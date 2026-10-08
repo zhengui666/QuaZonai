@@ -325,6 +325,48 @@ fn compiler_report_cannot_borrow_another_code_or_model_object() {
     }
 }
 
+#[test]
+fn compiler_output_above_two_mib_retains_exact_bytes_and_identity_bindings() {
+    let code = Id::new();
+    let parameters = NativeTaskParametersV1::CompileModel {
+        schema_version: SchemaV1,
+        code_artifact_id: code,
+    };
+    // A valid opaque custom section, not a claim of runnable scientific output.
+    // The section has an empty name plus 2 MiB of payload.
+    let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+    bytes.extend_from_slice(&[0, 0x81, 0x80, 0x80, 0x01]);
+    bytes.resize(bytes.len() + 1 + 2 * 1024 * 1024, 0);
+    let model = descriptor("qz.wasm_model", bytes);
+    let report = NativeModelCompilationV1 {
+        schema_version: SchemaV1,
+        code_artifact_id: code,
+        model_storage_ref: model.0.storage_ref,
+        rustc_version: "rustc 1.98.1 (native version-format fixture)".into(),
+        target: "wasm32-unknown-unknown".into(),
+        abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
+        module_bytes: model.0.byte_count,
+    };
+    assert!(model.1.len() > 2 * 1024 * 1024);
+    assert!(accepts(
+        &parameters,
+        &[model.clone(), output("qz.model_compilation", &report)]
+    ));
+    for dimension in 0..4 {
+        let mut invalid = report.clone();
+        match dimension {
+            0 => invalid.module_bytes = count(model.1.len() as u64 - 1),
+            1 => invalid.code_artifact_id = Id::new(),
+            2 => invalid.model_storage_ref = Id::new(),
+            _ => invalid.module_bytes = count(7),
+        }
+        assert!(!accepts(
+            &parameters,
+            &[model.clone(), output("qz.model_compilation", &invalid)]
+        ));
+    }
+}
+
 fn forecast() -> (NativeTaskParametersV1, NativeForecastResultV1) {
     let selection = NativeBarSelectionV1 {
         schema_version: SchemaV1,
@@ -342,7 +384,7 @@ fn forecast() -> (NativeTaskParametersV1, NativeForecastResultV1) {
             fast_period: 1,
             slow_period: 2,
             label_horizon_observations: 1,
-            total_fuel: count(100),
+            total_fuel: Some(count(100)),
         },
     };
     let points = (0..4)
@@ -378,7 +420,7 @@ fn forecast() -> (NativeTaskParametersV1, NativeForecastResultV1) {
                 ("nautilus-persistence".into(), "0.63.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
-            consumed_fuel: count(10),
+            consumed_fuel: Some(count(10)),
             points,
         },
     )
@@ -402,7 +444,7 @@ fn forecast_cannot_expand_visibility_change_horizon_or_hide_missing_values() {
             5 => invalid.points[1].label_available_ns = Some(count(32)),
             6 => invalid.points[0].forecast_reason = None,
             7 => invalid.points[3].label_return = Some(0.01),
-            8 => invalid.consumed_fuel = count(101),
+            8 => invalid.consumed_fuel = Some(count(101)),
             _ => invalid.native_versions.remove("wasmi").map(|_| ()).unwrap(),
         }
         assert!(
@@ -415,4 +457,66 @@ fn forecast_cannot_expand_visibility_change_horizon_or_hide_missing_values() {
         request.parameters.label_horizon_observations = 2;
     }
     assert!(!accepts(&other, &[output("qz.native_forecast", &report)]));
+}
+
+#[test]
+fn forecast_fuel_binding_preserves_explicit_budget_and_unmetered_absence() {
+    let (mut parameters, mut report) = forecast();
+    report.consumed_fuel = None;
+    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    if let NativeTaskParametersV1::EvaluateAlpha { request, .. } = &mut parameters {
+        request.parameters.total_fuel = None;
+        domain::execution::forecast_request(request).unwrap();
+    }
+    assert!(accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    report.consumed_fuel = Some(count(10));
+    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    if let NativeTaskParametersV1::EvaluateAlpha { request, .. } = &mut parameters {
+        request.parameters.total_fuel = Some(count(1_000_000_001));
+        domain::execution::forecast_request(request).unwrap();
+    }
+    report.consumed_fuel = Some(count(1_000_000_001));
+    assert!(accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    report.consumed_fuel = Some(count(1_000_000_002));
+    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+}
+
+#[test]
+fn sealed_policy_keeps_every_asset_requirement_beyond_the_old_sixty_four_limit() {
+    use contracts::evidence::{Comparator, MetricRequirementV1};
+    let bars = NativeBarSelectionV1 {
+        schema_version: SchemaV1,
+        bar_types: (0..65)
+            .map(|index| format!("ASSET{index}.SIM-1-MINUTE-LAST-EXTERNAL"))
+            .collect(),
+        event_start_ns: count(1),
+        event_end_ns: count(10),
+        decision_cutoff_ns: count(11),
+        maximum_rows: 65,
+    };
+    let requirements: Vec<_> = (0..65)
+        .map(|index| MetricRequirementV1 {
+            schema_version: SchemaV1,
+            metric_code: "PEARSON_IC".into(),
+            scope: format!("asset:{index}"),
+            comparator: Comparator::Ge,
+            threshold_low: Some("0.1".parse().unwrap()),
+            threshold_high: None,
+            required: true,
+            minimum_observations: count(2),
+            method_allowlist: vec!["ndarray-stats.pearson_correlation".into()],
+        })
+        .collect();
+    assert!(domain::execution::alpha_sealed_policy(&requirements, &bars, 5).is_ok());
+    assert!(domain::execution::alpha_sealed_policy(&[], &bars, 5).is_err());
+    assert!(domain::execution::alpha_sealed_policy(&requirements, &bars, 0).is_err());
+    for dimension in 0..3 {
+        let mut invalid = requirements.clone();
+        match dimension {
+            0 => invalid[64].scope = "asset:65".into(),
+            1 => invalid[64].method_allowlist = vec!["unregistered-method".into()],
+            _ => invalid[64].metric_code = "UNKNOWN_METRIC".into(),
+        }
+        assert!(domain::execution::alpha_sealed_policy(&invalid, &bars, 5).is_err());
+    }
 }

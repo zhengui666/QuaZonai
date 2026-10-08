@@ -9,7 +9,6 @@ use contracts::{
     research::{DataPartition, PitStatus},
     science::{
         FeatureAvailabilityV1, FeatureDefinitionV1, FeatureObservationV1, FeatureObservationsV1,
-        MAX_EXPERIMENT_DECISIONS, MAX_FEATURE_OBSERVATIONS,
     },
 };
 use nautilus_common::{clock::TestClock, timer::TimeEvent};
@@ -26,7 +25,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -215,15 +214,13 @@ fn project(
     let mut aggregation_observed_before_window = false;
     loop {
         let mut raw = Vec::new();
-        let n = (&mut *input)
-            .take(2 * 1024 * 1024 + 1)
-            .read_until(b'\n', &mut raw)?;
+        let n = input.read_until(b'\n', &mut raw)?;
         if n == 0 {
             break;
         }
         ensure!(
-            n <= 2 * 1024 * 1024 && raw.last() == Some(&b'\n'),
-            "FORWARD_SOURCE_RECORD_INCOMPLETE_OR_OVERSIZE"
+            raw.last() == Some(&b'\n'),
+            "FORWARD_SOURCE_RECORD_INCOMPLETE"
         );
         ensure!(!ended, "FORWARD_RECORD_AFTER_END");
         let r: SourceRecord = serde_json::from_slice(&raw)?;
@@ -323,10 +320,6 @@ fn project(
                         value: Some(value),
                         missing_reason: None,
                     });
-                    ensure!(
-                        observations.len() <= MAX_FEATURE_OBSERVATIONS,
-                        "FORWARD_FEATURE_CONTRACT_LIMIT"
-                    );
                 }
             }
             "trade" => {
@@ -571,10 +564,6 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         last.ts_event.as_u64().checked_add(interval) == Some(plan.source.first_close_ns.get()),
         "FORWARD_WARMUP_CONTINUATION_GAP"
     );
-    ensure!(
-        series.bars.len() + plan.source.required_bars as usize <= MAX_EXPERIMENT_DECISIONS,
-        "FORWARD_DECISION_CONTRACT_LIMIT"
-    );
     let original_parts = args
         .original_features
         .iter()
@@ -607,19 +596,9 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         &cursors,
         last.ts_init.as_u64(),
     )?;
-    ensure!(
-        parts.iter().map(|p| p.observations.len()).sum::<usize>()
-            + observed.features.observations.len()
-            <= MAX_FEATURE_OBSERVATIONS,
-        "FORWARD_COMBINED_FEATURE_CONTRACT_LIMIT"
-    );
     let mut bars = series.bars.clone();
     bars.extend_from_slice(&observed.bars);
     let feature_bytes = serde_json::to_vec(&observed.features)?;
-    ensure!(
-        feature_bytes.len() <= contracts::artifacts::MAX_UPLOAD_BYTES,
-        "FORWARD_FEATURE_ATTACHMENT_CONTRACT_LIMIT"
-    );
     let feature_path = args.output.join("forward-features.json");
     write_new(&feature_path, &feature_bytes)?;
     for (i, (_, bytes)) in original_parts.iter().enumerate() {

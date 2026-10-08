@@ -1,5 +1,5 @@
 //! Immutable research preparation. Registration is not native capability or PASS evidence.
-use crate::{evidence::MetricRequirementV1, DbCounter, DecimalValue, Id, Revision, SchemaV1};
+use crate::{DbCounter, DecimalValue, Id, Revision, SchemaV1, evidence::MetricRequirementV1};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -129,7 +129,7 @@ pub struct InputSetCreate {
     pub project_id: Id,
     pub purpose: InputPurpose,
     pub decision_cutoff: DateTime<Utc>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1, max_items = 65536)]
     pub items: Vec<InputItemV1>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -147,7 +147,7 @@ pub struct InputSetSummary {
 #[serde(deny_unknown_fields)]
 pub struct InputItemView {
     pub id: Id,
-    #[schema(minimum = 0, maximum = 255)]
+    #[schema(minimum = 0, maximum = 65535)]
     pub ordinal: u16,
     pub item: InputItemV1,
     pub origin: DataOrigin,
@@ -157,7 +157,7 @@ pub struct InputItemView {
 #[serde(deny_unknown_fields)]
 pub struct InputSetView {
     pub header: InputSetSummary,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub items: Vec<InputItemView>,
 }
 fn limit() -> u16 {
@@ -281,7 +281,7 @@ pub struct PortfolioStudyPlanV1 {
     pub schema_version: SchemaV1,
     pub input_set_id: Id,
     pub evaluation_start: DateTime<Utc>,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub manual_cutoffs: Option<Vec<DateTime<Utc>>>,
 }
 
@@ -296,12 +296,12 @@ pub struct EvaluationPolicyCreate {
     pub execution_assumptions_id: Id,
     pub selection: SelectionParametersV1,
     pub split_policy: SplitPolicyV1,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub metric_requirements: Vec<MetricRequirementV1>,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub sealed_metric_requirements: Vec<MetricRequirementV1>,
     /// Independent portfolio criteria; None cannot authorize portfolio PASS.
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
     pub portfolio_study_plan: Option<PortfolioStudyPlanV1>,
     #[schema(minimum = 1, maximum = 2147483647)]
@@ -327,11 +327,11 @@ pub struct EvaluationPolicyView {
     pub question: String,
     pub selection_rule: SelectionRuleV1,
     pub split_policy: SplitPolicyV1,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub metric_requirements: Vec<MetricRequirementV1>,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub sealed_metric_requirements: Option<Vec<MetricRequirementV1>>,
-    #[schema(required = true, min_items = 1, max_items = 64)]
+    #[schema(required = true, min_items = 1)]
     pub portfolio_metric_requirements: Option<Vec<MetricRequirementV1>>,
     #[schema(required = true)]
     pub portfolio_study_plan: Option<PortfolioStudyPlanV1>,
@@ -358,7 +358,6 @@ fn capabilities_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Sche
     use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
     ArrayBuilder::new()
         .min_items(Some(0))
-        .max_items(Some(64))
         .unique_items(true)
         .items(
             ObjectBuilder::new()

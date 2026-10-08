@@ -1,7 +1,7 @@
 //! Integrity of an uploaded runner report, not attestation of independent execution.
 use crate::{research::invalid, DomainError};
 use chrono::{Datelike, Timelike};
-use contracts::{agent_evaluation::*, artifacts::MAX_UPLOAD_BYTES};
+use contracts::agent_evaluation::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn reject() -> DomainError {
@@ -10,9 +10,8 @@ fn reject() -> DomainError {
 fn text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.chars().count() <= max && !value.chars().any(char::is_control)
 }
-fn ids(values: &[String], max: usize) -> bool {
+fn ids(values: &[String]) -> bool {
     !values.is_empty()
-        && values.len() <= max
         && values.iter().all(|id| text(id, 200))
         && values.iter().collect::<BTreeSet<_>>().len() == values.len()
 }
@@ -20,7 +19,7 @@ fn settings(value: &AgentEvaluationPolicyV1) -> bool {
     text(&value.model, 200) && text(&value.reasoning_effort, 200)
 }
 pub fn parse(bytes: &[u8]) -> Result<AgentEvaluationReportV1, DomainError> {
-    if bytes.is_empty() || bytes.len() > MAX_UPLOAD_BYTES {
+    if bytes.is_empty() {
         return Err(reject());
     }
     let report = serde_json::from_slice(bytes).map_err(|_| reject())?;
@@ -57,10 +56,10 @@ pub fn validate(report: &AgentEvaluationReportV1) -> Result<(), DomainError> {
             .any(|v| !text(&v.name, 200) || !text(&v.version, 200))
         || [&report.tuning, &report.held_out]
             .iter()
-            .any(|v| !text(&v.id, 200) || !ids(&v.case_ids, 500))
+            .any(|v| !text(&v.id, 200) || !ids(&v.case_ids))
         || report.tuning.sha256 == report.held_out.sha256
         || report.tuning.id == report.held_out.id
-        || !(2..=500).contains(&report.cases.len())
+        || report.cases.len() < 2
         || aggregate(&report.cases) != report.status
     {
         return Err(reject());
@@ -82,8 +81,7 @@ pub fn validate(report: &AgentEvaluationReportV1) -> Result<(), DomainError> {
             || !seen.insert(&case.id)
             || !split.contains(&case.id)
             || !text(&case.reason, 2000)
-            || !ids(&case.required_assertions, 100)
-            || case.assertions.len() > 100
+            || !ids(&case.required_assertions)
             || scenarios
                 .insert(hash, case.split)
                 .is_some_and(|previous| previous != case.split)

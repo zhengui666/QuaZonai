@@ -1,5 +1,5 @@
 //! Package shape and original target binding only; no release/approval authority.
-use crate::{control::text, DomainError};
+use crate::{DomainError, control::text};
 use contracts::{
     delivery::{ForecastTargetPackageV2, FrozenForwardDatasetV2},
     portfolio::{CandidateDetailV1, MandateViewV1},
@@ -54,7 +54,7 @@ pub fn target_package(
         || package.valid_until <= package.valid_from
         || package.valid_until > original.valid_until
         || package.cash_weight != original.cash_weight
-        || !(1..=256).contains(&package.targets.len())
+        || package.targets.len() < 1
         || package.targets.len() != original.targets.len()
         || package.engine_versions.is_empty()
         || package.engine_versions.len() > 64
@@ -89,9 +89,7 @@ pub fn target_package(
         (&package.input_revision_refs, 1),
         (&package.provenance_artifact_refs, 1),
     ] {
-        if !(minimum..=256).contains(&refs.len())
-            || refs.iter().collect::<BTreeSet<_>>().len() != refs.len()
-        {
+        if refs.len() < minimum || refs.iter().collect::<BTreeSet<_>>().len() != refs.len() {
             return Err(invalid());
         }
     }
@@ -146,10 +144,7 @@ pub fn freeze_forward_dataset(
 ) -> Result<FrozenForwardDatasetV2, DomainError> {
     let invalid = || DomainError::Invalid("forecast_forward_dataset_binding");
     let required: BTreeSet<_> = instrument_ids.iter().map(String::as_str).collect();
-    if required.is_empty()
-        || required.len() > 256
-        || metadata.partition != contracts::research::DataPartition::Forward
-    {
+    if required.is_empty() || metadata.partition != contracts::research::DataPartition::Forward {
         return Err(invalid());
     }
     let versions = crate::catalogs::instrument_versions(&metadata.universe.instrument_definitions)?;
@@ -469,7 +464,7 @@ pub fn strategy_target_package(
             .and_then(|v| u64::try_from(v).ok())
             .is_none_or(|v| v > target.valid_until_ns.get())
         || package.targets.len() != target.targets.len()
-        || !(1..=256).contains(&package.targets.len())
+        || package.targets.len() < 1
         || package.cash_weight != target.cash_weight
         || package.cash_weight != candidate.cash_weight
         || package.engine_versions.is_empty()

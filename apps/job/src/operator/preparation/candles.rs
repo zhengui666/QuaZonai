@@ -3,7 +3,7 @@
 use super::bars::{
     bar_type, candle, definitions, exact, no_symlinks, publish, read, write_catalog,
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Parser;
 use nautilus_model::{
@@ -12,7 +12,7 @@ use nautilus_model::{
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use serde_json::{json, value::RawValue, Value};
+use serde_json::{Value, json, value::RawValue};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -20,7 +20,6 @@ use std::{
 };
 
 const MIB: u64 = 1024 * 1024;
-const MAX_ROWS: usize = 100_000;
 const SCHEMA: &str = "qz.public_acquisition/1";
 const PROVIDER: &str = "coinbase-candles";
 const TERMS: &str = "https://www.coinbase.com/legal/market_data";
@@ -70,11 +69,36 @@ struct Selection {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Limits {
-    max_response_bytes: u64,
-    max_response_total_bytes: u64,
-    max_requests: usize,
-    max_records: usize,
-    max_output_bytes: u64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_response_bytes: Option<u64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_response_total_bytes: Option<u64>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_requests: Option<usize>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_records: Option<usize>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    max_output_bytes: Option<u64>,
+}
+
+impl Limits {
+    fn validate(&self) -> Result<()> {
+        // Preserve the exact frozen legacy shape. Null means no application cap in
+        // new manifests; only a caller-declared total byte budget is operational.
+        let legacy = self.max_response_bytes == Some(4 * MIB)
+            && self.max_requests == Some(128)
+            && self.max_records == Some(100_000)
+            && self.max_output_bytes == Some(128 * MIB);
+        let uncapped = self.max_response_bytes.is_none()
+            && self.max_requests.is_none()
+            && self.max_records.is_none()
+            && self.max_output_bytes.is_none();
+        ensure!(
+            (legacy || uncapped) && self.max_response_total_bytes.is_none_or(|v| v > 0),
+            "SOURCE_ACQUISITION_LIMITS"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -157,12 +181,9 @@ struct Original {
     index: usize,
 }
 
-fn source_file(root: &Path, file: &File, expected: &str, limit: u64) -> Result<Vec<u8>> {
-    ensure!(
-        file.path == expected && file.size <= limit,
-        "SOURCE_FILE_IDENTITY"
-    );
-    let bytes = read(&root.join(expected), limit)?;
+fn source_file(root: &Path, file: &File, expected: &str) -> Result<Vec<u8>> {
+    ensure!(file.path == expected, "SOURCE_FILE_IDENTITY");
+    let bytes = read(&root.join(expected))?;
     ensure!(bytes.len() as u64 == file.size, "SOURCE_SIZE_MISMATCH");
     Ok(bytes)
 }
@@ -279,29 +300,22 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
         "SOURCE_ACQUISITION_CONTRACT"
     );
     let limits = &manifest.limits;
-    ensure!(
-        limits.max_response_bytes == 4 * MIB
-            && (1..=128 * MIB).contains(&limits.max_response_total_bytes)
-            && limits.max_requests == 128
-            && limits.max_records == MAX_ROWS
-            && limits.max_output_bytes == 128 * MIB,
-        "SOURCE_ACQUISITION_LIMITS"
-    );
+    limits.validate()?;
     ensure!(
         manifest.source_terms.reference == TERMS
             && manifest.source_terms.evidence_status
                 == "OPERATOR_SUPPLIED_NOT_INDEPENDENTLY_VERIFIED",
         "SOURCE_TERMS_REQUIRED"
     );
-    let terms = source_file(root, &manifest.source_terms.file, "source-terms.bin", MIB)?;
+    let terms = source_file(root, &manifest.source_terms.file, "source-terms.bin")?;
     ensure!(
         !terms.is_empty() && terms.iter().any(|byte| !byte.is_ascii_whitespace()),
         "SOURCE_TERMS_REQUIRED"
     );
     ensure!(
-        (1..=MAX_ROWS).contains(&manifest.record_count)
+        manifest.record_count > 0
             && manifest.observation_status == "OBSERVED"
-            && (1..=128).contains(&manifest.requests.len())
+            && !manifest.requests.is_empty()
             && manifest.requests.len() == manifest.responses.len(),
         "SOURCE_EMPTY_OR_INCOMPLETE"
     );
@@ -319,7 +333,7 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
     let step = selected.interval_seconds * 299;
     let mut cursor = selected.start_seconds;
     let mut previous_received = 0;
-    let mut bytes_read = 0;
+    let mut bytes_read = 0_u64;
     let mut originals = BTreeMap::new();
     for (index, (request, response)) in manifest
         .requests
@@ -329,9 +343,16 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
     {
         let end = cursor.saturating_add(step).min(selected.end_seconds);
         let expected = Request {
-            url: format!("https://api.exchange.coinbase.com/products/{}/candles?start={}&end={}&granularity={}",
-                selected.instrument, query_clock(cursor)?, query_clock(end)?, selected.interval_seconds),
-            start_seconds: cursor, end_seconds: end, method: "GET".into(),
+            url: format!(
+                "https://api.exchange.coinbase.com/products/{}/candles?start={}&end={}&granularity={}",
+                selected.instrument,
+                query_clock(cursor)?,
+                query_clock(end)?,
+                selected.interval_seconds
+            ),
+            start_seconds: cursor,
+            end_seconds: end,
+            method: "GET".into(),
         };
         ensure!(
             cursor < end && *request == expected && response.request == expected,
@@ -359,10 +380,14 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
             "SOURCE_RESPONSE_TYPE"
         );
         let path = format!("raw/{index:04}.json");
-        let bytes = source_file(root, &response.file, &path, 4 * MIB)?;
-        bytes_read += bytes.len() as u64;
+        let bytes = source_file(root, &response.file, &path)?;
+        bytes_read = bytes_read
+            .checked_add(bytes.len() as u64)
+            .context("SOURCE_BYTE_COUNT_OVERFLOW")?;
         ensure!(
-            bytes_read <= limits.max_response_total_bytes,
+            limits
+                .max_response_total_bytes
+                .is_none_or(|maximum| bytes_read <= maximum),
             "SOURCE_BYTE_LIMIT"
         );
         let source: Vec<[Box<RawValue>; 6]> = serde_json::from_slice(&bytes)?;
@@ -434,7 +459,6 @@ fn native_bars(
     let mut bars = Vec::new();
     let mut previous = None;
     for line in bytes.split(|c| *c == b'\n').filter(|line| !line.is_empty()) {
-        ensure!(bars.len() < MAX_ROWS, "SOURCE_ROW_LIMIT");
         let row: Row = serde_json::from_slice(line)?;
         let original = originals
             .get(&row.selection_time_seconds)
@@ -483,7 +507,7 @@ fn native_bars(
 }
 
 pub fn run(args: &Arguments) -> Result<Value> {
-    let source_bytes = read(&args.acquisition, MIB)?;
+    let source_bytes = read(&args.acquisition)?;
     let manifest: Manifest = serde_json::from_slice(&source_bytes)?;
     let source = args
         .acquisition
@@ -491,15 +515,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let originals = original_rows(&manifest, source)?;
-    ensure!(
-        source_bytes.len() as u64
-            + manifest.source_terms.file.size
-            + manifest.raw_response_bytes
-            + manifest.records.size
-            <= 128 * MIB,
-        "SOURCE_OUTPUT_LIMIT"
-    );
-    let definition_bytes = read(&args.instruments, MIB)?;
+    let definition_bytes = read(&args.instruments)?;
     let (base, quote) = selection(&manifest)?;
     let instruments = definitions(
         &definition_bytes,
@@ -508,7 +524,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         base,
         quote,
     )?;
-    let records = source_file(source, &manifest.records, "records.jsonl", 128 * MIB)?;
+    let records = source_file(source, &manifest.records, "records.jsonl")?;
     let bars = native_bars(&records, &manifest, &originals, &instruments)?;
     let cutoff = bars.last().context("SOURCE_EMPTY")?.ts_init;
     ensure!(
@@ -551,13 +567,12 @@ pub fn run(args: &Arguments) -> Result<Value> {
     // A direct native invocation has the same frozen-input obligation as the
     // operator wrapper. Recheck originals after native writes/readback.
     ensure!(
-        read(&args.acquisition, MIB)? == source_bytes
-            && read(&args.instruments, MIB)? == definition_bytes,
+        read(&args.acquisition)? == source_bytes && read(&args.instruments)? == definition_bytes,
         "SOURCE_INPUT_CHANGED_DURING_IMPORT"
     );
     ensure!(
         original_rows(&manifest, &source)? == originals
-            && source_file(&source, &manifest.records, "records.jsonl", 128 * MIB)? == records,
+            && source_file(&source, &manifest.records, "records.jsonl")? == records,
         "SOURCE_INPUT_CHANGED_DURING_IMPORT"
     );
     let counter = |value| contracts::DbCounter::new(value).map_err(anyhow::Error::msg);
@@ -593,4 +608,54 @@ pub fn run(args: &Arguments) -> Result<Value> {
         &serde_json::to_vec_pretty(&report)?,
     )?;
     Ok(report)
+}
+
+#[cfg(test)]
+mod limit_contract_tests {
+    use super::*;
+
+    fn uncapped() -> Value {
+        json!({"max_response_bytes":null,"max_response_total_bytes":null,
+            "max_requests":null,"max_records":null,"max_output_bytes":null})
+    }
+
+    #[test]
+    fn accepts_exact_legacy_or_unlimited_manifest_without_mutating_it() {
+        for value in [
+            uncapped(),
+            json!({"max_response_bytes":4*MIB,
+            "max_response_total_bytes":32*MIB,"max_requests":128,
+            "max_records":100_000,"max_output_bytes":128*MIB}),
+        ] {
+            let original = value.clone();
+            serde_json::from_value::<Limits>(value.clone())
+                .unwrap()
+                .validate()
+                .unwrap();
+            assert_eq!(value, original);
+        }
+        let mut value = uncapped();
+        value["max_response_total_bytes"] = json!(129 * MIB);
+        serde_json::from_value::<Limits>(value)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    #[test]
+    fn refuses_missing_mixed_forged_or_zero_limit_metadata() {
+        let mut value = uncapped();
+        value.as_object_mut().unwrap().remove("max_records");
+        assert!(serde_json::from_value::<Limits>(value).is_err());
+        for (key, number) in [("max_records", 1), ("max_response_total_bytes", 0)] {
+            let mut value = uncapped();
+            value[key] = json!(number);
+            assert!(
+                serde_json::from_value::<Limits>(value)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+    }
 }

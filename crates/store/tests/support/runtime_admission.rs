@@ -16,7 +16,7 @@ fn standalone(fixture: &support::Fixture, request: &RunSubmission) -> Standalone
         runtime_revision: request.runtime_revision,
         kind: RunKind::DataValidate,
         limits,
-        max_parallel_runs: 2,
+        max_parallel_runs: Some(2),
     }
 }
 async fn reject_both(
@@ -112,11 +112,11 @@ async fn actual_runtime_wall_memory_and_output_capacity_gate_every_admission(poo
         let mut capabilities =
             runtime_observation::configured_capabilities(&pool, request.runtime_id).await;
         match dimension {
-            0 => capabilities.max_wall_seconds = request.limits.wall_seconds.unwrap() - 1,
-            1 => capabilities.max_memory_mib = request.limits.memory_mib - 1,
+            0 => capabilities.max_wall_seconds = Some(request.limits.wall_seconds.unwrap() - 1),
+            1 => capabilities.max_memory_mib = request.limits.memory_mib.unwrap() - 1,
             _ => {
                 capabilities.max_output_bytes =
-                    DbCounter::new(request.limits.output_bytes.unwrap().get() - 1).unwrap()
+                    Some(DbCounter::new(request.limits.output_bytes.unwrap().get() - 1).unwrap())
             }
         }
         runtime_observation::publish(
@@ -132,9 +132,9 @@ async fn actual_runtime_wall_memory_and_output_capacity_gate_every_admission(poo
     }
     let mut capabilities =
         runtime_observation::configured_capabilities(&pool, request.runtime_id).await;
-    capabilities.max_wall_seconds = request.limits.wall_seconds.unwrap();
-    capabilities.max_memory_mib = request.limits.memory_mib;
-    capabilities.max_output_bytes = request.limits.output_bytes.unwrap();
+    capabilities.max_wall_seconds = request.limits.wall_seconds;
+    capabilities.max_memory_mib = request.limits.memory_mib.unwrap();
+    capabilities.max_output_bytes = request.limits.output_bytes;
     runtime_observation::publish(
         &pool,
         request.runtime_id,
@@ -174,11 +174,11 @@ async fn first_send_rechecks_readiness_and_limits_but_sent_unknown_keeps_its_ide
         let mut capabilities =
             runtime_observation::configured_capabilities(&pool, request.runtime_id).await;
         match dimension {
-            0 => capabilities.max_wall_seconds = request.limits.wall_seconds.unwrap() - 1,
-            1 => capabilities.max_memory_mib = request.limits.memory_mib - 1,
+            0 => capabilities.max_wall_seconds = Some(request.limits.wall_seconds.unwrap() - 1),
+            1 => capabilities.max_memory_mib = request.limits.memory_mib.unwrap() - 1,
             _ => {
                 capabilities.max_output_bytes =
-                    DbCounter::new(request.limits.output_bytes.unwrap().get() - 1).unwrap()
+                    Some(DbCounter::new(request.limits.output_bytes.unwrap().get() - 1).unwrap())
             }
         }
         runtime_observation::publish(

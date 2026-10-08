@@ -91,8 +91,10 @@ fn bounded(file: File, maximum: usize, private: bool) -> Result<Vec<u8>> {
     {
         return Err(Failure::Invalid("native_file"));
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(maximum as u64 + 1).read_to_end(&mut bytes)?;
+    let capacity = usize::try_from(metadata.len()).map_err(|_| Failure::Capacity)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity).map_err(|_| Failure::Capacity)?;
+    file.take(metadata.len().saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() != metadata.len() as usize {
         return Err(Failure::Integrity);
     }
@@ -148,12 +150,10 @@ pub fn output_usage(root: &Path, maximum: Option<u64>) -> Result<u64> {
     let directory = directory_handle(root)?;
     let _metadata = directory.metadata()?;
     let mut total = 0u64;
-    let mut entries = 0;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        entries += 1;
         let metadata = fs::symlink_metadata(entry.path())?;
-        if entries > 128 || !metadata.is_file() || metadata.nlink() != 1 {
+        if !metadata.is_file() || metadata.nlink() != 1 {
             return Err(Failure::Invalid("native_output_entry"));
         }
         total = total.checked_add(metadata.len()).ok_or(Failure::Capacity)?;
@@ -189,6 +189,10 @@ mod optional_output_tests {
         assert_eq!(output_usage(root.path(), None).unwrap(), 10);
         assert!(output_usage(root.path(), Some(9)).is_err());
         assert_eq!(output_usage(root.path(), Some(10)).unwrap(), 10);
+        for index in 0..129 {
+            fs::write(root.path().join(format!("output-{index}")), b"x").unwrap();
+        }
+        assert_eq!(output_usage(root.path(), None).unwrap(), 139);
         std::os::unix::fs::symlink(root.path().join("a"), root.path().join("link")).unwrap();
         assert!(output_usage(root.path(), None).is_err());
     }

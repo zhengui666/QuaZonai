@@ -1,11 +1,10 @@
 //! Structural provenance checks; an ordered timestamp is not proof of historical availability.
-use crate::{control::text, research::invalid, DomainError};
+use crate::{DomainError, control::text, research::invalid};
 use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The existing wire limit bounds definition records, not just distinct identities.
-pub const MAX_INSTRUMENT_DEFINITIONS: usize = 256;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
@@ -37,7 +36,7 @@ pub fn instrument_definition(
 pub fn instrument_versions(
     definitions: &[serde_json::Value],
 ) -> Result<BTreeMap<&str, Vec<&serde_json::Value>>, DomainError> {
-    if !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&definitions.len()) {
+    if definitions.len() < 1 {
         return Err(bad("instrument_definitions"));
     }
     let mut chains: BTreeMap<&str, Vec<&serde_json::Value>> = BTreeMap::new();
@@ -286,7 +285,6 @@ pub fn metadata(
         || value.available_through < value.event_start
         || value.available_through > observed_at + chrono::Duration::seconds(5)
         || value.row_count.get() == 0
-        || value.row_count.get() > 1_000_000
         || value.data_kind != RuntimeDataKind::Bar
         || value.quality.native_version != "nautilus-persistence/0.63.0"
         || value.quality.datasets.len() != 1
@@ -343,7 +341,6 @@ pub fn metadata(
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns
         || quality.instrument_ids.is_empty()
-        || quality.instrument_ids.len() > 256
     {
         return Err(bad("quality"));
     }
@@ -399,8 +396,8 @@ pub fn metadata(
         || universe.coverage_end < value.event_end
         || universe.coverage_start >= universe.coverage_end
         || universe.selection_asof > value.available_through
-        || !(1..=4096).contains(&universe.membership.len())
-        || !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&universe.instrument_definitions.len())
+        || universe.membership.is_empty()
+        || universe.instrument_definitions.len() < 1
     {
         return Err(bad("universe"));
     }
@@ -410,9 +407,6 @@ pub fn metadata(
         text(&member.instrument_id, 1, 200, false)?;
         if let Some(groups) = &member.groups {
             let mut unique = BTreeSet::new();
-            if groups.len() > contracts::portfolio::MAX_ALLOCATION_GROUPS {
-                return Err(bad("universe.groups"));
-            }
             for group in groups {
                 text(group, 1, 120, false)?;
                 if !unique.insert(group) {
@@ -472,7 +466,7 @@ pub fn calendar_sessions(
     text(&value.source_reference, 1, 2000, false)?;
     if value.timezone.parse::<chrono_tz::Tz>().is_err()
         || value.coverage_start_ns >= value.coverage_end_ns
-        || !(1..=4096).contains(&value.sessions.len())
+        || value.sessions.is_empty()
     {
         return Err(bad("calendar_sessions"));
     }
@@ -497,7 +491,7 @@ pub fn bar_notionals(
     let Some(values) = &quality.last_bar_notionals else {
         return Ok(());
     };
-    if values.is_empty() || values.len() != quality.instrument_ids.len() || values.len() > 256 {
+    if values.is_empty() || values.len() != quality.instrument_ids.len() {
         return Err(bad("quality.last_bar_notionals"));
     }
     for (value, instrument) in values.iter().zip(&quality.instrument_ids) {
@@ -599,10 +593,6 @@ pub fn recorded_feature_inputs(
     partition: contracts::research::DataPartition,
     available_through: DateTime<Utc>,
 ) -> Result<(), DomainError> {
-    use contracts::{
-        artifacts::MAX_UPLOAD_BYTES,
-        science::{MAX_FEATURE_ARTIFACTS, MAX_FEATURE_OBSERVATIONS},
-    };
     let available = available_through
         .timestamp_nanos_opt()
         .and_then(|n| u64::try_from(n).ok())
@@ -610,7 +600,7 @@ pub fn recorded_feature_inputs(
     if value.partition != partition
         || partition == contracts::research::DataPartition::Sealed
         || value.source_selection_start_ns >= value.source_selection_end_ns
-        || !(1..=MAX_FEATURE_ARTIFACTS).contains(&value.fragments.len())
+        || value.fragments.len() < 1
     {
         return Err(bad("recorded_feature_inputs"));
     }
@@ -622,9 +612,8 @@ pub fn recorded_feature_inputs(
             .checked_add(fragment.observations.get())
             .ok_or_else(|| bad("recorded_feature_inputs.observations"))?;
         if !keys.insert(&fragment.part_key)
-            || !(1..=MAX_UPLOAD_BYTES as u64).contains(&fragment.byte_count.get())
+            || fragment.byte_count.get() == 0
             || fragment.observations.get() == 0
-            || observations > MAX_FEATURE_OBSERVATIONS as u64
             || fragment.min_event_ns > fragment.max_event_ns
             || fragment.min_event_ns < value.source_selection_start_ns
             || fragment.max_event_ns >= value.source_selection_end_ns

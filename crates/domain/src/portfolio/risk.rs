@@ -1,7 +1,7 @@
 //! Frozen risk configuration and publication checks, not another optimizer.
 use crate::DomainError;
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{portfolio::*, DecimalValue};
+use contracts::{DecimalValue, portfolio::*};
 
 pub fn risk_budgeting<'a>(
     objective: AllocationObjective,
@@ -17,7 +17,7 @@ pub fn risk_budgeting<'a>(
         };
     }
     let settings = settings.ok_or(DomainError::Invalid("portfolio_risk_budgeting"))?;
-    if !(1..=MAX_ALLOCATION_ASSETS).contains(&settings.assets.len())
+    if settings.assets.len() < 1
         || !settings.risky_gross_exposure.is_positive()
         || settings.risky_gross_exposure.as_decimal() > constraints.max_gross_exposure.as_decimal()
     {

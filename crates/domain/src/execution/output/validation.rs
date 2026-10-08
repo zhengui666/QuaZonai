@@ -1,16 +1,14 @@
 //! Exact native fold membership, not a second splitter, estimator or PIT attestation.
 use super::{bad, instruments};
 use crate::{
-    execution::validation::{
-        validation_folds, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS,
-    },
     DomainError,
+    execution::validation::{MAX_VALIDATION_FOLDS, validation_folds},
 };
 use contracts::{
+    DbCounter, Id, SchemaV1,
     brief::TargetKind,
     evidence::{MetricStatus, MetricValueV1},
     science::*,
-    DbCounter, Id, SchemaV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -105,43 +103,35 @@ pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainE
         ("ndarray-stats".into(), "0.7.0".into()),
     ]);
     if value.native_versions != versions
-        || !(1..=MAX_VALIDATION_FOLDS).contains(&value.folds.len())
-        || !(1..=1_000_000_000).contains(&value.consumed_fuel.get())
+        || value.folds.is_empty()
+        || value.consumed_fuel == Some(contracts::DbCounter::ZERO)
     {
         return Err(bad("native_output.validation"));
     }
     let mut assets = BTreeSet::new();
     let mut prior: Option<&NativeValidationFoldV1> = None;
     let mut observations = BTreeMap::new();
-    let mut rows = 0_u64;
-    let mut indices = 0_usize;
     for fold in &value.folds {
         crate::control::text(&fold.instrument_id, 1, 200, false)?;
         crate::control::text(&fold.bar_type, 1, 300, false)?;
-        if !(1..=MAX_VALIDATION_ROWS as u64).contains(&fold.source_row_count.get())
-            || !(3..=MAX_VALIDATION_ROWS).contains(&fold.training_ordinals.len())
-            || !(1..=MAX_VALIDATION_ROWS).contains(&fold.test_points.len())
+        if fold.source_row_count.get() < 1
+            || fold.training_ordinals.len() < 3
+            || fold.test_points.len() < 1
         {
             return Err(bad("native_output.validation_counts"));
         }
         match prior.filter(|p| p.instrument_id == fold.instrument_id) {
             Some(p)
-                if fold.fold_index == p.fold_index + 1
+                if p.fold_index.checked_add(1) == Some(fold.fold_index)
                     && fold.bar_type == p.bar_type
                     && fold.source_row_count == p.source_row_count => {}
-            None if fold.fold_index == 0 && assets.insert(fold.instrument_id.as_str()) => {
-                rows += fold.source_row_count.get();
-            }
+            None if fold.fold_index == 0 && assets.insert(fold.instrument_id.as_str()) => {}
             _ => return Err(bad("native_output.validation_order")),
         }
-        indices += fold.training_ordinals.len() + fold.test_points.len();
-        if rows > MAX_VALIDATION_ROWS as u64
-            || assets.len() > 256
-            || indices > MAX_VALIDATION_INDICES
-            || fold
-                .training_ordinals
-                .iter()
-                .any(|n| u64::from(*n) >= fold.source_row_count.get())
+        if fold
+            .training_ordinals
+            .iter()
+            .any(|n| u64::from(*n) >= fold.source_row_count.get())
             || fold.training_ordinals.windows(2).any(|w| w[0] >= w[1])
         {
             return Err(bad("native_output.validation_indices"));
@@ -384,7 +374,7 @@ pub(super) fn binding(
         .chunk_by(|a, b| a.instrument_id == b.instrument_id)
         .collect::<Vec<_>>();
     if groups.len() != selected.len()
-        || value.consumed_fuel > request.forecast.parameters.total_fuel
+        || !crate::execution::fuel_within_budget(value.consumed_fuel, request.forecast.parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
     {
         return Err(bad("native_output.validation_input"));
     }
@@ -507,8 +497,8 @@ pub fn frozen_calibration(model: &NativeFrozenCalibrationV1) -> Result<(), Domai
     if model.estimator_kind != "linregress.affine_ols"
         || model.estimator_version != "0.5.4"
         || model.selection_rule != "LAST_NATIVE_FOLD"
-        || !(1..=100_000).contains(&model.horizon_observations.get())
-        || !(1..=256).contains(&model.assets.len())
+        || model.horizon_observations.get() == 0
+        || model.assets.len() < 1
         || model
             .assets
             .iter()
@@ -519,21 +509,13 @@ pub fn frozen_calibration(model: &NativeFrozenCalibrationV1) -> Result<(), Domai
         return Err(bad("calibration.model"));
     }
     let mut instruments = BTreeSet::new();
-    let mut indices = 0;
     for asset in &model.assets {
         crate::control::text(&asset.instrument_id, 1, 200, false)?;
         crate::control::text(&asset.bar_type, 1, 300, false)?;
-        indices += asset.training_ordinals.len();
         let fit = &asset.calibration;
         if !instruments.insert(&asset.instrument_id)
             || asset.bar_type.rsplitn(5, '-').nth(4) != Some(asset.instrument_id.as_str())
-            || asset.fold_index as usize >= MAX_VALIDATION_FOLDS
-            || !(3..=MAX_VALIDATION_ROWS).contains(&asset.training_ordinals.len())
-            || indices > MAX_VALIDATION_INDICES
-            || asset
-                .training_ordinals
-                .iter()
-                .any(|n| *n as usize >= MAX_VALIDATION_ROWS)
+            || asset.training_ordinals.len() < 3
             || asset.training_ordinals.windows(2).any(|w| w[0] >= w[1])
             || asset.training_end_available_ns == DbCounter::ZERO
             || fit.training_observations.get() != asset.training_ordinals.len() as u64

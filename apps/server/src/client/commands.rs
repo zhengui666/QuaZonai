@@ -718,10 +718,10 @@ pub enum Run {
         id: String,
         #[arg(long)]
         after: Option<String>,
-        #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u32).range(1..=3600))]
-        max_seconds: u32,
-        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..=10000))]
-        max_events: u32,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_seconds: Option<u32>,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_events: Option<u64>,
     },
 }
 
@@ -735,8 +735,8 @@ pub(super) enum Output {
     Events {
         run: Id,
         after: Option<String>,
-        seconds: u32,
-        events: u32,
+        seconds: Option<u32>,
+        events: Option<u64>,
     },
 }
 #[derive(Subcommand)]
@@ -802,13 +802,12 @@ fn decode<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<serde_json::V
     let value: T = serde_json::from_slice(bytes).map_err(|_| Failure::Contract)?;
     serde_json::to_value(value).map_err(|_| Failure::Contract)
 }
-fn read_input<T: DeserializeOwned + Serialize>(input: impl Read) -> Result<Vec<u8>> {
+fn read_input<T: DeserializeOwned + Serialize>(mut input: impl Read) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     input
-        .take(16 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| Failure::Input)?;
-    if bytes.is_empty() || bytes.len() > 16 * 1024 * 1024 {
+    if bytes.is_empty() {
         return Err(Failure::Input);
     }
     let value: T = serde_json::from_slice(&bytes).map_err(|_| Failure::Input)?;
@@ -879,7 +878,7 @@ impl Request {
     ) -> Result<Self> {
         Self::write_input::<T, R>(method, route, status, operator, std::io::stdin().lock())
     }
-    // The same typed, bounded input gate is used before previews and real sends.
+    // The same typed input gate is used before previews and real sends.
     // In particular, historical target versions cannot become a Request body.
     fn write_input<T: DeserializeOwned + Serialize, R: DeserializeOwned + Serialize>(
         method: Method,
@@ -2494,6 +2493,42 @@ mod capital_exit_cli_tests {
             assert!(CapitalExits::action_input(ID.into(), suffix, "WRONG_ACTION", bytes.as_slice()).is_err());
             body["unknown_field"] = true.into();
             assert!(CapitalExits::action_input(ID.into(), suffix, action, serde_json::to_vec(&body).unwrap().as_slice()).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod complete_input_tests {
+    use super::*;
+
+    #[test]
+    fn typed_input_crosses_the_former_transport_limit_without_truncation() {
+        let expected = serde_json::json!({"original": "a".repeat(16 * 1024 * 1024 + 1)});
+        let raw = serde_json::to_vec(&expected).unwrap();
+        let parsed = read_input::<serde_json::Value>(raw.as_slice()).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&parsed).unwrap(), expected);
+        let mut incomplete = raw;
+        incomplete.pop();
+        assert!(read_input::<serde_json::Value>(incomplete.as_slice()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod uncapped_watch_tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Arguments { #[command(subcommand)] command: Command }
+    const RUN: &str = "018fc823-8e40-7000-8000-000000000001";
+
+    #[test]
+    fn watch_has_no_default_time_or_event_ceiling_and_preserves_explicit_values() {
+        let request = Arguments::try_parse_from(["client", "run", "watch", RUN]).unwrap().command.request().unwrap();
+        assert!(matches!(request.output, Output::Events { seconds: None, events: None, .. }));
+        let request = Arguments::try_parse_from(["client", "run", "watch", RUN, "--max-seconds", "3601", "--max-events", "10001"]).unwrap().command.request().unwrap();
+        assert!(matches!(request.output, Output::Events { seconds: Some(3601), events: Some(10001), .. }));
+        for field in ["--max-seconds", "--max-events"] {
+            assert!(Arguments::try_parse_from(["client", "run", "watch", RUN, field, "0"]).is_err());
         }
     }
 }

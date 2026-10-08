@@ -492,7 +492,7 @@ class CatalogPreparationTest(unittest.TestCase):
                                    "--output", str(self.output)])
             self.assertIs(kwargs["shell"], False)
             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
-            self.assertEqual(kwargs["timeout"], 3600)
+            self.assertNotIn("timeout", kwargs)
             (self.output / "catalog").mkdir(parents=True)
             (self.output / "catalog/fixture.parquet").write_bytes(b"PAR1prepared-fixturePAR1")
             (self.output / "catalog-metadata.json").write_bytes(self.body)
@@ -601,9 +601,9 @@ class CatalogPreparationTest(unittest.TestCase):
         self.assertEqual(result["catalog_registration"], {
             "root": str(self.output / "catalog"), "metadata_file": str(self.output / "catalog-metadata.json")})
 
-    def test_missing_malformed_oversized_and_mismatched_publication_fail_without_handoff(self):
+    def test_missing_malformed_large_invalid_and_mismatched_publication_fail_without_handoff(self):
         mutations = [lambda p: p.unlink(), lambda p: p.rename(p.with_suffix(".json.partial")),
-            lambda p: p.write_bytes(b"not JSON"), lambda p: p.write_bytes(b" " * (plugins.MAX_REPORT_BYTES + 1)),
+            lambda p: p.write_bytes(b"not JSON"), lambda p: p.write_bytes(b" " * (1024 * 1024 + 1)),
             lambda p: p.write_text(json.dumps(self.metadata | {"registered_ref": "wrong"})),
             lambda p: p.write_text(json.dumps(self.metadata | {"storage_version": "wrong"})),
             lambda p: p.write_text(json.dumps(self.metadata | {"schema_version": True})),
@@ -662,14 +662,13 @@ class CatalogPreparationTest(unittest.TestCase):
             run.assert_not_called()
         self.assertEqual((existing / "keep").read_bytes(), b"original")
 
-    def test_oversized_symlink_missing_and_malformed_inputs_never_launch(self):
+    def test_large_invalid_symlink_missing_and_malformed_inputs_never_launch(self):
         for path in (self.declaration, self.selection, self.source / "import-report.json", self.source / "source-evidence.json"):
             original = path.read_bytes()
-            for mode in ("oversized", "symlink", "missing", "malformed"):
-                if mode == "oversized":
+            for mode in ("large_invalid", "symlink", "missing", "malformed"):
+                if mode == "large_invalid":
                     with path.open("wb") as stream:
-                        stream.truncate((plugins.MAX_EVIDENCE_BYTES if path.name == "source-evidence.json"
-                                         else plugins.MAX_REPORT_BYTES) + 1)
+                        stream.truncate(1024 * 1024 + 1)
                 elif mode == "symlink":
                     path.unlink()
                     path.symlink_to(self.binary)

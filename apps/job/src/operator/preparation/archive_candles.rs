@@ -2,17 +2,17 @@
 use super::bars::{
     bar_type, candle, definitions, digest, exact, no_symlinks, publish, read, write_catalog,
 };
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate, Utc};
 use clap::Parser;
 use nautilus_model::instruments::Instrument;
 use rust_decimal::Decimal;
 use serde::{
-    de::{self, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{self, MapAccess, SeqAccess, Visitor},
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,
@@ -75,7 +75,7 @@ impl Spec {
             &selection.quote_asset,
         ] {
             ensure!(
-                (1..=32).contains(&part.len())
+                !part.is_empty()
                     && part
                         .bytes()
                         .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
@@ -276,8 +276,7 @@ fn amount(s: &str, positive: bool) -> Result<BigDecimal> {
         !integer.is_empty()
             && integer.bytes().all(|b| b.is_ascii_digit())
             && (integer.len() == 1 || !integer.starts_with('0'))
-            && fraction.is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
-            && s.bytes().filter(u8::is_ascii_digit).count() <= 100,
+            && fraction.is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit())),
         "SOURCE_DECIMAL_LEXEME"
     );
     let v = BigDecimal::from_str(s)?;
@@ -351,8 +350,7 @@ fn records(
     basis: &Value,
 ) -> Result<(Vec<u8>, Vec<Candle>, Value)> {
     ensure!(
-        body.len() <= 4 * MIB as usize
-            && body.is_ascii()
+        body.is_ascii()
             && body
                 .iter()
                 .all(|b| !matches!(*b,0..=9|11..=12|14..=31|127|b'"')),
@@ -372,10 +370,9 @@ fn records(
     let possible = 86400 / spec.interval;
     ensure!(
         physical.len() <= possible as usize
-            && physical.len() <= 1440
             && physical
                 .iter()
-                .all(|l| !l.trim_end_matches('\r').is_empty() && l.len() <= 4096),
+                .all(|l| !l.trim_end_matches('\r').is_empty()),
         "SOURCE_CSV_ROW_LIMIT"
     );
     let mut reader = csv::ReaderBuilder::new()
@@ -391,7 +388,7 @@ fn records(
     for (index, row) in reader.records().enumerate() {
         let row = row?;
         ensure!(
-            index < physical.len() && row.len() == 12 && row.iter().all(|f| f.len() <= 128),
+            index < physical.len() && row.len() == 12,
             "SOURCE_CSV_FIELDS"
         );
         let opened = unsigned(&row[0])?
@@ -449,7 +446,6 @@ fn records(
                 .collect::<BTreeMap<_, _>>(),
         )?);
         reproduced.push(b'\n');
-        ensure!(reproduced.len() <= 4 * MIB as usize, "SOURCE_RECORD_BYTES");
         candles.push(Candle {
             values: [
                 exact(&row[1])?,
@@ -473,25 +469,22 @@ fn records(
 
 struct OriginalFile {
     path: PathBuf,
-    limit: u64,
     bytes: Vec<u8>,
 }
 fn source_file(
     root: &Path,
     name: &str,
-    limit: u64,
     files: &mut Map<String, Value>,
     originals: &mut Vec<OriginalFile>,
 ) -> Result<Vec<u8>> {
     let path = root.join(name);
-    let bytes = read(&path, limit)?;
+    let bytes = read(&path)?;
     files.insert(
         name.into(),
         json!({"path":name,"size":bytes.len(),"sha256":digest(&bytes)}),
     );
     originals.push(OriginalFile {
         path,
-        limit,
         bytes: bytes.clone(),
     });
     Ok(bytes)
@@ -516,7 +509,7 @@ fn checksum(bytes: &[u8], archive: &[u8], name: &str) -> Result<String> {
 }
 
 pub fn run(args: &Arguments) -> Result<Value> {
-    let bytes = read(&args.acquisition, 256 * 1024)?;
+    let bytes = read(&args.acquisition)?;
     let manifest = strict_json(&bytes)?;
     let spec = Spec::new(serde_json::from_value(
         manifest
@@ -531,7 +524,6 @@ pub fn run(args: &Arguments) -> Result<Value> {
         .unwrap_or(Path::new("."));
     let mut original_files = vec![OriginalFile {
         path: args.acquisition.clone(),
-        limit: 256 * 1024,
         bytes: bytes.clone(),
     }];
     let imported = clock(text(&manifest, "imported_at")?)?;
@@ -551,38 +543,17 @@ pub fn run(args: &Arguments) -> Result<Value> {
         .and_then(Value::as_object)
         .context("SOURCE_FILES")?;
     let mut files = Map::new();
-    let archive = source_file(
-        source,
-        "raw/archive.zip",
-        MIB,
-        &mut files,
-        &mut original_files,
-    )?;
+    let archive = source_file(source, "raw/archive.zip", &mut files, &mut original_files)?;
     let checksum_bytes = source_file(
         source,
         "raw/archive.CHECKSUM",
-        4096,
         &mut files,
         &mut original_files,
     )?;
-    let record_bytes = source_file(
-        source,
-        "records.jsonl",
-        4 * MIB,
-        &mut files,
-        &mut original_files,
-    )?;
+    let record_bytes = source_file(source, "records.jsonl", &mut files, &mut original_files)?;
     let provenance_bytes = original_map
         .contains_key("provenance.json")
-        .then(|| {
-            source_file(
-                source,
-                "provenance.json",
-                4096,
-                &mut files,
-                &mut original_files,
-            )
-        })
+        .then(|| source_file(source, "provenance.json", &mut files, &mut original_files))
         .transpose()?;
     let (declaration, received, basis) = provenance(provenance_bytes.as_deref(), &spec, imported)?;
     let mut evidence = Map::new();
@@ -590,7 +561,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         let path = format!("evidence/{role}.bin");
         let supplied = original_map.contains_key(&path);
         if supplied {
-            source_file(source, &path, 2 * MIB, &mut files, &mut original_files)?;
+            source_file(source, &path, &mut files, &mut original_files)?;
         }
         evidence.insert(role.into(),json!({"status":if supplied {"OPERATOR_SUPPLIED_UNVERIFIED"} else {"NOT_SUPPLIED"},"source_url":null,"revision":null}));
     }
@@ -609,6 +580,22 @@ pub fn run(args: &Arguments) -> Result<Value> {
         "SOURCE_IMPLEMENTATION_HASH"
     );
     let mut expected = spec.plan.clone();
+    let recorded_limits = manifest
+        .get("limits")
+        .context("SOURCE_ACQUISITION_LIMITS")?;
+    let mut uncapped_limits = expected["limits"].clone();
+    for value in uncapped_limits
+        .as_object_mut()
+        .context("SOURCE_PLAN")?
+        .values_mut()
+    {
+        *value = Value::Null;
+    }
+    ensure!(
+        *recorded_limits == expected["limits"] || *recorded_limits == uncapped_limits,
+        "SOURCE_ACQUISITION_LIMITS"
+    );
+    expected["limits"] = recorded_limits.clone();
     expected.as_object_mut().context("SOURCE_PLAN")?.extend(json!({
         "files":files,"decoded_member":{"name":spec.plan["member_name"],"size":decoded.len(),"sha256":digest(&decoded)},
         "checksum_sha256":checksum_hash,"archive_identity":format!("sha256:{}",digest(&archive)),"upstream_revision":null,
@@ -618,7 +605,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         "status":if candles.is_empty() {"NO_OBSERVATIONS"} else {"OBSERVATIONS"}}).as_object().context("SOURCE_MANIFEST")?.clone());
     ensure!(manifest == expected, "SOURCE_MANIFEST_REPRODUCTION");
     ensure!(!candles.is_empty(), "SOURCE_EMPTY");
-    let definition_bytes = read(&args.instruments, MIB)?;
+    let definition_bytes = read(&args.instruments)?;
     strict_json(&definition_bytes)?;
     let instruments = definitions(
         &definition_bytes,
@@ -654,7 +641,6 @@ pub fn run(args: &Arguments) -> Result<Value> {
     };
     original_files.push(OriginalFile {
         path: args.instruments.clone(),
-        limit: MIB,
         bytes: definition_bytes.clone(),
     });
     let parent = args
@@ -688,7 +674,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
     write_catalog(&root, &instruments, &bars)?;
     for original in original_files {
         ensure!(
-            read(&original.path, original.limit)? == original.bytes,
+            read(&original.path)? == original.bytes,
             "SOURCE_INPUT_CHANGED_DURING_IMPORT"
         );
     }
@@ -724,7 +710,11 @@ mod tests {
     }
     fn row(spec: &Spec, offset: u64) -> String {
         let opened = spec.start + offset * spec.interval * 1_000_000_000;
-        format!("{},1.00,2.00,0.50,1.50,0.10,{},10000000000000000000000000000000000000000000000000000000000.00000000000001,1,0.01,0.00000000000001,0",opened/spec.scale,(opened+spec.interval*1_000_000_000-spec.scale)/spec.scale)
+        format!(
+            "{},1.00,2.00,0.50,1.50,0.10,{},10000000000000000000000000000000000000000000000000000000000.00000000000001,1,0.01,0.00000000000001,0",
+            opened / spec.scale,
+            (opened + spec.interval * 1_000_000_000 - spec.scale) / spec.scale
+        )
     }
     fn parse(bytes: &[u8], spec: &Spec) -> Result<(Vec<u8>, Vec<Candle>, Value)> {
         records(
@@ -758,7 +748,7 @@ mod tests {
         for value in ["", "00", "01", "1.", ".1", "-1", "+1", "1e2", "1 0", "1\t0"] {
             assert!(amount(value, false).is_err(), "{value}");
         }
-        assert!(amount(&"1".repeat(101), false).is_err());
+        assert!(amount(&"1".repeat(101), false).is_ok());
         assert!(amount("0", true).is_err());
         assert!(amount("0", false).is_ok());
     }

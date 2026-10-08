@@ -53,7 +53,7 @@ struct ServiceConfig {
     #[serde(default)]
     capital_exit: bool,
     bind: SocketAddr,
-    max_seconds: u64,
+    max_seconds: Option<u64>,
     #[serde(default)]
     proxy_env: Option<String>,
 }
@@ -151,14 +151,10 @@ fn new_private(path: &Path) -> Result<File> {
 }
 
 fn original_bytes(path: &Path) -> Result<Vec<u8>> {
-    let file = File::open(path)?;
-    ensure!(
-        file.metadata()?.is_file() && file.metadata()?.len() <= 8 * 1024 * 1024,
-        "PAPER_SERVICE_INPUT_LIMIT"
-    );
+    let mut file = File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "PAPER_SERVICE_INPUT_LIMIT");
     let mut bytes = Vec::new();
-    file.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 8 * 1024 * 1024, "PAPER_SERVICE_INPUT_LIMIT");
+    file.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -329,7 +325,7 @@ async fn serve(config: ServiceConfig) -> Result<()> {
         "PAPER_CONTROL_LOOPBACK_ORIGIN_REQUIRED"
     );
     ensure!(
-        (1..=300).contains(&config.max_seconds),
+        config.max_seconds != Some(0),
         "PAPER_HOST_OBSERVATION_BOUND"
     );
     if let Some(name) = &config.proxy_env {

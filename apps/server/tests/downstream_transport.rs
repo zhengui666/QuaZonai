@@ -107,7 +107,7 @@ async fn native_boundary_rejects_incompatible_stale_duplicate_or_secret_response
     .await;
     assert_eq!(
         client(&server).capabilities().await.unwrap_err(),
-        RuntimeProbeFailure::ResponseLimit
+        RuntimeProbeFailure::ContractUnsupported
     );
 }
 
@@ -165,4 +165,18 @@ fn timestamp_limits_and_maximal_distinct_contracts_match_domain_validation() {
     }
     value.market_capability_versions.push("overflow".into());
     assert!(domain::delivery::downstream_capabilities(&value, now).is_err());
+}
+
+#[tokio::test]
+async fn complete_downstream_observation_crosses_the_former_response_limit() {
+    for chunked in [false, true] {
+        let expected = observation();
+        let mut raw = serde_json::to_vec(&expected).unwrap();
+        raw.resize(64 * 1024 + 1, b' ');
+        let server = native_http_at(
+            "/downstream/v1/capabilities", StatusCode::OK, raw, None, chunked,
+        ).await;
+        assert_eq!(serde_json::to_value(client(&server).capabilities().await.unwrap()).unwrap(), expected);
+        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+    }
 }

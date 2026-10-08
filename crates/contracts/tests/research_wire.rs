@@ -1,5 +1,5 @@
 use contracts::research::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 fn request() -> Value {
     serde_json::from_str(include_str!(
         "../../../tests/contracts/research-policy.json"
@@ -44,10 +44,12 @@ fn input_union_rejects_mixed_references_and_unregistered_roles() {
     input["artifact_id"] = id.clone();
     assert!(serde_json::from_value::<InputItemV1>(input).is_err());
     for role in ["SECRET", "*", "LOG", "SEALED"] {
-        assert!(serde_json::from_value::<InputItemV1>(
-            json!({"kind":"ARTIFACT","artifact_id":id,"role":role})
-        )
-        .is_err());
+        assert!(
+            serde_json::from_value::<InputItemV1>(
+                json!({"kind":"ARTIFACT","artifact_id":id,"role":role})
+            )
+            .is_err()
+        );
     }
 }
 #[test]
@@ -64,7 +66,11 @@ fn generated_policy_schema_exposes_native_scalar_and_array_boundaries() {
     );
     assert_eq!(
         schemas["InputSetCreate"]["properties"]["items"]["maxItems"],
-        256
+        65536
+    );
+    assert_ne!(
+        schemas["NativeBarSelectionV1"]["properties"]["maximum_rows"]["maximum"],
+        1000000
     );
     assert_eq!(
         schemas["SplitPolicyV1"]["properties"]["interval_validation_required"]["enum"],
@@ -87,7 +93,7 @@ fn nested_metric_schema_has_both_array_and_item_boundaries() {
     }
     let a = &m["method_allowlist"];
     assert_eq!(a["minItems"], 1);
-    assert_eq!(a["maxItems"], 64);
+    assert!(a["maxItems"].is_null());
     assert_eq!(a["uniqueItems"], true);
     assert_eq!(a["items"]["minLength"], 1);
     assert_eq!(a["items"]["maxLength"], 120);
@@ -103,7 +109,7 @@ fn review_policy_fraction_and_capabilities_publish_the_remaining_bounds() {
             "{name}: exact decimal plus fraction bounds"
         );
         let caps = &p["required_capabilities"];
-        assert_eq!(caps["maxItems"], 64);
+        assert!(caps["maxItems"].is_null());
         assert_eq!(caps["uniqueItems"], true);
         assert_eq!(caps["items"]["minLength"], 1);
         assert_eq!(caps["items"]["maxLength"], 120);

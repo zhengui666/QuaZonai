@@ -19,7 +19,7 @@ pub fn weights(request: &DownstreamWeightsSubmitV1) -> Result<(), DomainError> {
     if request.asof_ns > request.available_ns
         || request.available_ns >= request.valid_until_ns
         || !contracts::research_currency::supported(&request.base_currency)
-        || !(1..=256).contains(&request.weights.len())
+        || request.weights.is_empty()
     {
         return Err(DomainError::Invalid("forward_weights"));
     }
@@ -56,7 +56,6 @@ fn report(r: &contracts::forward::ForwardReportContentV1) -> Result<(), DomainEr
             .any(|t| t.timestamp_subsec_nanos() % 1000 != 0)
         || r.window_end <= r.window_start
         || r.issued_at < r.window_end
-        || r.returns.len() > 10000
         || (r.complete && (r.returns.is_empty() || r.returns.iter().any(|p| p.value.is_none())))
     {
         return Err(DomainError::Invalid("forward_report"));

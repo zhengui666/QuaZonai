@@ -52,9 +52,9 @@ fn fixture(parameters: NativeTaskParametersV1, mut inputs: Vec<RuntimeInputV1>) 
         inputs,
         parameters_artifact_id: id,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(market::count(20)),
-            memory_mib: 512,
+            memory_mib: Some(512),
             wall_seconds: Some(60),
             output_bytes: Some(market::count(8 * 1024 * 1024)),
         },
@@ -1051,7 +1051,7 @@ fn actual_managed_allocation_reads_original_catalog_models_and_preserves_infeasi
         .targets
         .as_ref()
         .is_some_and(|v| v.len() == 2));
-    assert!(report.consumed_fuel.get() > 0);
+    assert!(report.consumed_fuel.unwrap().get() > 0);
     for member in &report.input.forecasts.members {
         assert_eq!(member.forecasts, vec![0.01, 0.01]);
     }

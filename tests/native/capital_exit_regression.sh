@@ -82,6 +82,12 @@ if [[ $mode == pg ]]; then
   run_required pg capital-registration-01 server test account_observations_http 'native-codex' paper_capital_exit_registration::paper_capital_exit_disabled_intake_preserves_original_receipt_without_registration_header
   run_required pg capital-registration-02 server test account_observations_http 'native-codex' paper_capital_exit_registration::paper_capital_exit_enabled_receipt_ack_requires_successful_exact_source_registration
   run_required pure capital-http-schema server test capital_exit_http native-codex capital_exit_http_contracts_have_exact_routes_closed_types_and_auth_boundaries
+  # Payload size must not bypass authentication, exact replay or full JSON validation.
+  run_required pg capital-http-evidence-full server test account_observations_http native-codex capital_exit_body_limit::capital_exit_native_evidence_http_preserves_history_without_body_cap
+  run_required pg capital-http-assessment-full server test account_observations_http native-codex capital_exit_body_limit::capital_exit_native_assessment_http_keeps_history_intact_without_body_cap
+  run_required pg capital-http-command-full server test account_observations_http native-codex capital_exit_body_limit::ordinary_http_commands_accept_complete_large_json_and_keep_auth_and_idempotency
+  run_required native runtime-http-object-full runtime test runtime_http '' native_object_upload_accepts_binary_above_former_cap_and_checks_exact_versioned_replays
+  run_required native runtime-http-json-full runtime test runtime_http '' native_json_intake_has_no_implicit_body_cap_and_keeps_auth_and_complete_validation
 fi
 
 # Build BOTH test executables in one invocation from this exact checkout. A fresh

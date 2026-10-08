@@ -1,18 +1,18 @@
 //! Trusted original feedback admission. No public DTO, arbitrary runtime or research trial.
 use super::*;
 use crate::lifecycle::{
-    native::{bind_task, NativeTaskDefinition},
     StandaloneRunSubmission,
+    native::{NativeTaskDefinition, bind_task},
 };
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
+    DbCounter, SchemaV1,
     artifacts::ArtifactAccess,
     execution::NativeTaskParametersV1,
     lifecycle::JobLimitsV1,
     research::{ArtifactInputRole, DataOrigin, InputItemV1, InputPurpose, InputSetCreate},
     runs::{RunKind, RunSnapshotV1},
     runtime_jobs::RuntimeInputV1,
-    DbCounter, SchemaV1,
 };
 
 fn limits(row: &sqlx::postgres::PgRow) -> Result<JobLimitsV1, StoreError> {
@@ -184,13 +184,8 @@ impl Store {
             .await?;
         let original = header(&mut tx, handoff).await?;
         let origin: DataOrigin = db::enum_value(&original, "delivery_origin")?;
-        let source_ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM app.forward_messages WHERE handoff_id=$1 AND stream_id=$2 ORDER BY sequence,message_revision LIMIT 256")
+        let source_ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM app.forward_messages WHERE handoff_id=$1 AND stream_id=$2 ORDER BY sequence,message_revision")
             .bind(handoff.as_uuid()).bind(stream).fetch_all(&mut *tx).await?;
-        if source_ids.len() > 255 {
-            return Err(
-                domain::DomainError::CapabilityUnavailable("forward_native_source_limit").into(),
-            );
-        }
         // Immutable original IDs identify a replay without rereading protected bytes.
         if let Some(run)=sqlx::query_scalar::<_,serde_json::Value>("SELECT a.initial_snapshot FROM app.forward_evaluation_inputs f JOIN app.runs r ON r.input_set_id=f.input_set_id AND r.kind='FORWARD_EVALUATE' JOIN app.run_admissions a ON a.run_id=r.id WHERE f.handoff_id=$1 AND f.request->'request'->'window'->>'stream_id'=$2 AND (SELECT array_agg((s.value->>'id')::uuid ORDER BY s.ordinal) FROM jsonb_array_elements(f.request->'request'->'sources') WITH ORDINALITY AS s(value,ordinal))=$3::uuid[]")
             .bind(handoff.as_uuid()).bind(stream).bind(&source_ids).fetch_optional(&mut *tx).await? {
@@ -232,6 +227,11 @@ impl Store {
         )
         .await?;
         domain::runtime::job_limits(&capabilities, &limits)?;
+        let cpu =
+            domain::execution_limits::native_cpu_rate(limits.cpu_seconds, limits.wall_seconds)?;
+        if cpu.is_some_and(|cpu| cpu == 0 || cpu > capabilities.max_cpu) {
+            return Err(domain::DomainError::CapabilityUnavailable("native_cpu_capacity").into());
+        }
         let parameters = NativeTaskParametersV1::EvaluateForward {
             schema_version: SchemaV1,
             request: Box::new(request.clone()),
@@ -309,7 +309,7 @@ impl Store {
             runtime_revision: revision,
             kind: RunKind::ForwardEvaluate,
             limits,
-            max_parallel_runs: 2,
+            max_parallel_runs: None,
         };
         let (mut tx, result) = Self::enqueue_standalone_run_in_transaction(
             tx,
@@ -330,7 +330,7 @@ impl Store {
                 parameters_artifact_id: parameter,
                 inputs: bindings,
                 image_ref: image,
-                cpu: 1,
+                cpu,
                 capability_snapshot_artifact_id: db::id(capability)?,
                 output_schemas: schemas,
                 origin,

@@ -13,13 +13,14 @@ from typing import Protocol
 import urllib.parse
 
 
-MAX_REQUESTS = 128
-MAX_RECORDS = 100_000
+# None denotes no application-imposed total; supplier page sizes remain below.
+MAX_REQUESTS = None
+MAX_RECORDS = None
 MAX_SECONDS = 253402300799  # Last representable UTC second in year 9999.
 
 
 def integer(value, name, minimum=0, maximum=MAX_SECONDS):
-    if type(value) is not int or not minimum <= value <= maximum:
+    if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
         raise ValueError(f"invalid {name}")
     return value
 
@@ -48,9 +49,7 @@ def decimal_text(value, positive=False):
     if type(value) not in (int, Decimal):
         raise ValueError("source amount must be an original JSON number")
     number = Decimal(value)
-    if (not number.is_finite() or len(number.as_tuple().digits) > 100
-            or abs(number.as_tuple().exponent) > 100
-            or number < 0 or (positive and number == 0)):
+    if not number.is_finite() or number < 0 or (positive and number == 0):
         raise ValueError("invalid source amount")
     return format(number, "f")
 
@@ -93,9 +92,6 @@ def utc_seconds(value):
 
 
 def windows(selection, seconds):
-    count = (selection.end_seconds - selection.start_seconds + seconds - 1) // seconds
-    if count > MAX_REQUESTS:
-        raise ValueError("selection exceeds 128 requests; split the acquisition")
     for start in range(selection.start_seconds, selection.end_seconds, seconds):
         yield start, min(start + seconds, selection.end_seconds)
 
@@ -141,8 +137,6 @@ class PolymarketPrices:
         value = read_json(body)
         if not isinstance(value, dict) or set(value) != {"history"} or not isinstance(value["history"], list):
             raise ValueError("invalid Polymarket price-history response")
-        if len(value["history"]) > MAX_RECORDS:
-            raise ValueError("source record limit exceeded")
         rows = []
         for item in value["history"]:
             if not isinstance(item, dict) or set(item) != {"t", "p"}:
@@ -175,7 +169,7 @@ class CoinbaseCandles:
     def plan(self, selection):
         selection.validate()
         if (not isinstance(selection.instrument, str)
-                or not re.fullmatch(r"[A-Z0-9]{1,20}-[A-Z0-9]{1,20}", selection.instrument)):
+                or not re.fullmatch(r"[A-Z0-9]+-[A-Z0-9]+", selection.instrument)):
             raise ValueError("Coinbase instrument must be an explicit BASE-QUOTE product ID")
         if selection.interval_seconds not in (60, 300, 900, 3600, 21600, 86400):
             raise ValueError("unsupported Coinbase granularity")

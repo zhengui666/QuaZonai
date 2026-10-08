@@ -10,7 +10,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut bytes = Vec::new();
     File::open(path)?
-        .take(contracts::artifacts::MAX_UPLOAD_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
     let report = domain::agent_evaluation::parse(&bytes)?;
     println!("Valid report contract: {:?}; mode {:?}; {} cases. Uploaded runner evidence is not scientific qualification.", report.status, report.mode, report.cases.len());

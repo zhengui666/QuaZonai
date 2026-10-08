@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow, ensure};
 use contracts::Id;
 use reqwest::{Client, Url};
 use serde::Deserialize;
-use std::{fs::File, io::Read, path::PathBuf, time::Duration};
+use std::{fs::File, io::Read, path::PathBuf};
 
 #[path = "../../server/src/service_http.rs"]
 pub(crate) mod service_http;
@@ -102,7 +102,7 @@ impl InitialExecutionAuthority {
                     .map_err(|_| anyhow!("PAPER_INITIAL_EXECUTION_CONNECTION_INVALID"))?,
             );
         }
-        let mut builder = service_http::builder(headers, Duration::from_secs(10));
+        let mut builder = service_http::builder(headers);
         if let Some(path) = &config.ca_certificate {
             ensure!(
                 path.is_absolute() && origin.scheme() == "https",
@@ -258,7 +258,7 @@ impl InitialExecutionAuthority {
             .map_err(|_| anyhow!("PAPER_INITIAL_EXECUTION_BLOCKED"))?;
         service_http::media(&response, "application/json")
             .map_err(|_| anyhow!("PAPER_INITIAL_EXECUTION_RESPONSE_INVALID"))?;
-        let bytes = service_http::body(response, 8 * 1024 * 1024)
+        let bytes = service_http::body(response, None)
             .await
             .map_err(|_| anyhow!("PAPER_INITIAL_EXECUTION_RESULT_UNKNOWN"))?;
         let result: CommandResult<PaperInitialExecutionViewV1> =

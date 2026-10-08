@@ -24,7 +24,7 @@ pub fn limits() -> JobLimitsV1 {
         experiments: 1,
         cpu_seconds: Some(DbCounter::new(10).unwrap()),
         wall_seconds: Some(60),
-        memory_mib: 1024,
+        memory_mib: Some(1024),
         output_bytes: Some(DbCounter::new(1024 * 1024).unwrap()),
     }
 }
@@ -586,7 +586,7 @@ async fn complete_native(
                 ("nautilus-persistence".into(), "0.63.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
-            consumed_fuel: DbCounter::new(u64::from(rows)).unwrap(),
+            consumed_fuel: Some(DbCounter::new(u64::from(rows)).unwrap()),
             points,
         };
         let bytes = if let Some(model) = calibration {
@@ -811,7 +811,7 @@ fn validation_report(
             ("linregress".into(), "0.5.4".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
         ]),
-        consumed_fuel: count(1000),
+        consumed_fuel: Some(count(1000)),
         unique_test_observations: count(unique.len() as u64),
         folds,
     }

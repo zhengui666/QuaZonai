@@ -119,15 +119,15 @@ pub(crate) async fn input(
     .await?
     .ok_or(StoreError::NotFound)?;
     let header = summary(&r)?;
-    let rows=sqlx::query("SELECT i.id,i.ordinal,i.dataset_revision_id,i.artifact_id,i.role,COALESCE(d.origin,a.origin) AS origin,COALESCE(d.pit_status,fd.pit_status) AS pit_status FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.artifacts a ON a.id=i.artifact_id LEFT JOIN app.feature_artifact_sources fs ON fs.artifact_id=a.id LEFT JOIN app.dataset_revisions fd ON fd.id=fs.dataset_revision_id WHERE i.input_set_id=$1 ORDER BY i.ordinal LIMIT 257")
+    let rows=sqlx::query("SELECT i.id,i.ordinal,i.dataset_revision_id,i.artifact_id,i.role,COALESCE(d.origin,a.origin) AS origin,COALESCE(d.pit_status,fd.pit_status) AS pit_status FROM app.input_set_items i LEFT JOIN app.dataset_revisions d ON d.id=i.dataset_revision_id LEFT JOIN app.artifacts a ON a.id=i.artifact_id LEFT JOIN app.feature_artifact_sources fs ON fs.artifact_id=a.id LEFT JOIN app.dataset_revisions fd ON fd.id=fs.dataset_revision_id WHERE i.input_set_id=$1 ORDER BY i.ordinal")
         .bind(id.as_uuid()).fetch_all(&mut **tx).await?;
-    if !(1..=256).contains(&rows.len()) {
+    if rows.is_empty() {
         return Err(StoreError::Integrity);
     }
     let mut items = Vec::with_capacity(rows.len());
     for (index, r) in rows.iter().enumerate() {
         let ordinal = r.try_get::<i32, _>("ordinal")?;
-        if ordinal != index as i32 {
+        if ordinal != i32::try_from(index).map_err(|_| StoreError::Integrity)? {
             return Err(StoreError::Integrity);
         }
         let item = if let Some(id) = db::optional_id(r, "dataset_revision_id")? {
@@ -143,7 +143,7 @@ pub(crate) async fn input(
         };
         items.push(InputItemView {
             id: db::id(r.try_get("id")?)?,
-            ordinal: ordinal as u16,
+            ordinal: u16::try_from(ordinal).map_err(|_| StoreError::Integrity)?,
             item,
             origin: db::enum_value(r, "origin")?,
             pit_status: r
@@ -490,7 +490,7 @@ pub(crate) async fn insert_frozen_input(
             }
         };
         sqlx::query("INSERT INTO app.input_set_items(input_set_id,dataset_revision_id,artifact_id,role,ordinal) VALUES($1,$2,$3,$4,$5)")
-                .bind(id.as_uuid()).bind(dataset).bind(artifact).bind(role).bind(index as i32).execute(&mut **tx).await?;
+                .bind(id.as_uuid()).bind(dataset).bind(artifact).bind(role).bind(i32::try_from(index).map_err(|_| StoreError::Invalid("input_ordinal"))?).execute(&mut **tx).await?;
     }
     sqlx::query("UPDATE app.input_sets SET frozen_at=clock_timestamp() WHERE id=$1")
         .bind(id.as_uuid())

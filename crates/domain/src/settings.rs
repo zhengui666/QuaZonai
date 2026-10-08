@@ -13,7 +13,7 @@ pub fn secret_intent(request: &IntegrationSecretIntent) -> Result<(), DomainErro
 pub fn secret_value(purpose: IntegrationSecretPurpose, value: &str) -> Result<(), DomainError> {
     let valid = match purpose {
         IntegrationSecretPurpose::TlsCa => {
-            !value.is_empty() && value.len() <= 65536 && value.is_ascii()
+            !value.is_empty() && value.is_ascii()
         }
         _ => {
             let minimum = if purpose == IntegrationSecretPurpose::Runtime {

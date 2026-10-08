@@ -1,12 +1,12 @@
 use chrono::{Duration, TimeZone, Utc};
 use contracts::{
+    DbCounter, Id, Revision, SchemaV1,
     budget::{BudgetV1, CostEnforcement, StopRuleV1},
     codex::{ModelCapabilityV1, ReasoningEffortCapability, SavedModelSettingsV1},
     evidence::*,
     runs::{ProjectState, RunState},
-    DbCounter, Id, Revision, SchemaV1,
 };
-use domain::{admission::*, codex::*, evidence::*, runs::*, DomainError};
+use domain::{DomainError, admission::*, codex::*, evidence::*, runs::*};
 use proptest::prelude::*;
 
 fn count(value: u64) -> DbCounter {
@@ -19,14 +19,14 @@ fn budget() -> BudgetV1 {
     BudgetV1 {
         schema_version: SchemaV1,
         max_experiments: 20,
-        max_parallel_runs: 2,
-        max_turns_per_mission: 16,
-        max_repair_turns: 2,
+        max_parallel_runs: Some(2),
+        max_turns_per_mission: Some(16),
+        max_repair_turns: Some(2),
         max_wall_seconds: Some(3600),
         max_cpu_seconds: Some(count(7200)),
-        max_memory_mib: 4096,
+        max_memory_mib: Some(4096),
         max_output_bytes: Some(count(67108864)),
-        max_cycles_per_day: 3,
+        max_cycles_per_day: Some(3),
         min_cycle_interval_seconds: 120,
         max_tokens: None,
         max_cost_decimal: None,
@@ -69,7 +69,7 @@ fn request() -> Reservation {
         experiments: 3,
         cpu_seconds: Some(count(100)),
         wall_seconds: Some(60),
-        memory_mib: 256,
+        memory_mib: Some(256),
         output_bytes: Some(count(1024)),
         model: None,
     }
@@ -127,7 +127,7 @@ fn non_trial_work_still_reserves_resources_without_consuming_an_experiment() {
 #[test]
 fn mission_concurrency_is_one_and_does_not_borrow_science_parallel_limit() {
     let mut limits = budget();
-    limits.max_parallel_runs = 10;
+    limits.max_parallel_runs = Some(10);
     let mut job = request();
     job.experiments = 0;
     let first =
@@ -137,7 +137,7 @@ fn mission_concurrency_is_one_and_does_not_borrow_science_parallel_limit() {
         reserve_mission(ProjectState::Active, &limits, &stop(), &first, &job),
         Err(DomainError::BudgetExhausted("parallel_runs"))
     ));
-    limits.max_parallel_runs = 1;
+    limits.max_parallel_runs = Some(1);
     assert!(reserve(
         ProjectState::Active,
         &limits,
@@ -212,7 +212,7 @@ fn every_resource_and_all_internal_optuna_trials_consume_budget() {
             ..request()
         },
         Reservation {
-            memory_mib: 4097,
+            memory_mib: Some(4097),
             ..request()
         },
         Reservation {
@@ -252,13 +252,17 @@ fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validati
     for (wall, memory, output) in [
         (
             budget.max_wall_seconds.map(|seconds| seconds + 1),
-            1,
+            Some(1),
             count(1),
         ),
-        (Some(1), budget.max_memory_mib + 1, count(1)),
         (
             Some(1),
-            1,
+            budget.max_memory_mib.map(|memory| memory + 1),
+            count(1),
+        ),
+        (
+            Some(1),
+            Some(1),
             budget.max_output_bytes.unwrap().checked_add(1).unwrap(),
         ),
     ] {
@@ -270,7 +274,7 @@ fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validati
     // This helper owns only upper bounds. Reservation keeps its earlier shape
     // check, including its original error precedence over resource exhaustion.
     assert_eq!(
-        job_resource_limits(&budget, Some(0), 0, Some(count(0))),
+        job_resource_limits(&budget, Some(0), Some(0), Some(count(0))),
         Ok(())
     );
     assert_eq!(
@@ -281,7 +285,7 @@ fn staged_job_preflight_reuses_inclusive_limits_without_replacing_shape_validati
             &empty_usage(),
             &Reservation {
                 wall_seconds: Some(0),
-                memory_mib: budget.max_memory_mib + 1,
+                memory_mib: budget.max_memory_mib.map(|memory| memory + 1),
                 ..request()
             },
         ),
@@ -318,13 +322,13 @@ fn estimated_cost_is_never_promoted_to_exact_enforcement() {
     policy.cost_currency = None;
     assert!(validate_budget(&policy, &stop()).is_err());
     let mut policy = budget();
-    policy.max_parallel_runs = 0;
+    policy.max_parallel_runs = Some(0);
     assert!(validate_budget(&policy, &stop()).is_err());
 }
 
 proptest! {
     #[test]
-    fn accepted_reservation_cannot_exceed_any_frozen_aggregate(used in 0u32..25, reserved in 0u32..25, cpu in 0u64..8000, active in 0u16..5, trials in 1u32..25) {
+    fn accepted_reservation_cannot_exceed_any_frozen_aggregate(used in 0u32..25, reserved in 0u32..25, cpu in 0u64..8000, active in 0u64..5, trials in 1u32..25) {
         let usage=BudgetUsage {used_experiments:used,reserved_experiments:reserved,reserved_cpu_seconds:count(cpu),active_runs:active,..empty_usage()};
         if let Ok(next)=reserve(ProjectState::Active,&budget(),&stop(),&usage,&Reservation {experiments:trials,..request()}) {
             prop_assert_eq!(next.used_experiments,used);
@@ -1028,7 +1032,7 @@ fn uncapped_tokens_still_enforce_turn_and_repair_counts() {
     let mut model = model_request(1, None).model.unwrap();
     model.tokens = None;
     let mut usage = empty_usage();
-    for _ in 0..policy.max_turns_per_mission {
+    for _ in 0..policy.max_turns_per_mission.unwrap() {
         usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
         assert_eq!(usage.reserved_tokens, DbCounter::ZERO);
     }
@@ -1038,7 +1042,7 @@ fn uncapped_tokens_still_enforce_turn_and_repair_counts() {
     );
     model.turn_kind = TurnKind::Repair;
     let mut usage = empty_usage();
-    for _ in 0..policy.max_repair_turns {
+    for _ in 0..policy.max_repair_turns.unwrap() {
         usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
     }
     assert_eq!(
@@ -1260,7 +1264,7 @@ fn native_turns_exhaust_the_mission_cap_even_without_token_or_cost_limits() {
     let model = model_request(10, None).model.unwrap();
     let mut usage = empty_usage();
     // A continuing Mission may run while every parallel slot is occupied.
-    usage.active_runs = policy.max_parallel_runs;
+    usage.active_runs = u64::from(policy.max_parallel_runs.unwrap());
     usage.used_experiments = policy.max_experiments;
     usage.reserved_cpu_seconds = policy.max_cpu_seconds.unwrap();
     let job_counters = (
@@ -1268,7 +1272,7 @@ fn native_turns_exhaust_the_mission_cap_even_without_token_or_cost_limits() {
         usage.used_experiments,
         usage.reserved_cpu_seconds,
     );
-    for expected in 1..=policy.max_turns_per_mission {
+    for expected in 1..=u64::from(policy.max_turns_per_mission.unwrap()) {
         usage = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
         assert_eq!(usage.mission.as_ref().unwrap().reserved_turns, expected);
         assert_eq!(
@@ -1305,7 +1309,7 @@ fn repair_turns_consume_both_limits_and_may_be_disabled() {
         Err(DomainError::BudgetExhausted("repair_turns"))
     );
     let policy = BudgetV1 {
-        max_repair_turns: 0,
+        max_repair_turns: Some(0),
         ..budget()
     };
     assert_eq!(
@@ -1346,14 +1350,14 @@ fn used_and_unknown_outstanding_turns_both_count_and_cannot_wrap() {
         reserve_model_turn(ProjectState::Active, &budget(), &stop(), &next, &model),
         Err(DomainError::BudgetExhausted("mission_turns"))
     );
-    usage.mission.as_mut().unwrap().used_turns = u16::MAX;
+    usage.mission.as_mut().unwrap().used_turns = u64::MAX;
     assert_eq!(
         reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
         Err(DomainError::BudgetExhausted("mission_turns"))
     );
     usage.mission.as_mut().unwrap().used_turns = 0;
     usage.mission.as_mut().unwrap().used_repair_turns = 0;
-    usage.mission.as_mut().unwrap().reserved_turns = u16::MAX;
+    usage.mission.as_mut().unwrap().reserved_turns = u64::MAX;
     assert_eq!(
         reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model),
         Err(DomainError::BudgetExhausted("mission_turns"))
@@ -1386,7 +1390,7 @@ fn unknown_or_different_mission_is_not_an_implicit_fresh_budget() {
 #[test]
 fn new_model_job_and_followup_turn_use_the_same_budget_guard() {
     let mut usage = empty_usage();
-    usage.mission.as_mut().unwrap().used_turns = budget().max_turns_per_mission;
+    usage.mission.as_mut().unwrap().used_turns = u64::from(budget().max_turns_per_mission.unwrap());
     let request = model_request(10, None);
     assert_eq!(
         reserve(ProjectState::Active, &budget(), &stop(), &usage, &request),
@@ -1455,8 +1459,8 @@ fn followup_turns_cannot_skip_cycle_token_or_cost_limits() {
 proptest! {
     #[test]
     fn every_accepted_turn_respects_used_plus_outstanding_total_and_repair_limits(
-        used in 0u16..20, outstanding in 0u16..20,
-        used_repairs in 0u16..5, outstanding_repairs in 0u16..5, repair in any::<bool>()
+        used in 0u64..20, outstanding in 0u64..20,
+        used_repairs in 0u64..5, outstanding_repairs in 0u64..5, repair in any::<bool>()
     ) {
         let mut usage = empty_usage();
         let mission = usage.mission.as_mut().unwrap();
@@ -1467,7 +1471,7 @@ proptest! {
         let mut model = model_request(1, None).model.unwrap();
         model.turn_kind = if repair { TurnKind::Repair } else { TurnKind::Research };
         let expected = used_repairs <= used && outstanding_repairs <= outstanding
-            && used + outstanding < 16 && used_repairs + outstanding_repairs + u16::from(repair) <= 2;
+            && used + outstanding < 16 && used_repairs + outstanding_repairs + u64::from(repair) <= 2;
         let result = reserve_model_turn(ProjectState::Active, &budget(), &stop(), &usage, &model);
         prop_assert_eq!(result.is_ok(), expected);
         if let Ok(next) = result {
@@ -1585,9 +1589,102 @@ fn optional_execution_caps_do_not_bypass_finite_grants_or_erase_accounting() {
     assert_eq!(next.reserved_cpu_seconds, count(123));
     assert_eq!(next.reserved_experiments, job.experiments);
     assert_eq!(next.active_runs, 1);
-    job.memory_mib = b.max_memory_mib + 1;
+    job.memory_mib = b.max_memory_mib.map(|memory| memory + 1);
     assert_eq!(
         reserve(ProjectState::Active, &b, &stop(), &usage, &job),
         Err(DomainError::BudgetExhausted("job_resource_limit"))
     );
+}
+
+#[test]
+fn absent_mission_caps_keep_full_accounting_beyond_the_old_16_bit_ceiling() {
+    let policy = BudgetV1 {
+        max_turns_per_mission: None,
+        max_repair_turns: None,
+        max_cycles_per_day: None,
+        ..budget()
+    };
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    model.turn_kind = TurnKind::Repair;
+    let mut usage = empty_usage();
+    let mission = usage.mission.as_mut().unwrap();
+    mission.used_turns = 100_000;
+    mission.used_repair_turns = 80_000;
+    let next = reserve_model_turn(ProjectState::Active, &policy, &stop(), &usage, &model).unwrap();
+    let mission = next.mission.unwrap();
+    assert_eq!(mission.used_turns, 100_000);
+    assert_eq!(mission.used_repair_turns, 80_000);
+    assert_eq!(mission.reserved_turns, 1);
+    assert_eq!(mission.reserved_repair_turns, 1);
+    assert_eq!(next.reserved_tokens, DbCounter::ZERO);
+    let disabled = BudgetV1 { max_repair_turns: Some(0), ..policy.clone() };
+    assert_eq!(reserve_model_turn(ProjectState::Active, &disabled, &stop(), &empty_usage(), &model),
+        Err(DomainError::BudgetExhausted("repair_turns")));
+    let bounded = BudgetV1 { max_turns_per_mission: Some(100_000), ..policy };
+    assert_eq!(reserve_model_turn(ProjectState::Active, &bounded, &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns")));
+}
+
+#[test]
+fn absent_repair_cap_does_not_bypass_a_finite_total_or_scientific_trial_cap() {
+    let policy = BudgetV1 { max_turns_per_mission: Some(1), max_repair_turns: None, ..budget() };
+    let mut model = model_request(1, None).model.unwrap();
+    model.tokens = None;
+    model.turn_kind = TurnKind::Repair;
+    let next = reserve_model_turn(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &empty_usage(),
+        &model,
+    )
+    .unwrap();
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &policy, &stop(), &next, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
+    let mut usage = empty_usage();
+    usage.used_experiments = policy.max_experiments;
+    assert_eq!(reserve(ProjectState::Active, &policy, &stop(), &usage, &request()),
+        Err(DomainError::BudgetExhausted("experiments")));
+}
+
+#[test]
+fn absent_parallel_budget_has_no_legacy_slot_ceiling_but_keeps_trial_and_memory_guards() {
+    let mut policy = budget();
+    policy.max_parallel_runs = None;
+    let usage = BudgetUsage { active_runs: 65536, ..empty_usage() };
+    let next = reserve(ProjectState::Active, &policy, &stop(), &usage, &request()).unwrap();
+    assert_eq!(next.active_runs, 65537);
+    let too_much_memory = Reservation {
+        memory_mib: policy.max_memory_mib.map(|memory| memory + 1),
+        ..request()
+    };
+    assert!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &too_much_memory
+        )
+        .is_err()
+    );
+    let too_many_trials = Reservation {
+        experiments: policy.max_experiments + 1,
+        ..request()
+    };
+    assert!(
+        reserve(
+            ProjectState::Active,
+            &policy,
+            &stop(),
+            &usage,
+            &too_many_trials
+        )
+        .is_err()
+    );
+    policy.max_parallel_runs = Some(65536);
+    assert!(reserve(ProjectState::Active, &policy, &stop(), &usage, &request()).is_err());
 }

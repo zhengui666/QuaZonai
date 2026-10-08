@@ -117,7 +117,9 @@ impl Store {
             .bind(request.request.brief_id.as_uuid()).fetch_one(&mut *tx).await?;
         let now: DateTime<Utc> = timing.try_get("now")?;
         let cooldown: Option<DateTime<Utc>> = timing.try_get("cooldown")?;
-        let quota = timing.try_get::<i64, _>("today")? >= timing.try_get::<i64, _>("maximum")?;
+        let today = timing.try_get::<i64, _>("today")?;
+        let quota = timing.try_get::<Option<i64>, _>("maximum")?
+            .is_some_and(|maximum| today >= maximum);
         if quota || cooldown.is_some_and(|until| until > now) {
             let until = if quota {
                 timing.try_get::<DateTime<Utc>, _>("tomorrow")?

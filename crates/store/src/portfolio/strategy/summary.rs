@@ -35,7 +35,7 @@ impl Store {
             .ok()
             .and_then(|value| DbCounter::new(value).ok())
             .ok_or(StoreError::Integrity)?;
-        if size == DbCounter::ZERO || size.get() > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES {
+        if size == DbCounter::ZERO {
             return Err(StoreError::Integrity);
         }
         let bytes = read(candidate.report_artifact_id, size).await?;

@@ -1,5 +1,5 @@
 //! Immutable target-only package body, never an approval or execution instruction.
-use crate::{portfolio::PortfolioConstraintsV1, settings::PackageSchemaVersion, DecimalValue, Id};
+use crate::{DecimalValue, Id, portfolio::PortfolioConstraintsV1, settings::PackageSchemaVersion};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -88,14 +88,14 @@ pub struct DownstreamCapabilitiesV1 {
 
 // The active capability contract advertises V2 only. A persisted observation is
 // audit data and may retain V1; it never restores permission for a new delivery.
-fn historical_downstream_capabilities_schema(
-) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+fn historical_downstream_capabilities_schema()
+-> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        openapi::{
-            schema::{ArrayBuilder, ObjectBuilder, Schema, Type},
-            RefOr,
-        },
         PartialSchema,
+        openapi::{
+            RefOr,
+            schema::{ArrayBuilder, ObjectBuilder, Schema, Type},
+        },
     };
     let RefOr::T(Schema::Object(mut object)) = DownstreamCapabilitiesV1::schema() else {
         unreachable!("downstream capabilities is an object schema");
@@ -253,7 +253,7 @@ pub struct FrozenForwardDatasetV2 {
     pub row_count: crate::DbCounter,
     pub selection: crate::science::NativeBarSelectionV1,
     /// Original externally tagged Nautilus InstrumentAny values, never rewritten.
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_definitions: Vec<serde_json::Value>,
 }
 
@@ -270,11 +270,11 @@ pub struct ForecastTargetPackageV2 {
     pub project_id: Id,
     pub candidate_id: Id,
     pub mandate_id: Id,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub qualification_refs: Vec<Id>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub evaluation_refs: Vec<Id>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub input_revision_refs: Vec<Id>,
     pub engine_versions: BTreeMap<String, String>,
     pub asof: chrono::DateTime<chrono::Utc>,
@@ -287,7 +287,7 @@ pub struct ForecastTargetPackageV2 {
     pub current_weights: crate::science::PortfolioCurrentWeightsV1,
     /// Original Build execution assumptions, not current downstream settings.
     pub execution_settings: crate::science::NativeSimulationSettingsV1,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub targets: Vec<PackageTargetV1>,
     pub cash_weight: DecimalValue,
     pub constraints_summary: PortfolioConstraintsV1,
@@ -297,7 +297,7 @@ pub struct ForecastTargetPackageV2 {
     pub compatible_market_capabilities: Vec<String>,
     #[schema(max_items = 64)]
     pub limitations: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub provenance_artifact_refs: Vec<Id>,
 }
 
@@ -316,11 +316,11 @@ pub struct TargetPackageV1 {
     pub project_id: Id,
     pub candidate_id: Id,
     pub mandate_id: Id,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub qualification_refs: Vec<Id>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub evaluation_refs: Vec<Id>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub input_revision_refs: Vec<Id>,
     pub engine_versions: BTreeMap<String, String>,
     pub asof: chrono::DateTime<chrono::Utc>,
@@ -329,7 +329,7 @@ pub struct TargetPackageV1 {
     pub base_currency: String,
     pub capital_assumption: DecimalValue,
     pub current_weights_source: crate::portfolio::CandidateWeightsSourceV1,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub targets: Vec<PackageTargetV1>,
     pub cash_weight: DecimalValue,
     pub constraints_summary: PortfolioConstraintsV1,
@@ -339,7 +339,7 @@ pub struct TargetPackageV1 {
     pub compatible_market_capabilities: Vec<String>,
     #[schema(max_items = 64)]
     pub limitations: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub provenance_artifact_refs: Vec<Id>,
 }
 

@@ -273,7 +273,6 @@ where
         parameters,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;
@@ -308,7 +307,6 @@ where
         report_id,
         None,
         "qz.native_portfolio",
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
         read,
     )
     .await?;
@@ -344,7 +342,7 @@ where
     .bind(project.as_uuid())
     .fetch_one(&mut **tx)
     .await?;
-    if !(1..=1024 * 1024).contains(&weights_size) {
+    if weights_size == 0 {
         return Err(StoreError::Integrity);
     }
     let weights_bytes = read(frozen.current_weights_artifact_id, counter(weights_size)?).await?;
@@ -453,7 +451,6 @@ where
             db::id(row.try_get("producer_attempt_id")?)?,
         )),
         "qz.candidate_evaluation",
-        8 * 1024 * 1024,
         read,
     )
     .await?;

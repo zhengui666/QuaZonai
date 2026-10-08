@@ -28,7 +28,7 @@ pub async fn setup(pool: &PgPool, store: &Store, actor: &Actor, maximum: u32) ->
     let data = research_support::setup(pool, store, actor).await;
     let mut draft = brief_support::request(store, actor, &data).await;
     draft.request.content.budget.max_experiments = maximum;
-    draft.request.content.budget.max_parallel_runs = 1;
+    draft.request.content.budget.max_parallel_runs = Some(1);
     draft.request.content.stop_rule.stop_on_qualified_count = 1;
     let brief = store
         .create_brief(actor, &Id::new().to_string(), &draft)

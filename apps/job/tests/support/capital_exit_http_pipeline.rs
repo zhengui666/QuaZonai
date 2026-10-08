@@ -53,8 +53,11 @@ async fn command(state: &Rc<RefCell<State>>, value: Command) -> Result<()> {
     wait(state, || state.borrow().command.is_none()).await
 }
 async fn wait(state: &Rc<RefCell<State>>, ready: impl Fn() -> bool) -> Result<()> {
+    wait_until(state, || Ok(ready())).await
+}
+async fn wait_until(state: &Rc<RefCell<State>>, ready: impl Fn() -> Result<bool>) -> Result<()> {
     let end = tokio::time::Instant::now() + Duration::from_secs(5);
-    while !ready() {
+    while !ready()? {
         if let Some(error) = &state.borrow().error {
             return Err(anyhow!(error.clone()));
         }
@@ -68,6 +71,32 @@ async fn wait(state: &Rc<RefCell<State>>, ready: impl Fn() -> bool) -> Result<()
         return Err(anyhow!(error.clone()));
     }
     Ok(())
+}
+async fn retain_original_snapshot(
+    state: &Rc<RefCell<State>>,
+    observer: &NativeNodeObserver,
+    path: &Path,
+) -> Result<()> {
+    // A heartbeat is only a lifecycle frame. Wait for the official Portfolio
+    // timer to emit and fully write a snapshot AFTER the native outcome.
+    // Neither cursor progress alone nor a fixed sleep proves a complete record.
+    ensure!(observer.heartbeat()?, "native_lifecycle_frame_not_queued");
+    let after = observer.cursor().0;
+    wait_until(state, || {
+        let bytes = std::fs::read(path)?;
+        let complete = bytes
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map_or(&[][..], |i| &bytes[..=i]);
+        for line in complete.split_inclusive(|b| *b == b'\n') {
+            let original: AccountObservationSubmitV2 = serde_json::from_slice(line)?;
+            if original.observation.sequence > after && original.observation.snapshot.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+    .await
 }
 async fn relay(
     input: &Input,
@@ -218,7 +247,10 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
         .with_delay_post_stop_secs(0)
         .with_delay_shutdown_secs(0)
         .with_portfolio_config(PortfolioConfig {
-            snapshot_interval_ms: Some(20),
+            // This sequential real HTTP/PG bridge is not a 50 Hz load test.
+            // Keep the official producer below intake throughput; relay every
+            // emitted frame unchanged, rather than dropping/coalescing a backlog.
+            snapshot_interval_ms: Some(1_000),
             ..Default::default()
         })
         .add_simulated_exec_client(
@@ -294,7 +326,7 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
             // Relay only native producer frames, including all original sequence
             // numbers. Freeze intake briefly while admitting the immutable plan.
             eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"relay_original_observations"}));
-            observer.heartbeat()?;tokio::time::sleep(Duration::from_millis(35)).await;
+            retain_original_snapshot(&state,&observer,&retained).await?;
             relay(&input,&http,&owner,&retained,&mut consumed,&mut latest).await?;
             let (source,observation)=latest.ok_or_else(||anyhow!("native_source_observation_absent"))?;
             wait(&state,||input.registered.is_file()).await?;
@@ -324,7 +356,8 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
             wait(&state,||state.borrow().cancels.len()==1).await?;
             command(&state,Command::Advance(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
             wait(&state,||state.borrow().fills.len()==2).await?;
-            observer.heartbeat()?;tokio::time::sleep(Duration::from_millis(35)).await;
+            eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"relay_after_original_exit_fill","original_fills":state.borrow().fills.len(),"original_cancellations":state.borrow().cancels.len(),"relayed_records":consumed}));
+            retain_original_snapshot(&state,&observer,&retained).await?;
             relay(&input,&http,&owner,&retained,&mut consumed,&mut latest).await?;
             command(&state,Command::Observation(latest.unwrap().1)).await?;
             command(&state,Command::Advance(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
@@ -347,10 +380,12 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
     };
     let (run, result) = tokio::join!(node.run_with_mode(NodeRunMode::Hosted), drive);
     run.unwrap();
-    observer.finish().unwrap();
+    let (retained_records, dropped_events) = observer.finish().unwrap();
     let result = result.unwrap();
     relay(&input, &http, &owner, &retained, &mut consumed, &mut latest)
         .await
         .unwrap();
+    assert_eq!(dropped_events, DbCounter::ZERO);
+    assert_eq!(u64::try_from(consumed).unwrap(), retained_records.get());
     std::fs::write(&input.result, serde_json::to_vec(&result).unwrap()).unwrap();
 }

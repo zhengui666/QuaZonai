@@ -985,3 +985,6 @@ mod paper_service_acceptance;
 
 #[path = "support/capital_exit_bridge_diagnostics.rs"]
 mod capital_exit_bridge_diagnostics;
+
+#[path = "support/capital_exit_body_limit.rs"]
+mod capital_exit_body_limit;

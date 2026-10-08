@@ -18,9 +18,6 @@ pub fn window(
     sources: &[ForwardWindowSource],
 ) -> Result<ForwardWindow, DomainError> {
     text(stream, 1, 200, false)?;
-    if sources.len() > 10000 {
-        return Err(DomainError::CapabilityUnavailable("forward_window_limit"));
-    }
     let mut groups: BTreeMap<u64, Vec<&ForwardWindowSource>> = BTreeMap::new();
     let mut ids = BTreeSet::new();
     let mut points = 0usize;
@@ -33,9 +30,6 @@ pub fn window(
         points = points
             .checked_add(c.returns.len())
             .ok_or(DomainError::Invalid("forward_window_limit"))?;
-        if points > 1000000 {
-            return Err(DomainError::CapabilityUnavailable("forward_window_limit"));
-        }
         let coverage = if c.supersedes_message_id.is_some() {
             ForwardCoverageV1::Correction
         } else if c.complete {

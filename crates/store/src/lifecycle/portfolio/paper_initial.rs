@@ -100,7 +100,7 @@ where
         }
         let root = reference(&row)?;
         let size = counter(row.try_get("byte_count")?)?;
-        if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+        if size == DbCounter::ZERO {
             return Err(StoreError::Integrity);
         }
         let bytes = read(root.artifact_id, size).await?;
@@ -172,7 +172,7 @@ where
     let [quality] = dataset.metadata.quality.datasets.as_slice() else {
         return Err(StoreError::Integrity);
     };
-    if !(1..=MAX_ALLOCATION_ASSETS).contains(&quality.instrument_ids.len()) {
+    if quality.instrument_ids.is_empty() {
         return Err(StoreError::Invalid("paper_initialization_assets"));
     }
     let cutoff = dataset.selection.selection.decision_cutoff_ns;

@@ -155,9 +155,6 @@ impl Store {
             content: report.clone(),
         };
         let bytes = serde_json::to_vec(&original).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(StoreError::Invalid("forward_report_size"));
-        }
         let scope = format!("DOWNSTREAM:{downstream}");
         let alias:Option<uuid::Uuid>=sqlx::query_scalar("SELECT resource_id FROM app.command_receipts WHERE principal_scope=$1 AND operation='FORWARD_SUBMIT' AND idempotency_key=$2")
             .bind(&scope).bind(&request.external_message_id).fetch_optional(&mut *tx).await?;

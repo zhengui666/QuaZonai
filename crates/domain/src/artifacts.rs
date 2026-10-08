@@ -4,7 +4,7 @@ use contracts::{artifacts::*, DbCounter};
 
 pub fn upload(request: &ArtifactCreate) -> Result<DbCounter, DomainError> {
     let bytes = request.content.len();
-    if bytes == 0 || bytes > MAX_UPLOAD_BYTES || request.content.trim().is_empty() {
+    if bytes == 0 || request.content.trim().is_empty() {
         return Err(invalid("content", "ARTIFACT_SIZE"));
     }
     if request.content.contains('\0') {
@@ -73,14 +73,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_binary_and_oversized_content_without_compiling_source() {
+    fn preserves_large_content_and_rejects_empty_or_binary_text_without_compiling_source() {
         for content in ["", "\n\t ", "source\0"] {
             assert!(upload(&request(ResearchArtifactKind::Code, content)).is_err());
         }
-        let accepted = "x".repeat(MAX_UPLOAD_BYTES);
+        let accepted = "x".repeat(2 * 1024 * 1024 + 1);
         assert!(upload(&request(ResearchArtifactKind::Code, &accepted)).is_ok());
-        let rejected = "界".repeat(MAX_UPLOAD_BYTES / 3 + 1);
-        assert!(upload(&request(ResearchArtifactKind::Code, &rejected)).is_err());
+        let original = "界".repeat(2 * 1024 * 1024 / 3 + 1);
+        assert_eq!(upload(&request(ResearchArtifactKind::Code, &original)).unwrap().get(), original.len() as u64);
         assert!(upload(&request(
             ResearchArtifactKind::Code,
             "deliberately not valid Rust; validate in the isolated job"

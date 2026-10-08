@@ -2,7 +2,7 @@
 //! This module does not calculate fills, settlement or transaction commissions.
 use crate::DomainError;
 use bigdecimal::BigDecimal;
-use contracts::{portfolio::NativeModelRefV1, DecimalValue};
+use contracts::{DecimalValue, portfolio::NativeModelRefV1};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -29,11 +29,7 @@ pub fn uses_native_fee(model: &NativeModelRefV1) -> bool {
 /// UTC daily portfolio returns: continuous prediction markets use a calendar year.
 /// Existing non-prediction studies retain their frozen 252-day convention.
 pub fn portfolio_annualization_days(model: &NativeModelRefV1) -> usize {
-    if uses_native_fee(model) {
-        365
-    } else {
-        252
-    }
+    if uses_native_fee(model) { 365 } else { 252 }
 }
 
 /// Inspect original Rust BinaryOption payloads. These checks do not grant PIT status.
@@ -121,9 +117,6 @@ pub fn settlements(
 ) -> Result<(), DomainError> {
     use std::collections::BTreeSet;
     let bad = || DomainError::Invalid("polymarket_settlement_source");
-    if groups.len() > 256 {
-        return Err(bad());
-    }
     let mut conditions = BTreeSet::new();
     let mut instruments = BTreeSet::new();
     for group in groups {

@@ -810,13 +810,13 @@ async fn exercise(pool: PgPool, case: Case) {
         runtime_id: runtime,
         runtime_revision: contracts::Revision::INITIAL,
         kind: contracts::runs::RunKind::ForwardEvaluate,
-        max_parallel_runs: 2,
+        max_parallel_runs: Some(2),
         limits: contracts::lifecycle::JobLimitsV1 {
             schema_version: SchemaV1,
             experiments: 0,
             cpu_seconds: Some(count(30)),
             wall_seconds: Some(60),
-            memory_mib: 512,
+            memory_mib: Some(512),
             output_bytes: Some(count(1048576)),
         },
     };
@@ -842,7 +842,7 @@ async fn human_source(
     let mut f = cycle_support::setup(pool, &store, &actor).await;
     let mut content = f.brief.content.clone();
     content.budget.min_cycle_interval_seconds = 15;
-    content.budget.max_cycles_per_day = if quota { 1 } else { 3 };
+    content.budget.max_cycles_per_day = Some(if quota { 1 } else { 3 });
     f.brief = store
         .update_brief(
             &actor,

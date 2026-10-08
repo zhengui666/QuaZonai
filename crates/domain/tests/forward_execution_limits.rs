@@ -9,7 +9,7 @@ fn source(cpu: Option<u64>, wall: Option<u32>, memory: u32, output: Option<u64>)
         experiments: 3,
         cpu_seconds: cpu.map(|n| DbCounter::new(n).unwrap()),
         wall_seconds: wall,
-        memory_mib: memory,
+        memory_mib: Some(memory),
         output_bytes: output.map(|n| DbCounter::new(n).unwrap()),
     }
 }
@@ -20,44 +20,22 @@ fn absent_source_caps_stay_absent_with_memory_and_no_trial() {
         result,
         JobLimitsV1 {
             experiments: 0,
-            ..source(None, None, 512, None)
+            ..source(None, None, 2048, None)
         }
     );
 }
 #[test]
-fn finite_measurement_keeps_legacy_ceilings_and_narrows_to_original() {
-    for (input, expected) in [
-        (
-            source(Some(300), Some(3600), 4096, Some(67108864)),
-            source(Some(30), Some(60), 512, Some(1048576)),
-        ),
-        (
-            source(Some(4), Some(5), 128, Some(512)),
-            source(Some(4), Some(5), 128, Some(512)),
-        ),
-        (
-            source(Some(30), Some(1), 512, Some(1048576)),
-            source(Some(1), Some(1), 512, Some(1048576)),
-        ),
-        (
-            source(None, Some(90), 512, None),
-            source(None, Some(60), 512, None),
-        ),
+fn finite_measurement_preserves_exact_source_without_hidden_clamps() {
+    for input in [
+        source(Some(300), Some(3600), 4096, Some(67108864)),
+        source(Some(4), Some(5), 128, Some(512)),
+        source(Some(30), Some(1), 512, Some(1048576)),
+        source(None, Some(90), 512, None),
     ] {
-        let result = forward_evaluation(&input).unwrap();
         assert_eq!(
-            result,
-            JobLimitsV1 {
-                experiments: 0,
-                ..expected
-            }
+            forward_evaluation(&input).unwrap(),
+            JobLimitsV1 { experiments: 0, ..input }
         );
-        if let (Some(cpu), Some(wall)) = (result.cpu_seconds, result.wall_seconds) {
-            assert!(
-                cpu.get() <= u64::from(wall),
-                "fixed one-core execution must cover the finite request"
-            );
-        }
     }
 }
 #[test]
@@ -88,6 +66,7 @@ fn absent_caps_require_each_native_runtime_capability() {
     for name in [
         "optional-wall-time",
         "optional-cpu-budget",
+        "optional-cpu-rate",
         "optional-output-budget",
     ] {
         let mut old = caps.clone();

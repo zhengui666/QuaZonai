@@ -1,7 +1,7 @@
 //! Deployment-only historical file copying. No HTTP/MCP path or source credential input.
 use contracts::{imports::*, DbCounter, SchemaV1};
 use integrations::{
-    artifacts::{ArtifactStore, MAX_LOCAL_OBJECT_BYTES},
+    artifacts::ArtifactStore,
     mission_files::MissionFiles,
 };
 use serde::Deserialize;
@@ -55,12 +55,12 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
                 .file_name()
                 .and_then(|v| v.to_str())
                 .ok_or_else(invalid)?,
-            4 * 1024 * 1024,
+            u64::MAX,
         )
         .map_err(|_| invalid())?;
     let selected: Selection = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     let _ = selected.schema_version;
-    if selected.artifacts.is_empty() || selected.artifacts.len() > 10_000 {
+    if selected.artifacts.is_empty() {
         return Err(invalid());
     }
     let mut identities = BTreeSet::new();
@@ -96,7 +96,7 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
             Disposition::ManualReviewRequired => {}
             Disposition::CopyPublic => match source.read_bytes(
                 item.relative_path.as_deref().ok_or_else(invalid)?,
-                MAX_LOCAL_OBJECT_BYTES,
+                u64::MAX,
             ) {
                 Ok(bytes) => {
                     let id = contracts::Id::new();

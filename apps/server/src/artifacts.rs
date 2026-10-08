@@ -8,9 +8,9 @@ use crate::{
 use axum::{
     extract::{
         rejection::{JsonRejection, PathRejection, QueryRejection},
-        FromRequestParts, Path, Query, State,
+        Path, Query, State,
     },
-    http::{header, request::Parts, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -22,32 +22,7 @@ use contracts::{
 };
 use integrations::artifacts::ArtifactStore;
 use std::sync::Arc;
-use tokio::sync::OwnedSemaphorePermit;
 
-/// Acquired by the native extractor before any potentially large JSON body.
-pub struct ArtifactCapacity(Arc<OwnedSemaphorePermit>);
-impl FromRequestParts<AppState> for ArtifactCapacity {
-    type Rejection = Response;
-    async fn from_request_parts(_: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
-        state
-            .artifact_slots
-            .clone()
-            .try_acquire_owned()
-            .map(|p| Self(Arc::new(p)))
-            .map_err(|_| {
-                let mut response = ApiError::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "ARTIFACT_BUSY",
-                    "产物服务繁忙，请稍后重试。",
-                )
-                .into_response();
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-                response
-            })
-    }
-}
 fn native(state: &AppState) -> Result<Arc<ArtifactStore>, ApiError> {
     state.artifact_store.clone().ok_or_else(|| {
         ApiError::new(
@@ -65,7 +40,6 @@ fn path(id: Result<Path<Id>, PathRejection>) -> Result<Id, ApiError> {
 pub async fn create(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     headers: HeaderMap,
     body: Result<Json<ArtifactCreate>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CommandResult<ArtifactView>>), ApiError> {
@@ -80,13 +54,10 @@ pub async fn create(
     let bytes = request.content.into_bytes();
     // Once native publication starts, losing the HTTP waiter must not roll back
     // its quota/receipt transaction while non-abortable file I/O continues.
-    // The already-bounded owned task holds the transaction and capacity through
+    // The owned task holds the original transaction through
     // commit; it is not a queue, a retry loop or a replacement for PGMQ.
     let result = tokio::spawn(async move {
-        let _capacity = capacity;
-        let permit = _capacity.0.clone();
         tokio::task::spawn_blocking(move || {
-            let _permit = permit;
             if let Some(previous) = replay {
                 let original = objects
                     .read(id, previous.resource.byte_count)
@@ -141,7 +112,6 @@ pub struct ArtifactBytes(pub Vec<u8>);
 pub async fn content(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     id: Result<Path<Id>, PathRejection>,
 ) -> Result<Response, ApiError> {
     let id = path(id)?;
@@ -155,7 +125,6 @@ pub async fn content(
         objects,
         locator.local_object_id,
         locator.metadata.byte_count,
-        capacity,
     )
     .await
 }
@@ -177,7 +146,6 @@ fn content_backend_error(error: store::StoreError) -> ApiError {
 pub async fn agent_evaluation(
     State(state): State<AppState>,
     Authority(actor): Authority,
-    capacity: ArtifactCapacity,
     id: Result<Path<Id>, PathRejection>,
 ) -> Result<Response, ApiError> {
     let id = path(id)?;
@@ -187,9 +155,7 @@ pub async fn agent_evaluation(
         .artifact_content(&actor, id)
         .await
         .map_err(content_backend_error)?;
-    if locator.metadata.kind != "REPORT"
-        || locator.metadata.byte_count.get() > MAX_UPLOAD_BYTES as u64
-    {
+    if locator.metadata.kind != "REPORT" {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "AGENT_EVALUATION_REPORT_REQUIRED",
@@ -197,9 +163,7 @@ pub async fn agent_evaluation(
         ));
     }
     let objects = native(&state)?;
-    let permit = capacity.0.clone();
     let bytes = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
         let bytes = objects
             .read(locator.local_object_id, locator.metadata.byte_count)
             .map_err(|_| ApiError::internal())?;
@@ -216,7 +180,7 @@ pub async fn agent_evaluation(
     })
     .await
     .map_err(|_| ApiError::internal())??;
-    let mut response = buffered_content(bytes, id, capacity)?;
+    let mut response = buffered_content(bytes, id)?;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
@@ -229,35 +193,29 @@ pub(crate) async fn native_content(
     objects: Arc<ArtifactStore>,
     id: Id,
     byte_count: contracts::DbCounter,
-    capacity: ArtifactCapacity,
 ) -> Result<Response, ApiError> {
-    let permit = capacity.0.clone();
     let bytes = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
         objects
             .read(id, byte_count)
             .map_err(|_| ApiError::internal())
     })
     .await
     .map_err(|_| ApiError::internal())??;
-    buffered_content(bytes, id, capacity)
+    buffered_content(bytes, id)
 }
 fn buffered_content(
     bytes: Vec<u8>,
     id: Id,
-    capacity: ArtifactCapacity,
 ) -> Result<Response, ApiError> {
-    // Keep the large-buffer permit in the native stream until EOF or disconnect.
-    // Chunking prevents a slow consumer from moving every bounded buffer into an
-    // unbounded set of already-returned response bodies.
+    // Bytes slices share the original complete allocation, which can stay live
+    // until its final slice is dropped at EOF or disconnect. Concurrent responses
+    // are not given an application memory ceiling; the immutable object is unchanged.
     let stream = futures_util::stream::unfold(
-        (axum::body::Bytes::from(bytes), capacity.0),
-        |(mut bytes, permit)| async move {
-            if bytes.is_empty() {
-                None
-            } else {
+        axum::body::Bytes::from(bytes),
+        |mut bytes| async move {
+            if bytes.is_empty() { None } else {
                 let chunk = bytes.split_to(bytes.len().min(64 * 1024));
-                Some((Ok::<_, std::convert::Infallible>(chunk), (bytes, permit)))
+                Some((Ok::<_, std::convert::Infallible>(chunk), bytes))
             }
         },
     );
@@ -281,22 +239,19 @@ mod tests {
     use futures_util::StreamExt;
 
     #[tokio::test]
-    async fn artifact_buffer_holds_capacity_through_partial_reads_and_disconnect() {
-        let slots = Arc::new(tokio::sync::Semaphore::new(1));
-        let capacity = ArtifactCapacity(Arc::new(slots.clone().acquire_owned().await.unwrap()));
-        let response = buffered_content(vec![b'x'; 128 * 1024], Id::new(), capacity).unwrap();
-        assert_eq!(slots.available_permits(), 0);
-        let mut stream = response.into_body().into_data_stream();
-        assert_eq!(stream.next().await.unwrap().unwrap().len(), 64 * 1024);
-        assert_eq!(slots.available_permits(), 0);
-        drop(stream);
-        assert_eq!(slots.available_permits(), 1);
-        let capacity = ArtifactCapacity(Arc::new(slots.clone().acquire_owned().await.unwrap()));
-        let response = buffered_content(vec![b'x'; 128 * 1024], Id::new(), capacity).unwrap();
-        axum::body::to_bytes(response.into_body(), 128 * 1024)
-            .await
-            .unwrap();
-        assert_eq!(slots.available_permits(), 1);
+    async fn artifact_buffers_remain_independent_through_partial_reads_and_disconnect() {
+        let mut streams = Vec::new();
+        for _ in 0..5 {
+            let response = buffered_content(vec![b'x'; 128 * 1024], Id::new()).unwrap();
+            let mut stream = response.into_body().into_data_stream();
+            assert_eq!(stream.next().await.unwrap().unwrap().len(), 64 * 1024);
+            streams.push(stream);
+        }
+        streams.pop();
+        for mut stream in streams {
+            assert_eq!(stream.next().await.unwrap().unwrap().len(), 64 * 1024);
+            assert!(stream.next().await.is_none());
+        }
     }
 
     #[tokio::test]

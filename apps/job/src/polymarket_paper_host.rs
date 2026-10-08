@@ -73,8 +73,6 @@ use crate::polymarket_source_record::{ForwardSourcePlan, SourceRecord};
 use crate::polymarket_streaming_paper::PolymarketStreamingPaper;
 
 const CLIENT: &str = "QZ-POLYMARKET-PAPER-DATA";
-const MAX_RECORD: u64 = 2 * 1024 * 1024;
-const MAX_INPUT: u64 = 8 * 1024 * 1024;
 
 #[derive(clap::Args)]
 pub struct Arguments {
@@ -150,8 +148,8 @@ enum Operation {
         snapshots_output: PathBuf,
         #[arg(long)]
         binding_output: PathBuf,
-        #[arg(long, default_value_t = 30)]
-        max_seconds: u64,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_seconds: Option<u64>,
         /// Explicit existing HTTP(S) proxy environment variable; no automatic selection.
         #[arg(long)]
         proxy_env: Option<String>,
@@ -163,8 +161,8 @@ enum Operation {
         instrument_id: Vec<String>,
         #[arg(long)]
         output: PathBuf,
-        #[arg(long, default_value_t = 30)]
-        max_seconds: u64,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        max_seconds: Option<u64>,
         #[arg(long)]
         proxy_env: Option<String>,
     },
@@ -192,11 +190,8 @@ fn now_ns() -> Result<DbCounter> {
 
 pub(crate) fn read_original<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let file = File::open(path)?;
-    ensure!(
-        file.metadata()?.len() <= MAX_INPUT,
-        "PAPER_HOST_INPUT_LIMIT"
-    );
-    Ok(serde_json::from_reader(file.take(MAX_INPUT + 1))?)
+    ensure!(file.metadata()?.is_file(), "PAPER_HOST_INPUT_LIMIT");
+    Ok(serde_json::from_reader(file)?)
 }
 
 fn new_output(path: &Path) -> Result<File> {
@@ -348,10 +343,7 @@ pub(crate) fn forecast_preflight(config: &HostConfig, claim: &HandoffClaimViewV2
             "PAPER_INITIAL_CAPITAL_SCOPE"
         );
     }
-    ensure!(
-        (1..=8).contains(&instruments.len()),
-        "PAPER_HOST_SOURCE_SCOPE"
-    );
+    ensure!(!instruments.is_empty(), "PAPER_HOST_SOURCE_SCOPE");
     ensure!(
         package.execution_settings.account_kind == contracts::science::NativeAccountKind::Cash
             && package.execution_settings.leverage.as_decimal() == &bigdecimal::BigDecimal::from(1)
@@ -580,10 +572,7 @@ fn prepare_managed(
     let mut ids = Vec::new();
     let mut bars = Vec::new();
     let mut unique = BTreeSet::new();
-    ensure!(
-        (1..=8).contains(&package.targets.len()),
-        "PAPER_HOST_SOURCE_SCOPE"
-    );
+    ensure!(!package.targets.is_empty(), "PAPER_HOST_SOURCE_SCOPE");
     for target in &package.targets {
         let id: InstrumentId = target.instrument_id.parse()?;
         ensure!(
@@ -1257,10 +1246,6 @@ impl LifecycleWatch {
 
 fn write_record(file: &mut File, stdout: &mut impl Write, record: &SourceRecord) -> Result<()> {
     let mut bytes = serde_json::to_vec(record)?;
-    ensure!(
-        bytes.len() as u64 + 1 <= MAX_RECORD,
-        "PAPER_SOURCE_RECORD_LIMIT"
-    );
     bytes.push(b'\n');
     // Retain first. The parent never simulates a frame absent from its source log.
     file.write_all(&bytes)?;
@@ -1273,10 +1258,10 @@ fn write_record(file: &mut File, stdout: &mut impl Write, record: &SourceRecord)
 async fn source(
     ids: Vec<InstrumentId>,
     output: &Path,
-    max_seconds: u64,
+    max_seconds: Option<u64>,
     proxy_env: Option<&str>,
 ) -> Result<()> {
-    source_inner(ids, output, Some(max_seconds), proxy_env, None).await
+    source_inner(ids, output, max_seconds, proxy_env, None).await
 }
 
 async fn source_inner(
@@ -1550,13 +1535,13 @@ async fn source_inner(
 
 fn read_record(reader: &mut impl BufRead) -> Result<Option<SourceRecord>> {
     let mut bytes = Vec::new();
-    reader.take(MAX_RECORD + 1).read_until(b'\n', &mut bytes)?;
+    reader.read_until(b'\n', &mut bytes)?;
     if bytes.is_empty() {
         return Ok(None);
     }
     ensure!(
-        bytes.len() as u64 <= MAX_RECORD && bytes.last() == Some(&b'\n'),
-        "PAPER_SOURCE_TRUNCATED_OR_OVERSIZED_RECORD"
+        bytes.last() == Some(&b'\n'),
+        "PAPER_SOURCE_TRUNCATED_RECORD"
     );
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
@@ -1568,12 +1553,12 @@ struct SourceChild {
 
 impl SourceChild {
     fn wait_until(&mut self, deadline: Instant) -> Result<ExitStatus> {
-        self.wait_until_controlled(deadline, None)
+        self.wait_until_controlled(Some(deadline), None)
     }
 
     fn wait_until_controlled(
         &mut self,
-        deadline: Instant,
+        deadline: Option<Instant>,
         control: Option<&crate::polymarket_paper_service::ExecutionControl>,
     ) -> Result<ExitStatus> {
         loop {
@@ -1588,7 +1573,7 @@ impl SourceChild {
                 return Ok(status);
             }
             ensure!(
-                Instant::now() < deadline,
+                deadline.is_none_or(|deadline| Instant::now() < deadline),
                 "PAPER_SOURCE_PARENT_WALL_DEADLINE"
             );
             std::thread::sleep(Duration::from_millis(10));
@@ -1645,12 +1630,12 @@ fn next_source_record(
     receiver: &mpsc::Receiver<SourceRead>,
     deadline: Instant,
 ) -> Result<Option<SourceRecord>> {
-    next_source_record_controlled(receiver, deadline, None, None)
+    next_source_record_controlled(receiver, Some(deadline), None, None)
 }
 
 fn next_source_record_controlled(
     receiver: &mpsc::Receiver<SourceRead>,
-    deadline: Instant,
+    deadline: Option<Instant>,
     control: Option<&crate::polymarket_paper_service::ExecutionControl>,
     mut session: Option<&mut PolymarketStreamingPaper>,
 ) -> Result<Option<SourceRecord>> {
@@ -1662,12 +1647,12 @@ fn next_source_record_controlled(
             }
         }
         ensure!(
-            Instant::now() < deadline,
+            deadline.is_none_or(|deadline| Instant::now() < deadline),
             "PAPER_SOURCE_PARENT_WALL_DEADLINE"
         );
-        let wait = deadline
-            .saturating_duration_since(Instant::now())
-            .min(Duration::from_millis(50));
+        let wait = deadline.map_or(Duration::from_millis(50), |deadline| {
+            deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50))
+        });
         match receiver.recv_timeout(wait) {
             Ok(value) => return value.map_err(anyhow::Error::msg),
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -1687,13 +1672,13 @@ pub(crate) fn execute(
     report_path: &Path,
     snapshots_path: &Path,
     binding_path: &Path,
-    max_seconds: u64,
+    max_seconds: Option<u64>,
     proxy_env: Option<&str>,
     control: Option<&crate::polymarket_paper_service::ExecutionControl>,
     initial_permit: Option<InitialCapitalPermit>,
 ) -> Result<()> {
     ensure!(
-        (1..=300).contains(&max_seconds),
+        max_seconds != Some(0),
         "PAPER_HOST_OBSERVATION_BOUND"
     );
     if let Some(name) = proxy_env {
@@ -1744,20 +1729,25 @@ pub(crate) fn execute(
     command
         .args(["polymarket-paper", "source", "--output"])
         .arg(source_path)
-        .arg("--max-seconds")
-        .arg(max_seconds.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
+    if let Some(seconds) = max_seconds {
+        command.arg("--max-seconds").arg(seconds.to_string());
+    }
     for id in &ids {
         command.arg("--instrument-id").arg(id.to_string());
     }
     if let Some(name) = proxy_env {
         command.arg("--proxy-env").arg(name);
     }
-    // Independent parent deadline covers child startup, capture, lifecycle
-    // observation and shutdown/drain. A silent or half-line child cannot hang us.
-    let deadline = Instant::now() + Duration::from_secs(max_seconds + 55);
+    // Only an explicit observation budget adds a parent deadline plus shutdown
+    // drain. Without one, current stop control and child exit remain authoritative.
+    let deadline = max_seconds.map(|seconds| {
+        seconds.checked_add(55)
+            .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)))
+            .ok_or_else(|| anyhow!("PAPER_HOST_OBSERVATION_BOUND"))
+    }).transpose()?;
     let mut child = SourceChild {
         process: command.spawn()?,
         reaped: None,
@@ -2123,7 +2113,7 @@ pub fn run(arguments: Arguments) -> Result<()> {
             proxy_env,
         } => {
             ensure!(
-                (1..=300).contains(&max_seconds) && (1..=8).contains(&instrument_id.len()),
+                max_seconds != Some(0) && !instrument_id.is_empty(),
                 "PAPER_SOURCE_BOUNDS"
             );
             let mut unique = BTreeSet::new();
@@ -2153,6 +2143,18 @@ pub fn run(arguments: Arguments) -> Result<()> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn source_observation_duration_is_explicit_and_has_no_five_minute_ceiling() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct TestParser { #[command(flatten)] args: super::Arguments }
+        let request = TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson"]).unwrap();
+        assert!(matches!(request.args.operation, super::Operation::Source { max_seconds: None, .. }));
+        let request = TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson", "--max-seconds", "301"]).unwrap();
+        assert!(matches!(request.args.operation, super::Operation::Source { max_seconds: Some(301), .. }));
+        assert!(TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson", "--max-seconds", "0"]).is_err());
+    }
+
     use super::*;
 
     pub(crate) fn forecast_claim_and_config() -> (HandoffClaimViewV2, HostConfig) {
@@ -2832,7 +2834,7 @@ pub(crate) mod tests {
         let began = Instant::now();
         let error = next_source_record_controlled(
             &receiver,
-            began + Duration::from_secs(60),
+            None,
             Some(&control),
             None,
         )
@@ -2877,7 +2879,7 @@ pub(crate) mod tests {
         });
         let began = Instant::now();
         let error = child
-            .wait_until_controlled(began + Duration::from_secs(60), Some(&control))
+            .wait_until_controlled(None, Some(&control))
             .unwrap_err();
         assert_eq!(error.to_string(), "PAPER_HOST_STOP_REQUESTED");
         let outcome = child.terminate().unwrap();
@@ -2909,7 +2911,7 @@ pub(crate) mod tests {
         assert!(
             next_source_record_controlled(
                 &receiver,
-                Instant::now() + Duration::from_secs(60),
+                None,
                 Some(&control),
                 None,
             )
@@ -2995,6 +2997,26 @@ pub(crate) mod tests {
         assert!(state.borrow().gap);
         assert_eq!(receiver.try_recv().unwrap().kind, "lifecycle_socket");
     }
+    #[test]
+    fn complete_source_record_above_two_mebibytes_round_trips() {
+        let record = SourceRecord {
+            schema_version: SchemaV1,
+            sequence: DbCounter::new(1).unwrap(),
+            observed_at_ns: DbCounter::new(2).unwrap(),
+            kind: "original_large_event".into(),
+            payload: json!({"original": "x".repeat(2 * 1024 * 1024 + 1)}),
+        };
+        let mut bytes = serde_json::to_vec(&record).unwrap();
+        bytes.push(b'\n');
+        let restored = read_record(&mut bytes.as_slice()).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(record).unwrap()
+        );
+        bytes.pop();
+        assert!(read_record(&mut bytes.as_slice()).is_err());
+    }
+
     #[test]
     fn truncated_record_is_not_a_complete_source() {
         let mut input = std::io::Cursor::new(b"{\"schema_version\":1}".as_slice());

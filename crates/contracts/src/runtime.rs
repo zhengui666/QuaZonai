@@ -1,5 +1,5 @@
 //! Runtime observations are transport evidence, not scientific qualification.
-use crate::{runs::RunKind, DbCounter, Id, Revision, SchemaV1};
+use crate::{DbCounter, Id, Revision, SchemaV1, runs::RunKind};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -103,19 +103,21 @@ pub struct RuntimeCapabilitiesV1 {
     pub artifact_schemas: Vec<RuntimeArtifactSchemaV1>,
     #[schema(min_items = 1, max_items = 7)]
     pub data_kinds: Vec<RuntimeDataKind>,
-    #[schema(max_items = 256)]
     pub venues: Vec<RuntimeVenueV1>,
     pub label_interval_support: LabelIntervalSupportV1,
     #[schema(max_items = 64)]
     pub solver_capabilities: Vec<String>,
-    #[schema(minimum = 1, maximum = 1024)]
-    pub max_cpu: u16,
+    #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
+    pub max_cpu: u32,
     #[schema(minimum = 1)]
     pub max_memory_mib: u32,
-    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
-    pub max_output_bytes: DbCounter,
-    #[schema(minimum = 1)]
-    pub max_wall_seconds: u32,
+    /// Optional upper bound for explicitly budgeted jobs. Unbudgeted jobs use
+    /// the existing optional-output-budget capability; null adds no application bound.
+    #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
+    pub max_output_bytes: Option<DbCounter>,
+    /// Explicit operator-selected Runtime ceiling. None imposes no wall-time cap.
+    #[schema(minimum = 1, maximum = 4294967295u64)]
+    pub max_wall_seconds: Option<u32>,
     pub isolation_profile: IsolationProfile,
     pub checked_at: DateTime<Utc>,
 }

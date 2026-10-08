@@ -35,7 +35,7 @@ async fn setup(pool: &PgPool) -> (support::Fixture, RunSubmission) {
             experiments: 1,
             cpu_seconds: Some(DbCounter::new(100).unwrap()),
             wall_seconds: Some(3600),
-            memory_mib: 1024,
+            memory_mib: Some(1024),
             output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
     };

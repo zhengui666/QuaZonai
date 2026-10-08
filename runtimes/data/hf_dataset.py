@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 from threading import Lock
 
 import acquire
@@ -21,8 +22,8 @@ import snapshot
 INDEX_SCHEMA = "qz.hf_partitions/1"
 PLAN_SCHEMA = "qz.hf_dataset_plan/1"
 SELECTION_SCHEMA = "qz.hf_selection/1"
-MAX_INDEX_BYTES = 8 * 1024 * 1024
-MAX_SELECTION_BYTES = 32 * snapshot.CHUNK
+MAX_INDEX_BYTES = None
+MAX_SELECTION_BYTES = None
 FORMATS = ("parquet", "json", "jsonl", "csv", "zip", "gzip", "opaque")
 CSV_FIELD_LOCK = Lock()
 
@@ -58,7 +59,7 @@ def partition_files(index, available, markets, start_date, end_date, includes=No
     if not isinstance(index, dict) or index.get("schema") != INDEX_SCHEMA:
         raise ValueError("unsupported Hugging Face partition index")
     entries = index.get("files")
-    if not isinstance(entries, list) or not 1 <= len(entries) <= 100_000:
+    if not isinstance(entries, list) or not entries:
         raise ValueError("invalid partition index file list")
     selected, seen, indexed_markets = {}, set(), set()
     for item in entries:
@@ -93,7 +94,8 @@ def partition_files(index, available, markets, start_date, end_date, includes=No
 def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_BYTES,
          manifest=None, markets=None, start_date=None, end_date=None):
     includes, markets = list(includes or []), list(markets or [])
-    providers.integer(max_bytes, "max_bytes", minimum=1, maximum=2**63 - 1)
+    if max_bytes is not None:
+        providers.integer(max_bytes, "max_bytes", minimum=1, maximum=None)
     if any(not isinstance(m, str) or not m.strip() for m in markets):
         raise ValueError("market selectors must be nonempty strings")
     if bool(start_date) != bool(end_date):
@@ -139,7 +141,7 @@ def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_B
         raise ValueError("no indexed files overlap the requested selection")
     files = []
     for path in sorted(selected):
-        size = providers.integer(available[path].get("size"), "source file byte size", maximum=2**63 - 1)
+        size = providers.integer(available[path].get("size"), "source file byte size", maximum=None)
         item = {"path": path, "size": size,
                 "url": snapshot.repository_file_url(dataset, commit, path),
                 "format": partitions[path]["format"] if path in partitions else inferred_format(path)}
@@ -147,7 +149,7 @@ def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_B
             item["partition"] = partitions[path]
         files.append(item)
     total = sum(f["size"] for f in files)
-    if total > max_bytes:
+    if max_bytes is not None and total > max_bytes:
         raise ValueError(f"requested files require {total} bytes, exceeding --max-bytes={max_bytes}")
     card = metadata.get("cardData") or {}
     license = card.get("license") if isinstance(card, dict) else None
@@ -185,31 +187,23 @@ def inspect_file(path, item):
             raise ValueError("source file does not contain the declared text format")
         stream.seek(0)
         if format == "json":
-            if item["size"] > 32 * snapshot.CHUNK:
-                if prefix.lstrip()[:1] not in (b"{", b"["):
-                    raise ValueError("source file has an invalid JSON prefix")
-                return "JSON_PREFIX_ONLY"
             providers.read_json(stream.read())
             return "JSON_DOCUMENT"
         if format == "jsonl":
-            first = stream.readline(snapshot.CHUNK + 1)
-            if len(first) > snapshot.CHUNK:
-                raise ValueError("source text first row exceeds 1 MiB")
+            first = stream.readline()
             providers.read_json(first)
             return "JSONL_FIRST_ROW"
         def csv_lines():
-            count = 0
-            while line := stream.readline(snapshot.CHUNK - count + 1):
-                count += len(line)
-                if count > snapshot.CHUNK:
-                    raise ValueError("source text first row exceeds 1 MiB")
-                yield line.decode("utf-8-sig" if count == len(line) else "utf-8")
+            first = True
+            for line in stream:
+                yield line.decode("utf-8-sig" if first else "utf-8")
+                first = False
         try:
-            # csv's process-global default field limit is only 128 KiB. Bound
-            # fields by our already enforced 1 MiB record limit, and serialize
-            # this setting/restore across concurrent inspections in this module.
+            # Remove csv's 128 KiB application default. sys.maxsize is the
+            # parser's platform length range, not a data budget. Restore the
+            # process-global setting across concurrent inspections.
             with CSV_FIELD_LOCK:
-                previous_limit = csv.field_size_limit(snapshot.CHUNK)
+                previous_limit = csv.field_size_limit(sys.maxsize)
                 try:
                     next(csv.reader(csv_lines(), strict=True))
                 finally:
@@ -261,9 +255,11 @@ def validate_plan(selection):
         providers.integer(index.get("size"), "partition index byte size", maximum=MAX_INDEX_BYTES)
         if index.get("url") != snapshot.repository_file_url(repository, revision, index_path):
             raise ValueError("partition index source differs from its selected repository revision")
-    budget = providers.integer(selection.get("max_bytes"), "max_bytes", minimum=1, maximum=2**63 - 1)
+    budget = selection.get("max_bytes")
+    if budget is not None:
+        providers.integer(budget, "max_bytes", minimum=1, maximum=None)
     files = selection.get("files")
-    if not isinstance(files, list) or not 1 <= len(files) <= 100_000:
+    if not isinstance(files, list) or not files:
         raise ValueError("invalid on-demand file list")
     seen, total = set(), 0
     for item in files:
@@ -291,7 +287,7 @@ def validate_plan(selection):
             raise ValueError("selected file claims a partition mapping without its source index")
         total += providers.integer(item.get("size"), "source file byte size", maximum=budget)
     declared_total = providers.integer(selection.get("total_bytes"), "total_bytes", maximum=budget)
-    if (total > budget or total != declared_total
+    if ((budget is not None and total > budget) or total != declared_total
             or any(not any(fnmatch.fnmatchcase(path, pattern) for path in seen) for pattern in includes)):
         raise ValueError("on-demand selection exceeds or differs from its byte budget")
 
@@ -320,21 +316,8 @@ def same_request(left, right):
             == {k: v for k, v in right.items() if k != "requested_revision"})
 
 
-def check_manifest_capacity(selection, root):
-    # Bound the final (plan + local paths + results) shape before downloading.
-    # The deliberately longer validation/clock strings cover every actual value.
-    estimated = [{**item, "local_path": str(snapshot.safe_local(root, "files/" + item["path"])),
-                  "cached": False, "resumed_bytes": item["size"], "validation": "V" * 64}
-                 for item in selection["files"]]
-    result = selection_result(selection, root, estimated, "T" * 64)
-    result.update(downloaded_bytes=selection["total_bytes"], cached_files=len(estimated))
-    if max(len(manifest_bytes(selection)), len(manifest_bytes(result))) > MAX_SELECTION_BYTES:
-        raise ValueError("on-demand request manifest exceeds its 32 MiB read/write limit")
-
-
 def download(selection, cache_dir, output):
     validate_plan(selection)
-    check_manifest_capacity(selection, cache_root(cache_dir, selection))
     output = Path(os.path.abspath(output))
     manifest_path = snapshot.safe_local(output, "selection.json")
     request_path = snapshot.safe_local(output, "request.json")

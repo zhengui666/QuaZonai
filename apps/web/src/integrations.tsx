@@ -8,6 +8,7 @@ import { useFormAutosave } from './settings-autosave';
 import { setSettingsWork, useSettingsWorkKey } from './settings-work';
 import { useSettingsCommand } from './settings-command';
 import { activeTargetVersions, downstreamTargetStatus, targetDownstreamConfiguration } from './producer-views';
+import { integrationSecretValueValid } from './integration-secret-value';
 
 type Runtime = Schema['RuntimeView'];
 type Downstream = Schema['DownstreamView'];
@@ -94,8 +95,7 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
   useEffect(() => { if (state.ref && value !== state.ref) onChange?.(state.ref); }, [state.ref, value, onChange]);
   useEffect(() => { if (state.ref) setSecret(''); }, [state.ref]);
   const isCa = purpose === 'TLS_CA';
-  const valid = isCa ? secret.length >= 1 && secret.length <= 65536 && /^[\x00-\x7f]+(?![\s\S])/.test(secret)
-    : secret.length >= (purpose === 'RUNTIME' ? 32 : 1) && secret.length <= 8192 && /^[!-~]+(?![\s\S])/.test(secret);
+  const valid = integrationSecretValueValid(purpose, secret);
   function register() {
     if (state.pending || state.unknown || state.ref || !online || !valid || disabled) return;
     onBusy(true);
@@ -109,7 +109,7 @@ export function SecretReference({ value, onChange, purpose, configured, disabled
   return <Space orientation="vertical" className="full-width">
     {configured && !value && <Typography.Text type="secondary">已配置</Typography.Text>}
     {(value || state.ref) && <Alert type="success" showIcon title="凭据已登记" description={<Space wrap><Typography.Text copyable>{value || state.ref}</Typography.Text><Button size="small" disabled={disabled || state.pending} onClick={() => { session.abandon(); onChange?.(undefined); }}>放弃本次绑定</Button></Space>} />}
-    {isCa ? <Input.TextArea aria-label="新的 CA PEM 证书" value={secret} onChange={event => setSecret(event.target.value)} rows={5} maxLength={65536} disabled={disabled || state.pending || state.unknown || !!state.ref || !online} autoComplete="off" />
+    {isCa ? <Input.TextArea aria-label="新的 CA PEM 证书" value={secret} onChange={event => setSecret(event.target.value)} rows={5} disabled={disabled || state.pending || state.unknown || !!state.ref || !online} autoComplete="off" />
       : <Input.Password aria-label={`新的 ${purpose} 凭据`} value={secret} onChange={event => setSecret(event.target.value)} maxLength={8192} disabled={disabled || state.pending || state.unknown || !!state.ref || !online} autoComplete="new-password" />}
     <Button onClick={register} loading={state.pending} disabled={!online || !valid || disabled || state.unknown || !!state.ref}>登记{isCa ? '证书' : '凭据'}</Button>
     {state.unknown && <Button disabled={!online || state.pending} onClick={() => { onBusy(true); void session.register(); }}>重试登记</Button>}
@@ -245,8 +245,8 @@ function RuntimeDetails({ id }: { id: string }) {
         {observation?.outcome.status === 'AVAILABLE' && <Descriptions column={1} items={[
           { key: 'cpu', label: 'CPU 核数上限', children: observation.outcome.capabilities.max_cpu },
           { key: 'memory', label: '内存上限 MiB', children: observation.outcome.capabilities.max_memory_mib },
-          { key: 'wall', label: '墙钟时间上限（秒）', children: observation.outcome.capabilities.max_wall_seconds },
-          { key: 'bytes', label: '输出上限（字节）', children: observation.outcome.capabilities.max_output_bytes },
+          { key: 'wall', label: '墙钟时间上限（秒）', children: observation.outcome.capabilities.max_wall_seconds ?? '未设置 Runtime 时间上限' },
+          { key: 'bytes', label: '输出上限（字节）', children: observation.outcome.capabilities.max_output_bytes ?? '不限' },
           { key: 'engine', label: '原生引擎', children: Object.entries(observation.outcome.capabilities.engine_versions).map(([name, version]) => `${name}: ${version}`).join('；') },
         ]} />}
       </Space>}

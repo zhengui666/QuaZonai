@@ -77,9 +77,6 @@ async fn inspect(
     }
     let rows = sqlx::query("SELECT c.oid::bigint AS table_oid,c.relname,format('%I.%I',n.nspname,c.relname) AS sql_name,c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND NOT c.relispartition ORDER BY c.relname")
             .fetch_all(&mut **tx).await?;
-    if rows.len() > 256 {
-        return Err(StoreError::Invalid("historical_source_tables"));
-    }
     let mut tables = Vec::new();
     for row in rows {
         if row.try_get::<bool, _>("relrowsecurity")? {
@@ -114,9 +111,6 @@ async fn inspect(
     }
     let constraints = sqlx::query("SELECT c.conname,c.confmatchtype::text AS match_type,format('%I.%I',ns.nspname,s.relname) AS source_sql,format('%I.%I',nt.nspname,t.relname) AS target_sql,array_agg(sa.attname::text ORDER BY k.ord) AS source_columns,array_agg(ta.attname::text ORDER BY k.ord) AS target_columns,array_agg(quote_ident(sa.attname) ORDER BY k.ord) AS source_keys,array_agg(quote_ident(ta.attname) ORDER BY k.ord) AS target_keys FROM pg_constraint c JOIN pg_class s ON s.oid=c.conrelid JOIN pg_namespace ns ON ns.oid=s.relnamespace JOIN pg_class t ON t.oid=c.confrelid JOIN pg_namespace nt ON nt.oid=t.relnamespace CROSS JOIN LATERAL unnest(c.conkey,c.confkey) WITH ORDINALITY k(source_key,target_key,ord) JOIN pg_attribute sa ON sa.attrelid=s.oid AND sa.attnum=k.source_key JOIN pg_attribute ta ON ta.attrelid=t.oid AND ta.attnum=k.target_key WHERE c.contype='f' AND ns.nspname='public' AND c.conparentid=0 GROUP BY c.oid,c.conname,c.confmatchtype,ns.nspname,s.relname,nt.nspname,t.relname ORDER BY ns.nspname,s.relname,c.conname")
             .fetch_all(&mut **tx).await?;
-    if constraints.len() > 1024 {
-        return Err(StoreError::Invalid("historical_source_constraints"));
-    }
     let mut foreign_keys = Vec::new();
     for row in constraints {
         let source: String = row.try_get("source_sql")?;
@@ -266,9 +260,6 @@ impl Store {
                     byte_count = byte_count
                         .checked_add(chunk.len() as u64)
                         .ok_or(StoreError::Integrity)?;
-                    if byte_count > 512 * 1024 * 1024 {
-                        return Err(StoreError::Invalid("historical_projection_size"));
-                    }
                     write(object, &chunk)?;
                 }
                 result.object_ref = Some(object);

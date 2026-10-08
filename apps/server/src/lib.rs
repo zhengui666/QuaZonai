@@ -152,13 +152,9 @@ pub struct AppState {
     pub crypto_slots: Arc<Semaphore>,
     pub(crate) password_failures: Arc<Mutex<VecDeque<Instant>>>,
     pub machine_crypto_slots: Arc<Semaphore>,
-    pub run_stream_slots: Arc<Semaphore>,
     pub artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
-    pub artifact_slots: Arc<Semaphore>,
     pub historical_artifact_store: Option<Arc<integrations::artifacts::ArtifactStore>>,
     pub historical_exports: Arc<migrations::HistoricalExports>,
-    pub historical_import_slots: Arc<Semaphore>,
-    pub integration_slots: Arc<Semaphore>,
     pub downstream_targets: Arc<runtime_transport::RuntimeTargets>,
     pub paper_capital_exit_owners: Arc<paper_capital_exit::PaperCapitalExitOwners>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
@@ -173,13 +169,9 @@ impl AppState {
             crypto_slots: Arc::new(Semaphore::new(2)),
             password_failures: Arc::default(),
             machine_crypto_slots: Arc::new(Semaphore::new(2)),
-            run_stream_slots: Arc::new(Semaphore::new(32)),
             artifact_store: None,
-            artifact_slots: Arc::new(Semaphore::new(4)),
             historical_artifact_store: None,
             historical_exports: Arc::new(migrations::HistoricalExports::default()),
-            historical_import_slots: Arc::new(Semaphore::new(1)),
-            integration_slots: Arc::new(Semaphore::new(4)),
             downstream_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             paper_capital_exit_owners: Arc::new(paper_capital_exit::PaperCapitalExitOwners::default()),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
@@ -309,11 +301,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/artifacts",
-            get(artifacts::list)
-                .post(artifacts::create)
-                .layer(DefaultBodyLimit::max(
-                    contracts::artifacts::MAX_UPLOAD_BODY_BYTES,
-                )),
+            get(artifacts::list).post(artifacts::create),
         )
         .route("/api/v2/artifacts/{id}", get(artifacts::get))
         .route("/api/v2/artifacts/{id}/content", get(artifacts::content))
@@ -323,9 +311,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/experiments",
-            get(experiments::list)
-                .post(experiments::propose)
-                .layer(DefaultBodyLimit::max(64 * 1024)),
+            get(experiments::list).post(experiments::propose),
         )
         .route("/api/v2/experiments/{id}", get(experiments::get))
         .route(
@@ -402,7 +388,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/settings/credentials",
-            post(settings::register_secret).layer(DefaultBodyLimit::max(512 * 1024)),
+            post(settings::register_secret),
         )
         .route(
             "/api/v2/integrations/runtimes",
@@ -430,7 +416,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/integrations/downstreams/{id}/probe",
-            post(downstream::probe).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(downstream::probe),
         )
         .route(
             "/api/v2/integrations/downstreams/{id}/readiness",
@@ -445,13 +431,11 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/auth/machine", get(control::machine_session))
         .route(
             "/api/v2/auth/operator-command-grants",
-            post(control::issue_grant).layer(DefaultBodyLimit::max(64 * 1024)),
+            post(control::issue_grant),
         )
         .route(
             "/api/v2/input-sets",
-            get(research::input_sets)
-                .post(research::create_input_set)
-                .layer(DefaultBodyLimit::max(64 * 1024)),
+            get(research::input_sets).post(research::create_input_set),
         )
         .route(
             "/api/v2/data/sources",
@@ -481,18 +465,14 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/data/revisions/{id}/features",
-            get(data::recorded_features::list)
-                .post(data::recorded_features::register)
-                .layer(DefaultBodyLimit::max(
-                    contracts::artifacts::MAX_UPLOAD_BODY_BYTES,
-                )),
+            get(data::recorded_features::list).post(data::recorded_features::register),
         )
         .route("/api/v2/data/universes", get(data::universes))
         .route("/api/v2/data/universes/{id}", get(data::universe))
         .route("/api/v2/input-sets/{id}", get(research::input_set))
         .route(
             "/api/v2/portfolio-mandates",
-            post(portfolio::create).layer(DefaultBodyLimit::max(64 * 1024)),
+            post(portfolio::create),
         )
         .route("/api/v2/portfolio-mandates/{id}", get(portfolio::get))
         .route(
@@ -513,29 +493,25 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/portfolio-builds",
-            post(portfolio::build).layer(DefaultBodyLimit::max(128 * 1024)),
+            post(portfolio::build),
         )
         .route(
             "/api/v2/candidate-simulations",
-            post(portfolio::simulate).layer(DefaultBodyLimit::max(128 * 1024)),
+            post(portfolio::simulate),
         )
         .route(
             "/api/v2/releases",
-            post(release::create).layer(DefaultBodyLimit::max(4096)),
+            post(release::create),
         )
         .route("/api/v2/releases/{id}", get(release::get))
         .route("/api/v2/projects/{id}/releases", get(release::list))
         .route(
             "/api/v2/releases/{id}/approvals",
-            get(release::approvals)
-                .post(release::approve)
-                .layer(DefaultBodyLimit::max(16 * 1024)),
+            get(release::approvals).post(release::approve),
         )
         .route(
             "/api/v2/projects/{id}/automation-policies",
-            get(automation::automation_policies)
-                .post(automation::authorize_automation)
-                .layer(DefaultBodyLimit::max(256 * 1024)),
+            get(automation::automation_policies).post(automation::authorize_automation),
         )
         .route(
             "/api/v2/automation-policies/{id}",
@@ -543,7 +519,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/automation-policies/{id}/revoke",
-            post(automation::revoke_automation).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(automation::revoke_automation),
         )
         .route(
             "/api/v2/automation-policies/{id}/revocations",
@@ -552,7 +528,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/approvals/{id}", get(release::approval))
         .route(
             "/api/v2/approvals/{id}/revoke",
-            post(release::revoke_approval).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(release::revoke_approval),
         )
         .route(
             "/api/v2/approvals/{id}/revocations",
@@ -560,7 +536,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route(
             "/api/v2/handoffs",
-            post(release::offer).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(release::offer),
         )
         .route("/api/v2/projects/{id}/handoffs", get(release::handoffs))
         .route(
@@ -570,36 +546,36 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/handoffs/{id}", get(release::handoff))
         .route(
             "/api/v2/handoffs/{id}/ack",
-            post(release::ack).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(release::ack),
         )
         .route(
             "/api/v2/handoffs/{id}/paper-initial-execution/consume",
-            post(release::consume_paper_initial_execution).layer(DefaultBodyLimit::max(4096)),
+            post(release::consume_paper_initial_execution),
         )
         .route(
             "/api/v2/handoffs/{id}/claim",
-            post(release::claim).layer(DefaultBodyLimit::max(4096)),
+            post(release::claim),
         )
         .route(
             "/api/v2/releases/{id}/rejections",
-            post(release::reject).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(release::reject),
         )
         .route("/api/v2/releases/{id}/decisions", get(release::decisions))
         .route(
             "/api/v2/release-decisions/{id}/reopen",
-            post(release::reopen).layer(DefaultBodyLimit::max(16 * 1024)),
+            post(release::reopen),
         )
         .route(
             "/api/v2/portfolio-studies",
-            post(portfolio::study).layer(DefaultBodyLimit::max(128 * 1024)),
+            post(portfolio::study),
         )
         .route(
             "/api/v2/execution-assumptions",
-            post(execution_assumptions::create).layer(DefaultBodyLimit::max(1024 * 1024)),
+            post(execution_assumptions::create),
         )
         .route(
             "/api/v2/forward/messages",
-            post(forward::message).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+            post(forward::message),
         )
         .route("/api/v2/projects/{project_id}/capital-exit-previews", post(capital_exit::preview))
         .route("/api/v2/projects/{project_id}/capital-exits", get(capital_exit::list).post(capital_exit::start))
@@ -614,12 +590,11 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/capital-exits/{id}/evidence", post(capital_exit::evidence))
         .route(
             "/api/v2/forward/account-observations",
-            post(account_observation::submit).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+            post(account_observation::submit),
         )
         .route(
             "/api/v2/forward/client-account-observations",
-            post(account_observation::submit_client_bound)
-                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+            post(account_observation::submit_client_bound),
         )
         .route(
             "/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding",
@@ -646,7 +621,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/handoffs/{id}/forward-window", get(forward::window))
         .route(
             "/api/v2/forward/weights",
-            post(forward::weights).layer(DefaultBodyLimit::max(1024 * 1024)),
+            post(forward::weights),
         )
         .route(
             "/api/v2/execution-assumptions/{id}",
@@ -675,21 +650,15 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/cycles/{id}/selection/trials", get(cycles::trials))
         .route(
             "/api/v2/projects/{id}/briefs",
-            get(brief::list)
-                .post(brief::create)
-                .layer(DefaultBodyLimit::max(64 * 1024)),
+            get(brief::list).post(brief::create),
         )
         .route(
             "/api/v2/briefs/{id}",
-            get(brief::get)
-                .patch(brief::update)
-                .layer(DefaultBodyLimit::max(64 * 1024)),
+            get(brief::get).patch(brief::update),
         )
         .route(
             "/api/v2/evaluation-policies",
-            get(research::evaluation_policies)
-                .post(research::create_evaluation_policy)
-                .layer(DefaultBodyLimit::max(64 * 1024)),
+            get(research::evaluation_policies).post(research::create_evaluation_policy),
         )
         .route(
             "/api/v2/evaluation-policies/{id}",
@@ -698,7 +667,9 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .fallback(|| async {
             ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "接口不存在。")
         })
-        .layer(DefaultBodyLimit::max(16 * 1024))
+        // Do not replace local caps with Axum's implicit 2 MiB default.
+        // Validity, authority and exact evidence checks remain in their handlers.
+        .layer(DefaultBodyLimit::disable())
         .layer(sessions)
         .layer(middleware::from_fn_with_state(
             state.clone(),

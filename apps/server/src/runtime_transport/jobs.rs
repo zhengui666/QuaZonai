@@ -1,4 +1,4 @@
-//! Bounded native job exchanges over the same deployment-authorized TLS client.
+//! Complete native job exchanges over the same deployment-authorized TLS client.
 //! Missing/timeout are observations, never proof that a job cannot execute later.
 use super::{json, RuntimeTransport};
 use chrono::{DateTime, Utc};
@@ -99,12 +99,15 @@ fn media(response: &Response, expected: &str) -> Result<(), RuntimeRequestError>
     Ok(())
 }
 
-async fn body(mut response: Response, maximum: usize) -> Result<Vec<u8>, RuntimeRequestError> {
-    if maximum == 0
-        || response
-            .content_length()
-            .is_some_and(|size| size > maximum as u64)
-    {
+// Only immutable artifact metadata supplies a byte boundary. JSON responses
+// are retained in full, including their original wire representation.
+async fn body(
+    mut response: Response,
+    expected_bytes: Option<usize>,
+) -> Result<Vec<u8>, RuntimeRequestError> {
+    if expected_bytes.is_some_and(|expected| {
+        response.content_length().is_some_and(|size| size > expected as u64)
+    }) {
         return Err(RuntimeRequestError::ResponseLimit);
     }
     let mut bytes = Vec::new();
@@ -113,7 +116,7 @@ async fn body(mut response: Response, maximum: usize) -> Result<Vec<u8>, Runtime
         .await
         .map_err(|_| RuntimeRequestError::Unavailable)?
     {
-        if chunk.len() > maximum.saturating_sub(bytes.len()) {
+        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len())) {
             return Err(RuntimeRequestError::ResponseLimit);
         }
         bytes.extend_from_slice(&chunk);
@@ -136,11 +139,10 @@ impl RuntimeTransport {
         &self,
         response: Response,
         accepted: &[StatusCode],
-        maximum: usize,
     ) -> Result<(T, Vec<u8>), RuntimeRequestError> {
         response_status(&response, accepted)?;
         media(&response, "application/json")?;
-        let bytes = body(response, maximum).await?;
+        let bytes = body(response, None).await?;
         json::verify(&bytes, &self.credential).map_err(|_| RuntimeRequestError::Contract)?;
         let parsed = serde_json::from_slice(&bytes).map_err(|_| RuntimeRequestError::Contract)?;
         Ok((parsed, bytes))
@@ -155,7 +157,7 @@ impl RuntimeTransport {
         let (run, attempt) =
             boundary::parse_external_id(external_id).map_err(|_| RuntimeRequestError::Contract)?;
         let (status, _) = self
-            .json_response(response, accepted, boundary::MAX_RESULT_MANIFEST_BYTES)
+            .json_response(response, accepted)
             .await?;
         boundary::status(&status, run, attempt, Utc::now())
             .map_err(|_| RuntimeRequestError::Contract)?;
@@ -169,9 +171,6 @@ impl RuntimeTransport {
     ) -> Result<RuntimeJobStatusV1, RuntimeRequestError> {
         boundary::spec_shape(spec).map_err(|_| RuntimeRequestError::Contract)?;
         let bytes = serde_json::to_vec(spec).map_err(|_| RuntimeRequestError::Contract)?;
-        if bytes.len() > boundary::MAX_JOB_REQUEST_BYTES {
-            return Err(RuntimeRequestError::ResponseLimit);
-        }
         let response = self
             .client
             .post(self.resource(&["jobs"])?)
@@ -244,11 +243,7 @@ impl RuntimeTransport {
             .await
             .map_err(|_| RuntimeRequestError::Unavailable)?;
         let (manifest, raw_document) = self
-            .json_response(
-                response,
-                &[StatusCode::OK],
-                boundary::MAX_RESULT_MANIFEST_BYTES,
-            )
+            .json_response(response, &[StatusCode::OK])
             .await?;
         boundary::manifest(&manifest, spec, submitted_not_before, Utc::now())
             .map_err(|_| RuntimeRequestError::Contract)?;
@@ -265,8 +260,8 @@ impl RuntimeTransport {
         bytes: Vec<u8>,
     ) -> Result<RuntimeObjectReceiptV1, RuntimeRequestError> {
         boundary::storage_version(version).map_err(|_| RuntimeRequestError::Contract)?;
-        if bytes.is_empty() || bytes.len() as u64 > boundary::MAX_INPUT_OBJECT_BYTES {
-            return Err(RuntimeRequestError::ResponseLimit);
+        if bytes.is_empty() {
+            return Err(RuntimeRequestError::Contract);
         }
         let expected = bytes.len() as u64;
         let version_header =
@@ -281,7 +276,7 @@ impl RuntimeTransport {
             .await
             .map_err(|_| RuntimeRequestError::Unavailable)?;
         let (receipt, _): (RuntimeObjectReceiptV1, _) = self
-            .json_response(response, &[StatusCode::OK, StatusCode::CREATED], 4096)
+            .json_response(response, &[StatusCode::OK, StatusCode::CREATED])
             .await?;
         if receipt.artifact_id != id
             || receipt.storage_version != version
@@ -302,7 +297,6 @@ impl RuntimeTransport {
         boundary::parse_external_id(external_id).map_err(|_| RuntimeRequestError::Contract)?;
         if output.storage_version.get() != 1
             || output.byte_count.get() == 0
-            || output.byte_count.get() > boundary::MAX_INPUT_OBJECT_BYTES
         {
             return Err(RuntimeRequestError::Contract);
         }
@@ -322,7 +316,7 @@ impl RuntimeTransport {
         media(&response, &output.media_type)?;
         let maximum = usize::try_from(output.byte_count.get())
             .map_err(|_| RuntimeRequestError::ResponseLimit)?;
-        let bytes = body(response, maximum).await?;
+        let bytes = body(response, Some(maximum)).await?;
         if bytes.len() != maximum
             || bytes
                 .windows(self.credential.len())

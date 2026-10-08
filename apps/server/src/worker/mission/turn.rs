@@ -1,5 +1,5 @@
 //! One reserved native Turn, never a second model/tool loop.
-use super::{MissionConnection, WorkerFailure};
+use super::{await_mission_operation, MissionConnection, WorkerFailure};
 use crate::codex_native::{NativeFailure, Observation, Turn, TurnStatus};
 use contracts::Id;
 use integrations::artifacts::ArtifactStore;
@@ -93,26 +93,22 @@ impl MissionConnection {
                 if *shutdown.borrow() || shutdown.has_changed().is_err() {
                     return Err(WorkerFailure::LostAuthority);
                 }
-                let turn = self
-                    .client
-                    .start_turn(
-                        &rpc_request_id,
-                        thread,
+                let turn = await_mission_operation(store, run, fence, false, async {
+                    self.client.start_turn(
+                        &rpc_request_id, thread,
                         prompt.as_deref().ok_or(WorkerFailure::Contract)?,
-                    )
-                    .await
-                    .map_err(|reason| WorkerFailure::Codex("START_TURN", reason))?;
+                    ).await.map_err(|reason| WorkerFailure::Codex("START_TURN", reason))
+                }).await?;
                 store.bind_native_turn(item.id, fence, &turn.id).await?;
                 turn
             }
             DispatchDecision::Reconcile {
                 native_turn_id: Some(id),
             } => {
-                let Some(turn) = self
-                    .client
-                    .turns(thread)
-                    .await
-                    .map_err(native)?
+                let Some(turn) = await_mission_operation(
+                    store, run, fence, job.lease.action == NextRuntimeAction::Cancel,
+                    async { self.client.turns(thread).await.map_err(native) },
+                ).await?
                     .into_iter()
                     .find(|turn| turn.id == id)
                 else {
@@ -198,16 +194,19 @@ impl MissionConnection {
                 && job.lease.action == NextRuntimeAction::Cancel
                 && interrupted_at.is_none()
             {
-                match self.client.interrupt_turn(thread, &actual.id).await {
-                    Ok(()) => {}
-                    Err(NativeFailure::Rejected(-32600)) => {
+                // This is a cancellation drain window, not a model budget.
+                // A missing interrupt ACK must also retain an unknown outcome.
+                interrupted_at = Some(Instant::now());
+                match tokio::time::timeout(Duration::from_secs(30), self.client.interrupt_turn(thread, &actual.id)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(NativeFailure::Rejected(-32600))) => {
                         // Completion can win. Await its real notification in the
                         // same bounded window; rejection/list status proves no
                         // outcome and cannot manufacture a cancellation receipt.
                     }
-                    Err(reason) => return Err(WorkerFailure::Codex("INTERRUPT_TURN", reason)),
+                    Ok(Err(reason)) => return Err(WorkerFailure::Codex("INTERRUPT_TURN", reason)),
+                    Err(_) => return Ok(TurnProgress::Unresolved),
                 }
-                interrupted_at = Some(Instant::now());
             }
             if interrupted_at.is_some_and(|time| time.elapsed() >= Duration::from_secs(30)) {
                 return Ok(TurnProgress::Unresolved);

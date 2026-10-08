@@ -3,14 +3,14 @@
 //! The minimal account/snapshot envelope follows domain/tests/native_portfolio_outputs.
 #![allow(dead_code)]
 use contracts::{
+    DbCounter, Id, Revision, SchemaV1,
     evidence::MetricStatus,
     execution::NativeTaskParametersV1,
     portfolio::AllocationTargetV1,
-    runtime_jobs::{native_output_contract, RuntimeOutputV1},
+    runtime_jobs::{RuntimeOutputV1, native_output_contract},
     science::*,
-    DbCounter, Id, Revision, SchemaV1,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 fn count(value: u64) -> DbCounter {
@@ -101,8 +101,9 @@ pub fn report(
         + split.embargo_observations.get()
         + split.test_size.get()
         + horizon;
-    let maximum_folds =
-        (MAX_EXPERIMENT_DECISIONS as u64 / split.test_size.get()).min(MAX_EXPERIMENT_FOLDS as u64);
+    // This explicit fixture workload keeps the regression small; it is not a
+    // production input, output or experiment budget.
+    let maximum_folds = (10_000_u64 / split.test_size.get()).min(32);
     assert!(maximum_folds > 0);
     let maximum_rows = minimum_rows + (maximum_folds - 1) * split.step_size.unwrap().get();
     let rows = if minimum_bytes.is_some() {
@@ -212,7 +213,7 @@ pub fn report(
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
         ]),
-        consumed_fuel: count(1),
+        consumed_fuel: Some(count(1)),
         source_row_count: count(rows),
         feature_count: request.feature_schema.len() as u16,
         folds,

@@ -153,7 +153,7 @@ pub(super) async fn complete(
     });
     let report = NativePortfolioStudyResultV1 {
         schema_version: SchemaV1,
-        consumed_fuel: DbCounter::new(frames.len() as u64).unwrap(),
+        consumed_fuel: Some(DbCounter::new(frames.len() as u64).unwrap()),
         frames,
         simulation: simulation_request.as_ref().map(|request| {
             let mut result = simulation_result::intraday(request);

@@ -51,7 +51,7 @@ impl Store {
             .await?;
         let today: i64 = sqlx::query_scalar("SELECT count(*) FROM app.research_cycles WHERE project_id=$1 AND created_at>=date_trunc('day',$2::timestamptz,'UTC') AND created_at<date_trunc('day',$2::timestamptz,'UTC')+interval '1 day'")
             .bind(request.project_id.as_uuid()).bind(time).fetch_one(&mut *tx).await?;
-        if today >= i64::from(brief.content.budget.max_cycles_per_day) {
+        if brief.content.budget.max_cycles_per_day.is_some_and(|limit| today >= i64::from(limit)) {
             return Err(DomainError::BudgetExhausted("cycles_per_day").into());
         }
         let previous: i32 = sqlx::query_scalar(

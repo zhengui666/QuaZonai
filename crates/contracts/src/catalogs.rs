@@ -1,8 +1,8 @@
 //! Runtime-owned immutable native catalog metadata, never client assertions of evidence.
 use crate::{
+    DbCounter, SchemaV1,
     research::{DataOrigin, DataPartition, PitStatus},
     runtime::RuntimeDataKind,
-    DbCounter, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,6 @@ pub struct NativeUniverseMemberV1 {
     pub valid_until: Option<DateTime<Utc>>,
     pub available_at: DateTime<Utc>,
     /// None means unknown classification; Some([]) is explicitly ungrouped.
-    #[schema(max_items = 64)]
     pub groups: Option<Vec<String>>,
 }
 
@@ -43,11 +42,11 @@ pub struct NativeUniverseV1 {
     pub has_historical_membership: bool,
     pub coverage_start: DateTime<Utc>,
     pub coverage_end: DateTime<Utc>,
-    #[schema(min_items = 1, max_items = 4096)]
+    #[schema(min_items = 1)]
     pub membership: Vec<NativeUniverseMemberV1>,
     /// Original Rust InstrumentAny externally tagged Serde definitions, e.g. {"CurrencyPair":{...}}.
     /// This document is metadata, not a second instrument or matching engine.
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_definitions: Vec<serde_json::Value>,
 }
 
@@ -122,17 +121,17 @@ pub struct RecordedFeatureInputsV1 {
     pub source_selection_start_ns: DbCounter,
     pub source_selection_end_ns: DbCounter,
     pub partition: DataPartition,
-    /// At most 100000 observations in total; each part retains original bytes.
-    #[schema(min_items = 1, max_items = 16)]
+    /// All original observations are retained across the declared parts.
+    #[schema(min_items = 1)]
     pub fragments: Vec<RecordedFeatureFragmentV1>,
 }
 
 pub(crate) fn recorded_feature_bytes_schema(
 ) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-    crate::scalars::bounded_bigint_schema(crate::artifacts::MAX_UPLOAD_BYTES as u64, true)
+    crate::scalars::positive_db_counter_schema()
 }
 
 fn recorded_feature_observations_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>
 {
-    crate::scalars::bounded_bigint_schema(crate::science::MAX_FEATURE_OBSERVATIONS as u64, true)
+    crate::scalars::positive_db_counter_schema()
 }

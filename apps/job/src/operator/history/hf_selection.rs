@@ -1,5 +1,5 @@
 //! Offline handoff for qz.hf_selection/1. No HTTP, hashes or scientific admission.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::{
@@ -9,8 +9,6 @@ use std::{
     path::{Component, Path, PathBuf},
     time::SystemTime,
 };
-
-const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
 pub(super) struct Selection {
     pub manifest: Value,
@@ -160,10 +158,6 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         "SELECTION_PATH_INVALID"
     );
     let manifest_state = file_state(&path)?;
-    ensure!(
-        manifest_state.bytes <= MAX_MANIFEST_BYTES,
-        "SELECTION_MANIFEST_LIMIT"
-    );
     let manifest: Value = super::read_json(&path)?;
     ensure!(
         manifest_state == file_state(&path)?,
@@ -212,11 +206,16 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
             .clone(),
     )?;
     ensure!(retrieved_at <= Utc::now(), "SELECTION_FUTURE_CLOCK");
-    let budget = integer(plan, "max_bytes")?;
-    ensure!(
-        budget > 0 && budget <= i64::MAX as u64,
-        "SELECTION_BYTE_BUDGET_INVALID"
-    );
+    let budget = match plan.get("max_bytes") {
+        Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|v| *v > 0)
+                .context("SELECTION_BYTE_BUDGET_INVALID")?,
+        ),
+        None => anyhow::bail!("SELECTION_BYTE_BUDGET_INVALID"),
+    };
     let request = plan.get("request").context("SELECTION_REQUEST_INVALID")?;
     let includes = strings(request, "includes")?;
     for pattern in &includes {
@@ -247,7 +246,7 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         let path = string(index, "path")?;
         checked_path(path)?;
         ensure!(
-            integer(index, "size")? <= 8 * 1024 * 1024
+            integer(index, "size")? > 0
                 && string(index, "url")? == source_url(repository, revision, path),
             "SELECTION_INDEX_INVALID"
         );
@@ -281,7 +280,7 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         .and_then(Value::as_array)
         .context("SELECTION_FILES_REQUIRED")?;
     ensure!(
-        !planned.is_empty() && planned.len() <= 100_000 && planned.len() == recorded.len(),
+        !planned.is_empty() && planned.len() == recorded.len(),
         "SELECTION_FILE_LIMIT"
     );
     let mut seen = BTreeSet::new();
@@ -307,7 +306,7 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
             .checked_add(size)
             .context("SELECTION_BYTE_BUDGET_INVALID")?;
         ensure!(
-            size <= budget && total <= budget,
+            budget.is_none_or(|maximum| size <= maximum && total <= maximum),
             "SELECTION_BYTE_BUDGET_INVALID"
         );
         if let Some(partition) = item.get("partition") {
@@ -464,11 +463,13 @@ mod tests {
         for market in ["market-a", "ALL", "*", "UNKNOWN"] {
             let directory = tempfile::tempdir().unwrap();
             let path = handoff(directory.path(), partition(), json!([market]));
-            assert!(load(&path, 0, 60)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("SELECTION_PARTITION_INVALID"));
+            assert!(
+                load(&path, 0, 60)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("SELECTION_PARTITION_INVALID")
+            );
         }
     }
 

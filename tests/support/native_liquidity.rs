@@ -32,7 +32,7 @@ pub async fn measured_report(
                     experiments: 0,
                     cpu_seconds: Some(DbCounter::new(10).unwrap()),
                     wall_seconds: Some(60),
-                    memory_mib: 512,
+                    memory_mib: Some(512),
                     output_bytes: Some(DbCounter::new(65536).unwrap()),
                 },
             },

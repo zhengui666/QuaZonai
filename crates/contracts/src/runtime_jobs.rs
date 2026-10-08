@@ -1,10 +1,10 @@
 //! Control-plane-to-runtime wire contracts. Only trusted services can submit these.
 //! Neither a terminal process nor a declared artifact grants scientific qualification.
 use crate::{
+    DbCounter, Id, Revision, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runs::RunKind,
     runtime::RuntimeArtifactSchemaV1,
-    DbCounter, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,21 +13,20 @@ use utoipa::ToSchema;
 
 mod schema;
 
-pub const MAX_JOB_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
-pub const MAX_INPUT_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeJobLimitsV1 {
-    #[schema(minimum = 1, maximum = 1024)]
-    pub cpu: u16,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true, minimum = 1, maximum = 4294967295u64, format = Int64)]
+    pub cpu: Option<u32>,
     #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
     pub cpu_seconds: Option<DbCounter>,
-    #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
-    pub memory_mib: u32,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true, minimum = 1, maximum = 4294967295u64, format = Int64)]
+    pub memory_mib: Option<u32>,
     #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
     pub wall_seconds: Option<u32>,
-    #[schema(schema_with = schema::job_output_bytes)]
+    #[schema(schema_with = crate::scalars::optional_positive_db_counter_schema)]
     pub output_bytes: Option<DbCounter>,
 }
 
@@ -68,14 +67,14 @@ pub struct JobSpecV1 {
     #[schema(min_length = 1, max_length = 512)]
     pub image_ref: String,
     pub input_set_id: Id,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub inputs: Vec<RuntimeInputV1>,
     /// Trusted native configuration stored under an immutable Artifact identity.
     /// It does not change frozen InputSet membership or provide arbitrary commands.
     pub parameters_artifact_id: Id,
     pub limits: RuntimeJobLimitsV1,
     pub deadline_at: Option<DateTime<Utc>>,
-    #[schema(min_items = 1, max_items = 64)]
+    #[schema(min_items = 1)]
     pub requested_output_schemas: Vec<RuntimeArtifactSchemaV1>,
 }
 
@@ -312,7 +311,6 @@ pub struct ResultManifestV1 {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: DateTime<Utc>,
     pub resource_usage: RuntimeResourceUsageV1,
-    #[schema(max_items = 64)]
     pub artifacts: Vec<RuntimeOutputV1>,
     pub error: Option<RuntimeJobErrorV1>,
 }

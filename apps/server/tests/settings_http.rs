@@ -78,6 +78,44 @@ fn vault(f: &Fixture) -> SecretVault {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn large_native_ca_registration_replays_exactly_and_keeps_plaintext_private(pool: PgPool) {
+    let (f, cookie) = authenticated(pool.clone()).await;
+    let certificate = include_str!("fixtures/capacity-ca.pem");
+    let value = certificate.repeat(65536 / certificate.len() + 1);
+    assert!(value.len() > 65536);
+    let response = secret(&f, &cookie, "large-ca", "TLS_CA", &value).await;
+    assert_eq!(response.status, StatusCode::CREATED);
+    assert!(response.body["resource"].get("value").is_none());
+    assert!(!response.body.to_string().contains("BEGIN CERTIFICATE"));
+    let id: Id = response.body["resource"]["id"].as_str().unwrap().to_owned().try_into().unwrap();
+    assert!(vault(&f).read(id, "TLS_CA").unwrap() == value.as_bytes(), "native CA bytes changed");
+    for purpose in ["RUNTIME", "DOWNSTREAM", "SESSION_KEY", "MACHINE_VERIFIER"] {
+        assert!(vault(&f).read(id, purpose).is_err());
+    }
+    let ciphertext = fs::read(f._state.path().join("secrets").join(id.to_string())).unwrap();
+    assert!(!ciphertext.windows(certificate.len()).any(|part| part == certificate.as_bytes()));
+    let replay = secret(&f, &cookie, "large-ca", "TLS_CA", &value).await;
+    assert_eq!(replay.status, StatusCode::CREATED);
+    assert_eq!(replay.body["replayed"], true);
+    assert!(replay.body["resource"] == response.body["resource"]);
+    let changed = format!("{value}{certificate}");
+    let conflict = secret(&f, &cookie, "large-ca", "TLS_CA", &changed).await;
+    assert_eq!(conflict.status, StatusCode::CONFLICT);
+    assert!(vault(&f).read(id, "TLS_CA").unwrap() == value.as_bytes(), "replay replaced native CA bytes");
+    let credential = secret(&f, &cookie, "runtime-for-large-ca", "RUNTIME", "native-runtime-capability-more-than-thirty-two-bytes").await;
+    assert_eq!(credential.status, StatusCode::CREATED);
+    let mut configuration = runtime(credential.body["resource"]["id"].clone());
+    configuration["configuration"]["tls_policy"] = json!("PINNED_CA");
+    configuration["ca_certificate_ref"] = json!(id);
+    let bound = browser(&f, &cookie, "bind-large-ca", "POST", "/api/v2/integrations/runtimes", configuration).await;
+    assert_eq!(bound.status, StatusCode::CREATED);
+    let invalid = secret(&f, &cookie, "invalid-large-ca", "TLS_CA", &"x".repeat(value.len())).await;
+    assert_eq!(invalid.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let records: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(c) FROM app.command_receipts c WHERE operation='INTEGRATION_SECRET_REGISTER'").fetch_all(&pool).await.unwrap();
+    assert!(records.iter().all(|record| !record.to_string().contains("BEGIN CERTIFICATE")));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn plaintext_never_enters_public_response_or_database_receipt(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
     let value = "RANDOM_INTEGRATION_SECRET_SENTINEL_8t3GvX";

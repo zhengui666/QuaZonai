@@ -130,7 +130,7 @@ fn operation(
                     fast_period: 1,
                     slow_period: 2,
                     label_horizon_observations: 1,
-                    total_fuel: count(1000),
+                    total_fuel: Some(count(1000)),
                 },
             };
             if kind == 1 {
@@ -236,7 +236,7 @@ async fn accepts_with_settlements(
     settlements: Vec<contracts::settlement::NativeSettlementGroupV1>,
 ) -> bool {
     let root = tempfile::tempdir().unwrap();
-    let journal = Journal::open(&root.path().join("journal.sqlite"), 64 * 1024 * 1024, 4)
+    let journal = Journal::open(&root.path().join("journal.sqlite"), 64 * 1024 * 1024, Some(4))
         .await
         .unwrap();
     let dataset = Id::new();
@@ -397,9 +397,9 @@ async fn accepts_with_settlements(
         inputs,
         parameters_artifact_id: parameter,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(1)),
-            memory_mib: 64,
+            memory_mib: Some(64),
             wall_seconds: Some(30),
             output_bytes: Some(count(4096)),
         },

@@ -87,7 +87,7 @@ fn build(request: &NativePortfolioBuildRequestV1) -> PortfolioBuildRequestV1 {
             experiments: 0,
             cpu_seconds: None,
             wall_seconds: None,
-            memory_mib: 128,
+            memory_mib: Some(128),
             output_bytes: None,
         },
     }

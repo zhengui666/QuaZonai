@@ -168,8 +168,8 @@ enum Command {
         downstream_targets: String,
         #[arg(long, env = "DEVELOPMENT_HTTP", default_value_t = false)]
         development_http: bool,
-        #[arg(long, env = "WORKER_PARALLELISM", default_value_t = 2)]
-        parallelism: usize,
+        #[arg(long, env = "WORKER_PARALLELISM")]
+        parallelism: Option<usize>,
         /// The same browser/API origin used by serve and its local proxy.
         #[arg(long, env = "PUBLIC_URL")]
         public_url: Option<String>,
@@ -214,9 +214,6 @@ fn parse_integration_targets(
     text: &str,
     development_http: bool,
 ) -> Result<server::runtime_transport::RuntimeTargets, &'static str> {
-    if text.len() > 65536 {
-        return Err("integration targets exceed deployment configuration limit");
-    }
     let targets = serde_json::from_str::<Vec<server::runtime_transport::RuntimeTarget>>(text)
         .map_err(|_| "invalid integration targets deployment configuration")?;
     server::runtime_transport::RuntimeTargets::new(targets, development_http)
@@ -537,9 +534,6 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             downstream_targets,
         } => {
             let paper_capital_exit_owners = server::paper_capital_exit::PaperCapitalExitOwners::parse(&paper_capital_exit_owners)?;
-            if historical_exports.len() > 65536 {
-                return Err("historical export registrations exceed limit".into());
-            }
             let registrations = serde_json::from_str(&historical_exports)
                 .map_err(|_| "invalid historical export registrations")?;
             let historical_exports = server::migrations::HistoricalExports::load(registrations)?;

@@ -2,7 +2,6 @@
 use super::{bad, equity_curve::portfolio_equity_curve, simulation, spot_cash_report};
 use crate::DomainError;
 use contracts::{
-    DbCounter, Id, SchemaV1,
     equity_curve::EquityCurveQuery,
     evidence::MetricStatus,
     experiment_summary::*,
@@ -10,6 +9,7 @@ use contracts::{
         NativeAccountKind, NativeExperimentEvaluationResultV1, NativeSimulationRequestV1,
         NativeSimulationResultV1, NativeStatisticGroup,
     },
+    DbCounter, Id, SchemaV1,
 };
 
 fn count(value: usize) -> Result<DbCounter, DomainError> {
@@ -135,7 +135,7 @@ pub fn experiment_summary(
     })
 }
 
-/// The same native metrics and bounded equity selection for every replay view.
+/// The same native metrics and gap-preserving equity selection for every replay view.
 pub(super) fn native_simulation_summary(
     request: &NativeSimulationRequestV1,
     result: &NativeSimulationResultV1,
@@ -143,7 +143,7 @@ pub(super) fn native_simulation_summary(
     let series = portfolio_equity_curve(request, result, &EquityCurveQuery::default())?;
     let n = series.points.len();
     let indices = if result.spot_cash_report.is_some() {
-        super::equity_curve::report_preview_indices(&series.points, MAX_EXPERIMENT_PREVIEW_POINTS)?
+        super::equity_curve::report_preview_indices(&series.points, MAX_EXPERIMENT_PREVIEW_POINTS)
     } else {
         let selected = n.min(MAX_EXPERIMENT_PREVIEW_POINTS);
         (0..selected)

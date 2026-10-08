@@ -1,7 +1,7 @@
 //! Frozen catalog and original Wasm models produce all numerical portfolio inputs.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use contracts::{
-    brief::HorizonKind, evidence::ForecastUnit, portfolio::*, science::*, DbCounter, Id, SchemaV1,
+    DbCounter, Id, SchemaV1, brief::HorizonKind, evidence::ForecastUnit, portfolio::*, science::*,
 };
 use nautilus_model::instruments::Instrument;
 use std::path::Path;
@@ -92,7 +92,9 @@ pub(crate) struct Prepared {
     pub forecasts: PortfolioForecastInputV1,
     pub returns: PortfolioReturnHistoryV1,
     pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
-    pub consumed_fuel: DbCounter,
+    pub consumed_fuel: Option<DbCounter>,
+    /// Same order as models; only explicit budgets have a measured remainder.
+    pub remaining_fuel: Vec<Option<DbCounter>>,
 }
 
 /// Borrow the caller's selected market so forecasts and liquidity use the same
@@ -107,7 +109,7 @@ pub(crate) fn prepare(
     models: &[NativePortfolioAlphaV1],
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<Prepared> {
-    ensure!((2..=256).contains(&models.len()), "PORTFOLIO_MEMBERS");
+    ensure!(models.len() >= 2, "PORTFOLIO_MEMBERS");
     crate::simulation::execution_market(market, settings)?;
     let until = selection
         .decision_cutoff_ns
@@ -126,16 +128,9 @@ pub(crate) fn prepare(
     let horizon = models[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
     let rows = first.bars.len();
+    ensure!(rows >= horizon + 2, "PORTFOLIO_RETURN_SAMPLE_LIMIT");
     ensure!(
-        rows >= horizon + 2 && rows - horizon <= MAX_RETURN_OBSERVATIONS,
-        "PORTFOLIO_RETURN_SAMPLE_LIMIT"
-    );
-    ensure!(
-        market
-            .series
-            .len()
-            .checked_mul(rows - horizon)
-            .is_some_and(|n| n <= MAX_RETURN_VALUES),
+        market.series.len().checked_mul(rows - horizon).is_some(),
         "PORTFOLIO_RETURN_SIZE_LIMIT"
     );
     let instruments = market
@@ -190,7 +185,8 @@ pub(crate) fn prepare(
         })
         .collect();
     let mut members = Vec::new();
-    let mut consumed = 0_u64;
+    let mut consumed = Some(0_u64);
+    let mut remaining_fuel = Vec::with_capacity(models.len());
     for member in models {
         let module = read(member.model_artifact_id)?;
         let calibration: Option<NativeFrozenCalibrationV1> = member
@@ -206,9 +202,12 @@ pub(crate) fn prepare(
             },
             &module,
         )?;
-        consumed = consumed
-            .checked_add(consumed_fuel.get())
-            .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
+        remaining_fuel.push(member.parameters.total_fuel.zip(consumed_fuel).map(|(total, used)| {
+            count(total.get() - used.get())
+        }).transpose()?);
+        consumed = consumed.zip(consumed_fuel).map(|(sum, next)| {
+            sum.checked_add(next.get()).ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
+        }).transpose()?;
         let mut forecasts = Vec::new();
         let mut available = 0;
         for (instrument, bar_type) in instruments.iter().zip(&selection.bar_types) {
@@ -300,7 +299,8 @@ pub(crate) fn prepare(
             asset_returns,
         },
         slippage: slippage_references,
-        consumed_fuel: count(consumed)?,
+        consumed_fuel: consumed.map(count).transpose()?,
+        remaining_fuel,
     })
 }
 

@@ -64,11 +64,8 @@ pub(super) fn returns_state(report: &NativeSpotCashReportV1) -> (MetricStatus, O
 
 pub(super) fn shape(report: &NativeSpotCashReportV1) -> Result<(), DomainError> {
     if report.observations.is_empty()
-        || report.observations.len() > 1_000_000
         || report.instruments.is_empty()
-        || report.instruments.len() > 256
         || report.statistics.len() > 4096
-        || report.daily_returns.days.len() > 10_000
     {
         return Err(bad("spot_report.bounds"));
     }

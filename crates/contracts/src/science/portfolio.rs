@@ -1,6 +1,6 @@
 //! Catalog-backed portfolio execution, not permission to use an Alpha version.
 use super::{NativeBarSelectionV1, NativeForecastParametersV1};
-use crate::{brief::TargetKind, portfolio::*, DbCounter, DecimalValue, Id, SchemaV1};
+use crate::{DbCounter, DecimalValue, Id, SchemaV1, brief::TargetKind, portfolio::*};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -14,7 +14,7 @@ pub struct PortfolioTargetsV1 {
     pub asof: chrono::DateTime<chrono::Utc>,
     pub valid_until: chrono::DateTime<chrono::Utc>,
     pub cash_weight: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub targets: Vec<AllocationTargetV1>,
 }
 
@@ -74,7 +74,7 @@ pub struct PortfolioCurrentWeightsV1 {
     pub valid_until_ns: DbCounter,
     pub base_currency: String,
     pub cash_weight: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub weights: Vec<AllocationTargetV1>,
 }
 
@@ -109,9 +109,9 @@ pub struct NativePortfolioBuildRequestV1 {
     pub execution_settings: super::NativeSimulationSettingsV1,
     pub bar_liquidity: Option<NativePortfolioLiquidityV1>,
     pub rolling_liquidity: Option<NativeRollingBarLiquidityPolicyV1>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<AllocationAssetV1>,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub members: Vec<NativePortfolioAlphaV1>,
 }
 
@@ -119,14 +119,15 @@ pub struct NativePortfolioBuildRequestV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativePortfolioBuildResultV1 {
     pub schema_version: SchemaV1,
-    #[schema(max_items = 256)]
     pub bar_notionals: Vec<crate::execution::NativeBarNotionalV1>,
-    #[schema(max_items = 256)]
     pub slippage_references: Vec<NativePortfolioSlippageReferenceV1>,
     /// Observable original numerical inputs generated inside the fixed native job.
     pub input: AllocationInputV1,
     pub allocation: AllocationResultV1,
-    pub consumed_fuel: DbCounter,
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
 }
 
 /// Original per-rebalance measurement policy, not a previously measured snapshot.
@@ -159,7 +160,7 @@ pub struct NativeCalendarSessionsV1 {
     pub available_at_ns: DbCounter,
     pub coverage_start_ns: DbCounter,
     pub coverage_end_ns: DbCounter,
-    #[schema(min_items = 1, max_items = 4096)]
+    #[schema(min_items = 1)]
     pub sessions: Vec<NativeCalendarSessionV1>,
 }
 
@@ -176,21 +177,20 @@ pub struct NativePortfolioCalendarV1 {
 pub struct NativePortfolioStudyRequestV1 {
     /// Complete original condition payouts; not inferred from a last bar or expiry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schema(max_items = 256)]
     pub settlements: Vec<crate::settlement::NativeSettlementGroupV1>,
     pub schema_version: SchemaV1,
     pub source_selection: NativeBarSelectionV1,
     pub evaluation_start_ns: DbCounter,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub manual_cutoffs_ns: Option<Vec<DbCounter>>,
     pub calendar: Option<NativePortfolioCalendarV1>,
     pub research_available_through_ns: DbCounter,
     pub mandate: MandateContentV1,
     pub execution_settings: super::NativeSimulationSettingsV1,
     pub rolling_liquidity: Option<NativeRollingBarLiquidityPolicyV1>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<AllocationAssetV1>,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub members: Vec<NativePortfolioAlphaV1>,
 }
 
@@ -208,8 +208,10 @@ pub struct NativePortfolioStudyFrameV1 {
 #[serde(deny_unknown_fields)]
 pub struct NativePortfolioStudyResultV1 {
     pub schema_version: SchemaV1,
-    pub consumed_fuel: DbCounter,
-    #[schema(max_items = 256)]
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
     pub frames: Vec<NativePortfolioStudyFrameV1>,
     /// Actual generated points, never the schedule's provisional all-cash placeholders.
     pub simulation_request: Option<super::NativeSimulationRequestV1>,

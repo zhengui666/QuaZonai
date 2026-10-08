@@ -127,7 +127,7 @@ fn state(capacity: usize) -> State {
         Id::new(),
         &market,
         rows,
-        capacity,
+        Some(capacity),
     )
     .unwrap()
 }
@@ -150,7 +150,7 @@ fn frozen_source_bar_and_closed_boundary_must_match_exactly() {
             Id::new(),
             &market,
             rows,
-            10
+            Some(10)
         )
         .is_err()
     );
@@ -163,7 +163,7 @@ fn frozen_source_bar_and_closed_boundary_must_match_exactly() {
             Id::new(),
             &market,
             rows,
-            10
+            Some(10)
         )
         .is_err()
     );
@@ -432,7 +432,7 @@ fn numeric_equality_does_not_allow_native_precision_rewrites() {
             Id::new(),
             &market,
             rows,
-            10
+            Some(10)
         )
         .is_err()
     );

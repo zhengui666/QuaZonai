@@ -552,14 +552,24 @@ async fn terminal_status_with_invalid_manifest_closes_as_invalid_input_without_f
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn terminal_status_with_oversized_manifest_is_not_retried_forever(pool: PgPool) {
-    assert_native_failure(
-        pool,
-        Behavior::OversizedManifest,
-        "NATIVE_MANIFEST_LIMIT",
-        0,
-    )
-    .await;
+async fn complete_large_manifest_is_published_once_without_retry_or_cancellation(pool: PgPool) {
+    let harness = native::setup(&pool, Behavior::OversizedManifest).await;
+    let f = &harness.fixture;
+    let run = tasks::start(f, "complete-large-manifest", &f.request)
+        .await.unwrap().resource;
+    let driver = Driver::start(harness.worker.clone());
+    assert_eq!(terminal(&pool, run.id).await, "SUCCEEDED");
+    driver.finish().await;
+    let counts = harness.counts();
+    assert_eq!(counts.submits, 1);
+    assert_eq!(counts.output_reads, 1);
+    assert_eq!(counts.cancels, 0);
+    let facts: (i64, i64, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.run_attempts WHERE run_id=$1),(SELECT count(*) FROM app.run_terminal_receipts WHERE run_id=$1),(SELECT count(*) FROM app.artifacts WHERE producer_run_id=$1),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM pgmq.a_runs)")
+        .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (1, 1, 2, 0, 1));
+    let bytes: i64 = sqlx::query_scalar("SELECT a.byte_count FROM app.artifacts a JOIN app.run_attempts r ON r.result_manifest_artifact_id=a.id WHERE r.run_id=$1")
+        .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert_eq!(bytes, 1024 * 1024 + 1);
 }
 
 #[sqlx::test(migrations = "../../migrations")]

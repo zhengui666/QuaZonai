@@ -21,7 +21,7 @@ struct Fixture {
 async fn fixture() -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let root = Arc::new(RuntimeRoot::open(&directory.path().join("runtime")).unwrap());
-    let journal = Journal::open(&root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
+    let journal = Journal::open(&root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
         .await
         .unwrap();
     let code_id = Id::new();
@@ -65,9 +65,9 @@ async fn fixture() -> Fixture {
         ],
         parameters_artifact_id: parameter_id,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(DbCounter::new(1).unwrap()),
-            memory_mib: 64,
+            memory_mib: Some(64),
             wall_seconds: Some(30),
             output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
@@ -122,8 +122,7 @@ async fn repeated_materialization_reuses_one_quota_reservation_and_one_immutable
     let expected = f.parameters.len() as u64
         + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
-        + f.spec.limits.output_bytes.unwrap().get()
-        + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
+        + f.spec.limits.output_bytes.unwrap().get();
     assert_eq!(
         f.journal
             .materialization_bytes(&f.spec.external_job_id)
@@ -273,7 +272,7 @@ async fn concurrent_admission_reserves_disk_once_and_replays_do_not_charge_again
     );
     assert_eq!(fs::read_dir(f.root.path.join("jobs")).unwrap().count(), 0);
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
+    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
         .await
         .unwrap();
     assert!(reopened.submit(accepted, &f.capability).await.unwrap().1);
@@ -306,14 +305,13 @@ async fn admission_at_exact_disk_quota_succeeds_and_one_extra_byte_rolls_back() 
     let materialized = f.parameters.len() as u64
         + CODE.len() as u64
         + serde_json::to_vec(&f.spec).unwrap().len() as u64
-        + f.spec.limits.output_bytes.unwrap().get()
-        + domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as u64;
+        + f.spec.limits.output_bytes.unwrap().get();
     let exact = f.parameters.len() as u64
         + CODE.len() as u64
         + f.spec.limits.output_bytes.unwrap().get()
         + materialized;
     f.journal.close().await;
-    let too_small = Journal::open(&f.root.path.join("journal.sqlite"), exact - 1, 16)
+    let too_small = Journal::open(&f.root.path.join("journal.sqlite"), exact - 1, Some(16))
         .await
         .unwrap();
     assert!(matches!(
@@ -329,7 +327,7 @@ async fn admission_at_exact_disk_quota_succeeds_and_one_extra_byte_rolls_back() 
         None
     );
     too_small.close().await;
-    let sufficient = Journal::open(&f.root.path.join("journal.sqlite"), exact, 16)
+    let sufficient = Journal::open(&f.root.path.join("journal.sqlite"), exact, Some(16))
         .await
         .unwrap();
     assert!(!sufficient.submit(&f.spec, &f.capability).await.unwrap().1);
@@ -365,7 +363,7 @@ async fn interrupted_staging_before_spec_write_recovers_from_the_exact_durable_r
     fs::create_dir(staging.join("input")).unwrap();
     fs::write(staging.join("input/partial"), b"interrupted private copy").unwrap();
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
+    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
         .await
         .unwrap();
     materialize::recover(f.root.clone(), &reopened)
@@ -410,7 +408,7 @@ async fn interrupted_terminal_cache_deletion_cannot_release_quota_early_or_destr
         .unwrap()
         .is_some());
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, 16)
+    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
         .await
         .unwrap();
     materialize::recover(f.root.clone(), &reopened)

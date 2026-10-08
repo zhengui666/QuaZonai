@@ -175,7 +175,7 @@ impl CapitalExitOwnerTransport {
         );
         service_http::media(&response, "application/json")
             .map_err(|_| anyhow!("capital_exit_transport_invalid_response"))?;
-        let bytes = service_http::body(response, 8 * 1024 * 1024)
+        let bytes = service_http::body(response, None)
             .await
             .map_err(|_| anyhow!("capital_exit_transport_invalid_response"))?;
         service_http::decode(&bytes, &self.credential)
@@ -205,7 +205,7 @@ impl CapitalExitOwnerTransport {
         service_http::media(&response, "application/json").map_err(|_| {
             anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
         })?;
-        let bytes = service_http::body(response, 8 * 1024 * 1024)
+        let bytes = service_http::body(response, None)
             .await
             .map_err(|_| {
                 anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
@@ -250,7 +250,7 @@ impl CapitalExitOwnerTransport {
         service_http::media(&response, "application/json").map_err(|_| {
             anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
         })?;
-        let bytes = service_http::body(response, 8 * 1024 * 1024)
+        let bytes = service_http::body(response, None)
             .await
             .map_err(|_| {
                 anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")

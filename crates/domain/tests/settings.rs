@@ -130,7 +130,10 @@ fn secret_intent_excludes_plaintext_and_value_validation_is_purpose_bounded() {
     assert!(secret_value(intent.purpose, &"x".repeat(8192)).is_ok());
     assert!(secret_value(intent.purpose, &"x".repeat(8193)).is_err());
     assert!(secret_value(IntegrationSecretPurpose::TlsCa, "a\nb\n").is_ok()); // native PEM parsing is a separate mandatory step
-    assert!(secret_value(IntegrationSecretPurpose::TlsCa, &"x".repeat(65537)).is_err());
+    assert!(secret_value(IntegrationSecretPurpose::TlsCa, &"x".repeat(65537)).is_ok());
+    for value in ["", "中文"] {
+        assert!(secret_value(IntegrationSecretPurpose::TlsCa, value).is_err());
+    }
 }
 
 #[test]

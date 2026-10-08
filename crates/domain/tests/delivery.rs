@@ -183,7 +183,7 @@ fn package_preserves_original_targets_and_mandate_without_order_fields() {
             experiments: 0,
             cpu_seconds: None,
             wall_seconds: None,
-            memory_mib: 128,
+            memory_mib: Some(128),
             output_bytes: None,
         },
     };

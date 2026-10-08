@@ -55,7 +55,7 @@ fn fixture(rows: usize) -> (NativeMarketData, NativeForecastRequestV1) {
             fast_period: 2,
             slow_period: 3,
             label_horizon_observations: 2,
-            total_fuel: counter(1_000_000).unwrap(),
+            total_fuel: Some(counter(1_000_000).unwrap()),
         },
     };
     (
@@ -127,7 +127,7 @@ fn latest_retention_checks_discarded_predictions_and_total_task_fuel() {
     }
     let wasm = module("global.get $n f64.convert_i32_s");
     let full = forecast_market(&market, &request, &wasm).unwrap();
-    request.parameters.total_fuel = counter(full.consumed_fuel.get() / 2).unwrap();
+    request.parameters.total_fuel = Some(counter(full.consumed_fuel.unwrap().get() / 2).unwrap());
     same_failure(&market, &request, &wasm);
 }
 

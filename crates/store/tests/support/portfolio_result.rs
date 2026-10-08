@@ -166,7 +166,7 @@ pub(super) async fn complete(
         bar_notionals,
         slippage_references,
         input,
-        consumed_fuel: DbCounter::ZERO,
+        consumed_fuel: Some(DbCounter::ZERO),
         allocation: AllocationResultV1 {
             schema_version: SchemaV1,
             solver_status: SolverStatus::Optimal,

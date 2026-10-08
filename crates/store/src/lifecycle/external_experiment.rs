@@ -34,7 +34,7 @@ async fn artifact_input(
     let row = sqlx::query("SELECT byte_count,storage_version FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind=$3 AND schema_name=$4 AND schema_version='1' AND access_class='RESEARCH' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND media_type=$5")
         .bind(id.as_uuid()).bind(project.as_uuid()).bind(role.code()).bind(schema).bind(media_type).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("external_experiment_artifact"))?;
     let byte_count = counter(row.try_get("byte_count")?)?;
-    if !(1..=2 * 1024 * 1024).contains(&byte_count.get()) {
+    if byte_count.get() == 0 {
         return Err(StoreError::Invalid("external_experiment_artifact_size"));
     }
     Ok(RuntimeInputV1::Artifact {
@@ -770,7 +770,7 @@ impl Store {
         let row=sqlx::query("SELECT r.run_id,r.report_artifact_id,a.byte_count FROM app.external_experiment_results r JOIN app.experiments e ON e.id=r.experiment_id AND e.run_id=r.run_id AND e.conclusion_artifact_id=r.report_artifact_id JOIN app.artifacts a ON a.id=r.report_artifact_id AND a.project_id=e.project_id AND a.access_class='RESEARCH' AND a.schema_name='qz.experiment_evaluation' AND a.schema_version='1' AND a.storage_backend='LOCAL' AND a.storage_object_ref=a.id::text WHERE r.experiment_id=$1").bind(experiment.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let id = db::id(row.try_get("report_artifact_id")?)?;
         let size = counter(row.try_get("byte_count")?)?;
-        if size == DbCounter::ZERO || size.get() > contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES {
+        if size == DbCounter::ZERO {
             return Err(StoreError::Integrity);
         }
         let bytes = read(id, size).await?;

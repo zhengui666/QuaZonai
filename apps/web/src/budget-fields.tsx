@@ -37,15 +37,20 @@ export function BudgetFields() {
   return <>
     <Typography.Title level={3}>执行预算</Typography.Title>
     <Button onClick={() => form.setFieldValue(['content', 'budget'], applyRelaxedResearchBudget(form.getFieldValue(['content', 'budget'])))}>使用宽松研究预算</Button>
-    <Typography.Paragraph type="secondary">宽松研究取消任务总超时、累计 CPU、Token 和产物大小上限，增加实验及轮次额度；保留当前内存、并行和费用设置，实际资源须通过 Runtime 能力检查。只修改当前草稿，不更改已冻结研究。</Typography.Paragraph>
+    <Typography.Paragraph type="secondary">宽松研究取消任务总超时、累计 CPU、Token、产物大小、Mission 轮次、修复轮次、每日 Cycle 和并行上限；保留实验数、已设置的内存限额和费用设置，内存留空表示不设任务内存限额，实际资源须通过 Runtime 能力检查。只修改当前草稿，不更改已冻结研究。</Typography.Paragraph>
     
     <div className="field-grid">
       {([
-        ['max_experiments', '最大实验数', 1, 4294967295], ['max_parallel_runs', '最大并行运行', 1, 65535],
-        ['max_turns_per_mission', '每个 Mission 最大轮次', 1, 65535], ['max_repair_turns', '最大修复轮次', 0, 65535],
-        ['max_memory_mib', '最大内存（MiB）', 1, 4294967295],
-        ['max_cycles_per_day', '每日最大 Cycle 数', 1, 65535], ['min_cycle_interval_seconds', 'Cycle 最小间隔（秒）', 0, 4294967295],
+        ['max_experiments', '最大实验数', 1, 4294967295],
+        ['min_cycle_interval_seconds', 'Cycle 最小间隔（秒）', 0, 4294967295],
       ] as const).map(([name, label, min, max]) => <Form.Item key={name} name={['content', 'budget', name]} label={label} dependencies={relationDependencies(name)} rules={[{ required: true, type: 'integer', min, max }, ...relationRules(name)]}><InputNumber min={min} max={max} precision={0} className="full-width" /></Form.Item>)}
+      {([
+        ['max_memory_mib', '最大内存（MiB，留空不设任务内存限额）', 1],
+        ['max_parallel_runs', '最大并行运行（留空不设人工上限）', 1],
+        ['max_turns_per_mission', '每个 Mission 最大轮次（留空不设上限）', 1],
+        ['max_repair_turns', '最大修复轮次（留空不设上限，0 禁用修复）', 0],
+        ['max_cycles_per_day', '每日最大 Cycle 数（留空不设上限）', 1],
+      ] as const).map(([name, label, min]) => <Form.Item key={name} name={['content', 'budget', name]} label={label} dependencies={relationDependencies(name)} rules={[{ type: 'integer', min, max: 4294967295 }, ...relationRules(name)]}><InputNumber min={min} max={4294967295} precision={0} className="full-width" placeholder="不设上限" /></Form.Item>)}
       {([['max_cpu_seconds', '累计 CPU 秒数（留空不设上限）'], ['max_output_bytes', '产物字节数（留空不设上限）']] as const).map(([name, label]) => <Form.Item key={name} name={['content', 'budget', name]} label={label} rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isCounter(value, true)) ? Promise.resolve() : Promise.reject(new Error('需要正整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} allowClear /></Form.Item>)}
       <Form.Item name={['content', 'budget', 'max_wall_seconds']} label="任务总超时（秒，留空不设上限）" rules={[{ type: 'integer', min: 1, max: 4294967295 }]}><InputNumber min={1} max={4294967295} precision={0} className="full-width" placeholder="不设任务总超时" /></Form.Item>
       <Form.Item name={['content', 'budget', 'max_tokens']} label="最大 Token 数（可选）" rules={[{ validator: (_, value: unknown) => !value || (typeof value === 'string' && isCounter(value, true)) ? Promise.resolve() : Promise.reject(new Error('需要正整数字符串。')) }]}><Input inputMode="numeric" maxLength={19} /></Form.Item>

@@ -15,18 +15,16 @@ use axum::{
     response::Response,
 };
 use chrono::{Duration, Utc};
-use contracts::{artifacts::MAX_UPLOAD_BYTES, Id};
+use contracts::Id;
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
 use serde_json::{json, Value};
 use server::{AppState, WebPolicy};
 use sqlx::PgPool;
-use std::sync::Arc;
 use support::*;
-use tokio::sync::Semaphore;
 use tower::ServiceExt;
 use tower_sessions::cookie::Key;
 
-async fn setup(pool: &PgPool) -> (Fixture, String, Id, Arc<Semaphore>) {
+async fn setup(pool: &PgPool) -> (Fixture, String, Id) {
     let mut f = fixture(pool.clone()).await;
     let root = f._state.path();
     let state = AppState::new(
@@ -40,7 +38,6 @@ async fn setup(pool: &PgPool) -> (Fixture, String, Id, Arc<Semaphore>) {
         .unwrap(),
     )
     .with_artifact_store(ArtifactStore::open(&root.join("artifacts")).unwrap());
-    let slots = state.artifact_slots.clone();
     f.app = server::router(state, Key::generate());
     let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
@@ -53,7 +50,7 @@ async fn setup(pool: &PgPool) -> (Fixture, String, Id, Arc<Semaphore>) {
         .to_owned()
         .try_into()
         .unwrap();
-    (f, cookie, project, slots)
+    (f, cookie, project)
 }
 fn request(
     method: &str,
@@ -149,7 +146,7 @@ async fn raw(f: &Fixture, path: &str, cookie: &str) -> Response {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn upload_download_and_same_length_replay_use_real_original_bytes(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     let text = "// Original 中文\nfn signal() -> f64 { 0.0 }\n";
     let body = upload(project, text);
     let created = send(
@@ -192,7 +189,7 @@ async fn upload_download_and_same_length_replay_use_real_original_bytes(pool: Pg
         .unwrap()
         .starts_with("attachment;"));
     assert_eq!(
-        &to_bytes(response.into_body(), MAX_UPLOAD_BYTES)
+        &to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap()[..],
         text.as_bytes()
@@ -242,7 +239,7 @@ async fn upload_download_and_same_length_replay_use_real_original_bytes(pool: Pg
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn machine_scope_project_and_revocation_are_enforced_without_operator_grant(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     let (read_only, _) = bearer(&f, &cookie, project, &["RESEARCH_READ"], "reader").await;
     assert_eq!(
         send(
@@ -351,7 +348,7 @@ async fn machine_scope_project_and_revocation_are_enforced_without_operator_gran
 async fn rejects_forged_provenance_bad_documents_and_byte_overflow_before_publication(
     pool: PgPool,
 ) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     for field in [
         "origin",
         "access_class",
@@ -418,31 +415,27 @@ async fn rejects_forged_provenance_bad_documents_and_byte_overflow_before_public
             StatusCode::UNPROCESSABLE_ENTITY
         );
     }
-    let large = "界".repeat(MAX_UPLOAD_BYTES / 3 + 1);
-    assert_eq!(
-        send(
-            &f,
-            "POST",
-            "/api/v2/artifacts",
-            "overflow",
-            upload(project, &large),
-            Some(&cookie),
-            None
-        )
-        .await
-        .status,
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
+    let large = "界".repeat(2 * 1024 * 1024 / 3 + 1);
+    let created = send(
+        &f, "POST", "/api/v2/artifacts", "large-original",
+        upload(project, &large), Some(&cookie), None,
+    ).await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_eq!(created.body["resource"]["byte_count"], large.len().to_string());
+    let id = created.body["resource"]["id"].as_str().unwrap();
+    let response = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(to_bytes(response.into_body(), usize::MAX).await.unwrap().as_ref(), large.as_bytes());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 0);
+    assert_eq!(count, 1);
     assert_eq!(
         std::fs::read_dir(f._state.path().join("artifacts"))
             .unwrap()
             .count(),
-        0
+        1
     );
     // This source is never executed or served with an active content type.
     let report =
@@ -468,7 +461,7 @@ async fn rejects_forged_provenance_bad_documents_and_byte_overflow_before_public
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn evaluator_only_objects_never_leak_through_general_artifact_routes(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     let sealed = Id::new();
     sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','fixture','1','LOCAL','sealed-private-location','1',10,'EVALUATOR_ONLY','FIXTURE','RUNTIME','AUDIT')")
         .bind(sealed.as_uuid()).bind(project.as_uuid()).execute(&pool).await.unwrap();
@@ -508,7 +501,7 @@ async fn evaluator_only_objects_never_leak_through_general_artifact_routes(pool:
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn database_failure_preserves_orphan_without_publishing_a_false_receipt(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     sqlx::raw_sql("CREATE FUNCTION public.reject_artifact() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected metadata failure'; END $$; CREATE TRIGGER reject_upload BEFORE INSERT ON app.artifacts FOR EACH ROW EXECUTE FUNCTION public.reject_artifact();").execute(&pool).await.unwrap();
     let failed = send(
         &f,
@@ -563,53 +556,25 @@ async fn database_failure_preserves_orphan_without_publishing_a_false_receipt(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_capacity_is_held_before_body_parse_and_until_download_disconnect(pool: PgPool) {
-    let (f, cookie, project, slots) = setup(&pool).await;
-    let reserved = slots.clone().acquire_many_owned(4).await.unwrap();
-    let rejected = send(
-        &f,
-        "POST",
-        "/api/v2/artifacts",
-        "full",
-        json!({}),
-        Some(&cookie),
-        None,
-    )
-    .await;
-    assert_eq!(rejected.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(rejected.headers[header::RETRY_AFTER], "1");
-    drop(reserved);
-    let created = send(
-        &f,
-        "POST",
-        "/api/v2/artifacts",
-        "source",
-        upload(project, "original"),
-        Some(&cookie),
-        None,
-    )
-    .await;
+async fn artifact_downloads_cross_four_concurrent_streams_without_rejecting_uploads(pool: PgPool) {
+    let (f, cookie, project) = setup(&pool).await;
+    let created = send(&f, "POST", "/api/v2/artifacts", "source", upload(project, "original"), Some(&cookie), None).await;
     assert_eq!(created.status, StatusCode::CREATED);
-    let path = format!(
-        "/api/v2/artifacts/{}/content",
-        created.body["resource"]["id"].as_str().unwrap()
-    );
+    let path = format!("/api/v2/artifacts/{}/content", created.body["resource"]["id"].as_str().unwrap());
     let mut responses = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         let response = raw(&f, &path, &cookie).await;
         assert_eq!(response.status(), StatusCode::OK);
         responses.push(response);
     }
-    assert_eq!(slots.available_permits(), 0);
-    let fifth = raw(&f, &path, &cookie).await;
-    assert_eq!(fifth.status(), StatusCode::TOO_MANY_REQUESTS);
+    let next = send(&f, "POST", "/api/v2/artifacts", "parallel-upload", upload(project, "next"), Some(&cookie), None).await;
+    assert_eq!(next.status, StatusCode::CREATED);
     responses.pop();
-    assert_eq!(slots.available_permits(), 1);
-    let next = raw(&f, &path, &cookie).await;
-    assert_eq!(next.status(), StatusCode::OK);
-    drop(next);
-    drop(responses);
-    assert_eq!(slots.available_permits(), 4);
+    for response in responses {
+        assert_eq!(to_bytes(response.into_body(), 64).await.unwrap().as_ref(), b"original");
+    }
+    let replay = raw(&f, &path, &cookie).await;
+    assert_eq!(to_bytes(replay.into_body(), 64).await.unwrap().as_ref(), b"original");
 }
 
 async fn mission_token(
@@ -681,7 +646,7 @@ async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
             experiments: 0,
             cpu_seconds: Some(DbCounter::new(100).unwrap()),
             wall_seconds: Some(3600),
-            memory_mib: 1024,
+            memory_mib: Some(1024),
             output_bytes: Some(DbCounter::new(8).unwrap()),
         },
     };
@@ -715,7 +680,7 @@ async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_attempt(pool: PgPool) {
-    let (f, _cookie, _, _) = setup(&pool).await;
+    let (f, _cookie, _) = setup(&pool).await;
     let (project, run, attempt, principal) = mission(&f, &pool).await;
     let (bearer, credential, _) = mission_token(&f, &pool, principal, 600).await;
     let stored: String = sqlx::query_scalar(
@@ -856,7 +821,7 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn expiry_during_native_io_cannot_publish_after_authority_expires(pool: PgPool) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (project, _run, _, principal) = mission(&f, &pool).await;
     let (_, credential, reference) = mission_token(&f, &pool, principal, 2).await;
     let actor = store::authority::Actor::Machine {
@@ -904,8 +869,8 @@ fn report_upload(project: Id, report: &Value) -> Value {
     json!({"schema_version":1,"project_id":project,"kind":"REPORT","content":report.to_string()})
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn agent_report_retains_immutable_bytes_replay_and_stream_capacity(pool: PgPool) {
-    let (f, cookie, project, slots) = setup(&pool).await;
+async fn agent_report_retains_immutable_bytes_and_replay(pool: PgPool) {
+    let (f, cookie, project) = setup(&pool).await;
     let mut report = agent_report();
     report["recorded_at"] = json!("2026-9-30T00:00:00Z");
     report["status"] = json!("BLOCKED");
@@ -936,7 +901,6 @@ async fn agent_report_retains_immutable_bytes_replay_and_stream_capacity(pool: P
     assert_eq!(replay.body["resource"], created.body["resource"]);
     assert_eq!(replay.body["replayed"], true);
     let id = created.body["resource"]["id"].as_str().unwrap();
-    let available = slots.available_permits();
     let response = raw(
         &f,
         &format!("/api/v2/artifacts/{id}/agent-evaluation"),
@@ -947,22 +911,19 @@ async fn agent_report_retains_immutable_bytes_replay_and_stream_capacity(pool: P
     assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
-    assert_eq!(slots.available_permits(), available - 1);
-    let bytes = to_bytes(response.into_body(), MAX_UPLOAD_BYTES)
+    let bytes = to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let typed: Value = serde_json::from_slice(&bytes).unwrap();
     let mut expected = report.clone();
     expected["recorded_at"] = json!("2026-09-30T00:00:00Z");
     assert_eq!(typed, expected);
-    assert_eq!(slots.available_permits(), available);
     let original = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
     assert_eq!(original.status(), StatusCode::OK);
-    let original = to_bytes(original.into_body(), MAX_UPLOAD_BYTES)
+    let original = to_bytes(original.into_body(), usize::MAX)
         .await
         .unwrap();
     assert_eq!(original.as_ref(), report.to_string().as_bytes());
-    assert_eq!(slots.available_permits(), available);
     let qualifications: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
         .fetch_one(&pool)
         .await
@@ -971,7 +932,7 @@ async fn agent_report_retains_immutable_bytes_replay_and_stream_capacity(pool: P
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn agent_report_rejects_forged_pass_and_unsupported_documents(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     for (index, (pointer, replacement)) in [
         ("/status", json!("PASS")),
         ("/recorded_at", json!("+10000-01-01T00:00:00Z")),
@@ -1044,8 +1005,8 @@ async fn agent_report_rejects_forged_pass_and_unsupported_documents(pool: PgPool
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn agent_report_read_enforces_project_scope_revocation_and_capacity(pool: PgPool) {
-    let (f, cookie, project, slots) = setup(&pool).await;
+async fn agent_report_read_enforces_project_scope_and_revocation(pool: PgPool) {
+    let (f, cookie, project) = setup(&pool).await;
     let created = send(
         &f,
         "POST",
@@ -1087,16 +1048,13 @@ async fn agent_report_read_enforces_project_scope_revocation_and_capacity(pool: 
             .status,
         StatusCode::NOT_FOUND
     );
-    let permits = slots
-        .clone()
-        .acquire_many_owned(slots.available_permits() as u32)
-        .await
-        .unwrap();
-    assert_eq!(
-        raw(&f, &path, &cookie).await.status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
-    drop(permits);
+    let mut original_reads = Vec::new();
+    for _ in 0..5 {
+        let response = raw(&f, &path, &cookie).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        original_reads.push(response);
+    }
+    drop(original_reads);
     let revoked = send(
         &f,
         "POST",
@@ -1118,7 +1076,7 @@ async fn agent_report_read_enforces_project_scope_revocation_and_capacity(pool: 
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn agent_report_and_binary_reads_share_backend_unavailable_mapping(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     let id = Id::new();
     sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'REPORT','application/json','fixture','1','OBJECT_STORE','unsupported-test-object','1',10,'RESEARCH','SYNTHETIC','OPERATOR','AUDIT')")
         .bind(id.as_uuid()).bind(project.as_uuid()).execute(&pool).await.unwrap();

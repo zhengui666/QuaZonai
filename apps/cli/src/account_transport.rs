@@ -8,12 +8,10 @@ use clap::Args;
 use contracts::account_observation::{AccountObservationReceiptV1, AccountObservationSubmitV1};
 use std::{
     fs::{File, OpenOptions},
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader},
     path::PathBuf,
     time::Duration,
 };
-
-const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Args)]
 pub struct Arguments {
@@ -24,9 +22,10 @@ pub struct Arguments {
     #[arg(long)]
     pub follow: bool,
     /// Attempts per record for unavailable transport or retryable server Problems.
-    /// Exhaustion stops before the next record; restart with the same retained file.
-    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..=100))]
-    pub max_attempts: u16,
+    /// Omitted means retry until receipt, a nonretryable failure, or client stop.
+    /// A configured exhaustion stops before the next record; restart with the same file.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_attempts: Option<u64>,
 }
 
 struct RetainedInput {
@@ -97,14 +96,9 @@ impl RetainedInput {
     /// Keep the partial bytes for the next append; never submit a partial JSON.
     fn next(&mut self, follow: bool) -> Result<Option<Vec<u8>>> {
         self.unchanged()?;
-        let allowance = MAX_RECORD_BYTES + 1 - self.pending.len();
-        Read::by_ref(&mut self.reader)
-            .take(allowance as u64)
+        self.reader
             .read_until(b'\n', &mut self.pending)
             .map_err(|_| Failure::Input)?;
-        if self.pending.len() > MAX_RECORD_BYTES {
-            return Err(Failure::Input);
-        }
         if self.pending.ends_with(b"\n") {
             return Ok(Some(std::mem::take(&mut self.pending)));
         }
@@ -130,16 +124,20 @@ async fn submit(
     connection: &Connection,
     request: &Request,
     expected: &AccountObservationSubmitV1,
-    max_attempts: u16,
+    max_attempts: Option<u64>,
     retry_delay: Duration,
 ) -> Result<AccountObservationReceiptV1> {
-    for attempt in 1..=max_attempts {
+    if max_attempts == Some(0) {
+        return Err(Failure::Input);
+    }
+    let mut attempt = 1u64;
+    loop {
         let result = async {
             let response = connection
                 .checked(connection.send(request, None, None).await?, request.status)
                 .await?;
             service_http::media(&response, "application/json")?;
-            let bytes = service_http::body(response, MAX_RECORD_BYTES + 16 * 1024).await?;
+            let bytes = service_http::body(response, None).await?;
             let receipt: AccountObservationReceiptV1 =
                 service_http::decode(&bytes, &connection.credential)?;
             if receipt.resource.observation != *expected {
@@ -149,22 +147,22 @@ async fn submit(
         }
         .await;
         match result {
-            Err(error) if attempt < max_attempts && retryable(&error) => {
+            Err(error) if max_attempts.is_none_or(|maximum| attempt < maximum) && retryable(&error) => {
                 // No envelope or credential values in diagnostic output.
                 eprintln!("CLI_ACCOUNT_RELAY_RETRY attempt={attempt}");
                 tokio::time::sleep(retry_delay).await;
+                attempt = attempt.checked_add(1).ok_or(Failure::Input)?;
             }
             result => return result,
         }
     }
-    Err(Failure::Input)
 }
 
 pub async fn run(arguments: &super::Arguments, relay: &Arguments) -> Result<()> {
     // Account replay belongs to the immutable native envelope, never a file-wide key.
     if arguments.idempotency_key.is_some()
         || arguments.operator_grant.is_some()
-        || relay.max_attempts == 0
+        || relay.max_attempts == Some(0)
         || (arguments.preview && relay.follow)
     {
         return Err(Failure::Input);

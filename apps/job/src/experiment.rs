@@ -2,13 +2,13 @@
 //! generated targets use the existing Nautilus account, fills, fees and equity.
 //! No supervised fitting, future labels, source-specific adapters or live orders.
 use crate::{catalog::load_catalog, feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use bigdecimal::BigDecimal;
-use contracts::{research::DataPartition, science::*, DbCounter, DecimalValue, Id, SchemaV1};
-use domain::execution::features::{effective_available_ns, FeatureState};
+use contracts::{DbCounter, DecimalValue, Id, SchemaV1, research::DataPartition, science::*};
+use domain::execution::features::{FeatureState, effective_available_ns};
 use nautilus_backtest::{config::BacktestEngineConfig, engine::BacktestEngine};
 use nautilus_common::{
-    actor::{data_actor::DataActorConfig, DataActor, DataActorCore},
+    actor::{DataActor, DataActorCore, data_actor::DataActorConfig},
     logging::logger::LoggerConfig,
     nautilus_actor,
 };
@@ -75,7 +75,7 @@ impl CustomDataTrait for FeatureEvent {
 #[derive(Default)]
 struct FeatureReplayStatus {
     decisions: Vec<NativeExperimentDecisionV1>,
-    remaining_fuel: u64,
+    remaining_fuel: Option<u64>,
     failure: bool,
 }
 
@@ -163,7 +163,7 @@ pub(crate) fn replay_features(
     observations: &[FeatureObservationV1],
     decisions: &[(u32, u64, u64)],
     module: &SignalModule,
-    fuel: &mut u64,
+    fuel: &mut Option<u64>,
 ) -> Result<Vec<NativeExperimentDecisionV1>> {
     ensure!(!decisions.is_empty(), "EXPERIMENT_EMPTY_FOLD");
     let last_cutoff = decisions.last().unwrap().2;
@@ -211,7 +211,7 @@ pub(crate) fn replay_features(
             ..DataActorConfig::default()
         }),
         state: FeatureState::new(schema)?,
-        model: FeatureModel::new(module, u32::try_from(decisions.len())?, *fuel)?,
+        model: FeatureModel::new(module, u64::try_from(decisions.len())?, *fuel)?,
         status: status.clone(),
     };
     let mut engine = BacktestEngine::new(BacktestEngineConfig {
@@ -292,11 +292,18 @@ pub fn evaluate(
     ensure!(
         matches!(
             series.instrument,
-            InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_) | InstrumentAny::BinaryOption(_)
+            InstrumentAny::CurrencyPair(_)
+                | InstrumentAny::Equity(_)
+                | InstrumentAny::BinaryOption(_)
         ),
         "EXPERIMENT_TRADED_INSTRUMENT_UNSUPPORTED"
     );
-    crate::prediction::bind_target_context(root, &market, &request.selection, request.binary_option.as_ref())?;
+    crate::prediction::bind_target_context(
+        root,
+        &market,
+        &request.selection,
+        request.binary_option.as_ref(),
+    )?;
     crate::simulation::execution_market(&market, &request.settings)?;
     let horizon = request.label_horizon_observations as usize;
     let eligible = series
@@ -305,16 +312,8 @@ pub fn evaluate(
         .checked_sub(horizon)
         .ok_or_else(|| anyhow::anyhow!("EXPERIMENT_INSUFFICIENT_LABELS"))?;
     let splits = crate::validation::validation_folds(&request.split_policy, eligible)?;
-    ensure!(
-        splits.len() <= MAX_EXPERIMENT_FOLDS,
-        "EXPERIMENT_FOLD_LIMIT"
-    );
-    ensure!(
-        splits.iter().map(|fold| fold.test.len()).sum::<usize>() <= MAX_EXPERIMENT_DECISIONS,
-        "EXPERIMENT_DECISION_LIMIT"
-    );
-    let module = SignalModule::new(wasm)?;
-    let mut fuel = request.total_fuel.get();
+    let module = SignalModule::new(wasm, request.total_fuel.is_some())?;
+    let mut fuel = request.total_fuel.map(|fuel| fuel.get());
     let mut folds = Vec::with_capacity(splits.len());
     for (fold_index, split) in splits.into_iter().enumerate() {
         ensure!(
@@ -407,8 +406,11 @@ pub fn evaluate(
         }
         let simulation_request = NativeSimulationRequestV1 {
             schema_version: SchemaV1,
-            settlements: domain::prediction::binary_option_settlements(request.binary_option.as_ref(),
-                &request.instrument_id, selection.decision_cutoff_ns),
+            settlements: domain::prediction::binary_option_settlements(
+                request.binary_option.as_ref(),
+                &request.instrument_id,
+                selection.decision_cutoff_ns,
+            ),
             selection,
             settings: request.settings.clone(),
             target_points: targets,
@@ -439,7 +441,7 @@ pub fn evaluate(
         ]),
         feature_artifact_ids: feature_artifact_ids.to_vec(),
         instrument_id: request.instrument_id.clone(),
-        consumed_fuel: count(request.total_fuel.get() - fuel)?,
+        consumed_fuel: request.total_fuel.zip(fuel).map(|(total, left)| count(total.get() - left)).transpose()?,
         source_row_count: count(series.bars.len() as u64)?,
         feature_count: u16::try_from(request.feature_schema.len())?,
         folds,

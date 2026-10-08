@@ -44,6 +44,32 @@ pub struct MissionConnection {
     pub session: MissionSession,
 }
 
+/// Pending RPCs have no artificial elapsed-time budget. A committed stop still
+/// aborts the local wait; a possibly sent request retains its original identity
+/// and unknown outcome for reconciliation, never a second send or refund.
+async fn await_mission_operation<T>(
+    store: &Store,
+    run: Id,
+    fence: &WorkerFence,
+    reconciling: bool,
+    operation: impl std::future::Future<Output = Result<T, WorkerFailure>>,
+) -> Result<T, WorkerFailure> {
+    if reconciling {
+        return operation.await;
+    }
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return result,
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel {
+                    return Err(WorkerFailure::LostAuthority);
+                }
+            }
+        }
+    }
+}
+
 impl Worker {
     /// Trusted queue entry point, shared by the daemon and actual native tests.
     /// Pin the pipeline on the heap before callers embed it in larger futures.
@@ -136,7 +162,7 @@ impl Worker {
                 connection
                     .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
                     .await?;
-                self.capture_mission_summary(&mut connection, lease).await
+                self.capture_mission_summary(&mut connection, lease, true).await
             })
             .await;
             let closed = connection.client.close().await;
@@ -201,7 +227,7 @@ impl Worker {
             connection
                 .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
                 .await?;
-            self.capture_mission_summary(&mut connection, lease).await?;
+            self.capture_mission_summary(&mut connection, lease, false).await?;
             Ok(())
         }
         .await;
@@ -215,6 +241,7 @@ impl Worker {
         &self,
         connection: &mut MissionConnection,
         lease: &RunLease,
+        reconciling: bool,
     ) -> Result<(), WorkerFailure> {
         let Some(latest) = self
             .store
@@ -232,12 +259,13 @@ impl Worker {
             return Ok(());
         }
         let turn = latest.native_turn_id.ok_or(WorkerFailure::Contract)?;
-        let message = connection
-            .client
-            .public_summary(&connection.session.native.thread_id, &turn)
-            .await
-            .map_err(|reason| WorkerFailure::Codex("PUBLIC_SUMMARY", reason))?
-            .ok_or(WorkerFailure::Contract)?;
+        let message = await_mission_operation(
+            &self.store, lease.run.id, &lease.fence, reconciling,
+            async {
+                connection.client.public_summary(&connection.session.native.thread_id, &turn)
+                    .await.map_err(|reason| WorkerFailure::Codex("PUBLIC_SUMMARY", reason))
+            },
+        ).await?.ok_or(WorkerFailure::Contract)?;
         let summary = NativePublicSummary {
             schema_version: contracts::SchemaV1,
             native_turn_id: turn,
@@ -469,7 +497,7 @@ impl MissionLauncher {
         Ok(path)
     }
 
-    /// Callers must maintain the existing Attempt heartbeat while this bounded
+    /// Callers must maintain the existing Attempt heartbeat while this
     /// bootstrap runs. It does not send a paid turn or mark the Run as RUNNING.
     pub async fn open(
         &self,
@@ -489,14 +517,9 @@ impl MissionLauncher {
         fence: &WorkerFence,
         monitor_sender: Option<watch::Sender<Option<native::ResourceMonitor>>>,
     ) -> Result<MissionConnection, WorkerFailure> {
-        tokio::time::timeout(
-            Duration::from_secs(110),
-            self.open_inner(store, vault, run, fence, monitor_sender),
-        )
-        .await
-        .map_err(|_| {
-            WorkerFailure::Codex("BOOTSTRAP_TIMEOUT", native::NativeFailure::Unavailable)
-        })?
+        let reconciling = store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel;
+        await_mission_operation(store, run, fence, reconciling,
+            self.open_inner(store, vault, run, fence, monitor_sender)).await
     }
 
     async fn open_inner(

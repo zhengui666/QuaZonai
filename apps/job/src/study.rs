@@ -1,6 +1,6 @@
 //! Offline rolling science, with one native account and no fabricated source identities.
-use anyhow::{ensure, Result};
-use contracts::{portfolio::*, science::*, DbCounter, Id, SchemaV1};
+use anyhow::{Result, ensure};
+use contracts::{DbCounter, Id, SchemaV1, portfolio::*, science::*};
 use std::{collections::BTreeMap, path::Path};
 
 fn count(value: u64) -> Result<DbCounter> {
@@ -63,14 +63,9 @@ pub fn evaluate(
             );
         }
     }
-    for model in &mut models {
-        model.parameters.total_fuel =
-            count(model.parameters.total_fuel.get() / cutoffs.len() as u64)?;
-    }
     let mut frames = Vec::new();
     let mut points = Vec::new();
-    let mut consumed = 0_u64;
-    let mut return_values = 0_usize;
+    let mut consumed = Some(0_u64);
     let ttl = u64::from(request.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000;
     // ponytail: bounded prefix recomputation; stream/cache frames if this measured cost limits throughput.
     for cutoff in cutoffs {
@@ -92,13 +87,14 @@ pub fn evaluate(
                     .ok_or_else(|| anyhow::anyhow!("STUDY_MODEL_MISSING"))
             },
         )?;
-        return_values = return_values
-            .checked_add(prepared.returns.end_ns.len() * request.assets.len())
-            .ok_or_else(|| anyhow::anyhow!("STUDY_INPUT_LIMIT"))?;
-        ensure!(return_values <= MAX_RETURN_VALUES, "STUDY_INPUT_LIMIT");
-        consumed = consumed
-            .checked_add(prepared.consumed_fuel.get())
-            .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
+        // Carry each model's unspent explicit budget across cutoffs. Do not
+        // invent a fixed per-cutoff quota or refill the original task budget.
+        for (model, remaining) in models.iter_mut().zip(&prepared.remaining_fuel) {
+            model.parameters.total_fuel = *remaining;
+        }
+        consumed = consumed.zip(prepared.consumed_fuel).map(|(sum, next)| {
+            sum.checked_add(next.get()).ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
+        }).transpose()?;
         let bar_notionals = if request.rolling_liquidity.is_some() {
             crate::catalog::last_bar_notionals(&market)?
         } else {
@@ -189,7 +185,7 @@ pub fn evaluate(
     };
     let result = NativePortfolioStudyResultV1 {
         schema_version: SchemaV1,
-        consumed_fuel: count(consumed)?,
+        consumed_fuel: consumed.map(count).transpose()?,
         frames,
         simulation_request,
         simulation,

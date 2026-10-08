@@ -377,7 +377,7 @@ async fn impossible_stage_allocations_are_rejected_before_any_trial_or_run(pool:
                         .max_wall_seconds
                         .map(|seconds| seconds + 1)
                 }
-                1 => limits.memory_mib = f.brief.content.budget.max_memory_mib + 1,
+                1 => limits.memory_mib = f.brief.content.budget.max_memory_mib.map(|memory| memory + 1),
                 2 => {
                     limits.output_bytes = Some(
                         contracts::DbCounter::new(

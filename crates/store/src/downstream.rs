@@ -94,9 +94,6 @@ fn encode(
     }
     let bytes = serde_json::to_vec(&json!({"schema_version":1,"result":outcome}))
         .map_err(|_| StoreError::Integrity)?;
-    if bytes.len() > 64 * 1024 {
-        return Err(StoreError::Invalid("downstream_probe_artifact_size"));
-    }
     Ok(bytes)
 }
 

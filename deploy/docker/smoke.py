@@ -1054,7 +1054,7 @@ def verify_runtime(config: dict) -> None:
             "docker_socket": config["docker_socket"], "bind": f"127.0.0.1:{port}",
             "images": [{"job_kind": "DATA_VALIDATE", "image_ref": config["runtime_image"]}],
             "catalogs": [], "max_cpu": 1, "max_memory_mib": 1024, "max_wall_seconds": 120,
-            "max_output_bytes": 67108864, "max_parallel_jobs": 2, "max_pending_jobs": 8,
+            "max_output_bytes": None, "max_parallel_jobs": 2, "max_pending_jobs": 8,
             "storage_quota_bytes": 268435456,
         }
         path = directory / "runtime.json"

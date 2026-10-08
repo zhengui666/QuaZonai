@@ -154,7 +154,7 @@ not a registry of trusted historical implementations. It is neither code
 attestation nor the upstream data revision. Original v1 provider/parser rules
 must remain reproducible when future implementations add capabilities.
 
-## Parsing and bounded validation
+## Parsing and source validation
 
 Timestamp units follow the selected source date: milliseconds before 2025-01-01,
 microseconds on/after it. Unit guessing by digit count is forbidden. Opens must
@@ -172,7 +172,7 @@ Decimal lexemes allow digits and an optional fractional part, without exponent,
 sign, whitespace or redundant integer leading zeros. Decimal construction and
 comparisons retain exact values; normalization never uses binary floats or
 rounds to a guessed tick. Base and quote volumes remain separate; no invented
-close-times-volume equality is tested. The ignored field is bounded printable
+close-times-volume equality is tested. The ignored field is printable
 ASCII and retained without assigned semantics.
 
 Missing buckets remain absent and are listed. An empty member publishes
@@ -180,13 +180,14 @@ Missing buckets remain absent and are listed. An empty member publishes
 fees, original definitions, feed receipt times, calendar, availability or PIT
 evidence are generated.
 
-Fixed limits are 1 MiB ZIP, 4 KiB checksum, 4 MiB decoded member, at most 1,440
-rows, 4 KiB per physical row, 128 bytes per field, 100 decimal digits, 4 KiB
-provenance, 2 MiB per evidence file across four fixed roles, 4 MiB normalized
-rows and 256 KiB manifest. All retained output fits below 18 MiB. The checksum
-must contain one SHA-256 entry for the exact expected ZIP basename (text/binary
-checksum markers allowed), optionally followed by one LF/CRLF. Extra entries,
-paths, wrong hashes and oversized input fail.
+There are no application-imposed archive, decoded-member, field, decimal,
+provenance, evidence, record or manifest byte budgets. The explicit UTC day and
+interval still determine the maximum possible nonduplicate bucket count, and all
+gaps remain reported. The checksum must contain one SHA-256 entry for the exact
+expected ZIP basename (text/binary checksum markers allowed), optionally followed
+by one LF/CRLF. Extra entries, paths and wrong hashes fail. New manifest `limits`
+values are `null`; verification preserves historical positive limit metadata
+without rewriting the frozen envelope or using it as an input/output cap.
 
 The [stdlib ZIP APIs](https://docs.python.org/3/library/zipfile.html) enumerate
 exactly one regular member, compare its expected basename, reject path aliases,
@@ -194,10 +195,10 @@ directories/special-file metadata, duplicate/extra members, encryption flags and
 unsupported compression. Only stored/deflate is accepted. A canonical public
 `ZipInfo` name probe rejects NUL suffix aliases. A shallow copy of the member
 retains the stdlib's local-header/overlap checks while its public decoded-size
-field is set to the independent byte budget for reading. This prevents a forged
+field permits one byte past the member's declared size. This prevents a forged
 declared size and matching prefix CRC from clipping away later rows. The original
-size, CRC and metadata remain unchanged and are compared with the bounded decoded
-bytes; over-budget data and mismatches are rejected before CSV parsing.
+size, CRC and metadata remain unchanged and are compared with the decoded bytes;
+source size or CRC mismatches are rejected before CSV parsing.
 There are no private ZIP API calls, extraction calls or handwritten container or
 compression parsers. Advertised sizes, emitted bytes and CRC are checked; an
 exposed nonzero first local-header offset is rejected as a prefix.
@@ -205,7 +206,7 @@ exposed nonzero first local-header offset is rejected as a prefix.
 **This does not certify a canonical ZIP container.** The public APIs do not
 provide a complete raw-envelope/consumed-compressed-byte validation contract.
 Unused ZIP64 records, extra fields, comments, trailing payloads and noncanonical
-disk/header metadata may be accepted when the stdlib accepts the bounded member.
+disk/header metadata may be accepted when the stdlib accepts the selected member.
 Do not infer independent enforcement of every disk-number flag, exact compressed
 stream termination or absence of bytes outside the decoded member. Synthetic
 tests explicitly demonstrate accepted ZIP64/trailing variants and preserve their

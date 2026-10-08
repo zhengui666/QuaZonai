@@ -100,7 +100,7 @@ pub async fn prepare(pool: &PgPool, f: data::Fixture) -> Fixture {
             experiments: 0,
             cpu_seconds: Some(DbCounter::new(10).unwrap()),
             wall_seconds: Some(60),
-            memory_mib: 512,
+            memory_mib: Some(512),
             output_bytes: Some(DbCounter::new(65_536).unwrap()),
         },
     };

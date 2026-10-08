@@ -18,7 +18,7 @@ pub struct Journal {
     pool: SqlitePool,
     pub instance_id: Id,
     quota: i64,
-    max_pending: i64,
+    max_pending: Option<i64>,
 }
 
 #[derive(Clone, sqlx::FromRow)]
@@ -52,9 +52,6 @@ fn request_document(spec: &JobSpecV1) -> Result<String> {
         return Err(Failure::Invalid("external_job_id"));
     }
     let document = serde_json::to_string(spec)?;
-    if document.len() > boundary::MAX_JOB_REQUEST_BYTES {
-        return Err(Failure::Invalid("job_size"));
-    }
     Ok(document)
 }
 fn replay_status(row: &NativeJob, document: &str) -> Result<RuntimeJobStatusV1> {
@@ -119,9 +116,10 @@ impl NativeJob {
 }
 
 impl Journal {
-    pub async fn open(path: &Path, quota_bytes: u64, max_pending: u32) -> Result<Self> {
-        if !(64 * 1024 * 1024..=1_099_511_627_776).contains(&quota_bytes)
-            || !(1..=4096).contains(&max_pending)
+    pub async fn open(path: &Path, quota_bytes: u64, max_pending: impl Into<Option<u32>>) -> Result<Self> {
+        let max_pending = max_pending.into();
+        if quota_bytes == 0 || quota_bytes > i64::MAX as u64
+            || max_pending == Some(0)
         {
             return Err(Failure::Invalid("journal_limits"));
         }
@@ -170,7 +168,7 @@ impl Journal {
             pool,
             instance_id,
             quota: quota_bytes as i64,
-            max_pending: i64::from(max_pending),
+            max_pending: max_pending.map(i64::from),
         })
     }
 
@@ -194,7 +192,7 @@ impl Journal {
         bytes: &[u8],
     ) -> Result<(RuntimeObjectReceiptV1, bool)> {
         boundary::storage_version(version).map_err(|_| Failure::Invalid("storage_version"))?;
-        if bytes.is_empty() || bytes.len() as u64 > boundary::MAX_INPUT_OBJECT_BYTES {
+        if bytes.is_empty() {
             return Err(Failure::Invalid("object_size"));
         }
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -270,7 +268,7 @@ impl Journal {
             sqlx::query_scalar("SELECT COUNT(*) FROM runtime_jobs WHERE phase!='TERMINAL'")
                 .fetch_one(&mut *tx)
                 .await?;
-        if pending >= self.max_pending {
+        if self.max_pending.is_some_and(|maximum| pending >= maximum) {
             return Err(Failure::Busy);
         }
         let materialization =
@@ -319,12 +317,12 @@ impl Journal {
     }
     /// Read only bounded scheduling metadata; do not load thousands of 1 MiB specs.
     pub async fn scheduling(&self) -> Result<Vec<(String, String, bool)>> {
-        Ok(sqlx::query_as("SELECT external_id,phase,(cancel_requested_us IS NOT NULL OR stop_code IS NOT NULL OR (deadline_us IS NOT NULL AND deadline_us<=?)) FROM runtime_jobs WHERE phase!='TERMINAL' ORDER BY 3 DESC,(phase!='QUEUED') DESC,submitted_us,external_id LIMIT 4096")
+        Ok(sqlx::query_as("SELECT external_id,phase,(cancel_requested_us IS NOT NULL OR stop_code IS NOT NULL OR (deadline_us IS NOT NULL AND deadline_us<=?)) FROM runtime_jobs WHERE phase!='TERMINAL' ORDER BY 3 DESC,(phase!='QUEUED') DESC,submitted_us,external_id")
             .bind(now().timestamp_micros()).fetch_all(&self.pool).await?)
     }
 
     pub async fn pending(&self, limit: u32) -> Result<Vec<NativeJob>> {
-        if !(1..=4096).contains(&limit) {
+        if limit == 0 {
             return Err(Failure::Invalid("limit"));
         }
         Ok(sqlx::query_as("SELECT * FROM runtime_jobs WHERE phase!='TERMINAL' ORDER BY submitted_us,external_id LIMIT ?")
@@ -372,9 +370,6 @@ impl Journal {
         launch: &bollard::models::ContainerCreateBody,
     ) -> Result<bool> {
         let document = serde_json::to_string(launch)?;
-        if document.len() > 2 * 1024 * 1024 {
-            return Err(Failure::Invalid("native_launch_size"));
-        }
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let row = Self::find(&mut tx, id).await?.ok_or(Failure::Missing)?;
         if row.phase == "TERMINAL" || row.cancel_requested_us.is_some() || row.stop_code.is_some() {
@@ -595,9 +590,6 @@ impl Journal {
                 .bind(bytes).bind(bytes.len() as i64).execute(&mut *tx).await?;
         }
         let document = serde_json::to_string(&manifest)?;
-        if document.len() > boundary::MAX_RESULT_MANIFEST_BYTES {
-            return Err(Failure::Invalid("manifest_size"));
-        }
         sqlx::query("UPDATE runtime_jobs SET phase='TERMINAL',terminal_state=?,finished_us=?,manifest_json=?,output_reservation=0 WHERE external_id=?")
             .bind(code(&manifest.state)?).bind(manifest.finished_at.timestamp_micros()).bind(document)
             .bind(id).execute(&mut *tx).await?;

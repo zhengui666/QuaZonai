@@ -1,6 +1,7 @@
 //! Weight strategies share the existing Alpha, Run, candidate and delivery
 //! aggregates. Their outputs are target weights, never return forecasts.
 use crate::{
+    DbCounter, DecimalValue, Id, Revision, SchemaV1,
     evidence::AlphaVersionView,
     portfolio::{AllocationTargetV1, PortfolioConstraintsV1},
     research::{DataOrigin, PitStatus},
@@ -8,7 +9,6 @@ use crate::{
         FeatureDefinitionV1, NativeBarSelectionV1, NativeSimulationRequestV1,
         NativeSimulationResultV1, NativeSimulationSettingsV1, NativeTargetPointV1,
     },
-    DbCounter, DecimalValue, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -224,7 +224,7 @@ pub struct StrategyPortfolioBuildV1 {
     pub input_set_id: Id,
     pub runtime_id: Id,
     pub expected_runtime_revision: Revision,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub members: Vec<StrategyMemberSelectionV1>,
     pub purpose: StrategyPortfolioPurposeV1,
     #[schema(schema_with = crate::data::bounded_native_limits_schema)]
@@ -276,9 +276,11 @@ pub struct NativeStrategyCompositionRequestV1 {
     pub settings: NativeSimulationSettingsV1,
     pub purpose: StrategyPortfolioPurposeV1,
     pub input_provenance: StrategyInputProvenanceV1,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub members: Vec<NativeStrategyMemberV1>,
-    pub total_fuel: DbCounter,
+    /// Optional execution budget; absent disables Wasmi fuel metering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_fuel: Option<DbCounter>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -306,7 +308,10 @@ pub struct NativeStrategyCompositionResultV1 {
     pub schema_version: SchemaV1,
     pub request: NativeStrategyCompositionRequestV1,
     pub native_versions: BTreeMap<String, String>,
-    pub consumed_fuel: DbCounter,
+    /// None means some execution was unmetered, not a measured zero.
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
     pub outcome: StrategyCompositionOutcomeV1,
 }
 

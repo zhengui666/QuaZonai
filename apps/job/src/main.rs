@@ -103,16 +103,7 @@ fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
 }
 
 fn input<T: DeserializeOwned>() -> Result<T> {
-    const MAX_INPUT_BYTES: u64 = 8 * 1024 * 1024;
-    let mut bytes = Vec::new();
-    std::io::stdin()
-        .lock()
-        .take(MAX_INPUT_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_INPUT_BYTES {
-        anyhow::bail!("native job input limit");
-    }
-    Ok(serde_json::from_slice(&bytes)?)
+    Ok(serde_json::from_reader(std::io::stdin().lock())?)
 }
 
 fn output<T: Serialize>(value: &T) -> Result<()> {
@@ -123,9 +114,9 @@ fn output<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
+fn model_bytes(path: &Path) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() || metadata.len() > maximum_bytes as u64 {
+    if !metadata.is_file() {
         anyhow::bail!("native model file limit");
     }
     // Only the runtime's registered read-only model mount is passed here. These
@@ -144,10 +135,10 @@ fn model_bytes(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>> {
         anyhow::bail!("native model is not a file");
     }
     let mut bytes = Vec::new();
-    file.take(maximum_bytes as u64 + 1)
+    file.take(metadata.len().saturating_add(1))
         .read_to_end(&mut bytes)?;
-    if bytes.len() > maximum_bytes {
-        anyhow::bail!("native model file limit");
+    if bytes.len() as u64 != metadata.len() {
+        anyhow::bail!("native model file changed");
     }
     Ok(bytes)
 }
@@ -182,12 +173,12 @@ fn run(operation: Operation) -> Result<()> {
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,
             &input()?,
-            &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
+            &model_bytes(&model)?,
         )?),
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,
-            &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
+            &model_bytes(&model)?,
         )?),
         Operation::EvaluateExperiment {
             catalog,
@@ -202,9 +193,7 @@ fn run(operation: Operation) -> Result<()> {
                 .into_iter()
                 .map(|path| -> Result<_> {
                     Ok(serde_json::from_slice(&model_bytes(
-                        &path,
-                        2 * 1024 * 1024,
-                    )?)?)
+                        &path)?)?)
                 })
                 .collect::<Result<Vec<_>>>()?;
             output(&job::experiment::evaluate(
@@ -214,7 +203,7 @@ fn run(operation: Operation) -> Result<()> {
                 model_artifact_id,
                 &feature_artifact_id,
                 &parts,
-                &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
+                &model_bytes(&model)?,
             )?)
         }
         Operation::EvaluateSealedAlpha {
@@ -225,21 +214,21 @@ fn run(operation: Operation) -> Result<()> {
             let calibration = calibration
                 .map(
                     |p| -> Result<contracts::science::NativeFrozenCalibrationV1> {
-                        Ok(serde_json::from_slice(&model_bytes(&p, 8 * 1024 * 1024)?)?)
+                        Ok(serde_json::from_slice(&model_bytes(&p)?)?)
                     },
                 )
                 .transpose()?;
             output(&job::validation::evaluate_sealed_alpha(
                 &catalog,
                 &input()?,
-                &model_bytes(&model, job::signals::MAX_SIGNAL_MODULE_BYTES)?,
+                &model_bytes(&model)?,
                 calibration.as_ref(),
             )?)
         }
         Operation::Simulate { catalog, dataset_revision_id } => output(&job::simulation::simulate_explicit(&catalog, &input()?, dataset_revision_id)?),
         Operation::StudyPortfolio { catalog, objects } => {
             output(&job::study::evaluate(&catalog, &input()?, |id| {
-                model_bytes(&objects.join(id.to_string()), 8 * 1024 * 1024)
+                model_bytes(&objects.join(id.to_string()))
             })?)
         }
     }
@@ -259,26 +248,15 @@ fn public_error_code(error: &anyhow::Error) -> &'static str {
 }
 
 fn public_failure(error: &anyhow::Error) -> String {
-    const MAX_DETAIL_BYTES: usize = 4096;
     let mut detail = format!("{error:#}");
     // Fields deliberately has a generic Display for other transports. Preserve
     // its actual field/code diagnostics only at this local native CLI boundary.
     for cause in error.chain() {
         if let Some(domain::DomainError::Fields(issues)) = cause.downcast_ref() {
             for issue in issues {
-                if detail.len() > MAX_DETAIL_BYTES {
-                    break;
-                }
                 detail.push_str(&format!("; {} [{}]", issue.field, issue.code));
             }
         }
-        if detail.len() > MAX_DETAIL_BYTES {
-            break;
-        }
-    }
-    if detail.len() > MAX_DETAIL_BYTES {
-        detail.truncate(detail.floor_char_boundary(MAX_DETAIL_BYTES));
-        detail.push_str(" [truncated]");
     }
     format!("{}\n{detail}", public_error_code(error))
 }
@@ -386,8 +364,7 @@ mod tests {
         let diagnostic = public_failure(&anyhow::anyhow!("界".repeat(2000)));
         let (code, detail) = diagnostic.split_once('\n').unwrap();
         assert_eq!(code, "QZ_NATIVE_JOB_FAILED");
-        assert_eq!(detail, format!("{} [truncated]", "界".repeat(1365)));
-        assert!(detail.len() <= 4096 + " [truncated]".len());
+        assert_eq!(detail, "界".repeat(2000));
     }
 
     #[test]

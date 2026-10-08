@@ -792,3 +792,71 @@ async fn native_cli_reads_observation_and_wake_history_without_mutation() {
         assert!(seen[0].key.is_none());
     }
 }
+
+#[tokio::test]
+async fn native_cli_keeps_complete_json_above_the_former_response_limit() {
+    for chunked in [false, true] {
+        let expected = json!({"schema_version":1,"items":[source(Id::new())],"next_cursor":null});
+        let f = Fixture::new(|_| {
+            let mut reply = Reply::json(expected.clone());
+            reply.bytes.resize(1024 * 1024 + 1, b' ');
+            reply.chunk_bytes = chunked.then_some(32 * 1024);
+            vec![reply]
+        }).await;
+        let output = f.execute(&args(&["data", "source", "list"]), b"").await;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), expected);
+        assert_eq!(f.seen.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn native_sse_preserves_events_past_single_and_cumulative_byte_limits() {
+    let run = Id::new();
+    let mut frames = String::new();
+    let original = "x".repeat(1024 * 1024 + 1);
+    for seq in 1..=17 {
+        let mut document = event(run, seq);
+        document["payload"]["original"] = json!(original);
+        frames.push_str(&format!("id: {run}:{seq}\nevent: future.public_observation\ndata: {document}\n\n"));
+    }
+    let f = Fixture::new(|_| vec![Reply {
+        status: StatusCode::OK, media: "text/event-stream", bytes: frames.into_bytes(),
+        headers: vec![], chunk_bytes: Some(32 * 1024),
+    }]).await;
+    let output = f.execute(&args(&[
+        "run", "watch", &run.to_string(), "--max-events", "17", "--max-seconds", "10",
+    ]), b"").await;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let values: Vec<Value> = std::str::from_utf8(&output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(values.len(), 18);
+    for seq in 1..=17 {
+        let mut expected = event(run, seq as u64);
+        expected["payload"]["original"] = json!(original);
+        assert_eq!(values[seq - 1]["event"], expected);
+        assert_eq!(values[seq - 1]["event_id"], format!("{run}:{seq}"));
+    }
+    assert_eq!(values[17]["events_received"], 17);
+    assert_eq!(values[17]["last_event_id"], format!("{run}:17"));
+    assert_eq!(values[17]["cancellation_requested"], false);
+    assert_eq!(f.seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn complete_large_problem_retains_the_original_status_and_receipt() {
+    let expected = problem(409);
+    let f = Fixture::new(|_| {
+        let mut reply = Reply::json(expected.clone());
+        reply.status = StatusCode::CONFLICT;
+        reply.media = "application/problem+json";
+        reply.bytes.resize(1024 * 1024 + 1, b' ');
+        reply.chunk_bytes = Some(32 * 1024);
+        vec![reply]
+    }).await;
+    let output = f.execute(&args(&["data", "source", "list"]), b"").await;
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap(), expected);
+    assert_eq!(f.seen.lock().unwrap().len(), 1);
+}

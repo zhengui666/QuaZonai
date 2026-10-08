@@ -38,8 +38,6 @@ use crate::{
     simulation::{ReplayStatus, streaming_paper_target_strategy},
 };
 
-const MAX_TIMESTAMP_EVENTS: usize = 65_536;
-
 /// Retain the final timestamp until a later native timestamp or source EOF proves
 /// that it is complete. Late/equal-after-flush input never becomes a new batch.
 #[derive(Default)]
@@ -79,10 +77,6 @@ impl TimestampBatch {
         } else {
             None
         };
-        ensure!(
-            self.pending.len() < MAX_TIMESTAMP_EVENTS,
-            "PAPER_STREAM_TIMESTAMP_CAPACITY"
-        );
         self.pending_at = Some(at);
         self.pending.push(data);
         Ok(complete)

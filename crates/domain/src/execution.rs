@@ -1,11 +1,11 @@
 //! Bind fixed native operations to the already admitted immutable job inputs.
-use crate::{research::invalid, DomainError};
+use crate::{DomainError, research::invalid};
 use contracts::{
+    Id,
     execution::NativeTaskParametersV1,
     research::ArtifactInputRole,
     runtime_jobs::{JobSpecV1, RuntimeInputV1},
     science::NativeBarSelectionV1,
-    Id,
 };
 use std::collections::BTreeSet;
 
@@ -35,9 +35,22 @@ fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_TASK_BINDING_INVALID")
 }
 
+/// A missing measurement is valid only when execution metering was disabled.
+/// u128 accommodates sums of explicit DbCounter budgets without imposing a cap.
+pub(crate) fn fuel_within_budget(
+    consumed: Option<contracts::DbCounter>,
+    budget: Option<u128>,
+) -> bool {
+    match (consumed, budget) {
+        (Some(consumed), Some(budget)) => u128::from(consumed.get()) <= budget,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn selection(value: &NativeBarSelectionV1) -> Result<(), DomainError> {
-    if !(1..=256).contains(&value.bar_types.len())
-        || !(1..=1_000_000).contains(&value.maximum_rows)
+    if value.bar_types.len() < 1
+        || value.maximum_rows < 1
         || value.event_start_ns >= value.event_end_ns
         || value.event_end_ns > value.decision_cutoff_ns
     {
@@ -60,9 +73,8 @@ pub fn forecast_request(
     let parameters = &request.parameters;
     if parameters.fast_period == 0
         || parameters.slow_period <= parameters.fast_period
-        || parameters.slow_period > 10_000
-        || !(1..=100_000).contains(&parameters.label_horizon_observations)
-        || !(1..=1_000_000_000).contains(&parameters.total_fuel.get())
+        || parameters.label_horizon_observations == 0
+        || parameters.total_fuel == Some(contracts::DbCounter::ZERO)
     {
         return Err(bad("forecast_parameters"));
     }
@@ -117,20 +129,19 @@ fn forecast_inputs(
 pub fn experiment_request(
     request: &contracts::science::NativeExperimentEvaluationRequestV1,
 ) -> Result<(), DomainError> {
-    use contracts::{research::SplitKind, science::MAX_EXPERIMENT_ROWS};
+    use contracts::research::SplitKind;
     selection(&request.selection)?;
     features::schema(&request.feature_schema)?;
     crate::control::text(&request.instrument_id, 1, 200, false)?;
     if request.selection.bar_types.len() != 1
         || request.selection.bar_types[0].rsplitn(5, '-').nth(4)
             != Some(request.instrument_id.as_str())
-        || request.selection.maximum_rows > MAX_EXPERIMENT_ROWS
         || request.split_policy.kind != SplitKind::WalkForward
         || request
             .split_policy
             .step_size
             .is_none_or(|n| n < request.split_policy.test_size)
-        || !(1..=1_000_000_000).contains(&request.total_fuel.get())
+        || request.total_fuel == Some(contracts::DbCounter::ZERO)
         || request.target_ttl_ns == contracts::DbCounter::ZERO
     {
         return Err(bad("experiment_request"));
@@ -150,8 +161,12 @@ pub fn experiment_request(
     {
         return Err(bad("experiment_settings"));
     }
-    crate::prediction::binary_option_request(request.binary_option.as_ref(),
-        &request.selection, &request.instrument_id, &request.settings)?;
+    crate::prediction::binary_option_request(
+        request.binary_option.as_ref(),
+        &request.selection,
+        &request.instrument_id,
+        &request.settings,
+    )?;
     Ok(())
 }
 fn artifact(spec: &JobSpecV1, id: Id, expected: ArtifactInputRole) -> bool {
@@ -224,7 +239,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             }
         }
         NativeTaskParametersV1::ValidateData { selections, .. } => {
-            if !(1..=256).contains(&selections.len()) {
+            if selections.len() < 1 {
                 return Err(bad("selections"));
             }
             let mut seen = BTreeSet::new();
@@ -274,9 +289,9 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
                 || !spec.inputs.iter().any(|i| matches!(i, RuntimeInputV1::Dataset {revision_id, role: contracts::research::DataPartition::Validation, ..} if revision_id == dataset_revision_id))
                 || spec.inputs.iter().any(|i| match i {
                     RuntimeInputV1::Dataset { revision_id, role, .. } => revision_id != dataset_revision_id || *role != contracts::research::DataPartition::Validation,
-                    RuntimeInputV1::Artifact { artifact_id, role, byte_count, .. } => !(*artifact_id == *model_artifact_id && *role == ArtifactInputRole::Model
+                    RuntimeInputV1::Artifact { artifact_id, role, .. } => !(*artifact_id == *model_artifact_id && *role == ArtifactInputRole::Model
                         || *artifact_id == spec.parameters_artifact_id && *role == ArtifactInputRole::Parameters
-                        || ids.contains(artifact_id) && *role == ArtifactInputRole::Parameters && byte_count.get() <= contracts::artifacts::MAX_UPLOAD_BYTES as u64),
+                        || ids.contains(artifact_id) && *role == ArtifactInputRole::Parameters),
                 }) {
                 return Err(bad("experiment_inputs"));
             }
@@ -396,7 +411,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             selection(&request.selection)?;
             if !dataset(spec, *dataset_revision_id)
                 || spec.inputs.iter().any(|input| matches!(input, RuntimeInputV1::Dataset { revision_id, .. } if *revision_id != *dataset_revision_id))
-                || !(1..=10_000).contains(&request.target_points.len())
+                || request.target_points.is_empty()
             { return Err(bad("simulation_inputs")); }
             let bound = match parameters {
                 NativeTaskParametersV1::SimulateCandidate {

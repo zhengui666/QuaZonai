@@ -38,7 +38,7 @@ where
         .bind(candidate_id.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::Invalid("portfolio_last_target"))?;
     let id = db::id(row.try_get("target_artifact_id")?)?;
     let size = counter(row.try_get("byte_count")?)?;
-    if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+    if size == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let bytes = read(id, size).await?;
@@ -62,7 +62,7 @@ where
     .await?;
     let mut sorted = document.targets.clone();
     sorted.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
-    if targets.is_empty() || targets.len() != sorted.len() || targets.len() > MAX_ALLOCATION_ASSETS
+    if targets.is_empty() || targets.len() != sorted.len()
     {
         return Err(StoreError::Integrity);
     }
@@ -129,7 +129,7 @@ where
                     .map_err(|_| StoreError::Integrity)?;
             let id = db::id(row.try_get("report_artifact_id")?)?;
             let size = counter(row.try_get("byte_count")?)?;
-            if size == DbCounter::ZERO || size.get() > 1024 * 1024 {
+            if size == DbCounter::ZERO {
                 return Err(StoreError::Integrity);
             }
             let bytes = read(id, size).await?;

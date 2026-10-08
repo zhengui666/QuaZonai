@@ -55,7 +55,6 @@ where
         parameter,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         &mut read,
     )
     .await?;
@@ -106,7 +105,6 @@ where
             manifest_id,
             Some((run.id, attempt)),
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             &mut read,
         )
         .await?,
@@ -146,7 +144,6 @@ where
         report_id,
         Some((run.id, attempt)),
         "qz.strategy_portfolio",
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
         &mut read,
     )
     .await?;

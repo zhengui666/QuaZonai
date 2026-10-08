@@ -2,7 +2,6 @@
 use super::bad;
 use crate::DomainError;
 use contracts::{
-    artifacts::MAX_UPLOAD_BYTES,
     catalogs::{DataRevisionPolicy, RuntimeCatalogMetadataV1},
     data::{
         RecordedFeatureRegisterIntentV1, RecordedFeatureRegisterV1, RecordedFeatureSourceBindingV1,
@@ -16,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub fn recorded_feature_intent(value: &RecordedFeatureRegisterIntentV1) -> Result<(), DomainError> {
     crate::catalogs::recorded_feature_part_key(&value.feature_part_key)?;
-    if !(1..=MAX_UPLOAD_BYTES as u64).contains(&value.byte_count.get()) {
+    if value.byte_count.get() == 0 {
         return Err(bad("feature.content_size"));
     }
     Ok(())
@@ -28,7 +27,7 @@ pub fn recorded_feature_register(
     value: &RecordedFeatureRegisterV1,
 ) -> Result<FeatureObservationsV1, DomainError> {
     crate::catalogs::recorded_feature_part_key(&value.feature_part_key)?;
-    if !(1..=MAX_UPLOAD_BYTES).contains(&value.content.len()) || value.content.contains('\0') {
+    if value.content.is_empty() || value.content.contains('\0') {
         return Err(bad("feature.content_size"));
     }
     let parsed: FeatureObservationsV1 =

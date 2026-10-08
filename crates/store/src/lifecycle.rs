@@ -2,27 +2,27 @@
 //! services receive this Store; external workers, shell code and Agent tools do
 //! not receive database credentials or a generic dispatch/terminal endpoint.
 use crate::{
+    Store, StoreError,
     authority::{self, Actor},
     commands, db,
     turns::WorkerFence,
-    Store, StoreError,
 };
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
+    DbCounter, Id, Revision, SchemaV1,
     budget::{BudgetV1, StopRuleV1},
     control::{CommandResult, MachineScope, Page, PrincipalKind},
     lifecycle::*,
     runs::{ProjectState, RunKind, RunSnapshotV1, RunState},
-    DbCounter, Id, Revision, SchemaV1,
 };
 use domain::{
+    DomainError,
     admission::{self, BudgetUsage, CostUsage, Reservation},
     runs::{self, AttemptLease, RemoteTerminal},
-    DomainError,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
+use serde_json::{Value, json};
+use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
 mod experiment;
 mod external_experiment;
@@ -58,7 +58,7 @@ pub struct StandaloneRunSubmission {
     pub runtime_revision: Revision,
     pub kind: RunKind,
     pub limits: JobLimitsV1,
-    pub max_parallel_runs: u16,
+    pub max_parallel_runs: Option<u32>,
 }
 #[derive(Clone, Debug)]
 pub struct RunMessage {
@@ -636,7 +636,7 @@ impl Store {
             used_experiments: u32::try_from(c.try_get::<i64, _>("used_experiments")?)
                 .map_err(|_| StoreError::Integrity)?,
             reserved_cpu_seconds: counter(c.try_get("reserved_cpu_seconds")?)?,
-            active_runs: u16::try_from(active)
+            active_runs: u64::try_from(active)
                 .map_err(|_| DomainError::BudgetExhausted("parallel_runs"))?,
             reserved_tokens: counter(ledger.try_get("reserved_tokens")?)?,
             used_tokens: counter(ledger.try_get("used_tokens")?)?,
@@ -729,13 +729,12 @@ impl Store {
         commands::key(key)?;
         let l = &request.limits;
         if !standalone_kind(request.kind)
-            || (request.kind == RunKind::ForwardEvaluate && request.max_parallel_runs != 2)
             || l.experiments != 0
             || l.cpu_seconds.is_some_and(|cpu| cpu.get() == 0)
             || l.wall_seconds == Some(0)
-            || l.memory_mib == 0
+            || l.memory_mib == Some(0)
             || l.output_bytes.is_some_and(|output| output.get() == 0)
-            || request.max_parallel_runs == 0
+            || request.max_parallel_runs == Some(0)
         {
             return Err(StoreError::Invalid("standalone_run_limits_or_kind"));
         }
@@ -795,7 +794,7 @@ impl Store {
         .await?;
         let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE project_id=$1 AND cycle_id IS NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
             .bind(request.project_id.as_uuid()).fetch_one(&mut *tx).await?;
-        if active >= i64::from(request.max_parallel_runs) {
+        if request.max_parallel_runs.is_some_and(|maximum| active >= i64::from(maximum)) {
             return Err(DomainError::BudgetExhausted("standalone_parallel_runs").into());
         }
         let runtime = RuntimeSnapshot {
@@ -1185,9 +1184,9 @@ impl Store {
         }
         if let Some(manifest) = observation.manifest_artifact_id {
             // The native wire contract counts payload output bytes separately.
-            // Its result envelope retains the independent, fixed 1MiB ceiling.
-            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND producer_run_id=$3 AND producer_attempt_id=$4 AND kind='REPORT' AND media_type='application/json' AND schema_name='qz.job_result' AND schema_version='1' AND byte_count>0 AND byte_count<=$5)")
-                .bind(manifest.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(id.as_uuid()).bind(owner.attempt_id.as_uuid()).bind(domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES as i64).fetch_one(&mut *tx).await?;
+            // Its result envelope retains its own exact positive byte count.
+            let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.artifacts WHERE id=$1 AND project_id=$2 AND producer_run_id=$3 AND producer_attempt_id=$4 AND kind='REPORT' AND media_type='application/json' AND schema_name='qz.job_result' AND schema_version='1' AND byte_count>0)")
+                .bind(manifest.as_uuid()).bind(locked.run.project_id.as_uuid()).bind(id.as_uuid()).bind(owner.attempt_id.as_uuid()).fetch_one(&mut *tx).await?;
             if !valid {
                 return Err(StoreError::Invalid("manifest_exact_producer"));
             }

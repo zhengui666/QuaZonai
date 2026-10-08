@@ -47,8 +47,6 @@ use std::{
     sync::Arc,
 };
 
-const MAX_TARGET_ORDERS: usize = 65_536;
-
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
         .map_err(|_| anyhow::anyhow!("NATIVE_DECIMAL_RANGE"))
@@ -199,10 +197,6 @@ nautilus_strategy!(TargetReplay, {
             return;
         }
         if self.spot_cash.is_some() {
-            if self.status.borrow().spot_fills.len() >= 1_000_000 {
-                self.status.borrow_mut().failure = Some("SPOT_NATIVE_FILL_LIMIT");
-                return;
-            }
             self.status.borrow_mut().spot_fills.push(event.clone());
         }
         let fully_filled = self
@@ -1074,18 +1068,8 @@ fn validate_settings_with_currency(
         .map(|s| s.instrument.clone())
         .collect::<Vec<_>>();
     ensure!(
-        (1..=10_000).contains(&request.target_points.len())
-            && request
-                .target_points
-                .len()
-                .checked_mul(data.series.len())
-                .is_some_and(|n| n <= MAX_TARGET_ORDERS),
+        !request.target_points.is_empty(),
         "SIMULATION_TARGET_COUNT_LIMIT"
-    );
-    let span = request.selection.event_end_ns.get() - request.selection.event_start_ns.get();
-    ensure!(
-        span / (u64::from(settings.snapshot_interval_ms) * 1_000_000) <= 1_000_000,
-        "SIMULATION_SNAPSHOT_COUNT_LIMIT"
     );
     for (index, point) in request.target_points.iter().enumerate() {
         ensure!(
@@ -1462,7 +1446,7 @@ fn run_with_strategy_and_spot(
                 input.dataset_revision_id,
                 &market,
                 input.closed_rows,
-                1_000_000,
+                None,
                 Some(crate::spot_cash_runtime::execution_horizon(request)?),
             )?;
             strategy.spot_cash = Some(capture.handle(&engine)?);

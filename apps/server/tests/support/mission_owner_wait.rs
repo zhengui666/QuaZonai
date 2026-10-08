@@ -41,7 +41,7 @@ async fn expire_after_confirmed_wait(pool: &PgPool, blocker: i32, prefix: &str, 
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn identity_read_rechecks_native_lease_after_waiting_for_principal(pool: PgPool) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (_, _, attempt, principal) = mission(&f, &pool).await;
     let (token, _, _) = mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '10 seconds' WHERE id=$1")
@@ -83,7 +83,7 @@ async fn identity_read_rechecks_native_lease_after_waiting_for_principal(pool: P
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn issuance_rechecks_native_lease_after_waiting_for_principal(pool: PgPool) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (_, _, attempt, principal) = mission(&f, &pool).await;
     let (_, original, _) = mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '10 seconds' WHERE id=$1")
@@ -136,7 +136,7 @@ async fn issuance_rechecks_native_lease_after_waiting_for_principal(pool: PgPool
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn non_mission_credentials_remain_usable_and_cannot_bind_an_attempt_owner(pool: PgPool) {
-    let (f, cookie, project, _) = setup(&pool).await;
+    let (f, cookie, project) = setup(&pool).await;
     let (token, original) = bearer(&f, &cookie, project, READ_SCOPES, "ordinary-cli").await;
     let (_, _, attempt, _) = mission(&f, &pool).await;
     let binding: (Option<uuid::Uuid>, Option<i64>) = sqlx::query_as(

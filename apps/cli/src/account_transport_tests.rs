@@ -3,7 +3,7 @@ use contracts::Id;
 use serde_json::{json, Value};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     net::{TcpListener, TcpStream},
     thread,
     time::Instant,
@@ -134,18 +134,13 @@ fn retained_input_waits_for_complete_line_and_preserves_replay_bytes() {
 }
 
 #[test]
-fn partial_finite_input_and_excessive_records_are_explicit_failures() {
+fn partial_finite_input_and_invalid_envelopes_are_explicit_failures() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("retained.ndjson");
     fs::write(&path, &FIXTURE[..FIXTURE.len() - 1]).unwrap();
     assert!(matches!(
         RetainedInput::open(&path).unwrap().next(false),
         Err(Failure::AccountStreamIncomplete)
-    ));
-    fs::write(&path, vec![b' '; MAX_RECORD_BYTES + 1]).unwrap();
-    assert!(matches!(
-        RetainedInput::open(&path).unwrap().next(true),
-        Err(Failure::Input)
     ));
     assert!(prepare(b"\n").is_err());
     let mut unknown: Value = serde_json::from_slice(FIXTURE).unwrap();
@@ -285,7 +280,6 @@ fn receive(stream: &mut TcpStream) -> (String, Vec<u8>) {
         .unwrap()
         .parse()
         .unwrap();
-    assert!(length <= MAX_RECORD_BYTES);
     let mut body = vec![0; length];
     stream.read_exact(&mut body).unwrap();
     (headers, body)
@@ -350,7 +344,7 @@ async fn unknown_delivery_retries_the_same_authenticated_request_then_replays_on
         requests
     });
     let (request, expected) = prepare(FIXTURE).unwrap();
-    let original = submit(&connection, &request, &expected, 2, Duration::ZERO)
+    let original = submit(&connection, &request, &expected, Some(2), Duration::ZERO)
         .await
         .unwrap();
     assert!(original.replayed);
@@ -359,7 +353,7 @@ async fn unknown_delivery_retries_the_same_authenticated_request_then_replays_on
         &connection,
         &replay_request,
         &replay_expected,
-        1,
+        Some(1),
         Duration::ZERO,
     )
     .await
@@ -402,7 +396,7 @@ async fn mismatched_receipt_stops_and_permanent_rejection_is_not_retried() {
             listener
         });
         let (request, expected) = prepare(FIXTURE).unwrap();
-        let result = submit(&connection, &request, &expected, 3, Duration::ZERO).await;
+        let result = submit(&connection, &request, &expected, Some(3), Duration::ZERO).await;
         if mismatch {
             assert!(matches!(result, Err(Failure::Contract)));
         } else {
@@ -448,7 +442,7 @@ async fn retryable_problem_exhaustion_is_bounded_and_retains_original_input() {
         .unwrap();
     let (request, expected) = prepare(&line).unwrap();
     assert!(matches!(
-        submit(&connection, &request, &expected, 2, Duration::ZERO).await,
+        submit(&connection, &request, &expected, Some(2), Duration::ZERO).await,
         Err(Failure::Rejected(problem)) if problem.retryable && problem.status == 503
     ));
     assert_eq!(
@@ -456,4 +450,81 @@ async fn retryable_problem_exhaustion_is_bounded_and_retains_original_input() {
         std::io::ErrorKind::WouldBlock
     );
     assert_eq!(fs::read(path).unwrap(), FIXTURE);
+}
+
+#[test]
+fn retained_records_cross_the_former_size_boundary_without_losing_replay_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retained.ndjson");
+    let mut original = vec![b' '; 2 * 1024 * 1024 + 1];
+    original.extend_from_slice(FIXTURE);
+    // Exercise a partial record crossing the old limit before its newline arrives.
+    let split = original.len() - 1;
+    fs::write(&path, &original[..split]).unwrap();
+    let mut input = RetainedInput::open(&path).unwrap();
+    assert!(input.next(true).unwrap().is_none());
+    OpenOptions::new().append(true).open(&path).unwrap()
+        .write_all(&original[split..]).unwrap();
+    let record = input.next(true).unwrap().unwrap();
+    assert_eq!(record, original);
+    let (request, observation) = prepare(&record).unwrap();
+    assert_eq!(request.body.unwrap(), original);
+    assert_eq!(observation, serde_json::from_slice::<AccountObservationSubmitV1>(FIXTURE).unwrap());
+    assert!(input.next(false).unwrap().is_none());
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[tokio::test]
+async fn large_original_account_record_and_receipt_keep_the_same_replay_identity() {
+    let (connection, listener, _) = connection();
+    let mut original = vec![b' '; 2 * 1024 * 1024 + 1];
+    original.extend_from_slice(FIXTURE);
+    let expected_bytes = original.clone();
+    let server = thread::spawn(move || {
+        let mut stream = accept(&listener);
+        let (_, body) = receive(&mut stream);
+        assert_eq!(body, expected_bytes);
+        let mut reply = serde_json::to_vec(&receipt(&body, false)).unwrap();
+        reply.resize(2 * 1024 * 1024 + 16 * 1024 + 1, b' ');
+        write!(stream, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len()).unwrap();
+        stream.write_all(&reply).unwrap();
+    });
+    let (request, expected) = prepare(&original).unwrap();
+    let received = submit(&connection, &request, &expected, Some(1), Duration::ZERO).await.unwrap();
+    assert_eq!(received.resource.observation, expected);
+    server.join().unwrap();
+}
+
+#[test]
+fn relay_attempts_are_absent_by_default_and_not_capped_at_one_hundred() {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct TestParser { #[command(flatten)] relay: Arguments }
+    let request = TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson"]).unwrap();
+    assert_eq!(request.relay.max_attempts, None);
+    let request = TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson", "--max-attempts", "101"]).unwrap();
+    assert_eq!(request.relay.max_attempts, Some(101));
+    assert!(TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson", "--max-attempts", "0"]).is_err());
+}
+
+#[tokio::test]
+async fn absent_attempt_cap_retries_past_the_old_default_without_changing_the_envelope() {
+    let (connection, listener, _) = connection();
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for attempt in 0..7 {
+            let mut stream = accept(&listener);
+            let (_, body) = receive(&mut stream);
+            requests.push(body);
+            if attempt == 6 {
+                respond(&mut stream, 201, "application/json", &receipt(FIXTURE, true));
+            }
+        }
+        requests
+    });
+    let (request, expected) = prepare(FIXTURE).unwrap();
+    assert!(submit(&connection, &request, &expected, None, Duration::ZERO).await.unwrap().replayed);
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 7);
+    assert!(requests.iter().all(|bytes| bytes == FIXTURE));
 }

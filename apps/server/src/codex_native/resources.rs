@@ -1,6 +1,6 @@
 //! Native Linux cgroup/rlimit configuration, not another process supervisor.
-use super::{resource_account::ResourceAccount, NativeFailure, Result};
-use contracts::{lifecycle::JobLimitsV1, Id};
+use super::{NativeFailure, Result, resource_account::ResourceAccount};
+use contracts::{Id, lifecycle::JobLimitsV1};
 use std::{
     ffi::OsString,
     fs::{File, OpenOptions},
@@ -9,12 +9,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use store::{turns::WorkerFence, Store};
+use store::{Store, turns::WorkerFence};
 use tokio::process::Command;
-
-// Native SQLite/rollout files are not QZ research outputs. A 1 MiB artifact
-// budget must not kill the native schema migration's >1 MiB SQLite WAL.
-const MAX_NATIVE_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Holds the original kernel control file, never kills a later unit by its name.
 pub(super) struct ProcessGroup {
@@ -146,7 +142,7 @@ impl ProcessGroup {
     }
 
     async fn close_inner(&mut self) -> Result<()> {
-        use super::close_diagnostics::{failure, Phase};
+        use super::close_diagnostics::{Phase, failure};
         if let Some(account) = self.account.clone() {
             super::service::barrier(&account.resource.name())
                 .await
@@ -552,7 +548,7 @@ impl MissionProcess {
             .map(|deadline| deadline.saturating_duration_since(Instant::now()).as_secs());
         if limits.wall_seconds == Some(0)
             || remaining_seconds == Some(0)
-            || limits.memory_mib == 0
+            || limits.memory_mib == Some(0)
             || limits.output_bytes.is_some_and(|bytes| bytes.get() == 0)
         {
             return Err(NativeFailure::Configuration);
@@ -563,10 +559,8 @@ impl MissionProcess {
         let quota = limits
             .cpu_seconds
             .zip(limits.wall_seconds)
-            .map_or(10_000, |(cpu, wall)| {
-                u128::from(cpu.get()) * 10_000 / u128::from(wall)
-            });
-        if !(10..=100_000_000).contains(&quota) {
+            .map(|(cpu, wall)| u128::from(cpu.get()) * 10_000 / u128::from(wall));
+        if quota.is_some_and(|quota| quota < 10 || u64::try_from(quota).is_err()) {
             return Err(NativeFailure::Configuration);
         }
         let runtime = std::env::var_os("XDG_RUNTIME_DIR")
@@ -607,27 +601,23 @@ impl MissionProcess {
         } else {
             bounded.arg("--scope");
         }
+        if let Some(quota) = quota {
+            bounded.arg(format!("--property=CPUQuota={}.{:02}%", quota / 100, quota % 100))
+                .arg("--property=CPUQuotaPeriodSec=1s");
+        }
+        if let Some(memory) = limits.memory_mib {
+            bounded
+                .arg(format!("--property=MemoryMax={memory}M"))
+                .arg("--property=MemorySwapMax=0");
+        }
         bounded
             .arg(format!("--unit={}", self.name()))
-            .arg(format!(
-                "--property=CPUQuota={}.{:02}%",
-                quota / 100,
-                quota % 100
-            ))
-            .arg("--property=CPUQuotaPeriodSec=1s")
-            .arg(format!("--property=MemoryMax={}M", limits.memory_mib))
-            .args(["--property=MemorySwapMax=0", "--property=TasksMax=128"])
             .args(remaining_seconds.map(|seconds| format!("--property=RuntimeMaxSec={seconds}")))
             .args(["--", "/usr/bin/prlimit", "--core=0:0"])
             .args(
                 limits
                     .cpu_seconds
                     .map(|cpu| format!("--cpu={0}:{0}", cpu.get())),
-            )
-            .args(
-                limits
-                    .output_bytes
-                    .map(|_| format!("--fsize={MAX_NATIVE_FILE_BYTES}:{MAX_NATIVE_FILE_BYTES}")),
             )
             .arg("--");
         if self.account.is_some() {
@@ -781,7 +771,7 @@ mod accounting_tests {
             experiments: 0,
             cpu_seconds: Some(contracts::DbCounter::new(1).unwrap()),
             wall_seconds: None,
-            memory_mib: 64,
+            memory_mib: Some(64),
             output_bytes: Some(contracts::DbCounter::new(1_048_576).unwrap()),
         };
         let mut unlimited = limits.clone();
@@ -834,9 +824,51 @@ mod tests {
             experiments: 0,
             cpu_seconds: Some(DbCounter::new(1).unwrap()),
             wall_seconds: Some(5),
-            memory_mib: 64,
+            memory_mib: Some(64),
             output_bytes: Some(DbCounter::new(1048576).unwrap()),
         }
+    }
+
+    #[test]
+    fn absent_mission_cpu_budget_omits_host_cpu_quota_and_tasks_limit() {
+        let mut allocation = limits();
+        allocation.cpu_seconds = None;
+        allocation.wall_seconds = None;
+        let process = MissionProcess::new(Id::new(), allocation, None).unwrap();
+        let command = process.wrap(Command::new("/usr/bin/true")).unwrap();
+        let arguments: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(!arguments.iter().any(|arg| arg.contains("CPUQuota")
+            || arg.contains("TasksMax")
+            || arg.starts_with("--cpu=")));
+        assert!(
+            arguments
+                .iter()
+                .any(|arg| arg == "--property=MemoryMax=64M")
+        );
+    }
+
+    #[test]
+    fn absent_mission_memory_omits_only_native_memory_properties() {
+        let mut allocation = limits();
+        allocation.cpu_seconds = None;
+        allocation.wall_seconds = None;
+        allocation.memory_mib = None;
+        let process = MissionProcess::new(Id::new(), allocation, None).unwrap();
+        let command = process.wrap(Command::new("/usr/bin/true")).unwrap();
+        let arguments: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(!arguments.iter().any(|arg| arg.contains("MemoryMax")
+            || arg.contains("MemorySwapMax")
+            || arg.contains("CPUQuota")));
+        assert!(arguments.iter().any(|arg| arg == "--core=0:0"));
+        assert!(arguments.iter().any(|arg| arg.starts_with("--unit=")));
     }
 
     #[test]
@@ -955,8 +987,16 @@ mod tests {
     async fn kernel_actually_terminates_deadline_and_memory_exhaustion() {
         // These are disposable kernel probes, not model or scientific results.
         for (seconds, script, signal) in [
-            (3, "set -eu; printf 'READY\\n'; read -r line; exec /usr/bin/sleep 30", 15),
-            (10, "exec /usr/bin/awk 'BEGIN { print \"READY\"; fflush(); getline; for (i=0; ;i++) a[i]=sprintf(\"%01024d\", i) }'", 9),
+            (
+                3,
+                "set -eu; printf 'READY\\n'; read -r line; exec /usr/bin/sleep 30",
+                15,
+            ),
+            (
+                10,
+                "exec /usr/bin/awk 'BEGIN { print \"READY\"; fflush(); getline; for (i=0; ;i++) a[i]=sprintf(\"%01024d\", i) }'",
+                9,
+            ),
         ] {
             let root = tempfile::tempdir().unwrap();
             let mut limits = limits();
@@ -1034,7 +1074,6 @@ mod tests {
         for (name, value) in [
             ("memory.max", "67108864"),
             ("memory.swap.max", "0"),
-            ("pids.max", "128"),
             ("cpu.max", "200000 1000000"),
         ] {
             assert_eq!(
@@ -1054,13 +1093,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let fields: Vec<_> = values
-            .lines()
-            .find(|line| line.starts_with("Max file size"))
-            .unwrap()
-            .split_whitespace()
-            .collect();
-        assert_eq!(&fields[3..], &["67108864", "67108864", "bytes"]);
         let core: Vec<_> = values
             .lines()
             .find(|line| line.starts_with("Max core file size"))

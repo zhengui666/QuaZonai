@@ -13,7 +13,7 @@ type State = { pending: boolean; unknown: boolean; operation?: Operation; result
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** A pending write survives same-tab refresh. Only this bounded non-secret workflow
+/** A pending write survives same-tab refresh. Only this non-secret workflow
  * request and original key are retained; no response, token or credential is stored.
  * Restoring never submits. The user explicitly reconciles the unchanged operation. */
 export class ExitSession {
@@ -24,7 +24,6 @@ export class ExitSession {
     try {
       const text = storage?.getItem(storageKey);
       if (!text) return;
-      if (text.length > 65536) throw new Error('invalid recovery record');
       const saved = JSON.parse(text);
       if (saved.version !== 1 || (saved.lastIntent !== undefined && !uuid.test(saved.lastIntent))) throw new Error('invalid recovery identity');
       if (saved.operation) {

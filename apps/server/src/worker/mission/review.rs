@@ -8,19 +8,8 @@ fn materialize(
     objects: &ArtifactStore,
     workspace: &Path,
     work: &ReviewWork,
-    maximum: Option<u64>,
 ) -> Result<(), WorkerFailure> {
     let context = serde_json::to_vec(&work.context).map_err(|_| WorkerFailure::Contract)?;
-    if context.len() > 256 * 1024
-        || work
-            .code_bytes
-            .get()
-            .checked_add(work.parameter_bytes.get())
-            .and_then(|n| n.checked_add(context.len() as u64))
-            .is_none_or(|n| maximum.is_some_and(|maximum| n > maximum))
-    {
-        return Err(WorkerFailure::Contract);
-    }
     let code = objects
         .read(work.code_artifact_id, work.code_bytes)
         .map_err(|_| WorkerFailure::Contract)?;
@@ -93,8 +82,7 @@ impl Worker {
         let experiment = work.experiment_id;
         let workspace = launcher.workspace(run).await?;
         let objects = self.objects.clone();
-        let maximum = lease.limits.output_bytes.map(|bytes| bytes.get());
-        tokio::task::spawn_blocking(move || materialize(&objects, &workspace, &work, maximum))
+        tokio::task::spawn_blocking(move || materialize(&objects, &workspace, &work))
             .await
             .map_err(|_| WorkerFailure::Contract)??;
         let mut connection = launcher
@@ -133,7 +121,7 @@ impl Worker {
             connection
                 .drive_turn(&self.store, self.objects.clone(), run, fence, shutdown)
                 .await?;
-            self.capture_mission_summary(&mut connection, lease).await?;
+            self.capture_mission_summary(&mut connection, lease, false).await?;
             Ok(())
         }
         .await;
@@ -148,7 +136,7 @@ impl Worker {
 mod tests {
     use super::*;
     #[test]
-    fn original_review_inputs_are_reusable_but_never_overwritten_or_over_budget() {
+    fn complete_review_inputs_are_reusable_and_never_charged_as_output_or_overwritten() {
         let temp = tempfile::tempdir().unwrap();
         let objects = ArtifactStore::open(&temp.path().join("objects")).unwrap();
         let workspace = temp.path().join("reviewer");
@@ -166,17 +154,19 @@ mod tests {
             parameter_bytes: contracts::DbCounter::new(20).unwrap(),
             context: serde_json::json!({"schema_version":1,"qualification":"NOT_GRANTED"}),
         };
-        assert!(materialize(&objects, &workspace, &work, Some(10)).is_err());
-        materialize(&objects, &workspace, &work, Some(4096)).unwrap();
-        materialize(&objects, &workspace, &work, Some(4096)).unwrap();
-        materialize(&objects, &workspace, &work, None).unwrap();
+        work.context["complete_evidence"] = serde_json::json!("界".repeat(100_000));
+        let original_context = serde_json::to_vec(&work.context).unwrap();
+        materialize(&objects, &workspace, &work).unwrap();
+        materialize(&objects, &workspace, &work).unwrap();
         work.context["qualification"] = serde_json::json!("CHANGED");
-        assert!(materialize(&objects, &workspace, &work, Some(4096)).is_err());
+        assert!(materialize(&objects, &workspace, &work).is_err());
         let copies =
             ArtifactStore::open(&workspace.join(format!("review-{}", work.experiment_id))).unwrap();
         assert_eq!(
             copies.read(code, work.code_bytes).unwrap(),
             b"// original Rust"
         );
+        assert_eq!(copies.read(work.alpha_version_id,
+            contracts::DbCounter::new(original_context.len() as u64).unwrap()).unwrap(), original_context);
     }
 }

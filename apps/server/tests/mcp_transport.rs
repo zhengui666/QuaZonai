@@ -30,6 +30,7 @@ struct Responses {
     cycle: Value,
     status: StatusCode,
     oversized: bool,
+    padding_bytes: usize,
     redirect: bool,
     hits: usize,
     raw: Option<(StatusCode, &'static str, String)>,
@@ -88,7 +89,7 @@ async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> R
             .body(Body::from_stream(chunks))
             .unwrap();
     }
-    let (status, body) = if request.uri().path() == "/api/v2/auth/machine" {
+    let (status, mut body) = if request.uri().path() == "/api/v2/auth/machine" {
         (values.status, values.identity.to_string())
     } else if request.uri().path().starts_with("/api/v2/runs/") {
         (StatusCode::OK, values.run.to_string())
@@ -102,6 +103,7 @@ async fn reply(State(state): State<Arc<TestState>>, request: Request<Body>) -> R
             "upstream diagnostics must not be disclosed".to_owned(),
         )
     };
+    body.extend(std::iter::repeat_n(' ', values.padding_bytes));
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "application/json")
@@ -144,6 +146,7 @@ async fn api() -> Api {
                 "frozen_at":now,"created_at":now,"updated_at":now}),
             status: StatusCode::OK,
             oversized: false,
+            padding_bytes: 0,
             redirect: false,
             hits: 0,
             raw: None,
@@ -307,7 +310,7 @@ async fn next_call_rechecks_revocation_and_never_returns_upstream_diagnostics() 
 }
 
 #[tokio::test]
-async fn redirects_and_chunked_oversize_never_become_tool_data() {
+async fn redirects_and_invalid_chunked_json_never_become_tool_data() {
     let api = api().await;
     api.state.responses.lock().unwrap().redirect = true;
     assert!(matches!(bridge(&api).await, Err(Failure::Http(307))));
@@ -317,7 +320,7 @@ async fn redirects_and_chunked_oversize_never_become_tool_data() {
         values.redirect = false;
         values.oversized = true;
     }
-    assert!(matches!(bridge(&api).await, Err(Failure::ResponseLimit)));
+    assert!(matches!(bridge(&api).await, Err(Failure::Contract)));
     assert_eq!(api.state.responses.lock().unwrap().hits, 2);
 }
 
@@ -419,4 +422,39 @@ async fn success_rejects_duplicate_json_keys_and_wrong_media() {
         api.state.responses.lock().unwrap().raw = Some((StatusCode::OK, media, body));
         assert!(matches!(bridge(&api).await, Err(Failure::Contract)));
     }
+}
+
+#[tokio::test]
+async fn complete_http_json_crosses_the_former_limit_and_keeps_native_tool_data() {
+    let api = api().await;
+    let original = {
+        let mut values = api.state.responses.lock().unwrap();
+        values.padding_bytes = 1024 * 1024 + 1;
+        values.brief.clone()
+    };
+    let (client, task) = connected(&api).await;
+    let result = serde_json::to_value(client.call_tool(request("research.get_brief", json!({}))).await.unwrap()).unwrap();
+    assert_ne!(result["isError"], true);
+    assert_eq!(body(&result), original);
+    client.cancel().await.unwrap();
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test]
+async fn native_session_continues_after_the_former_cumulative_input_quota() {
+    let api = api().await;
+    let (client, task) = connected(&api).await;
+    // Invalid tool arguments remain invalid, but consuming them must not close
+    // the authenticated session or change its later run identity.
+    let padding = "x".repeat(256 * 1024);
+    for _ in 0..33 {
+        let response = client.call_tool(request("run.get", json!({"unknown":padding}))).await;
+        assert!(response.is_err() || serde_json::to_value(response.unwrap()).unwrap()["isError"] == true);
+    }
+    let result = run(&client).await;
+    assert_ne!(result["isError"], true);
+    assert_eq!(body(&result)["id"], json!(api.binding.run_id));
+    assert_eq!(api.state.responses.lock().unwrap().hits, 4);
+    client.cancel().await.unwrap();
+    assert!(task.await.unwrap().is_ok());
 }

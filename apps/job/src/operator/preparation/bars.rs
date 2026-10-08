@@ -1,5 +1,5 @@
 //! Shared exact spot-candle construction and original native catalog publication.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use bigdecimal::BigDecimal;
 use nautilus_model::{
     data::{Bar, BarType, Data},
@@ -33,7 +33,7 @@ pub(super) fn no_symlinks(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
+pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
     no_symlinks(path)?;
     let mut options = OpenOptions::new();
     options.read(true);
@@ -46,12 +46,9 @@ pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
     }
     let mut file = options.open(path)?;
     let metadata = file.metadata()?;
-    ensure!(
-        metadata.is_file() && metadata.len() <= limit,
-        "SOURCE_FILE_LIMIT"
-    );
+    ensure!(metadata.is_file(), "SOURCE_FILE_LIMIT");
     let mut bytes = Vec::new();
-    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+    file.read_to_end(&mut bytes)?;
     no_symlinks(path)?;
     let after = file.metadata()?;
     let current = fs::metadata(path)?;
@@ -64,10 +61,7 @@ pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
 }
 
 pub(super) fn exact(text: &str) -> Result<Decimal> {
-    ensure!(
-        !text.is_empty() && text.len() <= 256,
-        "SOURCE_DECIMAL_RANGE"
-    );
+    ensure!(!text.is_empty(), "SOURCE_DECIMAL_RANGE");
     let value = if text.contains(['e', 'E']) {
         Decimal::from_scientific(text)?
     } else {

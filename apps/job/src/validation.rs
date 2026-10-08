@@ -1,5 +1,5 @@
 //! Thin adapters over native splitters and estimators; no qualification authority.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder, RegressionModel};
 use ndarray::Array2;
 
@@ -24,7 +24,7 @@ pub fn predict_frozen_calibration(
         "CALIBRATION_INPUT_TIME_OR_HORIZON"
     );
     ensure!(
-        (1..=MAX_VALIDATION_ROWS).contains(&scores.len()) && scores.iter().all(|v| v.is_finite()),
+        scores.len() >= 1 && scores.iter().all(|v| v.is_finite()),
         "CALIBRATION_INPUT_INVALID"
     );
     let fit = &model
@@ -41,9 +41,7 @@ pub fn predict_frozen_calibration(
     Ok(values.into_raw_vec_and_offset().0)
 }
 
-pub use domain::execution::validation::{
-    validation_folds, MAX_VALIDATION_FOLDS, MAX_VALIDATION_INDICES, MAX_VALIDATION_ROWS,
-};
+pub use domain::execution::validation::{MAX_VALIDATION_FOLDS, validation_folds};
 
 /// Pure numerical adapter: callers must bind distinct qualified Alpha versions,
 /// common units/horizon/cutoff and this exact asset order before invoking it.
@@ -63,14 +61,13 @@ fn weighted_forecast(
     weights: &[&contracts::DecimalValue],
 ) -> Result<Vec<f64>> {
     use bigdecimal::ToPrimitive;
-    let maximum = contracts::portfolio::MAX_ALLOCATION_ASSETS;
     ensure!(
-        (2..=maximum).contains(&forecasts.len()) && forecasts.len() == weights.len(),
+        forecasts.len() >= 2 && forecasts.len() == weights.len(),
         "ENSEMBLE_MEMBER_LIMIT"
     );
     let assets = forecasts[0].len();
     ensure!(
-        (1..=maximum).contains(&assets)
+        assets > 0
             && forecasts
                 .iter()
                 .all(|row| row.len() == assets && row.iter().all(|v| v.is_finite())),
@@ -145,7 +142,7 @@ impl ScoreCalibration {
     /// Inputs must be selected from the same authorized training fold, with complete labels.
     pub fn fit(scores: &[f64], returns: &[f64]) -> Result<Self> {
         ensure!(
-            (3..=MAX_VALIDATION_ROWS).contains(&scores.len()) && scores.len() == returns.len(),
+            scores.len() >= 3 && scores.len() == returns.len(),
             "CALIBRATION_SAMPLE_LIMIT"
         );
         ensure!(
@@ -176,9 +173,7 @@ impl ScoreCalibration {
 
     pub fn predict(&self, scores: &[f64]) -> Result<Vec<f64>> {
         ensure!(
-            !scores.is_empty()
-                && scores.len() <= MAX_VALIDATION_ROWS
-                && scores.iter().all(|value| value.is_finite()),
+            !scores.is_empty() && scores.iter().all(|value| value.is_finite()),
             "CALIBRATION_INPUT_INVALID"
         );
         let values = self.model.predict(vec![("score", scores.to_vec())])?;

@@ -268,7 +268,7 @@ where
     let cost_bytes: i64 = sqlx::query_scalar("SELECT byte_count FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='PARAMETERS' AND schema_name='qz.native_simulation_settings' AND schema_version='1' AND storage_backend='LOCAL' AND storage_object_ref=id::text AND storage_version='1' AND access_class='RESEARCH' AND origin='SYNTHETIC'")
             .bind(costs.as_uuid()).bind(project.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::Integrity)?;
     let cost_bytes = counter(cost_bytes)?;
-    if cost_bytes == DbCounter::ZERO || cost_bytes.get() > 1024 * 1024 {
+    if cost_bytes == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let original = read(costs, cost_bytes).await?;
@@ -626,7 +626,6 @@ where
         db::id(row.try_get("parameters_artifact_id")?)?,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         read,
     )
     .await?;

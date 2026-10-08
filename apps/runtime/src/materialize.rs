@@ -43,9 +43,6 @@ pub async fn parameters(
     catalogs: &[RegisteredCatalog],
 ) -> Result<NativeTaskParametersV1> {
     let (_, bytes) = journal.input_object(spec.parameters_artifact_id).await?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        return Err(Failure::Invalid("parameters_size"));
-    }
     let parameters: NativeTaskParametersV1 =
         serde_json::from_slice(&bytes).map_err(|_| Failure::Invalid("native_parameters"))?;
     domain::execution::task(spec, &parameters)
@@ -59,9 +56,6 @@ pub async fn parameters(
         let mut parts = Vec::with_capacity(feature_artifact_ids.len());
         for id in feature_artifact_ids {
             let (_, bytes) = journal.input_object(*id).await?;
-            if bytes.len() > 2 * 1024 * 1024 {
-                return Err(Failure::Invalid("feature_parameters_size"));
-            }
             parts.push(
                 serde_json::from_slice::<contracts::science::FeatureObservationsV1>(&bytes)
                     .map_err(|_| Failure::Invalid("feature_parameters"))?,
@@ -317,9 +311,6 @@ pub async fn inputs(
             .ok_or(Failure::Capacity)?;
         entry.insert(bytes);
     }
-    if total > domain::runtime_jobs::MAX_INPUT_OBJECTS_BYTES {
-        return Err(Failure::Capacity);
-    }
     let mut mounts = Vec::new();
     let mut datasets = Vec::new();
     for input in &spec.inputs {
@@ -352,7 +343,7 @@ pub async fn inputs(
         if destination.try_exists()? {
             files::canonical_directory(&destination)?;
             let input = files::directory_handle(&destination.join("input"))?;
-            if files::read_child(&input, "spec.json", 1024 * 1024)? != encoded {
+            if files::read_child(&input, "spec.json", encoded.len())? != encoded {
                 return Err(Failure::Integrity);
             }
             let directory = files::directory_handle(&destination.join("input/objects"))?;
@@ -410,8 +401,8 @@ pub fn outputs(root: &RuntimeRoot, spec: &JobSpecV1) -> Result<Vec<(RuntimeOutpu
     let path = root.job(spec.run_id, spec.attempt_no).join("output");
     let directory = files::directory_handle(&path)?;
     let index: NativeJobOutputIndexV1 =
-        serde_json::from_slice(&files::read_child(&directory, "index.json", 1024 * 1024)?)?;
-    if index.artifacts.is_empty() || index.artifacts.len() > 64 {
+        serde_json::from_slice(&files::read_child(&directory, "index.json", usize::MAX)?)?;
+    if index.artifacts.is_empty() {
         return Err(Failure::Invalid("native_output_index"));
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -439,9 +430,6 @@ pub fn outputs(root: &RuntimeRoot, spec: &JobSpecV1) -> Result<Vec<(RuntimeOutpu
             .is_some_and(|maximum| total > maximum.get())
         {
             return Err(Failure::Capacity);
-        }
-        if output.byte_count.get() > contracts::runtime_jobs::MAX_INPUT_OBJECT_BYTES {
-            return Err(Failure::Invalid("native_output_transport_size"));
         }
         let maximum = usize::try_from(output.byte_count.get()).map_err(|_| Failure::Capacity)?;
         let bytes = files::read_child(&directory, &output.storage_ref.to_string(), maximum)?;

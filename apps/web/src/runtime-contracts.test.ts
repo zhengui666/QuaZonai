@@ -51,11 +51,11 @@ describe('native purpose-dependent secret request schema', () => {
       expect(accepts('IntegrationSecretCreate', secret('CUSTOM_PROVIDER', value))).toBe(false);
     }
   });
-  it('bounds ASCII CA material without pretending JSON Schema can verify a certificate', () => {
-    for (const value of ['a\nb\n', 'x'.repeat(65536)]) {
+  it('preserves complete ASCII CA material without pretending JSON Schema can verify a certificate', () => {
+    for (const value of ['a\nb\n', 'x'.repeat(65536), 'x'.repeat(65537)]) {
       expect(accepts('IntegrationSecretCreate', secret('TLS_CA', value))).toBe(true);
     }
-    for (const value of ['', 'x'.repeat(65537), '中文']) {
+    for (const value of ['', '中文']) {
       expect(accepts('IntegrationSecretCreate', secret('TLS_CA', value))).toBe(false);
     }
     expect(accepts('IntegrationSecretCreate', secret('UNKNOWN', 'x'.repeat(32)))).toBe(false);

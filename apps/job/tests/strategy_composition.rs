@@ -85,7 +85,7 @@ fn original_fold_single_and_two_member_replay_and_stateful_current_continuation(
             feature_artifact_origins: BTreeMap::from([(ids[0], DataOrigin::Synthetic)]),
         },
         members: vec![first],
-        total_fuel: fixture::count(10_000_000),
+        total_fuel: Some(fixture::count(10_000_000)),
     };
     let single = run(root.path(), &request, &objects).unwrap();
     let StrategyCompositionOutcomeV1::HistoricalReplay {
@@ -95,7 +95,7 @@ fn original_fold_single_and_two_member_replay_and_stateful_current_continuation(
     else {
         unreachable!()
     };
-    assert_eq!(single.consumed_fuel.get(), 0);
+    assert_eq!(single.consumed_fuel.unwrap().get(), 0);
     assert_eq!(
         serde_json::to_value(&simulation_request.target_points).unwrap(),
         serde_json::to_value(&original.folds[0].simulation_request.target_points).unwrap()
@@ -205,7 +205,7 @@ fn original_fold_single_and_two_member_replay_and_stateful_current_continuation(
         target.targets[0].weight,
         original.folds[0].decisions.last().unwrap().target_weight
     );
-    assert!(current.consumed_fuel.get() > 0);
+    assert!(current.consumed_fuel.unwrap().get() > 0);
     let fold = &original.folds[0];
     domain::execution::strategy::current_continuation(fold, &target, fixture::count(29)).unwrap();
     assert!(domain::execution::strategy::current_continuation(

@@ -105,7 +105,6 @@ pub(crate) async fn stage<R: Read + Seek>(
         || projection.projected_rows != inspection.rows
         || projection.object_ref.is_none()
         || expected_bytes == 0
-        || expected_bytes > 512 * 1024 * 1024
         || !rule.primary_key.iter().all(|key| columns.contains(key))
     {
         return Err(invalid());

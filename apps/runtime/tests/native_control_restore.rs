@@ -427,7 +427,7 @@ async fn checkpoint(
                 experiments: 0,
                 cpu_seconds: Some(count(30)),
                 wall_seconds: Some(120),
-                memory_mib: 512,
+                memory_mib: Some(512),
                 output_bytes: Some(count(65_536)),
             },
         },

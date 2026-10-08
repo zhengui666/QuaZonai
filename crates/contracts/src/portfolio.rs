@@ -3,10 +3,6 @@ use crate::{DecimalValue, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-pub const MAX_ALLOCATION_ASSETS: usize = 256;
-pub const MAX_ALLOCATION_GROUPS: usize = 64;
-pub const MAX_RETURN_OBSERVATIONS: usize = 100_000;
-pub const MAX_RETURN_VALUES: usize = 1_000_000;
 pub const CLARABEL_CLASS: &str = "clarabel::solver::DefaultSolver";
 pub const CLARABEL_VERSION: &str = "0.11.1";
 pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
@@ -53,12 +49,12 @@ pub struct AlphaForecastV1 {
     pub asof_ns: crate::DbCounter,
     pub available_ns: crate::DbCounter,
     pub ensemble_weight: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
     #[serde(serialize_with = "serialize_finite_values")]
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub forecasts: Vec<f64>,
 }
 
@@ -73,11 +69,11 @@ pub struct PortfolioForecastInputV1 {
     pub base_currency: String,
     #[schema(minimum = 1)]
     pub max_input_age_seconds: u32,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub members: Vec<AlphaForecastV1>,
 }
 
@@ -166,9 +162,7 @@ pub struct PortfolioConstraintsV1 {
     /// Positive per-horizon variance (VARIANCE) or expected loss return (CVAR) bound.
     /// Not volatility or annualized risk; allowance is bound * exposure_tolerance.
     pub max_ex_ante_risk: Option<DecimalValue>,
-    #[schema(max_items = 64)]
     pub group_bounds: Vec<GroupBoundV1>,
-    #[schema(max_items = 256)]
     pub asset_overrides: Vec<AssetBoundV1>,
     pub transaction_costs_ref: crate::Id,
     pub liquidity_ref: Option<crate::Id>,
@@ -194,7 +188,7 @@ pub enum RiskBudgetSign {
 pub struct RiskBudgetSettingsV1 {
     pub schema_version: SchemaV1,
     pub risky_gross_exposure: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<RiskBudgetAssetV1>,
 }
 
@@ -207,7 +201,7 @@ pub struct AllocatorSettingsV1 {
     pub cvar_confidence: Option<DecimalValue>,
     /// Required only for RISK_BUDGETING; explicit asset identity, share, sign and scale.
     pub risk_budgeting: Option<RiskBudgetSettingsV1>,
-    #[schema(minimum = 1, maximum = 100000)]
+    #[schema(minimum = 1)]
     pub max_iterations: u32,
     /// Numerical stopping tolerance, not permission to violate the mandate.
     pub solver_tolerance: DecimalValue,
@@ -272,7 +266,7 @@ pub struct PortfolioBuildRequestV1 {
     pub expected_runtime_revision: crate::Revision,
     pub current_weights_source: PortfolioBuildWeightsV1,
     pub environment: crate::forward::ForwardEnvironmentV1,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub members: Vec<PortfolioMemberSelectionV1>,
     #[schema(schema_with = crate::data::bounded_native_limits_schema)]
     pub limits: crate::lifecycle::JobLimitsV1,
@@ -578,15 +572,15 @@ pub struct PortfolioReturnHistoryV1 {
     pub base_currency: String,
     pub horizon_kind: crate::brief::HorizonKind,
     pub horizon_value: crate::DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
     /// Common completed return windows, in strictly increasing end-time order.
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub end_ns: Vec<crate::DbCounter>,
     /// Latest availability of all assets in each window, not just event time.
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub available_ns: Vec<crate::DbCounter>,
     /// Asset-major simple returns over the same horizon as the forecasts.
     #[serde(serialize_with = "serialize_finite_matrix")]
@@ -610,7 +604,7 @@ pub struct AllocationInputV1 {
     pub alpha_ensemble: NativeModelRefV1,
     pub covariance_estimator: NativeModelRefV1,
     pub return_history: PortfolioReturnHistoryV1,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<AllocationAssetV1>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -669,7 +663,7 @@ pub struct CvarRiskBudgetWitnessV1 {
     pub schema_version: SchemaV1,
     /// Native dual weights in the original return-history scenario order.
     #[serde(serialize_with = "serialize_finite_values")]
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub scenario_weights: Vec<f64>,
 }
 
@@ -686,23 +680,18 @@ fn return_history_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Sc
     use utoipa::openapi::schema::{ArrayBuilder, KnownFormat, ObjectBuilder, SchemaFormat, Type};
     ArrayBuilder::new()
         .min_items(Some(1))
-        .max_items(Some(MAX_ALLOCATION_ASSETS))
         .items(
-            ArrayBuilder::new()
-                .min_items(Some(2))
-                .max_items(Some(MAX_RETURN_OBSERVATIONS))
-                .items(
-                    ObjectBuilder::new()
-                        .schema_type(Type::Number)
-                        .format(Some(SchemaFormat::KnownFormat(KnownFormat::Double))),
-                ),
+            ArrayBuilder::new().min_items(Some(2)).items(
+                ObjectBuilder::new()
+                    .schema_type(Type::Number)
+                    .format(Some(SchemaFormat::KnownFormat(KnownFormat::Double))),
+            ),
         )
         .into()
 }
 fn group_membership_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
     ArrayBuilder::new()
-        .max_items(Some(MAX_ALLOCATION_GROUPS))
         .unique_items(true)
         .items(
             ObjectBuilder::new()

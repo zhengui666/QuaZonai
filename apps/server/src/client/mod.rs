@@ -7,7 +7,7 @@ mod private;
 mod session;
 mod watch;
 
-use crate::service_http::{self, body, media, verify, MAX_JSON_BYTES};
+use crate::service_http::{self, body, media, verify};
 use clap::Args;
 use contracts::{artifacts::ArtifactView, http::Problem, Id};
 use reqwest::{header, Client, Method, Response, Url};
@@ -117,10 +117,13 @@ struct Connection {
     credential: String,
 }
 
-fn read_file(path: &PathBuf, maximum: usize, private: bool) -> Result<Vec<u8>> {
+fn read_file(path: &PathBuf, maximum: Option<usize>, private: bool) -> Result<Vec<u8>> {
     let file = File::open(path).map_err(|_| Failure::Configuration)?;
     let metadata = file.metadata().map_err(|_| Failure::Configuration)?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum as u64 {
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || maximum.is_some_and(|maximum| metadata.len() > maximum as u64)
+    {
         return Err(Failure::Configuration);
     }
     if private {
@@ -134,11 +137,13 @@ fn read_file(path: &PathBuf, maximum: usize, private: bool) -> Result<Vec<u8>> {
         #[cfg(windows)]
         private::check(path)?;
     }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(maximum as u64 + 1)
+    let length = usize::try_from(metadata.len()).map_err(|_| Failure::Configuration)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(length).map_err(|_| Failure::Configuration)?;
+    file.take(metadata.len().saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|_| Failure::Configuration)?;
-    if bytes.len() != metadata.len() as usize {
+    if bytes.len() != length {
         return Err(Failure::Configuration);
     }
     Ok(bytes)
@@ -149,7 +154,7 @@ impl Connection {
         let (origin, credential, development_http, ca_certificate) =
             match (&args.origin, &args.credential_file) {
                 (Some(origin), Some(path)) => {
-                    let bytes = read_file(path, 256, true)?;
+                    let bytes = read_file(path, Some(256), true)?;
                     let bytes = bytes
                         .strip_suffix(b"\r\n")
                         .or_else(|| bytes.strip_suffix(b"\n"))
@@ -276,9 +281,10 @@ impl Connection {
         } = &request.output
         {
             watch::cursor(*run, after.as_deref())?;
-            call = call
-                .header(header::ACCEPT, "text/event-stream")
-                .timeout(Duration::from_secs(u64::from(*seconds) + 5));
+            call = call.header(header::ACCEPT, "text/event-stream");
+            if let Some(seconds) = seconds {
+                call = call.timeout(Duration::from_secs(u64::from(*seconds) + 5));
+            }
             if let Some(after) = after {
                 call = call.header("last-event-id", after);
             }
@@ -304,7 +310,7 @@ impl Connection {
             .checked(self.send(&request, None, None).await?, 200)
             .await?;
         media(&response, "application/json")?;
-        let bytes = body(response, MAX_JSON_BYTES).await?;
+        let bytes = body(response, None).await?;
         let metadata: contracts::imports::HistoricalArtifactResultV1 =
             service_http::decode(&bytes, &self.credential)?;
         if metadata.report_id != report
@@ -315,7 +321,7 @@ impl Connection {
                 != Some(contracts::imports::HistoricalArtifactOutcomeV1::Copied)
             || metadata
                 .byte_count
-                .is_none_or(|n| n.get() == 0 || n.get() > 64 * 1024 * 1024)
+                .is_none_or(|n| n.get() == 0)
         {
             return Err(Failure::Contract);
         }
@@ -328,9 +334,9 @@ impl Connection {
             .checked(self.send(&request, None, None).await?, 200)
             .await?;
         media(&response, "application/json")?;
-        let bytes = body(response, MAX_JSON_BYTES).await?;
+        let bytes = body(response, None).await?;
         let metadata: ArtifactView = service_http::decode(&bytes, &self.credential)?;
-        if metadata.id != id || metadata.byte_count.get() > 64 * 1024 * 1024 {
+        if metadata.id != id || metadata.byte_count.get() == 0 {
             return Err(Failure::Contract);
         }
         Ok(metadata)
@@ -415,15 +421,10 @@ pub async fn run(arguments: Arguments) -> Result<()> {
             request.status,
         )
         .await?;
-    let json_maximum = if matches!(&request.output, commands::Output::NativeReport(_)) {
-        contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize
-    } else {
-        MAX_JSON_BYTES
-    };
     match request.output {
         commands::Output::Json(decode) | commands::Output::NativeReport(decode) => {
             media(&response, "application/json")?;
-            let bytes = body(response, json_maximum).await?;
+            let bytes = body(response, None).await?;
             verify(&bytes, &connection.credential)?;
             write_json(&decode(&bytes)?)
         }
@@ -431,7 +432,7 @@ pub async fn run(arguments: Arguments) -> Result<()> {
             let metadata = metadata.ok_or(Failure::Contract)?;
             media(&response, &metadata.0)?;
             let maximum = usize::try_from(metadata.1.get()).map_err(|_| Failure::ResponseLimit)?;
-            let bytes = body(response, maximum).await?;
+            let bytes = body(response, Some(maximum)).await?;
             if bytes.len() != maximum
                 || bytes
                     .windows(connection.credential.len())

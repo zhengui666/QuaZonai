@@ -36,12 +36,12 @@ async fn fixture() -> Fixture {
             image_ref: format!("sha256:{}", "a".repeat(64)),
         }],
         catalogs: vec![],
-        max_cpu: 1,
-        max_memory_mib: 512,
-        max_wall_seconds: 60,
-        max_output_bytes: 64 * 1024 * 1024,
-        max_parallel_jobs: 1,
-        max_pending_jobs: 4,
+        max_cpu: Some(1),
+        max_memory_mib: Some(512),
+        max_wall_seconds: Some(60),
+        max_output_bytes: None,
+        max_parallel_jobs: Some(1),
+        max_pending_jobs: Some(4),
         storage_quota_bytes: 128 * 1024 * 1024,
     };
     let service = RuntimeService::open(config).await.unwrap();
@@ -141,9 +141,9 @@ async fn compile_spec(f: &Fixture) -> JobSpecV1 {
         }],
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(DbCounter::new(10).unwrap()),
-            memory_mib: 64,
+            memory_mib: Some(64),
             wall_seconds: Some(30),
             output_bytes: Some(DbCounter::new(4096).unwrap()),
         },
@@ -185,7 +185,7 @@ async fn bearer_is_required_and_cookie_or_duplicate_credentials_cannot_override_
 }
 
 #[tokio::test]
-async fn native_object_upload_accepts_binary_above_json_limit_and_checks_exact_versioned_replays() {
+async fn native_object_upload_accepts_binary_above_former_cap_and_checks_exact_versioned_replays() {
     let f = fixture().await;
     let id = Id::new();
     let path = format!("/runtime/v1/objects/{id}");
@@ -195,11 +195,11 @@ async fn native_object_upload_accepts_binary_above_json_limit_and_checks_exact_v
         ("content-type", "application/octet-stream"),
         ("x-qz-storage-version", "native-7"),
     ];
-    let bytes = vec![0x5a; 2 * 1024 * 1024];
+    let bytes = vec![0x5a; 64 * 1024 * 1024 + 1];
     let (status, first) = request(&f, Method::PUT, &path, &headers, bytes.clone()).await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(first["artifact_id"], id.to_string());
-    assert_eq!(first["byte_count"], "2097152");
+    assert_eq!(first["byte_count"], bytes.len().to_string());
     let (status, repeated) = request(&f, Method::PUT, &path, &headers, bytes.clone()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(first, repeated);
@@ -217,6 +217,7 @@ async fn native_object_upload_accepts_binary_above_json_limit_and_checks_exact_v
     );
     let (version, original) = f.service.journal().input_object(id).await.unwrap();
     assert_eq!(version, "native-7");
+    assert_eq!(original.len(), 64 * 1024 * 1024 + 1);
     assert!(original.iter().all(|value| *value == 0x5a));
     // Global input objects have no public download capability.
     assert_eq!(
@@ -474,5 +475,244 @@ async fn native_full_filesystem_upload_reports_capacity_failure_and_retries_orig
         f.service.journal().input_object(id).await.unwrap(),
         ("original-1".to_owned(), bytes)
     );
+    f.service.journal().close().await;
+}
+
+#[tokio::test]
+async fn native_json_intake_has_no_implicit_body_cap_and_keeps_auth_and_complete_validation() {
+    let f = fixture().await;
+    let run = Id::new();
+    let path = format!("/runtime/v1/jobs/{run}%2F1/cancel");
+    let cancellation = json!({"schema_version":1,"run_id":run,"attempt_no":1,"owner_epoch":"1"});
+    let mut bytes = vec![b' '; 2 * 1024 * 1024 + 1];
+    bytes.extend_from_slice(&serde_json::to_vec(&cancellation).unwrap());
+    assert_eq!(
+        request(&f, Method::POST, &path, &[("content-type", "application/json")], bytes.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let bearer = format!("Bearer {CREDENTIAL}");
+    let headers = [("authorization", bearer.as_str()), ("content-type", "application/json")];
+    let (status, receipt) = request(&f, Method::POST, &path, &headers, bytes.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["state"], "CANCELLED");
+    assert_eq!(receipt["run_id"], run.to_string());
+    assert_eq!(
+        authenticated(&f, Method::POST, &path, cancellation).await.1,
+        receipt,
+        "whitespace length cannot change the immutable cancellation receipt"
+    );
+    bytes.push(b'x');
+    assert_eq!(
+        request(&f, Method::POST, &path, &headers, bytes).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        authenticated(&f, Method::GET, &format!("/runtime/v1/jobs/{run}%2F1"), Value::Null).await.1,
+        receipt,
+        "invalid trailing data cannot alter a durable native identity"
+    );
+    assert!(f.service.journal().scheduling().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn fifth_authenticated_runtime_request_is_not_rejected_by_four_waiting_bodies() {
+    let f = fixture().await;
+    let mut tasks = Vec::new();
+    let mut releases = Vec::new();
+    for _ in 0..4 {
+        let (entered, waiting) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            entered.send(()).unwrap();
+            released.await.unwrap();
+            Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"original"))
+        }));
+        let req = Request::builder().method(Method::PUT).uri(format!("/runtime/v1/objects/{}", Id::new()))
+            .header(header::AUTHORIZATION, format!("Bearer {CREDENTIAL}"))
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header("x-qz-storage-version", "1").body(body).unwrap();
+        let app = f.app.clone();
+        tasks.push(tokio::spawn(async move { app.oneshot(req).await.unwrap() }));
+        tokio::time::timeout(std::time::Duration::from_secs(3), waiting).await.unwrap().unwrap();
+        releases.push(release);
+    }
+    let (status, _) = request(&f, Method::GET, "/unknown", &[("authorization", &format!("Bearer {CREDENTIAL}"))], vec![]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    for release in releases { release.send(()).unwrap(); }
+    for task in tasks { assert_eq!(task.await.unwrap().status(), StatusCode::CREATED); }
+    f.service.journal().close().await;
+}
+
+#[tokio::test]
+async fn legitimate_runtime_upload_can_cross_fifteen_seconds_and_replay_its_original_receipt() {
+    let f = fixture().await;
+    let id = Id::new();
+    let path = format!("/runtime/v1/objects/{id}");
+    let body = Body::from_stream(futures_util::stream::once(async {
+        tokio::time::sleep(std::time::Duration::from_secs(16)).await;
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"slow original"))
+    }));
+    let req = Request::builder().method(Method::PUT).uri(&path)
+        .header(header::AUTHORIZATION, format!("Bearer {CREDENTIAL}"))
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header("x-qz-storage-version", "original").body(body).unwrap();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(20), f.app.clone().oneshot(req)).await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let receipt: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(f.service.journal().input_object(id).await.unwrap(), ("original".to_owned(), b"slow original".to_vec()));
+    // Explicit client replay uses the same native identity; no server-side
+    // timeout retry or extra object publication is introduced.
+    let (status, replay) = request(&f, Method::PUT, &path, &[("authorization", &format!("Bearer {CREDENTIAL}")), ("content-type", "application/octet-stream"), ("x-qz-storage-version", "original")], b"slow original".to_vec()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay, receipt);
+    f.service.journal().close().await;
+}
+
+#[tokio::test]
+async fn cancelled_runtime_request_body_does_not_publish_or_retry_an_object() {
+    let f = fixture().await;
+    let id = Id::new();
+    let (entered, observed) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        entered.send(()).unwrap();
+        released.await.unwrap();
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"unpublished"))
+    }));
+    let req = Request::builder().method(Method::PUT).uri(format!("/runtime/v1/objects/{id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {CREDENTIAL}"))
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header("x-qz-storage-version", "original").body(body).unwrap();
+    let app = f.app.clone();
+    let waiter = tokio::spawn(async move { app.oneshot(req).await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(3), observed).await.unwrap().unwrap();
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    assert!(release.send(()).is_err(), "request cancellation must drop the body future");
+    assert!(matches!(f.service.journal().input_object(id).await, Err(runtime::Failure::Missing)));
+    f.service.journal().close().await;
+}
+
+
+struct TcpRequestFinished(Arc<tokio::sync::Notify>);
+impl Drop for TcpRequestFinished {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+async fn serve_tcp_fixture(
+    f: &Fixture,
+) -> (
+    std::net::SocketAddr,
+    Arc<tokio::sync::Notify>,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let finished = Arc::new(tokio::sync::Notify::new());
+    let observed = finished.clone();
+    let app = f.app.clone().layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let guard = TcpRequestFinished(observed.clone());
+            async move {
+                let response = next.run(request).await;
+                drop(guard);
+                response
+            }
+        },
+    ));
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async { let _ = stopped.await; })
+            .await
+            .unwrap();
+    });
+    (address, finished, stop, task)
+}
+
+async fn open_tcp_upload(
+    address: std::net::SocketAddr,
+    id: Id,
+    length: usize,
+    first: &[u8],
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let header = format!(
+        "PUT /runtime/v1/objects/{id} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {CREDENTIAL}\r\nContent-Type: application/octet-stream\r\nx-qz-storage-version: original\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(header.as_bytes()).await.unwrap();
+    stream.write_all(first).await.unwrap();
+    stream.flush().await.unwrap();
+    stream
+}
+
+async fn tcp_upload_receipt(mut stream: tokio::net::TcpStream) -> (u16, Value) {
+    use tokio::io::AsyncReadExt;
+    let mut response = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(10), stream.read_to_end(&mut response))
+        .await.unwrap().unwrap();
+    let separator = response.windows(4).position(|window| window == b"\r\n\r\n").unwrap();
+    let header = std::str::from_utf8(&response[..separator]).unwrap();
+    let status = header.lines().next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
+    let length: usize = header.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().unwrap())
+    }).unwrap();
+    let body = &response[separator + 4..];
+    assert_eq!(body.len(), length, "the native TCP response must be read completely");
+    assert!(!body.windows(CREDENTIAL.len()).any(|bytes| bytes == CREDENTIAL.as_bytes()));
+    (status, serde_json::from_slice(body).unwrap())
+}
+
+#[tokio::test]
+async fn real_tcp_upload_crosses_fifteen_seconds_and_replays_exact_original_bytes() {
+    use tokio::io::AsyncWriteExt;
+    let f = fixture().await;
+    let (address, finished, stop, server) = serve_tcp_fixture(&f).await;
+    let id = Id::new();
+    let bytes = b"slow original TCP bytes";
+    let mut stream = open_tcp_upload(address, id, bytes.len(), &bytes[..1]).await;
+    tokio::time::sleep(std::time::Duration::from_secs(16)).await;
+    stream.write_all(&bytes[1..]).await.unwrap();
+    let (status, receipt) = tcp_upload_receipt(stream).await;
+    assert_eq!(status, 201);
+    tokio::time::timeout(std::time::Duration::from_secs(3), finished.notified()).await.unwrap();
+    assert_eq!(f.service.journal().input_object(id).await.unwrap(), ("original".into(), bytes.to_vec()));
+    let stream = open_tcp_upload(address, id, bytes.len(), bytes).await;
+    let (status, replay) = tcp_upload_receipt(stream).await;
+    assert_eq!(status, 200);
+    assert_eq!(replay, receipt);
+    assert_eq!(f.service.journal().input_object(id).await.unwrap(), ("original".into(), bytes.to_vec()));
+    stop.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), server).await.unwrap().unwrap();
+    f.service.journal().close().await;
+}
+
+#[tokio::test]
+async fn real_tcp_disconnect_cannot_publish_partial_bytes_or_create_a_retry() {
+    let f = fixture().await;
+    let (address, finished, stop, server) = serve_tcp_fixture(&f).await;
+    let id = Id::new();
+    let bytes = b"complete original TCP object";
+    let stream = open_tcp_upload(address, id, bytes.len(), &bytes[..1]).await;
+    drop(stream);
+    // Observe termination of the real server request future before checking the
+    // durable journal. Elapsed time alone is not evidence of cancellation.
+    tokio::time::timeout(std::time::Duration::from_secs(5), finished.notified()).await.unwrap();
+    assert!(matches!(f.service.journal().input_object(id).await, Err(runtime::Failure::Missing)));
+    let stream = open_tcp_upload(address, id, bytes.len(), bytes).await;
+    let (status, receipt) = tcp_upload_receipt(stream).await;
+    assert_eq!(status, 201, "the partial request did not publish this identity");
+    assert_eq!(f.service.journal().input_object(id).await.unwrap(), ("original".into(), bytes.to_vec()));
+    let stream = open_tcp_upload(address, id, bytes.len(), bytes).await;
+    let (status, replay) = tcp_upload_receipt(stream).await;
+    assert_eq!(status, 200);
+    assert_eq!(replay, receipt);
+    stop.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), server).await.unwrap().unwrap();
     f.service.journal().close().await;
 }

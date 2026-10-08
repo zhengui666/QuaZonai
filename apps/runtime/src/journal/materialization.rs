@@ -44,16 +44,12 @@ pub(super) async fn required_bytes(
             .checked_add(u64::try_from(size).map_err(|_| Failure::Integrity)?)
             .ok_or(Failure::Capacity)?;
     }
-    if copied > boundary::MAX_INPUT_OBJECTS_BYTES {
-        return Err(Failure::Capacity);
-    }
     copied
         .checked_add(document_bytes as u64)
         .and_then(|bytes| match spec.limits.output_bytes {
             Some(output) => bytes.checked_add(output.get()),
             None => Some(bytes),
         })
-        .and_then(|bytes| bytes.checked_add(boundary::MAX_RESULT_MANIFEST_BYTES as u64))
         .ok_or(Failure::Capacity)
 }
 
@@ -103,7 +99,9 @@ impl Journal {
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(old) = old {
-            if old != amount_i64 {
+            // Older releases also reserved a fixed manifest allowance. Preserve that
+            // harmless over-reservation until cleanup rather than rejecting recovery.
+            if old < amount_i64 {
                 return Err(Failure::Integrity);
             }
         } else {

@@ -181,7 +181,7 @@ async fn portfolio_admission_without_its_running_cycle_never_publishes_or_charge
             experiments: 0,
             cpu_seconds: Some(contracts::DbCounter::new(10).unwrap()),
             wall_seconds: Some(10),
-            memory_mib: 64,
+            memory_mib: Some(64),
             output_bytes: Some(contracts::DbCounter::new(1024).unwrap()),
         },
     };

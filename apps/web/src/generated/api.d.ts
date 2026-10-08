@@ -2676,7 +2676,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -2685,7 +2685,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };
@@ -2775,11 +2775,7 @@ export interface components {
         /** @enum {string} */
         ArtifactAccess: "OPERATOR" | "RESEARCH" | "EVALUATOR_ONLY" | "DELIVERY";
         ArtifactCreate: {
-            /**
-             * @description The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,
-             *     and preserves the original bytes. JSON Schema string length counts characters,
-             *     so clients must check encoded UTF-8 byte length separately before submission.
-             */
+            /** @description Original UTF-8 bytes, including JSON whitespace, are preserved. */
             content: string;
             kind: components["schemas"]["ResearchArtifactKind"];
             project_id: components["schemas"]["Id"];
@@ -2868,20 +2864,15 @@ export interface components {
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
                 max_cpu_seconds?: null | string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
+                max_memory_mib?: null | number;
                 max_output_bytes?: null | string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
+                max_turns_per_mission?: null | number;
                 max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
@@ -2936,20 +2927,15 @@ export interface components {
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
                 max_cpu_seconds?: null | string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
+                max_memory_mib?: null | number;
                 max_output_bytes?: null | string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
+                max_turns_per_mission?: null | number;
                 max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
@@ -3004,20 +2990,15 @@ export interface components {
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
                 max_cpu_seconds?: null | string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
+                max_memory_mib?: null | number;
                 max_output_bytes?: null | string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
+                max_turns_per_mission?: null | number;
                 max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
@@ -3125,20 +3106,15 @@ export interface components {
             cost_enforcement: components["schemas"]["CostEnforcement"];
             max_cost_decimal?: null | string;
             max_cpu_seconds?: null | string;
-            /** Format: int32 */
-            max_cycles_per_day: number;
+            max_cycles_per_day?: null | number;
             /** Format: int64 */
             max_experiments: number;
-            /** Format: int64 */
-            max_memory_mib: number;
+            max_memory_mib?: null | number;
             max_output_bytes?: null | string;
-            /** Format: int32 */
-            max_parallel_runs: number;
-            /** Format: int32 */
-            max_repair_turns: number;
+            max_parallel_runs?: null | number;
+            max_repair_turns?: null | number;
             max_tokens?: null | string;
-            /** Format: int32 */
-            max_turns_per_mission: number;
+            max_turns_per_mission?: null | number;
             max_wall_seconds?: null | number;
             /** Format: int64 */
             min_cycle_interval_seconds: number;
@@ -3209,7 +3185,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -3218,7 +3194,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };
@@ -4848,7 +4824,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -4857,7 +4833,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };
@@ -5980,7 +5956,7 @@ export interface components {
              */
             experiments: number;
             /** Format: int64 */
-            memory_mib: number;
+            memory_mib?: number | null;
             output_bytes?: null | components["schemas"]["DbCounter"];
             schema_version: components["schemas"]["SchemaV1"];
             /** Format: int64 */
@@ -6163,10 +6139,10 @@ export interface components {
             settings: components["schemas"]["NativeSimulationSettingsV1"];
             split_policy: components["schemas"]["SplitPolicyV1"];
             target_ttl_ns: components["schemas"]["DbCounter"];
-            total_fuel: components["schemas"]["DbCounter"];
+            total_fuel?: null | components["schemas"]["DbCounter"];
         };
         NativeExperimentEvaluationResultV1: {
-            consumed_fuel: components["schemas"]["DbCounter"];
+            consumed_fuel: null | components["schemas"]["DbCounter"];
             dataset_revision_id: components["schemas"]["Id"];
             feature_artifact_ids: components["schemas"]["Id"][];
             /** Format: int32 */
@@ -7900,7 +7876,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -7909,7 +7885,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };
@@ -7990,7 +7966,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -7999,7 +7975,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };
@@ -8180,7 +8156,7 @@ export interface components {
          */
         RecordedFeatureRegisterV1: {
             /**
-             * @description 1..=2097152 encoded UTF-8 bytes; whitespace and final newline are retained.
+             * @description Original UTF-8 bytes; whitespace and final newline are retained.
              *     This is a string, never a parsed JSON Value to be reserialized for storage.
              */
             content: string;
@@ -8374,7 +8350,7 @@ export interface components {
             event_type: string;
             /** Format: date-time */
             occurred_at: string;
-            /** @description Public extensible schema-v1 JSON object; serialized UTF-8 is limited to 65536 bytes. Known event types additionally validate their specific payload contract. */
+            /** @description Public extensible schema-v1 JSON object. Known event types additionally validate their specific payload contract. */
             payload: {
                 /** @enum {integer} */
                 schema_version: 1;
@@ -8448,14 +8424,16 @@ export interface components {
             isolation_profile: components["schemas"]["IsolationProfile"];
             job_kinds: components["schemas"]["RunKind"][];
             label_interval_support: components["schemas"]["LabelIntervalSupportV1"];
-            /** Format: int32 */
+            /** Format: int64 */
             max_cpu: number;
             /** Format: int32 */
             max_memory_mib: number;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_output_bytes: string;
-            /** Format: int32 */
-            max_wall_seconds: number;
+            max_output_bytes?: null | string;
+            /**
+             * Format: int32
+             * @description Explicit operator-selected Runtime ceiling. None imposes no wall-time cap.
+             */
+            max_wall_seconds?: number | null;
             protocol_versions: components["schemas"]["SchemaV1"][];
             runtime_version: string;
             schema_version: components["schemas"]["SchemaV1"];
@@ -8807,7 +8785,7 @@ export interface components {
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
+                memory_mib?: number | null;
                 output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
@@ -8816,7 +8794,7 @@ export interface components {
                 cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
+                memory_mib?: null | number;
                 output_bytes?: null | string;
                 wall_seconds?: null | number;
             };

@@ -31,17 +31,11 @@ pub struct PaperCapitalExitOwners {
 }
 impl PaperCapitalExitOwners {
     pub fn parse(value: &str) -> Result<Self, &'static str> {
-        if value.len() > 65536 {
-            return Err("Paper capital-exit owner configuration exceeds limit");
-        }
         let owners = serde_json::from_str(value)
             .map_err(|_| "invalid Paper capital-exit owner configuration")?;
         Self::new(owners)
     }
     pub fn new(owners: Vec<PaperCapitalExitOwnerConfiguration>) -> Result<Self, &'static str> {
-        if owners.len() > 128 {
-            return Err("too many Paper capital-exit owner registrations");
-        }
         let mut identities = BTreeSet::new();
         for owner in &owners {
             for value in [
@@ -134,6 +128,40 @@ impl PaperCapitalExitOwners {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_configuration_crosses_count_and_byte_caps_without_widening_identity() {
+        let project_id = Id::new();
+        let downstream_id = Id::new();
+        let owners: Vec<_> = (0..257)
+            .map(|index| PaperCapitalExitOwnerConfiguration {
+                schema_version: SchemaV1,
+                project_id,
+                downstream_id,
+                native_trader_id: "TRADER-001".into(),
+                native_account_id: format!("POLYMARKET-{index:03}"),
+                native_client_id: "POLYMARKET".into(),
+                native_version: "0.63.0".into(),
+                venue: "POLYMARKET".into(),
+                collateral_currency: "USDC".into(),
+                instrument_id: "YES.POLYMARKET".into(),
+                controlled_strategy_ids: vec!["QZ-PAPER-001".into()],
+            })
+            .collect();
+        let raw = serde_json::to_string(&owners).unwrap();
+        assert!(raw.len() > 65536);
+        let parsed = PaperCapitalExitOwners::parse(&raw).unwrap();
+        assert_eq!(serde_json::to_value(&parsed.owners).unwrap(), serde_json::to_value(&owners).unwrap());
+        let mut duplicate = owners.clone();
+        duplicate.push(owners[0].clone());
+        assert!(PaperCapitalExitOwners::new(duplicate).is_err());
+        let mut wrong_strategy = owners.clone();
+        wrong_strategy.last_mut().unwrap().controlled_strategy_ids.push("OTHER-001".into());
+        assert!(PaperCapitalExitOwners::new(wrong_strategy).is_err());
+        let mut wrong_currency = owners;
+        wrong_currency.last_mut().unwrap().collateral_currency = "UNKNOWN".into();
+        assert!(PaperCapitalExitOwners::new(wrong_currency).is_err());
+    }
     #[test]
     fn paper_capital_exit_configuration_is_explicit_closed_and_disabled_by_default() {
         assert!(

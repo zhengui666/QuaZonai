@@ -4,7 +4,7 @@
 //! Each adapter/project/downstream/handoff owns one OS lock and immutable claim.
 //! A missing terminal observation after admission always requires reconciliation;
 //! releasing the OS lock after a crash never grants permission to execute again.
-use contracts::{strategy_portfolio::HandoffClaimViewV2, Id};
+use contracts::{Id, strategy_portfolio::HandoffClaimViewV2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -12,8 +12,6 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
-
-const MAX_RECORD: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum StoreError {
@@ -121,13 +119,13 @@ fn read_record(path: &Path) -> Result<Option<Vec<u8>>> {
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let file = match options.open(path) {
+    let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err(StoreError::RecoveryRequired),
     };
     let metadata = file.metadata().map_err(|_| StoreError::RecoveryRequired)?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_RECORD {
+    if !metadata.is_file() || metadata.len() == 0 {
         return Err(StoreError::RecoveryRequired);
     }
     #[cfg(unix)]
@@ -138,8 +136,7 @@ fn read_record(path: &Path) -> Result<Option<Vec<u8>>> {
         }
     }
     let mut bytes = Vec::new();
-    file.take(MAX_RECORD + 1)
-        .read_to_end(&mut bytes)
+    file.read_to_end(&mut bytes)
         .map_err(|_| StoreError::RecoveryRequired)?;
     if bytes.len() as u64 != metadata.len() {
         return Err(StoreError::RecoveryRequired);
@@ -148,7 +145,7 @@ fn read_record(path: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 fn publish(path: &Path, bytes: &[u8]) -> Result<()> {
-    if bytes.is_empty() || bytes.len() as u64 > MAX_RECORD {
+    if bytes.is_empty() {
         return Err(StoreError::Unavailable);
     }
     let parent = path.parent().ok_or(StoreError::Unavailable)?;
@@ -333,8 +330,8 @@ impl ClaimLease {
 mod tests {
     use super::*;
     use crate::paper_service::{
-        tests::{claim, private_state_directory},
         PaperProfile, PaperState, PaperStatus,
+        tests::{claim, private_state_directory},
     };
     use std::{
         process::Command,
@@ -638,9 +635,11 @@ mod tests {
         let original = claim();
         let lease = reserve(&store, &original);
         fs::create_dir(lease.path.join("terminal-status.json")).unwrap();
-        assert!(lease
-            .complete(&receipt(&original, PaperState::Stopped))
-            .is_err());
+        assert!(
+            lease
+                .complete(&receipt(&original, PaperState::Stopped))
+                .is_err()
+        );
         drop(lease);
         assert!(matches!(
             store.admit(&original, true),
@@ -703,11 +702,13 @@ mod tests {
         let store = ClaimStore::open(root.path(), "binance").unwrap();
         let original = claim();
         assert!(store.admit(&original, false).unwrap().is_none());
-        assert!(!store
-            .claim_path(&original)
-            .unwrap()
-            .join("claim.json")
-            .exists());
+        assert!(
+            !store
+                .claim_path(&original)
+                .unwrap()
+                .join("claim.json")
+                .exists()
+        );
         drop(reserve(&store, &original));
     }
 
@@ -791,17 +792,19 @@ mod tests {
     }
 
     fn child(root: &Path, mode: &str) {
-        assert!(Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "paper_claim_store::tests::subprocess_lock_probe",
-                "--nocapture"
-            ])
-            .env("QZ_CLAIM_TEST_ROOT", root)
-            .env("QZ_CLAIM_TEST_MODE", mode)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "paper_claim_store::tests::subprocess_lock_probe",
+                    "--nocapture"
+                ])
+                .env("QZ_CLAIM_TEST_ROOT", root)
+                .env("QZ_CLAIM_TEST_MODE", mode)
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     #[test]

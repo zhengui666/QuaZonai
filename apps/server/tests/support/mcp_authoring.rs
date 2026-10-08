@@ -91,7 +91,7 @@ pub async fn fixture(pool: &PgPool, scopes: &[&str]) -> Fixture {
                     experiments: 0,
                     cpu_seconds: Some(DbCounter::new(10).unwrap()),
                     wall_seconds: Some(3600),
-                    memory_mib: 128,
+                    memory_mib: Some(128),
                     output_bytes: Some(DbCounter::new(4096).unwrap()),
                 },
             },

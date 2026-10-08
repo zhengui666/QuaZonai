@@ -52,7 +52,6 @@ where
     let mut stored = 0;
     if let Some(artifacts) = artifacts {
         if artifacts.source_installation_id != source.source_installation_id
-            || artifacts.artifacts.len() > 10_000
         {
             return Err(invalid());
         }
@@ -76,7 +75,7 @@ where
             if copied {
                 let object = artifact.object_ref.ok_or_else(invalid)?;
                 let bytes = artifact.byte_count.ok_or_else(invalid)?;
-                if bytes.get() == 0 || bytes.get() > 64 * 1024 * 1024 || !objects.insert(object) {
+                if bytes.get() == 0 || !objects.insert(object) {
                     return Err(invalid());
                 }
                 if existing.is_some_and(|n| n as u64 != bytes.get()) {

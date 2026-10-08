@@ -36,7 +36,7 @@ export function checkedEquity(view: Schema['EquityCurveV1'], evaluation: Schema[
   }
   if (view.curve.status === 'READY') {
     const series = view.curve.series;
-    if (series.resolution === 'AUTO' || series.points.length > 10_000
+    if (series.resolution === 'AUTO'
         || BigInt(series.period_start_ns) > BigInt(series.period_end_ns)
         || BigInt(series.window_point_count) > BigInt(series.source_point_count)
         || BigInt(series.points.length) > BigInt(series.window_point_count)

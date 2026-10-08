@@ -244,9 +244,9 @@ async fn native_rolling_study(prediction: bool) {
         inputs,
         parameters_artifact_id: parameters_id,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(30)),
-            memory_mib: 512,
+            memory_mib: Some(512),
             wall_seconds: Some(30),
             output_bytes: Some(count(8 * 1024 * 1024)),
         },
@@ -566,9 +566,9 @@ async fn native_candidate_simulation(sequence: bool) {
         inputs,
         parameters_artifact_id: parameters_id,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(30)),
-            memory_mib: 512,
+            memory_mib: Some(512),
             wall_seconds: Some(30),
             output_bytes: Some(count(4 * 1024 * 1024)),
         },
@@ -1014,9 +1014,9 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         .collect(),
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(30)),
-            memory_mib: 512,
+            memory_mib: Some(512),
             wall_seconds: Some(30),
             output_bytes: Some(count(4 * 1024 * 1024)),
         },
@@ -1153,7 +1153,7 @@ async fn native_portfolio(cvar: bool, risk_budget: bool) {
         result.allocation.cvar_risk_budget_witness.is_some(),
         cvar && risk_budget
     );
-    assert!(result.consumed_fuel.get() > 0);
+    assert!(result.consumed_fuel.unwrap().get() > 0);
     assert_eq!(
         f.native_container(&spec).await.state.unwrap().exit_code,
         Some(0)
@@ -1494,9 +1494,9 @@ async fn real_native_sealed_job_reads_the_frozen_model_and_registered_parquet() 
         ],
         parameters_artifact_id: parameters,
         limits: RuntimeJobLimitsV1 {
-            cpu: 1,
+            cpu: Some(1),
             cpu_seconds: Some(count(30)),
-            memory_mib: 512,
+            memory_mib: Some(512),
             wall_seconds: Some(30),
             output_bytes: Some(count(4 * 1024 * 1024)),
         },
@@ -1565,7 +1565,7 @@ async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_
                 if container.state.as_ref().and_then(|state| state.running) == Some(true) {
                     match runtime::files::output_usage(
                         &output,
-                        Some(spec.limits.output_bytes.unwrap().get() + 1024 * 1024),
+                        None,
                     ) {
                         Ok(_) => {
                             // Both native observations must bound the scan while
@@ -1640,7 +1640,7 @@ async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_
         Some(native_id.as_str())
     );
     let mut conflict = spec.clone();
-    conflict.limits.memory_mib += 1;
+    conflict.limits.memory_mib = conflict.limits.memory_mib.map(|memory| memory + 1);
     let response = f
         .client
         .post(f.url(&["jobs"]))
@@ -1900,7 +1900,7 @@ async fn real_native_compile_oom_is_reported_as_a_safe_resource_failure() {
     // Never compile this input directly on the host.
     let code = format!("{SIGNAL}\n#[used] static PRESSURE: [u8; 1 << 30] = [1; 1 << 30];\n");
     let mut spec = f.compile(&code, 30).await;
-    spec.limits.memory_mib = 64;
+    spec.limits.memory_mib = Some(64);
     let docker = docker().await;
     // Poll the owned identity before submission, then sample its original live
     // PID/cgroup. This neither delays START nor changes the image or compiler.
@@ -2097,7 +2097,7 @@ async fn isolated_probe(
 ) -> (bollard::models::ContainerInspectResponse, tempfile::TempDir) {
     let mut fixture = Fixture::open().await;
     let mut spec = fixture.compile(SIGNAL, 10).await;
-    spec.limits.memory_mib = 64;
+    spec.limits.memory_mib = Some(if mode == "pids" { 256 } else { 64 });
     spec.limits.output_bytes = Some(count(1024 * 1024));
     fixture.crash();
     let directory = tempfile::tempdir().unwrap();
@@ -2210,7 +2210,7 @@ async fn actual_native_namespaces_forbid_secret_socket_network_root_input_writes
 }
 
 #[tokio::test]
-async fn actual_native_memory_pids_and_file_size_limits_are_enforced_by_the_kernel() {
+async fn actual_native_memory_grant_remains_without_a_fixed_process_cap() {
     let (memory, directory) = isolated_probe("memory").await;
     let state = memory.state.unwrap();
     assert_eq!(state.oom_killed, Some(true));
@@ -2225,14 +2225,14 @@ async fn actual_native_memory_pids_and_file_size_limits_are_enforced_by_the_kern
         .unwrap()
         .parse()
         .unwrap();
-    assert!((1..64).contains(&children));
+    assert_eq!(children, 65);
+}
+
+#[tokio::test]
+async fn native_metadata_files_are_not_subject_to_the_payload_file_ceiling() {
     let (files, directory) = isolated_probe("output").await;
-    let exit = files.state.unwrap().exit_code;
-    assert!(exit.is_some() && exit != Some(0) && exit != Some(99));
-    assert!(
-        fs::metadata(directory.path().join("output/bounded-file"))
-            .unwrap()
-            .len()
-            <= 1024 * 1024
-    );
+    assert_eq!(files.state.unwrap().exit_code, Some(0));
+    let bytes = fs::read(directory.path().join("output/metadata-probe")).unwrap();
+    assert_eq!(bytes.len(), 256 * 65536);
+    assert!(bytes.iter().all(|byte| *byte == 0x5a));
 }

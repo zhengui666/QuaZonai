@@ -22,8 +22,6 @@ use std::{
 };
 
 pub const SIDECAR: &str = SPOT_CANDLE_SOURCE_FILE;
-const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_RESPONSES: usize = 256;
 const MINUTE_MS: u64 = 60_000;
 
 pub struct VerifiedSpotSource {
@@ -50,12 +48,12 @@ fn read_bundle(root: &Path) -> Result<FrozenSpotCandleSourceV1> {
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let file = options
+    let mut file = options
         .open(root.join(SIDECAR))
         .context("SPOT_CASH_FROZEN_SOURCE_REQUIRED")?;
     let metadata = file.metadata()?;
     ensure!(
-        metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_SOURCE_BYTES as u64,
+        metadata.is_file() && metadata.len() > 0,
         "SPOT_SOURCE_FILE_LIMIT"
     );
     #[cfg(unix)]
@@ -64,8 +62,7 @@ fn read_bundle(root: &Path) -> Result<FrozenSpotCandleSourceV1> {
         ensure!(metadata.nlink() == 1, "SPOT_SOURCE_FILE_IDENTITY");
     }
     let mut bytes = Vec::new();
-    file.take(MAX_SOURCE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)?;
+    file.read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() as u64 == metadata.len(),
         "SPOT_SOURCE_FILE_CHANGED"
@@ -74,7 +71,6 @@ fn read_bundle(root: &Path) -> Result<FrozenSpotCandleSourceV1> {
 }
 fn write_bundle(root: &Path, bundle: &FrozenSpotCandleSourceV1) -> Result<()> {
     let bytes = serde_json::to_vec(bundle)?;
-    ensure!(bytes.len() <= MAX_SOURCE_BYTES, "SPOT_SOURCE_FILE_LIMIT");
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -105,9 +101,7 @@ fn source_rows(
     BTreeMap<FrozenSpotCandleRowV1, ClosedBarSourceRow>,
 )> {
     ensure!(
-        bundle.native_version == "0.63.0"
-            && !bundle.responses.is_empty()
-            && bundle.responses.len() <= MAX_RESPONSES,
+        bundle.native_version == "0.63.0" && !bundle.responses.is_empty(),
         "SPOT_SOURCE_VERSION_OR_RESPONSES"
     );
     let instrument: InstrumentAny = serde_json::from_value(bundle.instrument_definition.clone())?;
@@ -273,7 +267,7 @@ fn verified(
     selection: &NativeBarSelectionV1,
 ) -> Result<(VerifiedSpotSource, Vec<FrozenSpotCandleRowV1>)> {
     ensure!(
-        !bundle.selected_rows.is_empty() && bundle.selected_rows.len() <= MAX_RESPONSES,
+        !bundle.selected_rows.is_empty(),
         "SPOT_SOURCE_SELECTED_ROW_COUNT"
     );
     let (instrument, mut originals) = source_rows(bundle)?;

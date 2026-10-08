@@ -48,7 +48,7 @@ impl DownstreamTransport {
             .map_err(|_| RuntimeProbeFailure::Unavailable)?;
         let (capabilities, _) = self
             .http
-            .json_response(response, &[StatusCode::OK], 64 * 1024)
+            .json_response(response, &[StatusCode::OK])
             .await
             .map_err(RuntimeRequestError::probe)?;
         domain::delivery::downstream_capabilities(&capabilities, chrono::Utc::now())

@@ -1,4 +1,4 @@
-//! Bounded native catalog metadata over the existing deployment-approved TLS transport.
+//! Complete native catalog metadata over the existing deployment-approved TLS transport.
 use super::{RuntimeRequestError, RuntimeTransport};
 use chrono::Utc;
 use contracts::catalogs::RuntimeCatalogMetadataV1;
@@ -29,7 +29,7 @@ impl RuntimeTransport {
             .await
             .map_err(|_| RuntimeRequestError::Unavailable)?;
         let (metadata, raw_document): (RuntimeCatalogMetadataV1, _) = self
-            .json_response(response, &[StatusCode::OK], 1024 * 1024)
+            .json_response(response, &[StatusCode::OK])
             .await?;
         if metadata.registered_ref != registered_ref || metadata.storage_version != storage_version
         {

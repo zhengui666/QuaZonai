@@ -133,9 +133,6 @@ impl ThreadOptions {
         if !self.ephemeral || self.mission.is_some() {
             return Err(NativeFailure::Configuration);
         }
-        if servers.len() > 64 {
-            return Err(NativeFailure::ObservationLimit);
-        }
         let mut request = self.start_params()?;
         if request.get("config").is_none() {
             request["config"] = json!({});
@@ -258,7 +255,7 @@ pub(super) fn initialize() -> Value {
 pub(super) fn turn(client_id: &str, thread_id: &str, prompt: &str) -> Result<Value> {
     projection::text(client_id, 200)?;
     projection::text(thread_id, 200)?;
-    if prompt.trim().is_empty() || prompt.len() > 256 * 1024 || prompt.contains('\0') {
+    if prompt.trim().is_empty() || prompt.contains('\0') {
         return Err(NativeFailure::Configuration);
     }
     Ok(json!({"threadId":thread_id,"clientUserMessageId":client_id,
@@ -268,6 +265,13 @@ pub(super) fn turn(client_id: &str, thread_id: &str, prompt: &str) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn large_native_prompt_is_forwarded_without_a_product_size_cap() {
+        let prompt = "x".repeat(256 * 1024 + 1);
+        assert_eq!(turn("reserved", "thread", &prompt).unwrap()["input"][0]["text"], prompt);
+        assert!(turn("reserved", "thread", "").is_err());
+        assert!(turn("reserved", "thread", "invalid\0text").is_err());
+    }
     #[test]
     fn default_native_settings_are_omitted_and_resume_never_requests_raw_history() {
         let root = tempfile::tempdir().unwrap();
@@ -339,9 +343,7 @@ mod tests {
         let too_many = (0..65)
             .map(|i| (format!("server-{i}"), IgnoredAny))
             .collect();
-        assert_eq!(
-            options.probe_params(&too_many).unwrap_err(),
-            NativeFailure::ObservationLimit
-        );
+        assert_eq!(options.probe_params(&too_many).unwrap()["config"]["mcp_servers"]
+            .as_object().unwrap().len(), 65);
     }
 }

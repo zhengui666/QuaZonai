@@ -4,8 +4,6 @@ use reqwest::{header, Client, ClientBuilder, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
-pub(crate) const MAX_JSON_BYTES: usize = 1024 * 1024;
-
 // Never retain native error chains: URLs, credentials and response values may be private.
 pub(crate) enum Failure {
     Configuration,
@@ -25,7 +23,7 @@ pub(crate) fn bearer(token: &str) -> Result<header::HeaderMap> {
     Ok(headers)
 }
 
-pub(crate) fn builder(mut headers: header::HeaderMap, timeout: Duration) -> ClientBuilder {
+pub(crate) fn builder(mut headers: header::HeaderMap) -> ClientBuilder {
     headers.insert(
         header::ACCEPT,
         header::HeaderValue::from_static("application/json"),
@@ -44,7 +42,6 @@ pub(crate) fn builder(mut headers: header::HeaderMap, timeout: Duration) -> Clie
         .no_deflate()
         .no_zstd()
         .connect_timeout(Duration::from_secs(3))
-        .timeout(timeout)
 }
 
 pub(crate) async fn send(request: RequestBuilder) -> Result<Response> {
@@ -81,16 +78,20 @@ pub(crate) fn media(response: &Response, expected: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn body(mut response: Response, maximum: usize) -> Result<Vec<u8>> {
-    if response
-        .content_length()
-        .is_some_and(|size| size > maximum as u64)
-    {
+/// Read the complete response. An optional expected length comes only from the
+/// immutable artifact metadata, never from an adapter-specific payload quota.
+pub(crate) async fn body(
+    mut response: Response,
+    expected_bytes: Option<usize>,
+) -> Result<Vec<u8>> {
+    if expected_bytes.is_some_and(|expected| {
+        response.content_length().is_some_and(|size| size > expected as u64)
+    }) {
         return Err(Failure::ResponseLimit);
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Unavailable)? {
-        if chunk.len() > maximum.saturating_sub(bytes.len()) {
+        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len())) {
             return Err(Failure::ResponseLimit);
         }
         bytes.extend_from_slice(&chunk);
@@ -120,7 +121,7 @@ pub(crate) async fn checked(
         return Err(Failure::Contract);
     }
     media(&response, "application/problem+json")?;
-    let problem: Problem = decode(&body(response, MAX_JSON_BYTES).await?, credential)?;
+    let problem: Problem = decode(&body(response, None).await?, credential)?;
     if problem.status != status || !problem.kind.starts_with("urn:quazonai:problem:") {
         return Err(Failure::Contract);
     }

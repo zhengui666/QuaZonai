@@ -90,7 +90,6 @@ where
             spec.parameters_artifact_id,
             None,
             "qz.native_task",
-            8 * 1024 * 1024,
             &mut read,
         )
         .await?;
@@ -118,7 +117,6 @@ where
                     id,
                     None,
                     "qz.alpha_calibration",
-                    8 * 1024 * 1024,
                     &mut read,
                 )
                 .await?;
@@ -136,7 +134,6 @@ where
             manifest_id.ok_or(StoreError::Integrity)?,
             Some((run, attempt)),
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             &mut read,
         )
         .await?;
@@ -156,7 +153,6 @@ where
             output,
             Some((run, attempt)),
             "qz.alpha_sealed",
-            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
             &mut read,
         )
         .await?;
@@ -233,9 +229,6 @@ where
     }
     let report = json!({"schema_version":1,"evaluation_id":evaluation,"alpha_version_id":alpha,"run_id":run,"input_set_id":locked.run.input_set_id,"policy_id":policy_id,"evaluation_kind":"SEALED","execution_status":locked.run.state,"evidence_status":gate.evidence_status,"decision":gate.decision,"reasons":gate.reasons,"origin":binding.try_get::<String,_>("origin")?,"validation_evaluation_id":db::id(binding.try_get("validation_evaluation_id")?)?,"calibration_id":db::optional_id(&binding,"calibration_id")?,"exposure_id":exposure_id,"native_report_artifact_id":native_report,"native_manifest_artifact_id":manifest_id,"native_versions":versions,"source_observations":source_rows,"unique_test_observations":observations,"concluded_at":concluded_at,"valid_until":valid_until});
     let bytes = serde_json::to_vec(&report).map_err(|_| StoreError::Integrity)?;
-    if bytes.len() > 64 * 1024 {
-        return Err(StoreError::Integrity);
-    }
     let size = bytes.len() as i64;
     publish(NativeObjectPublication {
         id: report_id,

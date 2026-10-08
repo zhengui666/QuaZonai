@@ -117,15 +117,23 @@ Use a Linux x86_64 Runtime owner with local Docker Engine/cgroup v2 and the gate
     {"job_kind": "PORTFOLIO_SIMULATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"}
   ],
   "catalogs": [],
-  "max_cpu": 2,
-  "max_memory_mib": 4096,
-  "max_wall_seconds": 3600,
-  "max_output_bytes": 67108864,
+  "max_cpu": null,
+  "max_memory_mib": null,
+  "max_wall_seconds": null,
+  "max_output_bytes": null,
   "max_parallel_jobs": 2,
   "max_pending_jobs": 64,
   "storage_quota_bytes": 10737418240
 }
 ```
+
+`max_output_bytes` may be omitted or null to advertise no application-defined bound on explicit output budgets. Existing numeric configurations remain readable without rewriting them. A Job with no output budget keeps the existing `optional-output-budget` protocol behavior; an explicit Job budget counts its typed artifact payloads, not the index or result-envelope metadata. File, database and disk failures remain real failures, never truncated successful results.
+
+`max_cpu` and `max_memory_mib` may also be omitted or null to leave their corresponding application-defined ceilings unset. Positive values still impose an explicit Runtime ceiling; zero is invalid. A Job's nullable `cpu` is its CPU rate limit, distinct from the cumulative `cpu_seconds` budget. Its nullable `memory_mib` is its memory limit. Existing positive Job values and frozen numeric replay keep their meaning; absence is never replaced with one core or a fabricated memory allowance.
+
+Images built with the nullable CPU/memory Job decoder carry `io.quazonai.optional-resource-quotas=1` in the [native job image](../runtimes/native/native-job.Dockerfile). The gateway verifies the label on the actual pinned image, independently of the existing native-stack contract. It advertises `optional-cpu-rate/1` or `optional-memory-limit/1` only when every configured job image supports that label and the corresponding Runtime ceiling is unset. An unlabeled old image, or a mixture of old and new images, therefore withholds these new capabilities without invalidating finite old Jobs or changing existing optional wall-time/output-budget behavior. The selected image is checked again before launch; unsupported null limits fail rather than silently falling back to finite defaults. Do not add the label to an older image whose Job decoder requires numeric CPU/memory values.
+
+An absent Job memory limit removes the application memory/swap cap and the size/inode caps on its private `/tmp` and `/dev/shm` tmpfs mounts. The explicit tmpfs options `size=0,nr_inodes=0` have the [kernel's unlimited-instance meaning](https://docs.kernel.org/filesystems/tmpfs.html); setting Docker's `ShmSize` to zero alone instead selects the [daemon's default](https://github.com/moby/moby/blob/master/daemon/daemon_unix.go), normally 64 MiB. Host, parent-cgroup and physical resource limits still apply, and exhaustion remains a real failure. Finite memory Jobs retain their explicit container and temporary-filesystem limits.
 
 The state parent belongs to the Runtime owner; the state directory is mode 0700. Provision a mode-0600 regular credential file for that owner containing 32–8192 printable, non-whitespace ASCII bytes, optionally ending with one newline. Bind the same credential through the control plane's Runtime settings; do not put it in the JSON, URL, command arguments, repository or logs. Keep existing credentials and state when restarting or upgrading.
 

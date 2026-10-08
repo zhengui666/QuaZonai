@@ -1,4 +1,4 @@
-//! Native SSE framing with explicit session bounds; disconnect never cancels a Run.
+//! Native SSE framing with user-selected session bounds; disconnect never cancels a Run.
 use super::{verify, write_json, Failure, Result};
 use contracts::{lifecycle::RunEventV1, DbCounter, Id};
 use eventsource_stream::Eventsource;
@@ -23,29 +23,29 @@ pub(super) async fn stream(
     credential: &str,
     run: Id,
     after: Option<String>,
-    seconds: u32,
-    events: u32,
+    seconds: Option<u32>,
+    events: Option<u64>,
 ) -> Result<()> {
+    if seconds == Some(0) || events == Some(0) {
+        return Err(Failure::Input);
+    }
     let mut sequence = cursor(run, after.as_deref())?;
-    let mut bytes = 0usize;
     let source = response
         .bytes_stream()
-        .map_err(|_| Failure::Unavailable)
-        .and_then(move |chunk| {
-            bytes = bytes.saturating_add(chunk.len());
-            futures_util::future::ready(if bytes > 16 * 1024 * 1024 {
-                Err(Failure::ResponseLimit)
-            } else {
-                Ok(chunk)
-            })
-        });
+        .map_err(|_| Failure::Unavailable);
     let mut source = source.eventsource();
-    let mut received = 0u32;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(u64::from(seconds));
+    let mut received = 0u64;
+    let deadline = async move {
+        match seconds {
+            Some(seconds) => tokio::time::sleep(Duration::from_secs(u64::from(seconds))).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(deadline);
     let reason = loop {
         let next = tokio::select! {
             next = source.next() => next,
-            _ = tokio::time::sleep_until(deadline) => break "TIME_BOUND_REACHED",
+            _ = &mut deadline => break "TIME_BOUND_REACHED",
             _ = tokio::signal::ctrl_c() => break "CLIENT_INTERRUPTED",
         };
         let Some(event) = next else {
@@ -54,9 +54,6 @@ pub(super) async fn stream(
         let event = event.map_err(|_| Failure::Contract)?;
         if event.event == "reset-required" {
             return Err(Failure::ResetRequired);
-        }
-        if event.data.len() > 1024 * 1024 {
-            return Err(Failure::ResponseLimit);
         }
         verify(event.data.as_bytes(), credential)?;
         let document: RunEventV1 =
@@ -72,8 +69,8 @@ pub(super) async fn stream(
         // The public envelope and native event identity are retained even for an
         // unknown future event_type. This CLI does not infer a new business state.
         write_json(&serde_json::json!({"schema_version":1,"event_id":event.id,"event":document}))?;
-        received += 1;
-        if received >= events {
+        received = received.checked_add(1).ok_or(Failure::Contract)?;
+        if events.is_some_and(|maximum| received >= maximum) {
             break "EVENT_BOUND_REACHED";
         }
     };

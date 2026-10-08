@@ -14,8 +14,7 @@ use axum::{
 };
 use contracts::{catalogs::*, runtime::RuntimeCapabilitiesV1, runtime_jobs::*, Id, SchemaV1};
 use serde::Serialize;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
+use std::sync::Arc;
 use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
@@ -138,7 +137,6 @@ pub struct RuntimeBytes(pub Vec<u8>);
 struct HttpState {
     service: Arc<RuntimeService>,
     credential: String,
-    requests: Arc<Semaphore>,
 }
 
 fn native_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str> {
@@ -173,13 +171,11 @@ async fn authenticate(
         Failure::Authentication.into_response()
     } else if request.headers().contains_key(header::CONTENT_ENCODING) {
         Failure::Invalid("content_encoding").into_response()
-    } else if let Ok(_slot) = state.requests.clone().try_acquire_owned() {
-        match tokio::time::timeout(Duration::from_secs(15), next.run(request)).await {
-            Ok(response) => response,
-            Err(_) => Failure::Busy.into_response(),
-        }
     } else {
-        Failure::Busy.into_response()
+        // Request duration is not credential expiry or a Job execution budget.
+        // Keep the original handler/cancellation future and immutable journal
+        // identity; never retry a mutation because its response is unknown.
+        next.run(request).await
     };
     response
         .headers_mut()
@@ -200,7 +196,6 @@ pub fn router(service: Arc<RuntimeService>, credential: String) -> Result<Router
     let state = Arc::new(HttpState {
         service,
         credential,
-        requests: Arc::new(Semaphore::new(4)),
     });
     Ok(Router::new()
         .route("/runtime/v1/capabilities", get(capabilities))
@@ -218,7 +213,7 @@ pub fn router(service: Arc<RuntimeService>, credential: String) -> Result<Router
         )
         .route(
             "/runtime/v1/objects/{artifact_id}",
-            put(object).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+            put(object),
         )
         .fallback(|| async { Failure::Missing.into_response() })
         .method_not_allowed_fallback(|| async {
@@ -233,7 +228,9 @@ pub fn router(service: Arc<RuntimeService>, credential: String) -> Result<Router
                 }),
             )
         })
-        .layer(DefaultBodyLimit::max(1024 * 1024))
+        // Disabling the extractor limit explicitly also removes Axum's 2 MiB default.
+        // Authentication, native identity and complete-object checks still apply.
+        .layer(DefaultBodyLimit::disable())
         .layer(middleware::from_fn_with_state(state.clone(), authenticate))
         .with_state(state))
 }

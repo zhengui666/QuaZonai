@@ -49,7 +49,6 @@ where
         parameter,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         &mut read,
     )
     .await?;
@@ -96,7 +95,6 @@ where
             manifest_id.ok_or(StoreError::Integrity)?,
             Some((run.id, attempt)),
             "qz.job_result",
-            domain::runtime_jobs::MAX_RESULT_MANIFEST_BYTES,
             &mut read,
         )
         .await?;
@@ -147,7 +145,6 @@ where
             id,
             Some((run.id, attempt)),
             "qz.native_portfolio",
-            contracts::runtime_jobs::MAX_JOB_OUTPUT_BYTES as usize,
             &mut read,
         )
         .await?;
@@ -400,7 +397,6 @@ where
         project,
         frozen.mandate.constraints.transaction_costs_ref,
         "qz.native_simulation_settings",
-        1024 * 1024,
         read,
     )
     .await?;

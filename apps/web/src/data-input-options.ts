@@ -50,7 +50,7 @@ export function validationInputIssue(input: Schema['InputSetView'], projectId: s
   return undefined;
 }
 
-export type ValidationLimits = { cpu_seconds: string | null; wall_seconds: number | null; memory_mib: number; output_bytes: string | null };
+export type ValidationLimits = { cpu_seconds: string | null; wall_seconds: number | null; memory_mib: number | null; output_bytes: string | null };
 export function validationRequest(input: Schema['InputSetView'], projectId: string,
   runtime: Schema['RuntimeView'], selections: DatasetSelection[], limits: ValidationLimits): Schema['DataValidateRequest'] {
   const issue = validationInputIssue(input, projectId);
@@ -66,7 +66,7 @@ export function validationRequest(input: Schema['InputSetView'], projectId: stri
   if ((limits.cpu_seconds !== null && !isCounter(limits.cpu_seconds, true))
     || (limits.output_bytes !== null && (!isCounter(limits.output_bytes, true) || BigInt(limits.output_bytes) > 67108864n))
     || (limits.wall_seconds !== null && (!Number.isInteger(limits.wall_seconds) || limits.wall_seconds < 1 || limits.wall_seconds > 86400))
-    || !Number.isInteger(limits.memory_mib) || limits.memory_mib < 1 || limits.memory_mib > 1048576) throw new Error('资源限额超出允许范围');
+    || (limits.memory_mib !== null && (!Number.isInteger(limits.memory_mib) || limits.memory_mib < 1 || limits.memory_mib > 4294967295))) throw new Error('资源限额超出允许范围');
   return { schema_version: 1, project_id: projectId, input_set_id: input.header.id,
     runtime_id: runtime.id, expected_runtime_revision: runtime.revision,
     limits: { schema_version: 1, experiments: 0, ...limits } };

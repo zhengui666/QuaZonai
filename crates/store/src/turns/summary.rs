@@ -1,4 +1,4 @@
-//! A bounded public answer, correlated to native terminal and usage receipts.
+//! A complete public answer, correlated to native terminal and usage receipts.
 use super::*;
 use crate::lifecycle::native::NativeObjectPublication;
 use contracts::{lifecycle::JobLimitsV1, SchemaV1};
@@ -32,7 +32,7 @@ impl Store {
             || !bounded(&summary.native_item_id, 200)
             || summary.native_turn_id.chars().any(char::is_control)
             || summary.native_item_id.chars().any(char::is_control)
-            || !bounded(&summary.text, 64 * 1024)
+            || summary.text.trim().is_empty()
             || summary.text.contains('\0')
             || summary
                 .phase
@@ -60,9 +60,6 @@ impl Store {
             return Err(StoreError::Conflict);
         }
         let bytes = serde_json::to_vec(summary).map_err(|_| StoreError::Integrity)?;
-        if bytes.len() > 1024 * 1024 {
-            return Err(StoreError::Invalid("native_summary_document"));
-        }
         if let Some(row)=sqlx::query("SELECT s.artifact_id,a.byte_count,a.access_class FROM app.model_turn_summaries s JOIN app.artifacts a ON a.id=s.artifact_id WHERE s.reservation_id=$1")
             .bind(reservation.as_uuid()).fetch_optional(&mut *tx).await? {
             let artifact=id(row.try_get("artifact_id")?)?;

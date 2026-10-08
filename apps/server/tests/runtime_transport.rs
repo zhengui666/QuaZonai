@@ -92,11 +92,11 @@ async fn redirection_never_transfers_the_runtime_credential_to_another_listener(
 }
 
 #[tokio::test]
-async fn bounded_chunked_responses_and_retryable_http_failures_do_not_bypass_limits() {
+async fn invalid_chunked_responses_and_retryable_http_failures_keep_their_meaning() {
     let server = native_http(StatusCode::OK, vec![b'x'; 1024 * 1024 + 1], None, true).await;
     assert_eq!(
         http_client(&server).capabilities().await.unwrap_err(),
-        RuntimeProbeFailure::ResponseLimit
+        RuntimeProbeFailure::ContractUnsupported
     );
     let unavailable = native_http(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -220,4 +220,41 @@ async fn pinned_dns_preserves_sni_and_requires_the_exact_native_ca() {
     .unwrap();
     assert!(untrusted.capabilities().await.is_err());
     assert_eq!(tls.server.requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn complete_pinned_ca_bundle_crosses_former_certificate_limit() {
+    let tls = native_tls().await;
+    let endpoint = tls.endpoint();
+    let targets = RuntimeTargets::new(
+        vec![RuntimeTarget { origin: endpoint.clone(), addresses: vec![tls.server.address] }],
+        false,
+    ).unwrap();
+    let mut config = snapshot(endpoint, false);
+    config.tls_policy = "PINNED_CA".into();
+    config.ca_certificate_ref = Some(contracts::Id::new().to_string());
+    let bundle = tls.ca.repeat(17);
+    assert_eq!(reqwest::Certificate::from_pem_bundle(&bundle).unwrap().len(), 17);
+    let client = RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&bundle)).unwrap();
+    client.capabilities().await.unwrap();
+    assert_eq!(tls.server.requests.load(Ordering::SeqCst), 1);
+    let unrelated = include_bytes!("fixtures/capacity-ca.pem").repeat(17);
+    let untrusted = RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&unrelated)).unwrap();
+    assert!(untrusted.capabilities().await.is_err());
+    assert_eq!(tls.server.requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn complete_runtime_json_crosses_the_former_limit_with_or_without_content_length() {
+    for chunked in [false, true] {
+        let expected = capabilities(chrono::Utc::now());
+        let mut raw = serde_json::to_vec(&expected).unwrap();
+        raw.resize(1024 * 1024 + 1, b' ');
+        let server = native_http(StatusCode::OK, raw, None, chunked).await;
+        assert_eq!(
+            serde_json::to_value(http_client(&server).capabilities().await.unwrap()).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+    }
 }

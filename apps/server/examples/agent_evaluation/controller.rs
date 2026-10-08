@@ -1,4 +1,4 @@
-//! Bounded declaration replay, not an execution adapter or an attestation.
+//! Complete declaration replay, not an execution adapter or an attestation.
 #[path = "io.rs"]
 pub mod io;
 
@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-
-const MAX_SCENARIO: usize = 256 * 1024;
-const MAX_ASSERTIONS: usize = 10_000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,23 +154,22 @@ fn valid_pointer(pointer: &str) -> bool {
 
 fn prepare(input: &Path, budget: &mut io::Budget) -> Result<Frozen> {
     io::directory(input)?;
-    let suite_bytes = budget.relative(input, "suite.json", io::MAX_JSON)?;
+    let suite_bytes = budget.relative(input, "suite.json")?;
     let suite: Suite = io::parse(&suite_bytes)?;
     let _ = suite.schema_version;
     let count = suite.tuning.cases.len() + suite.held_out.cases.len();
-    if !(2..=500).contains(&count)
+    if count < 2
         || suite.tuning.cases.is_empty()
         || suite.held_out.cases.is_empty()
     {
         return Err("case count limit");
     }
-    let source = budget.relative(input, &suite.source_file, io::MAX_SOURCE)?;
+    let source = budget.relative(input, &suite.source_file)?;
     let source_sha256 = digest(&source);
     drop(source);
     let mut manifests = Vec::new();
     let mut scenarios = Vec::new();
     let mut cases = Vec::new();
-    let mut assertion_count = 0;
     for (split, dataset) in [
         (AgentEvaluationSplit::Tuning, &suite.tuning),
         (AgentEvaluationSplit::HeldOut, &suite.held_out),
@@ -185,8 +181,7 @@ fn prepare(input: &Path, budget: &mut io::Budget) -> Result<Frozen> {
             cases: Vec::new(),
         };
         for case in &dataset.cases {
-            assertion_count += case.assertions.len();
-            if !(1..=100).contains(&case.assertions.len()) || assertion_count > MAX_ASSERTIONS {
+            if case.assertions.is_empty() {
                 return Err("assertion count limit");
             }
             for assertion in &case.assertions {
@@ -197,7 +192,7 @@ fn prepare(input: &Path, budget: &mut io::Budget) -> Result<Frozen> {
                     return Err("invalid JSON pointer");
                 }
             }
-            let scenario = budget.relative(input, &case.scenario_file, MAX_SCENARIO)?;
+            let scenario = budget.relative(input, &case.scenario_file)?;
             let sha256 = digest(&scenario);
             scenarios.push(Scenario {
                 case_id: case.id.clone(),
@@ -291,7 +286,7 @@ pub fn replay(
         .try_into()
         .map_err(|_| "invalid lock digest")?;
     let mut budget = io::Budget::default();
-    let lock_bytes = budget.read(lock_path, io::MAX_JSON)?;
+    let lock_bytes = budget.read(lock_path)?;
     if digest(&lock_bytes) != expected {
         return Err("lock digest mismatch");
     }
@@ -308,12 +303,12 @@ pub fn replay(
         .into_iter()
         .zip(&frozen.manifests)
     {
-        if budget.relative(lock_root, name, io::MAX_JSON)? != *expected {
+        if budget.relative(lock_root, name)? != *expected {
             return Err("dataset manifest mismatch");
         }
     }
     io::directory(observations)?;
-    let index_bytes = budget.relative(observations, "observations.json", io::MAX_JSON)?;
+    let index_bytes = budget.relative(observations, "observations.json")?;
     let index: ObservationIndex = io::parse(&index_bytes)?;
     let _ = index.schema_version;
     if index.lock_sha256 != expected || index.observations.len() > frozen.report.cases.len() {
@@ -341,7 +336,7 @@ pub fn replay(
             .iter_mut()
             .find(|c| c.id == reference.case_id)
             .ok_or("unknown observation case")?;
-        let bytes = budget.relative(observations, &reference.file, io::MAX_JSON)?;
+        let bytes = budget.relative(observations, &reference.file)?;
         if digest(&bytes) != reference.sha256 {
             return Err("observation digest mismatch");
         }

@@ -361,7 +361,7 @@ fn two_original_alpha_members_run_through_native_portfolio_study() {
         .statistics
         .iter()
         .any(|s| s.group == NativeStatisticGroup::Returns && s.native_key.ends_with("(252 days)")));
-    assert!(result.consumed_fuel.get() > 0);
+    assert!(result.consumed_fuel.unwrap().get() > 0);
 }
 
 #[test]

@@ -77,6 +77,22 @@ describe('capital exit recoverable operation', () => {
     const crossed = new ExitSession('test', storage2, { project: intent, source });
     await crossed.submit(request, send); expect(send).not.toHaveBeenCalled();
   });
+  it('restores the same unknown operation past the former serialized recovery limit', async () => {
+    const storage = memory();
+    const first = new ExitSession('test', storage);
+    await first.submit(request, async () => { throw new ApiFailure('NETWORK_UNKNOWN', 'response lost'); });
+    const original = first.getSnapshot().operation!;
+    storage.setItem('test', ' '.repeat(65537) + storage.getItem('test')!);
+    const restored = new ExitSession('test', storage, { project: id, source });
+    expect(restored.getSnapshot().unknown).toBe(true);
+    expect(restored.getSnapshot().operation).toEqual(original);
+    expect(restored.getSnapshot().error).toBeUndefined();
+    const stillUnknown = vi.fn(async () => { throw new ApiFailure('OFFLINE', 'not sent'); });
+    await restored.submit({ ...request, body: { ...request.body, expected_account_control_revision: '2' } }, stillUnknown);
+    expect(stillUnknown).toHaveBeenCalledWith(original.request, original.key);
+    expect(restored.getSnapshot()).toMatchObject({ unknown: true, operation: original });
+    expect(new ExitSession('test', storage, { project: id, source }).getSnapshot().operation).toEqual(original);
+  });
   it('does not send when original key cannot be persisted', async () => {
     const session = new ExitSession('test', { getItem: () => null, setItem: () => { throw new Error('storage denied'); } });
     const send = vi.fn(async () => result); await session.submit(request, send);

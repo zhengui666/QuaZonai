@@ -53,7 +53,7 @@ async fn historical_cli(f: &Fixture, pool: &PgPool, project: Id) -> (String, Id)
 async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_takeover(
     pool: PgPool,
 ) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (project, run, first_attempt, principal) = mission(&f, &pool).await;
     let (writer, _, _) = mission_token(&f, &pool, principal, 600).await;
     let created = send(
@@ -125,7 +125,7 @@ async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_tak
 async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: PgPool) {
     use store::lifecycle::{ClaimResult, RunMessage};
 
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (project, run, attempt, principal) = mission(&f, &pool).await;
     let (writer, _, _) = mission_token(&f, &pool, principal, 600).await;
     let created = send(
@@ -219,7 +219,7 @@ async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: P
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn expired_mission_lease_revokes_ordinary_identity_and_run_reads(pool: PgPool) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (_, run, attempt, principal) = mission(&f, &pool).await;
     let (token, _, _) = mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     assert_eq!(
@@ -238,7 +238,7 @@ async fn expired_mission_lease_revokes_ordinary_identity_and_run_reads(pool: PgP
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn issuance_rejects_injected_owner_epoch_and_expired_native_lease(pool: PgPool) {
-    let (f, _, _, _) = setup(&pool).await;
+    let (f, _, _) = setup(&pool).await;
     let (_, _, attempt, principal) = mission(&f, &pool).await;
     let (_, original, _) = mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     let sql = "INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by,issuer_attempt_id,issuer_owner_epoch) SELECT $2,principal_id,$3,verifier_ref,principal_epoch,scope_codes,clock_timestamp(),expires_at,issued_by,issuer_attempt_id,$4 FROM app.machine_credentials WHERE id=$1";

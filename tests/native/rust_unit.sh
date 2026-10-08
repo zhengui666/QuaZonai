@@ -42,7 +42,7 @@ features=job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/na
 "${cargo[@]}" test --locked -p job --test polymarket_forward --features "$features" -- --test-threads=1
 # Existing native replay with synthetic local Parquet, no network/OCI/account.
 "${cargo[@]}" test --locked -p job --test polymarket_target_policy -- --test-threads=1
-"${cargo[@]}" test --locked -p runtime --test contracts -- --test-threads=1
+"${cargo[@]}" test --locked -p runtime --test contracts --test output_size_migration -- --test-threads=1
 
 # Lightweight authentication/identity/publication components use temporary files.
 # Full-filesystem/userns/seccomp fault acceptance stays in rust-regression.yml.

@@ -57,7 +57,7 @@ and selections with no overlapping indexed files return an explicit error.
 ## Actual partition index
 
 Upload an index describing only files that actually exist at the requested
-repository revision. The index is bounded to 8 MiB and uses this JSON shape:
+repository revision. The index has no application-imposed byte or file-count cap and uses this JSON shape:
 
 ```json
 {
@@ -162,8 +162,8 @@ The manager obtains network policy from the actual plugin inventory: planning
 and downloading are networked; verification remains offline.
 
 Checks are limited and reported: byte size; Parquet header/footer envelope;
-archive signature; complete JSON up to 32 MiB (larger JSON has prefix checking
-only); or the first JSONL/CSV row. These are ordinary transfer/format checks,
+archive signature; complete JSON documents; or the first JSONL/CSV logical row
+without an application-imposed field or row-size cap. These are ordinary transfer/format checks,
 not full Parquet decoding, source authenticity, scientific qualification or
 checksum attestation. Native adapters own record semantics and original clocks.
 
@@ -318,8 +318,10 @@ filtering or make the 127.2 GB monolithic raw file a small download. Prefer a
 licensed, fixed, source-preserving small raw partition when available. A
 re-encoded row-group extract must retain its actual derived provenance and must
 not be represented as a byte-identical source file or forged HF selection.
-The acquisition byte budget remains mandatory; do not raise it simply to test
-compatibility. The `sii-order-filled` decoder also supports the existing explicit
+No implicit acquisition or request-manifest byte budget is imposed. `--max-bytes`
+is an optional explicit operator budget, and is never raised automatically to
+make a source pass. File sizes, original request identities and format checks remain
+mandatory. The `sii-order-filled` decoder also supports the existing explicit
 legacy snapshot path when an original source snapshot already exists.
 
 Vendor event timestamps remain UNVERIFIED event-time proxies. The public

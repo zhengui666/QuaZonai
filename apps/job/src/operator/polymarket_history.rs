@@ -1,6 +1,6 @@
 //! Operator-only historical data preparation. Not a scientific job or trading client.
 //! Native clients own HTTP, pagination, asset parsing and market-data serialization.
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use contracts::SchemaV1;
@@ -26,8 +26,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_INPUT_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_ROWS: usize = 1_000_000;
 const NATIVE_VERSION: &str = "0.63.0";
 
 #[path = "history/archive.rs"]
@@ -61,9 +59,9 @@ enum Command {
         /// Exclusive epoch-second boundary in this command.
         #[arg(long)]
         end_seconds: u64,
-        /// Per-outcome bound, not a completeness claim.
-        #[arg(long, default_value_t = 5000, value_parser = clap::value_parser!(u32).range(1..=10000))]
-        max_trades: u32,
+        /// Optional caller-selected per-outcome bound. The native supplier offset ceiling still applies.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_trades: Option<u32>,
         #[arg(long)]
         output: PathBuf,
     },
@@ -183,10 +181,7 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         archive.source_observed_at <= Utc::now(),
         "FUTURE_SOURCE_OBSERVATION"
     );
-    ensure!(
-        (1..=256).contains(&archive.instruments.len()),
-        "INSTRUMENT_LIMIT"
-    );
+    ensure!(!archive.instruments.is_empty(), "INSTRUMENT_LIMIT");
     let rows = archive
         .trades
         .len()
@@ -195,7 +190,7 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         .and_then(|n| n.checked_add(archive.bars.len()))
         .and_then(|n| n.checked_add(archive.closes.len()))
         .context("ROW_COUNT_RANGE")?;
-    ensure!((1..=MAX_ROWS).contains(&rows), "NATIVE_ROW_LIMIT_OR_EMPTY");
+    ensure!(rows > 0, "NATIVE_ROW_LIMIT_OR_EMPTY");
     let mut ids = BTreeSet::new();
     let mut versions = std::collections::BTreeMap::<_, Vec<&InstrumentAny>>::new();
     for instrument in &archive.instruments {
@@ -472,29 +467,23 @@ fn import(mut archive: NativeArchive, output: &Path) -> Result<ImportReport> {
 }
 
 fn read_archive(path: &Path) -> Result<NativeArchive> {
-    let file = fs::File::open(path)?;
-    ensure!(
-        file.metadata()?.is_file() && file.metadata()?.len() <= MAX_INPUT_BYTES,
-        "INPUT_FILE_LIMIT"
-    );
+    let mut file = fs::File::open(path)?;
+    ensure!(file.metadata()?.is_file(), "INPUT_FILE_LIMIT");
     let mut bytes = Vec::new();
-    file.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() as u64 <= MAX_INPUT_BYTES, "INPUT_FILE_LIMIT");
+    file.read_to_end(&mut bytes)?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<NativeArchive> {
+async fn fetch(slug: &str, start: u64, end: u64, max_trades: Option<u32>) -> Result<NativeArchive> {
     ensure!(
-        !slug.is_empty()
-            && slug.len() <= 240
-            && slug.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        !slug.is_empty() && slug.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
         "INVALID_MARKET_SLUG"
     );
     ensure!(
         start < end && end <= u64::try_from(Utc::now().timestamp())?,
         "INVALID_HISTORY_WINDOW"
     );
-    ensure!((1..=10000).contains(&max_trades), "TRADE_LIMIT");
+    ensure!(max_trades.is_none_or(|value| value > 0), "TRADE_LIMIT");
     let start_ns = epoch_ns(start)?;
     let end_ns = epoch_ns(end)?;
     let gamma = PolymarketGammaRawHttpClient::new(None, 30)?;
@@ -518,7 +507,7 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
                 instrument.size_precision(),
                 Some(start_ns),
                 Some(epoch_ns(end - 1)?),
-                Some(max_trades),
+                max_trades,
             )
             .await?;
         // Enforce this command's half-open interval even if the upstream API returns a wider page.
@@ -531,7 +520,8 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: u32) -> Result<Nati
     Ok(NativeArchive {
         schema_version: SchemaV1,
         source_reference: format!(
-            "nautilus-polymarket/{NATIVE_VERSION}:market/{slug};seconds=[{start},{end});per_outcome_limit={max_trades}"
+            "nautilus-polymarket/{NATIVE_VERSION}:market/{slug};seconds=[{start},{end});per_outcome_limit={};native_offset_ceiling=10000;coverage=UNPROVEN",
+            max_trades.map_or_else(|| "NONE".to_owned(), |value| value.to_string())
         ),
         source_observed_at: observed,
         source_metadata: serde_json::to_value(market)?,

@@ -366,7 +366,7 @@ async fn delayed_resource_fit(
     pool: PgPool,
     cpu_seconds: u64,
     remaining: f64,
-    expected_cpu: Option<i16>,
+    expected_cpu: Option<i64>,
 ) {
     let (store, actor) = research_support::operator(&pool).await;
     let mut f = cycle_support::setup(&pool, &store, &actor).await;
@@ -440,7 +440,7 @@ async fn delayed_resource_fit(
     let (admission, ()) = tokio::join!(admission, release);
     if let Some(expected_cpu) = expected_cpu {
         let run = admission.unwrap().resource;
-        let (limits_json, cpu): (serde_json::Value, i16) = sqlx::query_as("SELECT a.limits,t.cpu FROM app.run_admissions a JOIN app.run_native_tasks t ON t.run_id=a.run_id WHERE a.run_id=$1")
+        let (limits_json, cpu): (serde_json::Value, i64) = sqlx::query_as("SELECT a.limits,t.cpu FROM app.run_admissions a JOIN app.run_native_tasks t ON t.run_id=a.run_id WHERE a.run_id=$1")
             .bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
         let effective: contracts::lifecycle::JobLimitsV1 =
             serde_json::from_value(limits_json).unwrap();
@@ -462,7 +462,7 @@ async fn delayed_resource_fit(
             panic!("child lease required");
         };
         let job = store.native_job(run.id, &child.fence).await.unwrap();
-        assert_eq!(job.spec.limits.cpu, expected_cpu as u16);
+        assert_eq!(job.spec.limits.cpu, Some(expected_cpu as u32));
         assert_eq!(job.spec.limits.wall_seconds, effective.wall_seconds);
         assert_eq!(job.spec.deadline_at, run.deadline_at);
     } else {
@@ -1160,7 +1160,7 @@ async fn forecast_parameter_and_late_publication_failures_do_not_charge_a_trial(
                                     serde_json::json!(6)
                             }
                             "fuel" => {
-                                value["parameters"]["total_fuel"] = serde_json::json!("1000000001")
+                                value["parameters"]["total_fuel"] = serde_json::json!("0")
                             }
                             "periods" => value["parameters"]["fast_period"] = serde_json::json!(5),
                             "model" => value["model_artifact_id"] = serde_json::json!(Id::new()),

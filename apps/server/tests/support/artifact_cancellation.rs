@@ -2,8 +2,8 @@
 use super::*;
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn cancelling_http_waiter_keeps_publication_transaction_and_capacity_alive(pool: PgPool) {
-    let (f, cookie, project, slots) = setup(&pool).await;
+async fn cancelling_http_waiter_keeps_original_publication_transaction_alive(pool: PgPool) {
+    let (f, cookie, project) = setup(&pool).await;
     let bytes = "// publication survives a cancelled HTTP waiter\n";
     let body = upload(project, bytes);
     let key = "cancel-after-native-publish";
@@ -80,14 +80,8 @@ async fn cancelling_http_waiter_keeps_publication_transaction_and_capacity_alive
         .await
         .unwrap();
     assert_eq!(before, 0, "uncommitted metadata must remain invisible");
-    assert_eq!(slots.available_permits(), 3);
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
-    assert_eq!(
-        slots.available_permits(),
-        3,
-        "HTTP cancellation must retain the publication permit"
-    );
     blocker.commit().await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
@@ -101,7 +95,7 @@ async fn cancelling_http_waiter_keeps_publication_transaction_and_capacity_alive
             .fetch_one(&pool)
             .await
             .unwrap();
-            if persisted && slots.available_permits() == 4 {
+            if persisted {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -139,5 +133,4 @@ async fn cancelling_http_waiter_keeps_publication_transaction_and_capacity_alive
     assert_eq!(totals, (1, 1));
     assert_eq!(std::fs::read_dir(&object_root).unwrap().count(), 1);
     assert_eq!(std::fs::read(object).unwrap(), bytes.as_bytes());
-    assert_eq!(slots.available_permits(), 4);
 }

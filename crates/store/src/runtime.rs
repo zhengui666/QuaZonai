@@ -81,7 +81,7 @@ pub(crate) fn encode_probe(
     }
     let exact = serde_json::to_vec(&json!({"schema_version":1,"result":outcome}))
         .map_err(|_| StoreError::Integrity)?;
-    if exact.is_empty() || exact.len() > 1024 * 1024 {
+    if exact.is_empty() {
         return Err(StoreError::Invalid("runtime_probe_artifact_size"));
     }
     Ok(exact)

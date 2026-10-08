@@ -14,6 +14,8 @@ pub fn capabilities(now: DateTime<Utc>) -> RuntimeCapabilitiesV1 {
     for (name, version) in [
         ("optional-wall-time", "1"),
         ("optional-cpu-budget", "1"),
+        ("optional-cpu-rate", "1"),
+        ("optional-memory-limit", "1"),
         ("optional-output-budget", "1"),
         ("solow-cv", "0.7.3"),
         ("ndarray-stats", "0.7.0"),

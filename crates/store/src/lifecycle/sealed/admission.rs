@@ -101,7 +101,7 @@ where
     let evaluation = db::id(source.try_get("evaluation_id")?)?;
     let model = db::id(source.try_get("model_artifact_id")?)?;
     let model_bytes = counter(source.try_get("model_bytes")?)?;
-    if model_bytes == DbCounter::ZERO || model_bytes.get() > 2 * 1024 * 1024 {
+    if model_bytes == DbCounter::ZERO {
         return Err(StoreError::Integrity);
     }
     let parameters = read_document(
@@ -109,7 +109,6 @@ where
         db::id(source.try_get("parameters_artifact_id")?)?,
         None,
         "qz.native_task",
-        8 * 1024 * 1024,
         &mut read,
     )
     .await?;
@@ -199,7 +198,6 @@ where
             id,
             None,
             "qz.alpha_calibration",
-            8 * 1024 * 1024,
             &mut read,
         )
         .await?;

@@ -3,7 +3,7 @@ use super::{requests::ThreadOptions, Client, NativeFailure, Result};
 use crate::mcp::MissionBinding;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
 
 const MCP_NAME: &str = "quazonai_mission";
 
@@ -95,10 +95,11 @@ impl MissionOptions {
             // The launcher has already delegated these QZ tools to this Mission.
             // Avoid a second native UI approval that a noninteractive client must
             // reject. API scopes/fences still authorize every request; no default
-            // approval is granted to other tools or servers.
+            // approval is granted to other tools or servers. The pinned native
+            // release still applies its own startup/tool defaults; omitting QZ
+            // overrides does not claim those upstream limits are disabled.
             json!({ MCP_NAME: {"command":self.server_binary,"args":args,
             "env":{"QUAZONAI_MCP_TOKEN":token},"required":true,"enabled":true,
-            "startup_timeout_sec":45,"tool_timeout_sec":20,
             "tools":{
                 "research.get_brief":{"approval_mode":"approve"},
                 "run.get":{"approval_mode":"approve"},
@@ -148,29 +149,32 @@ impl Client {
         thread: &str,
     ) -> Result<BTreeMap<String, Vec<String>>> {
         super::projection::text(thread, 200)?;
-        let inventory: Inventory = self
-            .call(
-                "mcpServerStatus/list",
-                json!({"threadId":thread,"detail":"toolsAndAuthOnly","limit":65}),
-            )
-            .await?;
-        if inventory.next_cursor.is_some() || inventory.data.len() > 65 {
-            return Err(NativeFailure::ObservationLimit);
-        }
         let mut result = BTreeMap::new();
-        for server in inventory.data {
-            super::projection::text(&server.name, 200)?;
-            if server.tools.len() > 64 {
-                return Err(NativeFailure::ObservationLimit);
+        let mut cursor = None::<String>;
+        let mut cursors = BTreeSet::new();
+        loop {
+            let inventory: Inventory = self.call(
+                "mcpServerStatus/list",
+                json!({"threadId":thread,"detail":"toolsAndAuthOnly","limit":100,"cursor":cursor}),
+            ).await?;
+            for server in inventory.data {
+                super::projection::text(&server.name, 200)?;
+                for name in server.tools.keys() {
+                    super::projection::text(name, 200)?;
+                }
+                if result.insert(server.name, server.tools.into_keys().collect()).is_some() {
+                    return Err(NativeFailure::Contract);
+                }
             }
-            for name in server.tools.keys() {
-                super::projection::text(name, 200)?;
-            }
-            if result
-                .insert(server.name, server.tools.into_keys().collect())
-                .is_some()
-            {
-                return Err(NativeFailure::Contract);
+            match inventory.next_cursor {
+                None => break,
+                Some(next) => {
+                    super::projection::text(&next, 4096)?;
+                    if !cursors.insert(next.clone()) {
+                        return Err(NativeFailure::Correlation);
+                    }
+                    cursor = Some(next);
+                }
             }
         }
         Ok(result)
@@ -212,9 +216,7 @@ impl Client {
             {
                 return Err(NativeFailure::ProfileInstructions);
             }
-            if native.config.mcp_servers.len() > 64
-                || native.config.mcp_servers.contains_key(MCP_NAME)
-            {
+            if native.config.mcp_servers.contains_key(MCP_NAME) {
                 return Err(NativeFailure::Configuration);
             }
             for name in native.config.mcp_servers.keys() {

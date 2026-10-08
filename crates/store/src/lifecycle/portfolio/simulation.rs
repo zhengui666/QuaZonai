@@ -58,7 +58,6 @@ impl Store {
             db::id(row.try_get("parameters_artifact_id")?)?,
             None,
             "qz.native_task",
-            8 * 1024 * 1024,
             &mut read,
         )
         .await?;
@@ -138,7 +137,6 @@ impl Store {
             project,
             costs,
             "qz.native_simulation_settings",
-            1024 * 1024,
             &mut read,
         )
         .await?;
@@ -249,7 +247,6 @@ impl Store {
                 project,
                 costs,
                 "qz.native_simulation_settings",
-                1024 * 1024,
                 &mut read,
             )
             .await?

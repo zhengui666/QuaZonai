@@ -377,13 +377,6 @@ impl Store {
             observed,
         )?;
         let document = json!({"schema_version":1,"result":outcome});
-        if serde_json::to_vec(&document)
-            .map_err(|_| StoreError::Integrity)?
-            .len()
-            > 2 * 1024 * 1024
-        {
-            return Err(StoreError::Invalid("codex_catalog_size"));
-        }
         commands::recheck_authority(&mut tx, &ticket.actor, &prepared).await?;
         let row = sqlx::query("INSERT INTO app.codex_profile_observations(profile_id,profile_revision,observed_at,valid_until,outcome) VALUES($1,$2,$3,$4,$5) RETURNING *")
             .bind(profile.id.as_uuid()).bind(profile.revision.get() as i64).bind(observed)

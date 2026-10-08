@@ -40,7 +40,7 @@ Pinned defaults used for verification:
 
 ## Plan and download
 
-Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. The default maximum is 128 MiB; increase it only for an intentional larger selection.
+Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. No default byte budget is imposed; `--max-bytes` is an optional explicit operator budget. Exact file sizes and content hashes are still verified.
 
 ```sh
 python3 -B runtimes/data/snapshot.py plan \
@@ -108,7 +108,7 @@ For v2 choose `--format time-seventeen-v2`, original **pUSD** definitions, and e
 
 ## Original chain evidence
 
-`evm.py` freezes original EVM headers and logs for explicit blocks, addresses and one event signature. It needs no account, Python package or paid API. Choose two to four distinct public HTTPS RPC hosts that retain the requested history; the [Polygon endpoint list](https://docs.polygon.technology/pos/reference/rpc-endpoints/) lists public options. Provider limits and pruned history can cause a request to fail. No credentials or automatic paid fallback are used.
+`evm.py` freezes original EVM headers and logs for explicit blocks, addresses and one event signature. It needs no account, Python package or paid API. Choose at least two distinct public HTTPS RPC hosts that retain the requested history; the [Polygon endpoint list](https://docs.polygon.technology/pos/reference/rpc-endpoints/) lists public options. Provider limits and pruned history can cause a request to fail. No credentials or automatic paid fallback are used.
 
 This bounded example selects the eight blocks containing the rejected BTC amounts. It does **not** establish continuous coverage between them:
 
@@ -125,7 +125,7 @@ python3 -B runtimes/data/evm.py \
   --output /absolute/data/v2-eight-blocks.json
 ```
 
-For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block` (at most 4,096 blocks per capture). The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. The default total response-body and output limits are each 128 MiB, with 32 MiB per response. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
+For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no default byte budget. An explicit `--max-bytes` optionally bounds cumulative response-body and output bytes. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
 
 The collector binds logs to block hashes, transaction hashes/indices and canonical log indices, checks parent links for adjacent blocks, and requires agreement between providers. The snapshot preserves each original response, endpoint and actual retrieval time. The native reader repeats identity/consistency checks and decodes the original ABI using the already pinned Alloy library. This is corroborated RPC evidence, not an independently verified receipt trie, a historical finality clock or a source permission grant. Raw blockchain facts do not imply a dataset redistribution license; preserve applicable provider terms.
 

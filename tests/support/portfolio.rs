@@ -102,7 +102,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
                     fast_period: 2,
                     slow_period: 3,
                     label_horizon_observations: m.horizon_value.get() as u32,
-                    total_fuel: contracts::DbCounter::new(100_000_000).unwrap(),
+                    total_fuel: Some(contracts::DbCounter::new(100_000_000).unwrap()),
                 },
             })
             .collect(),

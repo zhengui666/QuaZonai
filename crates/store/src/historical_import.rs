@@ -69,9 +69,7 @@ impl Store {
         let artifact_source = source.artifacts;
         let source = source.rows;
         if source.inspection.source_schema_version != "0029_portfolio_candidate_exposure"
-            || source.tables.len() > 256
             || source.inspection.tables.len() != source.tables.len()
-            || source.inspection.foreign_keys.len() > 1024
         {
             return Err(invalid());
         }
@@ -153,9 +151,6 @@ impl Store {
             total_bytes = total_bytes
                 .checked_add(projection.byte_count.ok_or_else(invalid)?.get())
                 .ok_or_else(invalid)?;
-            if total_bytes > 8 * 1024 * 1024 * 1024 {
-                return Err(invalid());
-            }
             let mut input = read(request.export_ref, object)?;
             let table = historical_rows::stage(&mut tx, inspection, projection, &mut input).await?;
             staged.insert(format!("public.{}", projection.table), table);

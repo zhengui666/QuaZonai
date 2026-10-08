@@ -103,7 +103,7 @@ own retained `--idempotency-key`, as in [connection](connection.md).
 
 ## Research content
 
-CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8, contains no NUL and is at most 2 MiB. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
+CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8 and contains no NUL. Original content bytes are retained without an application byte cap. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
 
 For scientific experiments, the generic JSON-object rule above is only the
 artifact storage envelope. Before writing a parameter artifact, discover its
@@ -119,6 +119,9 @@ quazonai openapi --domain --schema FeatureObservationsV1
 JSON encoded once in the outer `ArtifactCreate.content` string, not as extra
 outer request fields. Follow the selected contract's transitive schemas for
 settings, feature definitions, nullable values and decimal-string counters.
+An omitted or null `total_fuel` disables Wasmi fuel metering; an explicit budget
+remains a decimal-string counter. Results report `consumed_fuel: null` for
+unmetered execution, which is distinct from a measured `"0"`.
 The installed contract describes wire structure, not approved scientific
 choices or server eligibility. Do not infer model ABI or code requirements
 from a JSON schema; report an unavailable contract or unsupported workflow.
@@ -138,15 +141,15 @@ reconstructing them from newer records.
 Use `data features register DATASET_REVISION_ID` only for original recorded
 feature bytes already described in that Dataset's frozen native metadata. The
 body's `dataset_revision_id` must equal the route ID. Supply the original
-`feature_part_key`, project and unmodified UTF-8 attachment as `content`; the
-2 MiB encoded-content limit applies. Do not reserialize the inner JSON or replace
+`feature_part_key`, project and unmodified UTF-8 attachment as `content`. There
+is no application encoded-content byte cap. Do not reserialize the inner JSON or replace
 missing clocks/values. The server retains the actual Dataset origin, PIT and
 license binding; callers cannot assert them. Raw Sealed feature registration is
 not supported.
 
 Keep the same original bytes and idempotency key for retries. Read back with
-`data features list DATASET_REVISION_ID --project-id PROJECT_ID`; the bounded
-result contains at most 16 registered part descriptors and source bindings, not
+`data features list DATASET_REVISION_ID --project-id PROJECT_ID`; the result
+contains all registered part descriptors and source bindings, not
 the original observations. An empty list is not permission to reconstruct an
 attachment. Normal `artifact submit` research parameters remain self-authored
 research artifacts and must not be substituted for native recorded feature

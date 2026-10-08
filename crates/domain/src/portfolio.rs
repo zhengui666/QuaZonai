@@ -1,7 +1,7 @@
 //! Allocation ownership and publication bounds, independent of the numerical solver.
-use crate::{control, DomainError};
+use crate::{DomainError, control};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{portfolio::*, DecimalValue};
+use contracts::{DecimalValue, portfolio::*};
 use std::collections::{BTreeMap, BTreeSet};
 mod covariance;
 pub use covariance::sample_covariance;
@@ -29,7 +29,7 @@ pub fn build_selection(request: &PortfolioBuildRequestV1) -> Result<(), DomainEr
         }
     }
     crate::data::bounded_native_limits(&request.limits)?;
-    if !(2..=MAX_ALLOCATION_ASSETS).contains(&request.members.len()) {
+    if request.members.len() < 2 {
         return Err(DomainError::Invalid("portfolio_members"));
     }
     let mut qualifications = BTreeSet::new();
@@ -121,7 +121,7 @@ pub fn paper_weights_source(
         (PortfolioWeightsSourceV1::ForwardSnapshot { downstream_id, .. }, Some(root))
             if *downstream_id != root.downstream_id =>
         {
-            return Err(invalid())
+            return Err(invalid());
         }
         _ => {}
     }
@@ -146,7 +146,7 @@ pub fn simulation_settings(
         || settings.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
         || !contracts::research_currency::supported(&settings.base_currency)
-        || !(1..=256).contains(&settings.fee_rates.len())
+        || settings.fee_rates.len() < 1
         || (settings.account_kind == contracts::science::NativeAccountKind::Cash
             && settings.leverage.as_decimal() != &BigDecimal::from(1))
     {
@@ -258,8 +258,8 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
     else {
         return Err(invalid());
     };
-    if !(2..=MAX_ALLOCATION_ASSETS).contains(&input.members.len())
-        || !(1..=MAX_ALLOCATION_ASSETS).contains(&input.instrument_ids.len())
+    if input.members.len() < 2
+        || input.instrument_ids.len() < 1
         || input.max_input_age_seconds == 0
         || age > u64::from(input.max_input_age_seconds) * 1_000_000_000
         || input.horizon_value.get() == 0
@@ -312,7 +312,7 @@ pub fn ensemble_weights<'a>(
     weights: impl Iterator<Item = &'a DecimalValue>,
 ) -> Result<(), DomainError> {
     let mut sum = BigDecimal::from(0);
-    let mut count = 0;
+    let mut count = 0usize;
     let mut positive = 0;
     for weight in weights {
         if !weight.is_nonnegative() {
@@ -322,7 +322,7 @@ pub fn ensemble_weights<'a>(
         positive += usize::from(weight.is_positive());
         sum += weight.as_decimal();
     }
-    if !(2..=MAX_ALLOCATION_ASSETS).contains(&count) || positive < 2 || sum != BigDecimal::from(1) {
+    if count < 2 || positive < 2 || sum != BigDecimal::from(1) {
         return Err(DomainError::Invalid("ensemble_weights"));
     }
     Ok(())
@@ -331,9 +331,7 @@ pub fn ensemble_weights<'a>(
 /// Structural mandate checks shared with actual allocation and publication.
 /// Asset/group membership and feasibility still require the frozen native input.
 pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {
-    if constraints.group_bounds.len() > MAX_ALLOCATION_GROUPS
-        || constraints.asset_overrides.len() > MAX_ALLOCATION_ASSETS
-        || !constraints.max_gross_exposure.is_nonnegative()
+    if !constraints.max_gross_exposure.is_nonnegative()
         || !constraints.max_turnover_per_rebalance.is_nonnegative()
         || constraints
             .max_participation
@@ -480,7 +478,7 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     {
         return Err(DomainError::Invalid("allocation_forecast_binding"));
     }
-    if !(1..=MAX_ALLOCATION_ASSETS).contains(&count)
+    if count < 1
         || !input.capital_assumption.is_positive()
         || !input.exposure_tolerance.is_positive()
         || input.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
@@ -497,7 +495,6 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
         if !identities.insert(asset.instrument_id.as_str())
             || asset.currency != input.base_currency
             || !asset.transaction_cost_rate.is_fraction()
-            || asset.groups.len() > MAX_ALLOCATION_GROUPS
             || asset
                 .available_notional
                 .as_ref()
@@ -539,7 +536,7 @@ pub fn portfolio_return_history(
     forecasts: &PortfolioForecastInputV1,
 ) -> Result<(), DomainError> {
     let count = history.end_ns.len();
-    if !(2..=MAX_RETURN_OBSERVATIONS).contains(&count)
+    if count < 2
         || history.available_ns.len() != count
         || history.instrument_ids != forecasts.instrument_ids
         || history.bar_types != forecasts.bar_types
@@ -547,11 +544,7 @@ pub fn portfolio_return_history(
         || history.horizon_kind != forecasts.horizon_kind
         || history.horizon_value != forecasts.horizon_value
         || history.asset_returns.len() != history.instrument_ids.len()
-        || !history
-            .asset_returns
-            .len()
-            .checked_mul(count)
-            .is_some_and(|size| size <= MAX_RETURN_VALUES)
+        || !history.asset_returns.len().checked_mul(count).is_some()
         || history.asset_returns.iter().any(|row| {
             row.len() != count || row.iter().any(|value| !value.is_finite() || *value < -1.0)
         })
@@ -594,7 +587,7 @@ pub fn optimizer_settings(model: &NativeModelRefV1) -> Result<&AllocatorSettings
     if !parameters.risk_aversion.is_positive()
         || !parameters.solver_tolerance.is_positive()
         || parameters.solver_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
-        || !(1..=100_000).contains(&parameters.max_iterations)
+        || parameters.max_iterations == 0
     {
         return Err(DomainError::Invalid("portfolio_optimizer_parameters"));
     }

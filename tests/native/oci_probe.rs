@@ -43,12 +43,6 @@ fn inspect(host_sentinel: &str) {
             .trim(),
         "67108864"
     );
-    assert_eq!(
-        fs::read_to_string("/sys/fs/cgroup/pids.max")
-            .unwrap()
-            .trim(),
-        "64"
-    );
     let cpu = fs::read_to_string("/sys/fs/cgroup/cpu.max").unwrap();
     let parts: Vec<u64> = cpu
         .split_whitespace()
@@ -217,7 +211,9 @@ fn memory_pressure() {
 fn pids_limit() {
     let mut children = Vec::new();
     let mut bounded = false;
-    for _ in 0..128 {
+    // Bounded acceptance workload crosses the former QZ 64-process cap;
+    // never exhaust the host process table to prove the absence of a cap.
+    for _ in 0..65 {
         match Command::new("/usr/local/bin/isolation-probe")
             .arg("sleep")
             .stdin(Stdio::null())
@@ -237,18 +233,16 @@ fn pids_limit() {
         let _ = child.kill();
         let _ = child.wait();
     }
-    assert!(bounded && total > 0 && total < 64);
+    assert!(!bounded && total == 65);
     fs::write("/output/pids-verified", total.to_string()).unwrap();
 }
 
-fn output_limit() {
-    let mut output = fs::File::create("/output/bounded-file").unwrap();
+fn output_metadata() {
+    let mut output = fs::File::create("/output/metadata-probe").unwrap();
     for _ in 0..256 {
-        if output.write_all(&[0x5a; 65536]).is_err() {
-            std::process::exit(42);
-        }
+        output.write_all(&[0x5a; 65536]).unwrap();
     }
-    std::process::exit(99);
+    output.sync_all().unwrap();
 }
 
 fn main() {
@@ -258,7 +252,7 @@ fn main() {
         Some("memory") => memory_limit(),
         Some("memory-pressure") => memory_pressure(),
         Some("pids") => pids_limit(),
-        Some("output") => output_limit(),
+        Some("output") => output_metadata(),
         Some("sleep") => std::thread::sleep(Duration::from_secs(120)),
         _ => std::process::exit(2),
     }

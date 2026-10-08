@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeRunEvent } from './run-events';
+import { decodeRunEvent, runEventRetryDelay } from './run-events';
 const run = '01990000-0000-7000-8000-000000000001';
 function frame(seq = '1', event = 'run.state_changed', patch: Record<string, unknown> = {}) {
   return { id: `${run}:${seq}`, event, data: JSON.stringify({
@@ -44,7 +44,28 @@ describe('durable event cursor boundary', () => {
   it('stops on reset-required without consuming a cursor', () => {
     expect(() => decodeRunEvent({ id: '', event: 'reset-required', data: '{}' }, run, '0')).toThrow('重新载入快照');
   });
-  it('limits payload by UTF-8 bytes, not character count', () => {
-    expect(() => decodeRunEvent(frame('1', 'run.future_note', { payload: { schema_version: 1, note: '研'.repeat(24000) } }), run, '0')).toThrow();
+  it('preserves complete UTF-8 payloads past the former payload and frame caps', () => {
+    const payload = { schema_version: 1, note: '研'.repeat(40000) };
+    const original = frame('1', 'run.future_note', { payload });
+    expect(new TextEncoder().encode(original.data).length).toBeGreaterThan(100_000);
+    const received = decodeRunEvent(original, run, '0');
+    expect(received?.payload).toEqual(payload);
+    expect(received?.seq).toBe('1');
+    expect(decodeRunEvent(original, run, '1')).toBeNull();
+    expect(() => decodeRunEvent(frame('3', 'run.future_note', { payload }), run, '1')).toThrow('事件序号不连续');
+  });
+});
+
+describe('event stream retry spacing', () => {
+  it('continues past five disconnects without spinning or overflowing', () => {
+    let delay = 0;
+    const intervals: number[] = [];
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      delay = runEventRetryDelay(delay);
+      intervals.push(delay);
+    }
+    expect(intervals.slice(0, 5)).toEqual([2000, 4000, 8000, 16000, 30000]);
+    expect(intervals.slice(5)).toEqual(Array(95).fill(30000));
+    expect(runEventRetryDelay(0)).toBe(2000);
   });
 });

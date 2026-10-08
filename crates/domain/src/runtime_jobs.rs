@@ -1,18 +1,13 @@
 //! The wire boundary is not an executor or a qualification engine.
-use crate::{control::text, research::invalid, runtime, DomainError};
+use crate::{DomainError, control::text, research::invalid, runtime};
 use chrono::{DateTime, Duration, Utc};
-use contracts::{research::ArtifactInputRole, runtime::RuntimeCapabilitiesV1, runtime_jobs::*, Id};
+use contracts::{Id, research::ArtifactInputRole, runtime::RuntimeCapabilitiesV1, runtime_jobs::*};
 use std::collections::BTreeSet;
 
 /// The fixed native job reports fresh, local compiler cgroup OOM evidence with
 /// this exit status. It is not a compiler or signal exit code; GNU timeout
 /// preserves it when the job finishes before its deadline.
 pub const NATIVE_MEMORY_LIMIT_EXIT_CODE: i32 = 70;
-
-pub const MAX_JOB_REQUEST_BYTES: usize = 1024 * 1024;
-pub const MAX_RESULT_MANIFEST_BYTES: usize = 1024 * 1024;
-pub use contracts::runtime_jobs::MAX_INPUT_OBJECT_BYTES;
-pub const MAX_INPUT_OBJECTS_BYTES: u64 = 256 * 1024 * 1024;
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "INVALID_RUNTIME_JOB_CONTRACT")
@@ -68,24 +63,23 @@ pub fn spec_shape(value: &JobSpecV1) -> Result<(), DomainError> {
         time(deadline)?;
     }
     let limits = &value.limits;
-    if !(1..=1024).contains(&limits.cpu)
+    if limits.cpu == Some(0)
+        || (limits.cpu_seconds.is_some() && limits.cpu.is_none())
         || limits.cpu_seconds.is_some_and(|value| value.get() == 0)
-        || limits.memory_mib == 0
+        || limits.memory_mib == Some(0)
         || limits.wall_seconds == Some(0)
         || limits.output_bytes.is_some_and(|value| value.get() == 0)
         || limits
-            .output_bytes
-            .is_some_and(|value| value.get() > MAX_JOB_OUTPUT_BYTES)
-        || limits
             .wall_seconds
             .zip(limits.cpu_seconds)
-            .is_some_and(|(wall, cpu)| {
-                u128::from(cpu.get()) > u128::from(limits.cpu) * u128::from(wall)
+            .zip(limits.cpu)
+            .is_some_and(|((wall, cpu), rate)| {
+                u128::from(cpu.get()) > u128::from(rate) * u128::from(wall)
             })
     {
         return Err(bad("limits"));
     }
-    if !(1..=256).contains(&value.inputs.len()) {
+    if value.inputs.is_empty() {
         return Err(bad("inputs"));
     }
     let mut identities = BTreeSet::new();
@@ -117,7 +111,6 @@ pub fn spec_shape(value: &JobSpecV1) -> Result<(), DomainError> {
                 storage_version(version)?;
                 if !identities.insert(*artifact_id)
                     || byte_count.get() == 0
-                    || byte_count.get() > MAX_INPUT_OBJECT_BYTES
                     || (*artifact_id == value.parameters_artifact_id
                         && *role != ArtifactInputRole::Parameters)
                 {
@@ -129,11 +122,8 @@ pub fn spec_shape(value: &JobSpecV1) -> Result<(), DomainError> {
             }
         }
     }
-    if total_bytes > MAX_INPUT_OBJECTS_BYTES {
-        return Err(bad("inputs.byte_count"));
-    }
     let mut schemas = BTreeSet::new();
-    if !(1..=64).contains(&value.requested_output_schemas.len()) {
+    if value.requested_output_schemas.is_empty() {
         return Err(bad("requested_output_schemas"));
     }
     for schema in &value.requested_output_schemas {
@@ -162,20 +152,37 @@ pub fn admit_spec(
             .image_refs
             .iter()
             .any(|image| image.job_kind == value.job_kind && image.image_ref == value.image_ref)
-        || limits.cpu > capability.max_cpu
-        || limits.memory_mib > capability.max_memory_mib
+        || limits.cpu.is_some_and(|cpu| cpu > capability.max_cpu)
+        || (limits.cpu.is_none()
+            && capability
+                .engine_versions
+                .get("optional-cpu-rate")
+                .map(String::as_str)
+                != Some("1"))
+        || limits
+            .memory_mib
+            .is_some_and(|memory| memory > capability.max_memory_mib)
+        || (limits.memory_mib.is_none()
+            && capability
+                .engine_versions
+                .get("optional-memory-limit")
+                .map(String::as_str)
+                != Some("1"))
         || limits
             .wall_seconds
-            .is_some_and(|wall| wall > capability.max_wall_seconds)
+            .zip(capability.max_wall_seconds)
+            .is_some_and(|(requested, maximum)| requested > maximum)
         || ((limits.wall_seconds.is_none() || value.deadline_at.is_none())
             && capability
                 .engine_versions
                 .get("optional-wall-time")
                 .map(String::as_str)
                 != Some("1"))
-        || limits
-            .output_bytes
-            .is_some_and(|output| output > capability.max_output_bytes)
+        || limits.output_bytes.is_some_and(|output| {
+            capability
+                .max_output_bytes
+                .is_some_and(|maximum| output > maximum)
+        })
         || (limits.cpu_seconds.is_none()
             && capability
                 .engine_versions
@@ -291,7 +298,6 @@ pub fn manifest(
         || value.engine_versions.iter().any(|(name, version)| {
             text(name, 1, 120, false).is_err() || text(version, 1, 120, false).is_err()
         })
-        || value.artifacts.len() > 64
     {
         return Err(bad("result_manifest"));
     }
@@ -365,9 +371,8 @@ pub fn manifest(
             || value
                 .resource_usage
                 .peak_memory_bytes
-                .is_some_and(|memory| {
-                    memory.get() > u64::from(spec.limits.memory_mib) * 1024 * 1024
-                }))
+                .zip(spec.limits.memory_mib)
+                .is_some_and(|(memory, maximum)| memory.get() > u64::from(maximum) * 1024 * 1024))
     {
         return Err(bad("result_manifest.success"));
     }

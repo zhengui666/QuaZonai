@@ -265,7 +265,6 @@ fn method_allowlist_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::
     use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
     ArrayBuilder::new()
         .min_items(Some(1))
-        .max_items(Some(64))
         .unique_items(true)
         .items(
             ObjectBuilder::new()
