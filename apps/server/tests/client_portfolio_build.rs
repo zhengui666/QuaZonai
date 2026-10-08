@@ -248,7 +248,7 @@ async fn automation_policy_cli_freezes_original_intent_and_revokes_history(pool:
                 configuration: DownstreamConfigurationV1 {
                     name: "Policy protocol fixture".into(),
                     endpoint: "https://policy.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Both,
                     enabled: true,
                     development_http: false,

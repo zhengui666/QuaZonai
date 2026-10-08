@@ -65,6 +65,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::paper_service::initial_execution::InitialCapitalPermit;
 use crate::polymarket_data_probe::{
     public_config_from_proxy_env, public_transport_error, validate_proxy_env_name,
 };
@@ -123,6 +124,14 @@ enum Operation {
         #[arg(long)]
         credential_file: PathBuf,
     },
+    /// Validate a Forecast V2 original without opening a node, account, or network.
+    /// Reports unsupported account initialization separately from source validity.
+    Preflight {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        claim: PathBuf,
+    },
     /// Use an original accepted Paper claim and frozen catalog with current public data.
     Run {
         #[arg(long)]
@@ -130,9 +139,9 @@ enum Operation {
         #[arg(long)]
         claim: PathBuf,
         #[arg(long)]
-        frozen_metadata: PathBuf,
+        frozen_metadata: Option<PathBuf>,
         #[arg(long)]
-        dataset_revision: PathBuf,
+        dataset_revision: Option<PathBuf>,
         #[arg(long)]
         source_output: PathBuf,
         #[arg(long)]
@@ -168,7 +177,9 @@ pub(crate) struct HostConfig {
     project_id: Id,
     downstream_id: Id,
     pub(crate) market_capability_version: String,
-    execution_assumptions: ExecutionAssumptionsViewV1,
+    /// Native TargetDecision cross-check only; Forecast uses its frozen claim.
+    #[serde(default)]
+    execution_assumptions: Option<ExecutionAssumptionsViewV1>,
     bar_interval_seconds: u32,
 }
 
@@ -212,16 +223,275 @@ pub(crate) fn claim(path: &Path) -> Result<HandoffClaimViewV2> {
     })
 }
 
+fn forecast_execution_instruments(
+    package: &contracts::delivery::ForecastTargetPackageV2,
+) -> Result<Vec<InstrumentAny>> {
+    use nautilus_model::instruments::Instrument;
+    let all = crate::paper_node::forecast_instruments(package, Venue::from("POLYMARKET"))?;
+    ensure!(
+        all.len() == package.targets.len(),
+        "PAPER_FORECAST_ASSET_SCOPE_UNSUPPORTED"
+    );
+    let mut by_id = all
+        .into_iter()
+        .map(|instrument| (instrument.id(), instrument))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let ordered = package
+        .targets
+        .iter()
+        .map(|target| -> Result<_> {
+            let id = target.instrument_id.parse::<InstrumentId>()?;
+            by_id
+                .remove(&id)
+                .ok_or_else(|| anyhow!("PAPER_FORECAST_ASSET_SCOPE_UNSUPPORTED"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(by_id.is_empty(), "PAPER_FORECAST_ASSET_SCOPE_UNSUPPORTED");
+    Ok(ordered)
+}
+
+fn forecast_target(
+    package: &contracts::delivery::ForecastTargetPackageV2,
+) -> Result<NativeTargetPointV1> {
+    Ok(NativeTargetPointV1 {
+        schema_version: SchemaV1,
+        asof_ns: DbCounter::new(u64::try_from(
+            package
+                .valid_from
+                .timestamp_nanos_opt()
+                .ok_or_else(|| anyhow!("PAPER_HOST_TARGET_CLOCK"))?,
+        )?)
+        .map_err(anyhow::Error::msg)?,
+        valid_until_ns: DbCounter::new(u64::try_from(
+            package
+                .valid_until
+                .timestamp_nanos_opt()
+                .ok_or_else(|| anyhow!("PAPER_HOST_TARGET_CLOCK"))?,
+        )?)
+        .map_err(anyhow::Error::msg)?,
+        targets: package
+            .targets
+            .iter()
+            .map(|target| AllocationTargetV1 {
+                instrument_id: target.instrument_id.clone(),
+                weight: target.target_weight.clone(),
+                currency: target.currency.clone(),
+            })
+            .collect(),
+        cash_weight: package.cash_weight.clone(),
+    })
+}
+
+/// Source-only verification. A valid Forecast is not a FreshPaperCash decision.
+pub(crate) fn forecast_preflight(config: &HostConfig, claim: &HandoffClaimViewV2) -> Result<Value> {
+    let TargetPackageEnvelopeV2::Forecast(package) = &claim.package else {
+        return Err(anyhow!(
+            "PAPER_HOST_FORECAST_PREFLIGHT_REQUIRES_FORECAST_V2"
+        ));
+    };
+    let handoff = &claim.handoff;
+    let now = chrono::Utc::now();
+    ensure!(
+        handoff.state == HandoffStateV1::Claimed
+            && handoff.environment == ForwardEnvironmentV1::Paper
+            && handoff.project_id == config.project_id
+            && handoff.project_id == package.project_id
+            && handoff.downstream_id == config.downstream_id
+            && handoff.release_id == package.release_id
+            && handoff.candidate_id == package.candidate_id
+            && handoff.mandate_id == package.mandate_id
+            && handoff
+                .external_claim_id
+                .as_ref()
+                .is_some_and(|id| !id.is_empty()
+                    && id.trim() == id
+                    && !id.chars().any(char::is_control))
+            && handoff
+                .claimed_at
+                .is_some_and(|at| at >= handoff.offered_at && at <= now && at < handoff.expires_at)
+            && handoff.acknowledged_at.is_none()
+            && package
+                .compatible_market_capabilities
+                .contains(&config.market_capability_version),
+        "PAPER_HOST_ORIGINAL_CLAIM_BINDING"
+    );
+    ensure!(
+        (1..=60).contains(&config.bar_interval_seconds),
+        "PAPER_HOST_BAR_INTERVAL"
+    );
+    let instruments = forecast_execution_instruments(package)?;
+    let initial = crate::paper_node::forecast_initial_account(package)?;
+    if let Some(account) = initial {
+        ensure!(
+            account.downstream_id == config.downstream_id && account.account_id == "POLYMARKET-001",
+            "PAPER_INITIAL_CAPITAL_SCOPE"
+        );
+        let point = forecast_target(package)?;
+        let current = point
+            .targets
+            .iter()
+            .map(|_| "0".parse::<contracts::DecimalValue>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::msg)?;
+        domain::execution::strategy::target_bounds(
+            &package.constraints_summary,
+            &package.base_currency,
+            &package.exposure_tolerance,
+            &point,
+            &current,
+        )
+        .map_err(|_| anyhow!("PAPER_FORECAST_CONSTRAINT_MEASUREMENT_UNSUPPORTED"))?;
+    }
+    if let Some(root) = &package.current_weights.paper_initialization {
+        ensure!(
+            root.downstream_id == handoff.downstream_id,
+            "PAPER_INITIAL_CAPITAL_SCOPE"
+        );
+    }
+    ensure!(
+        (1..=8).contains(&instruments.len()),
+        "PAPER_HOST_SOURCE_SCOPE"
+    );
+    ensure!(
+        package.execution_settings.account_kind == contracts::science::NativeAccountKind::Cash
+            && package.execution_settings.leverage.as_decimal() == &bigdecimal::BigDecimal::from(1)
+            && domain::prediction::uses_native_fee(&package.execution_settings.fee_model),
+        "PAPER_HOST_ORIGINAL_EXECUTION_SETTINGS"
+    );
+    let market = crate::catalog::NativeMarketData {
+        rows: 0,
+        series: instruments
+            .iter()
+            .map(|instrument| -> Result<_> {
+                use nautilus_model::instruments::Instrument;
+                Ok(crate::catalog::NativeBarSeries {
+                    instrument: instrument.clone(),
+                    instrument_updates: Vec::new(),
+                    bars: Vec::new(),
+                    bar_type: BarType::from_str(&format!(
+                        "{}-{}-SECOND-MID-INTERNAL",
+                        instrument.id(),
+                        config.bar_interval_seconds
+                    ))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
+    crate::simulation::execution_market(&market, &package.execution_settings)?;
+    crate::prediction::validate_market(&market, &package.execution_settings)?;
+    crate::prediction::target_window(
+        &instruments,
+        u64::try_from(
+            package
+                .valid_from
+                .timestamp_nanos_opt()
+                .ok_or_else(|| anyhow!("PAPER_HOST_TARGET_CLOCK"))?,
+        )?,
+        u64::try_from(
+            package
+                .valid_until
+                .timestamp_nanos_opt()
+                .ok_or_else(|| anyhow!("PAPER_HOST_TARGET_CLOCK"))?,
+        )?,
+    )?;
+    Ok(json!({
+        "package_schema_version": "2", "source_kind": "FORECAST_EVALUATION",
+        "claim_inputs_valid": true, "connects_market_data": false,
+        "execution_supported": initial.is_some(), "execution_authorized": false,
+        "execution_blocker": if initial.is_some() { "PAPER_INITIAL_EXECUTION_CONSUME_REQUIRED" }
+            else { crate::paper_node::forecast_initialization_blocker(package) },
+        "economic_origin": package.environment_origin,
+        "paper_initialization": package.current_weights.paper_initialization,
+        "handoff_id": handoff.id, "release_id": package.release_id,
+        "dataset_revision_id": package.forward_dataset.dataset_revision_id,
+        "frozen_instrument_count": instruments.len(),
+        "current_weight_count": package.current_weights.weights.len(),
+        "build_environment": package.source.build_environment,
+        "execution_environment": handoff.environment,
+    }))
+}
+
+#[cfg(test)]
 fn prepare(
     config: &HostConfig,
     claim: &HandoffClaimViewV2,
-    metadata: &RuntimeCatalogMetadataV1,
-    dataset: &DatasetView,
-) -> Result<(PolymarketStreamingPaper, Vec<InstrumentId>)> {
+    metadata: Option<&RuntimeCatalogMetadataV1>,
+    dataset: Option<&DatasetView>,
+    initial_permit: Option<InitialCapitalPermit>,
+) -> Result<(PolymarketStreamingPaper, Vec<InstrumentId>, Option<Value>)> {
+    prepare_managed(config, claim, metadata, dataset, initial_permit, None)
+}
+
+fn prepare_managed(
+    config: &HostConfig,
+    claim: &HandoffClaimViewV2,
+    metadata: Option<&RuntimeCatalogMetadataV1>,
+    dataset: Option<&DatasetView>,
+    initial_permit: Option<InitialCapitalPermit>,
+    capital_exit_root: Option<&Path>,
+) -> Result<(PolymarketStreamingPaper, Vec<InstrumentId>, Option<Value>)> {
     let _ = config.schema_version;
     let TargetPackageEnvelopeV2::TargetDecision(package) = &claim.package else {
-        return Err(anyhow!("PAPER_HOST_REQUIRES_ORIGINAL_V2_TARGET_DECISION"));
+        forecast_preflight(config, claim)?;
+        let TargetPackageEnvelopeV2::Forecast(original) = &claim.package else {
+            unreachable!()
+        };
+        crate::paper_node::forecast_initial_account(original)?
+            .ok_or_else(|| anyhow!(crate::paper_node::forecast_initialization_blocker(original)))?;
+        let (canonical, evidence) = initial_permit
+            .ok_or_else(|| anyhow!("PAPER_INITIAL_EXECUTION_CONSUME_REQUIRED"))?
+            .into_canonical(claim)?;
+        let TargetPackageEnvelopeV2::Forecast(package) = &canonical.package else {
+            unreachable!()
+        };
+        let account = crate::paper_node::forecast_initial_account(package)?
+            .ok_or_else(|| anyhow!("PAPER_INITIAL_CAPITAL_SOURCE_REQUIRED"))?;
+        // Use the authenticated server's exact canonical package. No local
+        // metadata or owner-authored settings substitute for this branch.
+        let instruments = forecast_execution_instruments(package)?;
+        let ids = instruments
+            .iter()
+            .map(|instrument| {
+                use nautilus_model::instruments::Instrument;
+                instrument.id()
+            })
+            .collect::<Vec<_>>();
+        let bars = ids
+            .iter()
+            .map(|id| {
+                BarType::from_str(&format!(
+                    "{id}-{}-SECOND-MID-INTERNAL",
+                    config.bar_interval_seconds
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let target = forecast_target(package)?;
+        return Ok((
+            PolymarketStreamingPaper::new_inner(
+                account,
+                &package.execution_settings,
+                &package.constraints_summary,
+                target,
+                instruments,
+                bars,
+                capital_exit_root.map(|root| (&*canonical, root)),
+            )?,
+            ids,
+            Some(evidence),
+        ));
     };
+    ensure!(
+        initial_permit.is_none(),
+        "PAPER_INITIAL_EXECUTION_WRONG_SOURCE"
+    );
+    // Preserve the original Native contract and evidence path. These are never
+    // a fallback for missing Forecast claim-contained inputs.
+    let metadata = metadata.ok_or_else(|| anyhow!("PAPER_HOST_NATIVE_METADATA_REQUIRED"))?;
+    let dataset = dataset.ok_or_else(|| anyhow!("PAPER_HOST_NATIVE_DATASET_REQUIRED"))?;
+    let assumptions = config
+        .execution_assumptions
+        .as_ref()
+        .ok_or_else(|| anyhow!("PAPER_HOST_NATIVE_ASSUMPTIONS_REQUIRED"))?;
     let handoff = &claim.handoff;
     let now = chrono::Utc::now();
     ensure!(
@@ -251,15 +521,14 @@ fn prepare(
                 .compatible_market_capabilities
                 .contains(&config.market_capability_version)
             && package.account_start.downstream_id == config.downstream_id
-            && package.account_start.execution_assumptions_id == config.execution_assumptions.id
-            && config.execution_assumptions.project_id == config.project_id
-            && package.cost_assumption_ref == config.execution_assumptions.id
-            && package.base_currency == config.execution_assumptions.settings.base_currency
-            && package.capital_assumption == config.execution_assumptions.settings.starting_capital
-            && package.exposure_tolerance
-                == config.execution_assumptions.settings.exposure_tolerance
+            && package.account_start.execution_assumptions_id == assumptions.id
+            && assumptions.project_id == config.project_id
+            && package.cost_assumption_ref == assumptions.id
+            && package.base_currency == assumptions.settings.base_currency
+            && package.capital_assumption == assumptions.settings.starting_capital
+            && package.exposure_tolerance == assumptions.settings.exposure_tolerance
             && serde_json::to_value(&package.execution_settings)?
-                == serde_json::to_value(&config.execution_assumptions.settings)?,
+                == serde_json::to_value(&assumptions.settings)?,
         "PAPER_HOST_ORIGINAL_EXECUTION_SETTINGS"
     );
     ensure!(
@@ -356,15 +625,17 @@ fn prepare(
         cash_weight: package.cash_weight.clone(),
     };
     Ok((
-        PolymarketStreamingPaper::new(
+        PolymarketStreamingPaper::new_inner(
             &package.account_start,
             &package.execution_settings,
             &package.constraints_summary,
             target,
             instruments,
             bars,
+            capital_exit_root.map(|root| (claim, root)),
         )?,
         ids,
+        None,
     ))
 }
 
@@ -1374,17 +1645,21 @@ fn next_source_record(
     receiver: &mpsc::Receiver<SourceRead>,
     deadline: Instant,
 ) -> Result<Option<SourceRecord>> {
-    next_source_record_controlled(receiver, deadline, None)
+    next_source_record_controlled(receiver, deadline, None, None)
 }
 
 fn next_source_record_controlled(
     receiver: &mpsc::Receiver<SourceRead>,
     deadline: Instant,
     control: Option<&crate::polymarket_paper_service::ExecutionControl>,
+    mut session: Option<&mut PolymarketStreamingPaper>,
 ) -> Result<Option<SourceRecord>> {
     loop {
         if let Some(control) = control {
             control.check_stop()?;
+            if let Some(session) = session.as_deref_mut() {
+                control.service_capital_exit(session)?;
+            }
         }
         ensure!(
             Instant::now() < deadline,
@@ -1406,8 +1681,8 @@ fn next_source_record_controlled(
 pub(crate) fn execute(
     config_path: &Path,
     claim_path: &Path,
-    metadata_path: &Path,
-    dataset_path: &Path,
+    metadata_path: Option<&Path>,
+    dataset_path: Option<&Path>,
     source_path: &Path,
     report_path: &Path,
     snapshots_path: &Path,
@@ -1415,6 +1690,7 @@ pub(crate) fn execute(
     max_seconds: u64,
     proxy_env: Option<&str>,
     control: Option<&crate::polymarket_paper_service::ExecutionControl>,
+    initial_permit: Option<InitialCapitalPermit>,
 ) -> Result<()> {
     ensure!(
         (1..=300).contains(&max_seconds),
@@ -1425,9 +1701,31 @@ pub(crate) fn execute(
     }
     let config: HostConfig = read_original(config_path)?;
     let original_claim = claim(claim_path)?;
-    let metadata: RuntimeCatalogMetadataV1 = read_original(metadata_path)?;
-    let dataset: DatasetView = read_original(dataset_path)?;
-    let (mut session, ids) = prepare(&config, &original_claim, &metadata, &dataset)?;
+    // Forecast ignores external metadata entirely: its source is the immutable claim.
+    let (metadata, dataset) = if matches!(
+        original_claim.package,
+        TargetPackageEnvelopeV2::TargetDecision(_)
+    ) {
+        (
+            metadata_path
+                .map(read_original::<RuntimeCatalogMetadataV1>)
+                .transpose()?,
+            dataset_path.map(read_original::<DatasetView>).transpose()?,
+        )
+    } else {
+        (None, None)
+    };
+    if let Some(control) = control {
+        control.check_stop()?;
+    }
+    let (mut session, ids, initial_execution) = prepare_managed(
+        &config,
+        &original_claim,
+        metadata.as_ref(),
+        dataset.as_ref(),
+        initial_permit,
+        control.and_then(|value| value.capital_exit_root()),
+    )?;
     if let Some(control) = control {
         control.check_stop()?;
         control.started(session.session_id());
@@ -1481,7 +1779,9 @@ pub(crate) fn execute(
     let mut definitions = BTreeSet::new();
     let mut last_observed = 0;
     let consumed = (|| -> Result<()> {
-        while let Some(record) = next_source_record_controlled(&receiver, deadline, control)? {
+        while let Some(record) =
+            next_source_record_controlled(&receiver, deadline, control, Some(&mut session))?
+        {
             ensure!(
                 !ended
                     && record.sequence.get() == expected
@@ -1642,10 +1942,32 @@ pub(crate) fn execute(
     report["source_failure"] = json!(source_failure);
     report["source_process_cleanup_confirmed"] = json!(cleanup_confirmed);
     report["source_output"] = json!(source_path);
-    report["dataset_revision_id"] = json!(dataset.id);
-    report["frozen_catalog_ref"] = json!(metadata.registered_ref);
-    report["frozen_origin"] = json!(metadata.origin);
-    report["frozen_pit_status"] = json!(metadata.pit_status);
+    report["execution_environment"] = json!("PAPER");
+    report["economic_origin"] = json!("SYNTHETIC");
+    report["return_label"] = json!("SIMULATED_RETURNS");
+    if let Some(execution) = initial_execution {
+        let TargetPackageEnvelopeV2::Forecast(package) = &original_claim.package else {
+            unreachable!()
+        };
+        report["initial_execution"] = execution;
+        report["paper_initialization"] = json!(package.current_weights.paper_initialization);
+        report["dataset_revision_id"] = json!(package.forward_dataset.dataset_revision_id);
+        report["frozen_metadata_artifact_id"] =
+            json!(package.forward_dataset.native_metadata_artifact_id);
+        report["frozen_origin"] = json!(package.forward_dataset.origin);
+        report["frozen_pit_status"] = json!(package.forward_dataset.pit_status);
+    } else {
+        let dataset = dataset
+            .as_ref()
+            .ok_or_else(|| anyhow!("PAPER_HOST_NATIVE_DATASET_REQUIRED"))?;
+        let metadata = metadata
+            .as_ref()
+            .ok_or_else(|| anyhow!("PAPER_HOST_NATIVE_METADATA_REQUIRED"))?;
+        report["dataset_revision_id"] = json!(dataset.id);
+        report["frozen_catalog_ref"] = json!(metadata.registered_ref);
+        report["frozen_origin"] = json!(metadata.origin);
+        report["frozen_pit_status"] = json!(metadata.pit_status);
+    }
     let complete = child_ok
         && cleanup_confirmed
         && report["performance_status"] == "NATIVE_SIMULATION_AVAILABLE";
@@ -1717,6 +2039,16 @@ pub(crate) fn execute(
 
 pub fn run(arguments: Arguments) -> Result<()> {
     match arguments.operation {
+        Operation::Preflight {
+            config,
+            claim: claim_path,
+        } => {
+            let config: HostConfig = read_original(&config)?;
+            let original = claim(&claim_path)?;
+            let checked = forecast_preflight(&config, &original)?;
+            println!("{}", checked);
+            Ok(())
+        }
         Operation::RecordForward {
             plan,
             output,
@@ -1773,14 +2105,15 @@ pub fn run(arguments: Arguments) -> Result<()> {
         } => execute(
             &config,
             &claim,
-            &frozen_metadata,
-            &dataset_revision,
+            frozen_metadata.as_deref(),
+            dataset_revision.as_deref(),
             &source_output,
             &report_output,
             &snapshots_output,
             &binding_output,
             max_seconds,
             proxy_env.as_deref(),
+            None,
             None,
         ),
         Operation::Source {
@@ -1819,8 +2152,323 @@ pub fn run(arguments: Arguments) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn forecast_claim_and_config() -> (HandoffClaimViewV2, HostConfig) {
+        use contracts::science::NativeFeeRateV1;
+        use nautilus_model::{
+            enums::AssetClass,
+            identifiers::Symbol,
+            instruments::BinaryOption,
+            types::{Currency, Price, Quantity},
+        };
+        let mut claim = crate::paper_service::tests::claim();
+        let native = crate::paper_service::tests::polymarket_claim();
+        let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+            unreachable!()
+        };
+        let TargetPackageEnvelopeV2::TargetDecision(native) = native.package else {
+            unreachable!()
+        };
+        let now = chrono::Utc::now();
+        let asof = now.timestamp_nanos_opt().unwrap() as u64;
+        let until = (now + chrono::Duration::seconds(300))
+            .timestamp_nanos_opt()
+            .unwrap() as u64;
+        package.asof = now;
+        package.valid_from = now + chrono::Duration::seconds(1);
+        package.valid_until = now + chrono::Duration::seconds(300);
+        package.environment_origin = contracts::delivery::PackageOriginV1::Real;
+        package.base_currency = native.base_currency.clone();
+        package.execution_settings = native.execution_settings;
+        package.targets = native.targets;
+        let id: InstrumentId = package.targets[0].instrument_id.parse().unwrap();
+        let binary = BinaryOption::builder()
+            .instrument_id(id)
+            .raw_symbol(Symbol::new("1"))
+            .asset_class(AssetClass::Alternative)
+            .currency(Currency::from_str("pUSD").unwrap())
+            .activation_ns(0_u64.into())
+            .expiration_ns((until + 60_000_000_000).into())
+            .price_precision(4)
+            .size_precision(6)
+            .price_increment(Price::from("0.0001"))
+            .size_increment(Quantity::from("0.000001"))
+            .ts_event(0_u64.into())
+            .ts_init(0_u64.into())
+            .build()
+            .unwrap();
+        let mut definition = serde_json::to_value(InstrumentAny::BinaryOption(binary)).unwrap();
+        definition["BinaryOption"]["info"] = json!({
+            "condition_id": "synthetic-condition", "token_id": "1",
+            "fee_schedule": {"rate": 0.02, "exponent": 1, "rebateRate": 0.2, "takerOnly": true},
+            "source_reference": "SYNTHETIC_PREFLIGHT_FIXTURE_ONLY"
+        });
+        package.execution_settings.fee_rates = vec![NativeFeeRateV1 {
+            instrument_id: id.to_string(),
+            maker: "0".parse().unwrap(),
+            taker: domain::prediction::planning_fee(&definition["BinaryOption"]).unwrap(),
+        }];
+        package.current_weights.base_currency = package.base_currency.clone();
+        package.current_weights.asof_ns = DbCounter::new(asof).unwrap();
+        package.current_weights.available_ns = DbCounter::new(asof).unwrap();
+        package.current_weights.valid_until_ns = DbCounter::new(until).unwrap();
+        package.current_weights.cash_weight = "0.5".parse().unwrap();
+        package.current_weights.weights = vec![AllocationTargetV1 {
+            instrument_id: id.to_string(),
+            weight: "0.5".parse().unwrap(),
+            currency: "pUSD".into(),
+        }];
+        let frozen = &mut package.forward_dataset;
+        frozen.origin = DataOrigin::Real;
+        frozen.pit_status = contracts::research::PitStatus::Verified;
+        frozen.revision_policy = contracts::catalogs::DataRevisionPolicy::AsKnownThen;
+        frozen.selection.bar_types = vec![format!("{id}-1-SECOND-LAST-EXTERNAL")];
+        frozen.instrument_definitions = vec![definition];
+        let config = HostConfig {
+            schema_version: SchemaV1,
+            project_id: package.project_id,
+            downstream_id: claim.handoff.downstream_id,
+            market_capability_version: "service-test/1".into(),
+            execution_assumptions: None,
+            bar_interval_seconds: 1,
+        };
+        (claim, config)
+    }
+
+    pub(crate) fn config_for(claim: &HandoffClaimViewV2) -> HostConfig {
+        HostConfig {
+            schema_version: SchemaV1,
+            project_id: claim.handoff.project_id,
+            downstream_id: claim.handoff.downstream_id,
+            market_capability_version: "service-test/1".into(),
+            execution_assumptions: None,
+            bar_interval_seconds: 1,
+        }
+    }
+
+    pub(crate) fn initial_claim_and_config() -> (HandoffClaimViewV2, HostConfig) {
+        use contracts::{
+            delivery::PackageOriginV1,
+            portfolio::CandidateWeightsSourceV1,
+            science::{PaperInitializationRefV1, PortfolioWeightsSourceV1},
+            strategy_portfolio::FreshPaperCashV1,
+        };
+        let (mut claim, config) = forecast_claim_and_config();
+        let now = chrono::Utc::now();
+        let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+            unreachable!()
+        };
+        package.source.build_environment = ForwardEnvironmentV1::Paper;
+        package.environment_origin = PackageOriginV1::Synthetic;
+        package.asof = now - chrono::Duration::seconds(3);
+        package.valid_from = now - chrono::Duration::seconds(2);
+        package.valid_until = now + chrono::Duration::seconds(300);
+        package.forward_dataset.event_end = package.asof;
+        let cutoff = DbCounter::new(package.asof.timestamp_nanos_opt().unwrap() as u64).unwrap();
+        package.forward_dataset.selection.event_start_ns =
+            DbCounter::new(cutoff.get() - 10_000_000_000).unwrap();
+        package.forward_dataset.selection.event_end_ns = cutoff;
+        package.forward_dataset.selection.decision_cutoff_ns = cutoff;
+        package.current_weights_source = CandidateWeightsSourceV1::PaperInitialCapital;
+        package.current_weights.source = PortfolioWeightsSourceV1::PaperInitialCapital {
+            account_start: FreshPaperCashV1 {
+                downstream_id: config.downstream_id,
+                trader_id: "TEST-001".into(),
+                account_id: "POLYMARKET-001".into(),
+                base_currency: package.base_currency.clone(),
+                starting_capital: package.execution_settings.starting_capital.clone(),
+                execution_assumptions_id: package.cost_assumption_ref,
+            },
+        };
+        package.current_weights.paper_initialization = Some(PaperInitializationRefV1 {
+            artifact_id: package.source.current_weights_artifact_id,
+            downstream_id: config.downstream_id,
+            trader_id: "TEST-001".into(),
+            account_id: "POLYMARKET-001".into(),
+        });
+        package.current_weights.asof_ns = cutoff;
+        package.current_weights.available_ns = cutoff;
+        package.current_weights.valid_until_ns =
+            DbCounter::new(package.valid_until.timestamp_nanos_opt().unwrap() as u64).unwrap();
+        package.current_weights.cash_weight = "1".parse().unwrap();
+        for weight in &mut package.current_weights.weights {
+            weight.weight = "0".parse().unwrap();
+        }
+        claim.handoff.claimed_at = Some(now - chrono::Duration::seconds(1));
+        claim.handoff.expires_at = now + chrono::Duration::seconds(300);
+        (claim, config)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn live_consume_permit_constructs_official_cash_once_without_market_connection() {
+        // The server is a controlled protocol fixture. The constructed native
+        // Cash engine is official; no market client, engine run, or order occurs.
+        let (_files, connection, claim, count, server) =
+            crate::paper_service::initial_execution::tests::fixture("first-only").await;
+        let config = HostConfig {
+            schema_version: SchemaV1,
+            project_id: claim.handoff.project_id,
+            downstream_id: claim.handoff.downstream_id,
+            market_capability_version: "service-test/1".into(),
+            execution_assumptions: None,
+            bar_interval_seconds: 1,
+        };
+        forecast_preflight(&config, &claim).unwrap();
+        let mut authority =
+            crate::paper_service::initial_execution::InitialExecutionAuthority::open(&connection)
+                .unwrap();
+        let permit = authority.consume(&claim).await.unwrap();
+        let (session, ids, evidence) = prepare(&config, &claim, None, None, Some(permit)).unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(!session.has_started());
+        assert_eq!(evidence.unwrap()["economic_origin"], "SYNTHETIC");
+        assert!(authority.consume(&claim).await.is_err());
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        drop(session);
+        server.abort();
+    }
+
+    #[test]
+    fn explicit_paper_initial_source_requires_live_server_consume_before_engine() {
+        let (claim, config) = initial_claim_and_config();
+        let checked = forecast_preflight(&config, &claim).unwrap();
+        assert_eq!(checked["execution_supported"], true);
+        assert_eq!(checked["execution_authorized"], false);
+        assert_eq!(checked["economic_origin"], "SYNTHETIC");
+        assert_eq!(
+            checked["execution_blocker"],
+            "PAPER_INITIAL_EXECUTION_CONSUME_REQUIRED"
+        );
+        assert_eq!(
+            prepare(&config, &claim, None, None, None)
+                .err()
+                .unwrap()
+                .to_string(),
+            "PAPER_INITIAL_EXECUTION_CONSUME_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn initial_source_never_relabels_live_market_or_discards_existing_holdings() {
+        let (original, config) = initial_claim_and_config();
+        for field in [
+            "root", "cash", "position", "capital", "scope", "origin", "market", "live",
+        ] {
+            let mut claim = original.clone();
+            let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+                unreachable!()
+            };
+            match field {
+                "root" => package.current_weights.paper_initialization = None,
+                "cash" => package.current_weights.cash_weight = "0.5".parse().unwrap(),
+                "position" => package.current_weights.weights[0].weight = "0.5".parse().unwrap(),
+                "capital" => package.execution_settings.starting_capital = "9999".parse().unwrap(),
+                "scope" => {
+                    package
+                        .current_weights
+                        .paper_initialization
+                        .as_mut()
+                        .unwrap()
+                        .downstream_id = Id::new()
+                }
+                "origin" => package.environment_origin = contracts::delivery::PackageOriginV1::Real,
+                "market" => package.forward_dataset.origin = DataOrigin::Synthetic,
+                "live" => claim.handoff.environment = ForwardEnvironmentV1::Live,
+                _ => unreachable!(),
+            }
+            assert!(forecast_preflight(&config, &claim).is_err(), "{field}");
+        }
+        let mut continuation = original;
+        let TargetPackageEnvelopeV2::Forecast(package) = &mut continuation.package else {
+            unreachable!()
+        };
+        package.current_weights.source = contracts::science::PortfolioWeightsSourceV1::LastTarget {
+            candidate_id: Id::new(),
+        };
+        package.current_weights_source = contracts::portfolio::CandidateWeightsSourceV1::LastTarget;
+        let checked = forecast_preflight(&config, &continuation).unwrap();
+        assert_eq!(checked["execution_supported"], false);
+        assert_eq!(
+            checked["execution_blocker"],
+            "PAPER_FORECAST_CONTINUATION_UNSUPPORTED"
+        );
+        assert_eq!(
+            prepare(&config, &continuation, None, None, None)
+                .err()
+                .unwrap()
+                .to_string(),
+            "PAPER_FORECAST_CONTINUATION_UNSUPPORTED"
+        );
+    }
+
+    #[test]
+    fn initial_source_checks_original_constraints_before_server_consumption() {
+        let (original, config) = initial_claim_and_config();
+        for field in ["risk", "participation", "liquidity"] {
+            let mut claim = original.clone();
+            let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+                unreachable!()
+            };
+            match field {
+                "risk" => {
+                    package.constraints_summary.max_ex_ante_risk = Some("0.5".parse().unwrap())
+                }
+                "participation" => {
+                    package.constraints_summary.max_participation = Some("0.5".parse().unwrap())
+                }
+                "liquidity" => package.constraints_summary.liquidity_ref = Some(Id::new()),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                forecast_preflight(&config, &claim)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "PAPER_FORECAST_CONSTRAINT_MEASUREMENT_UNSUPPORTED"
+            );
+        }
+    }
+
+    #[test]
+    fn forecast_preflight_reads_only_claim_and_preserves_nonzero_weights() {
+        // REAL/PIT enum values exercise validation only, never establish source evidence.
+        let (claim, config) = forecast_claim_and_config();
+        let original = serde_json::to_value(&claim).unwrap();
+        let checked = forecast_preflight(&config, &claim).unwrap();
+        assert_eq!(checked["claim_inputs_valid"], true);
+        assert_eq!(checked["build_environment"], "LIVE");
+        assert_eq!(checked["execution_environment"], "PAPER");
+        assert_eq!(checked["execution_supported"], false);
+        assert_eq!(
+            checked["execution_blocker"],
+            "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+        );
+        let error = prepare(&config, &claim, None, None, None).err().unwrap();
+        assert_eq!(
+            error.to_string(),
+            "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+        );
+        assert_eq!(serde_json::to_value(&claim).unwrap(), original);
+    }
+
+    #[test]
+    fn forecast_preflight_has_no_native_metadata_fallback() {
+        let (mut claim, config) = forecast_claim_and_config();
+        let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
+            unreachable!()
+        };
+        package.forward_dataset.instrument_definitions.clear();
+        assert!(forecast_preflight(&config, &claim).is_err());
+        assert_ne!(
+            prepare(&config, &claim, None, None, None)
+                .err()
+                .unwrap()
+                .to_string(),
+            "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+        );
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn forward_bar_actor_registers_beside_original_source_without_starting_node() {
@@ -2186,6 +2834,7 @@ mod tests {
             &receiver,
             began + Duration::from_secs(60),
             Some(&control),
+            None,
         )
         .err()
         .expect("stop must interrupt read");
@@ -2261,7 +2910,8 @@ mod tests {
             next_source_record_controlled(
                 &receiver,
                 Instant::now() + Duration::from_secs(60),
-                Some(&control)
+                Some(&control),
+                None,
             )
             .is_err()
         );

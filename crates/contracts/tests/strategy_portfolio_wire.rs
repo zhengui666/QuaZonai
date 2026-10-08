@@ -1,6 +1,8 @@
 use contracts::{
-    delivery::{ReleaseCreateV1, TargetPackageV1},
-    settings::{DownstreamConfigurationV1, PackageSchemaVersion},
+    delivery::{ForecastTargetPackageV2, HandoffClaimV1, ReleaseCreateV1, TargetPackageV1},
+    settings::{
+        DownstreamConfigurationV1, DownstreamCreate, DownstreamUpdate, PackageSchemaVersion,
+    },
     strategy_portfolio::*,
     DbCounter, Id,
 };
@@ -38,6 +40,40 @@ fn v1_package() -> Value {
     })
 }
 
+fn forecast_v2_package() -> Value {
+    let mut package = v1_package();
+    package["package_schema_version"] = json!("2");
+    package["source_kind"] = json!("FORECAST_EVALUATION");
+    let dataset = Id::new();
+    let metadata = Id::new();
+    package["source"] = json!({
+        "build_run_id":Id::new(), "build_accepted_attempt_id":Id::new(),
+        "build_parameters_artifact_id":Id::new(), "build_report_artifact_id":Id::new(),
+        "build_input_set_id":Id::new(), "build_environment":"LIVE",
+        "forward_dataset_revision_id":dataset, "forward_metadata_artifact_id":metadata,
+        "current_weights_artifact_id":Id::new()
+    });
+    package["current_weights"] = json!({
+        "schema_version":1, "source":{"kind":"LAST_TARGET", "candidate_id":Id::new()},
+        "asof_ns":"9007199254740993", "available_ns":"9007199254740994",
+        "valid_until_ns":"9007199254740995", "base_currency":"USD", "cash_weight":"0.75",
+        "weights":[{"instrument_id":"EXAMPLE.SIM","weight":"0.25","currency":"USD"}]
+    });
+    package["execution_settings"] = v2_package()["execution_settings"].clone();
+    package["forward_dataset"] = json!({
+        "dataset_revision_id":dataset,"native_metadata_artifact_id":metadata,
+        "storage_version":"original-version", "data_kind":"BAR", "partition":"FORWARD",
+        "origin":"SYNTHETIC","pit_status":"UNVERIFIED","revision_policy":"UNKNOWN",
+        "event_start":"2026-10-02T23:00:00Z","event_end":"2026-10-03T00:00:00Z",
+        "available_through":"2026-10-03T00:00:00Z","row_count":"1",
+        "selection":{"schema_version":1,"bar_types":["EXAMPLE.SIM-1-MINUTE-LAST-EXTERNAL"],
+            "event_start_ns":"1","event_end_ns":"9007199254740993",
+            "decision_cutoff_ns":"9007199254740993","maximum_rows":1},
+        "instrument_definitions":[{"CurrencyPair":{"id":"EXAMPLE.SIM","ts_event":0,"ts_init":0,"price_increment":"0.01"}}]
+    });
+    package
+}
+
 fn v2_package() -> Value {
     let mut package = v1_package();
     let object = package.as_object_mut().unwrap();
@@ -71,14 +107,65 @@ fn v2_package() -> Value {
 }
 
 #[test]
-fn legacy_package_wire_remains_unchanged_in_the_typed_envelope() {
+fn legacy_package_is_readable_only_outside_the_active_envelope() {
     let value = v1_package();
+    assert!(serde_json::from_value::<TargetPackageEnvelopeV2>(value.clone()).is_err());
+    let mut historical: TargetPackageV1 = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&historical).unwrap(), value);
+    historical.package_schema_version = PackageSchemaVersion::V2;
+    assert!(serde_json::to_value(historical).is_err());
+}
+
+#[test]
+fn forecast_v2_preserves_its_own_evidence_and_requires_source_discriminator() {
+    let value = forecast_v2_package();
     let parsed: TargetPackageEnvelopeV2 = serde_json::from_value(value.clone()).unwrap();
     assert!(matches!(parsed, TargetPackageEnvelopeV2::Forecast(_)));
-    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
-    let mut package: TargetPackageV1 = serde_json::from_value(value).unwrap();
-    package.package_schema_version = PackageSchemaVersion::V2;
-    assert!(serde_json::to_value(package).is_err());
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+    assert_eq!(value["current_weights"]["asof_ns"], "9007199254740993");
+    assert!(value.get("account_start").is_none());
+    for field in [
+        "qualification_refs",
+        "evaluation_refs",
+        "current_weights",
+        "execution_settings",
+        "source",
+        "forward_dataset",
+        "source_kind",
+    ] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<TargetPackageEnvelopeV2>(missing).is_err(),
+            "{field}"
+        );
+    }
+    for (path, injection) in [
+        ("source_kind", json!("NATIVE_TARGET_DECISION")),
+        ("source_kind", json!("UNKNOWN")),
+        ("account_start", cash()),
+        ("unrecognized", json!(true)),
+    ] {
+        let mut changed = value.clone();
+        changed[path] = injection;
+        assert!(serde_json::from_value::<TargetPackageEnvelopeV2>(changed).is_err());
+    }
+    for field in [
+        "source",
+        "current_weights",
+        "execution_settings",
+        "forward_dataset",
+    ] {
+        let mut changed = value.clone();
+        changed[field]["unrecognized"] = json!(true);
+        assert!(
+            serde_json::from_value::<ForecastTargetPackageV2>(changed).is_err(),
+            "{field}"
+        );
+    }
+    let mut crossed = v2_package();
+    crossed["source_kind"] = json!("FORECAST_EVALUATION");
+    assert!(serde_json::from_value::<TargetPackageEnvelopeV2>(crossed).is_err());
 }
 
 #[test]
@@ -101,6 +188,9 @@ fn paper_execution_does_not_relabel_market_provenance_or_manufacture_qualificati
 fn package_versions_select_their_own_body_and_reject_shape_downgrades() {
     for (mut body, wrong) in [
         (v1_package(), json!("2")),
+        (forecast_v2_package(), json!("1")),
+        (forecast_v2_package(), json!(2)),
+        (forecast_v2_package(), json!("3")),
         (v2_package(), json!("1")),
         (v2_package(), json!(2)),
         (v2_package(), json!("3")),
@@ -144,7 +234,7 @@ fn current_release_reference_is_distinct_from_a_forecast_evaluation() {
 }
 
 #[test]
-fn version_two_is_discoverable_without_removing_version_one() {
+fn historical_configuration_is_readable_but_cannot_be_submitted_again() {
     let value = json!({"name":"Paper","endpoint":"http://127.0.0.1:8099",
         "accepted_package_versions":["1","2"],"environments":"PAPER","enabled":true,"development_http":true});
     let parsed: DownstreamConfigurationV1 = serde_json::from_value(value.clone()).unwrap();
@@ -153,6 +243,35 @@ fn version_two_is_discoverable_without_removing_version_one() {
         vec![PackageSchemaVersion::V1, PackageSchemaVersion::V2]
     );
     assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+    for versions in [
+        json!(["1"]),
+        json!(["1", "2"]),
+        json!(["2", "2"]),
+        json!([]),
+    ] {
+        let mut configuration = value.clone();
+        configuration["accepted_package_versions"] = versions;
+        let create =
+            json!({"schema_version":1,"configuration":configuration,"credential_ref":Id::new()});
+        assert!(serde_json::from_value::<DownstreamCreate>(create).is_err());
+        let update = json!({"schema_version":1,"configuration":configuration,"expected_revision":"1","credential_ref":null});
+        assert!(serde_json::from_value::<DownstreamUpdate>(update).is_err());
+    }
+    let mut configuration = value.clone();
+    configuration["accepted_package_versions"] = json!(["2"]);
+    assert!(serde_json::from_value::<DownstreamCreate>(
+        json!({"schema_version":1,"configuration":configuration,"credential_ref":Id::new()})
+    )
+    .is_ok());
+    for version in ["1", "3"] {
+        assert!(serde_json::from_value::<HandoffClaimV1>(json!({"schema_version":1,"external_claim_id":"original","package_schema_version":version})).is_err());
+    }
+    assert!(serde_json::from_value::<HandoffClaimV1>(
+        json!({"schema_version":1,"external_claim_id":"original","package_schema_version":"2"})
+    )
+    .is_ok());
+    assert!(!PackageSchemaVersion::V1.is_deliverable());
+    assert!(PackageSchemaVersion::V2.is_deliverable());
     assert!(serde_json::from_value::<PackageSchemaVersion>(json!("3")).is_err());
 }
 
@@ -366,7 +485,6 @@ fn indirection_keeps_envelopes_small_and_preserves_existing_schemas() {
             "StrategyCompositionOutcomeV1",
             StrategyCompositionOutcomeV1::schema(),
         ),
-        ("TargetPackageEnvelopeV2", TargetPackageEnvelopeV2::schema()),
     ] {
         assert_eq!(
             serde_json::to_value(schema).unwrap(),
@@ -374,4 +492,51 @@ fn indirection_keeps_envelopes_small_and_preserves_existing_schemas() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn active_schemas_advertise_only_v2_and_the_two_source_bodies() {
+    let envelope = serde_json::to_value(TargetPackageEnvelopeV2::schema()).unwrap();
+    let text = envelope.to_string();
+    assert!(text.contains("ForecastTargetPackageV2"));
+    assert!(text.contains("TargetPackageV2"));
+    assert!(!text.contains("TargetPackageV1"));
+    for schema in [DownstreamCreate::schema(), DownstreamUpdate::schema()] {
+        let schema = serde_json::to_value(schema).unwrap();
+        let versions =
+            &schema["properties"]["configuration"]["properties"]["accepted_package_versions"];
+        assert_eq!(versions["items"]["enum"], json!(["2"]));
+        assert_eq!(versions["maxItems"], json!(1));
+    }
+    let capabilities =
+        serde_json::to_value(contracts::delivery::DownstreamCapabilitiesV1::schema()).unwrap();
+    assert_eq!(
+        capabilities["properties"]["accepted_package_versions"]["items"]["enum"],
+        json!(["2"])
+    );
+}
+
+#[test]
+fn historical_probe_schema_and_wire_keep_original_v1_observations_readable() {
+    let wire = json!({"status":"AVAILABLE","capabilities":{
+        "schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["1"],
+        "environments":["PAPER"],"market_capability_versions":["original/1"],
+        "accepting_targets":true,"checked_at":"2026-10-03T00:00:00Z"
+    }});
+    let parsed: contracts::delivery::DownstreamProbeOutcomeV1 =
+        serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), wire);
+    let schema =
+        serde_json::to_value(contracts::delivery::DownstreamProbeOutcomeV1::schema()).unwrap();
+    let available = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["properties"].get("capabilities").is_some())
+        .unwrap();
+    assert_eq!(
+        available["properties"]["capabilities"]["properties"]["accepted_package_versions"]["items"]
+            ["enum"],
+        json!(["1", "2"])
+    );
 }

@@ -305,7 +305,7 @@ async fn downstream_and_doctor_authority_follow_the_real_machine_channel(pool: P
         "recipient-capability",
     )
     .await;
-    let request = json!({"schema_version":1,"configuration":{"name":"Paper recipient","endpoint":"https://recipient.example","accepted_package_versions":["1"],"environments":"PAPER","enabled":true,"development_http":false},"credential_ref":credential.body["resource"]["id"]});
+    let request = json!({"schema_version":1,"configuration":{"name":"Paper recipient","endpoint":"https://recipient.example","accepted_package_versions":["2"],"environments":"PAPER","enabled":true,"development_http":false},"credential_ref":credential.body["resource"]["id"]});
     let created = browser(
         &f,
         &cookie,

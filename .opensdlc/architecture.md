@@ -19,8 +19,10 @@ QZ 只交付目标，不连接券商账户或执行真实订单。任务执行�
 | [quazonai-cli](../apps/cli) | 跨平台 HTTP/HTTPS 所有者 CLI、离线合同查询 | contracts、integrations |
 | [server](../apps/server/src) | HTTP/CLI/MCP、API 与 Worker 编排 | contracts、domain、store、integrations |
 | [runtime](../apps/runtime/src) | 科学任务网关、OCI 生命周期、持久 journal | contracts、domain、integrations |
-| [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain |
+| [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain；仅 native-paper 可选依赖 integrations |
 | [web](../apps/web/src) | React、Ant Design、生成客户端、PWA | 公开 API 合同 |
+
+Job 仅在 `native-paper` 入口通过普通可选依赖复用 `integrations` 的认证和严格 JSON 辅助；`native-paper-test` 只能经该入口启用，默认、离线科学与无关 feature 均不得直接或传递启用此依赖。
 
 依赖方向由 [architecture 测试](../crates/contracts/tests/architecture.rs)检查。测试辅助跨层复用不改变生产依赖；领域层不执行 SQL、HTTP 或容器操作。
 

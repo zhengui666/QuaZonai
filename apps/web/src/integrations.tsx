@@ -7,6 +7,7 @@ import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useOnl
 import { useFormAutosave } from './settings-autosave';
 import { setSettingsWork, useSettingsWorkKey } from './settings-work';
 import { useSettingsCommand } from './settings-command';
+import { activeTargetVersions, downstreamTargetStatus, targetDownstreamConfiguration } from './producer-views';
 
 type Runtime = Schema['RuntimeView'];
 type Downstream = Schema['DownstreamView'];
@@ -281,8 +282,8 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
   const autosave = useFormAutosave(form, original && `downstream:${original.id}`, (original?.configuration ?? {}) as Values,
     original?.revision, original?.updated_at, online && !!original, async (values, revision, writeIntent) => {
       if (!original) throw new Error('下游不存在');
-      const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint,
-        accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http };
+      const configuration = targetDownstreamConfiguration({ name: values.name, endpoint: values.endpoint,
+        accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http });
       const body: Schema['DownstreamUpdate'] = { schema_version: 1, expected_revision: revision, configuration, credential_ref: values.credential_ref ?? null };
       const result = dataOf(await api.PATCH('/api/v2/integrations/downstreams/{id}', { body, params: { path: { id: original.id },
         header: writeIntent.headers('PATCH', `/api/v2/integrations/downstreams/${original.id}`, body) } }));
@@ -308,10 +309,12 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
     okText={state.unknown && !original ? '重试当前操作' : '保存下游配置'} cancelText="返回" okButtonProps={{ disabled: !online || secretBusy }}>
     
     {original && <ResourceFacts id={original.id} revision={autosave.revision} updated={autosave.updated_at} />}
-    <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && (pending || state.unknown))} initialValues={original?.configuration ?? { accepted_package_versions: ['1'], environments: 'PAPER', enabled: true, development_http: false }}
+    {shown && !activeTargetVersions(shown.configuration.accepted_package_versions) && <Alert showIcon type="warning"
+      title="该配置含历史目标包版本" description="保留原版本供查阅。保存前须明确移除 V1 并选择 V2；配置选择不会证明下游已经支持 V2，交付仍以原生就绪探测和审批为准。" />}
+    <Form form={form} layout="vertical" disabled={!online || secretBusy || (!original && (pending || state.unknown))} initialValues={original?.configuration ?? { accepted_package_versions: ['2'], environments: 'PAPER', enabled: true, development_http: false }}
       onValuesChange={original ? autosave.change : undefined} onFinish={original ? undefined : values => {
-        const configuration: Schema['DownstreamConfigurationV1'] = { name: values.name, endpoint: values.endpoint,
-          accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http };
+        const configuration = targetDownstreamConfiguration({ name: values.name, endpoint: values.endpoint,
+          accepted_package_versions: values.accepted_package_versions, environments: values.environments, enabled: values.enabled, development_http: values.development_http });
         const body: Schema['DownstreamCreate'] = { schema_version: 1, configuration, credential_ref: values.credential_ref! };
         void command.submit(async () => {
           if (!values.credential_ref) throw new ApiFailure('LOCAL_VALIDATION_ERROR', '请先登记下游服务凭据。');
@@ -323,9 +326,11 @@ function DownstreamDialog({ original, close }: { original?: Downstream; close: (
       }}>
       <Form.Item name="name" label="下游名称" rules={[required, { max: 120, whitespace: true }]}><Input maxLength={120} /></Form.Item>
       <Form.Item name="endpoint" label="下游 HTTPS origin" rules={[required, { max: 2048 }]}><Input maxLength={2048} placeholder="https://downstream.example" /></Form.Item>
-      <Form.Item name="accepted_package_versions" label="接受的目标包版本" rules={[required]}><Select<Schema['PackageSchemaVersion'][]> mode="multiple" options={[
-        { value: '1', label: '1' }, { value: '2', label: '2' },
-      ]} /></Form.Item>
+      <Form.Item name="accepted_package_versions" label="接受的目标包版本" rules={[required, {
+        validator: (_, versions: string[] | undefined) => activeTargetVersions(versions ?? []) ? Promise.resolve() : Promise.reject(new Error('请明确选择且仅保留 V2。')),
+      }]}><Select<Schema['PackageSchemaVersion'][]> mode="multiple" options={[
+        { value: '2', label: 'V2' },
+      ]} labelRender={({ value }) => value === '1' ? 'V1（历史不可交付）' : 'V2'} /></Form.Item>
       <Form.Item name="environments" label="允许环境" rules={[required]}><Select options={[
         { value: 'PAPER', label: '仅 Paper' }, { value: 'LIVE', label: '仅 Live' }, { value: 'BOTH', label: 'Paper 与 Live（仍须分别审批）' },
       ]} /></Form.Item>
@@ -351,7 +356,8 @@ function Downstreams() {
       <Table<Downstream> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 650 }} locale={{ emptyText: <NoData text="暂无下游服务" /> }} columns={[
         { title: '名称', key: 'name', render: (_, item) => item.configuration.name }, { title: '服务地址', key: 'endpoint', render: (_, item) => item.configuration.endpoint },
         { title: '环境', key: 'environment', render: (_, item) => item.configuration.environments }, { title: '版本', dataIndex: 'revision' },
-        { title: '状态', key: 'enabled', render: (_, item) => item.configuration.enabled ? '允许未来交付' : '已停用' },
+        { title: '目标包协议', key: 'protocol', render: (_, item) => item.configuration.accepted_package_versions.map(version => version === '1' ? 'V1（历史）' : 'V2').join('、') },
+        { title: '状态', key: 'enabled', render: (_, item) => downstreamTargetStatus(item.configuration) },
         { title: '操作', key: 'edit', render: (_, item) => <Button disabled={!online || query.isError} onClick={() => setEditing({ original: item })}>修改下游</Button> },
       ]} /><Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     </QueryPanel>

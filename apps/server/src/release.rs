@@ -17,8 +17,8 @@ use contracts::{
     control::{CommandResult, ListQuery, Page},
     delivery::{
         ApprovalRevocationViewV1, ApprovalRevokeV1, ApprovalViewV1, HandoffAckV1, HandoffClaimV1,
-        HandoffOfferV1, HandoffViewV1, ReleaseApproveV1, ReleaseDecisionViewV1, ReleaseRejectV1,
-        ReleaseReopenV1,
+        HandoffOfferV1, HandoffViewV1, PaperInitialExecutionConsumeV1, PaperInitialExecutionViewV1,
+        ReleaseApproveV1, ReleaseDecisionViewV1, ReleaseRejectV1, ReleaseReopenV1,
     },
     strategy_portfolio::{HandoffClaimViewV2, ReleaseCreateEnvelopeV2, ReleaseViewEnvelopeV2},
     Id,
@@ -309,6 +309,24 @@ pub async fn claim(
     Ok((StatusCode::OK, Json(result)))
 }
 
+/// Atomically consumes one explicit Paper model initialization. It never runs a host.
+#[utoipa::path(post,path="/api/v2/handoffs/{id}/paper-initial-execution/consume",operation_id="consume_paper_initial_execution",tag="Release",request_body=PaperInitialExecutionConsumeV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<PaperInitialExecutionViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
+pub async fn consume_paper_initial_execution(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    headers: HeaderMap,
+    id: Result<Path<Id>, PathRejection>,
+    body: Result<Json<PaperInitialExecutionConsumeV1>, JsonRejection>,
+) -> Result<(StatusCode, Json<CommandResult<PaperInitialExecutionViewV1>>), ApiError> {
+    let Path(id) = id.map_err(|_| ApiError::validation())?;
+    let request = json(body)?;
+    let result = state
+        .store
+        .consume_paper_initial_execution(&actor, idempotency_key(&headers)?, id, &request)
+        .await?;
+    Ok((StatusCode::OK, Json(result)))
+}
+
 #[utoipa::path(post,path="/api/v2/handoffs/{id}/ack",operation_id="acknowledge_handoff",tag="Release",request_body=HandoffAckV1,params(("id"=Id,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=CommandResult<HandoffViewV1>),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=409,body=Problem),(status=422,body=Problem),(status=429,body=Problem),(status=503,body=Problem)))]
 pub async fn ack(
     State(state): State<AppState>,
@@ -357,4 +375,120 @@ pub async fn revocations(
     Ok(Json(
         state.store.approval_revocations(&actor, id, &query).await?,
     ))
+}
+
+#[cfg(test)]
+mod target_delivery_v2_tests {
+    use super::*;
+    use axum::{body::Body, extract::FromRequest, http::Request, response::IntoResponse};
+    use serde_json::{json, Value};
+
+    #[tokio::test]
+    async fn target_v2_http_claim_extractor_rejects_v1_without_dispatch() {
+        for version in [json!("1"), json!(1), json!(2), Value::Null] {
+            let request = Request::builder().method("POST").header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({
+                    "schema_version":1,"external_claim_id":"original-claim","package_schema_version":version
+                })).unwrap())).unwrap();
+            let parsed = Json::<HandoffClaimV1>::from_request(request, &()).await;
+            let error = crate::auth::json(parsed).unwrap_err();
+            assert_eq!(
+                error.into_response().status(),
+                StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+        let request = Request::builder().method("POST").header("content-type", "application/json")
+            .body(Body::from(r#"{"schema_version":1,"external_claim_id":"original-claim","package_schema_version":"2"}"#)).unwrap();
+        let parsed =
+            crate::auth::json(Json::<HandoffClaimV1>::from_request(request, &()).await).unwrap();
+        assert!(parsed.package_schema_version.is_deliverable());
+        assert_eq!(parsed.external_claim_id, "original-claim");
+        // Parsing does not mint authority or replace the existing idempotency gate.
+        assert!(idempotency_key(&HeaderMap::new()).is_err());
+    }
+
+    #[test]
+    fn target_v2_http_schema_exposes_only_active_bodies_and_keeps_claim_guards() {
+        let api: Value = serde_json::from_str(&crate::openapi_json().unwrap()).unwrap();
+        let schemas = &api["components"]["schemas"];
+        assert!(schemas.get("TargetPackageV1").is_none());
+        assert!(schemas.get("ForecastTargetPackageV2").is_some());
+        assert!(schemas.get("TargetPackageV2").is_some());
+        let envelope = schemas["TargetPackageEnvelopeV2"].to_string();
+        assert!(envelope.contains("ForecastTargetPackageV2"));
+        assert!(envelope.contains("TargetPackageV2"));
+        assert!(!envelope.contains("TargetPackageV1"));
+        let claim = &api["paths"]["/api/v2/handoffs/{id}/claim"]["post"];
+        assert!(claim["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|parameter| {
+                parameter["name"] == "Idempotency-Key" && parameter["required"] == true
+            }));
+        assert!(claim["security"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty()));
+        for status in ["401", "403", "409", "422"] {
+            assert!(claim["responses"].get(status).is_some());
+        }
+        let response = claim["responses"]["200"].to_string();
+        assert!(response.contains("HandoffClaimViewV2"));
+    }
+
+    #[test]
+    fn target_v2_http_schema_reference_closure_preserves_active_and_historical_versions() {
+        fn assert_refs(value: &Value, document: &Value) {
+            match value {
+                Value::Object(fields) => {
+                    if let Some(reference) = fields.get("$ref") {
+                        let reference = reference.as_str().expect("schema reference is a string");
+                        let pointer = reference
+                            .strip_prefix('#')
+                            .expect("HTTP schema is self-contained");
+                        assert!(
+                            document.pointer(pointer).is_some(),
+                            "unresolved schema reference: {reference}"
+                        );
+                    }
+                    for field in fields.values() {
+                        assert_refs(field, document);
+                    }
+                }
+                Value::Array(items) => {
+                    for item in items {
+                        assert_refs(item, document);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let api: Value = serde_json::from_str(&crate::openapi_json().unwrap()).unwrap();
+        assert_refs(&api, &api);
+        let schemas = &api["components"]["schemas"];
+        assert_eq!(
+            schemas["DownstreamDeliveryModeV1"]["enum"],
+            json!(["TARGET_ONLY"])
+        );
+        let available = schemas["DownstreamProbeOutcomeV1"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["status"]["enum"] == json!(["AVAILABLE"]))
+            .expect("historical available observation");
+        assert_eq!(
+            available["properties"]["capabilities"]["properties"]["accepted_package_versions"]
+                ["items"]["enum"],
+            json!(["1", "2"])
+        );
+        for name in ["DownstreamCreate", "DownstreamUpdate"] {
+            assert_eq!(
+                schemas[name]["properties"]["configuration"]["properties"]
+                    ["accepted_package_versions"]["items"]["enum"],
+                json!(["2"])
+            );
+        }
+        assert_eq!(schemas["TargetPackageVersionV2"]["enum"], json!(["2"]));
+        assert!(schemas.get("TargetPackageV1").is_none());
+    }
 }

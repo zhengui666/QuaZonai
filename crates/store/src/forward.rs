@@ -41,9 +41,11 @@ pub(crate) async fn source_authority(
     .fetch_one(&mut **tx)
     .await?;
     let environments: String = row.try_get("environments")?;
-    if !row.try_get::<bool, _>("enabled")?
-        || (environments != "BOTH" && environments != db::code(&environment)?)
-    {
+    if !domain::forward::downstream_environment_enabled(
+        row.try_get("enabled")?,
+        &environments,
+        environment,
+    ) {
         return Err(StoreError::Forbidden);
     }
     Ok(downstream)
@@ -147,6 +149,34 @@ impl Store {
             tx.commit().await?;
             return Ok(replay);
         }
+        // An exact historical receipt is read-only and replays above. For a
+        // new observation this DTO has no other trusted account identity: a
+        // Paper-initialized destination cannot drop its root or relabel as LIVE.
+        if request.paper_initialization.is_none() {
+            let initialized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.paper_initial_capital_sources WHERE downstream_id=$1)")
+                .bind(downstream.as_uuid()).fetch_one(&mut *tx).await?;
+            if initialized {
+                return Err(StoreError::Invalid(
+                    "paper_initialization_reference_required",
+                ));
+            }
+        }
+        if let Some(root) = &request.paper_initialization {
+            if request.environment != ForwardEnvironmentV1::Paper
+                || root.downstream_id != downstream
+            {
+                return Err(StoreError::Invalid("paper_initialization_paper_only"));
+            }
+            // The immutable genesis and actual transfer, not the supplied label,
+            // authorize this Paper lineage. An unacknowledged claim still counts.
+            let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.paper_initial_capital_sources s JOIN app.releases r ON r.paper_initial_weights_artifact_id=s.weights_artifact_id JOIN app.handoff_offers h ON h.release_id=r.id JOIN app.handoff_transfers t ON t.handoff_id=h.id AND t.external_claim_id=h.external_claim_id AND t.claimed_at=h.claimed_at WHERE s.weights_artifact_id=$1 AND s.project_id=$2 AND s.downstream_id=$3 AND s.trader_id=$4 AND s.account_id=$5 AND s.base_currency=$6 AND h.downstream_id=s.downstream_id AND h.environment='PAPER' AND h.claimed_at IS NOT NULL AND app.paper_release_root_valid(r.id) AND t.provenance='RECORDED_TRANSITION' AND extract(epoch FROM h.claimed_at)*1000000000 <= $7::numeric)")
+                .bind(root.artifact_id.as_uuid()).bind(request.project_id.as_uuid()).bind(downstream.as_uuid())
+                .bind(&root.trader_id).bind(&root.account_id).bind(&request.base_currency).bind(request.asof_ns.get().to_string())
+                .fetch_one(&mut *tx).await?;
+            if !valid {
+                return Err(StoreError::Invalid("paper_initialization_claim_binding"));
+            }
+        }
         let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
             .fetch_one(&mut *tx)
             .await?;
@@ -161,6 +191,7 @@ impl Store {
                 downstream_id: downstream,
                 external_message_id: request.external_message_id.clone(),
             },
+            paper_initialization: request.paper_initialization.clone(),
             asof_ns: request.asof_ns,
             available_ns: request.available_ns,
             valid_until_ns: request.valid_until_ns,

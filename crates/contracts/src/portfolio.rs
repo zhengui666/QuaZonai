@@ -278,11 +278,24 @@ pub struct PortfolioBuildRequestV1 {
     pub limits: crate::lifecycle::JobLimitsV1,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum PortfolioBuildWeightsV1 {
-    ForwardSnapshot { snapshot_id: crate::Id },
-    LastTarget { candidate_id: crate::Id },
+    ForwardSnapshot {
+        snapshot_id: crate::Id,
+    },
+    LastTarget {
+        candidate_id: crate::Id,
+    },
+    /// Explicit one-time virtual-capital intent. Amount and currency come only
+    /// from the original frozen execution settings and matching mandate.
+    PaperInitialCapital {
+        downstream_id: crate::Id,
+        #[schema(min_length = 1, max_length = 200)]
+        trader_id: String,
+        #[schema(min_length = 1, max_length = 200)]
+        account_id: String,
+    },
 }
 
 /// Original-source hold simulation intent; never accepts replacement targets or settings.
@@ -324,6 +337,7 @@ pub struct MandateViewV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CandidateWeightsSourceV1 {
+    PaperInitialCapital,
     ForwardSnapshot,
     LastTarget,
     None,

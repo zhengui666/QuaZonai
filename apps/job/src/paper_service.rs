@@ -6,6 +6,9 @@ use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use crate::paper_claim_store::{Admission, ClaimLease, ClaimStore, StoreError};
 
+#[path = "paper_initial_execution.rs"]
+pub(crate) mod initial_execution;
+
 use axum::{
     extract::{rejection::JsonRejection, Request, State},
     http::{header, HeaderValue, StatusCode},
@@ -48,7 +51,7 @@ impl PaperProfile {
 
     fn package_versions(self) -> Vec<PackageSchemaVersion> {
         match self {
-            Self::Binance => vec![PackageSchemaVersion::V1, PackageSchemaVersion::V2],
+            Self::Binance => vec![PackageSchemaVersion::V2],
             Self::Polymarket => vec![PackageSchemaVersion::V2],
         }
     }
@@ -58,7 +61,17 @@ impl PaperProfile {
     fn accepts(self, package: &TargetPackageEnvelopeV2) -> bool {
         match (self, package) {
             (Self::Binance, _) => true,
-            (Self::Polymarket, TargetPackageEnvelopeV2::Forecast(_)) => false,
+            (Self::Polymarket, TargetPackageEnvelopeV2::Forecast(package)) => {
+                package.execution_settings.account_kind == NativeAccountKind::Cash
+                    && package.execution_settings.leverage.as_decimal()
+                        == &bigdecimal::BigDecimal::from(1)
+                    && package.targets.iter().all(|target| {
+                        target
+                            .instrument_id
+                            .parse::<InstrumentId>()
+                            .is_ok_and(|id| id.venue == Venue::from("POLYMARKET"))
+                    })
+            }
             (Self::Polymarket, TargetPackageEnvelopeV2::TargetDecision(package)) => {
                 package.account_start.account_id == "POLYMARKET-001"
                     && package.execution_settings.account_kind == NativeAccountKind::Cash
@@ -171,6 +184,14 @@ impl PaperStatus {
 #[derive(Clone, Copy, Debug)]
 pub enum PaperApplyError {
     InvalidClaim,
+    Stopped,
+    UnsupportedForecastInitialization,
+    UnsupportedForecastContinuation,
+    UnsupportedForecastConstraints,
+    UnsupportedForecastAssets,
+    InitialExecutionConfigurationRequired,
+    InitialExecutionBlocked,
+    InitialExecutionUnknown,
     Unavailable,
 }
 
@@ -178,6 +199,20 @@ impl PaperApplyError {
     fn code(self) -> &'static str {
         match self {
             Self::InvalidClaim => "invalid_claim",
+            Self::Stopped => "PAPER_HOST_STOP_REQUESTED",
+            Self::UnsupportedForecastInitialization => {
+                "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+            }
+            Self::UnsupportedForecastContinuation => "PAPER_FORECAST_CONTINUATION_UNSUPPORTED",
+            Self::UnsupportedForecastConstraints => {
+                "PAPER_FORECAST_CONSTRAINT_MEASUREMENT_UNSUPPORTED"
+            }
+            Self::UnsupportedForecastAssets => "PAPER_FORECAST_ASSET_SCOPE_UNSUPPORTED",
+            Self::InitialExecutionConfigurationRequired => {
+                "PAPER_INITIAL_EXECUTION_CONNECTION_REQUIRED"
+            }
+            Self::InitialExecutionBlocked => "PAPER_INITIAL_EXECUTION_BLOCKED",
+            Self::InitialExecutionUnknown => "PAPER_INITIAL_EXECUTION_RESULT_UNKNOWN",
             Self::Unavailable => "native_unavailable",
         }
     }
@@ -467,8 +502,17 @@ async fn apply(
         Ok(Ok(Err(error))) => {
             fail_starting(&state, error.code());
             let code = match error {
-                PaperApplyError::InvalidClaim => StatusCode::UNPROCESSABLE_ENTITY,
-                PaperApplyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                PaperApplyError::InvalidClaim
+                | PaperApplyError::UnsupportedForecastInitialization
+                | PaperApplyError::UnsupportedForecastContinuation
+                | PaperApplyError::UnsupportedForecastConstraints
+                | PaperApplyError::UnsupportedForecastAssets => StatusCode::UNPROCESSABLE_ENTITY,
+                PaperApplyError::Stopped | PaperApplyError::InitialExecutionBlocked => {
+                    StatusCode::CONFLICT
+                }
+                PaperApplyError::InitialExecutionConfigurationRequired
+                | PaperApplyError::InitialExecutionUnknown
+                | PaperApplyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             };
             failure(code, error.code())
         }
@@ -544,7 +588,15 @@ fn valid_claim(claim: &HandoffClaimViewV2, capability: &str, profile: PaperProfi
             .is_some_and(|at| at >= handoff.offered_at && at < handoff.expires_at && at <= now)
         && handoff.acknowledged_at.is_none()
         && match &claim.package {
-            TargetPackageEnvelopeV2::Forecast(_) => true,
+            TargetPackageEnvelopeV2::Forecast(p) => p
+                .current_weights
+                .paper_initialization
+                .as_ref()
+                .is_none_or(|root| {
+                    root.downstream_id == handoff.downstream_id
+                        && p.source.build_environment == ForwardEnvironmentV1::Paper
+                        && p.environment_origin == contracts::delivery::PackageOriginV1::Synthetic
+                }),
             TargetPackageEnvelopeV2::TargetDecision(p) => {
                 p.execution_environment == ForwardEnvironmentV1::Paper
                     && p.account_start.downstream_id == handoff.downstream_id
@@ -593,6 +645,11 @@ pub(crate) mod tests {
         let candidate = Id::new();
         let mandate = Id::new();
         let release = Id::new();
+        let dataset = Id::new();
+        let metadata = Id::new();
+        let weights = Id::new();
+        let parameters = Id::new();
+        let report = Id::new();
         serde_json::from_value(json!({
             "handoff": {
                 "id": Id::new(), "project_id": project, "candidate_id": candidate,
@@ -606,11 +663,51 @@ pub(crate) mod tests {
                 "acknowledged_at": null
             },
             "package": {
-                "release_id": release, "package_schema_version": "1",
+                "release_id": release, "package_schema_version": "2",
+                "source_kind": "FORECAST_EVALUATION",
+                "source": {
+                    "build_run_id": Id::new(), "build_accepted_attempt_id": Id::new(),
+                    "build_parameters_artifact_id": parameters, "build_report_artifact_id": report,
+                    "build_input_set_id": Id::new(), "build_environment": "LIVE",
+                    "forward_dataset_revision_id": dataset, "forward_metadata_artifact_id": metadata,
+                    "current_weights_artifact_id": weights
+                },
+                "forward_dataset": {
+                    "dataset_revision_id": dataset, "native_metadata_artifact_id": metadata,
+                    "storage_version": "synthetic-control-only/1", "data_kind": "BAR",
+                    "partition": "FORWARD", "origin": "SYNTHETIC", "pit_status": "UNVERIFIED",
+                    "revision_policy": "UNKNOWN", "event_start": now - chrono::Duration::seconds(20),
+                    "event_end": now, "available_through": now, "row_count": "1",
+                    "selection": { "schema_version": 1, "bar_types": ["ALPHA.EXAMPLE-1-SECOND-LAST-EXTERNAL"],
+                        "event_start_ns": "1", "event_end_ns": "2", "decision_cutoff_ns": "2", "maximum_rows": 1 },
+                    "instrument_definitions": []
+                },
+                "current_weights": { "schema_version": 1,
+                    "source": {"kind": "LAST_TARGET", "candidate_id": Id::new()},
+                    "asof_ns": "1", "available_ns": "1", "valid_until_ns": "999999999999999999",
+                    "base_currency": "USD", "cash_weight": "0",
+                    "weights": [{"instrument_id": "ALPHA.EXAMPLE", "weight": "1", "currency": "USD"}]
+                },
+                "execution_settings": {
+                    "schema_version": 1, "base_currency": "USD", "starting_capital": "1000",
+                    "account_kind": "MARGIN", "leverage": "1", "snapshot_interval_ms": 1000,
+                    "exposure_tolerance": "0.000001", "fee_rates": [],
+                    "fee_model": { "schema_version": 1, "adapter_kind": "NAUTILUS_MAKER_TAKER",
+                        "upstream_class": contracts::portfolio::NAUTILUS_FEE_CLASS,
+                        "upstream_version": contracts::portfolio::NAUTILUS_EXECUTION_VERSION, "parameters": {} },
+                    "fill_model": { "schema_version": 1, "adapter_kind": "NAUTILUS_DEFAULT_FILL",
+                        "upstream_class": contracts::portfolio::NAUTILUS_FILL_CLASS,
+                        "upstream_version": contracts::portfolio::NAUTILUS_EXECUTION_VERSION,
+                        "parameters": { "prob_fill_on_limit": "1", "prob_slippage": "0", "random_seed": "1" } },
+                    "latency_model": { "schema_version": 1, "adapter_kind": "NAUTILUS_STATIC_LATENCY",
+                        "upstream_class": contracts::portfolio::NAUTILUS_LATENCY_CLASS,
+                        "upstream_version": contracts::portfolio::NAUTILUS_EXECUTION_VERSION,
+                        "parameters": { "base_latency_ns": "0", "insert_latency_ns": "0", "update_latency_ns": "0", "cancel_latency_ns": "0" } }
+                },
                 "environment_origin": "DEMO", "project_id": project,
                 "candidate_id": candidate, "mandate_id": mandate,
                 "qualification_refs": [Id::new(), Id::new()],
-                "evaluation_refs": [Id::new()], "input_revision_refs": [Id::new()],
+                "evaluation_refs": [Id::new()], "input_revision_refs": [dataset],
                 "engine_versions": {"test": "1"}, "asof": now,
                 "valid_from": now + chrono::Duration::seconds(10),
                 "valid_until": now + chrono::Duration::seconds(300),
@@ -621,7 +718,7 @@ pub(crate) mod tests {
                 "cash_weight": "0", "constraints_summary": input["constraints"],
                 "exposure_tolerance": "0.000001", "cost_assumption_ref": Id::new(),
                 "compatible_market_capabilities": ["service-test/1"],
-                "limitations": [], "provenance_artifact_refs": [Id::new()]
+                "limitations": [], "provenance_artifact_refs": [parameters, report, weights, metadata]
             }
         }))
         .unwrap()
@@ -662,6 +759,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn active_claim_rejects_legacy_version_even_with_v2_fields() {
+        let original = claim();
+        let mut legacy = serde_json::to_value(&original).unwrap();
+        legacy["package"]["package_schema_version"] = json!("1");
+        assert!(serde_json::from_value::<HandoffClaimViewV2>(legacy).is_err());
+        let mut missing = serde_json::to_value(&original).unwrap();
+        missing["package"]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_kind");
+        assert!(serde_json::from_value::<HandoffClaimViewV2>(missing).is_err());
+    }
+
+    #[test]
     fn claim_deadline_is_not_execution_deadline() {
         let mut claim = claim();
         assert!(valid_claim(&claim, "service-test/1", PaperProfile::Binance));
@@ -674,7 +785,7 @@ pub(crate) mod tests {
         ));
         claim.handoff.claimed_at = Some(claim.handoff.offered_at);
         let TargetPackageEnvelopeV2::Forecast(package) = &mut claim.package else {
-            panic!("V1 fixture");
+            panic!("Forecast V2 fixture");
         };
         package.valid_until = Utc::now() - chrono::Duration::seconds(1);
         assert!(!valid_claim(
@@ -686,7 +797,7 @@ pub(crate) mod tests {
 
     /// Synthetic control-boundary fixture; it is not an original market claim
     /// and intentionally provides no host/source validation evidence.
-    fn polymarket_claim() -> HandoffClaimViewV2 {
+    pub(crate) fn polymarket_claim() -> HandoffClaimViewV2 {
         use contracts::portfolio::{
             NAUTILUS_EXECUTION_VERSION, NAUTILUS_FILL_CLASS, NAUTILUS_LATENCY_CLASS,
             NAUTILUS_POLYMARKET_FEE_CLASS,
@@ -700,6 +811,8 @@ pub(crate) mod tests {
             "qualification_refs",
             "evaluation_refs",
             "current_weights_source",
+            "current_weights",
+            "forward_dataset",
         ] {
             package.remove(key);
         }
@@ -778,10 +891,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn profiles_advertise_only_supported_versions_and_paper() {
         for (profile, versions) in [
-            (
-                PaperProfile::Binance,
-                vec![PackageSchemaVersion::V1, PackageSchemaVersion::V2],
-            ),
+            (PaperProfile::Binance, vec![PackageSchemaVersion::V2]),
             (PaperProfile::Polymarket, vec![PackageSchemaVersion::V2]),
         ] {
             let (state, _requests) = state_with_profile(profile);
@@ -1058,7 +1168,7 @@ pub(crate) mod tests {
         );
         let mut changed = claim.clone();
         let TargetPackageEnvelopeV2::Forecast(package) = &mut changed.package else {
-            panic!("V1 fixture");
+            panic!("Forecast V2 fixture");
         };
         package.targets[0].target_weight = "0.5".parse().unwrap();
         assert_eq!(

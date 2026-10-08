@@ -66,3 +66,28 @@ fn missing_transitive_budget_dependency_is_detected() {
         .expect("the real HTTP document must register the budget dependency");
     assert_local_references(&document);
 }
+
+#[test]
+fn native_paper_machine_operations_do_not_advertise_owner_or_operator_grants() {
+    let document: Value = serde_json::from_str(&server::openapi_json().unwrap()).unwrap();
+    for path in [
+        "/api/v2/handoffs/{id}/claim",
+        "/api/v2/handoffs/{id}/paper-initial-execution/consume",
+        "/api/v2/forward/client-account-observations",
+    ] {
+        assert_eq!(
+            document["paths"][path]["post"]["security"],
+            serde_json::json!([{"MachineBearer": []}]),
+            "the original scoped downstream machine owns {path}"
+        );
+    }
+    // An unrelated operator mutation keeps its existing security projection.
+    assert_eq!(
+        document["paths"]["/api/v2/releases"]["post"]["security"],
+        serde_json::json!([
+            {"BrowserSession": []},
+            {"OwnerDeviceBearer": []},
+            {"MachineBearer": [], "OperatorCommandGrant": []}
+        ])
+    );
+}

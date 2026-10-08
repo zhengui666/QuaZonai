@@ -255,7 +255,7 @@ pub(crate) async fn readiness(
             if capabilities.accepting_targets {
                 let configured: Vec<String> = row.try_get("accepted_package_versions")?;
                 for version in &capabilities.accepted_package_versions {
-                    if configured.contains(&db::code(version)?) {
+                    if version.is_deliverable() && configured.contains(&db::code(version)?) {
                         versions.push(*version);
                     }
                 }

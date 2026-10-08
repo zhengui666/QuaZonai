@@ -21,6 +21,10 @@ pub struct DownstreamWeightsSubmitV1 {
     pub environment: ForwardEnvironmentV1,
     #[schema(min_length = 1, max_length = 200)]
     pub external_message_id: String,
+    /// Reference only, never caller-granted initialization authority. Store must
+    /// resolve its original scope and claimed Paper handoff before accepting it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_initialization: Option<crate::science::PaperInitializationRefV1>,
     pub asof_ns: DbCounter,
     pub available_ns: DbCounter,
     pub valid_until_ns: DbCounter,

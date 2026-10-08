@@ -312,7 +312,7 @@ pub(super) async fn check(
             let request = HandoffClaimV1 {
                 schema_version: SchemaV1,
                 external_claim_id: "claim-original".into(),
-                package_schema_version: PackageSchemaVersion::V1,
+                package_schema_version: PackageSchemaVersion::V2,
             };
             assert!(matches!(
                 Box::pin(store.claim_handoff(

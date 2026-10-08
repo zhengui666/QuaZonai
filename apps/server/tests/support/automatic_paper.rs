@@ -36,7 +36,7 @@ pub(super) async fn check(
                     configuration: DownstreamConfigurationV1 {
                         name: key.clone(),
                         endpoint: "https://auto-paper.example".into(),
-                        accepted_package_versions: vec![PackageSchemaVersion::V1],
+                        accepted_package_versions: vec![PackageSchemaVersion::V2],
                         environments: DownstreamEnvironments::Both,
                         enabled: true,
                         development_http: false,
@@ -112,7 +112,7 @@ pub(super) async fn check(
         else {
             panic!("new native probe")
         };
-        store.complete_downstream_probe(*ticket,DownstreamProbeOutcomeV1::Available{capabilities:DownstreamCapabilitiesV1{schema_version:SchemaV1,delivery_mode:DownstreamDeliveryModeV1::TargetOnly,accepted_package_versions:vec![PackageSchemaVersion::V1],environments:vec![ForwardEnvironmentV1::Paper,ForwardEnvironmentV1::Live],market_capability_versions:vec![release.market_capability_version.clone()],accepting_targets:true,checked_at:chrono::Utc::now()}},|id,bytes|async move{f.objects.put(id,&bytes).map_err(|_|StoreError::Integrity)}).await.unwrap();
+        store.complete_downstream_probe(*ticket,DownstreamProbeOutcomeV1::Available{capabilities:DownstreamCapabilitiesV1{schema_version:SchemaV1,delivery_mode:DownstreamDeliveryModeV1::TargetOnly,accepted_package_versions:vec![PackageSchemaVersion::V2],environments:vec![ForwardEnvironmentV1::Paper,ForwardEnvironmentV1::Live],market_capability_versions:vec![release.market_capability_version.clone()],accepting_targets:true,checked_at:chrono::Utc::now()}},|id,bytes|async move{f.objects.put(id,&bytes).map_err(|_|StoreError::Integrity)}).await.unwrap();
         if index == 0 {
             let inputs: i64 = sqlx::query_scalar("SELECT count(*) FROM app.input_sets")
                 .fetch_one(pool)
@@ -320,7 +320,7 @@ pub(super) async fn check(
         let claim = HandoffClaimV1 {
             schema_version: SchemaV1,
             external_claim_id: key.clone(),
-            package_schema_version: PackageSchemaVersion::V1,
+            package_schema_version: PackageSchemaVersion::V2,
         };
         let claimed =
             Box::pin(
@@ -466,7 +466,7 @@ pub(super) async fn quota(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
                     market_capability_versions: vec![second.market_capability_version.clone()],
                     accepting_targets: true,

@@ -27,9 +27,29 @@ pub struct NativePortfolioTargetSourceV1 {
     pub target_artifact_id: Id,
 }
 
+/// Immutable initialization lineage, not an account balance or execution ledger.
+/// The artifact is the original initial-weights document. The scope deliberately
+/// excludes project, mandate and session IDs, so those cannot reset capital.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PaperInitializationRefV1 {
+    pub artifact_id: Id,
+    pub downstream_id: Id,
+    #[schema(min_length = 1, max_length = 200)]
+    pub trader_id: String,
+    #[schema(min_length = 1, max_length = 200)]
+    pub account_id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum PortfolioWeightsSourceV1 {
+    /// New model initial condition. It is not a historical account observation.
+    /// Only this source interprets asof/available as the frozen model cutoff;
+    /// the actual initialization receipt retains its real creation timestamp.
+    PaperInitialCapital {
+        account_start: crate::strategy_portfolio::FreshPaperCashV1,
+    },
     ForwardSnapshot {
         downstream_id: Id,
         external_message_id: String,
@@ -45,6 +65,10 @@ pub enum PortfolioWeightsSourceV1 {
 pub struct PortfolioCurrentWeightsV1 {
     pub schema_version: SchemaV1,
     pub source: PortfolioWeightsSourceV1,
+    /// None preserves historical bytes. A new Paper lineage must carry the
+    /// original server-resolved reference through snapshots and last targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_initialization: Option<PaperInitializationRefV1>,
     pub asof_ns: DbCounter,
     pub available_ns: DbCounter,
     pub valid_until_ns: DbCounter,

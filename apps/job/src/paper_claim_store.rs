@@ -20,6 +20,7 @@ pub(crate) enum StoreError {
     Busy,
     Conflict,
     RecoveryRequired,
+    LegacyUnsupported,
     Unavailable,
 }
 
@@ -29,6 +30,7 @@ impl StoreError {
             Self::Busy => "paper_claim_in_progress",
             Self::Conflict => "paper_claim_conflict",
             Self::RecoveryRequired => "paper_claim_recovery_required",
+            Self::LegacyUnsupported => "paper_legacy_claim_not_executable",
             Self::Unavailable => "paper_claim_store_unavailable",
         }
     }
@@ -255,6 +257,14 @@ impl ClaimStore {
             let original: OriginalClaim =
                 serde_json::from_slice(&original).map_err(|_| StoreError::RecoveryRequired)?;
             if original.schema_version != 1 || original.adapter != self.adapter {
+                return Err(StoreError::RecoveryRequired);
+            }
+            // Preserve original bytes for diagnosis. A successful old terminal
+            // record is never upgraded into permission to replay/execute V2.
+            if original.claim["package"]["package_schema_version"] == "1" {
+                return Err(StoreError::LegacyUnsupported);
+            }
+            if original.claim["package"]["package_schema_version"] != "2" {
                 return Err(StoreError::RecoveryRequired);
             }
             if original.claim != value {
@@ -720,6 +730,37 @@ mod tests {
             Err(StoreError::RecoveryRequired)
         ));
         assert_eq!(fs::read(&target).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn legacy_success_journal_is_retained_but_never_replayed_or_upgraded() {
+        let root = private_state_directory();
+        let claim = claim();
+        let store = ClaimStore::open(root.path(), "binance").unwrap();
+        let path = store.claim_path(&claim).unwrap();
+        let mut old = serde_json::to_value(&claim).unwrap();
+        old["package"]["package_schema_version"] = serde_json::json!("1");
+        let original = serde_json::to_vec(&OriginalClaim {
+            schema_version: 1,
+            adapter: "binance".into(),
+            claim: old,
+        })
+        .unwrap();
+        let terminal = receipt(&claim, PaperState::Stopped);
+        publish(&path.join("claim.json"), &original).unwrap();
+        publish(&path.join("terminal-status.json"), &terminal).unwrap();
+        for _ in 0..2 {
+            let restarted = ClaimStore::open(root.path(), "binance").unwrap();
+            assert!(matches!(
+                restarted.admit(&claim, true),
+                Err(StoreError::LegacyUnsupported)
+            ));
+            assert_eq!(fs::read(path.join("claim.json")).unwrap(), original);
+            assert_eq!(
+                fs::read(path.join("terminal-status.json")).unwrap(),
+                terminal
+            );
+        }
     }
 
     #[test]

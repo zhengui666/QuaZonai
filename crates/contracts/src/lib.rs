@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account_observation;
+pub mod capital_exit;
 pub mod agent_evaluation;
 pub mod artifacts;
 pub mod auth;
@@ -114,13 +115,27 @@ use utoipa::OpenApi;
     strategy_portfolio::HandoffClaimViewV2,
     strategy_portfolio::StrategyReleaseViewV1,
     strategy_portfolio::ReleaseViewEnvelopeV2,
+    capital_exit::CapitalExitPreviewRequestV1,
+    capital_exit::CapitalExitPreviewV1,
+    capital_exit::CapitalExitStartV1,
+    capital_exit::CapitalExitActionV1,
+    capital_exit::CapitalExitViewV1,
+    capital_exit::CapitalExitClaimV1,
+    capital_exit::CapitalExitOwnerEvidenceV1,
+    capital_exit::CapitalExitEvidenceViewV1,
+    capital_exit::CapitalExitOwnerAssessmentV1,
+    capital_exit::CapitalExitAssessmentReceiptV1,
     account_observation::AccountObservationSubmitV1,
     account_observation::AccountObservationReceiptV1,
     account_observation::AccountCurrentV1,
     account_observation::AccountSourceV1,
     equity_curve::EquityCurveQuery,
     equity_curve::EquityCurveV1,
-    delivery::TargetPackageV1,
+    delivery::ForecastReleaseSourceV2,
+    delivery::ForecastEvaluationSourceV2,
+    delivery::FrozenForwardDatasetV2,
+    delivery::ForecastTargetPackageV2,
+    science::PaperInitializationRefV1,
     delivery::DownstreamCapabilitiesV1,
     delivery::DownstreamProbeRequestV1,
     delivery::DownstreamProbeViewV1,
@@ -130,6 +145,9 @@ use utoipa::OpenApi;
     delivery::ApprovalViewV1,
     delivery::HandoffOfferV1,
     delivery::HandoffClaimV1,
+    delivery::PaperInitialExecutionConsumeV1,
+    delivery::PaperInitialExecutionStateV1,
+    delivery::PaperInitialExecutionViewV1,
     delivery::HandoffAckV1,
     delivery::HandoffAckOutcomeV1,
     delivery::ApprovalRevokeV1,

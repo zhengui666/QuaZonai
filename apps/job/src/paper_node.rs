@@ -4,7 +4,7 @@ use anyhow::{anyhow, ensure, Result};
 use bigdecimal::ToPrimitive;
 use contracts::{
     account_observation::{NativeAccountBindingV1, NATIVE_ACCOUNT_VERSION},
-    delivery::{HandoffClaimViewV1, HandoffStateV1, PackageOriginV1},
+    delivery::{ForecastTargetPackageV2, HandoffStateV1, PackageOriginV1},
     forward::ForwardEnvironmentV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::{NativeAccountKind, NativeTargetPointV1},
@@ -79,7 +79,10 @@ pub struct PaperConfig {
     pub trader_id: String,
     pub account_id: String,
     pub market_capability_version: String,
-    pub execution_assumptions: contracts::execution_assumptions::ExecutionAssumptionsViewV1,
+    /// Required only to cross-check original Native TargetDecision packages.
+    /// Forecast settings are always read from the immutable V2 claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_assumptions: Option<contracts::execution_assumptions::ExecutionAssumptionsViewV1>,
     pub source: PaperDataSource,
     pub paper_latency: PaperLatencyModel,
     /// A new segment for this invocation. Existing files are never overwritten.
@@ -111,18 +114,16 @@ pub struct PaperPreflight {
     pub fee_basis: &'static str,
     pub latency_basis: &'static str,
     pub connects_market_data: bool,
+    pub execution_supported: bool,
+    pub execution_blocker: Option<&'static str>,
 }
 
 impl PaperConfig {
-    pub fn validate(&self) -> Result<()> {
+    fn validate_runtime(&self) -> Result<()> {
         ensure!(self.bind.ip().is_loopback(), "PAPER_BIND_LOOPBACK_REQUIRED");
         ensure!(
             self.claim_state_directory.is_absolute(),
             "PAPER_STABLE_CLAIM_STATE_REQUIRED"
-        );
-        ensure!(
-            self.execution_assumptions.project_id == self.project_id,
-            "PAPER_ASSUMPTIONS_PROJECT"
         );
         ensure!(
             !self.market_capability_version.is_empty(),
@@ -138,16 +139,35 @@ impl PaperConfig {
                 && self.observations_file != self.credential_file,
             "PAPER_OBSERVATION_PATH"
         );
-        domain::portfolio::simulation_settings(&self.execution_assumptions.settings)?;
+        let PaperDataSource::BinanceSpotPublic {
+            bar_interval_seconds,
+        } = self.source;
         ensure!(
-            self.execution_assumptions.settings.account_kind == NativeAccountKind::Margin
-                && self.execution_assumptions.settings.leverage.as_decimal()
-                    == &bigdecimal::BigDecimal::from(1),
+            (1..=60).contains(&bar_interval_seconds),
+            "PAPER_BAR_INTERVAL"
+        );
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.validate_runtime()?;
+        let assumptions = self
+            .execution_assumptions
+            .as_ref()
+            .ok_or_else(|| anyhow!("PAPER_NATIVE_ASSUMPTIONS_REQUIRED"))?;
+        ensure!(
+            assumptions.project_id == self.project_id,
+            "PAPER_ASSUMPTIONS_PROJECT"
+        );
+        domain::portfolio::simulation_settings(&assumptions.settings)?;
+        ensure!(
+            assumptions.settings.account_kind == NativeAccountKind::Margin
+                && assumptions.settings.leverage.as_decimal() == &bigdecimal::BigDecimal::from(1),
             "PAPER_MARGIN_LEVERAGE_ONE_REQUIRED"
         );
         ensure!(
             matches!(
-                self.execution_assumptions.settings.fee_model,
+                assumptions.settings.fee_model,
                 NativeModelRefV1::NautilusMakerTaker { .. }
             ),
             "PAPER_SPOT_MAKER_TAKER_REQUIRED"
@@ -163,7 +183,7 @@ impl PaperConfig {
         // fixed adapter supplies its published 0.001 maker/taker model instead.
         let fallback: contracts::DecimalValue = "0.001".parse().map_err(anyhow::Error::msg)?;
         ensure!(
-            self.execution_assumptions
+            assumptions
                 .settings
                 .fee_rates
                 .iter()
@@ -183,47 +203,301 @@ fn nanos(value: chrono::DateTime<chrono::Utc>) -> Result<DbCounter> {
     .map_err(anyhow::Error::msg)
 }
 
-/// This checks the original accepted claim's local binding. Authority still
-/// belongs to Q's existing authenticated claim transaction, never to this file.
-pub fn preflight(config: &PaperConfig, claim: &HandoffClaimViewV1) -> Result<PaperPreflight> {
-    preflight_envelope(
-        config,
-        &HandoffClaimViewV2 {
-            handoff: claim.handoff.clone(),
-            package: TargetPackageEnvelopeV2::Forecast(Box::new(claim.package.clone())),
-        },
-    )
+/// An explicit model initial condition is the only Forecast source which may
+/// request new Paper funding. Zero weights alone never select this branch.
+/// This validates original facts; a server consume receipt is still required
+/// before any native account is constructed.
+pub(crate) fn forecast_initial_account(
+    package: &ForecastTargetPackageV2,
+) -> Result<Option<&contracts::strategy_portfolio::FreshPaperCashV1>> {
+    use contracts::{portfolio::CandidateWeightsSourceV1, science::PortfolioWeightsSourceV1};
+    let weights = &package.current_weights;
+    let Some(root) = weights.paper_initialization.as_ref() else {
+        ensure!(
+            package.environment_origin == PackageOriginV1::Real
+                && !matches!(
+                    weights.source,
+                    PortfolioWeightsSourceV1::PaperInitialCapital { .. }
+                )
+                && package.current_weights_source != CandidateWeightsSourceV1::PaperInitialCapital,
+            "PAPER_INITIAL_CAPITAL_ORIGIN_OR_ROOT"
+        );
+        return Ok(None);
+    };
+    ensure!(
+        package.environment_origin == PackageOriginV1::Synthetic
+            && package.source.build_environment == ForwardEnvironmentV1::Paper,
+        "PAPER_INITIAL_CAPITAL_REQUIRES_SYNTHETIC_PAPER"
+    );
+    domain::portfolio::paper_account_scope(&root.trader_id, &root.account_id)?;
+    TraderId::new_checked(&root.trader_id)?;
+    AccountId::new_checked(&root.account_id)?;
+    let PortfolioWeightsSourceV1::PaperInitialCapital { account_start } = &weights.source else {
+        if let PortfolioWeightsSourceV1::ForwardSnapshot { downstream_id, .. } = &weights.source {
+            ensure!(
+                *downstream_id == root.downstream_id,
+                "PAPER_INITIAL_CAPITAL_SCOPE"
+            );
+        }
+        return Ok(None);
+    };
+    ensure!(
+        package.current_weights_source == CandidateWeightsSourceV1::PaperInitialCapital
+            && root.artifact_id == package.source.current_weights_artifact_id
+            && root.downstream_id == account_start.downstream_id
+            && root.trader_id == account_start.trader_id
+            && root.account_id == account_start.account_id
+            && account_start.execution_assumptions_id == package.cost_assumption_ref
+            && account_start.base_currency == package.base_currency
+            && account_start.base_currency == package.execution_settings.base_currency
+            && account_start.base_currency == weights.base_currency
+            && account_start.starting_capital == package.capital_assumption
+            && account_start.starting_capital == package.execution_settings.starting_capital
+            && account_start.starting_capital.is_positive()
+            && weights.cash_weight.as_decimal() == &bigdecimal::BigDecimal::from(1)
+            && !weights.weights.is_empty()
+            && weights
+                .weights
+                .iter()
+                .all(|weight| weight.weight.as_decimal() == &bigdecimal::BigDecimal::from(0))
+            && weights.asof_ns == package.forward_dataset.selection.decision_cutoff_ns
+            && weights.available_ns == package.forward_dataset.selection.decision_cutoff_ns,
+        "PAPER_INITIAL_CAPITAL_ORIGINAL_BINDING"
+    );
+    Ok(Some(account_start))
 }
 
+pub(crate) fn forecast_initialization_blocker(package: &ForecastTargetPackageV2) -> &'static str {
+    if package.current_weights.paper_initialization.is_some() {
+        "PAPER_FORECAST_CONTINUATION_UNSUPPORTED"
+    } else {
+        "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+    }
+}
+
+/// Validate only the immutable Forecast claim. No owner-authored assumptions,
+/// metadata path, research read scope, or fresh-cash account substitutes for it.
+/// This is a source preflight, not a claim that a research weight snapshot can
+/// initialize a new native account.
+pub(crate) fn forecast_instruments(
+    package: &ForecastTargetPackageV2,
+    venue: Venue,
+) -> Result<Vec<nautilus_model::instruments::InstrumentAny>> {
+    use contracts::{
+        catalogs::DataRevisionPolicy,
+        portfolio::CandidateWeightsSourceV1,
+        research::{DataOrigin, DataPartition, PitStatus},
+        science::PortfolioWeightsSourceV1,
+    };
+    let frozen = &package.forward_dataset;
+    let weights = &package.current_weights;
+    let settings = &package.execution_settings;
+    let asof = nanos(package.asof)?.get();
+    let from = nanos(package.valid_from)?.get();
+    let until = nanos(package.valid_until)?.get();
+    forecast_initial_account(package)?;
+    ensure!(
+        frozen.origin == DataOrigin::Real
+            && frozen.partition == DataPartition::Forward
+            && frozen.data_kind == contracts::runtime::RuntimeDataKind::Bar
+            && frozen.pit_status == PitStatus::Verified
+            && frozen.revision_policy == DataRevisionPolicy::AsKnownThen,
+        "PAPER_FORECAST_REQUIRES_REAL_PIT_FORWARD_SOURCE"
+    );
+    ensure!(
+        package.source.forward_dataset_revision_id == frozen.dataset_revision_id
+            && package.source.forward_metadata_artifact_id == frozen.native_metadata_artifact_id
+            && package
+                .input_revision_refs
+                .contains(&frozen.dataset_revision_id)
+            && [
+                package.source.build_parameters_artifact_id,
+                package.source.build_report_artifact_id,
+                package.source.current_weights_artifact_id,
+                package.source.forward_metadata_artifact_id
+            ]
+            .iter()
+            .all(|id| package.provenance_artifact_refs.contains(id))
+            && package.qualification_refs.len() >= 2
+            && !package.evaluation_refs.is_empty(),
+        "PAPER_FORECAST_ORIGINAL_SOURCE_BINDING"
+    );
+    ensure!(
+        package.asof <= package.valid_from
+            && package.valid_from < package.valid_until
+            && package.valid_until > chrono::Utc::now()
+            && weights.asof_ns.get() <= asof
+            && weights.asof_ns <= weights.available_ns
+            && weights.available_ns.get() <= asof
+            && until <= weights.valid_until_ns.get()
+            && package.base_currency == weights.base_currency
+            && package.base_currency == settings.base_currency
+            && package.capital_assumption == settings.starting_capital
+            && package.exposure_tolerance == settings.exposure_tolerance,
+        "PAPER_FORECAST_ORIGINAL_WEIGHTS_AND_SETTINGS"
+    );
+    ensure!(
+        matches!(
+            (package.current_weights_source, &weights.source),
+            (
+                CandidateWeightsSourceV1::ForwardSnapshot,
+                PortfolioWeightsSourceV1::ForwardSnapshot { .. }
+            ) | (
+                CandidateWeightsSourceV1::LastTarget,
+                PortfolioWeightsSourceV1::LastTarget { .. }
+            ) | (
+                CandidateWeightsSourceV1::PaperInitialCapital,
+                PortfolioWeightsSourceV1::PaperInitialCapital { .. }
+            )
+        ),
+        "PAPER_FORECAST_ORIGINAL_WEIGHTS_SOURCE"
+    );
+    domain::portfolio::simulation_settings(settings)?;
+    ensure!(
+        frozen.event_start < frozen.event_end
+            && frozen.event_start <= frozen.available_through
+            && frozen.row_count.get() > 0
+            && frozen.selection.event_start_ns < frozen.selection.event_end_ns
+            && frozen.selection.event_end_ns <= frozen.selection.decision_cutoff_ns
+            && frozen.selection.decision_cutoff_ns.get() <= asof
+            && !frozen.selection.bar_types.is_empty(),
+        "PAPER_FORECAST_ORIGINAL_DATASET_CLOCK"
+    );
+    let definitions = domain::catalogs::instrument_versions(&frozen.instrument_definitions)?;
+    let mut required = BTreeSet::new();
+    let mut current = BTreeSet::new();
+    let mut total = weights.cash_weight.as_decimal().clone();
+    for weight in &weights.weights {
+        ensure!(
+            weight.currency == package.base_currency
+                && current.insert(weight.instrument_id.as_str()),
+            "PAPER_FORECAST_CURRENT_WEIGHTS"
+        );
+        required.insert(weight.instrument_id.as_str());
+        total += weight.weight.as_decimal();
+    }
+    ensure!(
+        !current.is_empty()
+            && (total - bigdecimal::BigDecimal::from(1)).abs()
+                <= *package.exposure_tolerance.as_decimal(),
+        "PAPER_FORECAST_CURRENT_WEIGHTS"
+    );
+    let mut targets = BTreeSet::new();
+    let mut total = package.cash_weight.as_decimal().clone();
+    for target in &package.targets {
+        ensure!(
+            target.currency == package.base_currency
+                && targets.insert(target.instrument_id.as_str()),
+            "PAPER_FORECAST_TARGETS"
+        );
+        required.insert(target.instrument_id.as_str());
+        total += target.target_weight.as_decimal();
+    }
+    ensure!(
+        !targets.is_empty()
+            && (total - bigdecimal::BigDecimal::from(1)).abs()
+                <= *package.exposure_tolerance.as_decimal(),
+        "PAPER_FORECAST_TARGETS"
+    );
+    // Include every frozen asset, not just positive final targets. Existing
+    // holdings and zero targets must not disappear from the preflight.
+    for bar in &frozen.selection.bar_types {
+        let bar = BarType::from_str(bar)?;
+        ensure!(
+            bar.instrument_id().venue == venue,
+            "PAPER_FORECAST_SOURCE_VENUE"
+        );
+        required.insert(
+            definitions
+                .get_key_value(bar.instrument_id().to_string().as_str())
+                .ok_or_else(|| anyhow!("PAPER_FORECAST_FROZEN_DEFINITION_MISSING"))?
+                .0,
+        );
+    }
+    ensure!(
+        required.iter().all(|id| definitions.contains_key(id)),
+        "PAPER_FORECAST_FROZEN_DEFINITION_MISSING"
+    );
+    // Store freezes the full original asset closure. Preserve every definition,
+    // including an original asset with zero current and zero target weight.
+    required.extend(definitions.keys().copied());
+    let mut instruments = Vec::new();
+    for id in required {
+        let parsed: InstrumentId = id.parse()?;
+        ensure!(parsed.venue == venue, "PAPER_FORECAST_SOURCE_VENUE");
+        let (class, original) = domain::catalogs::instrument_version_at(
+            definitions
+                .get(id)
+                .ok_or_else(|| anyhow!("PAPER_FORECAST_FROZEN_DEFINITION_MISSING"))?,
+            from,
+        )?;
+        ensure!(
+            venue != Venue::from("POLYMARKET") || class == "BinaryOption",
+            "PAPER_HOST_BINARY_DEFINITION_REQUIRED"
+        );
+        instruments.push(serde_json::from_value(
+            serde_json::json!({(class): original}),
+        )?);
+    }
+    Ok(instruments)
+}
+
+/// This checks the original accepted claim's local binding. Authority still
+/// belongs to Q's existing authenticated claim transaction, never to this file.
 pub fn preflight_envelope(
     config: &PaperConfig,
     claim: &HandoffClaimViewV2,
 ) -> Result<PaperPreflight> {
-    config.validate()?;
+    config.validate_runtime()?;
     let handoff = &claim.handoff;
     let package = domain::delivery::package_delivery(&claim.package);
     match &claim.package {
-        TargetPackageEnvelopeV2::Forecast(p) => ensure!(
-            p.environment_origin == PackageOriginV1::Real,
-            "PAPER_PACKAGE_BINDING"
-        ),
+        TargetPackageEnvelopeV2::Forecast(p) => {
+            forecast_instruments(p, Venue::from("BINANCE"))?;
+            let fallback: contracts::DecimalValue = "0.001".parse().map_err(anyhow::Error::msg)?;
+            ensure!(
+                matches!(
+                    p.execution_settings.fee_model,
+                    NativeModelRefV1::NautilusMakerTaker { .. }
+                ) && p
+                    .execution_settings
+                    .fee_rates
+                    .iter()
+                    .all(|rate| rate.maker == fallback && rate.taker == fallback),
+                "PAPER_PUBLIC_FEE_MODEL_MISMATCH"
+            );
+            ensure!(
+                p.execution_settings.account_kind == NativeAccountKind::Margin
+                    && p.execution_settings.leverage.as_decimal()
+                        == &bigdecimal::BigDecimal::from(1),
+                "PAPER_MARGIN_LEVERAGE_ONE_REQUIRED"
+            );
+        }
         TargetPackageEnvelopeV2::TargetDecision(p) => {
+            config.validate()?;
+            let assumptions = config
+                .execution_assumptions
+                .as_ref()
+                .ok_or_else(|| anyhow!("PAPER_NATIVE_ASSUMPTIONS_REQUIRED"))?;
             ensure!(
                 p.execution_environment == ForwardEnvironmentV1::Paper
                     && p.account_start.downstream_id == config.downstream_id
                     && p.account_start.trader_id == config.trader_id
                     && p.account_start.account_id == config.account_id
-                    && p.account_start.base_currency
-                        == config.execution_assumptions.settings.base_currency
-                    && p.account_start.starting_capital
-                        == config.execution_assumptions.settings.starting_capital
-                    && p.account_start.execution_assumptions_id == config.execution_assumptions.id
+                    && p.account_start.base_currency == assumptions.settings.base_currency
+                    && p.account_start.starting_capital == assumptions.settings.starting_capital
+                    && p.account_start.execution_assumptions_id == assumptions.id
+                    && p.cost_assumption_ref == assumptions.id
                     && serde_json::to_value(&p.execution_settings)?
-                        == serde_json::to_value(&config.execution_assumptions.settings)?,
+                        == serde_json::to_value(&assumptions.settings)?,
                 "PAPER_FROZEN_ACCOUNT_BINDING"
             );
         }
     }
+    let settings = match &claim.package {
+        TargetPackageEnvelopeV2::Forecast(p) => &p.execution_settings,
+        TargetPackageEnvelopeV2::TargetDecision(p) => &p.execution_settings,
+    };
     let now = chrono::Utc::now();
     ensure!(
         handoff.environment == ForwardEnvironmentV1::Paper
@@ -237,10 +511,13 @@ pub fn preflight_envelope(
             && handoff
                 .external_claim_id
                 .as_ref()
-                .is_some_and(|id| !id.is_empty())
+                .is_some_and(|id| !id.is_empty()
+                    && id.trim() == id
+                    && !id.chars().any(char::is_control))
             && handoff
                 .claimed_at
-                .is_some_and(|at| at <= now && at < handoff.expires_at),
+                .is_some_and(|at| at >= handoff.offered_at && at <= now && at < handoff.expires_at)
+            && handoff.acknowledged_at.is_none(),
         "PAPER_CLAIM_BINDING"
     );
     ensure!(
@@ -250,12 +527,9 @@ pub fn preflight_envelope(
             && package
                 .compatible_market_capabilities
                 .contains(&config.market_capability_version)
-            && package.cost_assumption_ref == config.execution_assumptions.id
-            && *package.base_currency == config.execution_assumptions.settings.base_currency
-            && *package.capital_assumption
-                == config.execution_assumptions.settings.starting_capital
-            && *package.exposure_tolerance
-                == config.execution_assumptions.settings.exposure_tolerance,
+            && *package.base_currency == settings.base_currency
+            && *package.capital_assumption == settings.starting_capital
+            && *package.exposure_tolerance == settings.exposure_tolerance,
         "PAPER_PACKAGE_BINDING"
     );
     ensure!(!package.targets.is_empty(), "PAPER_TARGET_COUNT");
@@ -289,10 +563,8 @@ pub fn preflight_envelope(
         package.cash_weight.is_nonnegative()
             && (total - bigdecimal::BigDecimal::from(1)).abs()
                 <= *package.exposure_tolerance.as_decimal()
-            && config.execution_assumptions.settings.fee_rates.len() == instrument_ids.len()
-            && config
-                .execution_assumptions
-                .settings
+            && settings.fee_rates.len() == instrument_ids.len()
+            && settings
                 .fee_rates
                 .iter()
                 .all(|rate| unique.contains(&rate.instrument_id)),
@@ -319,6 +591,9 @@ pub fn preflight_envelope(
         latency_basis:
             "native wall clock; Sandbox does not apply the historical StaticLatencyModel",
         connects_market_data: false,
+        execution_supported: matches!(claim.package, TargetPackageEnvelopeV2::TargetDecision(_)),
+        execution_blocker: matches!(claim.package, TargetPackageEnvelopeV2::Forecast(_))
+            .then_some("PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"),
     })
 }
 
@@ -358,16 +633,6 @@ pub struct PaperNode {
 
 impl PaperNode {
     /// Constructing this object does not connect the data client. Only run does.
-    pub fn build(config: &PaperConfig, claim: &HandoffClaimViewV1) -> Result<Self> {
-        Self::build_envelope(
-            config,
-            &HandoffClaimViewV2 {
-                handoff: claim.handoff.clone(),
-                package: TargetPackageEnvelopeV2::Forecast(Box::new(claim.package.clone())),
-            },
-        )
-    }
-
     pub fn build_envelope(config: &PaperConfig, claim: &HandoffClaimViewV2) -> Result<Self> {
         let checked = preflight_envelope(config, claim)?;
         Self::build_from_factory(
@@ -380,24 +645,6 @@ impl PaperNode {
 
     /// Engineering acceptance only: substitutes current synthetic data at the
     /// official data-factory boundary. Sandbox and target execution stay unchanged.
-    #[cfg(feature = "native-paper-test")]
-    pub fn build_with_data_factory(
-        config: &PaperConfig,
-        claim: &HandoffClaimViewV1,
-        factory: Box<dyn DataClientFactory>,
-        source: Box<dyn ClientConfig>,
-    ) -> Result<Self> {
-        Self::build_with_data_factory_envelope(
-            config,
-            &HandoffClaimViewV2 {
-                handoff: claim.handoff.clone(),
-                package: TargetPackageEnvelopeV2::Forecast(Box::new(claim.package.clone())),
-            },
-            factory,
-            source,
-        )
-    }
-
     #[cfg(feature = "native-paper-test")]
     pub fn build_with_data_factory_envelope(
         config: &PaperConfig,
@@ -415,10 +662,16 @@ impl PaperNode {
         source: Box<dyn ClientConfig>,
     ) -> Result<Self> {
         let checked = preflight_envelope(config, claim)?;
+        ensure!(
+            matches!(claim.package, TargetPackageEnvelopeV2::TargetDecision(_)),
+            "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+        );
         let package = domain::delivery::package_delivery(&claim.package);
-        let (fill, _) =
-            domain::portfolio::simulation_models(&config.execution_assumptions.settings)?;
-        let settings = &config.execution_assumptions.settings;
+        let TargetPackageEnvelopeV2::TargetDecision(original) = &claim.package else {
+            unreachable!("Forecast initialization was rejected before native construction")
+        };
+        let settings = &original.execution_settings;
+        let (fill, _) = domain::portfolio::simulation_models(settings)?;
         let currency = Currency::from_str(&settings.base_currency)?;
         let mut node = LiveNode::builder(
             TraderId::new_checked(&config.trader_id)?,
@@ -773,7 +1026,7 @@ pub(crate) async fn stop_signal() {
 
 async fn serve(config: PaperConfig) -> Result<()> {
     use crate::paper_service::{start_control, PaperApplyError};
-    config.validate()?;
+    config.validate_runtime()?;
     let mut control = start_control(
         config.bind,
         read_credential(&config.credential_file)?,
@@ -800,14 +1053,21 @@ async fn serve(config: PaperConfig) -> Result<()> {
                 let _ = request.reply.send(Ok(()));
                 node.run(control.stop.clone(), control.status.clone()).await
             }
-            Err(_) => {
-                publish_state(
-                    &control.status,
-                    PaperState::Failed,
-                    Some("PAPER_INVALID_CLAIM_OR_CONFIGURATION"),
-                );
-                let _ = request.reply.send(Err(PaperApplyError::InvalidClaim));
-                Err(anyhow!("PAPER_INVALID_CLAIM_OR_CONFIGURATION"))
+            Err(error) => {
+                let unsupported =
+                    error.to_string() == "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED";
+                let code = if unsupported {
+                    "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
+                } else {
+                    "PAPER_INVALID_CLAIM_OR_CONFIGURATION"
+                };
+                publish_state(&control.status, PaperState::Failed, Some(code));
+                let _ = request.reply.send(Err(if unsupported {
+                    PaperApplyError::UnsupportedForecastInitialization
+                } else {
+                    PaperApplyError::InvalidClaim
+                }));
+                Err(anyhow!(code))
             }
         }
     } else {

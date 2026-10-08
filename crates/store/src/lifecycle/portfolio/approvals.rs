@@ -36,14 +36,19 @@ pub(super) async fn downstream(
     downstream_id: Id,
     revision: contracts::Revision,
     environment: ForwardEnvironmentV1,
-    package: &TargetPackageV1,
+    package: &ForecastTargetPackageV2,
 ) -> Result<DownstreamProbeViewV1, StoreError> {
+    if let Some(root) = &package.current_weights.paper_initialization {
+        if environment != ForwardEnvironmentV1::Paper || root.downstream_id != downstream_id {
+            return Err(StoreError::Invalid("paper_initialization_paper_only"));
+        }
+    }
     downstream_version(
         tx,
         downstream_id,
         revision,
         environment,
-        package.package_schema_version,
+        contracts::settings::PackageSchemaVersion::V2,
         &package.compatible_market_capabilities,
     )
     .await
@@ -62,6 +67,13 @@ pub(super) async fn downstream_envelope(
             || p.account_start.downstream_id != downstream_id
         {
             return Err(StoreError::Invalid("strategy_paper_account_binding"));
+        }
+    }
+    if let TargetPackageEnvelopeV2::Forecast(p) = package {
+        if let Some(root) = &p.current_weights.paper_initialization {
+            if environment != ForwardEnvironmentV1::Paper || root.downstream_id != downstream_id {
+                return Err(StoreError::Invalid("paper_initialization_paper_only"));
+            }
         }
     }
     let package = package_delivery(package);
@@ -141,32 +153,49 @@ pub(super) async fn source<R, Read>(
     release_id: Id,
     environment: ForwardEnvironmentV1,
     read: &mut R,
-) -> Result<(Id, Id, TargetPackageV1, DateTime<Utc>), StoreError>
+) -> Result<(Id, Id, ForecastTargetPackageV2, DateTime<Utc>), StoreError>
 where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let row=sqlx::query("SELECT r.*,c.project_id,c.run_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.artifacts a ON a.id=r.package_artifact_id AND a.project_id=c.project_id AND a.origin='REAL' AND a.schema_name='qz.target_package' AND a.schema_version='1' WHERE r.id=$1 AND r.environment='REAL'")
+    release::require_v2(tx, release_id).await?;
+    let row=sqlx::query("SELECT r.*,c.project_id,c.run_id FROM app.releases r JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.artifacts a ON a.id=r.package_artifact_id AND a.project_id=c.project_id AND a.origin=r.environment AND a.schema_name='qz.target_package' AND a.schema_version='2' WHERE r.id=$1 AND (r.environment='REAL' OR app.paper_release_root_valid(r.id)) AND r.source_kind='FORECAST_EVALUATION' AND r.package_schema_version='2'")
             .bind(release_id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
     let project = db::id(row.try_get("project_id")?)?;
+    if row.try_get::<String, _>("environment")? == "SYNTHETIC"
+        && environment != ForwardEnvironmentV1::Paper
+    {
+        return Err(StoreError::Invalid("paper_initialization_paper_only"));
+    }
     crate::research::project_for_write(tx, project).await?;
     let candidate = db::id(row.try_get("candidate_id")?)?;
     sqlx::query("SELECT id FROM app.portfolio_candidates WHERE id=$1 FOR UPDATE")
         .bind(candidate.as_uuid())
         .fetch_one(&mut **tx)
         .await?;
-    let bytes = validation::read_document(
+    let bytes = strategy_release::read_package(
         tx,
         db::id(row.try_get("package_artifact_id")?)?,
-        None,
-        "qz.target_package",
-        8 * 1024 * 1024,
+        project,
         read,
     )
     .await?;
-    let original: TargetPackageV1 =
+    let original: ForecastTargetPackageV2 =
         serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
-    if original.valid_from != row.try_get::<DateTime<Utc>, _>("valid_from")?
+    if original.release_id != release_id
+        || db::code(&original.environment_origin)? != row.try_get::<String, _>("environment")?
+        || original
+            .current_weights
+            .paper_initialization
+            .as_ref()
+            .map(|root| root.artifact_id)
+            != db::optional_id(&row, "paper_initial_weights_artifact_id")?
+        || original.project_id != project
+        || original.candidate_id != candidate
+        || original.source.build_run_id != db::id(row.try_get("run_id")?)?
+        || db::code(&original.source.build_environment)?
+            != row.try_get::<String, _>("execution_environment")?
+        || original.valid_from != row.try_get::<DateTime<Utc>, _>("valid_from")?
         || original.valid_until != row.try_get::<DateTime<Utc>, _>("valid_until")?
         || original.compatible_market_capabilities.first()
             != Some(&row.try_get::<String, _>("market_capability_version")?)
@@ -213,12 +242,10 @@ where
     if db::json(&final_package)? != db::json(&original)? {
         return Err(StoreError::Integrity);
     }
-    let latest_bytes = validation::read_document(
+    let latest_bytes = strategy_release::read_package(
         tx,
         db::id(row.try_get("package_artifact_id")?)?,
-        None,
-        "qz.target_package",
-        8 * 1024 * 1024,
+        project,
         read,
     )
     .await?;
@@ -238,14 +265,15 @@ where
     R: FnMut(Id, DbCounter) -> Read,
     Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
 {
-    let version: String =
-        sqlx::query_scalar("SELECT package_schema_version FROM app.releases WHERE id=$1")
+    release::require_v2(tx, release_id).await?;
+    let source_kind: String =
+        sqlx::query_scalar("SELECT source_kind FROM app.releases WHERE id=$1")
             .bind(release_id.as_uuid())
             .fetch_optional(&mut **tx)
             .await?
             .ok_or(StoreError::NotFound)?;
-    match version.as_str() {
-        "1" => {
+    match source_kind.as_str() {
+        "FORECAST_EVALUATION" => {
             let (project, candidate, package, until) =
                 source(tx, release_id, environment, read).await?;
             Ok((
@@ -255,8 +283,10 @@ where
                 until,
             ))
         }
-        "2" => strategy_release::source(tx, release_id, environment, read).await,
-        _ => Err(domain::DomainError::CapabilityUnavailable("target_package_version").into()),
+        "NATIVE_TARGET_DECISION" => {
+            strategy_release::source(tx, release_id, environment, read).await
+        }
+        _ => Err(StoreError::Integrity),
     }
 }
 
@@ -311,6 +341,7 @@ impl Store {
             db::json(request)?,
         )
         .await?;
+        release::require_v2(&mut tx, release_id).await?;
         if let Some(replay) = prepared.replay()? {
             tx.commit().await?;
             return Ok(replay);
@@ -477,7 +508,7 @@ impl Store {
 
 pub(super) async fn freeze_evidence(
     tx: &mut Tx<'_>,
-    original: &TargetPackageV1,
+    original: &ForecastTargetPackageV2,
     granted_at: DateTime<Utc>,
 ) -> Result<Id, StoreError> {
     let evidence_set_id = Id::new();

@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 mod access;
 pub mod account_observation;
+pub mod capital_exit;
+pub mod paper_capital_exit;
 pub mod artifacts;
 pub mod auth;
 mod automation;
@@ -158,6 +160,7 @@ pub struct AppState {
     pub historical_import_slots: Arc<Semaphore>,
     pub integration_slots: Arc<Semaphore>,
     pub downstream_targets: Arc<runtime_transport::RuntimeTargets>,
+    pub paper_capital_exit_owners: Arc<paper_capital_exit::PaperCapitalExitOwners>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
     pub codex_deployment: Arc<codex_profiles::CodexDeployment>,
 }
@@ -178,6 +181,7 @@ impl AppState {
             historical_import_slots: Arc::new(Semaphore::new(1)),
             integration_slots: Arc::new(Semaphore::new(4)),
             downstream_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
+            paper_capital_exit_owners: Arc::new(paper_capital_exit::PaperCapitalExitOwners::default()),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
             codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
         }
@@ -199,6 +203,10 @@ impl AppState {
     }
     pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
+        self
+    }
+    pub fn with_paper_capital_exit_owners(mut self, owners: paper_capital_exit::PaperCapitalExitOwners) -> Self {
+        self.paper_capital_exit_owners = Arc::new(owners);
         self
     }
     pub fn with_downstream_targets(mut self, targets: runtime_transport::RuntimeTargets) -> Self {
@@ -467,12 +475,17 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             get(data::revisions).post(data::register),
         )
         .route("/api/v2/data/revisions/{id}", get(data::revision))
-        .route("/api/v2/data/revisions/{id}/evidence", get(data::evidence::get))
+        .route(
+            "/api/v2/data/revisions/{id}/evidence",
+            get(data::evidence::get),
+        )
         .route(
             "/api/v2/data/revisions/{id}/features",
             get(data::recorded_features::list)
                 .post(data::recorded_features::register)
-                .layer(DefaultBodyLimit::max(contracts::artifacts::MAX_UPLOAD_BODY_BYTES)),
+                .layer(DefaultBodyLimit::max(
+                    contracts::artifacts::MAX_UPLOAD_BODY_BYTES,
+                )),
         )
         .route("/api/v2/data/universes", get(data::universes))
         .route("/api/v2/data/universes/{id}", get(data::universe))
@@ -560,6 +573,10 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             post(release::ack).layer(DefaultBodyLimit::max(16 * 1024)),
         )
         .route(
+            "/api/v2/handoffs/{id}/paper-initial-execution/consume",
+            post(release::consume_paper_initial_execution).layer(DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/v2/handoffs/{id}/claim",
             post(release::claim).layer(DefaultBodyLimit::max(4096)),
         )
@@ -584,13 +601,25 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/forward/messages",
             post(forward::message).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
+        .route("/api/v2/projects/{project_id}/capital-exit-previews", post(capital_exit::preview))
+        .route("/api/v2/projects/{project_id}/capital-exits", get(capital_exit::list).post(capital_exit::start))
+        .route("/api/v2/capital-exits/{id}", get(capital_exit::get))
+        .route("/api/v2/capital-exits/{id}/pause", post(capital_exit::pause))
+        .route("/api/v2/capital-exits/{id}/cancel", post(capital_exit::cancel))
+        .route("/api/v2/capital-exits/{id}/resume", post(capital_exit::resume))
+        .route("/api/v2/capital-exits/{id}/reconcile-withdrawal", post(capital_exit::reconcile))
+        .route("/api/v2/downstream/capital-exits", get(capital_exit::downstream))
+        .route("/api/v2/downstream/capital-exit-assessments", get(capital_exit::assessment_requests).post(capital_exit::assessment))
+        .route("/api/v2/capital-exits/{id}/claim", post(capital_exit::claim))
+        .route("/api/v2/capital-exits/{id}/evidence", post(capital_exit::evidence))
         .route(
             "/api/v2/forward/account-observations",
             post(account_observation::submit).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route(
             "/api/v2/forward/client-account-observations",
-            post(account_observation::submit_client_bound).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+            post(account_observation::submit_client_bound)
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route(
             "/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding",
@@ -785,6 +814,8 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
     response
 }
 
+// Historical capability schemas are embedded through schema_with, so their
+// delivery mode must be explicitly included in the HTTP schema reference closure.
 #[derive(OpenApi)]
 #[openapi(paths(migrations::artifact,migrations::artifact_summary,migrations::artifact_results,migrations::artifact_content,migrations::fields,migrations::field,migrations::reports,migrations::source,migrations::mappings,migrations::import,migrations::report,auth::session_status,auth::status,auth::setup,auth::login,auth::logout,auth::change_password,auth::cli_login,auth::cli_session,auth::cli_devices,auth::revoke_cli_device,
 control::projects,control::project,control::create_project,control::update_project,
@@ -794,8 +825,9 @@ control::machine_session,control::issue_grant,runs::list,runs::get,runs::rebalan
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
-automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,portfolio::summary,
+automation::authorize_automation,automation::revoke_automation,automation::automation_policy,automation::automation_policies,automation::automation_revocations,release::ack,release::revoke_approval,release::revocations,release::claim,release::consume_paper_initial_execution,release::offer,release::handoff,release::handoffs,release::create,release::get,release::list,release::approvals,release::approve,release::approval,release::reject,release::reopen,release::decisions,portfolio::list,portfolio::get,portfolio::create,portfolio::build,portfolio::simulate,portfolio::study,portfolio::candidates,portfolio::candidate,portfolio::summary,
 execution_assumptions::list,execution_assumptions::get,execution_assumptions::create,
+capital_exit::preview,capital_exit::start,capital_exit::list,capital_exit::get,capital_exit::pause,capital_exit::cancel,capital_exit::resume,capital_exit::reconcile,capital_exit::downstream,capital_exit::claim,capital_exit::evidence,capital_exit::assessment,capital_exit::assessment_requests,
 account_observation::submit,account_observation::submit_client_bound,account_observation::client_binding,account_observation::sources,account_observation::current,account_observation::observations,
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
 cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
@@ -812,7 +844,7 @@ data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::evidence::get,data::register,data::universes,data::universe,data::validate,
 data::recorded_features::list,data::recorded_features::register,
-artifacts::list,artifacts::get,artifacts::create,artifacts::content,artifacts::agent_evaluation),components(schemas(error::Problem)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
+artifacts::list,artifacts::get,artifacts::create,artifacts::content,artifacts::agent_evaluation),components(schemas(error::Problem, contracts::delivery::DownstreamDeliveryModeV1)),tags((name="Authentication",description="Password browser sessions and revocable CLI devices")))]
 struct HttpContracts;
 pub fn openapi_json() -> Result<String, serde_json::Error> {
     let mut document = HttpContracts::openapi();
@@ -870,6 +902,9 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
             "/api/v2/auth/machine"
                 | "/api/v2/auth/operator-command-grants"
                 | "/api/v2/auth/cli/session"
+                | "/api/v2/handoffs/{id}/claim"
+                | "/api/v2/handoffs/{id}/paper-initial-execution/consume"
+                | "/api/v2/forward/client-account-observations"
         );
         let browser_auth = path.starts_with("/api/v2/auth/") && !only_machine;
         let browser_read = path.starts_with("/api/v2/machine-principals");
@@ -937,6 +972,13 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     vec![]
                 } else if path == "/api/v2/auth/cli/session" {
                     vec![device]
+                } else if path == "/api/v2/downstream/capital-exits"
+                    || path == "/api/v2/downstream/capital-exit-assessments"
+                    || (path.starts_with("/api/v2/capital-exits/") && (path.ends_with("/claim") || path.ends_with("/evidence")))
+                {
+                    vec![bearer]
+                } else if path.contains("/capital-exits") || path.ends_with("/capital-exit-previews") {
+                    vec![local, device]
                 } else if only_machine {
                     vec![bearer]
                 } else if browser_auth || (!write && browser_read) {

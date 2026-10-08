@@ -87,7 +87,7 @@ async fn prepared(pool: &PgPool, objects: &ArtifactStore, cancel: bool) -> (stor
         .bind(mandate.as_uuid()).bind(f.project.as_uuid()).bind(&m.base_currency).bind(m.capital_assumption.as_decimal()).bind(universe)
         .bind(json!(m.covariance_estimator)).bind(json!(m.alpha_ensemble)).bind(json!(m.optimizer)).bind(json!(m.constraints)).bind(json!(m.rebalance_schedule)).bind(policy).bind(assumptions).bind(m.exposure_tolerance.as_decimal()).execute(pool).await.unwrap();
     let downstream = Id::new();
-    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'controlled paper source','https://downstream.example','fixture',ARRAY['1'],'PAPER',true)")
+    sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'controlled paper source','https://downstream.example','fixture',ARRAY['2'],'PAPER',true)")
         .bind(downstream.as_uuid()).execute(pool).await.unwrap();
     let snapshot = Id::new();
     native.current_weights.source = PortfolioWeightsSourceV1::ForwardSnapshot {

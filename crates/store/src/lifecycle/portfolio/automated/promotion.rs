@@ -6,6 +6,13 @@ pub(super) async fn evidence(
     policy: &AutomationPolicyViewV1,
     candidate: Id,
 ) -> Result<(Vec<Id>, DateTime<Utc>), StoreError> {
+    let paper_model: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.portfolio_candidates WHERE id=$1 AND paper_initial_weights_artifact_id IS NOT NULL)")
+        .bind(candidate.as_uuid()).fetch_one(&mut **tx).await?;
+    if paper_model {
+        return Err(StoreError::Invalid(
+            "paper_initialization_not_live_eligible",
+        ));
+    }
     if policy.content.mode != AutomationModeV1::AutoHandoff {
         return Err(StoreError::Invalid("automation_live_mode"));
     }

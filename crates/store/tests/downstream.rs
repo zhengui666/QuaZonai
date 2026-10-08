@@ -24,7 +24,7 @@ async fn fixture(pool: &PgPool) -> (Store, Actor, DownstreamView) {
                 configuration: DownstreamConfigurationV1 {
                     name: "fixture".into(),
                     endpoint: "https://downstream.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: false,
@@ -60,7 +60,7 @@ fn available(accepting: bool) -> DownstreamProbeOutcomeV1 {
         capabilities: DownstreamCapabilitiesV1 {
             schema_version: SchemaV1,
             delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-            accepted_package_versions: vec![PackageSchemaVersion::V1],
+            accepted_package_versions: vec![PackageSchemaVersion::V2],
             environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
             market_capability_versions: vec!["fixture/1".into()],
             accepting_targets: accepting,

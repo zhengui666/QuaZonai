@@ -14,10 +14,16 @@ mkdir -p "$evidence"
 phase=build-fixture
 trap 'status=$?; printf "phase=%s\nexit=%s\n" "$phase" "$status" > "$evidence/native-client-combined-status.txt"' EXIT
 
+set +e
 "${cargo[@]}" build --locked -p job --features native-sandbox-test \
   --example native_client_account_snapshots --message-format=json-render-diagnostics \
-  2> >(tee "$evidence/native-client-fixture-build.stderr" >&2) \
+  2> "$evidence/native-client-fixture-build.stderr" \
   | tee "$evidence/native-client-fixture-build.jsonl"
+build_pipeline=("${PIPESTATUS[@]}")
+set -e
+printf 'cargo_status=%s\nstdout_tee_status=%s\nexecution=not_run_by_build\n' "${build_pipeline[0]}" "${build_pipeline[1]}" > "$evidence/native-client-fixture-build-status.txt"
+cat "$evidence/native-client-fixture-build.stderr" >&2
+[[ ${build_pipeline[0]} == 0 && ${build_pipeline[1]} == 0 ]]
 QUAZONAI_NATIVE_CLIENT_ACCOUNT_FIXTURE_BIN=$(python3 - "$evidence/native-client-fixture-build.jsonl" <<'PY'
 import json
 import pathlib

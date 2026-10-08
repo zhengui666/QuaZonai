@@ -261,7 +261,7 @@ where
     ))
 }
 
-async fn read_package<R, Read>(
+pub(super) async fn read_package<R, Read>(
     tx: &mut Tx<'_>,
     id: Id,
     project: Id,

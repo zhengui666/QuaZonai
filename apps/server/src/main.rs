@@ -134,6 +134,9 @@ enum Command {
             hide_env_values = true
         )]
         downstream_targets: String,
+        /// Optional exact native Paper owner bindings. No credentials or HTTP-selected keys.
+        #[arg(long, env = "PAPER_CAPITAL_EXIT_OWNERS", default_value = "[]", hide_env_values = true)]
+        paper_capital_exit_owners: String,
         /// Deployment-only export references and absolute directories, frozen at startup.
         #[arg(
             long,
@@ -522,6 +525,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Command::Serve {
+            paper_capital_exit_owners,
             historical_exports,
             database,
             state_dir,
@@ -532,6 +536,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             runtime_targets,
             downstream_targets,
         } => {
+            let paper_capital_exit_owners = server::paper_capital_exit::PaperCapitalExitOwners::parse(&paper_capital_exit_owners)?;
             if historical_exports.len() > 65536 {
                 return Err("historical export registrations exceed limit".into());
             }
@@ -562,6 +567,7 @@ async fn execute(command: Command) -> Result<(), Box<dyn std::error::Error>> {
             let objects = ArtifactStore::open(&state_dir.join("artifacts"))?;
             let app = server::router(
                 AppState::new(store, vault, policy)
+                    .with_paper_capital_exit_owners(paper_capital_exit_owners)
                     .with_historical_exports(historical_exports)
                     .with_artifact_store(objects)
                     .with_historical_artifact_store(ArtifactStore::open(

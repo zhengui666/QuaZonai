@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 
 fn observation() -> serde_json::Value {
     json!({"schema_version":1,"delivery_mode":"TARGET_ONLY",
-        "accepted_package_versions":["1"],"environments":["PAPER","LIVE"],
+        "accepted_package_versions":["2"],"environments":["PAPER","LIVE"],
         "market_capability_versions":["fixture-market/1"],"accepting_targets":true,
         "checked_at":chrono::Utc::now()})
 }
@@ -57,7 +57,7 @@ async fn native_boundary_rejects_incompatible_stale_duplicate_or_secret_response
         ("schema_version", json!(2)),
         ("delivery_mode", json!("ORDERS")),
         ("accepted_package_versions", json!([])),
-        ("accepted_package_versions", json!(["1", "1"])),
+        ("accepted_package_versions", json!(["2", "2"])),
         ("environments", json!([])),
         ("environments", json!(["PAPER", "PAPER"])),
         ("environments", json!(["DEMO"])),

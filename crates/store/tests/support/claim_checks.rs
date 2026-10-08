@@ -13,8 +13,25 @@ pub(super) async fn check(
     let request = HandoffClaimV1 {
         schema_version: SchemaV1,
         external_claim_id: "claim-original".into(),
-        package_schema_version: PackageSchemaVersion::V1,
+        package_schema_version: PackageSchemaVersion::V2,
     };
+    let legacy_request = HandoffClaimV1 {
+        package_schema_version: PackageSchemaVersion::V1,
+        ..request.clone()
+    };
+    assert!(matches!(
+        Box::pin(store.claim_handoff(
+            machine,
+            "claim-original",
+            offer.id,
+            &legacy_request,
+            |_, _| async { panic!("V1 negotiation cannot read a package") }
+        ))
+        .await,
+        Err(StoreError::Domain(
+            domain::DomainError::CapabilityUnavailable("target_package_version")
+        ))
+    ));
     assert!(matches!(
         Box::pin(store.claim_handoff(
             operator,
@@ -86,6 +103,14 @@ pub(super) async fn check(
     );
     assert_eq!(a.resource.handoff.state, HandoffStateV1::Claimed);
     assert_eq!(a.resource.package.release_id, offer.release_id);
+    assert_eq!(
+        a.resource.package.package_schema_version,
+        contracts::strategy_portfolio::TargetPackageVersionV2::V2
+    );
+    assert_eq!(
+        a.resource.package.source_kind,
+        contracts::delivery::ForecastReleaseSourceV2::ForecastEvaluation
+    );
     assert_eq!(
         a.resource.handoff.external_claim_id.as_deref(),
         Some("claim-original")
@@ -278,7 +303,7 @@ async fn expiry(
                 configuration: DownstreamConfigurationV1 {
                     name: "Expiry protocol fixture".into(),
                     endpoint: "https://expiry.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Paper,
                     enabled: true,
                     development_http: false,
@@ -311,7 +336,7 @@ async fn expiry(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper],
                     market_capability_versions: vec![original.market_capability_version.clone()],
                     accepting_targets: true,
@@ -465,7 +490,7 @@ async fn expiry(
     let request = HandoffClaimV1 {
         schema_version: SchemaV1,
         external_claim_id: "expiry-claim".into(),
-        package_schema_version: PackageSchemaVersion::V1,
+        package_schema_version: PackageSchemaVersion::V2,
     };
     if scenario == "competing-claims" {
         let rival = HandoffClaimV1 {

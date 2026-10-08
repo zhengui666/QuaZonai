@@ -1,0 +1,312 @@
+//! Explicitly selected disposable HTTP/PG + original native Sandbox bridge.
+//! Reuses the component fixture's Strategy; contains no second execution engine.
+use super::*;
+use anyhow::{Result, anyhow, ensure};
+use contracts::{
+    account_observation::{AccountObservationReceiptV2, AccountObservationSubmitV2},
+    control::CommandResult,
+};
+use job::capital_exit_transport::CapitalExitOwnerTransport;
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Input {
+    origin: String,
+    token: String,
+    browser_cookie: String,
+    project: Id,
+    registered: PathBuf,
+    result: PathBuf,
+}
+async fn browser<T: DeserializeOwned>(
+    input: &Input,
+    http: &reqwest::Client,
+    path: &str,
+    key: &str,
+    body: &impl serde::Serialize,
+) -> Result<CommandResult<T>> {
+    let reply = http
+        .post(format!("{}{path}", input.origin))
+        .header("origin", &input.origin)
+        .header("cookie", &input.browser_cookie)
+        .header("Idempotency-Key", key)
+        .json(body)
+        .send()
+        .await?;
+    ensure!(
+        reply.status().is_success(),
+        "controlled_browser_status:{}",
+        reply.status().as_u16()
+    );
+    Ok(reply.json().await?)
+}
+async fn command(state: &Rc<RefCell<State>>, value: Command) -> Result<()> {
+    ensure!(state.borrow().command.is_none(), "controlled_command_busy");
+    state.borrow_mut().command = Some(value);
+    get_data_event_sender().send(DataEvent::Data(Data::Quote(quote())))?;
+    wait(state, || state.borrow().command.is_none()).await
+}
+async fn wait(state: &Rc<RefCell<State>>, ready: impl Fn() -> bool) -> Result<()> {
+    let end = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !ready() {
+        if let Some(error) = &state.borrow().error {
+            return Err(anyhow!(error.clone()));
+        }
+        ensure!(
+            tokio::time::Instant::now() < end,
+            "controlled_native_outcome_timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if let Some(error) = &state.borrow().error {
+        return Err(anyhow!(error.clone()));
+    }
+    Ok(())
+}
+async fn relay(
+    input: &Input,
+    http: &reqwest::Client,
+    owner: &NativeCapitalExitOwner,
+    path: &Path,
+    consumed: &mut usize,
+    latest: &mut Option<(Id, Id)>,
+) -> Result<()> {
+    let bytes = std::fs::read(path)?;
+    let complete = bytes
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(&[][..], |i| &bytes[..=i]);
+    for line in complete.split_inclusive(|b| *b == b'\n').skip(*consumed) {
+        let original: AccountObservationSubmitV2 = serde_json::from_slice(line)?;
+        let response = http
+            .post(format!(
+                "{}/api/v2/forward/client-account-observations",
+                input.origin
+            ))
+            .bearer_auth(&input.token)
+            .json(&original)
+            .send()
+            .await?;
+        ensure!(
+            response.status().is_success(),
+            "original_observation_intake_status:{}",
+            response.status().as_u16()
+        );
+        let mut registrations = response
+            .headers()
+            .get_all("x-qz-capital-exit-source")
+            .iter();
+        let registered = registrations
+            .next()
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| anyhow!("native_owner_registration_missing"))?
+            .to_owned();
+        ensure!(
+            registrations.next().is_none(),
+            "native_owner_registration_duplicate"
+        );
+        let receipt: AccountObservationReceiptV2 = response.json().await?;
+        ensure!(
+            registered == receipt.resource.source_id.to_string(),
+            "native_owner_registration_mismatch"
+        );
+        let observed = owner.bind_authenticated_source(&receipt)?;
+        if receipt.resource.observation.snapshot.is_some() {
+            *latest = Some((receipt.resource.source_id, observed));
+        }
+        *consumed += 1;
+    }
+    Ok(())
+}
+async fn post_latest(
+    owner_http: &CapitalExitOwnerTransport,
+    state: &Rc<RefCell<State>>,
+) -> Result<CapitalExitViewV1> {
+    let original = state
+        .borrow()
+        .evidence
+        .last()
+        .cloned()
+        .ok_or_else(|| anyhow!("native_evidence_absent"))?;
+    let first = owner_http.submit_evidence(&original).await?;
+    // Exercise exact retained replay, not another synthetic event/financial act.
+    let replay = owner_http.submit_evidence(&original).await?;
+    ensure!(
+        replay.replayed
+            && replay.resource.id == first.resource.id
+            && replay.resource.revision == first.resource.revision,
+        "native_evidence_replay_mismatch"
+    );
+    Ok(first.resource)
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires the explicitly selected disposable Server/PG fixture on stdin"]
+async fn real_http_capital_exit_uses_original_sandbox_events() {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(64 * 1024)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    let input: Input = serde_json::from_slice(&bytes).expect("controlled pipeline input");
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let owner_http = CapitalExitOwnerTransport::new(&input.origin, input.token.as_bytes()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let sandbox = SandboxExecutionClientConfig {
+        account_id: AccountId::from(ACCOUNT),
+        venue: Venue::from("QZEXIT"),
+        starting_balances: vec![Money::from("100 USDC")],
+        base_currency: Some(Currency::USDC()),
+        account_type: AccountType::Cash,
+        ..Default::default()
+    };
+    let mut node = LiveNode::builder(TraderId::from(ACCOUNT), Environment::Sandbox)
+        .unwrap()
+        .with_logging(LoggerConfig {
+            bypass_logging: true,
+            ..Default::default()
+        })
+        .with_load_state(false)
+        .with_save_state(false)
+        .with_reconciliation(false)
+        .with_timeout_connection(2)
+        .with_timeout_portfolio(2)
+        .with_delay_post_stop_secs(0)
+        .with_delay_shutdown_secs(0)
+        .with_portfolio_config(PortfolioConfig {
+            snapshot_interval_ms: Some(20),
+            ..Default::default()
+        })
+        .add_simulated_exec_client(
+            Some(CLIENT.into()),
+            Box::new(SandboxExecutionClientFactory::new()),
+            Box::new(sandbox.clone()),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut instrument = binary_option();
+    instrument.id = InstrumentId::from(INSTRUMENT);
+    instrument.activation_ns = UnixNanos::from(1);
+    instrument.expiration_ns = UnixNanos::from(
+        (Utc::now() + ChronoDuration::hours(1))
+            .timestamp_nanos_opt()
+            .unwrap() as u64,
+    );
+    node.kernel()
+        .cache()
+        .borrow_mut()
+        .add_instrument(InstrumentAny::BinaryOption(instrument))
+        .unwrap();
+    let owner = Rc::new(
+        NativeCapitalExitOwner::attach_source_bound_sandbox(
+            &node,
+            SandboxCapitalOwnerBinding {
+                managed_account_key: "sandbox-physical-QZEXIT-001".into(),
+                owner_binding_ref: "controlled-owner-v1".into(),
+                account_source_id: None,
+                strategy_id: StrategyId::from(STRATEGY),
+                client_id: ClientId::from(CLIENT),
+                instrument_id: InstrumentId::from(INSTRUMENT),
+            },
+            &sandbox,
+            directory.path(),
+        )
+        .unwrap(),
+    );
+    let state = Rc::new(RefCell::new(State::default()));
+    node.add_strategy(FixtureStrategy {
+        core: StrategyCore::new(StrategyConfig {
+            strategy_id: Some(StrategyId::from(STRATEGY)),
+            ..Default::default()
+        }),
+        owner: owner.clone(),
+        state: state.clone(),
+        source_observation_id: Id::new(),
+        sequence: 0,
+    })
+    .unwrap();
+    let retained = directory.path().join("original-native.ndjson");
+    let observer = NativeNodeObserver::attach_client_bound(
+        &node,
+        input.project,
+        ClientId::from(CLIENT),
+        &retained,
+        1024,
+    )
+    .unwrap();
+    let handle = node.handle();
+    let cache = node.kernel().cache();
+    let mut consumed = 0;
+    let mut latest = None;
+    let drive = async {
+        let outcome=async{
+            wait(&state,||handle.is_running()).await?;
+            command(&state,Command::Seed).await?;
+            wait(&state,||state.borrow().fills.len()==1 && cache.borrow().order(&ClientOrderId::from("OPENING-ORDER")).is_some_and(|o|o.status()==OrderStatus::Accepted)).await?;
+            // Relay only native producer frames, including all original sequence
+            // numbers. Freeze intake briefly while admitting the immutable plan.
+            observer.heartbeat()?;tokio::time::sleep(Duration::from_millis(35)).await;
+            relay(&input,&http,&owner,&retained,&mut consumed,&mut latest).await?;
+            let (source,observation)=latest.ok_or_else(||anyhow!("native_source_observation_absent"))?;
+            wait(&state,||input.registered.is_file()).await?;
+            command(&state,Command::Observation(observation)).await?;
+            let request=request(source,observation);
+            let blocked:CommandResult<CapitalExitPreviewV1>=browser(&input,&http,&format!("/api/v2/projects/{}/capital-exit-previews",input.project),"original-blocked-preview",&request).await?;
+            ensure!(blocked.resource.capability==CapitalExitCapabilityV1::Blocked,"assessment_missing_must_block");
+            let pending=owner_http.pending_assessments(None).await?;
+            ensure!(pending.items.iter().any(|p|p.id==blocked.resource.id),"original_preview_not_routed_to_owner");
+            command(&state,Command::Assess(request.clone())).await?;
+            let assessment=state.borrow().assessment.clone().ok_or_else(||anyhow!("native_assessment_absent"))?;
+            ensure!(assessment.capability==CapitalExitCapabilityV1::Supported,"native_assessment_blocked:{:?}",assessment.reason_codes);
+            owner_http.submit_assessment(&assessment).await?;
+            let preview:CommandResult<CapitalExitPreviewV1>=browser(&input,&http,&format!("/api/v2/projects/{}/capital-exit-previews",input.project),"original-supported-preview",&request).await?;
+            ensure!(preview.resource.capability==CapitalExitCapabilityV1::Supported,"supported_preview_unavailable");
+            let start=CapitalExitStartV1{schema_version:SchemaV1,preview_id:preview.resource.id,expected_account_control_revision:preview.resource.expected_account_control_revision.ok_or_else(||anyhow!("control_revision_missing"))?,acknowledged_plan_artifact_id:preview.resource.plan_artifact_id,expected_source_observation_id:observation};
+            let started:CommandResult<CapitalExitViewV1>=browser(&input,&http,&format!("/api/v2/projects/{}/capital-exits",input.project),"start-once",&start).await?;
+            let replay:CommandResult<CapitalExitViewV1>=browser(&input,&http,&format!("/api/v2/projects/{}/capital-exits",input.project),"start-once",&start).await?;
+            ensure!(replay.replayed && replay.resource.id==started.resource.id,"start_replay_created_another_intent");
+            let pending=owner_http.pending_intents(None).await?;ensure!(pending.items.iter().any(|v|v.id==started.resource.id),"intent_not_routed_to_bound_owner");
+            let v=started.resource;
+            let claim=CapitalExitClaimV1{schema_version:SchemaV1,expected_revision:v.revision,command_id:v.command_id,account_control_epoch:v.account_control_epoch,account_source_id:source,owner_binding_ref:v.owner_binding_ref.clone(),external_claim_id:"original-http-native-claim".into()};
+            let mut view=owner_http.claim(v.id,"claim-original-command",&claim).await?.resource;
+            command(&state,Command::Fence(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
+            command(&state,Command::TryObsoleteTarget).await?;ensure!(state.borrow().obsolete_blocked,"obsolete_native_target_not_fenced");
+            command(&state,Command::Advance(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
+            wait(&state,||state.borrow().cancels.len()==1).await?;
+            command(&state,Command::Advance(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
+            wait(&state,||state.borrow().fills.len()==2).await?;
+            observer.heartbeat()?;tokio::time::sleep(Duration::from_millis(35)).await;
+            relay(&input,&http,&owner,&retained,&mut consumed,&mut latest).await?;
+            command(&state,Command::Observation(latest.unwrap().1)).await?;
+            command(&state,Command::Advance(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
+            command(&state,Command::Available(view.clone())).await?;view=post_latest(&owner_http,&state).await?;
+            ensure!(view.funds.withdrawability==CapitalExitWithdrawabilityV1::Simulated && view.funds.released_cash_amount.as_ref().is_some_and(|m|m.amount=="70".parse().unwrap()),"native_release_not_observed");
+            ensure!(view.state!=CapitalExitStateV1::Completed,"cash_release_is_not_withdrawal");
+            let position=cache.borrow().positions_open(None,None,None,Some(&AccountId::from(ACCOUNT)),None).into_iter().next().unwrap().clone();
+            ensure!(position.quantity==Quantity::from("60.00") && owner.gate().issued_order_ids().len()==1,"native_partial_reduction_or_identity_mismatch");
+            Ok::<Value,anyhow::Error>(json!({"intent":view,"source_id":source,"assessment":assessment,"native_position":position,"original_evidence":state.borrow().evidence,"original_fills":state.borrow().fills,"original_cancellations":state.borrow().cancels,"actual_execution":"OFFICIAL_SANDBOX_ONLY","withdrawal_performed":false}))
+        }.await;
+        handle.stop();
+        outcome
+    };
+    let (run, result) = tokio::join!(node.run_with_mode(NodeRunMode::Hosted), drive);
+    run.unwrap();
+    observer.finish().unwrap();
+    let result = result.unwrap();
+    relay(&input, &http, &owner, &retained, &mut consumed, &mut latest)
+        .await
+        .unwrap();
+    std::fs::write(&input.result, serde_json::to_vec(&result).unwrap()).unwrap();
+}

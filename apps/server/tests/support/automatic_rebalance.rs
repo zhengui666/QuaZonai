@@ -254,7 +254,7 @@ async fn deliver(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
                     market_capability_versions: vec![release.market_capability_version.clone()],
                     accepting_targets: true,

@@ -8,7 +8,7 @@ use contracts::{
 use domain::delivery::package_delivery;
 use sqlx::postgres::PgRow;
 
-fn view(row: &PgRow) -> Result<HandoffViewV1, StoreError> {
+pub(super) fn view(row: &PgRow) -> Result<HandoffViewV1, StoreError> {
     Ok(HandoffViewV1 {
         id: db::id(row.try_get("id")?)?,
         project_id: db::id(row.try_get("project_id")?)?,
@@ -29,7 +29,7 @@ fn view(row: &PgRow) -> Result<HandoffViewV1, StoreError> {
         acknowledged_at: row.try_get("acknowledged_at")?,
     })
 }
-async fn load(tx: &mut Tx<'_>, id: Id) -> Result<PgRow, StoreError> {
+pub(super) async fn load(tx: &mut Tx<'_>, id: Id) -> Result<PgRow, StoreError> {
     sqlx::query("SELECT h.*,c.project_id,c.id AS candidate_id,c.mandate_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1")
         .bind(id.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
 }
@@ -223,6 +223,7 @@ impl Store {
             db::json(request)?,
         )
         .await?;
+        release::require_v2(&mut tx, request.release_id).await?;
         if let Some(replay) = prepared.replay()? {
             tx.commit().await?;
             return Ok(replay);
@@ -271,6 +272,12 @@ impl Store {
         machine.project(original.project_id)?;
         if machine.downstream_id != Some(original.downstream_id) {
             return Err(StoreError::Forbidden);
+        }
+        release::require_v2(&mut tx, original.release_id).await?;
+        if request.package_schema_version != contracts::settings::PackageSchemaVersion::V2 {
+            return Err(
+                domain::DomainError::CapabilityUnavailable("target_package_version").into(),
+            );
         }
         // Match source admission and revocation: project, candidate, downstream, approval.
         sqlx::query("SELECT id FROM app.projects WHERE id=$1 FOR UPDATE")
@@ -338,8 +345,22 @@ impl Store {
         {
             return Err(StoreError::Invalid("claim_expiry"));
         }
-        sqlx::query("UPDATE app.handoff_offers SET state='CLAIMED',external_claim_id=$2,claimed_at=clock_timestamp() WHERE id=$1")
-            .bind(id.as_uuid()).bind(&request.external_claim_id).execute(&mut *tx).await?;
+        // Only a newly claimed explicit model initial condition records its
+        // authenticated claimant. Legacy/other claims keep their original shape.
+        let initial_credential = match &package {
+            TargetPackageEnvelopeV2::Forecast(package)
+                if package.current_weights.paper_initialization.is_some()
+                    && matches!(
+                        package.current_weights.source,
+                        PortfolioWeightsSourceV1::PaperInitialCapital { .. }
+                    ) =>
+            {
+                Some(machine.credential_id.as_uuid())
+            }
+            _ => None,
+        };
+        sqlx::query("UPDATE app.handoff_offers SET state='CLAIMED',external_claim_id=$2,claimed_at=clock_timestamp(),paper_claim_credential_id=$3 WHERE id=$1")
+            .bind(id.as_uuid()).bind(&request.external_claim_id).bind(initial_credential).execute(&mut *tx).await?;
         // SQL triggers record the transfer and may wait; expiry and credential checks
         // after the write still roll back state, transfer and receipt together.
         approvals::downstream_envelope(
@@ -558,7 +579,7 @@ impl Store {
         R: FnMut(Id, DbCounter) -> Read,
         Read: std::future::Future<Output = Result<Vec<u8>, StoreError>>,
     {
-        if request.package_schema_version != contracts::settings::PackageSchemaVersion::V1 {
+        if request.package_schema_version != contracts::settings::PackageSchemaVersion::V2 {
             return Err(
                 domain::DomainError::CapabilityUnavailable("target_package_version").into(),
             );
@@ -579,4 +600,3 @@ impl Store {
         })
     }
 }
-

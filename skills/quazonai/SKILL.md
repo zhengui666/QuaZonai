@@ -23,6 +23,8 @@ Use the current identity and delegated authority. Owner devices need no Operator
 | Find the project; inspect data, Brief, policy or execution readiness; prepare or submit research | [Research](references/research.md) |
 | Follow a Run, resume event observation or handle a cancellation request | [Runs](references/runs.md) |
 | Explain Alpha qualification, portfolio candidates, evaluation metrics or delivery status | [Results](references/results.md) |
+| Inspect original account sources, current state or history; relay already-produced native observations | [Account observations and transport](references/account-transport.md) |
+| Preview or control a partial managed-capital exit; inspect reserved cash or reconcile a manual withdrawal | [Capital exits](references/capital-exits.md) |
 | Timeout, unknown write outcome, conflict, denial, exhausted budget or incompatible response | [Recovery](references/recovery.md) |
 
 Discover only unfamiliar fields: the exact command's `--help`, one `quazonai openapi --schema NAME` for an HTTP request, `quazonai openapi --domain --schema NAME` for scientific artifact content, or the selected MCP schema. Report missing capabilities; do not invent endpoints or install a replacement client.
@@ -39,4 +41,4 @@ Discover only unfamiliar fields: the exact command's `--help`, one `quazonai ope
 
 Report **operation → resource IDs → observed state → evidence/qualification → remaining action**. Include an event cursor/observation bound when relevant; distinguish failure, running, unknown outcome and not attempted.
 
-Saved reports, successful execution, REAL data, evaluation PASS, approval and ACK are different facts. Claim only returned evidence. Target-only delivery implies no real orders, fills, positions or broker control. Never expose credentials, hidden reasoning, raw Sealed data or unrequested artifact contents.
+Saved reports, successful execution, REAL data, evaluation PASS, approval and ACK are different facts. Claim only returned evidence. Target-only delivery implies no real orders, fills, positions or broker control. The separate capital-exit workflow can request bounded native reductions from an explicitly supported owner; it never transfers or withdraws funds. Never expose credentials, hidden reasoning, raw Sealed data or unrequested artifact contents.

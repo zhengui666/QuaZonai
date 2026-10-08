@@ -107,7 +107,7 @@ async fn setup_with_release_and_limits(
                 configuration: contracts::settings::DownstreamConfigurationV1 {
                     name: "controlled feedback fixture".into(),
                     endpoint: "https://example.invalid".into(),
-                    accepted_package_versions: vec![contracts::settings::PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![contracts::settings::PackageSchemaVersion::V2],
                     environments: contracts::settings::DownstreamEnvironments::Both,
                     enabled: true,
                     development_http: false,

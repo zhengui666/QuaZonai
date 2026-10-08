@@ -149,6 +149,18 @@ pub(super) async fn complete(
         &slippage_references,
     )
     .unwrap();
+    let initial = matches!(
+        &request.current_weights.source,
+        PortfolioWeightsSourceV1::PaperInitialCapital { .. }
+    );
+    let mut target_weights = request.current_weights.weights.clone();
+    if initial {
+        // Controlled one-asset solver protocol for the new initial-capital test.
+        // Keep the mandate's original zero-cash constraint; do not weaken it to
+        // make an all-cash numerical result pass as an allocated portfolio.
+        assert_eq!(target_weights.len(), 1);
+        target_weights[0].weight = "1".parse().unwrap();
+    }
     let report = NativePortfolioBuildResultV1 {
         schema_version: SchemaV1,
         bar_notionals,
@@ -159,8 +171,12 @@ pub(super) async fn complete(
             schema_version: SchemaV1,
             solver_status: SolverStatus::Optimal,
             reason_code: None,
-            targets: Some(request.current_weights.weights.clone()),
-            cash_weight: Some(request.current_weights.cash_weight.clone()),
+            targets: Some(target_weights),
+            cash_weight: Some(if initial {
+                "0".parse().unwrap()
+            } else {
+                request.current_weights.cash_weight.clone()
+            }),
             iterations: 1,
             cvar_risk_budget_witness: None,
             objective_value: Some(0.0001),

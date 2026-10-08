@@ -62,6 +62,7 @@ pub fn request(input: &AllocationInputV1) -> NativePortfolioBuildRequestV1 {
         },
         current_weights_artifact_id: Id::new(),
         current_weights: PortfolioCurrentWeightsV1 {
+            paper_initialization: None,
             schema_version: SchemaV1,
             source: PortfolioWeightsSourceV1::LastTarget {
                 candidate_id: Id::new(),

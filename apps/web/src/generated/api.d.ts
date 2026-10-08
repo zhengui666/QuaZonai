@@ -517,6 +517,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/capital-exits/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_capital_exit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancel_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["claim_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_capital_exit_evidence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pause_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/reconcile-withdrawal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resume_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/codex/account": {
         parameters: {
             query?: never;
@@ -901,6 +1013,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/downstream/capital-exit-assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_capital_exit_assessment_requests"];
+        put?: never;
+        post: operations["submit_capital_exit_assessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/downstream/capital-exits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_downstream_capital_exits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/evaluation-policies": {
         parameters: {
             query?: never;
@@ -1249,6 +1393,23 @@ export interface paths {
         get: operations["get_forward_window"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/handoffs/{id}/paper-initial-execution/consume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Atomically consumes one explicit Paper model initialization. It never runs a host. */
+        post: operations["consume_paper_initial_execution"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2066,6 +2227,38 @@ export interface paths {
         get: operations["list_account_observations"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/capital-exit-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["preview_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/capital-exits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_capital_exits"];
+        put?: never;
+        post: operations["start_capital_exit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3067,7 +3260,312 @@ export interface components {
             target_artifact_id?: null | components["schemas"]["Id"];
         };
         /** @enum {string} */
-        CandidateWeightsSourceV1: "FORWARD_SNAPSHOT" | "LAST_TARGET" | "NONE";
+        CandidateWeightsSourceV1: "PAPER_INITIAL_CAPITAL" | "FORWARD_SNAPSHOT" | "LAST_TARGET" | "NONE";
+        CapitalExitActionV1: {
+            /** @enum {string} */
+            action: "PAUSE";
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "CANCEL";
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "RESUME";
+            expected_revision: components["schemas"]["Revision"];
+            preview_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "RECONCILE_WITHDRAWAL";
+            currency: string;
+            expected_revision: components["schemas"]["Revision"];
+            external_transfer_ref?: string | null;
+            schema_version: components["schemas"]["SchemaV1"];
+            user_reported_amount: components["schemas"]["DecimalValue"];
+        };
+        CapitalExitAssessmentReceiptV1: {
+            account_source_id: components["schemas"]["Id"];
+            artifact_id: components["schemas"]["Id"];
+            external_message_id: string;
+            id: components["schemas"]["Id"];
+            /** Format: date-time */
+            received_at: string;
+        };
+        /** @enum {string} */
+        CapitalExitAvailabilityBasisV1: "NATIVE_VENUE_AVAILABLE" | "CONTROLLED_SANDBOX";
+        /** @enum {string} */
+        CapitalExitCapabilityV1: "SUPPORTED" | "UNSUPPORTED" | "BLOCKED";
+        CapitalExitClaimV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_source_id: components["schemas"]["Id"];
+            command_id: components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            external_claim_id: string;
+            owner_binding_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CapitalExitCostLimitV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            reference_evidence_id: components["schemas"]["Id"];
+        };
+        CapitalExitEvidenceKindV1: {
+            controlled_strategy_ids: string[];
+            invalidated_child_timer_refs: string[];
+            invalidated_target_claim_refs: string[];
+            /** @enum {string} */
+            kind: "FENCE_APPLIED";
+            native_gate_report_ref: string;
+            remaining_target_authority_ref?: string | null;
+            remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+            resolved_inflight_report_ref: string;
+        } | {
+            /** @enum {string} */
+            kind: "NATIVE_PROGRESS";
+            native_order_refs: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            native_position_refs: string[];
+            native_report_ref: string;
+            phase: components["schemas"]["CapitalExitStateV1"];
+            reason_codes: string[];
+            released_cash_amount?: null | components["schemas"]["AccountMoneyV1"];
+        } | {
+            available_cash: components["schemas"]["AccountMoneyV1"];
+            basis: components["schemas"]["CapitalExitAvailabilityBasisV1"];
+            /** @enum {string} */
+            kind: "WITHDRAWABILITY_OBSERVED";
+            margin_report_ref: string;
+            native_availability_report_ref: string;
+            open_orders_report_ref: string;
+            settlement_report_ref: string;
+            venue: string;
+        } | {
+            after_observation_id: components["schemas"]["Id"];
+            amount: components["schemas"]["AccountMoneyV1"];
+            before_observation_id: components["schemas"]["Id"];
+            external_transfer_ref: string;
+            /** @enum {string} */
+            kind: "WITHDRAWAL_RECONCILED";
+            native_cash_movement_ref: string;
+            /** @description Already observed after the transfer; never subtract amount from it again. */
+            observed_managed_capital_after: components["schemas"]["AccountMoneyV1"];
+        };
+        CapitalExitFundsV1: {
+            /** Format: date-time */
+            evidence_asof?: string | null;
+            /** Format: date-time */
+            evidence_valid_until?: string | null;
+            reconciled_withdrawal_amount: components["schemas"]["AccountMoneyV1"];
+            released_cash_amount?: null | components["schemas"]["AccountMoneyV1"];
+            requested_amount: components["schemas"]["AccountMoneyV1"];
+            reserved_amount: components["schemas"]["AccountMoneyV1"];
+            unreleased_amount?: null | components["schemas"]["AccountMoneyV1"];
+            verified_withdrawable_amount?: null | components["schemas"]["AccountMoneyV1"];
+            withdrawability: components["schemas"]["CapitalExitWithdrawabilityV1"];
+        };
+        CapitalExitNativeOrderRefV1: {
+            native_client_order_id: string;
+            native_instrument_id: string;
+            native_strategy_id: string;
+            original_event_refs: string[];
+        };
+        /**
+         * @description Original owner-computed read-side assessment. Publishing this never starts an
+         *     exit or grants execution authority. The configured owner supplies native facts.
+         */
+        CapitalExitOwnerAssessmentV1: {
+            account_source_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            asof: string;
+            capability: components["schemas"]["CapitalExitCapabilityV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            expected_account_control_revision: components["schemas"]["Revision"];
+            external_message_id: string;
+            funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+            native_evidence: unknown;
+            native_report_ref: string;
+            owner_binding_ref: string;
+            proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            reason_codes: string[];
+            reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+            request: components["schemas"]["CapitalExitPreviewRequestV1"];
+            retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            sequence: components["schemas"]["DbCounter"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        CapitalExitOwnerCommandV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            command_id: components["schemas"]["Id"];
+            instruction: components["schemas"]["CapitalExitOwnerInstructionV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CapitalExitOwnerEvidenceV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_source_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            asof: string;
+            command_id: components["schemas"]["Id"];
+            evidence: components["schemas"]["CapitalExitEvidenceKindV1"];
+            external_claim_id: string;
+            external_message_id: string;
+            intent_id: components["schemas"]["Id"];
+            native_account_id: string;
+            /** @description Exact original report, retained immutably on intake. No server-synthesized ledger. */
+            native_evidence: unknown;
+            native_session_id: string;
+            original_event_refs: string[];
+            owner_binding_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            sequence: components["schemas"]["DbCounter"];
+            source_observation_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /**
+         * @description Original instruction for this exact owner command. A lifecycle phase alone
+         *     cannot recover the user's withdrawal report or authorize further reductions.
+         */
+        CapitalExitOwnerInstructionV1: {
+            /** @enum {string} */
+            action: "START";
+        } | {
+            /** @enum {string} */
+            action: "PAUSE";
+        } | {
+            /** @enum {string} */
+            action: "CANCEL";
+        } | {
+            /** @enum {string} */
+            action: "RESUME";
+        } | {
+            /** @enum {string} */
+            action: "RECONCILE_WITHDRAWAL";
+            currency: string;
+            external_transfer_ref?: string | null;
+            user_reported_amount: components["schemas"]["DecimalValue"];
+        };
+        CapitalExitPolicyV1: {
+            /** @enum {string} */
+            kind: "CASH_ONLY";
+        } | {
+            /** Format: date-time */
+            deadline: string;
+            /** @enum {string} */
+            kind: "BOUNDED_LIMIT";
+            legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            max_execution_cost: components["schemas"]["CapitalExitCostLimitV1"];
+        };
+        CapitalExitPreviewFundsV1: {
+            estimated_execution_cost?: null | components["schemas"]["AccountMoneyV1"];
+            estimated_release?: null | components["schemas"]["AccountMoneyV1"];
+            existing_unrealized_pnl?: null | components["schemas"]["AccountMoneyV1"];
+            managed_capital_before?: null | components["schemas"]["AccountMoneyV1"];
+            native_equity?: null | components["schemas"]["AccountMoneyV1"];
+            native_free_cash?: null | components["schemas"]["AccountMoneyV1"];
+            native_locked_cash?: null | components["schemas"]["AccountMoneyV1"];
+            native_total_cash?: null | components["schemas"]["AccountMoneyV1"];
+            remaining_managed_capital?: null | components["schemas"]["AccountMoneyV1"];
+            requested: components["schemas"]["AccountMoneyV1"];
+            verified_idle_cash?: null | components["schemas"]["AccountMoneyV1"];
+        };
+        CapitalExitPreviewRequestV1: {
+            account_source_id: components["schemas"]["Id"];
+            expected_source_observation_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+        };
+        CapitalExitPreviewV1: {
+            account_source_id: components["schemas"]["Id"];
+            capability: components["schemas"]["CapitalExitCapabilityV1"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            expected_account_control_revision?: null | components["schemas"]["Revision"];
+            funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+            id: components["schemas"]["Id"];
+            /** @description Resolved from trusted owner configuration, never from the request. */
+            managed_account_key?: string | null;
+            original_observation_id: components["schemas"]["Id"];
+            owner_binding_ref?: string | null;
+            plan_artifact_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            project_id: components["schemas"]["Id"];
+            proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            reason_codes: string[];
+            reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+            retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        CapitalExitReductionLegV1: {
+            instrument_id: string;
+            maximum_reduction_quantity: components["schemas"]["DecimalValue"];
+            minimum_sell_price: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        CapitalExitRemainingTradingV1: "FENCED_PENDING_TARGET" | "BUDGET_AWARE";
+        CapitalExitScopeV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            /** @enum {string} */
+            kind: "AMOUNT";
+        } | {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            /** @enum {string} */
+            kind: "PORTFOLIO_SCOPE";
+            release_ids: components["schemas"]["Id"][];
+            stream_ids: components["schemas"]["Id"][];
+        };
+        CapitalExitStartV1: {
+            acknowledged_plan_artifact_id: components["schemas"]["Id"];
+            expected_account_control_revision: components["schemas"]["Revision"];
+            expected_source_observation_id: components["schemas"]["Id"];
+            preview_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        CapitalExitStateV1: "REQUESTED" | "FENCING" | "CANCELLING_OPENERS" | "REDUCING" | "WAITING_EVIDENCE" | "PAUSED" | "CANCELLING_EXIT" | "CANCELLED_RESERVED" | "RECONCILING_WITHDRAWAL" | "COMPLETED" | "BLOCKED";
+        CapitalExitViewV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_control_revision: components["schemas"]["Revision"];
+            account_source_id: components["schemas"]["Id"];
+            /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+            command_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            external_claim_id?: string | null;
+            funds: components["schemas"]["CapitalExitFundsV1"];
+            id: components["schemas"]["Id"];
+            last_phase: components["schemas"]["CapitalExitStateV1"];
+            managed_account_key: string;
+            owner_binding_ref: string;
+            owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+            plan_artifact_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            preview_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            reason_codes: string[];
+            remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+            revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+            state: components["schemas"]["CapitalExitStateV1"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @enum {string} */
+        CapitalExitWithdrawabilityV1: "UNVERIFIED" | "VERIFIED" | "STALE" | "SIMULATED";
         CliDevice: {
             /** Format: date-time */
             created_at: string;
@@ -3321,6 +3819,81 @@ export interface components {
                 updated_at: string;
                 /** Format: int32 */
                 version: number;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_CapitalExitAssessmentReceiptV1: {
+            replayed: boolean;
+            resource: {
+                account_source_id: components["schemas"]["Id"];
+                artifact_id: components["schemas"]["Id"];
+                external_message_id: string;
+                id: components["schemas"]["Id"];
+                /** Format: date-time */
+                received_at: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_CapitalExitPreviewV1: {
+            replayed: boolean;
+            resource: {
+                account_source_id: components["schemas"]["Id"];
+                capability: components["schemas"]["CapitalExitCapabilityV1"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                expected_account_control_revision?: null | components["schemas"]["Revision"];
+                funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+                id: components["schemas"]["Id"];
+                /** @description Resolved from trusted owner configuration, never from the request. */
+                managed_account_key?: string | null;
+                original_observation_id: components["schemas"]["Id"];
+                owner_binding_ref?: string | null;
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                project_id: components["schemas"]["Id"];
+                proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                reason_codes: string[];
+                reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+                remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+                retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                /** Format: date-time */
+                valid_until: string;
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_CapitalExitViewV1: {
+            replayed: boolean;
+            resource: {
+                account_control_epoch: components["schemas"]["DbCounter"];
+                account_control_revision: components["schemas"]["Revision"];
+                account_source_id: components["schemas"]["Id"];
+                /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+                command_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                external_claim_id?: string | null;
+                funds: components["schemas"]["CapitalExitFundsV1"];
+                id: components["schemas"]["Id"];
+                last_phase: components["schemas"]["CapitalExitStateV1"];
+                managed_account_key: string;
+                owner_binding_ref: string;
+                owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                preview_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason_codes: string[];
+                remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+                revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                state: components["schemas"]["CapitalExitStateV1"];
+                /** Format: date-time */
+                updated_at: string;
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3803,6 +4376,35 @@ export interface components {
                 id: components["schemas"]["Id"];
                 operation: components["schemas"]["OperatorOperation"];
                 target_id: components["schemas"]["Id"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_PaperInitialExecutionViewV1: {
+            replayed: boolean;
+            /**
+             * @description Audit data only, never a serializable execution permit. Only the current
+             *     authenticated HTTP response with CommandResult.replayed=false may be checked
+             *     for an in-process, non-Clone one-use permit. Files/replays cannot mint one.
+             */
+            resource: {
+                /**
+                 * @description Original immutable HANDOFF_CLAIM receipt body. A new consumer uses these
+                 *     canonical target bytes, not an owner-edited local package with matching IDs.
+                 */
+                claim: components["schemas"]["HandoffClaimViewV2"];
+                /**
+                 * Format: date-time
+                 * @description Real server receipt time, never the model's historical initial cutoff.
+                 */
+                consumed_at: string;
+                /** @description Existing credential that claimed the target and consumed this attempt. */
+                consuming_credential_id: components["schemas"]["Id"];
+                owner_instance_id: components["schemas"]["Id"];
+                /** @description Resolved by Store from the original release, never supplied by the host. */
+                package_artifact_id: components["schemas"]["Id"];
+                paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+                schema_version: components["schemas"]["SchemaV1"];
+                state: components["schemas"]["PaperInitialExecutionStateV1"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -4356,17 +4958,6 @@ export interface components {
         DecimalValue: string;
         /** @enum {string} */
         Decision: "PASS" | "REJECT" | "INCONCLUSIVE";
-        /** @description Native observation only. This does not authorize approval or delivery. */
-        DownstreamCapabilitiesV1: {
-            accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
-            accepting_targets: boolean;
-            /** Format: date-time */
-            checked_at: string;
-            delivery_mode: components["schemas"]["DownstreamDeliveryModeV1"];
-            environments: components["schemas"]["ForwardEnvironmentV1"][];
-            market_capability_versions: string[];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
         DownstreamConfigurationV1: {
             accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
             development_http: boolean;
@@ -4376,7 +4967,14 @@ export interface components {
             name: string;
         };
         DownstreamCreate: {
-            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            configuration: {
+                accepted_package_versions: "2"[];
+                development_http: boolean;
+                enabled: boolean;
+                endpoint: string;
+                environments: components["schemas"]["DownstreamEnvironments"];
+                name: string;
+            };
             credential_ref: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -4385,7 +4983,17 @@ export interface components {
         /** @enum {string} */
         DownstreamEnvironments: "PAPER" | "LIVE" | "BOTH";
         DownstreamProbeOutcomeV1: {
-            capabilities: components["schemas"]["DownstreamCapabilitiesV1"];
+            /** @description Native observation only. This does not authorize approval or delivery. */
+            capabilities: {
+                accepted_package_versions: ("1" | "2")[];
+                accepting_targets: boolean;
+                /** Format: date-time */
+                checked_at: string;
+                delivery_mode: components["schemas"]["DownstreamDeliveryModeV1"];
+                environments: components["schemas"]["ForwardEnvironmentV1"][];
+                market_capability_versions: string[];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
             /** @enum {string} */
             status: "AVAILABLE";
         } | {
@@ -4414,7 +5022,7 @@ export interface components {
         DownstreamReadinessState: "NOT_CHECKED" | "DISABLED" | "STALE" | "UNAVAILABLE" | "AVAILABLE";
         DownstreamReadinessV1: {
             available_environments: components["schemas"]["ForwardEnvironmentV1"][];
-            available_package_versions: components["schemas"]["PackageSchemaVersion"][];
+            available_package_versions: components["schemas"]["TargetPackageVersionV2"][];
             downstream_id: components["schemas"]["Id"];
             integration_revision: components["schemas"]["Revision"];
             latest_observation?: null | components["schemas"]["DownstreamProbeViewV1"];
@@ -4422,7 +5030,14 @@ export interface components {
             state: components["schemas"]["DownstreamReadinessState"];
         };
         DownstreamUpdate: {
-            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            configuration: {
+                accepted_package_versions: "2"[];
+                development_http: boolean;
+                enabled: boolean;
+                endpoint: string;
+                environments: components["schemas"]["DownstreamEnvironments"];
+                name: string;
+            };
             credential_ref?: null | components["schemas"]["Id"];
             expected_revision: components["schemas"]["Revision"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -4444,6 +5059,7 @@ export interface components {
             cash_weight: components["schemas"]["DecimalValue"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
             external_message_id: string;
+            paper_initialization?: null | components["schemas"]["PaperInitializationRefV1"];
             project_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
             valid_until_ns: components["schemas"]["DbCounter"];
@@ -4797,6 +5413,67 @@ export interface components {
             field: string;
             message: string;
         };
+        /**
+         * @description All Build identities refer to the Candidate's original accepted Build, not its
+         *     later Study. Study evidence remains in evaluation_refs and provenance refs.
+         */
+        ForecastEvaluationSourceV2: {
+            build_accepted_attempt_id: components["schemas"]["Id"];
+            /** @description Original research Build fact; delivery still uses the approved Handoff environment. */
+            build_environment: components["schemas"]["ForwardEnvironmentV1"];
+            build_input_set_id: components["schemas"]["Id"];
+            build_parameters_artifact_id: components["schemas"]["Id"];
+            build_report_artifact_id: components["schemas"]["Id"];
+            build_run_id: components["schemas"]["Id"];
+            current_weights_artifact_id: components["schemas"]["Id"];
+            /** @description Original Build task Dataset, checked against its unique Forward binding. */
+            forward_dataset_revision_id: components["schemas"]["Id"];
+            forward_metadata_artifact_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Forecast qualification and evaluation remain distinct from native weight decisions.
+         * @enum {string}
+         */
+        ForecastReleaseSourceV2: "FORECAST_EVALUATION";
+        /** @description Version-two forecast target delivery. No caller-supplied account initialization. */
+        ForecastTargetPackageV2: {
+            /** Format: date-time */
+            asof: string;
+            base_currency: string;
+            candidate_id: components["schemas"]["Id"];
+            capital_assumption: components["schemas"]["DecimalValue"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            compatible_market_capabilities: string[];
+            constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
+            cost_assumption_ref: components["schemas"]["Id"];
+            /** @description Original Build weights, never a newly observed or fresh-cash account. */
+            current_weights: components["schemas"]["PortfolioCurrentWeightsV1"];
+            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
+            engine_versions: {
+                [key: string]: string;
+            };
+            environment_origin: components["schemas"]["PackageOriginV1"];
+            evaluation_refs: components["schemas"]["Id"][];
+            /** @description Original Build execution assumptions, not current downstream settings. */
+            execution_settings: components["schemas"]["NativeSimulationSettingsV1"];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            forward_dataset: components["schemas"]["FrozenForwardDatasetV2"];
+            input_revision_refs: components["schemas"]["Id"][];
+            limitations: string[];
+            mandate_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
+            project_id: components["schemas"]["Id"];
+            provenance_artifact_refs: components["schemas"]["Id"][];
+            qualification_refs: components["schemas"]["Id"][];
+            release_id: components["schemas"]["Id"];
+            source: components["schemas"]["ForecastEvaluationSourceV2"];
+            source_kind: components["schemas"]["ForecastReleaseSourceV2"];
+            targets: components["schemas"]["PackageTargetV1"][];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
         /** @enum {string} */
         ForecastUnit: "RETURN_PER_HORIZON" | "RESIDUAL_RETURN_PER_HORIZON" | "UNITLESS_SCORE";
         /** @enum {string} */
@@ -4902,6 +5579,32 @@ export interface components {
             execution_context: components["schemas"]["BriefExecutionContextV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        /**
+         * @description Claim-contained projection of the original registered Forward Dataset. It
+         *     contains only bounded metadata and complete original definition histories for
+         *     the frozen portfolio's assets, including zero targets and existing holdings.
+         *     No catalog locator, raw market rows, credentials or current eligibility is carried.
+         */
+        FrozenForwardDatasetV2: {
+            /** Format: date-time */
+            available_through: string;
+            data_kind: components["schemas"]["RuntimeDataKind"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            event_end: string;
+            /** Format: date-time */
+            event_start: string;
+            /** @description Original externally tagged Nautilus InstrumentAny values, never rewritten. */
+            instrument_definitions: unknown[];
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            partition: components["schemas"]["DataPartition"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            row_count: components["schemas"]["DbCounter"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            storage_version: string;
+        };
         FrozenSpotFeeRuleV1: {
             basis: components["schemas"]["SpotFeeBasisV1"];
             /** @description Bind to the untouched native currency definition, including precision. */
@@ -4978,7 +5681,7 @@ export interface components {
         };
         HandoffClaimV1: {
             external_claim_id: string;
-            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         HandoffClaimViewV2: {
@@ -6185,8 +6888,11 @@ export interface components {
         /** @enum {string} */
         OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "RECORDED_FEATURE_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "EXPERIMENT_EVALUATE" | "EXPERIMENT_ADOPT_ALPHA" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "CYCLE_START_EXTERNAL" | "CYCLE_FINISH_EXTERNAL" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
-        PackageOriginV1: "DEMO" | "REAL";
-        /** @enum {string} */
+        PackageOriginV1: "DEMO" | "REAL" | "SYNTHETIC";
+        /**
+         * @description Persisted release/configuration history may contain V1. Only V2 is deliverable.
+         * @enum {string}
+         */
         PackageSchemaVersion: "1" | "2";
         PackageTargetV1: {
             currency: string;
@@ -6337,6 +7043,69 @@ export interface components {
                 updated_at: string;
                 /** Format: int32 */
                 version: number;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_CapitalExitPreviewV1: {
+            items: {
+                account_source_id: components["schemas"]["Id"];
+                capability: components["schemas"]["CapitalExitCapabilityV1"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                expected_account_control_revision?: null | components["schemas"]["Revision"];
+                funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+                id: components["schemas"]["Id"];
+                /** @description Resolved from trusted owner configuration, never from the request. */
+                managed_account_key?: string | null;
+                original_observation_id: components["schemas"]["Id"];
+                owner_binding_ref?: string | null;
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                project_id: components["schemas"]["Id"];
+                proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                reason_codes: string[];
+                reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+                remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+                retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                /** Format: date-time */
+                valid_until: string;
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_CapitalExitViewV1: {
+            items: {
+                account_control_epoch: components["schemas"]["DbCounter"];
+                account_control_revision: components["schemas"]["Revision"];
+                account_source_id: components["schemas"]["Id"];
+                /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+                command_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                external_claim_id?: string | null;
+                funds: components["schemas"]["CapitalExitFundsV1"];
+                id: components["schemas"]["Id"];
+                last_phase: components["schemas"]["CapitalExitStateV1"];
+                managed_account_key: string;
+                owner_binding_ref: string;
+                owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                preview_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason_codes: string[];
+                remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+                revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                state: components["schemas"]["CapitalExitStateV1"];
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -7031,6 +7800,62 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        /**
+         * @description Consume one existing model-capital root for an original accepted Paper claim.
+         *     The caller cannot supply capital, targets, artifact locators or a receipt time.
+         */
+        PaperInitialExecutionConsumeV1: {
+            external_claim_id: string;
+            /**
+             * @description Newly generated by the current service process. Never restored from a
+             *     configuration, claim, journal or earlier execution receipt.
+             */
+            owner_instance_id: components["schemas"]["Id"];
+            paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+            release_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description An immutable attempt-consumption fact, not proof that a native engine started.
+         * @enum {string}
+         */
+        PaperInitialExecutionStateV1: "CONSUMED";
+        /**
+         * @description Audit data only, never a serializable execution permit. Only the current
+         *     authenticated HTTP response with CommandResult.replayed=false may be checked
+         *     for an in-process, non-Clone one-use permit. Files/replays cannot mint one.
+         */
+        PaperInitialExecutionViewV1: {
+            /**
+             * @description Original immutable HANDOFF_CLAIM receipt body. A new consumer uses these
+             *     canonical target bytes, not an owner-edited local package with matching IDs.
+             */
+            claim: components["schemas"]["HandoffClaimViewV2"];
+            /**
+             * Format: date-time
+             * @description Real server receipt time, never the model's historical initial cutoff.
+             */
+            consumed_at: string;
+            /** @description Existing credential that claimed the target and consumed this attempt. */
+            consuming_credential_id: components["schemas"]["Id"];
+            owner_instance_id: components["schemas"]["Id"];
+            /** @description Resolved by Store from the original release, never supplied by the host. */
+            package_artifact_id: components["schemas"]["Id"];
+            paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            state: components["schemas"]["PaperInitialExecutionStateV1"];
+        };
+        /**
+         * @description Immutable initialization lineage, not an account balance or execution ledger.
+         *     The artifact is the original initial-weights document. The scope deliberately
+         *     excludes project, mandate and session IDs, so those cannot reset capital.
+         */
+        PaperInitializationRefV1: {
+            account_id: string;
+            artifact_id: components["schemas"]["Id"];
+            downstream_id: components["schemas"]["Id"];
+            trader_id: string;
+        };
         PasswordChange: {
             current_password: string;
             new_password: string;
@@ -7101,6 +7926,12 @@ export interface components {
             candidate_id: components["schemas"]["Id"];
             /** @enum {string} */
             kind: "LAST_TARGET";
+        } | {
+            account_id: string;
+            downstream_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            kind: "PAPER_INITIAL_CAPITAL";
+            trader_id: string;
         };
         PortfolioCandidateEnvelopeV2: components["schemas"]["CandidateDetailV1"] | components["schemas"]["StrategyPortfolioCandidateV1"];
         /** @description List rows preserve the original flat forecast header, unlike detail responses. */
@@ -7130,6 +7961,7 @@ export interface components {
             available_ns: components["schemas"]["DbCounter"];
             base_currency: string;
             cash_weight: components["schemas"]["DecimalValue"];
+            paper_initialization?: null | components["schemas"]["PaperInitializationRefV1"];
             schema_version: components["schemas"]["SchemaV1"];
             source: components["schemas"]["PortfolioWeightsSourceV1"];
             valid_until_ns: components["schemas"]["DbCounter"];
@@ -7175,6 +8007,10 @@ export interface components {
             schema_version: components["schemas"]["SchemaV1"];
         };
         PortfolioWeightsSourceV1: {
+            account_start: components["schemas"]["FreshPaperCashV1"];
+            /** @enum {string} */
+            kind: "PAPER_INITIAL_CAPITAL";
+        } | {
             downstream_id: components["schemas"]["Id"];
             external_message_id: string;
             /** @enum {string} */
@@ -8080,39 +8916,7 @@ export interface components {
         };
         /** @enum {string} */
         TargetKind: "SCORE" | "EXPECTED_RETURN";
-        TargetPackageEnvelopeV2: components["schemas"]["TargetPackageV1"] | components["schemas"]["TargetPackageV2"];
-        TargetPackageV1: {
-            /** Format: date-time */
-            asof: string;
-            base_currency: string;
-            candidate_id: components["schemas"]["Id"];
-            capital_assumption: components["schemas"]["DecimalValue"];
-            cash_weight: components["schemas"]["DecimalValue"];
-            compatible_market_capabilities: string[];
-            constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
-            cost_assumption_ref: components["schemas"]["Id"];
-            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
-            engine_versions: {
-                [key: string]: string;
-            };
-            environment_origin: components["schemas"]["PackageOriginV1"];
-            evaluation_refs: components["schemas"]["Id"][];
-            exposure_tolerance: components["schemas"]["DecimalValue"];
-            input_revision_refs: components["schemas"]["Id"][];
-            limitations: string[];
-            mandate_id: components["schemas"]["Id"];
-            /** @enum {string} */
-            package_schema_version: "1";
-            project_id: components["schemas"]["Id"];
-            provenance_artifact_refs: components["schemas"]["Id"][];
-            qualification_refs: components["schemas"]["Id"][];
-            release_id: components["schemas"]["Id"];
-            targets: components["schemas"]["PackageTargetV1"][];
-            /** Format: date-time */
-            valid_from: string;
-            /** Format: date-time */
-            valid_until: string;
-        };
+        TargetPackageEnvelopeV2: components["schemas"]["ForecastTargetPackageV2"] | components["schemas"]["TargetPackageV2"];
         TargetPackageV2: {
             account_start: components["schemas"]["FreshPaperCashV1"];
             /** Format: date-time */
@@ -10437,6 +11241,529 @@ export interface operations {
             };
         };
     };
+    get_capital_exit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    cancel_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    claim_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitClaimV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_capital_exit_evidence: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitOwnerEvidenceV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    pause_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reconcile_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resume_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getCodexAccountObservation: {
         parameters: {
             query: {
@@ -12622,6 +13949,194 @@ export interface operations {
             };
         };
     };
+    list_capital_exit_assessment_requests: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitPreviewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_capital_exit_assessment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitOwnerAssessmentV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitAssessmentReceiptV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_downstream_capital_exits: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     evaluation_policies: {
         parameters: {
             query: {
@@ -13815,6 +15330,8 @@ export interface operations {
         responses: {
             201: {
                 headers: {
+                    /** @description Present only after deployment-opted-in Paper owner registration succeeds for this exact original source. Absent means no capital-exit registration acknowledgement; it is not funds readiness. */
+                    "x-qz-capital-exit-source"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -14395,6 +15912,92 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    consume_paper_initial_execution: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperInitialExecutionConsumeV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_PaperInitialExecutionViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18796,6 +20399,228 @@ export interface operations {
                 };
             };
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    preview_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitPreviewRequestV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitPreviewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_capital_exits: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitStartV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

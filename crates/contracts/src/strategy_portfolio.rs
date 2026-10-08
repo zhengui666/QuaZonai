@@ -445,23 +445,31 @@ pub struct TargetPackageV2 {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 #[serde(untagged)]
 pub enum TargetPackageEnvelopeV2 {
-    Forecast(Box<crate::delivery::TargetPackageV1>),
+    Forecast(Box<crate::delivery::ForecastTargetPackageV2>),
     TargetDecision(Box<TargetPackageV2>),
 }
 
 impl<'de> Deserialize<'de> for TargetPackageEnvelopeV2 {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
-        match value
+        if value
             .get("package_schema_version")
             .and_then(serde_json::Value::as_str)
+            != Some("2")
         {
-            Some("1") => serde_json::from_value(value).map(Self::Forecast),
-            Some("2") => serde_json::from_value(value).map(Self::TargetDecision),
+            return Err(serde::de::Error::custom(
+                "active target packages require version 2",
+            ));
+        }
+        match value.get("source_kind").and_then(serde_json::Value::as_str) {
+            Some("FORECAST_EVALUATION") => serde_json::from_value(value).map(Self::Forecast),
+            Some("NATIVE_TARGET_DECISION") => {
+                serde_json::from_value(value).map(Self::TargetDecision)
+            }
             _ => {
                 return Err(serde::de::Error::custom(
-                    "unsupported target package version",
-                ))
+                    "unsupported target package source kind",
+                ));
             }
         }
         .map_err(serde::de::Error::custom)

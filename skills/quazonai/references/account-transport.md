@@ -1,8 +1,36 @@
-# Relay an existing native account source
+# Inspect or relay an existing native account source
 
-This transports already-produced official Nautilus 0.63.0 snapshots or Q account envelopes. It does not launch a native node, subscribe to a venue, create credentials, send orders, or establish that a Paper/Live account is connected. Use only the existing authorized Downstream connection and its configured project/environment/account/session.
+Read original account observations before interpreting delivery. The transport
+below relays already-produced official Nautilus 0.63.0 snapshots or Q account
+envelopes. Neither inspection nor relay launches a native node, subscribes to a
+venue, creates credentials, sends orders or establishes a Paper/Live connection.
+
+## Inspect original account state
+
+Use the saved login or original authorized scoped [connection](connection.md).
+Arguments below follow `quazonai client`:
+
+| Question | Native arguments |
+| --- | --- |
+| Which original sources are registered? | `forward accounts sources PROJECT_ID --limit 20` |
+| What is this source's current connection and valuation? | `forward accounts current PROJECT_ID SOURCE_ID` |
+| What observations and gaps were retained? | `forward accounts history PROJECT_ID SOURCE_ID --limit 20` |
+
+Select `SOURCE_ID` from the returned source's `id`, checking its Downstream,
+project, environment, native trader/account and session binding. Matching display
+labels do not join sessions. Preserve pagination cursors and disclose partial
+history. Report connection freshness separately from valuation freshness;
+heartbeats and replayed receipts do not refresh a snapshot's valuation clock.
+Missing snapshots or PnL remain unavailable, not zero. Preserve separate
+currencies, stale/unpriced flags and dropped-event gaps. Account totals and
+balance changes are not a Release's or Alpha's strategy return; native realized
+PnL covers the retained session/cache, not the broker's lifetime history.
+Use [results](results.md) for experiment, candidate and target-delivery evidence.
 
 ## Retained native snapshots to envelopes
+
+Relay only through the existing authorized Downstream connection and its
+configured project/environment/account/session; a read does not authorize it.
 
 If the native host already exports official `PortfolioSnapshot` JSON, retain that original input. Each stream record must be one complete JSON object followed by a newline. On the machine with the native converter installed:
 
@@ -37,4 +65,5 @@ Follow waits at an incomplete final line; finite mode reports `CLI_ACCOUNT_STREA
 
 To continue a still-running native session in a new segment, explicitly supply its known sequence/drop cursor and use a new output path. Replay existing envelopes before converting more input; reconversion would give them new source observation clocks. A native-node restart or lost producer cursor requires a new native session binding and disclosure of the break. Missing native history cannot be recreated by this transport.
 
-Read back with `forward accounts sources PROJECT_ID`, then `forward accounts current PROJECT_ID SOURCE_ID` and `forward accounts history PROJECT_ID SOURCE_ID`. Preserve separate currencies, connection/valuation freshness and gaps. Account totals can span strategies; they do not establish a release's profit or full broker lifetime history. A synthetic stream test is not real-time Sandbox or Live acceptance.
+Read back through the same source/current/history procedure above. A synthetic
+stream test is not real-time Sandbox or Live acceptance.

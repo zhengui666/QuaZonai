@@ -23,7 +23,7 @@ pub(super) async fn check(
                 configuration: DownstreamConfigurationV1 {
                     name: "Approval protocol fixture".into(),
                     endpoint: "https://approval.example".into(),
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: DownstreamEnvironments::Both,
                     enabled: true,
                     development_http: false,
@@ -73,7 +73,7 @@ pub(super) async fn check(
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![PackageSchemaVersion::V1],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper, ForwardEnvironmentV1::Live],
                     market_capability_versions: vec![release.market_capability_version.clone()],
                     accepting_targets: true,
@@ -85,6 +85,45 @@ pub(super) async fn check(
         .await
         .unwrap()
         .resource;
+    for case in ["source", "dataset", "version"] {
+        let rejected = Box::pin(store.approve_release(
+            actor,
+            &format!("approval-v2-tampered-{case}"),
+            release.id,
+            &request,
+            |id, size| async move {
+                let bytes = f.read(id, size).await?;
+                if id != release.package_artifact_id {
+                    return Ok(bytes);
+                }
+                let mut package: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                match case {
+                    "source" => {
+                        package["source"]["forward_dataset_revision_id"] =
+                            serde_json::json!(Id::new())
+                    }
+                    "dataset" => {
+                        package["forward_dataset"]["native_metadata_artifact_id"] =
+                            serde_json::json!(Id::new())
+                    }
+                    "version" => package["package_schema_version"] = serde_json::json!("1"),
+                    _ => unreachable!(),
+                }
+                let changed = serde_json::to_vec(&package).unwrap();
+                assert_eq!(
+                    changed.len(),
+                    bytes.len(),
+                    "read-size check is not the rejection under test"
+                );
+                Ok(changed)
+            },
+        ))
+        .await;
+        assert!(
+            matches!(rejected, Err(StoreError::Integrity)),
+            "{case}: {rejected:?}"
+        );
+    }
     let mut live = request.clone();
     live.environment = ForwardEnvironmentV1::Live;
     let rejected = Box::pin(store.approve_release(

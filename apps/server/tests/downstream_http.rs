@@ -40,7 +40,7 @@ async fn runtime_allowlist_never_authorizes_downstream_network_and_invalid_beare
     let cookie = confirmed.cookie.unwrap();
     let secret=browser(&f,&cookie,"secret","/api/v2/settings/credentials",json!({"intent":{"schema_version":1,"purpose":"DOWNSTREAM","label":"Unavailable native fixture"},"value":"disposable-downstream-credential"})).await;
     assert_eq!(secret.status, StatusCode::CREATED);
-    let downstream=browser(&f,&cookie,"config","/api/v2/integrations/downstreams",json!({"schema_version":1,"credential_ref":secret.body["resource"]["id"],"configuration":{"name":"Denied downstream","endpoint":"https://downstream.example","accepted_package_versions":["1"],"environments":"BOTH","enabled":true,"development_http":false}})).await;
+    let downstream=browser(&f,&cookie,"config","/api/v2/integrations/downstreams",json!({"schema_version":1,"credential_ref":secret.body["resource"]["id"],"configuration":{"name":"Denied downstream","endpoint":"https://downstream.example","accepted_package_versions":["2"],"environments":"BOTH","enabled":true,"development_http":false}})).await;
     assert_eq!(downstream.status, StatusCode::CREATED);
     let path = format!(
         "/api/v2/integrations/downstreams/{}/probe",
@@ -76,7 +76,7 @@ async fn native_cli_probe_uses_exact_grant_and_rolls_back_failed_artifact_public
     let app=Router::new().route("/downstream/v1/capabilities",get(move |headers:HeaderMap| {
         count.fetch_add(1,Ordering::SeqCst);
         assert!(headers[header::AUTHORIZATION]==format!("Bearer {SECRET}"),"fixture bearer mismatch");
-        async {Json(json!({"schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["1"],"environments":["PAPER","LIVE"],"market_capability_versions":["fixture/1"],"accepting_targets":true,"checked_at":chrono::Utc::now()}))}
+        async {Json(json!({"schema_version":1,"delivery_mode":"TARGET_ONLY","accepted_package_versions":["2"],"environments":["PAPER","LIVE"],"market_capability_versions":["fixture/1"],"accepting_targets":true,"checked_at":chrono::Utc::now()}))}
     }));
     let remote = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
     let f = support::fixture(pool.clone()).await;
@@ -90,7 +90,7 @@ async fn native_cli_probe_uses_exact_grant_and_rolls_back_failed_artifact_public
     let actor = store::authority::Actor::Browser {
         login_id: login.to_string().try_into().unwrap(),
     };
-    let request:DownstreamCreate=serde_json::from_value(json!({"schema_version":1,"credential_ref":secret.body["resource"]["id"],"configuration":{"name":"Native fixture","endpoint":endpoint,"accepted_package_versions":["1"],"environments":"PAPER","enabled":true,"development_http":true}})).unwrap();
+    let request:DownstreamCreate=serde_json::from_value(json!({"schema_version":1,"credential_ref":secret.body["resource"]["id"],"configuration":{"name":"Native fixture","endpoint":endpoint,"accepted_package_versions":["2"],"environments":"PAPER","enabled":true,"development_http":true}})).unwrap();
     let vault = SecretVault::open(
         &f._state.path().join("secrets"),
         &f._state.path().join("master.key"),

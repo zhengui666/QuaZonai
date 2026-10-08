@@ -173,6 +173,7 @@ pub fn portfolio_costs(
 }
 
 pub fn portfolio_build_request(request: &NativePortfolioBuildRequestV1) -> Result<(), DomainError> {
+    crate::portfolio::paper_weights_source(request)?;
     selection(&request.selection)?;
     portfolio_settings(
         &request.mandate,

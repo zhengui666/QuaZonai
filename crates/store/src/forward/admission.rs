@@ -48,8 +48,18 @@ async fn header(
     tx: &mut Transaction<'_, Postgres>,
     handoff: Id,
 ) -> Result<sqlx::postgres::PgRow, StoreError> {
-    sqlx::query("SELECT h.release_id,h.downstream_id,c.project_id,c.mandate_id,a.runtime_id,a.limits AS candidate_limits FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.run_admissions a ON a.run_id=c.run_id JOIN app.handoff_transfers transfer ON transfer.handoff_id=h.id AND transfer.downstream_id=h.downstream_id AND transfer.external_claim_id=h.external_claim_id AND transfer.claimed_at=h.claimed_at WHERE h.id=$1 AND h.state IN ('CLAIMED','ACKNOWLEDGED') AND r.environment='REAL' AND transfer.provenance='RECORDED_TRANSITION'")
-        .bind(handoff.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)
+    let row = sqlx::query("SELECT h.release_id,h.downstream_id,c.project_id,c.mandate_id,a.runtime_id,a.limits AS candidate_limits,r.environment AS delivery_origin FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id JOIN app.run_admissions a ON a.run_id=c.run_id JOIN app.handoff_transfers transfer ON transfer.handoff_id=h.id AND transfer.downstream_id=h.downstream_id AND transfer.external_claim_id=h.external_claim_id AND transfer.claimed_at=h.claimed_at WHERE h.id=$1 AND h.state IN ('CLAIMED','ACKNOWLEDGED') AND transfer.provenance='RECORDED_TRANSITION'")
+        .bind(handoff.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(StoreError::NotFound)?;
+    if row.try_get::<String, _>("delivery_origin")? != "REAL" {
+        let origin: Option<String> = sqlx::query_scalar("SELECT app.forward_delivery_origin($1)")
+            .bind(handoff.as_uuid())
+            .fetch_one(&mut **tx)
+            .await?;
+        if origin.as_deref() != Some("SYNTHETIC") {
+            return Err(StoreError::Invalid("forward_paper_root"));
+        }
+    }
+    Ok(row)
 }
 async fn current_policy(
     tx: &mut Transaction<'_, Postgres>,
@@ -173,6 +183,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         let original = header(&mut tx, handoff).await?;
+        let origin: DataOrigin = db::enum_value(&original, "delivery_origin")?;
         let source_ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM app.forward_messages WHERE handoff_id=$1 AND stream_id=$2 ORDER BY sequence,message_revision LIMIT 256")
             .bind(handoff.as_uuid()).bind(stream).fetch_all(&mut *tx).await?;
         if source_ids.len() > 255 {
@@ -253,8 +264,8 @@ impl Store {
         let size = bytes.len() as u64;
         let mut bindings = Vec::new();
         for source in &request.sources {
-            let row=sqlx::query("SELECT byte_count,storage_version FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='REPORT' AND schema_name='qz.forward_report' AND schema_version='1' AND access_class='EVALUATOR_ONLY' AND origin='REAL' AND storage_backend='LOCAL' AND storage_object_ref=id::text")
-                .bind(source.report_artifact_id.as_uuid()).bind(project.as_uuid()).fetch_one(&mut *tx).await?;
+            let row=sqlx::query("SELECT byte_count,storage_version FROM app.artifacts WHERE id=$1 AND project_id=$2 AND kind='REPORT' AND schema_name='qz.forward_report' AND schema_version='1' AND access_class='EVALUATOR_ONLY' AND origin=$3 AND storage_backend='LOCAL' AND storage_object_ref=id::text")
+                .bind(source.report_artifact_id.as_uuid()).bind(project.as_uuid()).bind(db::code(&origin)?).fetch_one(&mut *tx).await?;
             bindings.push(RuntimeInputV1::Artifact {
                 artifact_id: source.report_artifact_id,
                 storage_version: row.try_get("storage_version")?,
@@ -268,8 +279,8 @@ impl Store {
             bytes,
         })
         .await?;
-        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY','REAL','OPERATOR','AUDIT')")
-            .bind(parameter.as_uuid()).bind(project.as_uuid()).bind(parameter.to_string()).bind(size as i64).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO app.artifacts(id,project_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,'PARAMETERS','application/json','qz.native_task','1','LOCAL',$3,'1',$4,'EVALUATOR_ONLY',$5,'OPERATOR','AUDIT')")
+            .bind(parameter.as_uuid()).bind(project.as_uuid()).bind(parameter.to_string()).bind(size as i64).bind(db::code(&origin)?).execute(&mut *tx).await?;
         crate::research::insert_frozen_input(
             &mut tx,
             input,
@@ -322,7 +333,7 @@ impl Store {
                 cpu: 1,
                 capability_snapshot_artifact_id: db::id(capability)?,
                 output_schemas: schemas,
-                origin: DataOrigin::Real,
+                origin,
                 access: ArtifactAccess::EvaluatorOnly,
             },
         )
