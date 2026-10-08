@@ -54,6 +54,19 @@ fn await_mission_operation<'a, T: 'a>(
     reconciling: bool,
     operation: impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a,
 ) -> impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a {
+    await_mission_operation_with_check(reconciling, operation, move || async move {
+        Ok(store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel)
+    })
+}
+
+fn await_mission_operation_with_check<'a, T: 'a, Check>(
+    reconciling: bool,
+    operation: impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a,
+    mut stop_requested: impl FnMut() -> Check + 'a,
+) -> impl std::future::Future<Output = Result<T, WorkerFailure>> + 'a
+where
+    Check: std::future::Future<Output = Result<bool, WorkerFailure>> + 'a,
+{
     // Allocate before constructing the guard future: otherwise the native
     // bootstrap is embedded in both the initial and awaiting async states,
     // multiplying the callers' poll frames even when their futures are boxed.
@@ -63,15 +76,21 @@ fn await_mission_operation<'a, T: 'a>(
         if reconciling {
             return operation.await;
         }
-        loop {
-            tokio::select! {
-                result = &mut operation => return result,
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                    if store.mission_job(run, fence).await?.lease.action == NextRuntimeAction::Cancel {
-                        return Err(WorkerFailure::LostAuthority);
-                    }
+        let stopped = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                if stop_requested().await? {
+                    return Err(WorkerFailure::LostAuthority);
                 }
             }
+        };
+        // A check may wait for a project lock held by the operation. Keep both
+        // futures polled until one completes; awaiting the check inside a timer
+        // branch would suspend the only operation that can release that lock.
+        tokio::select! {
+            biased;
+            result = stopped => result,
+            result = &mut operation => result,
         }
     }
 }
@@ -728,6 +747,155 @@ async fn issue(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct DropFlag<'a>(&'a std::sync::atomic::AtomicBool);
+
+    impl Drop for DropFlag<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn mission_guard_polls_operation_while_authority_waits_for_its_lock() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let lock = tokio::sync::Mutex::new(());
+        let check_started = tokio::sync::Notify::new();
+        let check_dropped = AtomicBool::new(false);
+        let operation = async {
+            let held = lock.lock().await;
+            check_started.notified().await;
+            drop(held);
+            Ok(42)
+        };
+        let guarded = await_mission_operation_with_check(false, operation, || async {
+            let _drop = DropFlag(&check_dropped);
+            check_started.notify_one();
+            let _held = lock.lock().await;
+            Ok(false)
+        });
+
+        let result = tokio::time::timeout(Duration::from_secs(2), guarded)
+            .await
+            .expect("authority lock wait stopped polling the operation that releases the lock")
+            .unwrap();
+        assert_eq!(result, 42);
+        assert!(check_dropped.load(Ordering::SeqCst));
+        assert!(
+            lock.try_lock().is_ok(),
+            "the pending check must be dropped with the guard"
+        );
+    }
+
+    #[tokio::test]
+    async fn mission_guard_drops_pending_operation_when_stop_is_committed() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dropped = AtomicBool::new(false);
+        let operation = async {
+            let _drop = DropFlag(&dropped);
+            std::future::pending::<Result<(), WorkerFailure>>().await
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            await_mission_operation_with_check(false, operation, || async { Ok(true) }),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(WorkerFailure::LostAuthority)));
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn mission_guard_prefers_committed_stop_when_operation_also_becomes_ready() {
+        let stop_committed = tokio::sync::Notify::new();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            await_mission_operation_with_check(
+                false,
+                async {
+                    stop_committed.notified().await;
+                    Ok(())
+                },
+                || async {
+                    stop_committed.notify_one();
+                    Ok(true)
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(WorkerFailure::LostAuthority)));
+    }
+
+    #[tokio::test]
+    async fn mission_guard_preserves_authority_errors_and_drops_operation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dropped = AtomicBool::new(false);
+        let operation = async {
+            let _drop = DropFlag(&dropped);
+            std::future::pending::<Result<(), WorkerFailure>>().await
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            await_mission_operation_with_check(false, operation, || async {
+                Err(WorkerFailure::TaskKind)
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(WorkerFailure::TaskKind)));
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn mission_guard_drop_cancels_operation_and_pending_authority_check() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let operation_dropped = AtomicBool::new(false);
+        let check_dropped = AtomicBool::new(false);
+        let check_started = tokio::sync::Notify::new();
+        let guarded = await_mission_operation_with_check(
+            false,
+            async {
+                let _drop = DropFlag(&operation_dropped);
+                std::future::pending::<Result<(), WorkerFailure>>().await
+            },
+            || async {
+                let _drop = DropFlag(&check_dropped);
+                check_started.notify_one();
+                std::future::pending::<Result<bool, WorkerFailure>>().await
+            },
+        );
+        let finished = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::pin!(guarded);
+            tokio::select! {
+                result = &mut guarded => panic!("pending guard unexpectedly completed: {result:?}"),
+                _ = check_started.notified() => {},
+            }
+        })
+        .await;
+        assert!(finished.is_ok());
+        assert!(operation_dropped.load(Ordering::SeqCst));
+        assert!(check_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn mission_guard_keeps_reconciliation_operation_without_a_stop_check() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            await_mission_operation_with_check(
+                true,
+                async {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    Ok(42)
+                },
+                || async { panic!("reconciliation must retain its existing direct-await path") },
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result, 42);
+    }
 
     #[test]
     fn mission_bootstrap_guard_does_not_inline_the_native_operation() {
