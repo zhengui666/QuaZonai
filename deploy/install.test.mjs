@@ -11,6 +11,10 @@ const guide = await readFile(join(bundle, 'README.md'), 'utf8');
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 const operations = await readFile(new URL('../.opensdlc/operations.md', import.meta.url), 'utf8');
 const documents = [readme, guide, operations];
+// macOS CLI/bootstrap support must exercise the system Bash 3.2 even when a
+// newer CI-only Bash is supplied for the simulated Linux stack prerequisites.
+const nativeBash = '/bin/bash';
+const linuxStackBash = process.env.QUAZONAI_TEST_LINUX_BASH || nativeBash;
 const bundleFiles = ['manage.sh', 'json.awk', 'codex.sh', 'deploy.sh', 'update.sh', 'compose.yaml',
   'release.json', 'README.md', 'codex-update.sh', 'codex-login.sh', 'runtime.sh', 'codex.apparmor', '.env.example'];
 const releaseAssets = ['install.sh', 'install.ps1', 'release.json', 'quazonai-deploy.tar.gz', 'README.md',
@@ -71,6 +75,7 @@ async function releaseFixture(t, { system = 'Linux', architecture = 'x86_64', bo
   const commands = join(root, 'commands');
   const source = join(root, 'source');
   for (const path of [home, assets, commands, source]) await mkdir(path);
+  await symlink(nativeBash, join(commands, 'bash'));
   const version = 'v2.0.0-dev.20260928123456.100';
   const script = join(root, 'install.sh');
   const template = await readFile(new URL('./install.sh', import.meta.url), 'utf8');
@@ -126,7 +131,9 @@ fi
     TEST_VERSION: version, TEST_ASSETS: assets, TEST_SYSTEM: system, TEST_ARCH: architecture,
     TEST_COMMAND_LOG: join(root, 'commands.log'), TEST_MANAGER_LOG: join(root, 'manager.args'), TEST_BOOTSTRAP: script,
   };
-  const run = (args = [], extraEnv = {}) => spawnSync('bash', [script, ...args], { encoding: 'utf8', timeout: 20_000, env: { ...env, ...extraEnv } });
+  const run = (args = [], extraEnv = {}) => spawnSync(
+    system === 'Linux' && !args.includes('--cli-only') ? linuxStackBash : nativeBash,
+    [script, ...args], { encoding: 'utf8', timeout: 20_000, env: { ...env, ...extraEnv } });
   const destination = join(home, '.local/bin/quazonai');
   const directory = join(home, 'custom stack');
   return { root, home, source, script, version, assets, archive, binary, destination, directory, env, run, packCli, packStack, release, catalog };
@@ -247,14 +254,20 @@ test('download failure after partial bytes never executes or replaces anything',
 test('documented one-line bootstrap forwards explicit version and custom paths then cleans up', async t => {
   const f = await releaseFixture(t, { bootstrap: true });
   const temporary = join(f.root, 'downloads'); await mkdir(temporary);
+  const witness = join(f.root, 'record-shell.sh');
+  const log = join(f.root, 'shell-version');
+  await writeFile(witness, 'printf "%s\\n" "$BASH_VERSION" >> "$TEST_SHELL_LOG"\n');
   const command = readme.split('\n').find(line => line.startsWith("sh -c '") && line.includes('curl'));
   const result = spawnSync('sh', ['-c', command + ' --cli-only --version "$TEST_VERSION" --bin-dir "$HOME/custom bin"'], {
-    encoding: 'utf8', env: { ...f.env, TMPDIR: temporary },
+    encoding: 'utf8', env: { ...f.env, TMPDIR: temporary, BASH_ENV: witness, TEST_SHELL_LOG: log },
   });
   installed(result);
   assert.equal(await readFile(join(f.home, 'custom bin/quazonai'), 'utf8'), f.binary);
   assert.deepEqual(await readdir(temporary), []);
   assert.doesNotMatch(await readFile(f.env.TEST_COMMAND_LOG, 'utf8'), /api.github.com|FORBIDDEN/);
+  const versions = (await readFile(log, 'utf8')).trimEnd().split('\n');
+  assert.ok(versions.length > 0);
+  assert.deepEqual([...new Set(versions)], [succeeds(nativeBash, ['-c', 'printf "%s" "$BASH_VERSION"'])]);
 });
 
 test('latest bootstrap chooses newest complete dev release independently of publication order', async t => {
@@ -289,6 +302,41 @@ test('explicit versions skip release discovery even from raw bootstrap', async t
   const f = await releaseFixture(t, { bootstrap: true });
   await f.catalog('invalid JSON'); installed(f.run(['--cli-only', '--version', f.version]));
   assert.doesNotMatch(await readFile(f.env.TEST_COMMAND_LOG, 'utf8'), /api.github.com/);
+});
+
+test('CLI catalog fixtures use native Bash while Linux stack fixtures use their declared runtime', async t => {
+  const nativeVersion = succeeds(nativeBash, ['-c', 'printf "%s" "$BASH_VERSION"']);
+  if (process.platform === 'darwin') assert.match(nativeVersion, /^3\.2\./);
+  for (const [system, architecture, args] of [
+    ['Linux', 'x86_64', ['--cli-only']], ['Darwin', 'x86_64', []], ['Darwin', 'arm64', []],
+    ['Linux', 'x86_64', []],
+  ]) {
+    const f = await releaseFixture(t, { system, architecture, bootstrap: true });
+    const witness = join(f.root, 'record-shell.sh');
+    const log = join(f.root, 'shell-version');
+    await writeFile(witness, 'if [ "$0" = "$TEST_BOOTSTRAP" ]; then printf "%s" "$BASH_VERSION" > "$TEST_SHELL_LOG"; fi\n');
+    installed(f.run(args, { BASH_ENV: witness, TEST_SHELL_LOG: log }));
+    const expected = system === 'Linux' && args.length === 0
+      ? succeeds(linuxStackBash, ['-c', 'printf "%s" "$BASH_VERSION"']) : nativeVersion;
+    assert.equal(await readFile(log, 'utf8'), expected);
+  }
+});
+
+test('bootstrap rejects raw and escaped NUL without replacing the installed CLI', async t => {
+  const f = await releaseFixture(t, { system: 'Darwin', architecture: 'arm64', bootstrap: true });
+  installed(f.run());
+  const previous = await readFile(f.destination);
+  const valid = JSON.stringify([f.release()]);
+  for (const value of [
+    '\0' + valid, valid + '\0', valid.replace('tag_name', 'tag_\0name'),
+    valid.replace('tag_name', 'tag_\\u0000name'), valid.replace(f.version, f.version + '\\u0000'),
+  ]) {
+    await f.catalog(value);
+    const failure = f.run();
+    assert.notEqual(failure.status, 0);
+    assert.match(failure.stderr, /Invalid release catalog/);
+    assert.deepEqual(await readFile(f.destination), previous);
+  }
 });
 
 test('malformed or unrelated pending state is preserved and rejected before manager runs', async t => {

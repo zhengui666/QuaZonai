@@ -73,6 +73,10 @@ trap 'rm -rf -- "$work"; if [ -n "$staged" ]; then rm -f -- "$staged"; fi' EXIT
 # This standalone parser must be available before the versioned bundle exists.
 # It parses the whole JSON document, rejects duplicate keys and never evaluates data.
 json_read() {
+  # BSD awk strings cannot retain NUL: sprintf("%c",0) is empty there.
+  # Check file bytes in Bash before awk can silently discard them.
+  local prefix
+  if IFS= read -r -d '' prefix < "$2"; then return 1; fi
   LC_ALL=C awk -v mode="$1" -v field="${3:-}" '
   function bad() { failed=1; exit 2 }
   function ws() { while (substr(s,p,1) ~ /^[ \t\r\n]$/) p++ }
@@ -82,6 +86,7 @@ json_read() {
     p+=4; return n
   }
   function utf8(n) {
+    if(n==0) bad() # A decoded NUL must not disappear from keys or shell values.
     if(n<128) return sprintf("%c",n)
     if(n<2048) return sprintf("%c%c",192+int(n/64),128+n%64)
     if(n<65536) return sprintf("%c%c%c",224+int(n/4096),128+int(n/64)%64,128+n%64)
@@ -169,7 +174,6 @@ json_read() {
   { s=s $0 "\n" }
   END {
     if(failed) exit 2
-    if(index(s,sprintf("%c",0))) bad()
     p=1; root=parse(); ws(); if(p<=length(s)) bad()
     if(mode=="field") {
       if(kind[root]!="object") bad(); node=prop(root,field)
