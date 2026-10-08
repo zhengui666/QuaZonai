@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -46,7 +46,20 @@ struct Proxy {
     http: reqwest::Client,
     attempts: Arc<Mutex<Vec<Attempt>>>,
     active: Arc<AtomicUsize>,
+    trace: Arc<Mutex<Option<std::fs::File>>>,
 }
+// Independent failure evidence only. No headers, stdin, token or configuration
+// enter this trace. A broken diagnostic sink must not change the business result.
+fn trace(proxy: &Proxy, value: Value) {
+    if let Ok(mut file) = proxy.trace.lock() {
+        if let Some(file) = file.as_mut() {
+            if let Err(error) = writeln!(file, "{value}") {
+                eprintln!("paper_http_trace_write_failed:{error}");
+            }
+        }
+    }
+}
+
 struct InFlight(Arc<AtomicUsize>);
 impl Drop for InFlight {
     fn drop(&mut self) {
@@ -61,12 +74,17 @@ async fn forward(
     use axum::{body::Body, http::StatusCode};
     proxy.active.fetch_add(1, Ordering::SeqCst);
     let _in_flight = InFlight(proxy.active.clone());
+    let requested_at = chrono::Utc::now();
     let method = request.method().clone();
     let path = request.uri().to_string();
     let headers = request.headers().clone();
     let body = axum::body::to_bytes(request.into_body(), 8 * 1024 * 1024)
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    trace(
+        &proxy,
+        json!({"event":"request", "at":requested_at, "method":method.as_str(), "path":path, "body":String::from_utf8_lossy(&body)}),
+    );
     let mut outgoing = proxy
         .http
         .request(method.clone(), format!("{}{path}", proxy.origin));
@@ -81,13 +99,22 @@ async fn forward(
         .body(body.to_vec())
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|error| {
+            trace(&proxy, json!({"event":"transport_failed", "at":chrono::Utc::now(), "requested_at":requested_at, "method":method.as_str(), "path":path, "timeout":error.is_timeout(), "connect":error.is_connect()}));
+            StatusCode::BAD_GATEWAY
+        })?;
     let status = upstream.status();
     let mut response_headers = upstream.headers().clone();
     let original = upstream
         .bytes()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    // Preserve the original successful OR rejected reply before the deliberate
+    // test-only response loss. This also survives a later fixture timeout.
+    trace(
+        &proxy,
+        json!({"event":"response", "at":chrono::Utc::now(), "requested_at":requested_at, "method":method.as_str(), "path":path, "status":status.as_u16(), "body":String::from_utf8_lossy(&original)}),
+    );
     let mut returned = original.to_vec();
     if method == axum::http::Method::POST
         || (method == axum::http::Method::GET
@@ -108,6 +135,10 @@ async fn forward(
         let withheld =
             kind.filter(|kind| !attempts.iter().any(|a| a.withheld.as_deref() == Some(kind)));
         if let Some(kind) = withheld {
+            trace(
+                &proxy,
+                json!({"event":"withheld", "at":chrono::Utc::now(), "requested_at":requested_at, "method":method.as_str(), "path":path, "kind":kind}),
+            );
             if kind == "registration_header" {
                 // Native source must stay unbound after a real accepted intake
                 // whose registration acknowledgement did not reach the caller.
@@ -506,6 +537,15 @@ async fn run(input: Input) -> Result<()> {
         http: http.clone(),
         attempts: Arc::new(Mutex::new(Vec::new())),
         active: Arc::new(AtomicUsize::new(0)),
+        trace: Arc::new(Mutex::new(
+            match std::fs::File::create(input.result.with_extension("http.ndjson")) {
+                Ok(file) => Some(file),
+                Err(error) => {
+                    eprintln!("paper_http_trace_create_failed:{error}");
+                    None
+                }
+            },
+        )),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -525,7 +565,7 @@ async fn run(input: Input) -> Result<()> {
         input.token.as_bytes(),
     )?;
     let poller = crate::paper_capital_exit::Poller::new(transport, sender, root.clone());
-    let (status, _) =
+    let (status, status_receiver) =
         tokio::sync::watch::channel(crate::paper_service::PaperStatus::idle_with_profile(
             crate::paper_service::PaperProfile::Polymarket,
         ));
@@ -609,6 +649,7 @@ async fn run(input: Input) -> Result<()> {
             let bootstrap = supported_preview(&input, &http, &proxy, "bootstrap").await?;
             // Stop creating preview requests. The original accepted assessment
             // must not be emitted forever from its still-discoverable receipt.
+            trace(&proxy, json!({"event":"await_observation_after_assessment", "at":chrono::Utc::now(), "preview_id":bootstrap.id, "original_observation_id":bootstrap.original_observation_id}));
             wait("assessed_preview_must_not_starve_original_observation", || latest_receipt(&proxy).is_some_and(|r|r.resource.id != bootstrap.original_observation_id)).await?;
             let preview = supported_preview(&input, &http, &proxy, "start-fresh").await?;
             ensure!(preview.funds.estimated_execution_cost.as_ref().is_some_and(|m| m.amount.is_positive()), "official_fee_bound_missing");
@@ -784,6 +825,12 @@ async fn run(input: Input) -> Result<()> {
             ensure!(withheld_fence_checked.get(),"missing_observation_window_for_ambiguous_fence");
             Ok::<Value,anyhow::Error>(json!({"scenario":input.scenario,"actual_execution":"PRODUCTION_POLLER_ORIGINAL_PAPER_ENGINE_FIXTURE","scientific_qualification":"NOT_ASSESSED","full_serve_host_exercised":false,"withdrawal_performed":false,"seeded":seeded,"final_native":native_snapshot(&fixture.borrow()),"intent":final_view,"silence":silence,"late_resume":late_resume,"bootstrap_preview":bootstrap}))
         }.await;
+        if let Err(error) = &result {
+            trace(
+                &proxy,
+                json!({"event":"scenario_failed", "at":chrono::Utc::now(), "error":error.to_string(), "poller_reason":status_receiver.borrow().reason_code}),
+            );
+        }
         done.set(true);
         result
     };

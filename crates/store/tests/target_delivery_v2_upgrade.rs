@@ -15,6 +15,24 @@ use store::{authority::Actor, Store, StoreError};
 
 const CUTOVER: i64 = 202610070002;
 
+async fn upgrade_after_shutdown(pool: PgPool) -> PgPool {
+    // Deployment stops API/Worker before the standalone migration command, then
+    // starts fresh processes. Old SELECT r.*/h.* prepared plans cannot survive
+    // additive columns in later migrations. Preserve the same test database and
+    // SQLx pool options, including its shared connection limit and normal cache.
+    let options = pool.options().clone();
+    let connection_options = pool.connect_options().as_ref().clone();
+    pool.close().await;
+    let migrations = options
+        .clone()
+        .connect_with(connection_options.clone())
+        .await
+        .unwrap();
+    Store::from_pool(migrations.clone()).migrate().await.unwrap();
+    migrations.close().await;
+    options.connect_with(connection_options).await.unwrap()
+}
+
 async fn historical_release(
     pool: &PgPool,
     f: &support::Fixture,
@@ -269,7 +287,9 @@ async fn real_upgrade_preserves_v1_history_and_retires_active_receipt_replays(po
         json!({"schema_version":1,"handoff_id":claimed,"request":{"schema_version":1,"external_claim_id":"historical-claim","package_schema_version":"1"}}),
         json!({"handoff":store.handoff(&actor, claimed).await.unwrap(),"package":serde_json::from_slice::<Value>(&claimed_bytes).unwrap()})).await;
     let before = snapshot(&pool).await;
-    store.migrate().await.unwrap();
+    drop(store);
+    let pool = upgrade_after_shutdown(pool).await;
+    let store = Store::from_pool(pool.clone());
     assert!(
         sqlx::query_scalar::<_, bool>("SELECT success FROM _sqlx_migrations WHERE version=$1")
             .bind(CUTOVER)
@@ -469,6 +489,7 @@ async fn real_upgrade_preserves_v1_history_and_retires_active_receipt_replays(po
     );
     assert_eq!(std::fs::read(path).unwrap(), bytes);
     assert_eq!(std::fs::read(claimed_path).unwrap(), claimed_bytes);
+    pool.close().await;
 }
 
 #[sqlx::test(migrations = false)]
@@ -502,7 +523,9 @@ async fn historical_probe_versions_stay_readable_but_only_v2_is_currently_delive
             .bind(downstream.as_uuid()).bind(artifact.as_uuid()).bind(now).bind(&outcome).execute(&pool).await.unwrap();
         examples.push((downstream, versions, outcome));
     }
-    store.migrate().await.unwrap();
+    drop(store);
+    let pool = upgrade_after_shutdown(pool).await;
+    let store = Store::from_pool(pool.clone());
     for (downstream, versions, original) in examples {
         let readiness = store
             .downstream_readiness(&actor, downstream)
@@ -530,4 +553,5 @@ async fn historical_probe_versions_stay_readable_but_only_v2_is_currently_delive
             );
         }
     }
+    pool.close().await;
 }

@@ -1,7 +1,7 @@
 //! Disposable real HTTP/PG launcher for the existing Job library Paper fixture.
 //! This does not run a public market host, a real account or the full Serve flow.
 use super::*;
-use std::{io::Write, process::Stdio, time::Duration};
+use std::{io::Write, time::Duration};
 
 const CHILD: &str = "polymarket_streaming_paper::capital_exit_tests::paper_service_acceptance::production_poller_uses_registered_original_paper_and_real_receipts";
 
@@ -57,7 +57,8 @@ async fn execute(pool: PgPool, scenario: &str) {
     let executable=std::env::var_os("QZ_PAPER_SERVICE_TEST_BINARY").map(std::path::PathBuf::from)
         .expect("provide this composed candidate's Cargo-reported job --lib native-paper-test executable");
     assert!(executable.is_absolute() && executable.is_file());
-    let child = tokio::process::Command::new(executable)
+    let started = tokio::time::Instant::now();
+    let mut child = tokio::process::Command::new(executable)
         .args([
             CHILD,
             "--exact",
@@ -68,31 +69,28 @@ async fn execute(pool: PgPool, scenario: &str) {
         .current_dir(directory.path())
         .env_clear()
         .stdin(std::fs::File::open(input.path()).unwrap())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(std::fs::File::create(directory.path().join("stdout.log")).unwrap())
+        .stderr(std::fs::File::create(directory.path().join("stderr.log")).unwrap())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let output = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output())
-        .await
-        .expect("Paper Poller/PG fixture deadline")
-        .unwrap();
-    if !output.status.success() {
-        let diagnostic = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        )
-        .replace(&a.token, "[REDACTED]")
-        .replace(&a.browser_cookie, "[REDACTED]");
-        let mut begin = diagnostic.len().saturating_sub(8000);
-        while !diagnostic.is_char_boundary(begin) {
-            begin += 1;
-        }
+    let execution = tokio::time::timeout(Duration::from_secs(90), child.wait()).await;
+    if !matches!(&execution, Ok(Ok(status)) if status.success()) {
+        let _ = child.kill().await;
+        let status = child.try_wait();
+        let diagnostic = super::capital_exit_bridge_diagnostics::failure(
+            directory.path(),
+            &format!("capital-poller-{scenario}"),
+            &[&a.token, &a.browser_cookie],
+            &[
+                "stdout.log",
+                "stderr.log",
+                "paper-poller-result.http.ndjson",
+            ],
+        );
         panic!(
-            "Paper Poller {scenario} fixture failed {}: {}",
-            output.status,
-            &diagnostic[begin..]
+            "Paper Poller {scenario} fixture failed: {execution:?}; child_status={status:?}; elapsed_ms={}; {diagnostic}",
+            started.elapsed().as_millis()
         );
     }
     let result: Value = serde_json::from_slice(&std::fs::read(result_path).unwrap()).unwrap();

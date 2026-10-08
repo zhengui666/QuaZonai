@@ -965,7 +965,8 @@ async fn build_qualified_chain(
         .resource
         .header
         .id;
-    let mut next = request;
+    // Keep the original request paired with the original Candidate returned below.
+    let mut next = request.clone();
     next.input_set_id = input;
     next.current_weights_source = PortfolioBuildWeightsV1::LastTarget {
         candidate_id: candidate,
@@ -1497,7 +1498,7 @@ async fn build_qualified_chain(
         )
     );
     store.acknowledge_run(&message).await.unwrap();
-    Some((store, actor, f, next, candidate, directory))
+    Some((store, actor, f, request, candidate, directory))
 }
 
 async fn study_admission(

@@ -982,3 +982,6 @@ mod paper_capital_exit_registration;
 
 #[path = "support/paper_service_acceptance.rs"]
 mod paper_service_acceptance;
+
+#[path = "support/capital_exit_bridge_diagnostics.rs"]
+mod capital_exit_bridge_diagnostics;

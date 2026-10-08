@@ -84,6 +84,11 @@ async fn relay(
         .map_or(&[][..], |i| &bytes[..=i]);
     for line in complete.split_inclusive(|b| *b == b'\n').skip(*consumed) {
         let original: AccountObservationSubmitV2 = serde_json::from_slice(line)?;
+        let requested_at = Utc::now();
+        eprintln!(
+            "native_intake_request {}",
+            json!({"at":requested_at,"record_index":*consumed,"observation":original})
+        );
         let response = http
             .post(format!(
                 "{}/api/v2/forward/client-account-observations",
@@ -93,27 +98,37 @@ async fn relay(
             .json(&original)
             .send()
             .await?;
-        ensure!(
-            response.status().is_success(),
-            "original_observation_intake_status:{}",
-            response.status().as_u16()
-        );
-        let mut registrations = response
+        let status = response.status();
+        let registrations: Vec<_> = response
             .headers()
             .get_all("x-qz-capital-exit-source")
-            .iter();
-        let registered = registrations
-            .next()
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| anyhow!("native_owner_registration_missing"))?
-            .to_owned();
+            .iter()
+            .map(|value| value.to_str().map(str::to_owned))
+            .collect();
+        let bytes = response.bytes().await;
+        // Deliberately log no authentication or response headers. The one
+        // registration fact needed for diagnosis is its presence/count, not raw
+        // header contents. Parent redacts known test secrets before publication.
+        eprintln!(
+            "native_intake_response {}",
+            json!({"at":Utc::now(),"requested_at":requested_at,"record_index":*consumed,"status":status.as_u16(),"registration_count":registrations.len(),"body":bytes.as_ref().ok().map(|bytes|String::from_utf8_lossy(bytes)),"body_read_failed":bytes.is_err()})
+        );
         ensure!(
-            registrations.next().is_none(),
+            status.is_success(),
+            "original_observation_intake_status:{}",
+            status.as_u16()
+        );
+        let registered = registrations
+            .first()
+            .and_then(|value| value.as_ref().ok())
+            .ok_or_else(|| anyhow!("native_owner_registration_missing"))?;
+        ensure!(
+            registrations.len() == 1,
             "native_owner_registration_duplicate"
         );
-        let receipt: AccountObservationReceiptV2 = response.json().await?;
+        let receipt: AccountObservationReceiptV2 = serde_json::from_slice(&bytes?)?;
         ensure!(
-            registered == receipt.resource.source_id.to_string(),
+            *registered == receipt.resource.source_id.to_string(),
             "native_owner_registration_mismatch"
         );
         let observed = owner.bind_authenticated_source(&receipt)?;
@@ -252,11 +267,15 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
     let mut latest = None;
     let drive = async {
         let outcome=async{
+            eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"wait_node_running"}));
             wait(&state,||handle.is_running()).await?;
+            eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"seed_original_sandbox"}));
             command(&state,Command::Seed).await?;
+            eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"wait_original_seed_outcomes"}));
             wait(&state,||state.borrow().fills.len()==1 && cache.borrow().order(&ClientOrderId::from("OPENING-ORDER")).is_some_and(|o|o.status()==OrderStatus::Accepted)).await?;
             // Relay only native producer frames, including all original sequence
             // numbers. Freeze intake briefly while admitting the immutable plan.
+            eprintln!("native_pipeline_stage {}",json!({"at":Utc::now(),"stage":"relay_original_observations"}));
             observer.heartbeat()?;tokio::time::sleep(Duration::from_millis(35)).await;
             relay(&input,&http,&owner,&retained,&mut consumed,&mut latest).await?;
             let (source,observation)=latest.ok_or_else(||anyhow!("native_source_observation_absent"))?;
@@ -298,6 +317,13 @@ async fn real_http_capital_exit_uses_original_sandbox_events() {
             ensure!(position.quantity==Quantity::from("60.00") && owner.gate().issued_order_ids().len()==1,"native_partial_reduction_or_identity_mismatch");
             Ok::<Value,anyhow::Error>(json!({"intent":view,"source_id":source,"assessment":assessment,"native_position":position,"original_evidence":state.borrow().evidence,"original_fills":state.borrow().fills,"original_cancellations":state.borrow().cancels,"actual_execution":"OFFICIAL_SANDBOX_ONLY","withdrawal_performed":false}))
         }.await;
+        if let Err(error) = &outcome {
+            let state = state.borrow();
+            eprintln!(
+                "native_pipeline_failure {}",
+                json!({"at":Utc::now(),"error":error.to_string(),"native_error":state.error,"original_fills":state.fills,"original_cancellations":state.cancels,"relayed_records":consumed})
+            );
+        }
         handle.stop();
         outcome
     };

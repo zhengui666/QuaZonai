@@ -1,7 +1,7 @@
 //! Disposable real Server/PG bridge to the same Job owner and official Sandbox.
 //! Explicit native executable only; no production executable or credential source.
 use super::*;
-use std::{io::Write, process::Stdio, time::Duration};
+use std::{io::Write, time::Duration};
 
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires this composed candidate's native capital-exit test executable"]
@@ -15,7 +15,10 @@ async fn capital_exit_http_releases_partial_cash_with_original_native_events(poo
     input.as_file().sync_all().unwrap();
     let executable=std::env::var_os("QZ_NATIVE_CAPITAL_EXIT_TEST_BINARY").map(std::path::PathBuf::from).expect("build the composed Job native_capital_exit test with native-paper-test,native-sandbox-test and supply its Cargo-reported executable");
     assert!(executable.is_absolute() && executable.is_file());
-    let child = tokio::process::Command::new(executable)
+    // Files retain original output even when registration fails before the
+    // child exits. A dropped wait_with_output future would discard both pipes.
+    let started = tokio::time::Instant::now();
+    let mut child = tokio::process::Command::new(executable)
         .args([
             "capital_exit_http_pipeline::real_http_capital_exit_uses_original_sandbox_events",
             "--exact",
@@ -26,8 +29,8 @@ async fn capital_exit_http_releases_partial_cash_with_original_native_events(poo
         .current_dir(directory.path())
         .env_clear()
         .stdin(std::fs::File::open(input.path()).unwrap())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(std::fs::File::create(directory.path().join("stdout.log")).unwrap())
+        .stderr(std::fs::File::create(directory.path().join("stderr.log")).unwrap())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
@@ -37,41 +40,51 @@ async fn capital_exit_http_releases_partial_cash_with_original_native_events(poo
             // Only the production authenticated intake hook may register this
             // actual source. The fixture observes it, never bypasses registration.
             let source=sqlx::query("SELECT s.id FROM app.native_account_sources s JOIN app.managed_capital_reservations r ON r.paper_account_source_id=s.id WHERE s.project_id=$1 AND s.downstream_id=$2 AND s.native_client_id='QZ-EXIT-SANDBOX' AND s.native_account_id='QZEXIT-001'")
-                .bind(a.project.as_uuid()).bind(a.downstream.as_uuid()).fetch_optional(&pool).await.unwrap();
+                .bind(a.project.as_uuid()).bind(a.downstream.as_uuid()).fetch_optional(&pool).await.map_err(|error| format!("native registration query failed: {error}"))?;
             if source.is_some() {
-                std::fs::write(&registered, b"{\"registered\":true}\n").unwrap();
+                std::fs::write(&registered, b"{\"registered\":true}\n").map_err(|error| {
+                    format!("native registration acknowledgement failed: {error}")
+                })?;
                 break;
             }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "original client-bound native source never reached HTTP intake"
-            );
+            if tokio::time::Instant::now() >= deadline {
+                return Err(
+                    "original client-bound native source never reached HTTP intake".to_owned(),
+                );
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        Ok::<(), String>(())
     };
-    let execution = async {
-        tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
-            .await
-            .expect("native HTTP fixture deadline")
-            .unwrap()
+    let registration = tokio::select! {
+        registration = registration => registration,
+        status = child.wait() => Err(format!("native child exited before source registration: {status:?}")),
     };
-    let ((), output) = tokio::join!(registration, execution);
-    // Test harness writes its one selected test result to stdout. On failure,
-    // redact the temporary API token before showing a bounded diagnostic tail.
-    if !output.status.success() {
-        let mut diagnostic = String::from_utf8_lossy(&output.stderr).into_owned();
-        diagnostic.push_str(&String::from_utf8_lossy(&output.stdout));
-        diagnostic = diagnostic
-            .replace(&a.token, "[REDACTED]")
-            .replace(&a.browser_cookie, "[REDACTED]");
-        let mut begin = diagnostic.len().saturating_sub(8000);
-        while !diagnostic.is_char_boundary(begin) {
-            begin += 1;
+    let execution = if let Err(error) = registration {
+        Err(error)
+    } else {
+        // Keep the original total 60-second execution deadline, including the
+        // registration wait; diagnostic capture does not extend either timeout.
+        match tokio::time::timeout_at(started + Duration::from_secs(60), child.wait()).await {
+            Ok(Ok(status)) if status.success() => Ok(()),
+            Ok(status) => Err(format!("native partial-exit fixture failed: {status:?}")),
+            Err(_) => Err("native HTTP fixture deadline".to_owned()),
         }
+    };
+    if let Err(error) = execution {
+        // Reap before reading file-backed output. A diagnostic failure must not
+        // replace the actual registration/execution failure above.
+        let _ = child.kill().await;
+        let status = child.try_wait();
+        let diagnostic = super::capital_exit_bridge_diagnostics::failure(
+            directory.path(),
+            "capital-native-http",
+            &[&a.token, &a.browser_cookie],
+            &["stdout.log", "stderr.log"],
+        );
         panic!(
-            "native partial-exit fixture failed {}: {}",
-            output.status,
-            &diagnostic[begin..]
+            "{error}; child_status={status:?}; elapsed_ms={}; {diagnostic}",
+            started.elapsed().as_millis()
         );
     }
     let result: Value = serde_json::from_slice(&std::fs::read(result).unwrap()).unwrap();
