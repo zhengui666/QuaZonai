@@ -104,6 +104,90 @@ pub(super) fn failure(phase: Phase, error: NativeFailure) -> NativeFailure {
     error
 }
 
+// Diagnostic classification only; the caller's original populated-zero
+// predicate remains authoritative. Duplicate keys take precedence over values.
+fn events_class(events: &str) -> &'static str {
+    if events.is_empty() {
+        return "empty";
+    }
+    let mut populated = events
+        .lines()
+        .filter(|line| line.split_ascii_whitespace().next() == Some("populated"));
+    let first = populated.next();
+    if populated.next().is_some() {
+        return "duplicate";
+    }
+    match first {
+        None => "missing",
+        Some("populated 0") => "zero",
+        Some("populated 1") => "one",
+        Some(_) => "invalid",
+    }
+}
+
+fn errno_class(error: &std::io::Error) -> &'static str {
+    #[cfg(target_os = "linux")]
+    match error.raw_os_error() {
+        Some(libc::ENOENT) => return "not-found",
+        Some(libc::ENODEV) => return "no-device",
+        Some(libc::EACCES) => return "access-denied",
+        Some(libc::EPERM) => return "not-permitted",
+        Some(libc::EIO) => return "io",
+        Some(libc::EINVAL) => return "invalid",
+        _ => (),
+    }
+    match error.raw_os_error() {
+        Some(_) => "other-os",
+        None => "no-os",
+    }
+}
+
+/// Failure-only projection of the existing read and observation. No rereads or
+/// external text; zero bytes with "unread" means no byte length was observed.
+pub(super) fn cgroup_failure(
+    events: std::result::Result<&str, &std::io::Error>,
+    stop_code: Option<i32>,
+    observed: &super::service::Observation,
+) -> NativeFailure {
+    let (phase, events_class, events_bytes, errno_class) = match events {
+        Ok(events) => (
+            Phase::StopCgroupPopulated,
+            events_class(events),
+            events.len(),
+            "none",
+        ),
+        Err(error) => (Phase::StopCgroupRead, "unread", 0, errno_class(error)),
+    };
+    tracing::warn!(
+        target: "quazonai::native_shutdown",
+        phase = phase.code(),
+        failure_class = class(NativeFailure::Unavailable),
+        events_class,
+        events_bytes,
+        errno_class,
+        stop_class = match stop_code {
+            Some(0) => "success",
+            Some(_) => "failure",
+            None => "no-code",
+        },
+        load_class = match observed.load.as_str() {
+            "masked" => FenceLoad::Masked,
+            "loaded" => FenceLoad::Loaded,
+            "not-found" => FenceLoad::NotFound,
+            _ => FenceLoad::Other,
+        }.code(),
+        active_class = match observed.active.as_str() {
+            "inactive" => "inactive",
+            "failed" => "failed",
+            _ => "other",
+        },
+        main_pid_zero = observed.main_pid == 0,
+        job_present = observed.job,
+        group_present = observed.group.is_some(),
+    );
+    NativeFailure::Unavailable
+}
+
 /// Closed classification only: unrecognized native strings become Other and are
 /// never copied into the event. This type carries no unit or resource identity.
 #[derive(Clone, Copy)]
@@ -187,6 +271,172 @@ mod tests {
             let mut fields = Fields(BTreeMap::new());
             event.record(&mut fields);
             self.0.lock().unwrap().push(fields.0);
+        }
+    }
+
+    fn cgroup_event(
+        input: std::result::Result<&str, &std::io::Error>,
+        stop_code: Option<i32>,
+        load: &str,
+        active: &str,
+        state: (u32, bool, bool),
+    ) -> BTreeMap<String, String> {
+        let (main_pid, job, group_present) = state;
+        let observed = super::super::service::Observation {
+            load: load.into(),
+            active: active.into(),
+            group: group_present.then(|| "/private-group/quazonai-mission-secret.service".into()),
+            invocation: "private-invocation".into(),
+            main_pid,
+            job,
+            fragment: "/private-fragment".into(),
+        };
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::registry().with(capture.clone());
+        tracing::subscriber::with_default(subscriber, || {
+            assert_eq!(
+                cgroup_failure(input, stop_code, &observed),
+                NativeFailure::Unavailable
+            );
+        });
+        let mut events = capture.0.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        let event = events.pop().unwrap();
+        assert_eq!(
+            event.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "active_class",
+                "errno_class",
+                "events_bytes",
+                "events_class",
+                "failure_class",
+                "group_present",
+                "job_present",
+                "load_class",
+                "main_pid_zero",
+                "phase",
+                "stop_class",
+            ]
+        );
+        assert_eq!(event["failure_class"], "Unavailable");
+        for secret in [
+            "private-group",
+            "quazonai-mission-secret",
+            "private-invocation",
+            "123456789",
+            "private-fragment",
+            "private-error",
+            "private-key",
+            "private-load",
+            "private-active",
+        ] {
+            assert!(!event.values().any(|value| value.contains(secret)));
+        }
+        event
+    }
+
+    #[test]
+    fn cgroup_events_diagnostics_classify_only_existing_bytes() {
+        for (input, expected) in [
+            ("", "empty"),
+            ("populated 0\nfrozen 1\n", "zero"),
+            ("populated 1\nfrozen 0\n", "one"),
+            ("frozen 0\nprivate-key private-value\n", "missing"),
+            ("\n", "missing"),
+            ("populated 1\npopulated 1\n", "duplicate"),
+            ("populated 0\npopulated 1\n", "duplicate"),
+            ("populated 2\npopulated 0\n", "duplicate"),
+            ("populated\n", "invalid"),
+            ("populated 10\n", "invalid"),
+            (" populated 1\n", "invalid"),
+            ("populated\t1\n", "invalid"),
+            ("populated 1 extra\n", "invalid"),
+            ("private-key 值\npopulated 1\n", "one"),
+        ] {
+            let event = cgroup_event(Ok(input), Some(0), "masked", "inactive", (0, false, false));
+            assert_eq!(event["phase"], "stop.cgroup-populated");
+            assert_eq!(event["events_class"], expected, "{input:?}");
+            assert_eq!(event["events_bytes"], input.len().to_string());
+            assert_eq!(event["errno_class"], "none");
+        }
+    }
+
+    #[test]
+    fn cgroup_read_diagnostics_keep_errors_distinct_from_events() {
+        let error = std::io::Error::other("private-error /private-group");
+        let event = cgroup_event(Err(&error), None, "not-found", "failed", (0, false, false));
+        assert_eq!(event["phase"], "stop.cgroup-read");
+        assert_eq!(event["errno_class"], "no-os");
+        assert_eq!(event["events_class"], "unread");
+        assert_eq!(event["events_bytes"], "0");
+
+        #[cfg(target_os = "linux")]
+        for (errno, expected) in [
+            (libc::ENOENT, "not-found"),
+            (libc::ENODEV, "no-device"),
+            (libc::EACCES, "access-denied"),
+            (libc::EPERM, "not-permitted"),
+            (libc::EIO, "io"),
+            (libc::EINVAL, "invalid"),
+            (libc::EBUSY, "other-os"),
+        ] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let event = cgroup_event(
+                Err(&error),
+                Some(1),
+                "loaded",
+                "inactive",
+                (123456789, true, true),
+            );
+            assert_eq!(event["phase"], "stop.cgroup-read");
+            assert_eq!(event["errno_class"], expected);
+            assert_eq!(event["events_class"], "unread");
+            assert_eq!(event["events_bytes"], "0");
+        }
+    }
+
+    #[test]
+    fn cgroup_context_diagnostics_use_closed_states_and_booleans() {
+        for (stop_code, stop_class) in [
+            (Some(0), "success"),
+            (Some(17), "failure"),
+            (Some(-1), "failure"),
+            (None, "no-code"),
+        ] {
+            for (load, load_class) in [
+                ("masked", "masked"),
+                ("loaded", "loaded"),
+                ("not-found", "not-found"),
+                ("private-load", "other"),
+            ] {
+                for (active, active_class) in [
+                    ("inactive", "inactive"),
+                    ("failed", "failed"),
+                    ("private-active", "other"),
+                ] {
+                    for (main_pid, job, group_present) in [
+                        (0, false, false),
+                        (123456789, false, false),
+                        (0, true, false),
+                        (0, false, true),
+                        (123456789, true, true),
+                    ] {
+                        let event = cgroup_event(
+                            Ok("populated 1\n"),
+                            stop_code,
+                            load,
+                            active,
+                            (main_pid, job, group_present),
+                        );
+                        assert_eq!(event["stop_class"], stop_class);
+                        assert_eq!(event["load_class"], load_class);
+                        assert_eq!(event["active_class"], active_class);
+                        assert_eq!(event["main_pid_zero"], (main_pid == 0).to_string());
+                        assert_eq!(event["job_present"], job.to_string());
+                        assert_eq!(event["group_present"], group_present.to_string());
+                    }
+                }
+            }
         }
     }
 
