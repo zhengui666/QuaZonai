@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
+    fmt, fs,
     io::Read,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -126,6 +126,36 @@ struct Quality {
     chain_recovered_amounts: usize,
     one_sided_books: usize,
     empty_books: usize,
+}
+
+// The CLI may display only this typed context, never arbitrary source errors.
+#[derive(Debug)]
+pub(super) struct SourceRowContext {
+    stage: &'static str,
+    relative: String,
+    file_row: usize,
+}
+
+impl SourceRowContext {
+    fn new(stage: &'static str, relative: &str, file_row: usize) -> Self {
+        Self {
+            stage,
+            relative: relative.into(),
+            file_row,
+        }
+    }
+}
+
+impl fmt::Display for SourceRowContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:file_row={}",
+            self.stage,
+            self.relative.escape_debug(),
+            self.file_row
+        )
+    }
 }
 
 fn read_input_bytes(path: &Path) -> Result<Vec<u8>> {
@@ -660,8 +690,10 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
             );
         }
         let reader = SerializedFileReader::new(fs::File::open(file)?)?;
-        for row in reader.get_row_iter(None)? {
-            let row = row?;
+        for (row_index, row) in reader.get_row_iter(None)?.enumerate() {
+            let file_row = row_index + 1;
+            let row = row
+                .with_context(|| SourceRowContext::new("SOURCE_ROW_DECODE", &relative, file_row))?;
             quality.scanned_rows += 1;
             let label = match args.format {
                 Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled => {
@@ -669,10 +701,16 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                 }
                 Format::JosephBooks => "minute_ts",
             };
-            let label_at = seconds(&row, label)?;
+            let label_at = seconds(&row, label)
+                .with_context(|| SourceRowContext::new("SOURCE_TIMESTAMP", &relative, file_row))?;
             let at = match args.format {
                 Format::MooseFills | Format::TimeSeventeenV2 | Format::SiiOrderFilled => label_at,
-                Format::JosephBooks => label_at.checked_add(60).context("TIMESTAMP_RANGE")?,
+                Format::JosephBooks => label_at
+                    .checked_add(60)
+                    .context("TIMESTAMP_RANGE")
+                    .with_context(|| {
+                        SourceRowContext::new("SOURCE_TIMESTAMP", &relative, file_row)
+                    })?,
             };
             if at < args.start_seconds || at >= args.end_seconds {
                 continue;
@@ -683,15 +721,19 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                     let mut sii_event = None;
                     let parsed = match args.format {
                         Format::TimeSeventeenV2 => {
-                            v2::fill(&row, &by_token, &mut row_quality, chain.as_ref())?
+                            v2::fill(&row, &by_token, &mut row_quality, chain.as_ref())
                         }
-                        Format::SiiOrderFilled => sii::fill(&row, &by_token, &mut row_quality)?
-                            .map(|(trade, event)| {
-                                sii_event = Some(event);
-                                trade
-                            }),
-                        _ => fill(&row, &by_token, &mut row_quality)?,
-                    };
+                        Format::SiiOrderFilled => {
+                            sii::fill(&row, &by_token, &mut row_quality).map(|parsed| {
+                                parsed.map(|(trade, event)| {
+                                    sii_event = Some(event);
+                                    trade
+                                })
+                            })
+                        }
+                        _ => fill(&row, &by_token, &mut row_quality),
+                    }
+                    .with_context(|| SourceRowContext::new("SOURCE_FILL", &relative, file_row))?;
                     let Some(trade) = parsed else {
                         quality.exchange_summaries_excluded +=
                             row_quality.exchange_summaries_excluded;
@@ -731,7 +773,9 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
                         quality.duplicate_rows += 1;
                         continue;
                     }
-                    book(&row, instrument, &mut archive, &mut quality)?;
+                    book(&row, instrument, &mut archive, &mut quality).with_context(|| {
+                        SourceRowContext::new("SOURCE_BOOK", &relative, file_row)
+                    })?;
                     (identity, signature)
                 }
             };
@@ -862,18 +906,7 @@ mod tests {
         )
     }
 
-    fn fixture(root: &Path, rows: &[Row]) -> Arguments {
-        fixture_for(root, rows, Format::MooseFills)
-    }
-
-    fn fixture_for(root: &Path, rows: &[Row], format: Format) -> Arguments {
-        let relative = match format {
-            Format::MooseFills => "order_filled/year=2022/month=11.parquet",
-            Format::SiiOrderFilled => "orderfilled.parquet",
-            Format::TimeSeventeenV2 => "OrderFilled/2026-08-09.parquet",
-            Format::JosephBooks => "orderbook_1min/date=2026-05-01/data_0.parquet",
-        };
-        let path = root.join(relative);
+    fn write_parquet(path: &Path, rows: &[Row]) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let fields = rows[0]
             .get_column_iter()
@@ -883,7 +916,7 @@ mod tests {
         let schema =
             Arc::new(parse_message_type(&format!("message source {{ {fields} }}")).unwrap());
         let mut writer =
-            SerializedFileWriter::new(fs::File::create(&path).unwrap(), schema, Default::default())
+            SerializedFileWriter::new(fs::File::create(path).unwrap(), schema, Default::default())
                 .unwrap();
         let mut group = writer.next_row_group().unwrap();
         for (key, _) in rows[0].get_column_iter() {
@@ -900,6 +933,21 @@ mod tests {
         }
         group.close().unwrap();
         writer.close().unwrap();
+    }
+
+    fn fixture(root: &Path, rows: &[Row]) -> Arguments {
+        fixture_for(root, rows, Format::MooseFills)
+    }
+
+    fn fixture_for(root: &Path, rows: &[Row], format: Format) -> Arguments {
+        let relative = match format {
+            Format::MooseFills => "order_filled/year=2022/month=11.parquet",
+            Format::SiiOrderFilled => "orderfilled.parquet",
+            Format::TimeSeventeenV2 => "OrderFilled/2026-08-09.parquet",
+            Format::JosephBooks => "orderbook_1min/date=2026-05-01/data_0.parquet",
+        };
+        let path = root.join(relative);
+        write_parquet(&path, rows);
         let snapshot = Snapshot {
             schema_version: contracts::SchemaV1,
             repository: "fixture/public-history".into(),
@@ -943,20 +991,19 @@ mod tests {
         // Some platforms place their temporary directory beneath a symlink.
         // The handoff's absolute root itself must have no symlink ancestors.
         let root = root.canonicalize().unwrap();
-        let mut args = fixture(&root, rows);
-        let snapshot: Snapshot = read_json(args.snapshot.as_ref().unwrap()).unwrap();
-        let source = &snapshot.files[0];
+        let revision = "a".repeat(40);
+        let retrieved_at = Utc::now();
         let relative = "data/selected fill +\u{e9}.parquet";
         let cache_root = root.join("cache");
         let cached = cache_root.join("files").join(relative);
-        fs::create_dir_all(cached.parent().unwrap()).unwrap();
-        fs::copy(root.join(&source.path), &cached).unwrap();
+        write_parquet(&cached, rows);
+        let size = fs::metadata(&cached).unwrap().len();
         let url = format!(
             "https://huggingface.co/datasets/fixture/public-history/resolve/{}/data/selected%20fill%20%2B%C3%A9.parquet",
-            snapshot.revision
+            revision
         );
         let plan_file = serde_json::json!({
-            "path": relative, "size": source.size, "url": url, "format": "parquet"
+            "path": relative, "size": size, "url": url, "format": "parquet"
         });
         let mut record = plan_file.clone();
         record["local_path"] = cached.to_str().unwrap().into();
@@ -966,22 +1013,36 @@ mod tests {
         let selection = serde_json::json!({
             "schema": "qz.hf_selection/1",
             "plan": {
-                "schema": "qz.hf_dataset_plan/1", "repository": snapshot.repository,
-                "requested_revision": "main", "revision": snapshot.revision, "license": null,
+                "schema": "qz.hf_dataset_plan/1", "repository": "fixture/public-history",
+                "requested_revision": "main", "revision": revision, "license": null,
                 "partition_index": null,
                 "request": {"includes": [relative], "markets": [], "start_date": null, "end_date": null},
                 "selection_bounds": "[start_date,end_date)", "download_granularity": "FILE_PARTITION",
                 "coverage": "NOT_ASSERTED", "max_bytes": 1_000_000,
-                "total_bytes": source.size, "files": [plan_file]
+                "total_bytes": size, "files": [plan_file]
             },
             "cache_root": cache_root.to_str().unwrap(), "files": [record],
-            "retrieved_at": snapshot.retrieved_at, "downloaded_bytes": 0, "cached_files": 1
+            "retrieved_at": retrieved_at, "downloaded_bytes": 0, "cached_files": 1
         });
         let manifest = root.join("selection.json");
         fs::write(&manifest, serde_json::to_vec(&selection).unwrap()).unwrap();
-        args.snapshot = None;
-        args.selection = Some(manifest);
-        args
+        let definitions = root.join("instruments.json");
+        fs::write(
+            &definitions,
+            serde_json::to_vec(&vec![instrument()]).unwrap(),
+        )
+        .unwrap();
+        Arguments {
+            snapshot: None,
+            selection: Some(manifest),
+            chain_evidence: None,
+            instruments: definitions,
+            format: Format::MooseFills,
+            start_seconds: 0,
+            end_seconds: 240,
+            bar_seconds: Some(60),
+            output: root.join("native"),
+        }
     }
 
     fn alter_selection(args: &Arguments, alter: impl FnOnce(&mut serde_json::Value)) {
@@ -989,6 +1050,48 @@ mod tests {
         let mut value: serde_json::Value = read_json(path).unwrap();
         alter(&mut value);
         fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    fn selection_fixture_with_second_file(root: &Path, rows: &[Row]) -> Arguments {
+        let args = selection_fixture(
+            root,
+            &[
+                row("137_1_1", 10, "420000"),
+                row("137_1_2", 20, "420000"),
+                row("137_1_3", 30, "420000"),
+            ],
+        );
+        alter_selection(&args, |value| {
+            let relative = "data/second.parquet";
+            let cached = Path::new(value["cache_root"].as_str().unwrap())
+                .join("files")
+                .join(relative);
+            write_parquet(&cached, rows);
+            let size = fs::metadata(&cached).unwrap().len();
+            let mut item = value["plan"]["files"][0].clone();
+            item["path"] = relative.into();
+            item["size"] = size.into();
+            item["url"] = format!(
+                "https://huggingface.co/datasets/fixture/public-history/resolve/{}/{relative}",
+                "a".repeat(40)
+            )
+            .into();
+            let mut record = value["files"][0].clone();
+            record["path"] = item["path"].clone();
+            record["size"] = item["size"].clone();
+            record["url"] = item["url"].clone();
+            record["local_path"] = cached.to_str().unwrap().into();
+            value["plan"]["files"].as_array_mut().unwrap().push(item);
+            value["files"].as_array_mut().unwrap().push(record);
+            value["plan"]["request"]["includes"]
+                .as_array_mut()
+                .unwrap()
+                .push(relative.into());
+            value["plan"]["total_bytes"] =
+                (value["plan"]["total_bytes"].as_u64().unwrap() + size).into();
+            value["cached_files"] = 2.into();
+        });
+        args
     }
 
     fn indexed_selection(args: &Arguments) {
@@ -1046,6 +1149,82 @@ mod tests {
     }
 
     #[test]
+    fn hf_selection_invalid_amount_reports_second_file_row_and_preserves_cause() {
+        let directory = tempfile::tempdir().unwrap();
+        let args = selection_fixture_with_second_file(
+            directory.path(),
+            &[
+                row("137_2_1", 70, "420000"),
+                row("137_2_2", 80, "invalid-amount"),
+            ],
+        );
+        let error = prepare(&args)
+            .and_then(|archive| super::super::import(archive, &args.output))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert_eq!(
+            super::super::failure_message(&error),
+            "QZ_POLYMARKET_HISTORY_FAILED: SOURCE_FILL:data/second.parquet:file_row=2"
+        );
+        assert!(message.contains("data/second.parquet"));
+        assert!(message.contains("file_row=2"));
+        assert!(message.contains("SOURCE_RAW_AMOUNT_INVALID"));
+        assert_eq!(error.root_cause().to_string(), "SOURCE_RAW_AMOUNT_INVALID");
+        assert!(!message.contains(directory.path().to_str().unwrap()));
+        assert!(!message.contains("makerAmountFilled"));
+        assert!(!message.contains("420000"));
+        assert!(!args.output.join("import-report.json").exists());
+        assert!(!args.output.exists());
+    }
+
+    #[test]
+    fn hf_selection_invalid_timestamp_reports_second_file_row_and_preserves_cause() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut invalid = row("137_2_2", 80, "420000").into_columns();
+        invalid
+            .iter_mut()
+            .find(|(k, _)| k == "timestamp")
+            .unwrap()
+            .1 = Field::Str("invalid-timestamp".into());
+        let args = selection_fixture_with_second_file(
+            directory.path(),
+            &[row("137_2_1", 70, "420000"), Row::new(invalid)],
+        );
+        let error = prepare(&args)
+            .and_then(|archive| super::super::import(archive, &args.output))
+            .unwrap_err();
+        let original = "invalid-timestamp".parse::<u64>().unwrap_err();
+        let message = format!("{error:#}");
+        assert_eq!(
+            super::super::failure_message(&error),
+            "QZ_POLYMARKET_HISTORY_FAILED: SOURCE_TIMESTAMP:data/second.parquet:file_row=2"
+        );
+        assert!(message.contains("data/second.parquet"));
+        assert!(message.contains("file_row=2"));
+        assert!(message.contains(&original.to_string()));
+        assert_eq!(error.root_cause().to_string(), original.to_string());
+        assert!(error.downcast_ref::<std::num::ParseIntError>().is_some());
+        assert!(!message.contains(directory.path().to_str().unwrap()));
+        assert!(!message.contains("makerAmountFilled"));
+        assert!(!message.contains("420000"));
+        assert!(!args.output.join("import-report.json").exists());
+        assert!(!args.output.exists());
+    }
+
+    #[test]
+    fn cli_row_context_escapes_controls_and_excludes_source_error_data() {
+        let error = anyhow::anyhow!(
+            "/private/cache/source.parquet maker=0x1111111111111111111111111111111111111111 amount=420000"
+        )
+        .context(SourceRowContext::new("SOURCE_FILL", "data/a\n\r\t.parquet", 2));
+        assert_eq!(
+            super::super::failure_message(&error),
+            "QZ_POLYMARKET_HISTORY_FAILED: SOURCE_FILL:data/a\\n\\r\\t.parquet:file_row=2"
+        );
+        assert!(error.root_cause().to_string().contains("maker=0x1111"));
+    }
+
+    #[test]
     fn hf_selection_reads_real_cached_parquet_without_hashes_and_preserves_request_clock() {
         let directory = tempfile::tempdir().unwrap();
         let args = selection_fixture(
@@ -1062,15 +1241,14 @@ mod tests {
         let (instruments, by_token) = load_instruments(&args.instruments).unwrap();
         assert_eq!(instruments.len(), 1);
         assert!(by_token.contains_key("123"));
-        // Only the selected cached source is consumed; a same-byte-count change
-        // to the legacy fixture neither supplies nor invalidates this handoff.
-        fs::write(
-            directory
-                .path()
-                .join("order_filled/year=2022/month=11.parquet"),
-            b"unused",
-        )
-        .unwrap();
+        // Only the selected cached source is consumed; an unrelated legacy-path
+        // file neither supplies nor invalidates this handoff.
+        assert!(!directory.path().join("snapshot.json").exists());
+        let legacy = directory
+            .path()
+            .join("order_filled/year=2022/month=11.parquet");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"unused").unwrap();
         let archive = prepare(&args).unwrap();
         assert_eq!(archive.trades.len(), 3);
         assert_eq!(archive.bars.len(), 2);
@@ -1101,6 +1279,39 @@ mod tests {
         assert_eq!(report.coverage, "UNPROVEN");
         assert_eq!(report.historical_availability, "UNVERIFIED");
         assert!(!report.registered_in_quazonai);
+        let receipt = serde_json::json!({
+            "schema_version": 1,
+            "native_version": super::super::NATIVE_VERSION,
+            "source_reference": format!(
+                "https://huggingface.co/datasets/fixture/public-history/tree/{}",
+                "a".repeat(40)
+            ),
+            "source_observed_at": manifest["retrieved_at"],
+            "imported_at": report.imported_at,
+            "instruments": 1,
+            "instrument_versions": 1,
+            "trades": 3,
+            "quotes": 0,
+            "deltas": 0,
+            "bars": 2,
+            "closes": 0,
+            "catalog_relative_path": "catalog",
+            "coverage": "UNPROVEN",
+            "historical_availability": "UNVERIFIED",
+            "registered_in_quazonai": false,
+            "limitations": [
+                "Native serialization is not a coverage, historical fee, settlement or PIT verification.",
+                "Current metadata retains its observation time; it is not backdated for historical research.",
+                "Availability, ordering and truncation depend on the original source; see source-evidence.json.",
+                "Book records are not claimed gap-free or replayable without separate snapshot/sequence validation.",
+                "Missing intervals, prices and depth are not imputed. Source evidence is outside the native catalog mount."
+            ]
+        });
+        assert_eq!(serde_json::to_value(&report).unwrap(), receipt);
+        assert_eq!(
+            read_json::<serde_json::Value>(&args.output.join("import-report.json")).unwrap(),
+            receipt
+        );
         let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
             args.output.join("catalog").to_str().unwrap(),
             None,

@@ -534,6 +534,14 @@ async fn fetch(slug: &str, start: u64, end: u64, max_trades: Option<u32>) -> Res
     })
 }
 
+fn failure_message(error: &anyhow::Error) -> String {
+    const FAILURE: &str = "QZ_POLYMARKET_HISTORY_FAILED";
+    match error.downcast_ref::<archive::SourceRowContext>() {
+        Some(context) => format!("{FAILURE}: {context}"),
+        None => FAILURE.into(),
+    }
+}
+
 #[tokio::main]
 pub async fn run(argv: Vec<std::ffi::OsString>) {
     let args = Arguments::parse_from(argv);
@@ -564,8 +572,8 @@ pub async fn run(argv: Vec<std::ffi::OsString>) {
                 serde_json::to_string(&report).expect("report serialization")
             );
         }
-        Err(_) => {
-            eprintln!("QZ_POLYMARKET_HISTORY_FAILED");
+        Err(error) => {
+            eprintln!("{}", failure_message(&error));
             std::process::exit(1);
         }
     }
@@ -581,6 +589,20 @@ mod tests {
         types::{Currency, Price, Quantity},
     };
     use std::str::FromStr;
+
+    #[test]
+    fn failure_message_does_not_display_untyped_or_forged_source_details() {
+        for detail in [
+            "/private/cache/source.parquet maker=0x1111111111111111111111111111111111111111 amount=420000 token=private-fixture-token",
+            "SOURCE_FILL:/private/cache/source.parquet:file_row=2",
+            "SOURCE_TIMESTAMP:data/second.parquet:file_row=2\nwallet=private-fixture-wallet",
+        ] {
+            let error = anyhow::anyhow!(detail.to_owned());
+            assert_eq!(failure_message(&error), "QZ_POLYMARKET_HISTORY_FAILED");
+            let error = error.context(detail.to_owned());
+            assert_eq!(failure_message(&error), "QZ_POLYMARKET_HISTORY_FAILED");
+        }
+    }
 
     fn archive() -> NativeArchive {
         let id = InstrumentId::from_str("test-condition-123456789012345678901234567890.POLYMARKET")
