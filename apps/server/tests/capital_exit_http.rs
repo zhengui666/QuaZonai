@@ -698,7 +698,7 @@ async fn capital_exit_http_funds_keep_unavailable_simulated_and_stale_semantics(
     let ns = chrono::Utc::now().timestamp_nanos_opt().unwrap() as u64;
     next.observed_at_ns = DbCounter::new(ns).unwrap();
     let snapshot = next.snapshot.as_mut().unwrap();
-    snapshot.event_id = Id::new().to_string();
+    snapshot.event_id = "60a29b32-9e54-4f36-9304-0f0a8b16ce94".into();
     snapshot.ts_event = DbCounter::new(ns - 2).unwrap();
     snapshot.ts_init = DbCounter::new(ns - 1).unwrap();
     snapshot.is_stale = true;
