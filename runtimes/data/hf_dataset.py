@@ -419,19 +419,20 @@ def download(selection, cache_dir, output):
 
 
 def download_locked(selection, cache_dir, output, manifest_path, request_path):
+    request_exists = request_path.exists()
+    if request_exists:
+        original = snapshot.fetch_local_manifest(request_path) if request_path.is_file() else None
+        if not same_request(original, selection):
+            raise ValueError("existing selection output belongs to a different request")
+        validate_plan(original)
+        selection = original
     if manifest_path.exists():
         existing = snapshot.fetch_local_manifest(manifest_path)
         if not same_request(existing.get("plan"), selection):
             raise ValueError("existing selection output belongs to a different request")
         verify(manifest_path)
         return existing
-    if request_path.exists():
-        original = snapshot.fetch_local_manifest(request_path) if request_path.is_file() else None
-        if not same_request(original, selection):
-            raise ValueError("existing selection output belongs to a different request")
-        validate_plan(original)
-        selection = original
-    else:
+    if not request_exists:
         snapshot.publish_bytes(request_path, manifest_bytes(selection))
     root = cache_root(cache_dir, selection)
     files = [{**item, **snapshot.acquire_cached_file(root, item, inspect_file)} for item in selection["files"]]

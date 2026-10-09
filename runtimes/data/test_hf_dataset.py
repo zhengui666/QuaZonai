@@ -448,6 +448,48 @@ class HfDatasetTest(unittest.TestCase):
                     self.assertEqual({p.name: p.read_bytes() for p in output.iterdir()}, before)
         self.assertEqual(self.requests, [])
 
+    def test_completed_retry_rejects_selection_conflicting_with_preserved_request(self):
+        selection = self.plan()
+        result = hf_dataset.download(selection, self.cache, self.output)
+        request_path, manifest_path = self.output / "request.json", self.output / "selection.json"
+        original_request = request_path.read_bytes()
+        changed = deepcopy(selection)
+        changed["license"] = "other-terms"
+        altered = {**result, "plan": changed}
+        hf_dataset.validate_manifest(altered, check_files=True)
+        manifest_path.write_bytes(hf_dataset.manifest_bytes(altered))
+        before = manifest_path.read_bytes()
+        self.requests.clear()
+        self.http.side_effect = AssertionError("conflicting request must not access the Hub")
+        with patch.object(snapshot, "acquire_cached_file") as acquire, \
+                patch.object(snapshot, "publish_bytes") as publish:
+            with self.assertRaisesRegex(ValueError, "different request"):
+                hf_dataset.download(changed, self.cache, self.output)
+            acquire.assert_not_called()
+            publish.assert_not_called()
+        self.assertEqual(request_path.read_bytes(), original_request)
+        self.assertEqual(manifest_path.read_bytes(), before)
+        self.assertEqual(self.requests, [])
+
+    def test_completed_retry_keeps_legacy_manifest_only_output_and_revision_alias(self):
+        selection = self.plan(revision="original-tag")
+        result = hf_dataset.download(selection, self.cache, self.output)
+        request_path, manifest_path = self.output / "request.json", self.output / "selection.json"
+        request_path.unlink()
+        before = manifest_path.read_bytes()
+        pinned = {**selection, "requested_revision": COMMIT}
+        self.requests.clear()
+        self.http.side_effect = AssertionError("completed retry must not access the Hub")
+        with patch.object(snapshot, "repository_metadata", side_effect=AssertionError("no ref resolution")), \
+                patch.object(snapshot, "acquire_cached_file") as acquire, \
+                patch.object(snapshot, "publish_bytes") as publish:
+            self.assertEqual(hf_dataset.download(pinned, self.cache, self.output), result)
+            acquire.assert_not_called()
+            publish.assert_not_called()
+        self.assertFalse(request_path.exists())
+        self.assertEqual(manifest_path.read_bytes(), before)
+        self.assertEqual(self.requests, [])
+
     def test_valid_source_paths_do_not_collide_with_cache_control_names(self):
         self.content.update({"a": b"one", "a.lock/b": b"two", "a.partial/c": b"three"})
         self.sync_index()
