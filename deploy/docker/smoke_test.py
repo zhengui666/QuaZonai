@@ -1,17 +1,164 @@
 """Failure evidence and cleanup; real Runtime acceptance remains in smoke.py."""
 import contextlib
+import http.server
 import io
 import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 import urllib.error
 import urllib.parse
 
 import smoke
+
+
+class PublishedBundleCurlTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.assets = self.root / "assets"
+        self.assets.mkdir()
+        self.requests = []
+        self.responses = {"/health/live": (204, b""), "/": (200, b"<!doctype html><html>real frontend</html>")}
+        self.headers = {}
+        owner = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                owner.requests.append((self.path, self.headers.get("Accept")))
+                status, body = owner.responses.get(self.path, (404, b"not found"))
+                self.send_response(status)
+                for name, value in owner.headers.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01})
+        self.thread.start()
+        self.addCleanup(self.stop_server)
+        self.port = self.server.server_port
+        self.origin = f"http://localhost:{self.port}"
+        self.base = f"https://github.com/{smoke.manage.REPOSITORY}/releases/download/v0.0.0-ci.1/"
+        # Capture only the outer installer boundary, before Docker or any real
+        # installation. The generated fixture and manager readiness calls run.
+        with patch.object(smoke.manage, "manifest", return_value={"version": "v0.0.0-ci.1"}), \
+             patch.object(smoke, "ports", return_value=(self.port, 5432)), \
+             patch.object(smoke.manage, "run", side_effect=RuntimeError("installer boundary")) as run, \
+             patch.object(smoke, "cleanup_installation"):
+            with self.assertRaisesRegex(RuntimeError, "installer boundary"):
+                smoke.verify_published_bundle(self.root, self.root / "bundle", self.assets)
+        self.env = run.call_args.kwargs["env"]
+        self.curl = self.root / "release-downloads/curl"
+
+    def stop_server(self):
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+        self.server.server_close()
+
+    def curl_run(self, args):
+        return subprocess.run([str(self.curl), *args], env=self.env, capture_output=True, timeout=15)
+
+    def health_args(self, url=None):
+        return ["--silent", "--show-error", "--noproxy", "*", "--max-time", "10", "--output", "/dev/null",
+                "--write-out", "%{http_code}", url or self.origin + "/health/live"]
+
+    def frontend_args(self, output):
+        return ["--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "10", "--header",
+                "Accept: text/html", "--output", str(output), self.origin + "/"]
+
+    def console(self):
+        config = self.root / "config.json"
+        config.write_text(json.dumps({"port": self.port}))
+        return subprocess.run(["bash", "-c", 'source "$1"; QZ_WORK=$2; qz_verify_console "$3"',
+                               "readiness-test", str(Path(smoke.__file__).with_name("manage.sh")),
+                               str(self.root), str(config)], env=self.env, capture_output=True, timeout=20)
+
+    def test_release_assets_remain_exact_and_closed(self):
+        output = self.root / "download"
+        for name in ("SHA256SUMS", "quazonai-cli-linux-x86_64.tar.gz", "quazonai-deploy.tar.gz"):
+            content = b"exact release bytes\x00\xff" + name.encode()
+            (self.assets / name).write_bytes(content)
+            result = self.curl_run(["--fail", "--location", "--output", str(output), self.base + name])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_bytes(), content)
+        for name in ("unknown", "../SHA256SUMS", "SHA256SUMS?query=1", "%2e%2e/SHA256SUMS"):
+            with self.subTest(name=name):
+                output.unlink(missing_ok=True)
+                result = self.curl_run(["--output", str(output), self.base + name])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(output.exists())
+        self.assertEqual(self.requests, [])
+
+    def test_real_readiness_status_and_frontend_bytes(self):
+        result = self.curl_run(self.health_args())
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"204", b""))
+        output = self.root / "frontend with spaces.html"
+        result = self.curl_run(self.frontend_args(output))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, b"", b""))
+        self.assertEqual(output.read_bytes(), self.responses["/"][1])
+        self.assertEqual(self.requests, [("/health/live", "*/*"), ("/", "text/html")])
+        result = self.console()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_original_manager_rejects_non204_http_errors_and_nonhtml(self):
+        for health, frontend, message in ((200, (200, b"<!doctype html>"), b"API liveness check failed"),
+                                          (503, (200, b"<!doctype html>"), b"API liveness check failed"),
+                                          (204, (503, b"unavailable"), b"curl: (22)"),
+                                          (204, (200, b"not HTML"), b"Production frontend was not served")):
+            with self.subTest(health=health, frontend=frontend):
+                self.responses = {"/health/live": (health, b""), "/": frontend}
+                result = self.console()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+    def test_real_curl_http_failure_status_and_stderr_are_preserved(self):
+        self.responses["/"] = (503, b"unavailable")
+        result = self.curl_run(self.frontend_args(self.root / "frontend.html"))
+        self.assertEqual(result.returncode, 22)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"curl: (22)", result.stderr)
+        self.assertEqual(self.requests, [("/", "text/html")])
+
+    def test_other_urls_and_curl_routing_options_are_not_forwarded(self):
+        for url in (f"http://127.0.0.1:{self.port}/health/live", f"http://localhost:{self.port + 1}/health/live",
+                    f"http://user@localhost:{self.port}/health/live", self.origin + "/health/live?query=1",
+                    self.origin + "/health/live#fragment", self.origin + "/other", "https://example.invalid/"):
+            with self.subTest(url=url):
+                result = self.curl_run(self.health_args(url))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"AssertionError", result.stderr)
+        config = self.root / "curlrc"
+        config.write_text('url = "' + self.origin + '/other"\n')
+        for extra in ([self.origin + "/other"], ["--config", str(config)], ["-K", str(config)],
+                      ["--location"], ["-L"], ["--resolve", f"localhost:{self.port}:127.0.0.1"],
+                      ["--connect-to", f"localhost:{self.port}:127.0.0.1:{self.port}"]):
+            with self.subTest(extra=extra):
+                for args in (self.health_args(), self.frontend_args(self.root / "frontend.html")):
+                    result = self.curl_run([*extra, *args])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"AssertionError", result.stderr)
+        self.assertEqual(self.requests, [])
+
+    def test_redirect_is_not_followed(self):
+        self.responses["/health/live"] = (302, b"")
+        self.headers["Location"] = self.origin + "/other"
+        result = self.curl_run(self.health_args())
+        self.assertEqual((result.returncode, result.stdout), (0, b"302"))
+        self.assertEqual(self.requests, [("/health/live", "*/*")])
+        result = self.console()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"API liveness check failed", result.stderr)
+        self.assertEqual([path for path, _ in self.requests], ["/health/live", "/health/live"])
 
 
 class RuntimeFailureTests(unittest.TestCase):

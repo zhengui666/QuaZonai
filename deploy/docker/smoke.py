@@ -1107,10 +1107,23 @@ def verify_published_bundle(root: Path, bundle: Path, assets: Path | None = None
         transport = root / "release-downloads"
         transport.mkdir()
         curl = transport / "curl"
+        real_curl = shutil.which("curl")
+        assert real_curl, "The cold-install readiness checks require curl"
+        real_curl = str(Path(real_curl).resolve())
         base = f"https://github.com/{manage.REPOSITORY}/releases/download/{selected['version']}/"
-        curl.write_text("#!/usr/bin/python3\nimport shutil, sys\nfrom pathlib import Path\n"
+        # Forward only the manager's two exact readiness commands. Restrict both
+        # URLs and options so extra URLs, redirects or routing overrides cannot
+        # turn the release fixture into a general network transport.
+        health_args = ["--silent", "--show-error", "--noproxy", "*", "--max-time", "10",
+                       "--output", "/dev/null", "--write-out", "%{http_code}", f"http://localhost:{web}/health/live"]
+        frontend_args = ["--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "10",
+                         "--header", "Accept: text/html", "--output"]
+        curl.write_text("#!/usr/bin/python3\nimport os, shutil, sys\nfrom pathlib import Path\n"
                         f"base = {base!r}\nassets = Path({str(assets)!r})\n"
                         "args = sys.argv[1:]\nurl = args[-1]\n"
+                        f"if args == {health_args!r} or (len(args) == {len(frontend_args) + 2} "
+                        f"and args[:-2] == {frontend_args!r} and url == {'http://localhost:' + str(web) + '/'!r}):\n"
+                        f"    os.execv({real_curl!r}, [{real_curl!r}, *args])\n"
                         "assert url.startswith(base)\nname = url[len(base):]\n"
                         "assert name in {'SHA256SUMS', 'quazonai-cli-linux-x86_64.tar.gz', 'quazonai-deploy.tar.gz'}\n"
                         "shutil.copyfile(assets / name, args[args.index('--output') + 1])\n")
