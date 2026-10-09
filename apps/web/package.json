@@ -26,6 +26,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
     "test": "vitest run",
     "test:auth-ui": "playwright test --config playwright.auth.config.ts",
+    "test:capital-exits-ui": "playwright test --config playwright.capital-exits.config.ts",
     "test:e2e": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs",
     "check:generated": "node scripts/generate-validators.mjs --check --require-tracked",
     "test:validator-adapter": "node --test scripts/validator-*.test.mjs scripts/response-loader.test.mjs",

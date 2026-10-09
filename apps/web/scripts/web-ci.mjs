@@ -13,6 +13,7 @@ export const partitions = {
 };
 const authConfig = 'playwright.auth.config.ts';
 const validatorConfig = 'playwright.validators.config.ts';
+const capitalConfig = 'playwright.capital-exits.config.ts';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cli = resolve(web, 'node_modules/@playwright/test/cli.js');
 const key = (project, file, titles) => JSON.stringify([project, file, titles]);
@@ -116,6 +117,9 @@ function main(command) {
   console.log(`Reconciled ${reconcilePartition(complete, Object.values(groups))} synthetic browser instances`);
   if (command !== 'inventory') execute(authConfig, partitions[command], groups[command]);
   if (command === 'inventory' || command === 'synthetic-b') {
+    const capital = discover(capitalConfig);
+    console.log(`Discovered ${inventory(capital).size} capital-exit instances`);
+    if (command === 'synthetic-b') execute(capitalConfig, [], capital);
     const validators = discover(validatorConfig);
     const found = inventory(validators);
     for (const id of validatorSkips) assert.ok(found.has(id), `Intentional validator skip disappeared: ${id}`);

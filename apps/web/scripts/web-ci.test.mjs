@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inventory, reconcilePartition, reconcileExecution, requireJobs } from './web-ci.mjs';
+import { inventory, partitions, reconcilePartition, reconcileExecution, requireJobs, validatorSkips } from './web-ci.mjs';
 
 function report(titles, execution = false) {
   return { errors: [], suites: [{ title: 'sample.spec.ts', file: 'sample.spec.ts', line: 0, column: 0,
@@ -65,6 +65,106 @@ test('required-name aggregate fails closed on every non-success and missing job'
   const { native, ...partial } = all;
   assert.throws(() => requireJobs(partial), /Missing/);
   assert.throws(() => requireJobs({ ...all, extra: { result: 'success' } }), /unexpected/);
+});
+
+test('CLI discovers and executes the complete independent capital inventory only in synthetic-b', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'quazonai-web-capital-ci-test-'));
+  try {
+    mkdirSync(join(temp, 'scripts'));
+    mkdirSync(join(temp, 'node_modules/@playwright/test'), { recursive: true });
+    cpSync(new URL('./web-ci.mjs', import.meta.url), join(temp, 'scripts/web-ci.mjs'));
+    const auth = report(Object.values(partitions).flat());
+    for (const spec of auth.suites[0].specs) spec.file = spec.title;
+    const validators = report(validatorSkips.map((id) => JSON.parse(id)[2].at(-1)));
+    validators.suites[0].suites = [{ title: 'production PWA validator precache', line: 1, column: 1, specs: validators.suites[0].specs }];
+    delete validators.suites[0].specs;
+    for (const spec of validators.suites[0].suites[0].specs) {
+      spec.file = 'validator-loading.spec.ts';
+      spec.tests[0].projectName = 'normal-dev-prebundle';
+      spec.tests[0].expectedStatus = 'skipped';
+    }
+    // A fifth case stands for future additions; no count or title allowlist.
+    const capital = report(['one', 'two', 'three', 'four', 'new case']);
+    for (const spec of capital.suites[0].specs) spec.file = 'capital-exits.spec.ts';
+    const fixture = {
+      'playwright.auth.config.ts': auth,
+      'playwright.validators.config.ts': validators,
+      'playwright.capital-exits.config.ts': capital,
+    };
+    writeFileSync(join(temp, 'node_modules/@playwright/test/cli.js'), `
+      const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
+      const args = process.argv.slice(2);
+      const config = args[args.indexOf('--config') + 1];
+      const list = args.includes('--list');
+      const files = args.filter(arg => arg.endsWith('.spec.ts'));
+      const fixture = JSON.parse(readFileSync('fixture.json', 'utf8'));
+      const value = fixture[config];
+      appendFileSync('calls.jsonl', JSON.stringify({ config, list, files }) + '\\n');
+      if (files.length) value.suites[0].specs = value.suites[0].specs.filter(spec => files.includes(spec.file));
+      if (!list) {
+        function execute(suite) {
+          for (const spec of suite.specs ?? []) for (const test of spec.tests) {
+            test.results = [{ status: test.expectedStatus, retry: 0, duration: 1 }];
+            test.status = test.expectedStatus === 'skipped' ? 'skipped' : 'expected';
+          }
+          for (const child of suite.suites ?? []) execute(child);
+        }
+        value.suites.forEach(execute);
+        if (config === 'playwright.capital-exits.config.ts' && fixture.execution) Object.assign(value, fixture.execution);
+      }
+      if (process.env.PLAYWRIGHT_JSON_OUTPUT_FILE) writeFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, JSON.stringify(value));
+      else console.log(JSON.stringify(value));
+    `);
+    function run(command, value = fixture) {
+      writeFileSync(join(temp, 'fixture.json'), JSON.stringify(value));
+      writeFileSync(join(temp, 'calls.jsonl'), '');
+      const result = spawnSync(process.execPath, [join(temp, 'scripts/web-ci.mjs'), command], { encoding: 'utf8' });
+      const calls = readFileSync(join(temp, 'calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      return { ...result, calls };
+    }
+    const config = 'playwright.capital-exits.config.ts';
+    const discovered = run('inventory');
+    assert.equal(discovered.status, 0, discovered.stderr);
+    assert.match(discovered.stdout, /Discovered 5 capital-exit instances/);
+    assert.deepEqual(discovered.calls.filter(call => call.config === config), [{ config, list: true, files: [] }]);
+    const executed = run('synthetic-b');
+    assert.equal(executed.status, 0, executed.stderr);
+    assert.deepEqual(executed.calls.filter(call => call.config === config), [
+      { config, list: true, files: [] }, { config, list: false, files: [] },
+    ]);
+    const summary = executed.stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(row => row.suite === config);
+    assert.equal(summary.browser_instances.length, 5);
+    assert.ok(summary.browser_instances.every(row => row.status === 'passed'));
+    const other = run('synthetic-a');
+    assert.equal(other.status, 0, other.stderr);
+    assert.equal(other.calls.filter(call => call.config === config).length, 0);
+    const empty = run('inventory', { ...fixture, [config]: report([]) });
+    assert.notEqual(empty.status, 0);
+    assert.match(empty.stderr, /Empty browser inventory/);
+
+    const passed = structuredClone(capital);
+    for (const spec of passed.suites[0].specs) Object.assign(spec.tests[0], {
+      status: 'expected', results: [{ status: 'passed', retry: 0, duration: 1 }],
+    });
+    const cases = [
+      [value => value.suites[0].specs.pop(), /differs/],
+      [value => { value.suites[0].specs = []; }, /Empty/],
+      [value => value.suites[0].specs.push(value.suites[0].specs[0]), /Duplicate/],
+      [value => { value.suites[0].specs[0].tests[0].results = []; }, /Missing or retried/],
+      [value => value.suites[0].specs[0].tests[0].results.push({ status: 'passed', retry: 1 }), /Missing or retried/],
+      [value => { value.suites[0].specs[0].tests[0].results[0].retry = 1; }, /Retried/],
+      ...['failed', 'timedOut', 'interrupted', 'skipped'].map(status => [value => {
+        value.suites[0].specs[0].tests[0].results[0].status = status;
+      }, /did not passed/]),
+    ];
+    for (const [mutate, error] of cases) {
+      const execution = structuredClone(passed);
+      mutate(execution);
+      const failed = run('synthetic-b', { ...fixture, execution });
+      assert.notEqual(failed.status, 0);
+      assert.match(failed.stderr, error);
+    }
+  } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 
 test('installed Playwright discovery and JSON results reconcile without launching a browser', () => {

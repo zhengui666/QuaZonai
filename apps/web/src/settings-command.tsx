@@ -10,7 +10,7 @@ const listeners = new Set<() => void>();
 let recoverable: SettingsCommand[] = [];
 const empty: SettingsCommand[] = [];
 
-class SettingsCommand {
+export class SettingsCommand {
   readonly intent = new Intent();
   readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   readonly getSnapshot = () => this.state;
@@ -33,13 +33,15 @@ class SettingsCommand {
   }
   async submit(request: () => Promise<string>, complete: () => Promise<void> | void) {
     if (this.state.pending) return;
-    if (!this.state.unknown) { this.request = request; this.complete = complete; }
+    const wasUnknown = this.state.unknown;
+    if (!wasUnknown) { this.request = request; this.complete = complete; }
     this.update({ pending: true, error: undefined });
     let receipt: string;
     try {
       receipt = await this.request!();
     } catch (error) {
-      const rejected = error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500)
+      // A retry rejection cannot establish the outcome of the original request.
+      const rejected = !wasUnknown && error instanceof ApiFailure && ((!!error.problem && error.status >= 400 && error.status < 500)
         || ['OFFLINE', 'LOCAL_VALIDATION_ERROR'].includes(error.code));
       if (rejected) { this.request = undefined; this.complete = undefined; this.intent.clear(); }
       this.update({ pending: false, unknown: !rejected, error });
