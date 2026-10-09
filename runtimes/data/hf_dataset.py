@@ -429,6 +429,7 @@ def download_locked(selection, cache_dir, output, manifest_path, request_path):
         original = snapshot.fetch_local_manifest(request_path) if request_path.is_file() else None
         if not same_request(original, selection):
             raise ValueError("existing selection output belongs to a different request")
+        validate_plan(original)
         selection = original
     else:
         snapshot.publish_bytes(request_path, manifest_bytes(selection))

@@ -39,6 +39,8 @@ reads without re-registering or changing PIT labels.
 
 | Requested operation | Native arguments | Request schema |
 | --- | --- | --- |
+| Freeze selected registered inputs | `input-set create` | `InputSetCreate` |
+| Create an evaluation policy version | `policy create` | `EvaluationPolicyCreate` |
 | Save/replace a Brief | `brief create PROJECT_ID` / `brief update BRIEF_ID` | `BriefCreate` / `BriefUpdate` |
 | Freeze the selected Brief | `brief freeze BRIEF_ID` | `BriefFreezeV1` |
 | Start its internally managed research Cycle | `cycle start PROJECT_ID` | `CycleStartV1` |
@@ -52,6 +54,13 @@ reads without re-registering or changing PIT labels.
 | Adopt one accepted native fold as a target-weight Alpha | `experiment adopt-alpha EXPERIMENT_ID` | `StrategyAlphaAdoptV1` |
 | Build the original Forecast portfolio | `portfolio build` | `PortfolioBuildEnvelopeV2` → `PortfolioBuildRequestV1` |
 | Build the requested native target-weight portfolio | `portfolio build` | `PortfolioBuildEnvelopeV2` → `StrategyPortfolioBuildV1` |
+
+`input-set create` and `policy create` take no positional project ID or
+`--project-id` option. Both take their named DTO as JSON on stdin with
+`project_id` in that body and a retained `--idempotency-key`. Use the saved owner
+login or the original scoped identity's exact Operator grant. InputSet creation
+freezes the selected registered references; policy creation records a new version.
+Neither operation acquires data, validates quality or establishes evaluation PASS.
 
 Discover unfamiliar fields from the named schema. Populate user intent and current snapshot values; missing scientific decisions need the user, not invented IDs, budgets, data roles, policy versions, assumptions or runtime. Follow the entry Skill's authority rules; Missions use their bound tools.
 

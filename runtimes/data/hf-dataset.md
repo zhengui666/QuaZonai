@@ -183,6 +183,14 @@ Source bytes rejected by a format check are retained as a rejected partial; a
 later retry may fetch fresh bytes. Conflicting existing cache/request files and
 symlinks are rejected without overwriting the original data.
 
+Fixed-plan API retries do not resolve Hub refs or reload the partition index.
+A published selection is verified locally; an unfinished request reuses complete
+cache files and fetches only missing bytes. Fully cached retries work offline.
+The saved request is revalidated before acquisition, including its original
+`requested_revision`; a valid tag/commit alias may retry the same resolved plan,
+but the published plan retains the original spelling, files, mapping, dates and
+license metadata. Different request or license metadata cannot reuse that output.
+
 The source-checkout API can resume the same request directory. The installed
 manager deliberately requires a new output directory for every invocation.
 Keep the stable cache inside its owner-managed `--output-parent` writable mount,

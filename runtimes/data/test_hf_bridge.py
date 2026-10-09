@@ -114,6 +114,17 @@ class HfBridgeTest(unittest.TestCase):
         self.assertEqual(self.source_file.read_bytes(), self.original_source_bytes)
 
     def test_offline_freeze_handoff_uses_existing_selection_bridge_without_acquisition(self):
+        self.assert_offline_freeze_handoff()
+
+    def test_unknown_market_offline_freeze_retry_and_bridge_preserve_original_plan(self):
+        self.plan["request"]["markets"] = []
+        self.plan["files"][0]["partition"].update(markets=[], market_mapping="UNKNOWN")
+        self.plan["license"] = "cc-by-4.0"
+        self.args.end_seconds = START + 2 * 86400
+        self.assert_offline_freeze_handoff()
+
+    def assert_offline_freeze_handoff(self):
+        original_plan = deepcopy(self.plan)
         cache = self.root / "fixed-cache"
         target = hf_dataset.cache_root(cache, self.plan) / "files" / self.plan["files"][0]["path"]
         target.parent.mkdir(parents=True)
@@ -127,6 +138,8 @@ class HfBridgeTest(unittest.TestCase):
                 patch.object(snapshot, "acquire_cached_file", side_effect=AssertionError("no acquisition")), \
                 patch.object(snapshot, "file_hash", side_effect=AssertionError("no checksum")):
             self.manifest = hf_dataset.freeze(plan_path, cache, request)
+            pinned = {**original_plan, "requested_revision": COMMIT}
+            self.assertEqual(hf_dataset.download(pinned, cache, request), self.manifest)
             self.selection = request / "selection.json"
             self.args.selection = self.selection
             report, evidence = self.artifacts()
@@ -140,6 +153,10 @@ class HfBridgeTest(unittest.TestCase):
         self.assertFalse(result["admission"]["research_qualified"])
         self.assertEqual(self.manifest["downloaded_bytes"], 0)
         self.assertEqual(self.manifest["cached_files"], 1)
+        self.assertEqual(self.manifest["plan"], original_plan)
+        self.assertEqual(self.manifest["files"][0]["partition"], original_plan["files"][0]["partition"])
+        self.assertEqual(snapshot.fetch_local_manifest(request / "request.json"), original_plan)
+        self.assertEqual(evidence["source_metadata"]["selection_manifest"], self.manifest)
         self.assertEqual(before, hf_dataset.freeze_observation(self.source_file))
         self.assertTrue(self.source_file.samefile(target))
         network.assert_not_called()
@@ -166,6 +183,30 @@ class HfBridgeTest(unittest.TestCase):
             with self.subTest(lower=lower, upper=upper), patch.object(plugins.subprocess, "run") as run, self.assertRaises(ValueError):
                 plugins.hf_history_convert(self.args)
             run.assert_not_called()
+
+    def test_tampered_unknown_market_selection_fails_before_native_publication(self):
+        self.manifest["plan"]["request"]["markets"] = []
+        for item in (self.manifest["plan"]["files"][0], self.manifest["files"][0]):
+            item["partition"].update(markets=[], market_mapping="UNKNOWN")
+        original = json.loads(hf_dataset.manifest_bytes(self.manifest))
+        changes = [lambda m: m["plan"]["request"].update(markets=["ALL"]),
+                   lambda m: m["plan"]["files"][0]["partition"].update(markets=["ALL"]),
+                   lambda m: m["files"][0]["partition"].pop("market_mapping"),
+                   lambda m: m["plan"]["partition_index"].update(url="https://example.invalid/other"),
+                   lambda m: m["plan"].update(requested_revision=None)]
+        with patch.object(snapshot.urllib.request, "urlopen", side_effect=AssertionError("offline only")) as network:
+            for index, change in enumerate(changes):
+                candidate = deepcopy(original)
+                change(candidate)
+                before = hf_dataset.manifest_bytes(candidate)
+                self.selection.write_bytes(before)
+                with self.subTest(change=index), \
+                        patch.object(plugins.subprocess, "run") as run, self.assertRaises(ValueError):
+                    plugins.hf_history_convert(self.args)
+                run.assert_not_called()
+                self.assertFalse(self.output.exists())
+                self.assertEqual(self.selection.read_bytes(), before)
+            network.assert_not_called()
 
     def test_explicit_files_require_no_inferred_date_or_market_mapping(self):
         self.manifest["plan"]["request"] = {"includes": ["actual-indexed-path/fills.parquet"], "markets": [],

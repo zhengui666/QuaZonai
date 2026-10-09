@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
+from copy import deepcopy
 import csv
 import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -368,6 +369,84 @@ class HfDatasetTest(unittest.TestCase):
         self.assertEqual(result["plan"], selection)
         self.assertEqual(snapshot.fetch_local_manifest(self.output / "request.json"), selection)
         self.assertEqual(hf_dataset.download(pinned, self.cache, self.output), result)
+
+    def test_retry_revalidates_preserved_request_before_acquisition_or_publication(self):
+        selection = self.plan()
+        self.requests.clear()
+        for index, requested_revision in enumerate((None, "", " ", 1)):
+            with self.subTest(requested_revision=requested_revision):
+                output = self.root / f"invalid-request-{index}"
+                output.mkdir()
+                original = {**selection, "requested_revision": requested_revision}
+                request_path = output / "request.json"
+                before = hf_dataset.manifest_bytes(original)
+                request_path.write_bytes(before)
+                self.assertTrue(hf_dataset.same_request(original, selection))
+                with patch.object(snapshot, "acquire_cached_file", wraps=snapshot.acquire_cached_file) as acquire, \
+                        patch.object(snapshot, "publish_bytes", wraps=snapshot.publish_bytes) as publish:
+                    with self.assertRaises(ValueError):
+                        hf_dataset.download(selection, self.cache, output)
+                    acquire.assert_not_called()
+                    publish.assert_not_called()
+                self.assertEqual(request_path.read_bytes(), before)
+                self.assertFalse((output / "selection.json").exists())
+        self.assertEqual(self.requests, [])
+
+    def test_pending_request_reuses_completed_cache_offline_and_keeps_original_revision_alias(self):
+        selection = self.plan(revision="original-tag")
+        hf_dataset.download(selection, self.cache, self.output)
+        pending = self.root / "pending"
+        pending.mkdir()
+        original = hf_dataset.manifest_bytes(selection)
+        (pending / "request.json").write_bytes(original)
+        pinned = {**selection, "requested_revision": COMMIT}
+        self.requests.clear()
+        self.http.side_effect = AssertionError("fixed-plan retry must not access the Hub")
+        with patch.object(snapshot, "repository_metadata", side_effect=AssertionError("no ref resolution")), \
+                patch.object(snapshot, "file_hash", side_effect=AssertionError("no checksum")):
+            result = hf_dataset.download(pinned, self.cache, pending)
+            self.assertEqual(hf_dataset.verify(pending / "selection.json")["files"], 1)
+        self.assertEqual(result["plan"], selection)
+        self.assertEqual((pending / "request.json").read_bytes(), original)
+        self.assertEqual((result["downloaded_bytes"], result["cached_files"]), (0, 1))
+        self.assertEqual(self.requests, [])
+
+    def test_different_requests_cannot_reuse_pending_or_published_output(self):
+        selection = self.plan()
+        different_file = hf_dataset.plan(DATASET, includes=["data/c.parquet"])
+        candidates = [different_file]
+        for change in (lambda p: p.update(license="other-terms"),
+                       lambda p: p["request"].update(end_date="2026-09-03"),
+                       lambda p: p["files"][0]["partition"].update(markets=["market-a", "market-c"])):
+            candidate = deepcopy(selection)
+            change(candidate)
+            candidates.append(candidate)
+        revision = deepcopy(selection)
+        revision["revision"] = "b" * 40
+        for record in [revision["partition_index"], *revision["files"]]:
+            record["url"] = record["url"].replace(COMMIT, revision["revision"])
+        candidates.append(revision)
+        hf_dataset.download(selection, self.cache, self.output)
+        pending = self.root / "pending"
+        pending.mkdir()
+        (pending / "request.json").write_bytes(hf_dataset.manifest_bytes(selection))
+        (pending / ".hf-request.lock").touch()
+        self.requests.clear()
+        self.http.side_effect = AssertionError("conflicting request must not access the Hub")
+        for output in (pending, self.output):
+            before = {p.name: p.read_bytes() for p in output.iterdir()}
+            for index, candidate in enumerate(candidates):
+                with self.subTest(output=output.name, candidate=index):
+                    hf_dataset.validate_plan(candidate)
+                    self.assertFalse(hf_dataset.same_request(selection, candidate))
+                    with patch.object(snapshot, "acquire_cached_file") as acquire, \
+                            patch.object(snapshot, "publish_bytes") as publish:
+                        with self.assertRaisesRegex(ValueError, "different request"):
+                            hf_dataset.download(candidate, self.cache, output)
+                        acquire.assert_not_called()
+                        publish.assert_not_called()
+                    self.assertEqual({p.name: p.read_bytes() for p in output.iterdir()}, before)
+        self.assertEqual(self.requests, [])
 
     def test_valid_source_paths_do_not_collide_with_cache_control_names(self):
         self.content.update({"a": b"one", "a.lock/b": b"two", "a.partial/c": b"three"})
