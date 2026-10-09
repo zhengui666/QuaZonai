@@ -5,12 +5,14 @@ This downloads source files; it does not decode native research observations.
 """
 
 import csv
+from contextlib import ExitStack
 import datetime
 import fnmatch
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 from threading import Lock
 
@@ -314,6 +316,91 @@ def same_request(left, right):
     return (isinstance(left, dict) and isinstance(right, dict)
             and {k: v for k, v in left.items() if k != "requested_revision"}
             == {k: v for k, v in right.items() if k != "requested_revision"})
+
+
+def freeze_observation(path):
+    """Ordinary identity/stat observation, without hashing or following symlinks."""
+    snapshot.safe_local(path.parent, path.name)
+    try:
+        observed = path.lstat()
+    except FileNotFoundError:
+        raise ValueError(f"offline freeze input is missing: {path}") from None
+    if not stat.S_ISREG(observed.st_mode):
+        raise ValueError("offline freeze requires an existing regular file")
+    return (observed.st_dev, observed.st_ino, observed.st_size,
+            observed.st_mtime_ns, observed.st_ctime_ns)
+
+
+def freeze(plan_path, cache_dir, output):
+    """Publish an existing fixed plan/cache handoff; never acquire missing bytes."""
+    plan_path = Path(os.path.abspath(plan_path))
+    plan_state = freeze_observation(plan_path)
+    selection = snapshot.fetch_local_manifest(plan_path)
+    validate_plan(selection)
+    if plan_state != freeze_observation(plan_path):
+        raise ValueError("offline freeze input changed")
+    root = cache_root(cache_dir, selection)
+    output = Path(os.path.abspath(output))
+    manifest_path = snapshot.safe_local(output, "selection.json")
+    request_path = snapshot.safe_local(output, "request.json")
+    lock = snapshot.safe_local(output, ".hf-request.lock")
+    if output.exists():
+        raise ValueError("offline freeze output must be a new directory")
+    output.mkdir(parents=True, exist_ok=False)
+    with snapshot.cache_lock(lock), ExitStack() as locks:
+        # Keep every selected cache lock until final publication. A writer
+        # honoring the shared locks must not change an earlier file after its
+        # final stat check while a later file is still being checked.
+        # All freeze requests acquire these locks in the same stable order;
+        # download retains its original one-file-at-a-time locking behavior.
+        for item in sorted(selection["files"], key=lambda item: item["path"]):
+            target = snapshot.safe_local(root, "files/" + item["path"])
+            # Missing completed sources fail before control-directory creation;
+            # neither partial adoption nor source acquisition is attempted.
+            freeze_observation(target)
+            file_lock = snapshot.safe_local(root, "transfers/" + item["path"] + "/lock")
+            file_lock.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.safe_local(root, file_lock.relative_to(root).as_posix())
+            if file_lock.exists():
+                freeze_observation(file_lock)
+            locks.enter_context(snapshot.cache_lock(file_lock))
+        observations = {plan_path: plan_state}
+        files = []
+        for item in selection["files"]:
+            target = snapshot.safe_local(root, "files/" + item["path"])
+            before = freeze_observation(target)
+            state = snapshot.safe_local(root, "transfers/" + item["path"] + "/state.json")
+            if state.exists():
+                observations[state] = freeze_observation(state)
+                identity = {key: item[key] for key in ("url", "size", "format")}
+                if snapshot.fetch_local_manifest(state) != identity:
+                    raise ValueError("cached source belongs to different file metadata")
+            else:
+                observations[state] = None
+            validation = inspect_file(target, item)
+            if before != freeze_observation(target):
+                raise ValueError("offline freeze input changed")
+            observations[target] = before
+            files.append({**item, "local_path": str(target), "cached": True,
+                          "resumed_bytes": 0, "validation": validation})
+        result = selection_result(selection, root, files,
+            datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"))
+        validate_manifest(result)
+
+        def unchanged():
+            # Check the entire set again: an earlier file or the original plan
+            # may change while a later file is being inspected.
+            for path, before in observations.items():
+                snapshot.safe_local(path.parent, path.name)
+                after = freeze_observation(path) if path.exists() else None
+                if before != after:
+                    raise ValueError("offline freeze input changed")
+
+        unchanged()
+        snapshot.publish_bytes(request_path, manifest_bytes(selection))
+        unchanged()
+        snapshot.publish_bytes(manifest_path, manifest_bytes(result))
+        return result
 
 
 def download(selection, cache_dir, output):

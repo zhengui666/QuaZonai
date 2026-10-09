@@ -766,6 +766,16 @@ def hf_dataset_download(args):
     return hf_dataset.download(hf_dataset_plan(args), args.cache_dir, args.output)
 
 
+def hf_dataset_freeze_options(parser):
+    parser.add_argument("--plan", type=Path, required=True, help="original fixed qz.hf_dataset_plan/1 JSON")
+    parser.add_argument("--cache-dir", type=Path, required=True, help="existing repository/revision file cache")
+    parser.add_argument("--output", type=Path, required=True, help="new offline request directory")
+
+
+def hf_dataset_freeze(args):
+    return hf_dataset.freeze(args.plan, args.cache_dir, args.output)
+
+
 def hf_dataset_verify_options(parser):
     parser.add_argument("--selection", type=Path, required=True, help="existing selection.json request manifest")
 
@@ -785,11 +795,13 @@ PLUGINS["hf-snapshot"] = source_plugin("hf-snapshot", "immutable public Hugging 
 PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file partitions",
     {"plan": Capability(hf_dataset_options, hf_dataset_plan, public_network=True),
      "download": Capability(partial(hf_dataset_options, download=True), hf_dataset_download, public_network=True),
+     "freeze": Capability(hf_dataset_freeze_options, hf_dataset_freeze, public_network=False),
      "verify": Capability(hf_dataset_verify_options, lambda args: hf_dataset.verify(args.selection)),
      "convert": Capability(hf_history_options, hf_history_convert),
      "prepare": Capability(prepare_options, partial(prepare_source, "hf-dataset"))},
     ["Market/date selection requires an actual repository partition index; otherwise use explicit file includes",
      "Only requested file partitions are downloaded; overlapping requests share resumable cached files",
+     "Offline freeze requires an original fixed plan and every completed cache file; missing files never download",
      "Native conversion uses the explicit existing archive format and original definitions; preparation requires BAR output",
      "Byte/format checks do not establish full market coverage, data-use rights or PIT"],
     validate_native=partial(history_publication, "hf-dataset"))

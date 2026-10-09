@@ -39,6 +39,52 @@ revision. The requested ref is also retained. For reproducible retries after a
 branch moves, supply the returned revision through the same `--revision` option.
 No file checksums are calculated on this path.
 
+## Freeze an existing cache offline
+
+With an original saved `qz.hf_dataset_plan/1` containing its fixed repository
+revision and every completed file already in the cache:
+
+```sh
+python3 -B runtimes/data/source_plugins.py freeze hf-dataset \
+  --plan /data/original-plan.json --cache-dir /data/hf/cache \
+  --output /data/hf/offline-request-01
+```
+
+This operation never resolves Hub metadata, downloads missing files, resumes
+partials, hashes or copies source bytes. It requires a new output directory;
+an existing directory, even an empty one or an earlier successful request, fails.
+All files must be ordinary files at
+`CACHE/datasets/REPOSITORY/REVISION/files/REMOTE_PATH`. Symlinks, conflicting
+cache metadata, missing files, incorrect sizes/formats, and input changes fail
+without publishing `selection.json`. The fixed plan and every selected file
+are stat-checked before and after inspection. Parquet validation is only its
+header/footer envelope, not complete decoding or source authenticity.
+
+Originals outside that layout may be linked into it beforehand using ordinary
+same-filesystem hard links, only with their original repository/revision/path/size
+evidence. Confirm matching device/inode; do not substitute today's revision,
+symlinks, cross-filesystem copies or arbitrary `local_path` values. Freeze does
+not create those links or manufacture plans, instruments or historical evidence.
+
+The existing cache must allow the shared per-file lock metadata to be written;
+source files are opened only for reading. All selected file locks are acquired
+in stable path order and held through final stat checks and atomic selection
+publication, then released even on failure. This coordinates writers using the
+same locks; it does not make source files permanently immutable or exclude
+external writes that ignore those locks. For installed execution, keep the
+cache under the existing owner-managed writable `--output-parent`, mount the
+original plan with `--read-only`, and invoke the same `freeze hf-dataset` command
+through `manage.sh source`. The plugin inventory selects the existing offline
+container boundary (`public_network=false`). No deployment change is required.
+
+The result retains the original plan and existing `qz.hf_selection/1` contract:
+`downloaded_bytes=0`, actual `cached_files`, `cached=true`, and `resumed_bytes=0`.
+`retrieved_at` is this selection's assembly/cache-reading time, not historical
+availability. Existing `verify` and native `convert --selection` consume it
+unchanged. Failed artifacts are retained; use a new output path after correction.
+
+## Select explicit files
+
 Without a partition index, use explicit file globs:
 
 ```sh
@@ -273,6 +319,10 @@ truncation, over-sized responses, format rejection, conflicts and symlinks.
 A disposable loopback HTTP server exercises real urllib redirects, interrupted
 source bytes, Range resumption and repeated cache reads. Its small source bytes
 are explicitly fixtures. It is not a live Hub download or native research run.
+Offline freeze additionally covers hard-link reuse with acquisition/network/hash
+calls forbidden, missing/corrupt files, source conflicts, symlinks, input mutation
+and existing-output rejection. Its bridge test reuses fixture native output;
+it does not claim that a real source archive passed native decoding.
 
 `test_hf_bridge.py` checks offline Python orchestration and handoffs using
 explicit fixture native output. It does not prove actual native conversion.

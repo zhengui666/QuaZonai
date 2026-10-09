@@ -35,7 +35,7 @@ async function browserReload(page: Page, decision: 'stay' | 'leave' | 'clean') {
   }
 }
 
-async function setup(page: Page, acceptedPackageVersions: Schema['PackageSchemaVersion'][] = ['1']) {
+async function setup(page: Page, acceptedPackageVersions: Schema['PackageSchemaVersion'][] = ['2']) {
   const now = new Date().toISOString();
   const runtime: Schema['RuntimeView'] = {
     id: '01990000-0000-7000-8000-000000000011', revision: '1', protocol_version: 1, created_at: now, updated_at: now,
@@ -296,8 +296,145 @@ test('an uncertain Runtime credential binding cannot be abandoned before reconci
   await expect(dialog.getByRole('button', { name: '放弃本次绑定' })).toHaveCount(0);
 });
 
+test('an unknown Runtime retry stays frozen through OFFLINE, reconnect and reopening', async ({ page }) => {
+  const { runtime, writes, failNextRuntime, holdNextRuntime } = await setup(page);
+  await page.getByRole('tab', { name: '集成' }).click();
+  await page.getByRole('button', { name: '配置与原生探测' }).click();
+  await page.getByRole('button', { name: '修改配置' }).click();
+  const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+  failNextRuntime();
+  await dialog.getByRole('textbox', { name: '新的 RUNTIME 凭据' }).fill('a'.repeat(32));
+  await dialog.getByRole('button', { name: '登记凭据' }).click();
+  await expect(dialog.getByRole('button', { name: '重试' })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  const original = structuredClone(writes[0]);
+  await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime queued');
+  await dialog.getByRole('switch', { name: '允许新任务' }).click();
+  // Lose connectivity between the UI's online check and the API middleware.
+  await page.evaluate(() => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false }));
+  await dialog.getByRole('button', { name: '重试' }).click();
+  await expect(dialog.getByText('离线，操作未提交', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '关闭' }).click();
+  await expect(dialog).toHaveCount(0);
+  const release = holdNextRuntime();
+  try {
+    await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true }); window.dispatchEvent(new Event('online')); });
+    await page.getByRole('button', { name: '修改配置' }).click();
+    await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime queued');
+    await expect(dialog.getByRole('button', { name: '放弃本次绑定' })).toBeDisabled();
+    await page.waitForTimeout(600);
+    expect(writes).toEqual([original]);
+    await dialog.getByRole('button', { name: '重试' }).click();
+    await expect.poll(() => writes.length).toBe(2);
+    expect(writes[1]).toEqual(original);
+    await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime after receipt');
+    await page.waitForTimeout(600);
+    expect(writes).toEqual([original, original]);
+    release();
+    await expect.poll(() => runtime.configuration.name).toBe('Runtime after receipt');
+    await expect.poll(() => runtime.revision).toBe('3');
+    expect(writes).toHaveLength(3);
+    expect(writes[2]?.key).not.toBe(original?.key);
+    expect(writes[2]?.body).toMatchObject({ expected_revision: '2', credential_ref: null,
+      configuration: { name: 'Runtime after receipt', enabled: false } });
+    await expect(dialog.getByRole('button', { name: '重试' })).toHaveCount(0);
+  } finally { release(); }
+});
+
+for (const status of [401, 409] as const) {
+  test(`an unknown Runtime retry keeps its original receipt identity after ${status}`, async ({ page }) => {
+    const { runtime, secretId } = await setup(page);
+    const attempts: { key: string | undefined; body: Schema['RuntimeUpdate'] }[] = [];
+    let reads = 0;
+    let receipt: Schema['RuntimeView'] | undefined;
+    let release!: () => void;
+    const heldReceipt = new Promise<void>(resolve => { release = resolve; });
+    await page.route(`**/api/v2/integrations/runtimes/${runtime.id}`, async route => {
+      const request = route.request();
+      if (request.method() === 'GET') { reads++; return route.fallback(); }
+      const body: Schema['RuntimeUpdate'] = request.postDataJSON();
+      attempts.push({ key: request.headers()['idempotency-key'], body });
+      if (attempts.length === 1) {
+        runtime.configuration = body.configuration; runtime.revision = '2';
+        receipt = structuredClone(runtime);
+        return route.abort('failed'); // The write committed, but its receipt was lost.
+      }
+      if (attempts.length === 2) return route.fulfill({ status, contentType: 'application/problem+json', body: JSON.stringify({
+        type: 'about:blank', title: 'Retry failed', status, code: status === 401 ? 'AUTH_REQUIRED' : 'REVISION_CONFLICT',
+        detail: 'Original receipt still unconfirmed', request_id: secretId, retryable: false,
+        safe_next_actions: status === 409 ? ['RELOAD'] : [], field_errors: [],
+        ...(status === 409 ? { current_revision: '2' } : {}),
+      }) });
+      if (attempts.length === 3) {
+        await heldReceipt;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          schema_version: 1, replayed: true, resource: receipt,
+        }) });
+      }
+      expect(body.expected_revision).toBe('2');
+      runtime.configuration = body.configuration; runtime.revision = '3';
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        schema_version: 1, replayed: false, resource: runtime,
+      }) });
+    });
+    await page.route('**/api/v2/auth/login', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      schema_version: 1, authenticated_at: runtime.created_at, expires_at: new Date(Date.now() + 43_200_000).toISOString(),
+    }) }));
+    try {
+      await page.getByRole('tab', { name: '集成' }).click();
+      await page.getByRole('button', { name: '配置与原生探测' }).click();
+      await page.getByRole('button', { name: '修改配置' }).click();
+      const dialog = page.getByRole('dialog', { name: '修改 Runtime 配置' });
+      await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime committed');
+      await expect(dialog.getByRole('button', { name: '重试' })).toBeVisible();
+      const original = structuredClone(attempts[0]);
+      expect(original?.key).toBeTruthy();
+      // Also cover reverting to the pre-request value before a newer resource attaches.
+      const queuedName = status === 401 ? 'Runtime A' : 'Runtime queued';
+      const queuedEnabled = status === 401;
+      await dialog.getByRole('textbox', { name: '名称' }).fill(queuedName);
+      if (!queuedEnabled) await dialog.getByRole('switch', { name: '允许新任务' }).click();
+      await page.waitForTimeout(600);
+      expect(attempts).toEqual([original]);
+      const readsBeforeRetry = reads;
+      await dialog.getByRole('button', { name: '重试' }).click();
+      if (status === 401) {
+        await expect(page.getByText('请重新登录', { exact: true })).toBeVisible();
+        await page.getByLabel('登录密码', { exact: true }).fill('test-only-password');
+        await page.getByRole('button', { name: '登录', exact: true }).click();
+        await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+        await page.getByRole('tab', { name: '集成' }).click();
+        await page.getByRole('button', { name: '配置与原生探测' }).click();
+      } else {
+        await expect(dialog.getByText('Original receipt still unconfirmed', { exact: true })).toBeVisible();
+        await page.waitForTimeout(600);
+        expect(reads).toBe(readsBeforeRetry); // Unknown retries must never enter ordinary conflict recovery.
+        await dialog.getByRole('button', { name: '关闭' }).click();
+        await expect(dialog).toHaveCount(0);
+      }
+      await page.getByRole('button', { name: '修改配置' }).click();
+      await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue(queuedName);
+      await expect(dialog.getByRole('switch', { name: '允许新任务' })).toBeChecked({ checked: queuedEnabled });
+      await page.waitForTimeout(600);
+      expect(attempts).toEqual([original, original]);
+      await dialog.getByRole('button', { name: '重试' }).click();
+      await expect.poll(() => attempts.length).toBe(3);
+      expect(attempts).toEqual([original, original, original]);
+      await page.waitForTimeout(600);
+      expect(attempts).toHaveLength(3);
+      release();
+      await expect.poll(() => runtime.configuration.name).toBe(queuedName);
+      await expect.poll(() => runtime.revision).toBe('3');
+      expect(attempts).toHaveLength(4);
+      expect(attempts[3]?.key).not.toBe(original?.key);
+      expect(attempts[3]?.body).toMatchObject({ expected_revision: '2', configuration: { name: queuedName, enabled: queuedEnabled } });
+      await expect(dialog.getByRole('button', { name: '重试' })).toHaveCount(0);
+    } finally { release(); }
+  });
+}
+
 for (const versions of [['1'], ['2'], ['2', '1']] satisfies Schema['PackageSchemaVersion'][][]) {
-  test(`Downstream package versions ${versions.join(',')} survive unrelated edits and reopening`, async ({ page }) => {
+  test(`Downstream package versions ${versions.join(',')} survive reopening and save only as V2`, async ({ page }) => {
     const { downstream, writes } = await setup(page, versions);
     await page.getByRole('tab', { name: '集成', exact: true }).click();
     await page.getByRole('tab', { name: '目标交付下游', exact: true }).click();
@@ -305,17 +442,40 @@ for (const versions of [['1'], ['2'], ['2', '1']] satisfies Schema['PackageSchem
     const dialog = page.getByRole('dialog', { name: '修改目标交付下游' });
     const versionsField = dialog.getByRole('combobox', { name: /^(?:\*\s*)?接受的目标包版本$/ });
     await expect(versionsField).toBeVisible();
-    await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).fill('Paper renamed');
-    await expect.poll(() => downstream.configuration.name).toBe('Paper renamed');
+    if (versions.includes('1')) await expect(dialog.getByText('V1（历史不可交付）', { exact: true })).toBeVisible();
+    if (versions.includes('2')) await expect(dialog.getByText('V2', { exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('button', { name: '修改下游', exact: true }).click();
     expect(downstream.configuration.accepted_package_versions).toEqual(versions);
+    if (versions.includes('1')) await expect(dialog.getByText('V1（历史不可交付）', { exact: true })).toBeVisible();
+    expect(writes.filter(write => write.kind === 'downstream')).toHaveLength(0);
+    await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).fill('Paper renamed');
+    if (versions.includes('1')) {
+      await page.waitForTimeout(600);
+      expect(downstream.configuration.name).toBe('Downstream A');
+      expect(downstream.configuration.accepted_package_versions).toEqual(versions);
+      expect(writes.filter(write => write.kind === 'downstream')).toHaveLength(0);
+      await versionsField.focus();
+      await versionsField.press('Backspace'); // Explicitly remove the historical V1 token.
+      if (!versions.includes('2')) {
+        await versionsField.fill('2');
+        await versionsField.press('Enter');
+      }
+      await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).click();
+    }
+    await expect.poll(() => downstream.configuration.name).toBe('Paper renamed');
+    expect(downstream.configuration.accepted_package_versions).toEqual(['2']);
     await dialog.getByRole('button', { name: '关闭', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole('button', { name: '修改下游', exact: true }).click();
     await expect(dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ })).toHaveValue('Paper renamed');
+    await expect(dialog.getByText('V1（历史不可交付）', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('V2', { exact: true })).toBeVisible();
     await dialog.getByRole('switch', { name: '允许未来目标交付' }).click();
     await expect.poll(() => downstream.configuration.enabled).toBe(false);
     expect(writes.filter(write => write.kind === 'downstream').map(write =>
-      (write.body as Schema['DownstreamUpdate']).configuration.accepted_package_versions)).toEqual([versions, versions]);
+      (write.body as Schema['DownstreamUpdate']).configuration.accepted_package_versions)).toEqual([['2'], ['2']]);
     await dialog.getByRole('button', { name: '关闭', exact: true }).click();
     await expect.poll(() => page.evaluate(async () => {
       const modulePath = '/src/settings-work.ts';
@@ -325,8 +485,8 @@ for (const versions of [['1'], ['2'], ['2', '1']] satisfies Schema['PackageSchem
   });
 }
 
-for (const version of ['1', '2'] satisfies Schema['PackageSchemaVersion'][]) {
-test(`uncertain Downstream creation keeps package version ${version}, command and credential across Settings navigation`, async ({ page }) => {
+for (const selection of ['default V2', 'explicit V2'] as const) {
+test(`uncertain Downstream creation keeps ${selection}, command and credential across Settings navigation`, async ({ page }) => {
   const { downstream, secretId } = await setup(page);
   const requests: { key: string | undefined; body: Schema['DownstreamCreate'] }[] = [];
   await page.route(/\/api\/v2\/integrations\/downstreams(?:\?|$)/, async route => {
@@ -345,10 +505,12 @@ test(`uncertain Downstream creation keeps package version ${version}, command an
   const dialog = page.getByRole('dialog', { name: '登记目标交付下游' });
   await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游名称$/ }).fill('Downstream B');
   await dialog.getByRole('textbox', { name: /^(?:\*\s*)?下游 HTTPS origin$/ }).fill('https://downstream-b.example');
-  if (version === '2') {
+  await expect(dialog.getByText('V2', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('V1（历史不可交付）', { exact: true })).toHaveCount(0);
+  if (selection === 'explicit V2') {
     const versionsField = dialog.getByRole('combobox', { name: /^(?:\*\s*)?接受的目标包版本$/ });
     await versionsField.focus();
-    await versionsField.press('Backspace'); // Remove the backward-compatible V1 default explicitly.
+    await versionsField.press('Backspace'); // Re-select V2 explicitly instead of relying on the default.
     await versionsField.fill('2');
     await versionsField.press('Enter');
     await versionsField.press('Escape');
@@ -358,7 +520,7 @@ test(`uncertain Downstream creation keeps package version ${version}, command an
   await expect(dialog.getByText(secretId)).toBeVisible();
   await dialog.getByRole('button', { name: '保存下游配置' }).click();
   await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]?.body.configuration.accepted_package_versions).toEqual([version]);
+  expect(requests[0]?.body.configuration.accepted_package_versions).toEqual(['2']);
   expect(requests[0]?.body.credential_ref).toBe(secretId);
   expect(requests[0]?.key).toBeTruthy();
   await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
@@ -660,9 +822,12 @@ test('a revision conflict retains the edit on the canonical revision until retry
   await dialog.getByRole('textbox', { name: '名称' }).fill('Runtime local');
   await expect(dialog.getByText('配置在其他地方已更改，已保留本次编辑，请检查后重试')).toBeVisible();
   await expect(dialog.getByRole('textbox', { name: '名称' })).toHaveValue('Runtime local');
+  await page.waitForTimeout(600);
+  expect(writes).toHaveLength(1);
   await dialog.getByRole('button', { name: '重试' }).click();
   await expect.poll(() => runtime.configuration.name).toBe('Runtime local');
   expect(writes.map(write => (write.body as Schema['RuntimeUpdate']).expected_revision)).toEqual(['1', '2']);
+  expect(writes[1]?.key).not.toBe(writes[0]?.key);
 });
 
 test('an already applied edit clears its conflict instead of offering a no-op retry', async ({ page }) => {
@@ -891,13 +1056,12 @@ test('a detached data source command protects browser reload through retry and r
   expect(requests).toHaveLength(2);
 });
 
-test('a definite rejection after detached command retry stays visible until acknowledged', async ({ page }) => {
+test('a first definite data source rejection stays visible until acknowledged', async ({ page }) => {
   const { source } = await setup(page);
   let attempts = 0;
   await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
     if (route.request().method() === 'GET') return route.fallback();
     attempts++;
-    if (attempts === 1) return route.abort('failed');
     return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
       type: 'about:blank', title: 'Invalid source', status: 422, code: 'INVALID_SOURCE', detail: 'Source rejected',
       request_id: source.id, retryable: false, safe_next_actions: [], field_errors: [],
@@ -911,15 +1075,17 @@ test('a definite rejection after detached command retry stays visible until ackn
   await page.getByText('Runtime A', { exact: true }).last().click();
   await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/new-source');
   await dialog.getByRole('button', { name: '登记', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+  await expect(dialog.getByText('Source rejected')).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: '数据源名称' })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: '重试当前操作' })).toHaveCount(0);
   await dialog.getByRole('button', { name: '返回' }).click();
+  await page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true }).getByRole('button', { name: '确认离开' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: '集成' }).click();
   await page.getByRole('tab', { name: '数据', exact: true }).click();
-  await page.getByRole('button', { name: '重试当前操作' }).click();
-  await expect.poll(() => attempts).toBe(2);
+  expect(attempts).toBe(1);
   await expect(page.getByText('数据源登记未完成')).toBeVisible();
+  await expect(page.getByText('数据源登记结果待确认')).toHaveCount(0);
   await expect(page.getByText('Source rejected')).toBeVisible();
   expect(await page.evaluate(async () => {
     const path = '/src/settings-work.ts';
@@ -927,7 +1093,7 @@ test('a definite rejection after detached command retry stays visible until ackn
   })).toBe(true);
   await browserReload(page, 'stay');
   await expect(page.getByText('Source rejected')).toBeVisible();
-  expect(attempts).toBe(2);
+  expect(attempts).toBe(1);
   await page.getByRole('button', { name: '关闭错误' }).click();
   await expect(page.getByText('数据源登记未完成')).toHaveCount(0);
   await expect.poll(() => page.evaluate(async () => {
@@ -935,7 +1101,78 @@ test('a definite rejection after detached command retry stays visible until ackn
     return (await import(path)).settingsWorkActive();
   })).toBe(false);
   await browserReload(page, 'clean');
-  expect(attempts).toBe(2);
+  expect(attempts).toBe(1);
+});
+
+test('a detached unknown data source command retains its request after 422 until the original receipt', async ({ page }) => {
+  const { source } = await setup(page);
+  const requests: { method: string; path: string; key: string | undefined; body: Schema['DataSourceCreate'] }[] = [];
+  let release!: () => void;
+  const heldReceipt = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/v2\/data\/sources(?:\?|$)/, async route => {
+    const request = route.request();
+    if (request.method() === 'GET') return route.fallback();
+    const body: Schema['DataSourceCreate'] = request.postDataJSON();
+    requests.push({ method: request.method(), path: new URL(request.url()).pathname, key: request.headers()['idempotency-key'], body });
+    if (requests.length === 1) return route.abort('failed');
+    if (requests.length === 2) return route.fulfill({ status: 422, contentType: 'application/problem+json', body: JSON.stringify({
+      type: 'about:blank', title: 'Invalid source', status: 422, code: 'INVALID_SOURCE', detail: 'Source rejected',
+      request_id: source.id, retryable: false, safe_next_actions: [], field_errors: [],
+    }) });
+    await heldReceipt;
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({
+      schema_version: 1, replayed: true, resource: { ...source, name: body.name, native_catalog_ref: body.native_catalog_ref },
+    }) });
+  });
+  try {
+    await page.getByRole('tab', { name: '数据', exact: true }).click();
+    await page.getByRole('button', { name: '登记数据源' }).click();
+    const dialog = page.getByRole('dialog', { name: '登记数据源' });
+    await dialog.getByRole('textbox', { name: '数据源名称' }).fill('New source');
+    await dialog.getByRole('combobox', { name: '选择已登记的 Runtime' }).click();
+    await page.getByText('Runtime A', { exact: true }).last().click();
+    await dialog.getByRole('textbox', { name: 'Runtime 原生目录登记键' }).fill('catalog/new-source');
+    await dialog.getByRole('button', { name: '登记', exact: true }).click();
+    await expect(dialog.getByRole('button', { name: '重试当前操作' })).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.key).toBeTruthy();
+    const original = structuredClone(requests[0]);
+    await dialog.getByRole('button', { name: '返回' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: '放弃未保存的更改？', exact: true })).toHaveCount(0);
+    await page.getByRole('tab', { name: '集成' }).click();
+    await page.getByRole('tab', { name: '数据', exact: true }).click();
+    const response = page.waitForResponse(res => new URL(res.url()).pathname === '/api/v2/data/sources' && res.status() === 422);
+    await page.getByRole('button', { name: '重试当前操作' }).click();
+    await response;
+    await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+    await expect(page.getByText('数据源登记未完成')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '关闭错误' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '重试当前操作' })).toBeEnabled();
+    expect(requests).toEqual([original, original]);
+    await browserReload(page, 'stay');
+    expect(requests).toHaveLength(2);
+    await page.getByRole('button', { name: '重试当前操作' }).click();
+    await expect.poll(() => requests.length).toBe(3);
+    expect(requests).toEqual([original, original, original]);
+    await expect(page.getByText('数据源登记结果待确认')).toBeVisible();
+    await expect(page.getByText('数据源登记回执已确认')).toHaveCount(0);
+    expect(await page.evaluate(async () => {
+      const path = '/src/settings-work.ts';
+      return (await import(path)).settingsWorkActive();
+    })).toBe(true);
+    release();
+    await expect(page.getByText('数据源登记回执已确认')).toBeVisible();
+    await expect(page.getByText('数据源登记结果待确认')).toHaveCount(0);
+    expect(requests).toEqual([original, original, original]);
+    await page.getByRole('button', { name: '关闭回执' }).click();
+    await expect.poll(() => page.evaluate(async () => {
+      const path = '/src/settings-work.ts';
+      return (await import(path)).settingsWorkActive();
+    })).toBe(false);
+    await browserReload(page, 'clean');
+    expect(requests).toHaveLength(3);
+  } finally { release(); }
 });
 
 test('accepting browser reload discards an uncertain command without replaying it', async ({ page }) => {

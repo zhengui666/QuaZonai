@@ -6,6 +6,7 @@ import csv
 import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -412,9 +413,324 @@ class HfDatasetTest(unittest.TestCase):
                              "--cache-dir", str(self.cache), "--output", str(self.output)]), 0)
         self.assertEqual(json.loads(output.getvalue())["schema"], hf_dataset.SELECTION_SCHEMA)
         descriptor = next(p for p in source_plugins.plugin_descriptors() if p["id"] == "hf-dataset")
-        self.assertEqual(descriptor["capabilities"], ["convert", "download", "plan", "prepare", "verify"])
+        self.assertEqual(descriptor["capabilities"], ["convert", "download", "freeze", "plan", "prepare", "verify"])
         dockerfile = Path(__file__).parents[2] / "deploy/docker/Dockerfile"
         self.assertIn("runtimes/data/hf_dataset.py", dockerfile.read_text())
+
+
+class HfOfflineFreezeTest(unittest.TestCase):
+    """Existing original fixtures only; acquisition, network and hashing fail closed."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.cache = self.root / "cache"
+        self.output = self.root / "new-request"
+        self.plan_path = self.root / "original-plan.json"
+        self.body = b"PAR1existing-offline-fixturePAR1"
+        files = [{"path": f"data/{name}.parquet", "size": len(self.body), "format": "parquet",
+                  "url": snapshot.repository_file_url(DATASET, COMMIT, f"data/{name}.parquet")}
+                 for name in "ab"]
+        self.plan = {"schema": hf_dataset.PLAN_SCHEMA, "repository": DATASET, "revision": COMMIT,
+                     "requested_revision": "original-tag", "license": None, "partition_index": None,
+                     "request": {"includes": [f["path"] for f in files], "markets": [],
+                                 "start_date": None, "end_date": None},
+                     "selection_bounds": "[start_date,end_date)", "download_granularity": "FILE_PARTITION",
+                     "coverage": "NOT_ASSERTED", "max_bytes": None,
+                     "total_bytes": sum(f["size"] for f in files), "files": files}
+        self.plan_path.write_bytes(hf_dataset.manifest_bytes(self.plan))
+        self.cache_root = hf_dataset.cache_root(self.cache, self.plan)
+        self.originals, self.targets = [], []
+        for item in files:
+            original = self.root / Path(item["path"]).name
+            original.write_bytes(self.body)
+            target = self.cache_root / "files" / item["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.link(original, target)
+            self.originals.append(original)
+            self.targets.append(target)
+        self.forbidden = []
+        for owner, method in ((snapshot, "repository_metadata"), (snapshot, "acquire_cached_file"),
+                              (snapshot, "fetch_bytes"), (snapshot, "file_hash"),
+                              (snapshot.urllib.request, "urlopen"), (snapshot.hashlib, "sha256")):
+            mock = patch.object(owner, method, side_effect=AssertionError(f"freeze must not call {method}"))
+            self.forbidden.append(mock.start())
+            self.addCleanup(mock.stop)
+
+    def freeze(self, output=None):
+        return hf_dataset.freeze(self.plan_path, self.cache, output or self.output)
+
+    def test_real_cli_freezes_existing_hard_links_without_network_hash_or_data_copy(self):
+        before = [hf_dataset.freeze_observation(p) for p in self.originals + self.targets]
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(source_plugins.main(["freeze", "hf-dataset", "--plan", str(self.plan_path),
+                             "--cache-dir", str(self.cache), "--output", str(self.output)]), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["plan"], self.plan)
+        self.assertEqual(result["downloaded_bytes"], 0)
+        self.assertEqual(result["cached_files"], 2)
+        self.assertEqual(result["cache_root"], str(self.cache_root))
+        self.assertEqual(json.loads((self.output / "request.json").read_bytes()), self.plan)
+        self.assertEqual(json.loads((self.output / "selection.json").read_bytes()), result)
+        self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 2)
+        for item, original, target in zip(result["files"], self.originals, self.targets):
+            self.assertEqual(item["local_path"], str(target))
+            self.assertEqual((item["cached"], item["resumed_bytes"], item["validation"]),
+                             (True, 0, "PARQUET_ENVELOPE"))
+            self.assertTrue(original.samefile(target))
+            self.assertEqual(original.stat().st_nlink, 2)
+        self.assertEqual(before, [hf_dataset.freeze_observation(p) for p in self.originals + self.targets])
+        self.assertEqual(set(p.name for p in self.output.iterdir()),
+                         {"request.json", "selection.json", ".hf-request.lock"})
+        self.assertEqual(sorted(p for p in self.cache_root.rglob("*.parquet") if p.is_file()), self.targets)
+        for mock in self.forbidden:
+            mock.assert_not_called()
+        descriptor = next(p for p in source_plugins.plugin_descriptors() if p["id"] == "hf-dataset")
+        self.assertIn("freeze", descriptor["capabilities"])
+        self.assertEqual(descriptor["public_network_operations"], ["download", "plan"])
+        self.assertFalse(source_plugins.PLUGINS["hf-dataset"].capabilities["freeze"].public_network)
+
+    def test_missing_complete_file_never_adopts_partial_or_publishes_manifest(self):
+        self.targets[-1].unlink()
+        partial = self.cache_root / "transfers/data/b.parquet/data.partial"
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(self.body)
+        with self.assertRaisesRegex(ValueError, "input is missing.*b.parquet"):
+            self.freeze()
+        self.assertFalse((self.output / "selection.json").exists())
+        self.assertFalse((self.output / "request.json").exists())
+        self.assertEqual(partial.read_bytes(), self.body)
+        self.assertFalse(self.targets[-1].exists())
+
+    def test_bad_size_parquet_header_footer_and_nonregular_source_fail_without_publication(self):
+        for name, body in (("size", b"short"), ("header", b"FAIL" + self.body[4:]),
+                           ("footer", self.body[:-4] + b"FAIL")):
+            self.targets[0].write_bytes(body)
+            output = self.root / name
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.freeze(output)
+            self.assertFalse((output / "selection.json").exists())
+            self.assertEqual(self.targets[0].read_bytes(), body)
+        self.targets[0].unlink()
+        self.targets[0].mkdir()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            self.freeze()
+        self.assertFalse((self.output / "selection.json").exists())
+
+    def test_plan_file_cache_file_and_cache_ancestor_symlinks_fail(self):
+        linked_plan = self.root / "linked-plan.json"
+        linked_plan.symlink_to(self.plan_path)
+        with self.assertRaisesRegex(ValueError, "symlinks"):
+            hf_dataset.freeze(linked_plan, self.cache, self.output)
+        self.targets[0].unlink()
+        self.targets[0].symlink_to(self.originals[0])
+        with self.assertRaisesRegex(ValueError, "symlinks"):
+            self.freeze()
+        self.targets[0].unlink()
+        os.link(self.originals[0], self.targets[0])
+        alias = self.root / "cache-alias"
+        alias.symlink_to(self.cache, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlinks"):
+            hf_dataset.freeze(self.plan_path, alias, self.root / "ancestor-request")
+        self.assertEqual(self.originals[0].read_bytes(), self.body)
+
+    def test_existing_cache_state_must_match_original_source_identity(self):
+        state = self.cache_root / "transfers/data/a.parquet/state.json"
+        state.parent.mkdir(parents=True)
+        identity = {key: self.plan["files"][0][key] for key in ("url", "size", "format")}
+        for key, value in (("url", "https://example.invalid/other"), ("size", 1), ("format", "opaque")):
+            state.write_text(json.dumps({**identity, key: value}))
+            output = self.root / key
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "different file metadata"):
+                self.freeze(output)
+            self.assertFalse((output / "selection.json").exists())
+            self.assertEqual(json.loads(state.read_bytes()), {**identity, key: value})
+        state.write_text(json.dumps(identity))
+        self.assertEqual(self.freeze()["cached_files"], 2)
+
+    def test_plan_source_conflict_or_arbitrary_local_path_is_not_accepted(self):
+        for change in ("url", "revision", "local_path"):
+            plan = json.loads(json.dumps(self.plan))
+            if change == "url":
+                plan["files"][0]["url"] = "https://example.invalid/other"
+            elif change == "revision":
+                plan["revision"] = "main"
+            else:
+                plan["files"][0]["local_path"] = str(self.originals[0])
+            self.plan_path.write_bytes(hf_dataset.manifest_bytes(plan))
+            output = self.root / change
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.freeze(output)
+            self.assertFalse((output / "selection.json").exists())
+
+    def test_input_mutation_during_or_after_inspection_is_not_published(self):
+        inspect = hf_dataset.inspect_file
+        for name in ("source", "plan", "earlier-file"):
+            self.targets[0].write_bytes(self.body)
+            self.plan_path.write_bytes(hf_dataset.manifest_bytes(self.plan))
+            def mutate(path, item):
+                result = inspect(path, item)
+                if name == "plan":
+                    self.plan_path.write_bytes(self.plan_path.read_bytes() + b" ")
+                elif path == self.targets[0] and name == "source":
+                    path.write_bytes(self.body.replace(b"existing", b"modified"))
+                elif path == self.targets[1] and name == "earlier-file":
+                    self.targets[0].write_bytes(self.body.replace(b"existing", b"modified"))
+                return result
+            output = self.root / name
+            with self.subTest(name=name), patch.object(hf_dataset, "inspect_file", side_effect=mutate), \
+                    self.assertRaisesRegex(ValueError, "input changed"):
+                self.freeze(output)
+            self.assertFalse((output / "selection.json").exists())
+            self.assertFalse((output / "request.json").exists())
+
+    def test_mutation_between_request_and_selection_publication_keeps_selection_absent(self):
+        publish = snapshot.publish_bytes
+        def mutate(path, body):
+            publish(path, body)
+            if path.name == "request.json":
+                self.targets[0].write_bytes(self.body.replace(b"existing", b"modified"))
+        with patch.object(snapshot, "publish_bytes", side_effect=mutate), \
+                self.assertRaisesRegex(ValueError, "input changed"):
+            self.freeze()
+        self.assertFalse((self.output / "selection.json").exists())
+        self.assertEqual(json.loads((self.output / "request.json").read_bytes()), self.plan)
+
+    def test_existing_output_even_empty_or_prior_success_fails_without_overwrite(self):
+        self.output.mkdir()
+        with self.assertRaisesRegex(ValueError, "must be a new directory"):
+            self.freeze()
+        self.assertEqual(list(self.output.iterdir()), [])
+        other = self.root / "success"
+        self.freeze(other)
+        original = (other / "selection.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "must be a new directory"):
+            self.freeze(other)
+        self.assertEqual((other / "selection.json").read_bytes(), original)
+
+    def assert_writer_waits_for_publication(self, boundary):
+        attempted, acquired, allow_write = threading.Event(), threading.Event(), threading.Event()
+        observations, errors = [], []
+        lock = self.cache_root / "transfers/data/a.parquet/lock"
+        def writer():
+            try:
+                attempted.set()
+                with snapshot.cache_lock(lock):
+                    observations.append((self.output / "selection.json").exists())
+                    acquired.set()
+                    if allow_write.wait(2):
+                        self.targets[0].write_bytes(b"FAIL" + self.body[4:])
+            except Exception as error:
+                errors.append(error)
+        thread = threading.Thread(target=writer, daemon=True)
+        started = False
+        def start_writer():
+            nonlocal started
+            if not started:
+                started = True
+                thread.start()
+                self.assertTrue(attempted.wait(2))
+                self.assertFalse(acquired.wait(0.1), "selected cache lock released before publication")
+        original_observe, original_publish = hf_dataset.freeze_observation, snapshot.publish_bytes
+        def observe(path):
+            result = original_observe(path)
+            if (boundary == "last-stat" and path == self.targets[1]
+                    and (self.output / "request.json").exists()):
+                # a was already checked in this last pass; a cooperating
+                # writer must still be blocked while b's stat returns.
+                start_writer()
+            return result
+        def publish(path, body):
+            if boundary == "publish" and path.name == "selection.json":
+                # All final stats have returned, but publication has not run.
+                start_writer()
+            return original_publish(path, body)
+        try:
+            with patch.object(hf_dataset, "freeze_observation", side_effect=observe), \
+                    patch.object(snapshot, "publish_bytes", side_effect=publish):
+                self.assertEqual(self.freeze()["cached_files"], 2)
+            self.assertTrue(started)
+            self.assertTrue(acquired.wait(2), "selected cache lock was not released after publication")
+            self.assertEqual(observations, [True])
+            self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 2)
+        finally:
+            allow_write.set()
+            if started:
+                thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        # Publication is not a promise of permanent source immutability.
+        self.assertEqual(self.targets[0].read_bytes(), b"FAIL" + self.body[4:])
+
+    def test_earlier_file_lock_is_held_through_later_files_final_stat(self):
+        self.assert_writer_waits_for_publication("last-stat")
+
+    def test_all_file_locks_are_held_between_final_stat_and_atomic_publication(self):
+        self.assert_writer_waits_for_publication("publish")
+
+    def test_all_file_locks_release_on_inspection_or_publication_failure(self):
+        original_inspect, original_publish = hf_dataset.inspect_file, snapshot.publish_bytes
+        for failure in ("inspect", "publish"):
+            output = self.root / failure
+            def inspect(path, item):
+                if failure == "inspect" and path == self.targets[-1]:
+                    raise ValueError("injected inspection failure")
+                return original_inspect(path, item)
+            def publish(path, body):
+                if failure == "publish" and path.name == "selection.json":
+                    raise OSError("injected publication failure")
+                return original_publish(path, body)
+            with self.subTest(failure=failure), patch.object(hf_dataset, "inspect_file", side_effect=inspect), \
+                    patch.object(snapshot, "publish_bytes", side_effect=publish), self.assertRaises((ValueError, OSError)):
+                self.freeze(output)
+            self.assertFalse((output / "selection.json").exists())
+            released = []
+            def check_release():
+                for item in self.plan["files"]:
+                    lock = self.cache_root / "transfers" / item["path"] / "lock"
+                    with snapshot.cache_lock(lock):
+                        released.append(item["path"])
+            thread = threading.Thread(target=check_release, daemon=True)
+            thread.start()
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive(), "freeze leaked a selected cache lock")
+            self.assertEqual(released, [item["path"] for item in self.plan["files"]])
+
+    def test_overlapping_reversed_plans_acquire_locks_in_same_order_without_deadlock(self):
+        reverse_plan = {**self.plan, "files": list(reversed(self.plan["files"]))}
+        reverse_path = self.root / "reverse-plan.json"
+        reverse_path.write_bytes(hf_dataset.manifest_bytes(reverse_plan))
+        lock_orders, results, errors = {}, [], []
+        guard, start = threading.Lock(), threading.Barrier(2)
+        original_lock = snapshot.cache_lock
+        @contextlib.contextmanager
+        def lock(path):
+            if path.name == "lock":
+                with guard:
+                    lock_orders.setdefault(threading.current_thread().name, []).append(str(path))
+            with original_lock(path):
+                yield
+        def run(path, name):
+            try:
+                start.wait(timeout=2)
+                results.append(hf_dataset.freeze(path, self.cache, self.root / name))
+            except Exception as error:
+                errors.append(error)
+        threads = [threading.Thread(target=run, args=(path, f"concurrent-{index}"),
+                                    name=f"freeze-{index}", daemon=True)
+                   for index, path in enumerate((self.plan_path, reverse_path))]
+        with patch.object(snapshot, "cache_lock", side_effect=lock):
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=3)
+        self.assertFalse(any(thread.is_alive() for thread in threads), "inconsistent lock order deadlocked")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["cached_files"] == 2 for result in results))
+        self.assertEqual(lock_orders["freeze-0"], lock_orders["freeze-1"])
+        self.assertEqual(lock_orders["freeze-0"], sorted(lock_orders["freeze-0"]))
 
 
 class RealHttpTransportTest(unittest.TestCase):

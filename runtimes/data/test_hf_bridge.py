@@ -113,6 +113,37 @@ class HfBridgeTest(unittest.TestCase):
         self.assertFalse(result["admission"]["research_qualified"])
         self.assertEqual(self.source_file.read_bytes(), self.original_source_bytes)
 
+    def test_offline_freeze_handoff_uses_existing_selection_bridge_without_acquisition(self):
+        cache = self.root / "fixed-cache"
+        target = hf_dataset.cache_root(cache, self.plan) / "files" / self.plan["files"][0]["path"]
+        target.parent.mkdir(parents=True)
+        os.link(self.source_file, target)
+        before = hf_dataset.freeze_observation(self.source_file)
+        plan_path = self.root / "fixed-plan.json"
+        plan_path.write_bytes(hf_dataset.manifest_bytes(self.plan))
+        request = self.root / "frozen-request"
+        with patch.object(snapshot.urllib.request, "urlopen", side_effect=AssertionError("offline only")) as network, \
+                patch.object(snapshot, "repository_metadata", side_effect=AssertionError("no metadata fetch")), \
+                patch.object(snapshot, "acquire_cached_file", side_effect=AssertionError("no acquisition")), \
+                patch.object(snapshot, "file_hash", side_effect=AssertionError("no checksum")):
+            self.manifest = hf_dataset.freeze(plan_path, cache, request)
+            self.selection = request / "selection.json"
+            self.args.selection = self.selection
+            report, evidence = self.artifacts()
+            report["source_observed_at"] = evidence["source_observed_at"] = self.manifest["retrieved_at"]
+            with patch.object(plugins.subprocess, "run", side_effect=self.runner(report, evidence)) as run:
+                result = plugins.hf_history_convert(self.args)
+        self.assertEqual(run.call_args.args[0][:4],
+                         [str(self.binary), "archive", "--selection", str(self.selection)])
+        self.assertEqual(result["status"], "NATIVE_ARTIFACTS_VALIDATED")
+        self.assertEqual(result["native_report"]["historical_availability"], "UNVERIFIED")
+        self.assertFalse(result["admission"]["research_qualified"])
+        self.assertEqual(self.manifest["downloaded_bytes"], 0)
+        self.assertEqual(self.manifest["cached_files"], 1)
+        self.assertEqual(before, hf_dataset.freeze_observation(self.source_file))
+        self.assertTrue(self.source_file.samefile(target))
+        network.assert_not_called()
+
     def test_sii_raw_format_dispatches_and_prepares_without_network_hashes_or_pit_claim(self):
         self.args.format = "sii-order-filled"
         with patch.object(plugins.subprocess, "run", side_effect=self.runner()) as run, \
