@@ -6,6 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
+import codex
 import release
 
 
@@ -24,7 +25,7 @@ class PublicationPreflightTests(unittest.TestCase):
         with patch.dict(os.environ, {"RELEASE_BRANCH": "dev"}), patch.object(release.sys, "argv", ARGV), \
                 patch.object(release, "verify"), patch.object(release, "run", return_value=json.dumps(LABELS)), \
                 patch.object(release, "docker_configuration", return_value={}), \
-                patch.object(release.codex, "verify_candidate"), \
+                patch.object(codex, "verify_candidate"), \
                 patch.object(release, "published_codex_image", return_value=None), \
                 patch.object(release, "push_image", return_value=DIGEST) as push, \
                 patch.object(release, "bundle"):
@@ -38,7 +39,7 @@ class PublicationPreflightTests(unittest.TestCase):
                     patch.object(release, "verify"), patch.object(release, "run", side_effect=[
                         json.dumps(LABELS), json.dumps({**LABELS, field: wrong})]), \
                     patch.object(release, "push_image") as push, \
-                    patch.object(release.codex, "verify_candidate") as check_codex, \
+                    patch.object(codex, "verify_candidate") as check_codex, \
                     patch.object(release, "bundle") as bundle, \
                     self.assertRaisesRegex(ValueError, "version and source"):
                 release.main()
@@ -52,7 +53,7 @@ class PublicationPreflightTests(unittest.TestCase):
                     patch.object(release, "verify"), \
                     patch.object(release, "run", return_value=json.dumps(LABELS)), \
                     patch.object(release, "docker_configuration", return_value={}), \
-                    patch.object(release.codex, "verify_candidate",
+                    patch.object(codex, "verify_candidate",
                                  side_effect=ValueError("candidate") if failure == "candidate" else None), \
                     patch.object(release, "published_codex_image", side_effect=ValueError("registry")), \
                     patch.object(release, "push_image") as push, \
@@ -78,7 +79,7 @@ class PublicationPreflightTests(unittest.TestCase):
             with self.subTest(existing=existing), patch.object(release.sys, "argv", ARGV), \
                     patch.object(release, "verify"), patch.object(release, "run", side_effect=inspect), \
                     patch.object(release, "docker_configuration", return_value={}), \
-                    patch.object(release.codex, "verify_candidate", side_effect=check), \
+                    patch.object(codex, "verify_candidate", side_effect=check), \
                     patch.object(release, "published_codex_image", side_effect=lookup), \
                     patch.object(release, "push_image", side_effect=publish), \
                     patch.object(release, "bundle") as bundle:
@@ -98,7 +99,7 @@ class PublicationPreflightTests(unittest.TestCase):
             with self.subTest(existing=existing), patch.object(release.sys, "argv", [
                 "release.py", "publish-codex", "--codex-version", VERSION, "--image", "rebuilt-image"
             ]), patch.object(release, "docker_configuration", return_value={}), \
-                    patch.object(release.codex, "verify_candidate") as check, \
+                    patch.object(codex, "verify_candidate") as check, \
                     patch.object(release, "published_codex_image", return_value=existing), \
                     patch.object(release, "push_image", return_value=DIGEST) as push, \
                     patch.object(release, "advance_codex_latest") as latest:
@@ -120,7 +121,7 @@ class PublishedCodexTests(unittest.TestCase):
         with patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as pull, \
                 patch.object(release, "run", return_value=json.dumps([self.metadata()])) as inspect, \
                 patch.object(release, "docker_configuration", return_value={}), \
-                patch.object(release.codex, "verify_candidate") as check, \
+                patch.object(codex, "verify_candidate") as check, \
                 patch.object(release, "push_image") as push:
             self.assertEqual(release.published_codex_image(VERSION), DIGEST)
         self.assertEqual(pull.call_args.args[0], ["docker", "pull", release.CODEX_REPOSITORY + ":" + VERSION])
@@ -150,7 +151,7 @@ class PublishedCodexTests(unittest.TestCase):
             metadata = {**self.metadata(), **change}
             with self.subTest(change=change), patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                     patch.object(release, "run", return_value=json.dumps([metadata])), \
-                    patch.object(release.codex, "verify_candidate") as check, \
+                    patch.object(codex, "verify_candidate") as check, \
                     patch.object(release, "push_image") as push, self.assertRaisesRegex(ValueError, "not overwritten"):
                 release.published_codex_image(VERSION)
             check.assert_not_called()
@@ -160,7 +161,7 @@ class PublishedCodexTests(unittest.TestCase):
         with patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                 patch.object(release, "run", return_value=json.dumps([self.metadata()])), \
                 patch.object(release, "docker_configuration", return_value={}), \
-                patch.object(release.codex, "verify_candidate", side_effect=ValueError("sandbox unavailable")), \
+                patch.object(codex, "verify_candidate", side_effect=ValueError("sandbox unavailable")), \
                 patch.object(release, "push_image") as push, self.assertRaisesRegex(ValueError, "sandbox unavailable"):
             release.published_codex_image(VERSION)
         push.assert_not_called()

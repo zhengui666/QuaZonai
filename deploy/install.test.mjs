@@ -15,6 +15,9 @@ const documents = [readme, guide, operations];
 // newer CI-only Bash is supplied for the simulated Linux stack prerequisites.
 const nativeBash = '/bin/bash';
 const linuxStackBash = process.env.QUAZONAI_TEST_LINUX_BASH || nativeBash;
+// Record the installer shell before it starts; do not let child fixture shells
+// replace its version. Startup-file $0 is only the script name in Bash 5.2+.
+const shellVersionWitness = 'printf "%s" "$BASH_VERSION" > "$TEST_SHELL_LOG"\nunset BASH_ENV\n';
 const bundleFiles = ['manage.sh', 'json.awk', 'codex.sh', 'deploy.sh', 'update.sh', 'compose.yaml',
   'release.json', 'README.md', 'codex-update.sh', 'codex-login.sh', 'runtime.sh', 'codex.apparmor', '.env.example'];
 const releaseAssets = ['install.sh', 'install.ps1', 'release.json', 'quazonai-deploy.tar.gz', 'README.md',
@@ -314,12 +317,30 @@ test('CLI catalog fixtures use native Bash while Linux stack fixtures use their 
     const f = await releaseFixture(t, { system, architecture, bootstrap: true });
     const witness = join(f.root, 'record-shell.sh');
     const log = join(f.root, 'shell-version');
-    await writeFile(witness, 'if [ "$0" = "$TEST_BOOTSTRAP" ]; then printf "%s" "$BASH_VERSION" > "$TEST_SHELL_LOG"; fi\n');
+    await writeFile(witness, shellVersionWitness);
     installed(f.run(args, { BASH_ENV: witness, TEST_SHELL_LOG: log }));
     const expected = system === 'Linux' && args.length === 0
       ? succeeds(linuxStackBash, ['-c', 'printf "%s" "$BASH_VERSION"']) : nativeVersion;
     assert.equal(await readFile(log, 'utf8'), expected);
   }
+});
+
+test('runtime witness records before script naming and is not inherited by child shells', async t => {
+  const f = await releaseFixture(t);
+  const witness = join(f.root, 'record-shell.sh');
+  const log = join(f.root, 'shell-version');
+  const childLog = join(f.root, 'child-shell-version');
+  await writeFile(witness, shellVersionWitness);
+  // Before Bash 5.2, BASH_ENV sees the shell name in $0, not the script name.
+  // -c retains that startup condition even on the newer local test runtime.
+  succeeds(nativeBash, ['-c',
+    'test "$0" != "$TEST_BOOTSTRAP" && TEST_SHELL_LOG="$TEST_CHILD_SHELL_LOG" "$TEST_NATIVE_BASH" -c ":"',
+    'bash-before-script-name'], {
+    env: { ...f.env, BASH_ENV: witness, TEST_SHELL_LOG: log,
+      TEST_CHILD_SHELL_LOG: childLog, TEST_NATIVE_BASH: nativeBash },
+  });
+  assert.equal(await readFile(log, 'utf8'), succeeds(nativeBash, ['-c', 'printf "%s" "$BASH_VERSION"']));
+  await assert.rejects(readFile(childLog), { code: 'ENOENT' });
 });
 
 test('bootstrap rejects raw and escaped NUL without replacing the installed CLI', async t => {
