@@ -1,6 +1,6 @@
 //! Native user-service creation revocation. No polling daemon or model session.
 use super::{
-    close_diagnostics::{failure, not_fenced, FenceLoad, FenceState, Phase},
+    close_diagnostics::{cgroup_failure, failure, not_fenced, FenceLoad, FenceState, Phase},
     NativeFailure, Result,
 };
 use std::{path::PathBuf, process::Stdio, time::Duration};
@@ -257,7 +257,7 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
                 );
             }
             let events =
-                events.map_err(|_| failure(Phase::StopCgroupRead, NativeFailure::Unavailable))?;
+                events.map_err(|error| cgroup_failure(Err(&error), _stop_code, &observed))?;
             if !unpopulated(&events) {
                 #[cfg(all(test, feature = "native-codex"))]
                 native_tests::trace(
@@ -265,10 +265,7 @@ async fn observe_stopped(name: &str, _stop_code: Option<i32>) -> Result<Observat
                     "stop.cgroup-populated",
                     format_args!("populated_zero=false stop_code={:?}", _stop_code),
                 );
-                return Err(failure(
-                    Phase::StopCgroupPopulated,
-                    NativeFailure::Unavailable,
-                ));
+                return Err(cgroup_failure(Ok(&events), _stop_code, &observed));
             }
         }
     }
@@ -566,6 +563,32 @@ mod tests {
         assert!(unpopulated("populated 0\nfrozen 0\n"));
         for events in ["", "populated 1\n", "populated 10\n", "frozen 0\n"] {
             assert!(!unpopulated(events));
+        }
+    }
+
+    #[test]
+    fn unpopulated_acceptance_remains_independent_of_diagnostic_classification() {
+        for events in [
+            "populated 0\n",
+            "populated 0\r\nfrozen 1\r\n",
+            "populated 1\npopulated 0\n",
+            "populated 0\npopulated 0\n",
+            "populated 2\npopulated 0\n",
+            "private-key private-value\npopulated 0\n",
+        ] {
+            assert!(unpopulated(events), "{events:?}");
+        }
+        for events in [
+            "",
+            "frozen 0\n",
+            "populated 1\n",
+            "populated 10\n",
+            " populated 0\n",
+            "populated\t0\n",
+            "populated 0 extra\n",
+            "populated 1\npopulated 1\n",
+        ] {
+            assert!(!unpopulated(events), "{events:?}");
         }
     }
 }
