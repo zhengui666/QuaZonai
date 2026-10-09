@@ -300,7 +300,12 @@ qz_activate() {
     sync -f -- "$root"
     systemctl --user enable "$(qz_unit "$file")"
     qz_restarts "$file" true
-    rm -f -- "$root/pending.json"; sync -f -- "$root"
+    # Keep same-target recovery available if clearing the marker cannot be synced.
+    qz_save "$QZ_WORK/completed-pending.json" "$root/pending.json"
+    if ! (rm -f -- "$root/pending.json" && sync -f -- "$root"); then
+        qz_save "$root/pending.json" "$QZ_WORK/completed-pending.json"
+        qz_fail 'Could not durably clear the recovery marker; retry the same target.'
+    fi
     printf 'Active release %s: http://localhost:%s\n' "$version" "$(qz_get "$file" port)" || :
 }
 qz_start_prepared() { qz_resume "$2" false; qz_verify_worker "$2"; qz_activate "$1" "$2"; }

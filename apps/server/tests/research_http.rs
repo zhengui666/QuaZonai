@@ -231,6 +231,189 @@ async fn real_browser_prepares_input_and_policy_with_exact_public_retries_and_me
     assert_eq!(conflict.body["code"], "IDEMPOTENCY_CONFLICT");
 }
 #[sqlx::test(migrations = "../../migrations")]
+async fn research_pages_are_complete_project_scoped_and_preserve_original_receipts(pool: PgPool) {
+    let (f, cookie, data) = authenticated(pool.clone(), DataUse::Research).await;
+    let (other, other_cookie, other_data) = authenticated(pool.clone(), DataUse::Research).await;
+    let projects = [(&f, &cookie, &data), (&other, &other_cookie, &other_data)];
+    let mut input_ids = [Vec::new(), Vec::new()];
+    let mut policy_ids = [Vec::new(), Vec::new()];
+    let mut originals = Vec::new();
+    // Interleave projects so a foreign cursor falls inside the other project's history.
+    for round in 0..3 {
+        for (index, (f, cookie, data)) in projects.iter().enumerate() {
+            let key = format!("input-{index}-{round}");
+            let request = serde_json::to_value(data.input(InputPurpose::Validation)).unwrap();
+            let input = browser(
+                f,
+                cookie,
+                &key,
+                "POST",
+                "/api/v2/input-sets",
+                request.clone(),
+            )
+            .await;
+            assert_eq!(input.status, StatusCode::CREATED, "{}", input.body);
+            assert_eq!(input.body["replayed"], false);
+            let view: InputSetView =
+                serde_json::from_value(input.body["resource"].clone()).unwrap();
+            input_ids[index].push(view.header.id.to_string());
+            if index == 0 && round == 0 {
+                originals.push(("/api/v2/input-sets", key, request, input.body));
+            }
+            let key = format!("policy-{index}-{round}");
+            let mut request = serde_json::to_value(data.policy(view.header.id)).unwrap();
+            request["question"] = json!(format!("pagination round {round}"));
+            let policy = browser(
+                f,
+                cookie,
+                &key,
+                "POST",
+                "/api/v2/evaluation-policies",
+                request.clone(),
+            )
+            .await;
+            assert_eq!(policy.status, StatusCode::CREATED, "{}", policy.body);
+            assert_eq!(policy.body["replayed"], false);
+            assert_eq!(policy.body["resource"]["version"], round + 1);
+            policy_ids[index].push(policy.body["resource"]["id"].as_str().unwrap().to_owned());
+            if index == 0 && round == 0 {
+                originals.push(("/api/v2/evaluation-policies", key, request, policy.body));
+            }
+        }
+    }
+    let bearer = credential(&f, &cookie, data.project, "AUTOMATION").await;
+    for (endpoint, mut ids) in [
+        ("/api/v2/input-sets", input_ids),
+        ("/api/v2/evaluation-policies", policy_ids),
+    ] {
+        for (index, (f, cookie, data)) in projects.iter().enumerate() {
+            let expected = &mut ids[index];
+            expected.sort_unstable_by(|a, b| b.cmp(a));
+            let mut path = format!("{endpoint}?project_id={}&limit=1", data.project);
+            let mut seen = Vec::new();
+            for (page, id) in expected.iter().enumerate() {
+                let r = browser(f, cookie, "unused", "GET", &path, Value::Null).await;
+                assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+                assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
+                assert_eq!(r.body["schema_version"], 1);
+                let items = r.body["items"].as_array().unwrap();
+                assert_eq!(items.len(), 1, "{}", r.body);
+                assert_eq!(items[0]["project_id"], json!(data.project));
+                let actual = items[0]["id"].as_str().unwrap().to_owned();
+                assert_eq!(&actual, id);
+                assert!(!seen.contains(&actual), "duplicate page item: {actual}");
+                seen.push(actual);
+                let next = r.body.get("next_cursor").unwrap();
+                if page + 1 < expected.len() {
+                    let cursor = next.as_str().unwrap();
+                    assert_eq!(cursor, id);
+                    path = format!(
+                        "{endpoint}?project_id={}&limit=1&cursor={cursor}",
+                        data.project
+                    );
+                } else {
+                    assert!(next.is_null(), "{}", r.body);
+                }
+                for absent in [
+                    "storage_object_ref",
+                    "verifier_ref",
+                    "native_snapshot_ref",
+                    "native-fixture",
+                    "fixture-not-a-secret",
+                ] {
+                    assert!(!r.body.to_string().contains(absent));
+                }
+            }
+            assert_eq!(seen, *expected);
+            let exhausted = browser(
+                f,
+                cookie,
+                "unused",
+                "GET",
+                &format!(
+                    "{endpoint}?project_id={}&limit=1&cursor={}",
+                    data.project,
+                    expected.last().unwrap()
+                ),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(exhausted.status, StatusCode::OK, "{}", exhausted.body);
+            assert_eq!(exhausted.body["items"], json!([]));
+            assert!(exhausted.body.get("next_cursor").unwrap().is_null());
+        }
+        // A cursor is a UUID boundary, not authority to read its originating project.
+        for index in 0..2 {
+            let (f, cookie, data) = projects[index];
+            let foreign_cursor = &ids[1 - index][0];
+            let path = format!(
+                "{endpoint}?project_id={}&limit=100&cursor={foreign_cursor}",
+                data.project
+            );
+            let r = browser(f, cookie, "unused", "GET", &path, Value::Null).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+            let expected: Vec<_> = ids[index]
+                .iter()
+                .filter(|id| *id < foreign_cursor)
+                .cloned()
+                .collect();
+            assert!(
+                !expected.is_empty(),
+                "foreign cursor must exercise populated pages"
+            );
+            let actual: Vec<_> = r.body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    assert_eq!(item["project_id"], json!(data.project));
+                    item["id"].as_str().unwrap().to_owned()
+                })
+                .collect();
+            assert_eq!(actual, expected);
+            assert!(r.body.get("next_cursor").unwrap().is_null());
+            let scoped = send(
+                projects[0].0,
+                "GET",
+                &path,
+                Value::Null,
+                &[("authorization", &bearer)],
+            )
+            .await;
+            if index == 0 {
+                assert_eq!(scoped.status, StatusCode::OK, "{}", scoped.body);
+                assert_eq!(scoped.body, r.body);
+            } else {
+                assert_eq!(scoped.status, StatusCode::NOT_FOUND, "{}", scoped.body);
+                assert_eq!(scoped.body["code"], "NOT_FOUND");
+                assert_eq!(
+                    scoped.headers[header::CONTENT_TYPE],
+                    "application/problem+json"
+                );
+                assert!(scoped.body.get("items").is_none());
+                assert!(scoped.body.get("next_cursor").is_none());
+            }
+        }
+    }
+    for (endpoint, key, request, mut original) in originals {
+        let replay = browser(&f, &cookie, &key, "POST", endpoint, request).await;
+        assert_eq!(replay.status, StatusCode::CREATED, "{}", replay.body);
+        original["replayed"] = json!(true);
+        assert_eq!(replay.body, original);
+    }
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM app.input_sets),(SELECT count(*) FROM app.evaluation_policies)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        counts,
+        (6, 6),
+        "original retries must not publish extra records"
+    );
+}
+#[sqlx::test(migrations = "../../migrations")]
 async fn real_bearer_can_read_only_its_metadata_and_not_publish_or_change_sealed_access(
     pool: PgPool,
 ) {
@@ -342,7 +525,23 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
         .await;
         assert_eq!(authenticated.status, StatusCode::OK);
         assert_eq!(authenticated.body["items"], json!([]));
-        for tail in ["&limit=0", "&limit=101", "&limit=65536", "&unknown=1"] {
+        for tail in [
+            "&limit=0",
+            "&limit=101",
+            "&limit=65536",
+            "&limit=-1",
+            "&limit=1.5",
+            "&limit=true",
+            "&limit=invalid",
+            "&limit=",
+            "&limit=1&limit=2",
+            "&cursor=invalid",
+            "&cursor=123",
+            "&cursor=",
+            "&cursor=null",
+            "&cursor=00000000-0000-4000-8000-000000000000",
+            "&unknown=1",
+        ] {
             let r = browser(
                 &f,
                 &cookie,
@@ -352,7 +551,31 @@ async fn research_field_errors_are_safe_bounded_and_native_auth_is_not_optional(
                 Value::Null,
             )
             .await;
-            assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert_eq!(
+                r.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{path}{tail}: {}",
+                r.body
+            );
+            assert_eq!(r.headers[header::CONTENT_TYPE], "application/problem+json");
+            assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
+            let problem: contracts::http::Problem = serde_json::from_value(r.body).unwrap();
+            assert_eq!(problem.status, 422);
+            assert_eq!(problem.code, "VALIDATION_ERROR");
+            assert_eq!(problem.title, problem.code);
+            assert_eq!(problem.kind, "urn:quazonai:problem:validation-error");
+            assert!(!problem.retryable);
+            assert_eq!(
+                r.headers["x-request-id"].to_str().unwrap(),
+                problem.request_id.to_string()
+            );
+            if matches!(tail, "&limit=0" | "&limit=101") {
+                assert_eq!(problem.field_errors.len(), 1);
+                assert_eq!(problem.field_errors[0].field, "limit");
+                assert_eq!(problem.field_errors[0].code, "PAGE_SIZE");
+            } else {
+                assert!(problem.field_errors.is_empty());
+            }
         }
     }
     let r = send(

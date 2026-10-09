@@ -48,6 +48,15 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/native/rust_unit.sh rustup run "$RUSTUP_TOOLCHAIN" cargo 2>&1 | tee /tmp/native-evidence/tests.log
+      - name: Run native help and portable Skill contracts
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-evidence
+          phase=execute
+          trap 'status=$?; printf "phase=%s\nexit=%s\n" "$phase" "$status" > /tmp/native-evidence/cli-skill-status.txt' EXIT
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p server --test client_help --test client_skill -- --test-threads=1 2>&1 | tee /tmp/native-evidence/cli-skill-tests.log
+          phase=verified
       - name: Run exact original Paper stale-fence regressions without PostgreSQL
         if: ${{ !cancelled() }}
         env:
@@ -64,6 +73,7 @@ jobs:
           git archive --format=tar HEAD | gzip > /tmp/native-evidence/source.tar.gz
           cp Cargo.lock /tmp/native-evidence/Cargo.lock
           printf 'All-target/all-feature Rust check; lib/bin build; classified rule/local component tests. Integration/example linking, doctests, native services and broad PG business chains run in rust-regression.yml; two original real-PG stack cases remain required in store-postgres.\n' > /tmp/native-evidence/SCOPE.txt
+          printf 'Also required: all native client_help and client_skill integration cases, including preparation/archive help and the native schema root/reference closure. Consult cli-skill-tests.log and cli-skill-status.txt; compilation alone is not execution.\n' >> /tmp/native-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -169,6 +179,30 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/native/capital_exit_regression.sh rustup run "$RUSTUP_TOOLCHAIN" cargo
+      - name: Run exact research pagination and Capital exit HTTP regressions
+        if: ${{ !cancelled() }}
+        env:
+          QZ_TEST_PG_CONTAINER: store-database
+          QZ_TEST_EVIDENCE: /tmp/store-evidence
+        run: |
+          set -euo pipefail
+          : "${DATABASE_URL:?Use the existing disposable PostgreSQL and PGMQ instance}"
+          evidence=${QZ_TEST_EVIDENCE:?}
+          mkdir -p "$evidence"
+          cargo=(rustup run "$RUSTUP_TOOLCHAIN" cargo)
+          source tests/native/exact_regression_case.sh
+          failed=0
+          attempted=0
+          trap 'status=$?; printf "selected_cases=4\nattempted_cases=%s\nfailed=%s\nexit=%s\n" "$attempted" "$failed" "$status" > "$evidence/research-capital-http-combined-status.txt"' EXIT
+          run_case research-pages server test research_http native-codex research_pages_are_complete_project_scoped_and_preserve_original_receipts || failed=$((failed+1))
+          attempted=$((attempted+1))
+          run_case research-query-errors server test research_http native-codex research_field_errors_are_safe_bounded_and_native_auth_is_not_optional || failed=$((failed+1))
+          attempted=$((attempted+1))
+          run_case capital-http-expired server test capital_exit_http native-codex capital_exit_http_expired_preview_cannot_start_or_reserve || failed=$((failed+1))
+          attempted=$((attempted+1))
+          run_case capital-http-funds server test capital_exit_http native-codex capital_exit_http_funds_keep_unavailable_simulated_and_stale_semantics || failed=$((failed+1))
+          attempted=$((attempted+1))
+          test "$failed" -eq 0
       - name: Prepare the existing native Mission environment for release regressions
         if: ${{ !cancelled() }}
         run: |
@@ -225,6 +259,7 @@ jobs:
           printf 'Also required: eleven exact release regressions: three optional-wall Mission authority cases, three immutable legacy issuance cases, one real native Mission worker stack case, two native stop/replace cases, the original persistent-mask late-launcher case, and the original frozen-policy automatic rebalance publication retry case. Each must list exactly one test and execute one non-ignored pass; all case outcomes are aggregated. Consult release-regression-combined-status.txt and mission-optional-wall-*, issuance-*, mission-native-stack-*, service-*-status.txt and rebalance-release-retry-status.txt evidence. Compilation or missing dependencies is never acceptance; controlled native Codex Responses remain local fixtures.\n' >> /tmp/store-evidence/SCOPE.txt
           printf 'Capital exit: exact original native HTTP bridge and four production Paper Poller HTTP/PG bridges are explicitly enabled with --ignored. Their Job integration/lib test executables must come from this checkout compiler-artifacts and each child must list exactly once before the Server launcher runs. Build/list evidence never counts as execution. Consult capital-exit-combined-status.txt, per-case list/test/status logs and capital-exit-build.jsonl. These are original controlled native fixtures, not full Serve, public-market, Live-account or real-order acceptance.\n' >> /tmp/store-evidence/SCOPE.txt
           printf 'Capital exit selected transaction inventory: thirteen Store capital_exit, two Server capital_exit_http, four Store paper_capital_exit_binding and two exact registration-header tests, plus the five native/Poller bridges above. The pure HTTP schema case is counted separately. The two stale-fence regressions also run through the separate exact native-only gate without PostgreSQL; original Paper lib tests remain in the unchanged routine Job lib test run; full Rust regression retains the independent native owner integration tests. Selected counts are not executed passes; every required case must list one match and execute one non-ignored pass.\n' >> /tmp/store-evidence/SCOPE.txt
+          printf 'Also required separately: the exact research pagination and malformed-query cases and the Capital exit expired-preview and funds-semantics HTTP cases. Each must list one match and execute one non-ignored pass against the existing disposable PostgreSQL/PGMQ instance. Consult research-capital-http-combined-status.txt and research-pages-*, research-query-errors-*, capital-http-expired-* and capital-http-funds-* evidence; missing outcomes or compilation alone are not a pass.\n' >> /tmp/store-evidence/SCOPE.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

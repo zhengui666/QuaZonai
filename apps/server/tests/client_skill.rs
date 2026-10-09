@@ -303,6 +303,149 @@ fn malformed_ids_json_unknown_fields_and_missing_write_keys_are_not_previewed_as
 }
 
 #[test]
+fn documented_preparation_commands_use_stdin_project_scope_and_native_write_contracts() {
+    let instructions = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/quazonai/references/research.md"),
+    )
+    .unwrap();
+    let input = json!({
+        "schema_version": 1, "project_id": ID, "purpose": "DISCOVERY",
+        "decision_cutoff": "2026-09-01T00:00:00Z",
+        "items": [{"kind": "DATASET", "dataset_revision_id": ID, "role": "DISCOVERY"}]
+    });
+    let mut policy: Value = serde_json::from_str(include_str!(
+        "../../../tests/contracts/research-policy.json"
+    ))
+    .unwrap();
+    policy["project_id"] = json!(ID);
+    for (command, schema, body, route) in [
+        ("input-set", "InputSetCreate", input, "/api/v2/input-sets"),
+        (
+            "policy",
+            "EvaluationPolicyCreate",
+            policy,
+            "/api/v2/evaluation-policies",
+        ),
+    ] {
+        let row = instructions
+            .lines()
+            .find(|line| line.starts_with('|') && line.contains(&format!("`{schema}`")))
+            .unwrap_or_else(|| panic!("missing documented preparation: {schema}"));
+        assert_eq!(
+            row.split('|').nth(2).unwrap().trim(),
+            format!("`{command} create`")
+        );
+        let args = [
+            "--idempotency-key",
+            "original-preparation",
+            command,
+            "create",
+        ];
+        let receipt = successful(&preview_at(
+            "http://localhost:9",
+            &args,
+            Some(&body.to_string()),
+        ));
+        assert_eq!(receipt["route"], route);
+        assert_eq!(receipt["query"], json!([]));
+        assert_eq!(receipt["method"], "POST");
+        assert_eq!(receipt["expected_http_status"], 201);
+        assert_eq!(receipt["requires_idempotency_key"], true);
+        assert_eq!(receipt["requires_operator_grant"], true);
+        assert_eq!(receipt["authorization_checked"], false);
+        assert_eq!(receipt["request_sent"], false);
+        assert_eq!(receipt["body_redacted"], true);
+        assert!(receipt["body_bytes"].as_u64().unwrap() > 0);
+        let missing_key = preview_at(
+            "http://localhost:9",
+            &[command, "create"],
+            Some(&body.to_string()),
+        );
+        assert!(!missing_key.status.success());
+        assert!(missing_key.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&missing_key.stderr).contains("CLI_IDEMPOTENCY_KEY_REQUIRED")
+        );
+        for field in ["project_id", "invented_field"] {
+            let mut invalid = body.clone();
+            if field == "project_id" {
+                invalid.as_object_mut().unwrap().remove(field);
+            } else {
+                invalid[field] = json!("unsupported");
+            }
+            let output = preview_at("http://localhost:9", &args, Some(&invalid.to_string()));
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("CLI_INPUT_INVALID"));
+        }
+        for extra in [vec![ID], vec!["--project-id", ID]] {
+            let mut misplaced = args.to_vec();
+            misplaced.extend(extra);
+            let output = preview_at("http://localhost:9", &misplaced, Some(&body.to_string()));
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
+fn archive_field_reads_preserve_report_record_and_decimal_offset() {
+    const RECORD: &str = "018fc823-8e40-7000-8000-000000000002";
+    for (args, suffix, query) in [
+        (vec!["migrate", "fields", ID, RECORD], "fields", json!([])),
+        (
+            vec!["migrate", "field", ID, RECORD, "content"],
+            "field",
+            json!([["name", "content"], ["offset", "0"]]),
+        ),
+        (
+            vec![
+                "migrate",
+                "field",
+                ID,
+                RECORD,
+                "content",
+                "--offset",
+                "9007199254740993",
+            ],
+            "field",
+            json!([["name", "content"], ["offset", "9007199254740993"]]),
+        ),
+    ] {
+        let receipt = successful(&preview_at("http://localhost:9", &args, None));
+        assert_eq!(
+            receipt["route"],
+            format!("/api/v2/migrations/reports/{ID}/records/{RECORD}/{suffix}")
+        );
+        assert_eq!(receipt["query"], query);
+        assert_eq!(receipt["method"], "GET");
+        assert_eq!(receipt["expected_http_status"], 200);
+        assert_eq!(receipt["requires_idempotency_key"], false);
+        assert_eq!(receipt["requires_operator_grant"], false);
+        assert_eq!(receipt["request_sent"], false);
+    }
+    for args in [
+        vec!["migrate", "fields", "invalid", RECORD],
+        vec!["migrate", "fields", ID, "invalid"],
+        vec!["migrate", "field", ID, RECORD, ""],
+        vec!["migrate", "field", ID, RECORD, "content", "--offset", "-1"],
+        vec![
+            "migrate",
+            "field",
+            ID,
+            RECORD,
+            "content",
+            "--offset",
+            "9223372036854775808",
+        ],
+    ] {
+        let output = preview_at("http://localhost:9", &args, None);
+        assert!(!output.status.success(), "{args:?}");
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
 fn documented_read_routes_and_bounded_watch_parse_through_the_native_client() {
     let cases: &[(&[&str], &str)] = &[
         (&["identity"], "/api/v2/auth/machine"),
@@ -373,11 +516,6 @@ fn documented_read_routes_and_bounded_watch_parse_through_the_native_client() {
 #[test]
 fn offline_schema_discovery_matches_native_export_and_retains_its_reference_closure() {
     let exported = successful(&invoke(&["openapi"], None));
-    let selected = successful(&invoke(&["openapi", "--schema", "ArtifactCreate"], None));
-    assert_eq!(
-        selected["components"]["schemas"]["ArtifactCreate"],
-        exported["components"]["schemas"]["ArtifactCreate"]
-    );
     fn check_refs(value: &Value, root: &Value) {
         match value {
             Value::Object(fields) => {
@@ -397,10 +535,31 @@ fn offline_schema_discovery_matches_native_export_and_retains_its_reference_clos
             _ => {}
         }
     }
-    check_refs(&selected, &selected);
     let names = successful(&invoke(&["openapi", "--list-schemas"], None));
     let names = names["schemas"].as_array().unwrap();
-    assert!(names.iter().any(|name| name == "ArtifactCreate"));
+    for name in [
+        "ArtifactCreate",
+        "InputSetCreate",
+        "EvaluationPolicyCreate",
+        "HistoricalRecordFieldsV1",
+        "HistoricalFieldContentV1",
+    ] {
+        assert!(names.iter().any(|value| value == name));
+        let selected = successful(&invoke(&["openapi", "--schema", name], None));
+        assert_eq!(selected["name"], name);
+        assert_eq!(
+            selected["schema"]["$ref"],
+            format!("#/components/schemas/{name}")
+        );
+        assert_eq!(
+            selected["components"]["schemas"][name],
+            exported["components"]["schemas"][name]
+        );
+        for (name, schema) in selected["components"]["schemas"].as_object().unwrap() {
+            assert_eq!(schema, &exported["components"]["schemas"][name]);
+        }
+        check_refs(&selected, &selected);
+    }
     assert!(names
         .windows(2)
         .all(|pair| pair[0].as_str() < pair[1].as_str()));
