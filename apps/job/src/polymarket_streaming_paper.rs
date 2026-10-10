@@ -105,6 +105,7 @@ fn economic_definition(instrument: &InstrumentAny) -> Result<Value> {
 pub struct PolymarketStreamingPaper {
     engine: BacktestEngine,
     replay: Rc<RefCell<ReplayStatus>>,
+    fill_fees: crate::prediction::FillFeeObserver,
     definitions: BTreeMap<InstrumentId, (InstrumentAny, Value)>,
     batches: TimestampBatch,
     failure: Option<String>,
@@ -258,6 +259,7 @@ impl PolymarketStreamingPaper {
         data_config.validate_data_sequence = true;
         let mut engine = BacktestEngine::new(config)?;
         let fee_model = crate::prediction::fee_model(settings);
+        let fill_fees = crate::prediction::FillFeeObserver::default();
         let mut capital_exit = None;
         let built = (|| -> Result<Rc<RefCell<ReplayStatus>>> {
             engine.add_venue(
@@ -276,7 +278,7 @@ impl PolymarketStreamingPaper {
                         .map_err(anyhow::Error::msg)?,
                     ])
                     .default_leverage(rust_decimal::Decimal::ONE)
-                    .fee_model(fee_model.clone())
+                    .fee_model(fill_fees.wrap(fee_model.clone()))
                     .fill_model(FillModelHandle::new(DefaultFillModel::new(
                         fill.prob_fill_on_limit
                             .as_decimal()
@@ -348,6 +350,7 @@ impl PolymarketStreamingPaper {
         Ok(Self {
             engine,
             replay,
+            fill_fees,
             definitions,
             batches: TimestampBatch::default(),
             failure: None,
@@ -388,7 +391,7 @@ impl PolymarketStreamingPaper {
 
     fn stop_accounting(&mut self, error: anyhow::Error) -> anyhow::Error {
         if self.failure.is_none() {
-            self.failure = Some(error.to_string());
+            self.failure = Some(format!("{error:#}"));
         }
         error
     }
@@ -463,7 +466,10 @@ impl PolymarketStreamingPaper {
             self.engine.add_data(vec![event], None, true, true)?;
         }
         self.native_started = true;
-        self.engine.run(None, None, None, true)?;
+        let native_result = self.engine.run(None, None, None, true);
+        self.replay.borrow_mut().check_callback_error()?;
+        self.fill_fees.check()?;
+        native_result?;
         ensure!(
             self.replay.borrow().failure.is_none(),
             "PAPER_STREAM_NATIVE_TARGET_FAILED"
@@ -483,9 +489,18 @@ impl PolymarketStreamingPaper {
             }
         }
         if self.failure.is_none() && self.native_started {
-            if let Err(error) = self.engine.end() {
+            let native_result = self.engine.end();
+            let checked = (|| -> Result<()> {
+                self.replay.borrow_mut().check_callback_error()?;
+                self.fill_fees.check()?;
+                native_result
+            })();
+            if let Err(error) = checked {
                 self.stop_accounting(error);
             }
+        }
+        if let Err(error) = self.fill_fees.check() {
+            self.stop_accounting(error);
         }
         let consumed = self.replay.borrow().consumed;
         if self.failure.is_none() && (consumed != 1 || self.replay.borrow().failure.is_some()) {
@@ -572,7 +587,6 @@ impl PolymarketStreamingPaper {
         {
             self.stop_accounting(anyhow!("PAPER_STREAM_NATIVE_SNAPSHOTS_UNAVAILABLE"));
         }
-        let complete = self.failure.is_none();
         let terminal_capital_observation = self.capital_exit.as_mut().and_then(|owner| match owner
             .handle(
                 &self.engine,
@@ -582,6 +596,10 @@ impl PolymarketStreamingPaper {
             Ok(crate::paper_capital_exit::NativeResponse::Observation(value)) => Some(value),
             _ => None,
         });
+        if let Err(error) = self.fill_fees.check() {
+            self.stop_accounting(error);
+        }
+        let complete = self.failure.is_none();
         let mut report = json!({
             "schema_version": 1,
             "mode": "PUBLIC_DATA_DRIVEN_NATIVE_PAPER_SIMULATION",
@@ -609,6 +627,15 @@ impl PolymarketStreamingPaper {
             "scientific_qualification": "NOT_ASSESSED",
             "live_account_or_orders": false,
         });
+        if let Some(failure) = self.fill_fees.failure() {
+            report["native_fill_fee_failure"] = json!({
+                "reason": failure.reason,
+                "client_order_id": failure.client_order_id,
+                "instrument_id": failure.instrument_id,
+                "last_qty": failure.quantity.to_string(),
+                "last_px": failure.price.to_string(),
+            });
+        }
         if self.capital_exit.is_some() {
             report["capital_exit_terminal_observation"] = json!(terminal_capital_observation);
             report["capital_exit_silent_market_semantics"] =

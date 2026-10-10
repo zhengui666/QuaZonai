@@ -1,5 +1,6 @@
 //! Apply frozen targets in one native Nautilus simulated account, in replay or Paper.
 use crate::catalog::{NativeBarSeries, NativeMarketData, load_catalog};
+pub use crate::prediction::FillFeeFailure;
 use anyhow::{Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
@@ -21,8 +22,8 @@ use nautilus_execution::models::{
 };
 use nautilus_model::{
     accounts::{Account, AccountAny},
-    data::{Bar, BarType, Data, InstrumentClose},
-    enums::{AccountType, BookType, OmsType, OrderSide, OrderStatus},
+    data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus},
+    enums::{AccountType, BookType, MarketStatusAction, OmsType, OrderSide, OrderStatus},
     events::{
         OrderDenied, OrderFilled, OrderRejected, PositionChanged, PositionClosed, PositionOpened,
     },
@@ -58,11 +59,38 @@ fn count(value: usize) -> Result<DbCounter> {
     DbCounter::new(u64::try_from(value)?).map_err(anyhow::Error::msg)
 }
 
+fn append_settlement_events(
+    events: &mut Vec<Data>,
+    closes: impl IntoIterator<Item = InstrumentClose>,
+) {
+    for close in closes {
+        // This companion derives only from the verified close and preserves both clocks.
+        // Close trading before the native close handler can iterate resting orders.
+        events.push(Data::InstrumentStatus(InstrumentStatus::new(
+            close.instrument_id,
+            MarketStatusAction::Close,
+            close.ts_event,
+            close.ts_init,
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+        )));
+        events.push(Data::InstrumentClose(close));
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/support/polymarket.rs"]
+mod replay_fixture;
+
 #[derive(Default)]
 pub(crate) struct ReplayStatus {
     pub(crate) consumed: usize,
     pub(crate) failure: Option<&'static str>,
     callback_error: Option<anyhow::Error>,
+    order_rejection: Option<String>,
     submitted_after_ns: u64,
     study_infeasible: bool,
     frames: Vec<NativePortfolioStudyFrameV1>,
@@ -77,12 +105,21 @@ impl ReplayStatus {
         }
     }
 
-    fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
+    pub(crate) fn check_callback_error(&mut self) -> Result<()> {
         if let Some(error) = self.callback_error.take() {
             return Err(error.context("NATIVE_TARGET_REPLAY_FAILED"));
         }
+        Ok(())
+    }
+
+    fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
+        self.check_callback_error()?;
         if let Some(code) = self.failure {
-            return Err(anyhow::anyhow!(code).context("NATIVE_TARGET_REPLAY_FAILED"));
+            let error = match (code, self.order_rejection.as_deref()) {
+                ("NATIVE_ORDER_REJECTED", Some(reason)) => anyhow::anyhow!("{code}: {reason}"),
+                _ => anyhow::anyhow!(code),
+            };
+            return Err(error.context("NATIVE_TARGET_REPLAY_FAILED"));
         }
         native_result
     }
@@ -145,8 +182,10 @@ nautilus_strategy!(TargetReplay, {
     fn on_order_denied(&mut self, _event: OrderDenied) {
         self.status.borrow_mut().failure = Some("NATIVE_ORDER_DENIED");
     }
-    fn on_order_rejected(&mut self, _event: OrderRejected) {
-        self.status.borrow_mut().failure = Some("NATIVE_ORDER_REJECTED");
+    fn on_order_rejected(&mut self, event: OrderRejected) {
+        let mut status = self.status.borrow_mut();
+        status.order_rejection = Some(event.reason.to_string());
+        status.failure = Some("NATIVE_ORDER_REJECTED");
     }
     fn on_order_filled(&mut self, event: &OrderFilled) {
         let now = event.ts_event.as_u64();
@@ -1373,6 +1412,7 @@ fn run_with_strategy_and_spot(
     let mut engine = BacktestEngine::new(config)?;
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
+        let fill_fees = crate::prediction::FillFeeObserver::default();
         let fee = if is_spot {
             crate::spot_cash_runtime::fee_model(request, &market)?
         } else {
@@ -1398,7 +1438,11 @@ fn run_with_strategy_and_spot(
                     .map_err(anyhow::Error::msg)?,
                 ])
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(fee)
+                .fee_model(if domain::prediction::uses_native_fee(&settings.fee_model) {
+                    fill_fees.wrap(fee)
+                } else {
+                    fee
+                })
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()
@@ -1458,10 +1502,15 @@ fn run_with_strategy_and_spot(
         for series in market.series {
             events.extend(series.bars.into_iter().map(Data::Bar));
         }
-        events.extend(closes.into_iter().map(Data::InstrumentClose));
+        append_settlement_events(&mut events, closes);
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         let native_result = engine.run(None, None, None, false);
+        // Original callback errors retain precedence over native fee failure.
+        status.borrow_mut().check_callback_error()?;
+        fill_fees
+            .check()
+            .map_err(|error| error.context("NATIVE_TARGET_REPLAY_FAILED"))?;
         status.borrow_mut().finish_run(native_result)?;
         for instrument_id in &settled_ids {
             ensure!(
@@ -1587,7 +1636,277 @@ fn run_with_strategy_and_spot(
 
 #[cfg(test)]
 mod replay_error_tests {
-    use super::ReplayStatus;
+    use super::*;
+    use nautilus_model::{
+        data::QuoteTick,
+        enums::InstrumentCloseType,
+        events::OrderFilled,
+        types::{Price, Quantity},
+    };
+
+    struct CloseProbe {
+        core: StrategyCore,
+        instrument_id: InstrumentId,
+        submitted: bool,
+        fills: Rc<RefCell<Vec<OrderFilled>>>,
+    }
+    impl fmt::Debug for CloseProbe {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("CloseProbe").finish_non_exhaustive()
+        }
+    }
+    nautilus_strategy!(CloseProbe, {
+        fn on_order_filled(&mut self, event: &OrderFilled) {
+            self.fills.borrow_mut().push(event.clone());
+        }
+    });
+    impl DataActor for CloseProbe {
+        fn on_start(&mut self) -> Result<()> {
+            self.subscribe_quotes(self.instrument_id, None, None);
+            Ok(())
+        }
+        fn on_quote(&mut self, _quote: &QuoteTick) -> Result<()> {
+            if !self.submitted {
+                self.submitted = true;
+                let order = self.order().limit(
+                    self.instrument_id,
+                    OrderSide::Buy,
+                    Quantity::from("10.000000"),
+                    Price::from("0.5000"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(ClientOrderId::from("RESTING-BEFORE-CLOSE")),
+                );
+                self.submit_order(order, None, None, None)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn original_early_close_cancels_resting_remainder_before_another_native_fill() {
+        let original = replay_fixture::instruments("0", 18 * replay_fixture::STEP).remove(0);
+        let id = original.id();
+        let mut engine = BacktestEngine::new(BacktestEngineConfig {
+            logging: LoggerConfig::builder()
+                .bypass_logging(true)
+                .build()
+                .unwrap(),
+            shutdown_on_error: true,
+            bypass_logging: true,
+            ..Default::default()
+        })
+        .unwrap();
+        engine
+            .add_venue(
+                SimulatedVenueConfig::builder()
+                    .venue(original.venue())
+                    .oms_type(OmsType::Netting)
+                    .account_type(AccountType::Cash)
+                    .book_type(BookType::L1_MBP)
+                    .base_currency(original.quote_currency())
+                    .starting_balances(vec![Money::from("1000 pUSD")])
+                    .fee_model(nautilus_execution::models::fee::FeeModelHandle::new(
+                        nautilus_polymarket::models::PolymarketFeeModel,
+                    ))
+                    .fill_model(FillModelHandle::new(
+                        DefaultFillModel::new(1.0, 0.0, Some(7)).unwrap(),
+                    ))
+                    .bar_execution(false)
+                    .liquidity_consumption(true)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        engine.add_instrument(&original).unwrap();
+        let fills = Rc::new(RefCell::new(Vec::new()));
+        engine
+            .add_strategy(CloseProbe {
+                core: StrategyCore::new(StrategyConfig {
+                    strategy_id: Some(StrategyId::from("CLOSE-PROBE-001")),
+                    ..Default::default()
+                }),
+                instrument_id: id,
+                submitted: false,
+                fills: fills.clone(),
+            })
+            .unwrap();
+        let quote = |at: u64, price: &str| {
+            Data::Quote(QuoteTick::new(
+                id,
+                Price::from(price),
+                Price::from(price),
+                Quantity::from("2.000000"),
+                Quantity::from("2.000000"),
+                at.into(),
+                at.into(),
+            ))
+        };
+        let mut events = vec![quote(5 * replay_fixture::STEP, "0.5000")];
+        append_settlement_events(
+            &mut events,
+            [InstrumentClose::new(
+                id,
+                Price::from("1.0000"),
+                InstrumentCloseType::ContractExpired,
+                (8 * replay_fixture::STEP).into(),
+                (9 * replay_fixture::STEP).into(),
+            )],
+        );
+        events.push(quote(10 * replay_fixture::STEP, "0.2000"));
+        engine.add_data(events, None, true, true).unwrap();
+        engine.run(None, None, None, false).unwrap();
+        let cache = engine.kernel().cache.borrow();
+        let order = cache
+            .order(&ClientOrderId::from("RESTING-BEFORE-CLOSE"))
+            .unwrap();
+        assert_eq!(order.status(), OrderStatus::Canceled);
+        assert_eq!(order.filled_qty(), Quantity::from("2.000000"));
+        assert_eq!(order.leaves_qty(), Quantity::from("8.000000"));
+        drop(order);
+        assert!(cache
+            .positions_open(None, Some(&id), None, None, None)
+            .is_empty());
+        let account = cache.account_for_venue(&id.venue).unwrap();
+        assert_eq!(
+            account.balance_total(None).unwrap(),
+            Money::from("1001 pUSD")
+        );
+        assert_eq!(
+            account.balance_locked(None).unwrap(),
+            Money::zero(original.quote_currency())
+        );
+        drop(account);
+        drop(cache);
+        let observed = fills.borrow();
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0].last_qty, Quantity::from("2.000000"));
+        assert_eq!(observed[1].ts_event.as_u64(), 9 * replay_fixture::STEP);
+        assert_eq!(observed[1].last_px, Price::from("1.0000"));
+        assert!(crate::prediction::is_native_settlement_order(
+            observed[1].client_order_id.as_str()
+        ));
+        assert_eq!(
+            observed[1].commission,
+            Some(Money::zero(original.quote_currency()))
+        );
+        drop(observed);
+        let result = engine.get_result();
+        for key in ["positions.open", "orders.open", "orders.inflight"] {
+            assert_eq!(result.summary[key], "0");
+        }
+        engine.dispose();
+    }
+
+    #[test]
+    fn native_order_rejection_retains_closed_reason_under_original_outer_code() {
+        let mut status = ReplayStatus {
+            failure: Some("NATIVE_ORDER_REJECTED"),
+            order_rejection: Some("Market POLYMARKET is CLOSED".into()),
+            ..ReplayStatus::default()
+        };
+        let error = status
+            .finish_run(Err(anyhow::anyhow!("native shutdown")))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "NATIVE_TARGET_REPLAY_FAILED");
+        assert_eq!(
+            format!("{error:#}"),
+            "NATIVE_TARGET_REPLAY_FAILED: NATIVE_ORDER_REJECTED: Market POLYMARKET is CLOSED"
+        );
+    }
+
+    #[test]
+    fn rejection_detail_cannot_replace_an_original_callback_chain() {
+        let mut status = ReplayStatus::default();
+        status
+            .record_callback_error(anyhow::anyhow!("original callback cause").context("apply bar"));
+        status.failure = Some("NATIVE_ORDER_REJECTED");
+        status.order_rejection = Some("Market POLYMARKET is CLOSED".into());
+        let error = status.finish_run(Ok(())).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "NATIVE_TARGET_REPLAY_FAILED: apply bar: original callback cause"
+        );
+    }
+
+    #[test]
+    fn original_callback_chain_has_priority_over_an_observed_native_fee_failure() {
+        use nautilus_execution::models::fee::{FeeModel, FeeModelHandle};
+        use nautilus_model::{enums::OrderType, orders::builder::OrderTestBuilder};
+        struct FailedFee;
+        impl FeeModel for FailedFee {
+            fn get_commission(
+                &self,
+                _: &OrderAny,
+                _: Quantity,
+                _: Price,
+                _: &InstrumentAny,
+            ) -> Result<Money> {
+                anyhow::bail!("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND")
+            }
+        }
+        let instrument = replay_fixture::instruments("0.05", 18 * replay_fixture::STEP).remove(0);
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("10.000000"))
+            .build();
+        let fees = crate::prediction::FillFeeObserver::default();
+        fees.wrap(FeeModelHandle::new(FailedFee))
+            .get_commission(
+                &order,
+                Quantity::from("0.000480"),
+                Price::from("0.4000"),
+                &instrument,
+            )
+            .unwrap_err();
+        let mut status = ReplayStatus::default();
+        status
+            .record_callback_error(anyhow::anyhow!("original callback cause").context("apply bar"));
+        let result = (|| -> Result<()> {
+            status.check_callback_error()?;
+            fees.check()?;
+            status.finish_run(Err(anyhow::anyhow!("native shutdown")))
+        })();
+        assert_eq!(
+            format!("{:#}", result.unwrap_err()),
+            "NATIVE_TARGET_REPLAY_FAILED: apply bar: original callback cause"
+        );
+        assert_eq!(
+            fees.failure().unwrap().reason,
+            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+        );
+    }
+
+    #[test]
+    fn rejection_detail_is_not_added_to_denied_or_native_only_errors() {
+        let mut status = ReplayStatus {
+            failure: Some("NATIVE_ORDER_DENIED"),
+            order_rejection: Some("unrelated reason".into()),
+            ..ReplayStatus::default()
+        };
+        assert_eq!(
+            format!("{:#}", status.finish_run(Ok(())).unwrap_err()),
+            "NATIVE_TARGET_REPLAY_FAILED: NATIVE_ORDER_DENIED"
+        );
+        status.failure = None;
+        assert_eq!(
+            status
+                .finish_run(Err(anyhow::anyhow!("native failure")))
+                .unwrap_err()
+                .to_string(),
+            "native failure"
+        );
+    }
 
     #[test]
     fn original_callback_chain_survives_native_shutdown_error() {
