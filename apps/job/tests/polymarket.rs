@@ -295,6 +295,59 @@ fn own_and_cross_member_close_bar_receipt_ties_fail_both_scientific_entrypoints(
 }
 
 #[test]
+fn unselected_sibling_close_receipt_tie_rejects_selected_bar_at_both_entrypoints() {
+    use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType, types::Price};
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+
+    let (root, mut request) = simulation("0", None, 0);
+    request.selection.bar_types.truncate(1);
+    request.settings.fee_rates.truncate(1);
+    request.target_points[0].targets.truncate(1);
+    request.target_points[0].cash_weight = "0.8".parse().unwrap();
+    let selected_receipt = 9 * STEP + 2;
+    let sibling_receipt = 9 * STEP + 1;
+    request.settlements =
+        prediction::settlement_groups(8 * STEP, selected_receipt, ["1.0000", "0.0000"]);
+    request.settlements[0].outcomes[1].ts_init = market::count(sibling_receipt);
+    let catalog =
+        ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+            .unwrap();
+    // Only A is selected; B's verified original close ties A's BAR receipt.
+    for (id, price, receipt) in [
+        (IDS[0], "1.0000", selected_receipt),
+        (IDS[1], "0.0000", sibling_receipt),
+    ] {
+        let close = InstrumentClose::new(
+            id.parse().unwrap(),
+            Price::from(price),
+            InstrumentCloseType::ContractExpired,
+            (8 * STEP).into(),
+            receipt.into(),
+        );
+        catalog
+            .write_to_parquet(&[close], None, None, None)
+            .unwrap();
+    }
+    let selected = contracts::execution::NativeDatasetSelectionV1 {
+        dataset_revision_id: contracts::Id::new(),
+        selection: request.selection.clone(),
+        settlements: request.settlements.clone(),
+    };
+    let replay_error = job::simulation::simulate(root.path(), &request)
+        .err()
+        .map(|error| format!("{error:#}"));
+    let measurement_error = job::catalog::measure_catalog(root.path(), &selected, false)
+        .err()
+        .map(|error| format!("{error:#}"));
+    eprintln!("single A sibling receipt: simulate={replay_error:?}; measure_catalog={measurement_error:?}");
+    let expected = Some("POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS");
+    assert_eq!(
+        (replay_error.as_deref(), measurement_error.as_deref()),
+        (expected, expected)
+    );
+}
+
+#[test]
 fn equal_close_event_with_distinct_bar_receipt_is_not_receipt_ambiguity() {
     let (root, request) = early_close(8 * STEP + 2);
     let selected = contracts::execution::NativeDatasetSelectionV1 {

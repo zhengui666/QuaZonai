@@ -186,7 +186,7 @@ pub(crate) fn catalog_closes(
         true,
     )?;
     let mut seen = BTreeSet::new();
-    let mut closes = Vec::new();
+    let mut verified_closes = Vec::new();
     for record in query.take(ids.len() + 1) {
         let Data::InstrumentClose(close) = record? else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
@@ -217,19 +217,15 @@ pub(crate) fn catalog_closes(
                     && close.close_price.precision == binary.price_precision,
                 "POLYMARKET_CLOSE_CONTRACT_INVALID"
             );
-            if close.ts_init.as_u64() >= selection.event_start_ns.get()
-                && close.ts_init.as_u64() < selection.event_end_ns.get()
-            {
-                closes.push(close);
-            }
         }
+        verified_closes.push(close);
     }
     ensure!(
         seen.len() == expected.len(),
         "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
     );
     // A selected BAR at any member's close receipt has no authoritative tie order.
-    let close_receipts = closes
+    let close_receipts = verified_closes
         .iter()
         .map(|close| close.ts_init)
         .collect::<BTreeSet<_>>();
@@ -241,6 +237,14 @@ pub(crate) fn catalog_closes(
             .all(|bar| !close_receipts.contains(&bar.ts_init)),
         "POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"
     );
+    let mut closes = verified_closes
+        .into_iter()
+        .filter(|close| {
+            binaries.contains_key(&close.instrument_id)
+                && close.ts_init.as_u64() >= selection.event_start_ns.get()
+                && close.ts_init.as_u64() < selection.event_end_ns.get()
+        })
+        .collect::<Vec<_>>();
     // Keep original arrival ordering, including ties; no synthetic timestamp is added.
     closes.sort_by_key(|c| c.ts_init);
     Ok(closes)
