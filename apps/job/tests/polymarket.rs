@@ -169,27 +169,61 @@ fn early_original_close_redeems_both_positions_at_receipt_without_changing_expir
         assert_eq!(result.summary[key], "0");
     }
     let fills = result.canonical_result["fills"].as_array().unwrap();
-    let redemptions = fills
+    let orders = result.canonical_result["orders"].as_array().unwrap();
+    let settlement_orders = orders
         .iter()
-        .map(|row| &row["event"]["Filled"])
-        .filter(|fill| {
-            fill["client_order_id"]
-                .as_str()
+        .map(|order| {
+            order
+                .as_object()
                 .unwrap()
-                .starts_with("EXPIRATION-POLYMARKET-")
+                .values()
+                .find_map(|payload| payload.get("core"))
+                .unwrap()
+        })
+        .filter(|core| {
+            core["is_reduce_only"].as_bool().unwrap()
+                && core["tags"].as_array().is_some_and(|tags| {
+                    tags.iter().any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE")
+                })
         })
         .collect::<Vec<_>>();
-    assert_eq!(redemptions.len(), 2);
+    let redemptions = fills
+        .iter()
+        .filter_map(|row| {
+            settlement_orders
+                .iter()
+                .find(|core| core["client_order_id"] == row["client_order_id"])
+                .map(|core| (row, *core))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(redemptions.len(), 2, "orders={orders:?}; fills={fills:?}");
     for (id, payout) in IDS.iter().zip(["1.0000", "0.0000"]) {
-        let fill = redemptions
+        let (row, core) = redemptions
             .iter()
-            .find(|fill| fill["instrument_id"] == *id)
-            .unwrap();
-        assert_eq!(fill["last_px"], payout);
-        assert_eq!(fill["ts_event"], (9 * STEP).to_string());
+            .find(|(row, _)| row["event"]["Filled"]["instrument_id"] == *id)
+            .copied()
+            .unwrap_or_else(|| panic!("instrument={id}; redemptions={redemptions:?}"));
+        let fill = &row["event"]["Filled"];
+        let context = format!(
+            "order_id={} ordinal={} instrument={} qty={} px={} commission={} ts_event={} tags={} reduce_only={}",
+            core["client_order_id"],
+            row["order_event_ordinal"],
+            fill["instrument_id"],
+            fill["last_qty"],
+            fill["last_px"],
+            fill["commission"],
+            fill["ts_event"],
+            core["tags"],
+            core["is_reduce_only"]
+        );
+        eprintln!("canonical early redemption: {context}");
+        assert_eq!(fill["client_order_id"], core["client_order_id"], "{context}");
+        assert_eq!(fill["instrument_id"], core["instrument_id"], "{context}");
+        assert_eq!(fill["last_px"], payout, "{context}");
+        assert_eq!(fill["ts_event"], (9 * STEP).to_string(), "{context}");
         let fee: nautilus_model::types::Money =
             fill["commission"].as_str().unwrap().parse().unwrap();
-        assert_eq!(fee.as_decimal(), rust_decimal::Decimal::ZERO);
+        assert_eq!(fee.as_decimal(), rust_decimal::Decimal::ZERO, "{context}");
     }
     let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
     for series in data.series {
