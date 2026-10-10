@@ -1,6 +1,7 @@
 //! Thin prediction-market adaptation. Nautilus owns every fill, position and cash movement.
 use crate::catalog::NativeMarketData;
 use anyhow::{ensure, Result};
+use bigdecimal::BigDecimal;
 use contracts::science::{NativeBarSelectionV1, NativeSimulationSettingsV1};
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::fee::{FeeModel, FeeModelHandle, MakerTakerFeeModel};
@@ -17,7 +18,11 @@ use rust_decimal::Decimal;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    str::FromStr,
 };
+
+#[cfg(test)]
+mod fee_tests;
 
 /// The native expiry adapter emits a reduce-only EXPIRATION order. It represents
 /// redemption, not a taker trade, so dispatch that event to zero trading commission.
@@ -40,13 +45,23 @@ impl FeeModel for SettlementAwarePolymarketFee {
             return Ok(Money::zero(instrument.quote_currency()));
         }
         ensure!(
-            quantity
-                .as_decimal()
-                .checked_mul(price.as_decimal())
-                .is_some_and(|notional| notional >= Decimal::ONE),
-            "POLYMARKET_RESEARCH_MINIMUM_FILL_NOTIONAL"
+            quantity.as_decimal() > Decimal::ZERO && price.as_decimal() > Decimal::ZERO,
+            "POLYMARKET_FILL_QUANTITY_PRICE_RANGE"
         );
-        PolymarketFeeModel.get_commission(order, quantity, price, instrument)
+        let commission = PolymarketFeeModel.get_commission(order, quantity, price, instrument)?;
+        ensure!(
+            commission.currency == instrument.quote_currency(),
+            "POLYMARKET_FILL_FEE_CURRENCY_MISMATCH"
+        );
+        let rate = domain::prediction::planning_fee(&native_payload(instrument)?)?;
+        let quantity = BigDecimal::from_str(&quantity.as_decimal().to_string())?;
+        let price = BigDecimal::from_str(&price.as_decimal().to_string())?;
+        let actual = BigDecimal::from_str(&commission.as_decimal().to_string())?;
+        ensure!(
+            actual <= quantity * price * rate.as_decimal(),
+            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+        );
+        Ok(commission)
     }
 }
 
@@ -212,6 +227,19 @@ pub(crate) fn catalog_closes(
     ensure!(
         seen.len() == expected.len(),
         "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
+    );
+    // A selected BAR at any member's close receipt has no authoritative tie order.
+    let close_receipts = closes
+        .iter()
+        .map(|close| close.ts_init)
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .all(|bar| !close_receipts.contains(&bar.ts_init)),
+        "POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"
     );
     // Keep original arrival ordering, including ties; no synthetic timestamp is added.
     closes.sort_by_key(|c| c.ts_init);

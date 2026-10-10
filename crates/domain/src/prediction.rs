@@ -6,7 +6,8 @@ use contracts::{DecimalValue, portfolio::NativeModelRefV1};
 use serde_json::Value;
 use std::str::FromStr;
 
-/// Research execution floor in units of original collateral, in either trade direction.
+/// Whole-order research floor in original collateral, in either trade direction.
+/// Native partial fills do not inherit this order-admission floor.
 /// It is a frozen adapter constraint, not a claim about the venue's minimum order rules.
 pub const MINIMUM_TRADE_NOTIONAL: &str = "1";
 
@@ -75,8 +76,9 @@ pub fn instrument(value: &Value) -> Result<(u64, u64), DomainError> {
 
 /// Conservative optimizer coefficient sourced from the original native fee schedule.
 /// Actual transaction commissions are still calculated exclusively by PolymarketFeeModel.
-/// With notional >= 1 and the pinned model's five-decimal rounding, rate + 0.000005
-/// bounds taker fee / notional. Confirmed zero rates remain exactly zero; missing is an error.
+/// For whole-order notional >= 1, rate + 0.000005 includes pinned five-decimal rounding.
+/// Each native partial fill must separately fit this frozen bound with its original Money;
+/// commissions are never combined or rounded again. Confirmed zero remains zero; missing is an error.
 pub fn planning_fee(value: &Value) -> Result<DecimalValue, DomainError> {
     instrument(value)?;
     let schedule = value

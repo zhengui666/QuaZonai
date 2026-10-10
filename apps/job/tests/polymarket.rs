@@ -151,6 +151,162 @@ fn native_price_dependent_commission_is_not_a_fixed_planning_coefficient() {
     assert!((pnl(&simulate(half.path(), &half_request).unwrap()) - 88.0).abs() < 0.0001);
 }
 
+fn early_close(receipt: u64) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    let (_unused, mut request) = simulation("0", None, 0);
+    let root = tempfile::tempdir().unwrap();
+    prediction::write_catalog(root.path(), 17, "0", 18 * STEP, false);
+    request.target_points[0].asof_ns = market::count(5 * STEP + 1);
+    request.settlements = prediction::settlement_groups(8 * STEP, receipt, ["1.0000", "0.0000"]);
+    prediction::settle(root.path(), 8 * STEP, receipt, ["1.0000", "0.0000"]);
+    (root, request)
+}
+
+#[test]
+fn early_original_close_redeems_both_positions_at_receipt_without_changing_expiry() {
+    let (root, request) = early_close(9 * STEP);
+    let result = job::simulation::simulate(root.path(), &request).unwrap();
+    for key in ["positions.open", "orders.open", "orders.inflight"] {
+        assert_eq!(result.summary[key], "0");
+    }
+    let fills = result.canonical_result["fills"].as_array().unwrap();
+    let redemptions = fills
+        .iter()
+        .map(|row| &row["event"]["Filled"])
+        .filter(|fill| {
+            fill["client_order_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("EXPIRATION-POLYMARKET-")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(redemptions.len(), 2);
+    for (id, payout) in IDS.iter().zip(["1.0000", "0.0000"]) {
+        let fill = redemptions
+            .iter()
+            .find(|fill| fill["instrument_id"] == *id)
+            .unwrap();
+        assert_eq!(fill["last_px"], payout);
+        assert_eq!(fill["ts_event"], (9 * STEP).to_string());
+        let fee: nautilus_model::types::Money =
+            fill["commission"].as_str().unwrap().parse().unwrap();
+        assert_eq!(fee.as_decimal(), rust_decimal::Decimal::ZERO);
+    }
+    let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
+    for series in data.series {
+        let nautilus_model::instruments::InstrumentAny::BinaryOption(binary) = series.instrument
+        else {
+            panic!("binary required");
+        };
+        assert_eq!(binary.expiration_ns.as_u64(), 18 * STEP);
+    }
+}
+
+#[test]
+fn market_order_after_original_close_receipt_before_expiry_has_native_closed_reason() {
+    let (root, mut request) = early_close(9 * STEP);
+    let mut after_close = request.target_points[0].clone();
+    after_close.asof_ns = market::count(10 * STEP + 1);
+    request.target_points.push(after_close);
+    let error = job::simulation::simulate(root.path(), &request).unwrap_err();
+    let chain = format!("{error:#}");
+    assert_eq!(error.to_string(), "NATIVE_TARGET_REPLAY_FAILED");
+    assert!(
+        chain.contains("NATIVE_ORDER_REJECTED") && chain.contains("CLOSED"),
+        "{chain}"
+    );
+}
+
+#[test]
+fn own_and_cross_member_close_bar_receipt_ties_fail_both_scientific_entrypoints() {
+    use nautilus_model::{
+        data::{Bar, BarType, InstrumentClose},
+        enums::InstrumentCloseType,
+        types::{Price, Quantity},
+    };
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    for cross_member in [false, true] {
+        let (_unused, mut request) = simulation("0", None, 0);
+        let root = tempfile::tempdir().unwrap();
+        let catalog =
+            ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+                .unwrap();
+        catalog
+            .write_instruments(prediction::instruments("0", 18 * STEP))
+            .unwrap();
+        for (index, id) in IDS.iter().enumerate() {
+            let kind: BarType = format!("{id}-1-MINUTE-LAST-EXTERNAL").parse().unwrap();
+            let offset = if index == 0 { 1 } else { 3 };
+            let bars = (1..=17)
+                .map(|minute| {
+                    Bar::new_checked(
+                        kind,
+                        Price::from("0.4000"),
+                        Price::from("0.4000"),
+                        Price::from("0.4000"),
+                        Price::from("0.4000"),
+                        Quantity::from("10000000.000000"),
+                        (minute * STEP).into(),
+                        (minute * STEP + offset).into(),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>();
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        request.target_points[0].asof_ns = market::count(5 * STEP + 3);
+        // Close for member zero ties only its own BAR, or only member one's BAR.
+        let receipt = 9 * STEP + if cross_member { 3 } else { 1 };
+        request.settlements =
+            prediction::settlement_groups(8 * STEP, receipt, ["1.0000", "0.0000"]);
+        request.settlements[0].outcomes[1].ts_init = market::count(9 * STEP + 2);
+        for (id, px, at) in [
+            (IDS[0], "1.0000", receipt),
+            (IDS[1], "0.0000", 9 * STEP + 2),
+        ] {
+            let close = InstrumentClose::new(
+                id.parse().unwrap(),
+                Price::from(px),
+                InstrumentCloseType::ContractExpired,
+                (8 * STEP).into(),
+                at.into(),
+            );
+            catalog
+                .write_to_parquet(&[close], None, None, None)
+                .unwrap();
+        }
+        let selected = contracts::execution::NativeDatasetSelectionV1 {
+            dataset_revision_id: contracts::Id::new(),
+            selection: request.selection.clone(),
+            settlements: request.settlements.clone(),
+        };
+        let error = job::simulation::simulate(root.path(), &request).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"),
+            "{error:#}"
+        );
+        let error = job::catalog::measure_catalog(root.path(), &selected, false)
+            .err()
+            .expect("receipt ambiguity must fail measurement");
+        assert!(
+            format!("{error:#}").contains("POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"),
+            "{error:#}"
+        );
+    }
+}
+
+#[test]
+fn equal_close_event_with_distinct_bar_receipt_is_not_receipt_ambiguity() {
+    let (root, request) = early_close(8 * STEP + 2);
+    let selected = contracts::execution::NativeDatasetSelectionV1 {
+        dataset_revision_id: contracts::Id::new(),
+        selection: request.selection.clone(),
+        settlements: request.settlements.clone(),
+    };
+    assert!(job::catalog::measure_catalog(root.path(), &selected, false).is_ok());
+    let result = job::simulation::simulate(root.path(), &request).unwrap();
+    assert_eq!(result.summary["positions.open"], "0");
+}
+
 #[test]
 fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() {
     use nautilus_model::{
