@@ -1,5 +1,6 @@
 //! Apply frozen targets in one native Nautilus simulated account, in replay or Paper.
 use crate::catalog::{NativeBarSeries, NativeMarketData, load_catalog};
+pub use crate::prediction::FillFeeFailure;
 use anyhow::{Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
@@ -104,10 +105,15 @@ impl ReplayStatus {
         }
     }
 
-    fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
+    pub(crate) fn check_callback_error(&mut self) -> Result<()> {
         if let Some(error) = self.callback_error.take() {
             return Err(error.context("NATIVE_TARGET_REPLAY_FAILED"));
         }
+        Ok(())
+    }
+
+    fn finish_run(&mut self, native_result: Result<()>) -> Result<()> {
+        self.check_callback_error()?;
         if let Some(code) = self.failure {
             let error = match (code, self.order_rejection.as_deref()) {
                 ("NATIVE_ORDER_REJECTED", Some(reason)) => anyhow::anyhow!("{code}: {reason}"),
@@ -1406,6 +1412,7 @@ fn run_with_strategy_and_spot(
     let mut engine = BacktestEngine::new(config)?;
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
+        let fill_fees = crate::prediction::FillFeeObserver::default();
         let fee = if is_spot {
             crate::spot_cash_runtime::fee_model(request, &market)?
         } else {
@@ -1431,7 +1438,11 @@ fn run_with_strategy_and_spot(
                     .map_err(anyhow::Error::msg)?,
                 ])
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(fee)
+                .fee_model(if domain::prediction::uses_native_fee(&settings.fee_model) {
+                    fill_fees.wrap(fee)
+                } else {
+                    fee
+                })
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()
@@ -1495,6 +1506,11 @@ fn run_with_strategy_and_spot(
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
         let native_result = engine.run(None, None, None, false);
+        // Original callback errors retain precedence over native fee failure.
+        status.borrow_mut().check_callback_error()?;
+        fill_fees
+            .check()
+            .map_err(|error| error.context("NATIVE_TARGET_REPLAY_FAILED"))?;
         status.borrow_mut().finish_run(native_result)?;
         for instrument_id in &settled_ids {
             ensure!(
@@ -1819,6 +1835,55 @@ mod replay_error_tests {
         assert_eq!(
             format!("{error:#}"),
             "NATIVE_TARGET_REPLAY_FAILED: apply bar: original callback cause"
+        );
+    }
+
+    #[test]
+    fn original_callback_chain_has_priority_over_an_observed_native_fee_failure() {
+        use nautilus_execution::models::fee::{FeeModel, FeeModelHandle};
+        use nautilus_model::{enums::OrderType, orders::builder::OrderTestBuilder};
+        struct FailedFee;
+        impl FeeModel for FailedFee {
+            fn get_commission(
+                &self,
+                _: &OrderAny,
+                _: Quantity,
+                _: Price,
+                _: &InstrumentAny,
+            ) -> Result<Money> {
+                anyhow::bail!("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND")
+            }
+        }
+        let instrument = replay_fixture::instruments("0.05", 18 * replay_fixture::STEP).remove(0);
+        let order = OrderTestBuilder::new(OrderType::Market)
+            .instrument_id(instrument.id())
+            .side(OrderSide::Buy)
+            .quantity(Quantity::from("10.000000"))
+            .build();
+        let fees = crate::prediction::FillFeeObserver::default();
+        fees.wrap(FeeModelHandle::new(FailedFee))
+            .get_commission(
+                &order,
+                Quantity::from("0.000480"),
+                Price::from("0.4000"),
+                &instrument,
+            )
+            .unwrap_err();
+        let mut status = ReplayStatus::default();
+        status
+            .record_callback_error(anyhow::anyhow!("original callback cause").context("apply bar"));
+        let result = (|| -> Result<()> {
+            status.check_callback_error()?;
+            fees.check()?;
+            status.finish_run(Err(anyhow::anyhow!("native shutdown")))
+        })();
+        assert_eq!(
+            format!("{:#}", result.unwrap_err()),
+            "NATIVE_TARGET_REPLAY_FAILED: apply bar: original callback cause"
+        );
+        assert_eq!(
+            fees.failure().unwrap().reason,
+            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
         );
     }
 
