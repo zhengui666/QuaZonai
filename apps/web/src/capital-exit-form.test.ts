@@ -5,7 +5,7 @@ import type { ExitView } from './capital-exit-state';
 
 const bounded: ExitView = {
   ...exit,
-  scope: { kind: 'PORTFOLIO_SCOPE', amount: exit.scope.amount, currency: 'USD', stream_ids: [id, source], release_ids: [intent, id] },
+  scope: { kind: 'AMOUNT', amount: exit.scope.amount, currency: 'USD' },
   funds: { ...exit.funds, reserved_amount: { amount: '9007199254740992.000000001', currency: 'USD' } },
   policy: {
     kind: 'BOUNDED_LIMIT', deadline: '2026-10-07T02:03:04.123456789+02:30',
@@ -18,8 +18,8 @@ describe('capital exit resume form', () => {
   it('restores all constraints and remaining reservation as exact strings without mutating the record', () => {
     const original = structuredClone(bounded);
     const expected = {
-      amount: '9007199254740992.000000001', currency: 'USD', scope: 'PORTFOLIO_SCOPE',
-      streamIds: `${id}\n${source}`, releaseIds: `${intent}\n${id}`, policy: 'BOUNDED_LIMIT',
+      amount: '9007199254740992.000000001', currency: 'USD', scope: 'AMOUNT',
+      streamIds: '', releaseIds: '', policy: 'BOUNDED_LIMIT',
       instrument: 'BTC-USD.NATIVE', quantity: '9007199254740993.123456789', price: '1234567890123456.123456789',
       deadline: '2026-10-07T02:03:04.123456789+02:30', cost: '9007199254740991.123456789', costEvidence: source,
     };
@@ -33,6 +33,13 @@ describe('capital exit resume form', () => {
       amount: exit.funds.reserved_amount.amount, currency: 'USD', scope: 'AMOUNT', streamIds: '', releaseIds: '',
       policy: 'CASH_ONLY', instrument: '', quantity: '', price: '', deadline: '', cost: '', costEvidence: '',
     });
+  });
+  it('refuses portfolio resume without rewriting historical scope or policy evidence', () => {
+    const record: ExitView = { ...bounded, scope: { kind: 'PORTFOLIO_SCOPE', amount: exit.scope.amount,
+      currency: 'USD', stream_ids: [id, source], release_ids: [intent, id] } };
+    const original = structuredClone(record);
+    expect(resumeFormValues(record)).toBeUndefined();
+    expect(record).toEqual(original);
   });
   it.each([0, 2])('does not truncate an unsupported %i-leg policy into a single-leg form', count => {
     const policy = bounded.policy;

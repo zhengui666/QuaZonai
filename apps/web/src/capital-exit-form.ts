@@ -5,14 +5,14 @@ export type FormValues = { amount: string; currency: string; scope: 'AMOUNT' | '
 /** Restore exact strings, including an expired deadline. Never widen bounds or
  * silently discard legs unsupported by the existing single-leg execution path. */
 export function resumeFormValues(exit: ExitView): FormValues | undefined {
+  if (exit.scope.kind !== 'AMOUNT') return undefined;
   const policy = exit.policy;
   if (policy.kind === 'BOUNDED_LIMIT' && policy.legs.length !== 1) return undefined;
   const leg = policy.kind === 'BOUNDED_LIMIT' ? policy.legs[0]! : undefined;
   return {
     amount: exit.funds.reserved_amount.amount, currency: exit.funds.reserved_amount.currency,
     scope: exit.scope.kind,
-    streamIds: exit.scope.kind === 'PORTFOLIO_SCOPE' ? exit.scope.stream_ids.join('\n') : '',
-    releaseIds: exit.scope.kind === 'PORTFOLIO_SCOPE' ? exit.scope.release_ids.join('\n') : '',
+    streamIds: '', releaseIds: '',
     policy: policy.kind, instrument: leg?.instrument_id ?? '',
     quantity: leg?.maximum_reduction_quantity ?? '', price: leg?.minimum_sell_price ?? '',
     deadline: policy.kind === 'BOUNDED_LIMIT' ? policy.deadline : '',
