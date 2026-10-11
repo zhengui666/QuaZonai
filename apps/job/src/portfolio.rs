@@ -1,7 +1,7 @@
 //! Frozen catalog and original Wasm models produce all numerical portfolio inputs.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::{
-    DbCounter, Id, SchemaV1, brief::HorizonKind, evidence::ForecastUnit, portfolio::*, science::*,
+    brief::HorizonKind, evidence::ForecastUnit, portfolio::*, science::*, DbCounter, Id, SchemaV1,
 };
 use nautilus_model::instruments::Instrument;
 use std::path::Path;
@@ -202,12 +202,21 @@ pub(crate) fn prepare(
             },
             &module,
         )?;
-        remaining_fuel.push(member.parameters.total_fuel.zip(consumed_fuel).map(|(total, used)| {
-            count(total.get() - used.get())
-        }).transpose()?);
-        consumed = consumed.zip(consumed_fuel).map(|(sum, next)| {
-            sum.checked_add(next.get()).ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
-        }).transpose()?;
+        remaining_fuel.push(
+            member
+                .parameters
+                .total_fuel
+                .zip(consumed_fuel)
+                .map(|(total, used)| count(total.get() - used.get()))
+                .transpose()?,
+        );
+        consumed = consumed
+            .zip(consumed_fuel)
+            .map(|(sum, next)| {
+                sum.checked_add(next.get())
+                    .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
+            })
+            .transpose()?;
         let mut forecasts = Vec::new();
         let mut available = 0;
         for (instrument, bar_type) in instruments.iter().zip(&selection.bar_types) {

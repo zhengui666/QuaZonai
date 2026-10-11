@@ -171,11 +171,6 @@ impl From<StoreError> for ApiError {
                 "账户、价格或资金保留证据已变化；请刷新预览并重新确认原退出约束，不要自动换键执行。",
             ),
             StoreError::Invalid(_) => Self::validation(),
-            StoreError::TurnPending => Self::new(
-                StatusCode::CONFLICT,
-                "TURN_PENDING",
-                "此前模型请求仍待确认，不能重复发送。",
-            ),
             StoreError::Domain(domain::DomainError::Fields(fields)) => {
                 let mut error = Self::validation();
                 error.field_errors = fields

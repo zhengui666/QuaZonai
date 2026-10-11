@@ -12,7 +12,7 @@ use contracts::{
     Id,
 };
 use experiment_support::{artifact, machine, mission, setup};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use store::{authority::Actor, StoreError};
 
 async fn counts(pool: &PgPool, cycle: Id) -> (i64, i64, i64) {
@@ -236,7 +236,7 @@ async fn machine_permission_is_not_operator_or_automation_authority(pool: PgPool
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn mission_proposals_bind_the_real_author_attempt_not_the_science_run(pool: PgPool) {
+async fn retired_mission_cannot_submit_and_original_codex_provenance_stays_readable(pool: PgPool) {
     let (store, operator) = research_support::operator(&pool).await;
     let f = setup(&pool, &store, &operator, 6).await;
     let (run, attempt) = mission(&pool, &store, &operator, &f).await;
@@ -248,61 +248,39 @@ async fn mission_proposals_bind_the_real_author_attempt_not_the_science_run(pool
         &["RESEARCH_READ", "EXPERIMENT_SUBMIT"],
     )
     .await;
-    let result = store
-        .propose_experiment(&actor, "mission", &f.request)
-        .await
-        .unwrap()
-        .resource;
-    assert_eq!(result.author_run_id, Some(run));
-    assert_eq!(result.author_attempt_id, Some(attempt));
-    assert_eq!(result.trial_source, ExperimentSource::Codex);
-    assert!(result.run_id.is_none());
-    let row = sqlx::query("SELECT actor_kind,credential_id,author_attempt_id FROM app.experiment_authorship WHERE experiment_id=$1")
-        .bind(result.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    assert!(matches!(
+        store
+            .propose_experiment(&actor, "retired-submit", &f.request)
+            .await,
+        Err(StoreError::Forbidden)
+    ));
+    let id = Id::new();
+    sqlx::query("INSERT INTO app.experiments(id,project_id,cycle_id,family_id,ordinal,hypothesis,expected_failure_modes,proposal_artifact_id,code_artifact_id,parameter_artifact_id,trial_source,outcome) VALUES($1,$2,$3,$4,1,'Original controlled legacy proposal','Original failure modes',$5,$6,$7,'CODEX','PENDING')")
+        .bind(id.as_uuid()).bind(f.data.project.as_uuid()).bind(f.cycle.as_uuid()).bind(f.family.as_uuid()).bind(f.request.proposal_artifact_id.as_uuid()).bind(f.request.code_artifact_id.map(Id::as_uuid)).bind(f.request.parameter_artifact_id.as_uuid()).execute(&pool).await.unwrap();
     let Actor::Machine { credential_id, .. } = actor else {
         unreachable!()
     };
-    assert_eq!(row.get::<String, _>("actor_kind"), "MISSION");
-    assert_eq!(
-        row.get::<uuid::Uuid, _>("credential_id"),
-        credential_id.as_uuid()
-    );
-    let new_attempt = Id::new();
-    let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,2,'replacement',1,clock_timestamp()+interval '1 hour','NOT_SENT','UNKNOWN')")
-        .bind(new_attempt.as_uuid()).bind(run.as_uuid()).execute(&mut *tx).await.unwrap();
-    sqlx::query("UPDATE app.runs SET active_attempt_id=$1,current_attempt_no=2 WHERE id=$2")
-        .bind(new_attempt.as_uuid())
-        .bind(run.as_uuid())
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
+    sqlx::query("INSERT INTO app.experiment_authorship(experiment_id,project_id,actor_kind,credential_id,author_run_id,author_attempt_id) VALUES($1,$2,'MISSION',$3,$4,$5)")
+        .bind(id.as_uuid()).bind(f.data.project.as_uuid()).bind(credential_id.as_uuid()).bind(run.as_uuid()).bind(attempt.as_uuid()).execute(&pool).await.unwrap();
+    let original = store.experiment(&operator, id).await.unwrap();
+    assert_eq!(original.trial_source, ExperimentSource::Codex);
+    assert_eq!(original.author_run_id, Some(run));
+    assert_eq!(original.author_attempt_id, Some(attempt));
+    assert!(original.run_id.is_none());
     assert!(matches!(
         store
-            .propose_experiment(&actor, "mission-again", &f.request)
+            .propose_experiment(&actor, "retired-replay", &f.request)
             .await,
-        Err(StoreError::InvalidCredentials)
-    ));
-    // Even replay requires current possession/authority; the old author row stays immutable.
-    assert!(matches!(
-        store
-            .propose_experiment(&actor, "mission", &f.request)
-            .await,
-        Err(StoreError::InvalidCredentials)
+        Err(StoreError::Forbidden)
     ));
     assert_eq!(
-        store
-            .experiment(&operator, result.id)
-            .await
-            .unwrap()
-            .author_attempt_id,
-        Some(attempt)
+        serde_json::to_value(store.experiment(&operator, id).await.unwrap()).unwrap(),
+        serde_json::to_value(original).unwrap()
     );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn mission_write_requires_an_unexpired_attempt_lease(pool: PgPool) {
+async fn retired_mission_write_is_denied_even_with_a_previously_valid_lease(pool: PgPool) {
     let (store, operator) = research_support::operator(&pool).await;
     let f = setup(&pool, &store, &operator, 3).await;
     let (run, attempt) = mission(&pool, &store, &operator, &f).await;
@@ -316,14 +294,13 @@ async fn mission_write_requires_an_unexpired_attempt_lease(pool: PgPool) {
     .await;
     sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
         .bind(attempt.as_uuid()).execute(&pool).await.unwrap();
-    // Lease expiry now invalidates the Mission identity for every scope, before
-    // experiment-specific authorization. Keep the precise authentication error.
+    // Retirement does not revive an old bearer or depend on its lease expiry.
     let result = store
         .propose_experiment(&actor, "expired-lease", &f.request)
         .await;
     assert!(
-        matches!(result, Err(StoreError::InvalidCredentials)),
-        "expired Mission must fail at the shared identity boundary: {result:?}"
+        matches!(result, Err(StoreError::Forbidden)),
+        "retired Mission writes must be rejected: {result:?}"
     );
     assert_eq!(counts(&pool, f.cycle).await, (0, 0, 0));
 }

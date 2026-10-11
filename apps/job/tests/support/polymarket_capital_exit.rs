@@ -3,7 +3,7 @@
 //! generated order events. No market connection, real claim, credentials or PG.
 use super::*;
 use crate::paper_capital_exit::{NativeRequest, NativeResponse};
-use contracts::{DbCounter, Id, Revision, SchemaV1, account_observation::*, capital_exit::*};
+use contracts::{account_observation::*, capital_exit::*, DbCounter, Id, Revision, SchemaV1};
 use nautilus_model::{
     accounts::Account,
     data::QuoteTick,
@@ -86,11 +86,9 @@ impl Fixture {
             &constraints,
             target,
             instruments,
-            vec![
-                format!("{}-1-SECOND-MID-INTERNAL", polymarket::IDS[0])
-                    .parse()
-                    .unwrap(),
-            ],
+            vec![format!("{}-1-SECOND-MID-INTERNAL", polymarket::IDS[0])
+                .parse()
+                .unwrap()],
             &claim,
             directory.path(),
         )
@@ -193,11 +191,10 @@ impl Fixture {
         };
         let mut wrong = receipt.clone();
         wrong.native_client_id = "UNRELATED-DATA-ONLY-CLIENT".into();
-        assert!(
-            self.session
-                .control_capital_exit(NativeRequest::Bind(Box::new(wrong)))
-                .is_err()
-        );
+        assert!(self
+            .session
+            .control_capital_exit(NativeRequest::Bind(Box::new(wrong)))
+            .is_err());
         self.session
             .control_capital_exit(NativeRequest::Bind(Box::new(receipt)))
             .unwrap();
@@ -403,25 +400,21 @@ fn production_paper_reuses_account_strategy_and_nonzero_native_fee() {
         let assessment = fixture.assess(chrono::Utc::now() + chrono::Duration::seconds(30));
         let view = fixture.claimed(&assessment);
         fixture.evidence(NativeRequest::Fence(Box::new(view.clone())));
-        assert!(
-            fixture
-                .session
-                .control_capital_exit(NativeRequest::Advance(Box::new(view.clone())))
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("capital_exit_native_command_time_pending")
-        );
-        assert!(
-            fixture
-                .session
-                .capital_exit
-                .as_ref()
-                .unwrap()
-                .gate()
-                .issued_order_ids()
-                .is_empty()
-        );
+        assert!(fixture
+            .session
+            .control_capital_exit(NativeRequest::Advance(Box::new(view.clone())))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("capital_exit_native_command_time_pending"));
+        assert!(fixture
+            .session
+            .capital_exit
+            .as_ref()
+            .unwrap()
+            .gate()
+            .issued_order_ids()
+            .is_empty());
         fixture.next_quotes("0.4900", "1000000.000000");
         fixture.evidence(NativeRequest::Advance(Box::new(view.clone())));
         fixture.next_quotes("0.4900", "1000000.000000");
@@ -529,12 +522,10 @@ fn silent_stop(mode: &str, race: bool) {
         .unwrap();
     let original_frames = fixture.session.original_frames;
     std::thread::sleep(Duration::from_millis(5200));
-    assert!(
-        fixture
-            .session
-            .control_capital_exit(NativeRequest::Availability(Box::new(view.clone())))
-            .is_err()
-    );
+    assert!(fixture
+        .session
+        .control_capital_exit(NativeRequest::Availability(Box::new(view.clone())))
+        .is_err());
     if mode == "deadline" {
         fixture.session.capital_exit_deadline().unwrap();
     } else {
@@ -584,17 +575,15 @@ fn silent_stop(mode: &str, race: bool) {
             .unwrap(),
         original_quote
     );
-    assert!(
-        !fixture
-            .session
-            .engine
-            .kernel()
-            .cache
-            .borrow()
-            .order(&order_id)
-            .unwrap()
-            .is_closed()
-    );
+    assert!(!fixture
+        .session
+        .engine
+        .kernel()
+        .cache
+        .borrow()
+        .order(&order_id)
+        .unwrap()
+        .is_closed());
     fixture.next_quotes(if race { "0.5000" } else { "0.4800" }, "10.000000");
     fixture.next_quotes(if race { "0.5000" } else { "0.4800" }, "10.000000");
     let after = fixture
@@ -695,11 +684,9 @@ fn production_paper_first_stale_fence_retains_empty_scope_for_silent_deadline() 
             .control_capital_exit(NativeRequest::Fence(Box::new(view.clone())))
             .err()
             .expect("first original valuation is stale");
-        assert!(
-            failure
-                .to_string()
-                .contains("capital_exit_native_quote_stale")
-        );
+        assert!(failure
+            .to_string()
+            .contains("capital_exit_native_quote_stale"));
         assert_eq!(
             gate.control(),
             Some(view.clone()),

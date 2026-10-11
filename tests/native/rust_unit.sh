@@ -6,7 +6,7 @@ if (($# == 0)); then set -- cargo; fi
 cargo=("$@")
 features=job/catalog-prepare,job/polymarket-history,job/native-paper-test,job/native-sandbox-test
 
-# Keep Server rule tests, but do not enable native-codex's systemd/cgroup probes.
+# Keep Server rules; research execution/recovery is checked with official Node durable.
 # CLI code is shared by Server and the portable CLI. Preserve its rule/file cases;
 # skip only the verified socket/HTTP/FIFO/process cases, not either entire module.
 "${cargo[@]}" test --locked --workspace --exclude store --lib --bins --features "$features" -- \

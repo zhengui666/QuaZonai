@@ -4,10 +4,10 @@ mod exit_observations;
 #[path = "../../../tests/support/runtime.rs"]
 mod protocol;
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1, research::ArtifactInputRole, runs::RunKind,
-    runtime::RuntimeCapabilitiesV1, runtime_jobs::*,
+    research::ArtifactInputRole, runs::RunKind, runtime::RuntimeCapabilitiesV1, runtime_jobs::*,
+    DbCounter, Id, Revision, SchemaV1,
 };
-use runtime::{Failure, journal::Journal, now};
+use runtime::{journal::Journal, now, Failure};
 use std::collections::BTreeMap;
 
 fn count(value: u64) -> DbCounter {

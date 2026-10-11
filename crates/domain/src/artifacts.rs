@@ -80,7 +80,12 @@ mod tests {
         let accepted = "x".repeat(2 * 1024 * 1024 + 1);
         assert!(upload(&request(ResearchArtifactKind::Code, &accepted)).is_ok());
         let original = "界".repeat(2 * 1024 * 1024 / 3 + 1);
-        assert_eq!(upload(&request(ResearchArtifactKind::Code, &original)).unwrap().get(), original.len() as u64);
+        assert_eq!(
+            upload(&request(ResearchArtifactKind::Code, &original))
+                .unwrap()
+                .get(),
+            original.len() as u64
+        );
         assert!(upload(&request(
             ResearchArtifactKind::Code,
             "deliberately not valid Rust; validate in the isolated job"

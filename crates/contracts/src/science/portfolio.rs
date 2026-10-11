@@ -1,6 +1,6 @@
 //! Catalog-backed portfolio execution, not permission to use an Alpha version.
 use super::{NativeBarSelectionV1, NativeForecastParametersV1};
-use crate::{DbCounter, DecimalValue, Id, SchemaV1, brief::TargetKind, portfolio::*};
+use crate::{brief::TargetKind, portfolio::*, DbCounter, DecimalValue, Id, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

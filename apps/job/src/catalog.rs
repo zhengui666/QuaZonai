@@ -1,10 +1,10 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::{
-    DbCounter, SchemaV1,
     execution::{NativeDataQualityReportV1, NativeDatasetQualityV1, NativeDatasetSelectionV1},
     science::NativeBarSelectionV1,
+    DbCounter, SchemaV1,
 };
 use nautilus_core::UnixNanos;
 use nautilus_model::{
@@ -179,7 +179,7 @@ pub(crate) fn last_bar_notionals(
 
 fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
     ensure!(
-        selection.bar_types.len() >= 1
+        !selection.bar_types.is_empty()
             && selection.maximum_rows >= 1
             && selection.event_start_ns < selection.event_end_ns
             && selection.event_end_ns <= selection.decision_cutoff_ns,
@@ -190,7 +190,7 @@ fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
 
 /// Shared canonical native bar parsing, independent of any catalog path.
 pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
-    ensure!(values.len() >= 1, "CATALOG_SELECTION_INVALID");
+    ensure!(!values.is_empty(), "CATALOG_SELECTION_INVALID");
     let mut instruments = std::collections::BTreeSet::new();
     let mut types = Vec::with_capacity(values.len());
     for text in values {

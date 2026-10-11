@@ -3,14 +3,14 @@
 //! The minimal account/snapshot envelope follows domain/tests/native_portfolio_outputs.
 #![allow(dead_code)]
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1,
     evidence::MetricStatus,
     execution::NativeTaskParametersV1,
     portfolio::AllocationTargetV1,
-    runtime_jobs::{RuntimeOutputV1, native_output_contract},
+    runtime_jobs::{native_output_contract, RuntimeOutputV1},
     science::*,
+    DbCounter, Id, Revision, SchemaV1,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 fn count(value: u64) -> DbCounter {

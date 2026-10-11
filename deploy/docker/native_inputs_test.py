@@ -97,6 +97,16 @@ class NativeInputsTests(unittest.TestCase):
         finally:
             file.write_text(before)
 
+    def test_context_recipe_changes_invalidate_native_identity_without_checksum_checks(self):
+        original = self.identity()
+        file = self.root / 'deploy/docker/Dockerfile.dockerignore'
+        before = file.read_text()
+        try:
+            file.write_text(before + '\n# packaging-only recipe change\n')
+            self.assertNotEqual(self.identity()['recipe_sha256'], original['recipe_sha256'])
+        finally:
+            file.write_text(before)
+
     def test_unsupported_workspace_config_paths_and_dynamic_includes_fail(self):
         edits = [
             ('Cargo.toml', lambda s: s.replace('resolver = "2"', 'resolver = "2"\nexclude = ["apps/elsewhere"]')),
@@ -106,7 +116,6 @@ class NativeInputsTests(unittest.TestCase):
             ('apps/job/src/main.rs', lambda s: s + '\nconst X: &str = include_str!("../../../README.md");\n'),
             ('apps/job/src/main.rs', lambda s: s + '\nconst X: &str = include_str!(concat!("x", "y"));\n'),
             ('.dockerignore', lambda s: s + '\ncrates\n'),
-            ('deploy/docker/Dockerfile.dockerignore', lambda s: s + '\ncrates/**\n'),
         ]
         for name, change in edits:
             with self.subTest(path=name):

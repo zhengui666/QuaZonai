@@ -1,5 +1,5 @@
 //! Offline handoff for qz.hf_selection/1. No HTTP, hashes or scientific admission.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::{
@@ -463,13 +463,11 @@ mod tests {
         for market in ["market-a", "ALL", "*", "UNKNOWN"] {
             let directory = tempfile::tempdir().unwrap();
             let path = handoff(directory.path(), partition(), json!([market]));
-            assert!(
-                load(&path, 0, 60)
-                    .err()
-                    .unwrap()
-                    .to_string()
-                    .contains("SELECTION_PARTITION_INVALID")
-            );
+            assert!(load(&path, 0, 60)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("SELECTION_PARTITION_INVALID"));
         }
     }
 

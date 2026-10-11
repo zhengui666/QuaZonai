@@ -1,14 +1,14 @@
 //! Explicitly selected disposable HTTP/PG + original native Sandbox bridge.
 //! Reuses the component fixture's Strategy; contains no second execution engine.
 use super::*;
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
     account_observation::{AccountObservationReceiptV2, AccountObservationSubmitV2},
     control::CommandResult,
 };
 use job::capital_exit_transport::CapitalExitOwnerTransport;
-use serde::{Deserialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::{json, Value};
 use std::{
     io::Read,
     path::{Path, PathBuf},

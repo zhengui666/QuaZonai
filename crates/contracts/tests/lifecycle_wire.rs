@@ -1,4 +1,4 @@
-use contracts::{DbCounter, Id, SchemaV1, lifecycle::*, runs::RunState};
+use contracts::{lifecycle::*, runs::RunState, DbCounter, Id, SchemaV1};
 use serde_json::{from_value, json, to_value};
 
 #[test]
@@ -67,7 +67,10 @@ fn compatible_extension_envelopes_reject_invalid_names_and_versions() {
     }
     let mut large = valid.clone();
     large["payload"] = json!({"schema_version":1,"data":"x".repeat(65537)});
-    assert_eq!(to_value(from_value::<RunEventV1>(large.clone()).unwrap()).unwrap(), large);
+    assert_eq!(
+        to_value(from_value::<RunEventV1>(large.clone()).unwrap()).unwrap(),
+        large
+    );
     let mut bad = valid;
     bad["event_type"] = json!("run.created");
     assert!(
@@ -155,12 +158,10 @@ fn runtime_cpu_and_memory_are_required_nullable_and_legacy_numbers_round_trip_ex
     }
     let schema = to_value(RuntimeJobLimitsV1::schema()).unwrap();
     for field in ["cpu", "memory_mib"] {
-        assert!(
-            schema["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!(field))
-        );
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(field)));
         assert_eq!(schema["properties"][field]["minimum"], json!(1));
         assert_eq!(schema["properties"][field]["maximum"], json!(u32::MAX));
     }
@@ -173,7 +174,11 @@ fn optional_memory_request_defaults_preserve_explicit_numeric_choices() {
     let absent: JobLimitsV1 = from_value(base.clone()).unwrap();
     assert_eq!(absent.memory_mib, None);
     for memory in [json!(null), json!(1), json!(u32::MAX)] {
-        let mut value = base.clone(); value["memory_mib"] = memory;
-        assert_eq!(to_value(from_value::<JobLimitsV1>(value.clone()).unwrap()).unwrap(), value);
+        let mut value = base.clone();
+        value["memory_mib"] = memory;
+        assert_eq!(
+            to_value(from_value::<JobLimitsV1>(value.clone()).unwrap()).unwrap(),
+            value
+        );
     }
 }

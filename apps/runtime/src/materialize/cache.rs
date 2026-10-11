@@ -49,11 +49,7 @@ pub(super) fn discard_staging(root: &RuntimeRoot, spec: &JobSpecV1) -> Result<()
 fn exact_spec(directory: &Path) -> Result<JobSpecV1> {
     files::canonical_directory(directory)?;
     let input = files::directory_handle(&directory.join("input"))?;
-    let bytes = files::read_child(
-        &input,
-        "spec.json",
-        usize::MAX,
-    )?;
+    let bytes = files::read_child(&input, "spec.json", usize::MAX)?;
     serde_json::from_slice(&bytes).map_err(|_| Failure::Invalid("materialization_spec"))
 }
 

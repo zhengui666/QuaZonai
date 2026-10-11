@@ -63,7 +63,7 @@ class PackageTests(unittest.TestCase):
         self.assets.mkdir()
         self.binary = self.root / "quazonai"
         self.binary.write_bytes(b"native-binary-fixture")
-        self.manifest = {"schema_version": 2, "version": VERSION, "revision": REVISION}
+        self.manifest = {"schema_version": 3, "version": VERSION, "revision": REVISION}
 
     def payloads(self):
         (self.assets / "release.json").write_text(json.dumps(self.manifest), encoding="utf-8")

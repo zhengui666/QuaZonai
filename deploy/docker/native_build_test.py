@@ -40,12 +40,14 @@ sys.exit(37 if name == os.environ['QZ_TEST_FAIL'] else 0)
         result, calls = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [
-            ['cargo', 'build', '--locked', '--release', '-p', 'server', '-p', 'runtime',
+            ['cargo', 'build', '--locked', '--release', '-p', 'server', '-p', 'runtime', '-p', 'job', '--bin', 'server', '--bin', 'runtime', '--bin', 'job',
              '--config', 'profile.release.package.server.strip="symbols"',
-             '--config', 'profile.release.package.runtime.strip="symbols"'],
+             '--config', 'profile.release.package.runtime.strip="symbols"',
+             '--config', 'profile.release.package.job.strip="symbols"'],
             ['install', '-Dm755', 'target/release/server', '/out/server'],
             ['install', '-Dm755', 'target/release/runtime', '/out/runtime'],
-            ['strip', '/out/server', '/out/runtime'],
+            ['install', '-Dm755', 'target/release/job', '/out/job'],
+            ['strip', '/out/server', '/out/runtime', '/out/job'],
         ])
 
     def test_failed_build_cannot_install_stale_outputs(self):

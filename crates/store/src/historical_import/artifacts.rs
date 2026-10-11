@@ -51,8 +51,7 @@ where
     let mut readable = 0;
     let mut stored = 0;
     if let Some(artifacts) = artifacts {
-        if artifacts.source_installation_id != source.source_installation_id
-        {
+        if artifacts.source_installation_id != source.source_installation_id {
             return Err(invalid());
         }
         let mut identities = BTreeSet::new();

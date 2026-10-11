@@ -54,7 +54,9 @@ fn finish(
 ) -> PolymarketPreflight {
     let (outcome, native_order) = match result {
         Ok((request, order)) => (
-            PolymarketExecutionPreflightOutcomeV1::FormatValidated { request },
+            PolymarketExecutionPreflightOutcomeV1::FormatValidated {
+                request: Box::new(request),
+            },
             Some(order),
         ),
         Err(error) => (

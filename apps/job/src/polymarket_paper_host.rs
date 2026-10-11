@@ -1,10 +1,9 @@
 //! Current public-data Paper acceptance host. HF originals remain research history.
 //! The data producer is a separate data-only native process; this process owns
 //! one official simulation engine. No exchange execution client is registered.
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
-    DbCounter, Id, SchemaV1,
-    account_observation::{NATIVE_ACCOUNT_VERSION, NativeAccountBindingV1},
+    account_observation::{NativeAccountBindingV1, NATIVE_ACCOUNT_VERSION},
     catalogs::RuntimeCatalogMetadataV1,
     control::CommandResult,
     data::DatasetView,
@@ -15,6 +14,7 @@ use contracts::{
     research::DataOrigin,
     science::NativeTargetPointV1,
     strategy_portfolio::{HandoffClaimViewV2, TargetPackageEnvelopeV2},
+    DbCounter, Id, SchemaV1,
 };
 use nautilus_common::{
     actor::{DataActor, DataActorConfig, DataActorCore},
@@ -22,14 +22,15 @@ use nautilus_common::{
     logging::logger::LoggerConfig,
     messages::system::{QueueStateChanged, SocketState, SocketStateChanged},
     msgbus::{
-        self, ShareableMessageHandler, TypedHandler,
+        self,
         switchboard::{self, MessagingSwitchboard},
+        ShareableMessageHandler, TypedHandler,
     },
     nautilus_actor,
 };
 use nautilus_live::{
-    SocketControlFactory,
     node::{LiveNode, NodeRunMode, NodeState},
+    SocketControlFactory,
 };
 use nautilus_model::{
     data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus, QuoteTick, TradeTick},
@@ -45,8 +46,8 @@ use nautilus_polymarket::{
         messages::{MarketWsMessage, PolymarketWsMessage},
     },
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     cell::RefCell,
     collections::BTreeSet,
@@ -58,9 +59,9 @@ use std::{
     rc::Rc,
     str::FromStr,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
+        Arc,
     },
     time::{Duration, Instant},
 };
@@ -1651,7 +1652,9 @@ fn next_source_record_controlled(
             "PAPER_SOURCE_PARENT_WALL_DEADLINE"
         );
         let wait = deadline.map_or(Duration::from_millis(50), |deadline| {
-            deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50))
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(50))
         });
         match receiver.recv_timeout(wait) {
             Ok(value) => return value.map_err(anyhow::Error::msg),
@@ -1677,10 +1680,7 @@ pub(crate) fn execute(
     control: Option<&crate::polymarket_paper_service::ExecutionControl>,
     initial_permit: Option<InitialCapitalPermit>,
 ) -> Result<()> {
-    ensure!(
-        max_seconds != Some(0),
-        "PAPER_HOST_OBSERVATION_BOUND"
-    );
+    ensure!(max_seconds != Some(0), "PAPER_HOST_OBSERVATION_BOUND");
     if let Some(name) = proxy_env {
         validate_proxy_env_name(name)?;
     }
@@ -1743,11 +1743,14 @@ pub(crate) fn execute(
     }
     // Only an explicit observation budget adds a parent deadline plus shutdown
     // drain. Without one, current stop control and child exit remain authoritative.
-    let deadline = max_seconds.map(|seconds| {
-        seconds.checked_add(55)
-            .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)))
-            .ok_or_else(|| anyhow!("PAPER_HOST_OBSERVATION_BOUND"))
-    }).transpose()?;
+    let deadline = max_seconds
+        .map(|seconds| {
+            seconds
+                .checked_add(55)
+                .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)))
+                .ok_or_else(|| anyhow!("PAPER_HOST_OBSERVATION_BOUND"))
+        })
+        .transpose()?;
     let mut child = SourceChild {
         process: command.spawn()?,
         reaped: None,
@@ -2147,12 +2150,55 @@ pub(crate) mod tests {
     fn source_observation_duration_is_explicit_and_has_no_five_minute_ceiling() {
         use clap::Parser;
         #[derive(Parser)]
-        struct TestParser { #[command(flatten)] args: super::Arguments }
-        let request = TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson"]).unwrap();
-        assert!(matches!(request.args.operation, super::Operation::Source { max_seconds: None, .. }));
-        let request = TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson", "--max-seconds", "301"]).unwrap();
-        assert!(matches!(request.args.operation, super::Operation::Source { max_seconds: Some(301), .. }));
-        assert!(TestParser::try_parse_from(["paper", "source", "--instrument-id", "condition-1.POLYMARKET", "--output", "never-opened.ndjson", "--max-seconds", "0"]).is_err());
+        struct TestParser {
+            #[command(flatten)]
+            args: super::Arguments,
+        }
+        let request = TestParser::try_parse_from([
+            "paper",
+            "source",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "never-opened.ndjson",
+        ])
+        .unwrap();
+        assert!(matches!(
+            request.args.operation,
+            super::Operation::Source {
+                max_seconds: None,
+                ..
+            }
+        ));
+        let request = TestParser::try_parse_from([
+            "paper",
+            "source",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "never-opened.ndjson",
+            "--max-seconds",
+            "301",
+        ])
+        .unwrap();
+        assert!(matches!(
+            request.args.operation,
+            super::Operation::Source {
+                max_seconds: Some(301),
+                ..
+            }
+        ));
+        assert!(TestParser::try_parse_from([
+            "paper",
+            "source",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "never-opened.ndjson",
+            "--max-seconds",
+            "0"
+        ])
+        .is_err());
     }
 
     use super::*;
@@ -2530,23 +2576,17 @@ pub(crate) mod tests {
         for observations in [0, 1] {
             let mut progress = forward_fixture_progress();
             progress.observed = observations;
-            assert!(
-                !progress
-                    .observe_window(DbCounter::new(3_999_999_999).unwrap())
-                    .unwrap()
-            );
-            assert!(
-                progress
-                    .observe_window(DbCounter::new(4_000_000_100).unwrap())
-                    .unwrap()
-            );
+            assert!(!progress
+                .observe_window(DbCounter::new(3_999_999_999).unwrap())
+                .unwrap());
+            assert!(progress
+                .observe_window(DbCounter::new(4_000_000_100).unwrap())
+                .unwrap());
             assert!(progress.window_closed);
             assert!(!progress.complete());
-            assert!(
-                !progress
-                    .observe_window(DbCounter::new(5_000_000_000).unwrap())
-                    .unwrap()
-            );
+            assert!(!progress
+                .observe_window(DbCounter::new(5_000_000_000).unwrap())
+                .unwrap());
         }
     }
     #[test]
@@ -2766,17 +2806,15 @@ pub(crate) mod tests {
     #[test]
     fn expired_parent_deadline_rejects_even_buffered_records() {
         let (sender, receiver) = mpsc::sync_channel(1);
-        assert!(
-            sender
-                .send(Ok(Some(SourceRecord {
-                    schema_version: SchemaV1,
-                    sequence: DbCounter::new(1).unwrap(),
-                    observed_at_ns: DbCounter::new(1).unwrap(),
-                    kind: "start".into(),
-                    payload: json!({}),
-                })))
-                .is_ok()
-        );
+        assert!(sender
+            .send(Ok(Some(SourceRecord {
+                schema_version: SchemaV1,
+                sequence: DbCounter::new(1).unwrap(),
+                observed_at_ns: DbCounter::new(1).unwrap(),
+                kind: "start".into(),
+                payload: json!({}),
+            })))
+            .is_ok());
         let expired = Instant::now() - Duration::from_millis(1);
         assert!(next_source_record(&receiver, expired).is_err());
         // Expiry is checked before consuming a queued frame.
@@ -2832,14 +2870,9 @@ pub(crate) mod tests {
             stop.store(true, Ordering::Release);
         });
         let began = Instant::now();
-        let error = next_source_record_controlled(
-            &receiver,
-            None,
-            Some(&control),
-            None,
-        )
-        .err()
-        .expect("stop must interrupt read");
+        let error = next_source_record_controlled(&receiver, None, Some(&control), None)
+            .err()
+            .expect("stop must interrupt read");
         assert_eq!(error.to_string(), "PAPER_HOST_STOP_REQUESTED");
         drop(receiver);
         let outcome = child.terminate().unwrap();
@@ -2908,15 +2941,7 @@ pub(crate) mod tests {
             Arc::new(AtomicBool::new(true)),
             status,
         );
-        assert!(
-            next_source_record_controlled(
-                &receiver,
-                None,
-                Some(&control),
-                None,
-            )
-            .is_err()
-        );
+        assert!(next_source_record_controlled(&receiver, None, Some(&control), None,).is_err());
         assert!(receiver.try_recv().is_ok());
     }
 

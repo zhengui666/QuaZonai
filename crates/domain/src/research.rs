@@ -1,5 +1,5 @@
 //! QZ preparation invariants only. No split algorithm, estimator or capability registry.
-use crate::{DomainError, control::text, evidence::thresholds};
+use crate::{control::text, evidence::thresholds, DomainError};
 use contracts::{
     evidence::{Comparator, MetricRequirementV1},
     research::*,

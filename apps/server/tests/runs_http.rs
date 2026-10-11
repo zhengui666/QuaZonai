@@ -503,7 +503,10 @@ async fn sse_connections_cross_thirty_two_without_cancelling_runs(pool: PgPool) 
     assert_eq!(response.status(), StatusCode::OK);
     drop(streams);
     drop(response);
-    assert_eq!(http.get(&path, Some(&cookie)).await.status(), StatusCode::OK);
+    assert_eq!(
+        http.get(&path, Some(&cookie)).await.status(),
+        StatusCode::OK
+    );
     let status: String = sqlx::query_scalar("SELECT state FROM app.runs WHERE id=$1")
         .bind(run.id.as_uuid())
         .fetch_one(&pool)
@@ -564,12 +567,19 @@ async fn sse_preserves_compatible_extension_between_known_events_and_resumes(poo
 #[sqlx::test(migrations = "../../migrations")]
 async fn sse_stays_live_past_one_minute_then_revalidates_authority_and_cursor(pool: PgPool) {
     let (f, cookie) = authenticated(pool.clone()).await;
-    let login: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins").fetch_one(&pool).await.unwrap();
+    let login: String = sqlx::query_scalar("SELECT id::text FROM app.browser_logins")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     let run = admitted(&pool, &f, "long-stream").await;
     let http = Http::start(f.app.clone()).await;
     let path = format!("/api/v2/runs/{}/events", run.id);
-    let mut stream = http.request(reqwest::Method::GET, &path, Some(&cookie))
-        .timeout(std::time::Duration::from_secs(80)).send().await.unwrap();
+    let mut stream = http
+        .request(reqwest::Method::GET, &path, Some(&cookie))
+        .timeout(std::time::Duration::from_secs(80))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(frame_ids(&one_event(&mut stream).await), vec![1]);
     // Real elapsed time crosses the removed product deadline; the login's
     // persisted lifetime is neither extended nor replaced for this test.
@@ -580,14 +590,26 @@ async fn sse_stays_live_past_one_minute_then_revalidates_authority_and_cursor(po
         loop {
             let text = one_event(&mut stream).await;
             let ids = frame_ids(&text);
-            if !ids.is_empty() { assert_eq!(ids, vec![2]); break; }
+            if !ids.is_empty() {
+                assert_eq!(ids, vec![2]);
+                break;
+            }
         }
-    }).await.unwrap();
-    f.store.logout_browser(login.try_into().unwrap()).await.unwrap();
+    })
+    .await
+    .unwrap();
+    f.store
+        .logout_browser(login.try_into().unwrap())
+        .await
+        .unwrap();
     let reset = one_event(&mut stream).await;
     assert!(reset.contains("reset-required"));
     assert!(frame_ids(&reset).is_empty());
     assert!(stream.chunk().await.unwrap().is_none());
-    let state: String = sqlx::query_scalar("SELECT state FROM app.runs WHERE id=$1").bind(run.id.as_uuid()).fetch_one(&pool).await.unwrap();
+    let state: String = sqlx::query_scalar("SELECT state FROM app.runs WHERE id=$1")
+        .bind(run.id.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(state, "QUEUED");
 }

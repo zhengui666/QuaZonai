@@ -2,11 +2,11 @@
 //! This does not claim an external policy was trained without prior data access.
 use super::{bad, simulation};
 use crate::{
-    DomainError,
     execution::{experiment_request, features, validation::validation_folds},
+    DomainError,
 };
 use bigdecimal::BigDecimal;
-use contracts::{DbCounter, Id, science::*};
+use contracts::{science::*, DbCounter, Id};
 use std::collections::BTreeMap;
 
 pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), DomainError> {
@@ -110,7 +110,10 @@ pub fn binding(
         || value.feature_artifact_ids != feature_artifact_ids
         || value.instrument_id != request.instrument_id
         || usize::from(value.feature_count) != request.feature_schema.len()
-        || !crate::execution::fuel_within_budget(value.consumed_fuel, request.total_fuel.map(|fuel| u128::from(fuel.get())))
+        || !crate::execution::fuel_within_budget(
+            value.consumed_fuel,
+            request.total_fuel.map(|fuel| u128::from(fuel.get())),
+        )
         || value.source_row_count.get() > u64::from(request.selection.maximum_rows)
     {
         return Err(bad("experiment_result.binding"));

@@ -1,5 +1,5 @@
 //! Shared native estimator used by solving and publication.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use ndarray::Array2;
 use ndarray_stats::CorrelationExt;
 

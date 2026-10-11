@@ -1,7 +1,7 @@
 //! Allocation ownership and publication bounds, independent of the numerical solver.
-use crate::{DomainError, control};
+use crate::{control, DomainError};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{DecimalValue, portfolio::*};
+use contracts::{portfolio::*, DecimalValue};
 use std::collections::{BTreeMap, BTreeSet};
 mod covariance;
 pub use covariance::sample_covariance;
@@ -146,7 +146,7 @@ pub fn simulation_settings(
         || settings.exposure_tolerance.as_decimal() > &BigDecimal::new(1.into(), 3)
         || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
         || !contracts::research_currency::supported(&settings.base_currency)
-        || settings.fee_rates.len() < 1
+        || settings.fee_rates.is_empty()
         || (settings.account_kind == contracts::science::NativeAccountKind::Cash
             && settings.leverage.as_decimal() != &BigDecimal::from(1))
     {
@@ -259,7 +259,7 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
         return Err(invalid());
     };
     if input.members.len() < 2
-        || input.instrument_ids.len() < 1
+        || input.instrument_ids.is_empty()
         || input.max_input_age_seconds == 0
         || age > u64::from(input.max_input_age_seconds) * 1_000_000_000
         || input.horizon_value.get() == 0

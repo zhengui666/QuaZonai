@@ -1,17 +1,16 @@
 //! Thin native Docker API adapter. No Docker CLI, ambient socket discovery or retrying START.
 use crate::{
-    Failure, Result,
     config::{RegisteredCatalog, RuntimeConfig},
-    now,
+    now, Failure, Result,
 };
 use bollard::{
-    API_DEFAULT_VERSION, Docker,
     errors::Error as DockerError,
     models::*,
     query_parameters::{CreateContainerOptionsBuilder, StatsOptionsBuilder},
+    Docker, API_DEFAULT_VERSION,
 };
 use chrono::{DateTime, Utc};
-use contracts::{DbCounter, Id, SchemaV1, runtime::*, runtime_jobs::JobSpecV1};
+use contracts::{runtime::*, runtime_jobs::JobSpecV1, DbCounter, Id, SchemaV1};
 use futures_util::StreamExt;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -135,7 +134,8 @@ pub fn bind(source: &Path, destination: &str, readonly: bool) -> Result<Mount> {
 /// Optional operator caps never manufacture host capacity. Explicit values above
 /// physical capacity are configuration errors instead of silently lowered grants.
 fn observed_grant(selected: Option<u32>, observed: u64) -> Result<u32> {
-    let observed = u32::try_from(observed).map_err(|_| Failure::Invalid("host_resource_capacity"))?;
+    let observed =
+        u32::try_from(observed).map_err(|_| Failure::Invalid("host_resource_capacity"))?;
     if observed == 0 || selected.is_some_and(|value| value == 0 || value > observed) {
         return Err(Failure::Invalid("host_resource_capacity"));
     }
@@ -415,8 +415,12 @@ impl NativeEngine {
                 ],
                 max_cpu: observed_grant(self.config.max_cpu, cpu)?,
                 max_memory_mib: observed_grant(self.config.max_memory_mib, memory)?,
-                max_output_bytes: self.config.max_output_bytes.map(DbCounter::new)
-                    .transpose().map_err(|_| Failure::Integrity)?,
+                max_output_bytes: self
+                    .config
+                    .max_output_bytes
+                    .map(DbCounter::new)
+                    .transpose()
+                    .map_err(|_| Failure::Integrity)?,
                 max_wall_seconds: self.config.max_wall_seconds,
                 isolation_profile: IsolationProfile::OciResearchV1,
                 checked_at: now(),
@@ -509,7 +513,7 @@ impl NativeEngine {
             user: Some("65532:65532".into()),
             entrypoint: Some(vec![JOB_ENTRYPOINT.into()]),
             cmd: Some(vec![
-                if barrier { "--version" } else { "run-bounded" }.into(),
+                if barrier { "--version" } else { "run-bounded" }.into()
             ]),
             working_dir: Some("/tmp".into()),
             env: Some(vec![
@@ -717,7 +721,7 @@ mod optional_quota_tests {
         let new = image(true).versions;
         let old = image(false).versions;
         assert_eq!(
-            optional_resource_intersection(&[new.clone()], None, None),
+            optional_resource_intersection(std::slice::from_ref(&new), None, None),
             new
         );
         for images in [
@@ -727,12 +731,13 @@ mod optional_quota_tests {
         ] {
             assert!(optional_resource_intersection(&images, None, None).is_empty());
         }
-        let cpu_capped = optional_resource_intersection(&[new.clone()], Some(1), None);
+        let cpu_capped = optional_resource_intersection(std::slice::from_ref(&new), Some(1), None);
         assert_eq!(
             cpu_capped,
             BTreeMap::from([("optional-memory-limit".into(), "1".into())])
         );
-        let memory_capped = optional_resource_intersection(&[new.clone()], None, Some(512));
+        let memory_capped =
+            optional_resource_intersection(std::slice::from_ref(&new), None, Some(512));
         assert_eq!(
             memory_capped,
             BTreeMap::from([("optional-cpu-rate".into(), "1".into())])
@@ -752,7 +757,10 @@ mod optional_quota_tests {
         assert_eq!(host.memory_swap, host.memory);
         assert_eq!(host.shm_size, host.memory);
         let finite_tmpfs = host.tmpfs.as_ref().unwrap();
-        assert_eq!(finite_tmpfs["/tmp"], "rw,noexec,nosuid,nodev,size=67108864,mode=1777");
+        assert_eq!(
+            finite_tmpfs["/tmp"],
+            "rw,noexec,nosuid,nodev,size=67108864,mode=1777"
+        );
         assert!(!finite_tmpfs.contains_key("/dev/shm"));
         for (cpu, memory) in [(None, Some(64)), (Some(1), None), (None, None)] {
             assert!(matches!(
@@ -782,11 +790,24 @@ mod optional_quota_tests {
         assert_eq!(host.network_mode.as_deref(), Some("none"));
         assert_eq!(host.privileged, Some(false));
         assert_eq!(host.cap_drop, Some(vec!["ALL".into()]));
-        assert_eq!(host.security_opt, Some(vec!["no-new-privileges:true".into()]));
+        assert_eq!(
+            host.security_opt,
+            Some(vec!["no-new-privileges:true".into()])
+        );
         for (cpu, memory) in [(Some(1), None), (None, Some(64))] {
-            let partial = NativeEngine::launch(Id::new(), &spec(cpu, memory), &image(true), vec![], false).unwrap().host_config.unwrap();
-            assert_eq!(partial.nano_cpus, cpu.map(|cpu| i64::from(cpu) * 1_000_000_000));
-            assert_eq!(partial.memory, memory.map(|memory| i64::from(memory) * 1024 * 1024));
+            let partial =
+                NativeEngine::launch(Id::new(), &spec(cpu, memory), &image(true), vec![], false)
+                    .unwrap()
+                    .host_config
+                    .unwrap();
+            assert_eq!(
+                partial.nano_cpus,
+                cpu.map(|cpu| i64::from(cpu) * 1_000_000_000)
+            );
+            assert_eq!(
+                partial.memory,
+                memory.map(|memory| i64::from(memory) * 1024 * 1024)
+            );
         }
         let tmpfs = host.tmpfs.as_ref().unwrap();
         for path in ["/tmp", "/dev/shm"] {
@@ -803,10 +824,14 @@ mod optional_quota_tests {
             );
         }
         for (cpu, memory) in [(Some(0), None), (None, Some(0))] {
-            assert!(
-                NativeEngine::launch(Id::new(), &spec(cpu, memory), &image(true), vec![], false)
-                    .is_err()
-            );
+            assert!(NativeEngine::launch(
+                Id::new(),
+                &spec(cpu, memory),
+                &image(true),
+                vec![],
+                false
+            )
+            .is_err());
         }
     }
 }

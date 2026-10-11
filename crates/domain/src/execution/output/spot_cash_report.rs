@@ -1,12 +1,12 @@
 //! Verify the separate observed cash report without mutating canonical evidence.
 use super::{bad, simulation};
-use crate::{DomainError, spot_cash::SpotCashContext};
+use crate::{spot_cash::SpotCashContext, DomainError};
 use contracts::{
-    DecimalValue,
     evidence::MetricStatus,
     science::{NativeSimulationRequestV1, NativeSimulationResultV1, NativeStatisticGroup},
     spot_cash::*,
     spot_cash_report::*,
+    DecimalValue,
 };
 use serde::Serialize;
 use serde_json::Value;

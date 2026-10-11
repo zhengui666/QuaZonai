@@ -91,7 +91,7 @@ where
     }) {
         return Err(DomainError::CapabilityUnavailable("external_experiment_outputs").into());
     }
-    let cpu = experiment::native_cpu(limits, capabilities)?;
+    let cpu = resources::native_cpu(limits, capabilities)?;
     let capability: uuid::Uuid = sqlx::query_scalar(
         "SELECT last_capability_snapshot_artifact_id FROM app.runtime_integrations WHERE id=$1",
     )
@@ -342,8 +342,12 @@ impl Store {
         domain::catalogs::execution_fees(&dataset.metadata, &parameters.settings)?;
         let evaluation_request = NativeExperimentEvaluationRequestV1 {
             binary_option: domain::prediction::binary_option_context(
-                &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
-                &dataset.selection.selection, &parameters.instrument_id, &parameters.settings)?,
+                &dataset.metadata.universe.instrument_definitions,
+                &dataset.selection.settlements,
+                &dataset.selection.selection,
+                &parameters.instrument_id,
+                &parameters.settings,
+            )?,
             schema_version: SchemaV1,
             selection: dataset.selection.selection.clone(),
             split_policy: serde_json::from_value(brief.try_get("split_policy")?)
@@ -364,8 +368,11 @@ impl Store {
             RunKind::PortfolioSimulate,
         )
         .await?;
-        domain::prediction::binary_option_capability(evaluation_request.binary_option.as_ref(), &cap)?;
-        experiment::native_cpu(&limits.evaluation_limits, &cap)?;
+        domain::prediction::binary_option_capability(
+            evaluation_request.binary_option.as_ref(),
+            &cap,
+        )?;
+        resources::native_cpu(&limits.evaluation_limits, &cap)?;
         if image(&cap, RunKind::PortfolioSimulate)?
             != brief.try_get::<String, _>("engine_image_ref")?
         {
@@ -385,7 +392,7 @@ impl Store {
             RunKind::DataValidate,
         )
         .await?;
-        experiment::native_cpu(&limits.compile_limits, &cap)?;
+        resources::native_cpu(&limits.compile_limits, &cap)?;
         let definition = native_definition(
             &mut tx,
             (project, context.runtime_id),

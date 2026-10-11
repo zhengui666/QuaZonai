@@ -2,24 +2,25 @@
 pub mod account_observation_cli;
 pub mod account_observer;
 pub mod bounded;
-pub mod catalog;
 pub mod capital_exit_gate;
-#[cfg(any(feature = "native-sandbox-test", feature = "native-paper"))]
-pub mod native_capital_exit;
 #[cfg(feature = "native-paper")]
 pub mod capital_exit_transport;
-#[cfg(feature = "native-paper")]
-mod paper_capital_exit;
+pub mod catalog;
 pub mod experiment;
+pub mod factors;
 pub mod feature_model;
 pub mod forecast;
 pub mod forward;
 pub mod managed;
+#[cfg(any(feature = "native-sandbox-test", feature = "native-paper"))]
+pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
 #[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
 pub mod operator;
 mod optimization;
+#[cfg(feature = "native-paper")]
+mod paper_capital_exit;
 #[cfg(feature = "native-paper")]
 mod paper_claim_store;
 #[cfg(feature = "native-paper")]
@@ -39,7 +40,6 @@ mod polymarket_source_record;
 pub mod polymarket_streaming_paper;
 pub mod portfolio;
 mod prediction;
-pub use domain::codex::verified_codex_version;
 pub use optimization::allocate;
 mod report;
 pub use report::write_probe_report;

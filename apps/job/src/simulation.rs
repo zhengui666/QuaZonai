@@ -1,9 +1,9 @@
 //! Apply frozen targets in one native Nautilus simulated account, in replay or Paper.
-use crate::catalog::{NativeBarSeries, NativeMarketData, load_catalog};
+use crate::catalog::{load_catalog, NativeBarSeries, NativeMarketData};
 pub use crate::prediction::FillFeeFailure;
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive};
-use contracts::{DbCounter, DecimalValue, SchemaV1, science::*};
+use contracts::{science::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_analysis::{
     analyzer::{PortfolioAnalyzer, Statistic},
     statistics::{
@@ -1429,20 +1429,20 @@ fn run_with_strategy_and_spot(
                 .book_type(BookType::L1_MBP)
                 .maybe_base_currency((!is_spot).then_some(currency))
                 .allow_cash_borrowing(false)
-                .starting_balances(vec![
-                    Money::from_str(&format!(
-                        "{} {}",
-                        settings.starting_capital.as_decimal().to_plain_string(),
-                        settings.base_currency
-                    ))
-                    .map_err(anyhow::Error::msg)?,
-                ])
+                .starting_balances(vec![Money::from_str(&format!(
+                    "{} {}",
+                    settings.starting_capital.as_decimal().to_plain_string(),
+                    settings.base_currency
+                ))
+                .map_err(anyhow::Error::msg)?])
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(if domain::prediction::uses_native_fee(&settings.fee_model) {
-                    fill_fees.wrap(fee)
-                } else {
-                    fee
-                })
+                .fee_model(
+                    if domain::prediction::uses_native_fee(&settings.fee_model) {
+                        fill_fees.wrap(fee)
+                    } else {
+                        fee
+                    },
+                )
                 .fill_model(FillModelHandle::new(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()

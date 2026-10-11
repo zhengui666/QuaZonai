@@ -17,7 +17,7 @@ use sqlx::PgPool;
 use store::StoreError;
 
 async fn counts(pool: &PgPool) -> (i64, i64, i64, i64, i64, i64) {
-    sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM app.run_events),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM app.command_receipts WHERE operation='CYCLE_START')")
+    sqlx::query_as("SELECT (SELECT count(*) FROM app.research_cycles),(SELECT count(*) FROM app.runs),(SELECT count(*) FROM app.run_admissions),(SELECT count(*) FROM app.run_events),(SELECT count(*) FROM pgmq.q_runs),(SELECT count(*) FROM app.command_receipts WHERE operation='SCIENTIFIC_CYCLE_PREPARE')")
         .fetch_one(pool).await.unwrap()
 }
 
@@ -251,11 +251,8 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
     );
     assert_eq!(counts(&pool).await, (1, 1, 1, 1, 1, 1));
     assert_eq!(a.resource.cycle.initial_run_id, Some(a.resource.run.id));
-    assert_eq!(
-        a.resource.cycle.researcher_profile,
-        Some(f.researcher_profile)
-    );
-    assert_eq!(a.resource.cycle.reviewer_profile, Some(f.reviewer_profile));
+    assert_eq!(a.resource.cycle.researcher_profile, None);
+    assert_eq!(a.resource.cycle.reviewer_profile, None);
     assert_eq!(a.resource.run.cycle_id, Some(a.resource.cycle.id));
     assert_eq!(a.resource.cycle.reserved_experiments, 0);
     assert!(a.resource.cycle.reserved_cpu_seconds.get() > 0);
@@ -281,140 +278,6 @@ async fn cycle_run_event_admission_queue_and_receipt_are_created_once(pool: PgPo
             .initial_run_id,
         Some(a.resource.run.id)
     );
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn cycle_choices_are_explicit_revision_locked_and_never_rewritten_by_profile_updates(
-    pool: PgPool,
-) {
-    use contracts::codex::CodexProfileUpdateV1;
-    let (store, actor) = research_support::operator(&pool).await;
-    let f = cycle_support::setup(&pool, &store, &actor).await;
-    store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
-            f.read(id, size)
-        })
-        .await
-        .unwrap();
-    let request = cycle_support::start_request(&store, &actor, &f).await;
-    let mut invalid = request.clone();
-    invalid.request.reviewer_profile.profile_id = Id::new();
-    assert!(matches!(
-        f.start(&store, &actor, "missing-profile", &invalid).await,
-        Err(StoreError::NotFound)
-    ));
-    invalid = request.clone();
-    invalid.request.reviewer_profile.expected_revision = "99".to_owned().try_into().unwrap();
-    assert!(matches!(
-        f.start(&store, &actor, "stale-profile", &invalid).await,
-        Err(StoreError::RevisionConflict { .. })
-    ));
-    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
-
-    let first = f
-        .start(&store, &actor, "start", &request)
-        .await
-        .unwrap()
-        .resource;
-    let old = store
-        .codex_profile(&actor, f.researcher_profile.profile_id)
-        .await
-        .unwrap();
-    let updated = store
-        .update_codex_profile(
-            &actor,
-            "change-profile",
-            old.id,
-            &CodexProfileUpdateV1 {
-                schema_version: SchemaV1,
-                expected_revision: old.revision,
-                model_settings: old.model_settings,
-            },
-            |_| async { Ok(()) },
-        )
-        .await
-        .unwrap()
-        .resource;
-    assert_ne!(updated.revision, f.researcher_profile.expected_revision);
-    let replay = f.start(&store, &actor, "start", &request).await.unwrap();
-    assert!(replay.replayed);
-    assert_eq!(
-        serde_json::to_value(&replay.resource).unwrap(),
-        serde_json::to_value(&first).unwrap()
-    );
-    let visible = store.cycle(&actor, first.cycle.id).await.unwrap();
-    assert_eq!(visible.researcher_profile, Some(f.researcher_profile));
-    assert_eq!(visible.reviewer_profile, Some(f.reviewer_profile));
-    for (statement, code) in [
-        ("INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id) SELECT cycle_id,project_id,initial_run_id FROM app.cycle_startups WHERE cycle_id=$1", "23514"),
-        ("INSERT INTO app.cycle_startups SELECT cycle_id,project_id,initial_run_id,created_at,researcher_profile_id,researcher_profile_revision,reviewer_profile_id,reviewer_profile_revision FROM app.cycle_startups WHERE cycle_id=$1", "23514"),
-    ] {
-        // BEFORE INSERT must reject missing/stale choices before uniqueness is
-        // checked; updating the source profile above makes its old revision stale.
-        let error = sqlx::query(statement).bind(first.cycle.id.as_uuid()).execute(&pool).await.unwrap_err();
-        assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some(code));
-    }
-    let mut current = request.clone();
-    current.request.expected_revision = store
-        .project(&actor, f.data.project)
-        .await
-        .unwrap()
-        .revision;
-    assert!(matches!(
-        f.start(&store, &actor, "stale-after-edit", &current).await,
-        Err(StoreError::RevisionConflict { .. })
-    ));
-    assert_eq!(counts(&pool).await, (1, 1, 1, 1, 1, 1));
-    let mutation = sqlx::query(
-        "UPDATE app.cycle_startups SET researcher_profile_revision=$2 WHERE cycle_id=$1",
-    )
-    .bind(first.cycle.id.as_uuid())
-    .bind(updated.revision.get() as i64)
-    .execute(&pool)
-    .await
-    .unwrap_err();
-    assert_eq!(
-        mutation.as_database_error().unwrap().code().as_deref(),
-        Some("23000")
-    );
-    let mut changed = request.clone();
-    changed.request.researcher_profile.expected_revision = updated.revision;
-    assert!(
-        f.start(&store, &actor, "start", &changed).await.is_err(),
-        "same command key cannot select a different profile revision"
-    );
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn cycle_cannot_start_while_native_account_change_is_in_flight(pool: PgPool) {
-    use contracts::codex::{CodexAccountActionV1, CodexAccountRequestV1};
-    let (store, actor) = research_support::operator(&pool).await;
-    let f = cycle_support::setup(&pool, &store, &actor).await;
-    store
-        .freeze_brief(&actor, "freeze", f.brief.id, &f.freeze, |id, size| {
-            f.read(id, size)
-        })
-        .await
-        .unwrap();
-    let request = cycle_support::start_request(&store, &actor, &f).await;
-    store
-        .prepare_codex_account(
-            &actor,
-            "login",
-            &CodexAccountRequestV1 {
-                schema_version: SchemaV1,
-                profile_id: f.reviewer_profile.profile_id,
-                expected_revision: f.reviewer_profile.expected_revision,
-            },
-            CodexAccountActionV1::Login,
-        )
-        .await
-        .unwrap();
-    assert!(matches!(
-        f.start(&store, &actor, "during-login", &request).await,
-        Err(StoreError::Conflict)
-    ));
-    assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -512,7 +375,7 @@ async fn initial_cycle_run_has_one_native_definition_with_exact_discovery_parame
     // An exact completed command remains a read even if storage is temporarily
     // unavailable; it never allocates a replacement Run, object or retry key.
     let replay = store
-        .start_cycle(
+        .start_scientific_cycle(
             &actor,
             "native-start",
             &request,
@@ -542,7 +405,7 @@ async fn native_cycle_parameter_io_failure_cannot_leave_budget_run_or_queue_half
         .unwrap();
     let request = cycle_support::start_request(&store, &actor, &f).await;
     let missing = store
-        .start_cycle(
+        .start_scientific_cycle(
             &actor,
             "native-io",
             &request,
@@ -554,7 +417,7 @@ async fn native_cycle_parameter_io_failure_cannot_leave_budget_run_or_queue_half
     assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
     let reader = f.objects.clone();
     let write_failed = store
-        .start_cycle(
+        .start_scientific_cycle(
             &actor,
             "native-io",
             &request,
@@ -593,14 +456,14 @@ async fn failure_after_queue_enqueue_rolls_back_the_entire_official_start_comman
     let request = cycle_support::start_request(&store, &actor, &f).await;
     sqlx::query("CREATE FUNCTION app.fail_startup_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='injected failure after native queue publication'; END $$")
         .execute(&pool).await.unwrap();
-    sqlx::query("CREATE TRIGGER fail_startup_fixture BEFORE INSERT ON app.cycle_startups FOR EACH ROW EXECUTE FUNCTION app.fail_startup_fixture()")
+    sqlx::query("CREATE TRIGGER fail_startup_fixture BEFORE INSERT ON app.external_research_cycles FOR EACH ROW EXECUTE FUNCTION app.fail_startup_fixture()")
         .execute(&pool).await.unwrap();
     assert!(matches!(
         f.start(&store, &actor, "atomic", &request).await,
         Err(StoreError::Database(_))
     ));
     assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0, 0));
-    sqlx::query("DROP TRIGGER fail_startup_fixture ON app.cycle_startups")
+    sqlx::query("DROP TRIGGER fail_startup_fixture ON app.external_research_cycles")
         .execute(&pool)
         .await
         .unwrap();
@@ -689,6 +552,7 @@ async fn caller_cannot_commit_an_execution_context_without_freezing_the_brief(po
 #[test]
 fn public_start_and_freeze_contracts_do_not_accept_success_or_runtime_override_fields() {
     let start = json!({"schema_version":1,"brief_id":Id::new(),"expected_revision":"1"});
+    assert!(serde_json::from_value::<ExternalCycleStartV1>(start.clone()).is_ok());
     for field in [
         "outcome",
         "budget_snapshot",
@@ -700,7 +564,7 @@ fn public_start_and_freeze_contracts_do_not_accept_success_or_runtime_override_f
     ] {
         let mut injected = start.clone();
         injected[field] = json!("injected");
-        assert!(serde_json::from_value::<CycleStartV1>(injected).is_err());
+        assert!(serde_json::from_value::<ExternalCycleStartV1>(injected).is_err());
     }
     let freeze: Value = json!({"schema_version":1,"expected_revision":"1","execution_context":{"schema_version":1,"runtime_id":Id::new(),"runtime_revision":"1","discovery_input_set_id":Id::new(),"validation_input_set_id":Id::new(),"sealed_input_set_id":Id::new()}});
     assert!(serde_json::from_value::<BriefFreezeV1>(freeze.clone()).is_ok());
@@ -710,23 +574,46 @@ fn public_start_and_freeze_contracts_do_not_accept_success_or_runtime_override_f
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn absent_daily_cycle_quota_allows_more_than_the_old_default_without_rewriting_briefs(pool: PgPool) {
+async fn absent_daily_cycle_quota_allows_more_than_the_old_default_without_rewriting_briefs(
+    pool: PgPool,
+) {
     let (store, actor) = research_support::operator(&pool).await;
     let mut f = cycle_support::setup(&pool, &store, &actor).await;
     let original = f.brief.content.budget.clone();
     let mut content = f.brief.content.clone();
     content.budget.max_cycles_per_day = None;
-    let changed = store.update_brief(&actor, "uncapped-cycle-draft", f.brief.id, &BriefUpdate {
-        schema_version: SchemaV1, expected_revision: f.brief.revision,
-        content, bindings: f.brief.bindings.clone(),
-    }).await.unwrap();
+    let changed = store
+        .update_brief(
+            &actor,
+            "uncapped-cycle-draft",
+            f.brief.id,
+            &BriefUpdate {
+                schema_version: SchemaV1,
+                expected_revision: f.brief.revision,
+                content,
+                bindings: f.brief.bindings.clone(),
+            },
+        )
+        .await
+        .unwrap();
     f.brief = changed.resource;
     f.freeze.expected_revision = f.brief.revision;
-    let frozen = store.freeze_brief(&actor, "freeze-uncapped", f.brief.id, &f.freeze,
-        |id, size| f.read(id, size)).await.unwrap().resource;
+    let frozen = store
+        .freeze_brief(
+            &actor,
+            "freeze-uncapped",
+            f.brief.id,
+            &f.freeze,
+            |id, size| f.read(id, size),
+        )
+        .await
+        .unwrap()
+        .resource;
     let request = cycle_support::start_request(&store, &actor, &f).await;
     for index in 0..13 {
-        f.start(&store, &actor, &format!("uncapped-cycle-{index}"), &request).await.unwrap();
+        f.start(&store, &actor, &format!("uncapped-cycle-{index}"), &request)
+            .await
+            .unwrap();
     }
     let read = store.brief(&actor, f.brief.id).await.unwrap();
     assert_eq!(
@@ -734,11 +621,21 @@ async fn absent_daily_cycle_quota_allows_more_than_the_old_default_without_rewri
         serde_json::to_value(&frozen.brief.content).unwrap()
     );
     assert_eq!(read.content.budget.max_cycles_per_day, None);
-    assert_eq!(read.content.budget.max_experiments, original.max_experiments);
-    let snapshots: Vec<serde_json::Value> = sqlx::query_scalar("SELECT budget_snapshot FROM app.research_cycles WHERE project_id=$1")
-        .bind(f.data.project.as_uuid()).fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        read.content.budget.max_experiments,
+        original.max_experiments
+    );
+    let snapshots: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT budget_snapshot FROM app.research_cycles WHERE project_id=$1")
+            .bind(f.data.project.as_uuid())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(snapshots.len(), 13);
     for snapshot in snapshots {
-        assert_eq!(snapshot, serde_json::to_value(&read.content.budget).unwrap());
+        assert_eq!(
+            snapshot,
+            serde_json::to_value(&read.content.budget).unwrap()
+        );
     }
 }

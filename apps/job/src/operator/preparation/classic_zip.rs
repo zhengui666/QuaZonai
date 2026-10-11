@@ -13,7 +13,11 @@ use winnow::Partial;
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn require(ok: bool, why: &'static str) -> Result<()> {
-    if ok { Ok(()) } else { Err(why) }
+    if ok {
+        Ok(())
+    } else {
+        Err(why)
+    }
 }
 
 fn inflate(input: &[u8], expected_size: usize) -> Result<Vec<u8>> {

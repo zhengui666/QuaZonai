@@ -2,11 +2,11 @@
 mod capital_exit_support;
 use capital_exit_support::*;
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1, account_observation::*, capital_exit::*, control::ListQuery,
-    forward::ForwardEnvironmentV1,
+    account_observation::*, capital_exit::*, control::ListQuery, forward::ForwardEnvironmentV1,
+    DbCounter, Id, Revision, SchemaV1,
 };
 use sqlx::{PgPool, Row};
-use store::{Store, StoreError, authority::Actor, capital_exit::CapitalExitOwnerRegistration};
+use store::{authority::Actor, capital_exit::CapitalExitOwnerRegistration, Store, StoreError};
 
 async fn another_source(
     pool: &PgPool,
@@ -155,17 +155,16 @@ async fn paper_capital_exit_wrong_source_or_principal_cannot_reuse_an_owner_bind
             .await,
         Err(StoreError::NotFound)
     ));
-    assert!(
-        f.store
-            .register_paper_capital_exit_owner(
-                &other_actor,
-                f.source,
-                &f.observation.binding,
-                &f.registration
-            )
-            .await
-            .is_err()
-    );
+    assert!(f
+        .store
+        .register_paper_capital_exit_owner(
+            &other_actor,
+            f.source,
+            &f.observation.binding,
+            &f.registration
+        )
+        .await
+        .is_err());
     let mut wrong = f.observation.binding.clone();
     wrong.native_session_id = other_binding.binding.native_session_id;
     assert!(matches!(
@@ -178,17 +177,16 @@ async fn paper_capital_exit_wrong_source_or_principal_cannot_reuse_an_owner_bind
     request.account_source_id = other_receipt.resource.source_id;
     request.request.account_source_id = other_receipt.resource.source_id;
     request.request.expected_source_observation_id = other_receipt.resource.id;
-    assert!(
-        f.store
-            .submit_capital_exit_assessment(
-                &other_actor,
-                &request.external_message_id,
-                &request,
-                |_| async { Ok(()) }
-            )
-            .await
-            .is_err()
-    );
+    assert!(f
+        .store
+        .submit_capital_exit_assessment(
+            &other_actor,
+            &request.external_message_id,
+            &request,
+            |_| async { Ok(()) }
+        )
+        .await
+        .is_err());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.managed_capital_reservations")
         .fetch_one(&pool)
         .await
@@ -325,16 +323,12 @@ async fn paper_capital_exit_006_preserves_legacy_receipt_and_blocks_proven_engin
         persisted.get::<serde_json::Value, _>("owner_registration"),
         original_document
     );
-    assert!(
-        persisted
-            .get::<Option<uuid::Uuid>, _>("paper_account_source_id")
-            .is_none()
-    );
-    assert!(
-        persisted
-            .get::<Option<String>, _>("paper_native_session_id")
-            .is_none()
-    );
+    assert!(persisted
+        .get::<Option<uuid::Uuid>, _>("paper_account_source_id")
+        .is_none());
+    assert!(persisted
+        .get::<Option<String>, _>("paper_native_session_id")
+        .is_none());
     assert_eq!(
         persisted
             .get::<String, _>("reserved")
@@ -414,11 +408,9 @@ async fn paper_capital_exit_006_preserves_legacy_receipt_and_blocks_proven_engin
     assert_eq!(original_pause, pause_receipt);
     let current = f.store.capital_exit(&f.operator, id).await.unwrap();
     assert_eq!(current.state, CapitalExitStateV1::Blocked);
-    assert!(
-        current
-            .reason_codes
-            .contains(&"paper_capital_exit_legacy_binding_unresolved".into())
-    );
+    assert!(current
+        .reason_codes
+        .contains(&"paper_capital_exit_legacy_binding_unresolved".into()));
     assert!(current.funds.verified_withdrawable_amount.is_none());
     assert!(matches!(
         f.store

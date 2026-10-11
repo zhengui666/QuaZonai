@@ -65,7 +65,7 @@ fn accepted_format_preserves_explicit_native_identity_quantity_and_time() {
     assert_eq!(result.report.native_version, "0.63.0");
     match &result.report.outcome {
         PolymarketExecutionPreflightOutcomeV1::FormatValidated { request: echoed } => {
-            assert_eq!(*echoed, request);
+            assert_eq!(**echoed, request);
         }
         other => panic!("expected format validation: {other:?}"),
     }

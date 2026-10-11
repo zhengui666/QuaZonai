@@ -17,12 +17,12 @@ The password-auth migration invalidates pre-password browser sessions. The first
 
 [release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
 
-Release selection/waiting requires successful current-source [Rust CI](../.github/workflows/ci.yml). The [version workflow](../.github/workflows/release-version.yml) then directly calls the complete former [Rust regression](../.github/workflows/rust-regression.yml) at `inputs.revision`; its image `build` job depends on successful regression. The manual/reusable regression is deliberately not added to `release.py` source-workflow waiting, because it has no automatic source trigger. Frontend and standalone container acceptance workflows remain optional focused checks. After regression, the version workflow builds and validates the application, scientific job and Codex images, pushes those same images to GHCR, then runs installation/update/recovery on a fresh runner with no checkout or cached product images and with host build commands denied. The release also builds and executes native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs, archives and reloads all four Docker images, and checks the one-line installer on a fresh Linux runner. Only after every platform and installation check succeeds does it upload all archives, installers, tag-rendered README and SHA256SUMS, verify the uploaded asset sizes/digests, and complete the draft Release. It does not rebuild a different image after testing, overwrite a complete version or publish an application `latest` tag. A main push without a version tag is not a release.
+Release selection/waiting requires successful current-source [Rust CI](../.github/workflows/ci.yml). The [version workflow](../.github/workflows/release-version.yml) then directly calls [Rust regression](../.github/workflows/rust-regression.yml) at `inputs.revision`; image production depends on its success. It builds and validates the application (including the official Node Pi Durable host), scientific job and PostgreSQL images, publishes those same images to GHCR, and tests installation/update/recovery on a fresh runner without checkout, cached product images or host compilation. Native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs and all three Docker archives retain their existing release checks. Existing release asset metadata, version immutability and draft-completion rules remain unchanged: no rebuilding a different image after testing, overwriting a complete version, floating application `latest`, or release from an untagged main push.
 
 Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
 
 Installed source preparation uses the same application image digest through
-`manage.sh source`; it adds no service, fifth image or deployment archive member.
+`manage.sh source`; it adds no service, fourth image or deployment archive member.
 The source tools stay outside `/opt/quazonai/bin`, which the installer extracts
 onto the host. The existing no-checkout smoke executes real packaged candle
 conversion/preparation and preserves explicit fixture/unverified status before
@@ -59,7 +59,6 @@ The run creation timestamp and ID make retries reuse the existing tag; a tag
 pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
 Main release selection excludes these automatic timestamped tags even after their source is merged into main; the original dev run owns retries. The source must remain contained in dev. Force-pushing it away prevents release.
 
-Dev runs reuse a verified existing Codex digest or publish under their unique release tag; they never change shared Codex version/latest tags and do not contend with the default-branch publisher queue.
 
 The reusable workflow call is intentional: GitHub does not run tag-push workflows
 for tags created by GITHUB_TOKEN. No extra PAT, recursive commit, floating image
@@ -69,18 +68,18 @@ README contains its concrete tag. Retry the failed Actions run after fixing or
 rerunning its exact-source checks; do not move or replace its tag.
 
 Each complete Release contains the deployment bundle, four native CLI archives,
-four separately reload-tested Docker archives, `install.sh`, `install.ps1`,
-`README.md`, `release.json` and `SHA256SUMS`. Image downloads for installation
-remain immutable GHCR digest pulls; Docker archives are also available for
-explicit `docker load` use. These installers perform no local compilation/build.
-The existing cluster prerequisites, backup and recovery procedures still apply.
-The standalone CLI supports explicit HTTP URLs; public connections should use
-HTTPS. This does not change Runtime/MCP transport policies.
+three separately reload-tested Docker archives, `install.sh`, `install.ps1`,
+`README.md`, `release.json` and the existing asset metadata. Application manifest
+schema 3 contains application/scientific/database image identities; retired Codex
+images are not produced or required. Schema 2 installations use the new installer
+for this cutover, preserving original identity, data, history and backups.
+Image installation remains immutable GHCR digest pulls, without local compilation.
+Standalone CLI connections support explicit HTTP URLs; public connections use HTTPS.
 
 <a id="dev-image"></a>
 ### Development images
 
-Run **Dev image** on workflow ref `main`, setting `source_branch` to an existing branch in this repository. The source branch needs the version-2 container build/deployment files but need not contain the workflow. It is resolved to a fixed SHA; tags, arbitrary SHAs and fork PR refs are not inputs.
+Run **Dev image** on workflow ref `main`, setting `source_branch` to an existing branch in this repository. The source branch needs the current container build/deployment files but need not contain the workflow. It is resolved to a fixed SHA; tags, arbitrary SHAs and fork PR refs are not inputs.
 
 ```sh
 gh workflow run dev-image.yml --repo zhengui666/QuaZonai --ref main \
@@ -91,10 +90,14 @@ The read-only build uses the workflow's [container action](../.github/actions/co
 
 Use the digest in the publisher's successful Summary. A publisher retry reuses the same build artifact/tag; rerunning the build resolves the branch again. Build artifacts expire after seven days. Both workflows must succeed. This channel creates no Release or deployment bundle and never switches an installation; dev tags are not inputs to `update.sh`.
 
-<a id="codex-image"></a>
-### Codex images
+<a id="research-host"></a>
+### Durable research host
 
-Run the [Codex image workflow](../.github/workflows/codex-image.yml) from `main` with an exact official Codex version. It builds the existing Dockerfile, checks the native sandbox and App Server protocol, then publishes `ghcr.io/zhengui666/quazonai-codex:<version>`. Stable successful publications may advance `latest`; prereleases and older versions do not. The application release manifest freezes a digest. Installation and `codex-update.sh` pull published images; npm availability alone does not imply a published image.
+The application packages official Node 22.19.0 and the pinned Pi Durable/pi-ai/Chord dependencies. One supervised Node process owns the native SQLite database; Rust authenticates owner Web/CLI requests and forwards native submissions, views, tasks and usage. The private loopback host is not a public service and receives no owner cookie or control-plane token. An unexpected Node/Rust/Caddy exit stops the sibling processes rather than presenting a healthy partial application.
+
+The installer creates `data/research/config.json`, `provider.env` and persistent SQLite storage only when absent. Configuration selects trusted official Extension/Provider modules; provider credentials belong only in the private environment file, never model inputs, logs or child scientific environments. See [research host configuration](../apps/research/README.md). GET observation does not schedule a research iteration; HTTP 202 and stop admission are not terminal-outcome proof.
+
+Before update, configuration change or backup, settle native durable tasks and scientific Runs using their original identities. The installed manager observes the actual durable task state and stops both the application owner and scientific Worker before archiving application data. Preserve the complete stopped research directory, including SQLite/WAL, original configuration/provider environment and any owner-managed source catalogs. Do not run retained/restored SQLite owners simultaneously or copy a live database as a consistent backup. Restore the same paths/configuration and inspect original submissions/tasks/results before new work; safe versus interrupted recovery is upstream behavior, not permission to regenerate a failed trial or exposed final window.
 
 <a id="scientific-runtime"></a>
 ## Scientific Runtime
@@ -161,7 +164,7 @@ The gateway accepts only a loopback listener. Expose it through an existing same
 ]
 ```
 
-Editing the manifest alone, restarting only the Worker, or rerunning the same release's installer does not apply both environments. Finish all Runs and login sessions. As the installation owner, run the following maintenance command from the directory containing `runtime-targets.json`. It uses the **installed** manager, holds its deployment lock, preserves the old manifest, closes admissions and rechecks idle state before rewriting either environment. It recreates only the app container; it does not migrate, change images or touch the database volume.
+Editing the manifest alone, restarting only the Worker, or rerunning the same release's installer does not apply both environments. Settle durable tasks and scientific Runs. As the installation owner, run the following maintenance command from the directory containing `runtime-targets.json`. It uses the installed manager, retains the previous manifest and rechecks native idle state before rewriting either environment. It recreates only the app container; it does not migrate, change images or touch the database volume.
 
 ```sh
 bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" apply-config \
@@ -183,7 +186,7 @@ bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" resume-config
 
 Application update/retry/backup procedures are maintained in the [deployment bundle](../deploy/docker/README.md#recovery). Phase and identity invariants are in [architecture](architecture.md#container-release). Application updates do not upgrade PostgreSQL or downgrade schemas.
 
-For a cold restore, stop admissions and the original Worker, reconcile actual remote tasks, then stop every writer. Preserve the matching database, application artifacts, `master.key`, private installation manifest, original image/configuration, Codex home and independent Runtime journals/catalogs. Restore original absolute paths and ownership. Never replace an original backup with a partly migrated database or start an old executable against a newer schema.
+For a cold restore, stop admissions, reconcile actual durable and remote scientific tasks, then stop every writer, including the Node SQLite owner and original Worker. Preserve matching PostgreSQL/application artifacts, `master.key`, private installation manifest, complete research directory and independent Runtime journals/catalogs. Retain old Codex homes/records as history without activating that executor or inventing terminal outcomes. Restore original paths and ownership. Never replace an original backup with a partly migrated database or start an old executable against a newer schema.
 
 <a id="access-cutover"></a>
 ### Restored database access cutover
@@ -246,11 +249,11 @@ Do not mix SQLite/WAL/objects from different checkpoints or start the retained a
 <a id="observe"></a>
 ## Observe and diagnose
 
-Use the installed manager's `status`, Run/Attempt snapshots, safe event streams and the exact failing CI job. Keep resource IDs, original requests/keys and returned receipts; exclude credentials and private model/data content.
+Use the installed manager's `status`, native research/Submission/Task/usage views, scientific Run/Attempt snapshots, safe event streams and the exact failing CI job. Keep original identities, requests/keys and receipts; exclude credentials and private model/data content.
 
 | Observation | Action |
 | --- | --- |
-| HTTP 202, submission timeout or lost acknowledgement | Read the original Run/receipt; replay only the original authorized request when required |
+| HTTP 202, submission timeout or lost acknowledgement | Read the original native Submission/Task or scientific Run/receipt; replay only the captured original request when needed |
 | Cancellation pending or remote identity unknown | Reconcile the original remote task; do not infer termination from local exit or issue another Run |
 | `preparing` update failure | Retry the same target; preserve identity and original processors if Runs were admitted |
 | `migrating` / `starting` marker | Keep the recovery point and candidate; follow the same-target recovery path, not an old executable |

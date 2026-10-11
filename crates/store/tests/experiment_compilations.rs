@@ -23,7 +23,7 @@ use store::{
 #[path = "../../../tests/support/experiment_tasks.rs"]
 mod experiment_support;
 use experiment_support::{
-    complete_compilation, forecast, limits, result_turn, setup, start, trial_usage, validation,
+    complete_compilation, forecast, limits, setup, start, trial_usage, validation,
 };
 
 #[path = "support/validation_publication.rs"]
@@ -37,269 +37,6 @@ mod sealed_opportunities;
 
 #[path = "support/qualified_portfolio.rs"]
 mod qualified_portfolio;
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn failed_compiler_feedback_is_one_budgeted_repair_and_unknown_turns_do_not_continue(
-    pool: PgPool,
-) {
-    use store::{
-        lifecycle::{
-            mission::NativeSessionReceipt, FailureClass, NativeOutcome, TerminalObservation,
-        },
-        turns::{TurnOutcome, UsageReceipt},
-    };
-    let (store, _actor, f, lease, experiment) = setup(&pool).await;
-    store
-        .begin_run_dispatch(lease.run.id, &lease.fence)
-        .await
-        .unwrap();
-    let thread = Id::new().to_string();
-    store
-        .bind_mission_session(
-            lease.run.id,
-            &lease.fence,
-            &NativeSessionReceipt {
-                thread_id: thread.clone(),
-                codex_version: "0.144.4".into(),
-                protocol_schema_version: "v2".into(),
-                requested_service_tier: None,
-                effective: contracts::codex::CodexEffectiveSettingsV1 {
-                    model: "controlled-native-model".into(),
-                    provider: "controlled-native-provider".into(),
-                    reasoning_effort: Some("medium".into()),
-                    service_tier: None,
-                },
-            },
-        )
-        .await
-        .unwrap();
-    let reading = f.objects.clone();
-    let writing = f.objects.clone();
-    store.prepare_initial_mission_turn(lease.run.id,&lease.fence,
-        move |id,size| async move { reading.read(id,size).map_err(|_|StoreError::Integrity) },
-        move |object| async move { writing.put(object.id,&object.bytes).map_err(|_|StoreError::Integrity) }).await.unwrap();
-    let first = store
-        .mission_turn_checkpoint(lease.run.id, &lease.fence)
-        .await
-        .unwrap()
-        .latest
-        .unwrap()
-        .reservation;
-    store
-        .claim_turn_dispatch(first.id, &lease.fence)
-        .await
-        .unwrap();
-    store
-        .bind_native_turn(first.id, &lease.fence, "controlled-initial")
-        .await
-        .unwrap();
-    let compiler = start(&store, &f, &lease, experiment)
-        .await
-        .unwrap()
-        .resource
-        .id;
-    let message = store
-        .read_native_run_messages(60, 100)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|m| m.run_id == compiler)
-        .unwrap();
-    let Some(ClaimResult::Leased(compiling)) = store
-        .claim_native_run(&message, "controlled-failed-compiler", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("compiler lease required");
-    };
-    store
-        .begin_run_dispatch(compiler, &compiling.fence)
-        .await
-        .unwrap();
-    store
-        .accept_run_terminal(
-            compiler,
-            &compiling.fence,
-            &TerminalObservation {
-                schema_version: SchemaV1,
-                external_job_id: compiling.external_job_id.clone(),
-                outcome: NativeOutcome::Failed,
-                manifest_artifact_id: None,
-                failure_class: Some(FailureClass::InvalidInput),
-                failure_code: Some("MODEL_COMPILE_FAILED".into()),
-                observed_at: sqlx::query_scalar("SELECT clock_timestamp()")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap(),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        trial_usage(&pool, &lease).await,
-        (0, 1),
-        "failed compilation retains its trial"
-    );
-    assert_eq!(
-        start(&store, &f, &lease, experiment)
-            .await
-            .unwrap()
-            .resource
-            .id,
-        compiler
-    );
-    assert_eq!(
-        trial_usage(&pool, &lease).await,
-        (0, 1),
-        "replay cannot charge or refund"
-    );
-    assert!(
-        !result_turn(&store, &f, &lease).await.unwrap(),
-        "no receipt means no continuation"
-    );
-    store
-        .settle_turn(
-            first.id,
-            &lease.fence,
-            &UsageReceipt {
-                outcome: TurnOutcome::Succeeded,
-                actual_tokens: DbCounter::new(12).unwrap(),
-                actual_cost: None,
-                currency: None,
-                reason_code: "controlled_completed".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert!(matches!(
-        store
-            .prepare_mission_result_turn(
-                lease.run.id,
-                &lease.fence,
-                |_, _| async { panic!("failed compile must not read forecast or diagnostics") },
-                |_| async { Err(StoreError::Integrity) }
-            )
-            .await,
-        Err(StoreError::Integrity)
-    ));
-    let n: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1")
-            .bind(lease.run.id.as_uuid())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(n, 1, "publication failure rolls back reservation");
-    let (a, b) = tokio::join!(
-        result_turn(&store, &f, &lease),
-        result_turn(&store, &f, &lease)
-    );
-    assert_ne!(a.unwrap(), b.unwrap());
-    let latest = store
-        .mission_turn_checkpoint(lease.run.id, &lease.fence)
-        .await
-        .unwrap()
-        .latest
-        .unwrap();
-    assert_eq!(latest.reservation.ordinal, 2);
-    assert_eq!(
-        latest.reservation.turn_kind,
-        domain::admission::TurnKind::Repair
-    );
-    let reading = f.objects.clone();
-    let text=store.mission_turn_prompt(lease.run.id,&lease.fence,latest.reservation.id,
-        move |id,size|async move {reading.read(id,size).map_err(|_|StoreError::Integrity)}).await.unwrap();
-    let body: serde_json::Value = serde_json::from_str(text.lines().nth(1).unwrap()).unwrap();
-    assert_eq!(body["experiment_id"], experiment.to_string());
-    assert_eq!(body["run_id"], compiler.to_string());
-    assert_eq!(body["stage"], "COMPILATION");
-    assert_eq!(body["execution_state"], "FAILED");
-    assert_eq!(body["reason_code"], "RUNTIME_FAILED");
-    assert_eq!(body["detailed_diagnostics_available"], false);
-    assert!(body.get("forecast").is_none());
-    assert!(!result_turn(&store, &f, &lease).await.unwrap());
-    store
-        .claim_turn_dispatch(latest.reservation.id, &lease.fence)
-        .await
-        .unwrap();
-    store
-        .bind_native_turn(latest.reservation.id, &lease.fence, "controlled-feedback")
-        .await
-        .unwrap();
-    store
-        .settle_turn(
-            latest.reservation.id,
-            &lease.fence,
-            &UsageReceipt {
-                outcome: TurnOutcome::Succeeded,
-                actual_tokens: DbCounter::new(10).unwrap(),
-                actual_cost: None,
-                currency: None,
-                reason_code: "controlled_completed".into(),
-            },
-        )
-        .await
-        .unwrap();
-    assert!(
-        !result_turn(&store, &f, &lease).await.unwrap(),
-        "same failure is delivered only once"
-    );
-    let facts:(i64,i64,String)=sqlx::query_as("SELECT (SELECT count(*) FROM app.model_turn_reservations WHERE run_id=$1),(SELECT count(*) FROM pgmq.q_model_turns),(SELECT thread_id FROM app.codex_sessions WHERE run_id=$1)")
-        .bind(lease.run.id.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!(facts, (2, 2, thread));
-    let mut stale = lease.clone();
-    stale.fence.worker_owner_id = "not-owner".into();
-    assert!(matches!(
-        result_turn(&store, &f, &stale).await,
-        Err(StoreError::Domain(domain::DomainError::StaleAttempt))
-    ));
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn mission_cancellation_waits_for_admitted_compilation_but_not_future_forecast(pool: PgPool) {
-    let (store, actor, f, lease, experiment) = setup(&pool).await;
-    store
-        .begin_run_dispatch(lease.run.id, &lease.fence)
-        .await
-        .unwrap();
-    let compiler = start(&store, &f, &lease, experiment)
-        .await
-        .unwrap()
-        .resource
-        .id;
-    let run = store.get_run(&actor, lease.run.id).await.unwrap();
-    store
-        .cancel_run(
-            &actor,
-            "cancel-parent",
-            run.id,
-            &contracts::lifecycle::RunCancelV1 {
-                schema_version: SchemaV1,
-                expected_revision: run.revision,
-            },
-        )
-        .await
-        .unwrap();
-    assert!(!store.complete_mission(run.id, &lease.fence).await.unwrap());
-    assert_eq!(
-        store.get_run(&actor, compiler).await.unwrap().state,
-        contracts::runs::RunState::Queued
-    );
-    assert!(store
-        .next_mission_experiment(run.id, &lease.fence)
-        .await
-        .unwrap()
-        .is_none());
-    complete_compilation(&pool, &store, &f, compiler).await;
-    assert!(store.complete_mission(run.id, &lease.fence).await.unwrap());
-    assert_eq!(
-        store.get_run(&actor, run.id).await.unwrap().state,
-        contracts::runs::RunState::Cancelled
-    );
-    assert_eq!(trial_usage(&pool, &lease).await, (0, 1));
-    let untouched: (String,i64,i64) = sqlx::query_as("SELECT outcome,(SELECT count(*) FROM app.experiment_forecasts),(SELECT count(*) FROM app.model_turn_reservations) FROM app.experiments WHERE id=$1")
-        .bind(experiment.as_uuid()).fetch_one(&pool).await.unwrap();
-    assert_eq!(untouched, ("PENDING".into(), 0, 0));
-}
 
 async fn wait_for_ledger_read(pool: &PgPool) {
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -394,15 +131,8 @@ async fn delayed_resource_fit(
     mission_support::complete(&pool, &store, &f, preparation, false).await;
     // Publish the proposal before starting the Mission's real database clock.
     let experiment = experiment_support::propose(&pool, &store, &actor, &f, cycle).await;
-    assert!(store.advance_initial_cycle(preparation).await.unwrap());
-    let message = store.read_mission_messages(60, 1).await.unwrap().remove(0);
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_mission(&message, "bounded-cpu", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("Mission lease required");
-    };
+    let lease =
+        experiment_support::historical_alpha::parent(&pool, &store, &actor, &f, cycle).await;
     let counters = "SELECT (SELECT count(*) FROM app.runs WHERE cycle_id=$1),(SELECT count(*) FROM pgmq.q_runs),reserved_experiments::bigint,reserved_cpu_seconds::bigint FROM app.research_cycles WHERE id=$1";
     let before: (i64, i64, i64, i64) = sqlx::query_as(counters)
         .bind(cycle.as_uuid())
@@ -920,9 +650,6 @@ async fn research_alpha_uses_the_original_forecast_once_without_qualification(po
         Err(StoreError::Invalid("accepted_forecast_required"))
     ));
     experiment_support::complete_forecast(&pool, &store, &f, forecast).await;
-    assert!(
-        matches!(store.next_mission_experiment(lease.run.id,&lease.fence).await.unwrap(),Some(store::lifecycle::ExperimentWork::RecordAlpha(id)) if id==experiment)
-    );
     sqlx::raw_sql("CREATE FUNCTION public.reject_research_version() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Alpha publication failure'; END $$; CREATE TRIGGER reject_version BEFORE INSERT ON app.alpha_versions FOR EACH ROW EXECUTE FUNCTION public.reject_research_version();").execute(&pool).await.unwrap();
     assert!(store
         .prepare_research_alpha(lease.run.id, &lease.fence, experiment)
@@ -959,10 +686,6 @@ async fn research_alpha_uses_the_original_forecast_once_without_qualification(po
     assert_eq!(facts.get::<String, _>("runtime_image_ref"), image);
     assert_eq!(facts.get::<String, _>("outcome"), "PENDING");
     assert_eq!(facts.get::<i64, _>("qualifications"), 0);
-    assert!(matches!(
-        store.next_mission_experiment(lease.run.id, &lease.fence).await.unwrap(),
-        Some(store::lifecycle::ExperimentWork::Validate(id)) if id == experiment
-    ));
     assert!(
         sqlx::query("UPDATE app.alpha_versions SET signal_kind='EXPECTED_RETURN' WHERE id=$1")
             .bind(a.resource.as_uuid())
@@ -983,9 +706,6 @@ async fn research_alpha_uses_the_original_forecast_once_without_qualification(po
 #[sqlx::test(migrations = "../../migrations")]
 async fn forecast_requires_accepted_model_and_replay_retains_one_trial(pool: PgPool) {
     let (store, actor, f, lease, experiment) = setup(&pool).await;
-    assert!(
-        matches!(store.next_mission_experiment(lease.run.id, &lease.fence).await.unwrap(), Some(store::lifecycle::ExperimentWork::Compile(id)) if id == experiment)
-    );
     let compilation = start(&store, &f, &lease, experiment)
         .await
         .unwrap()
@@ -995,15 +715,7 @@ async fn forecast_requires_accepted_model_and_replay_retains_one_trial(pool: PgP
         forecast(&store, &f, &lease, experiment).await,
         Err(StoreError::Invalid("accepted_compilation_required"))
     ));
-    assert!(store
-        .next_mission_experiment(lease.run.id, &lease.fence)
-        .await
-        .unwrap()
-        .is_none());
     let model = complete_compilation(&pool, &store, &f, compilation).await;
-    assert!(
-        matches!(store.next_mission_experiment(lease.run.id, &lease.fence).await.unwrap(), Some(store::lifecycle::ExperimentWork::Forecast(id)) if id == experiment)
-    );
     let before: (i64, i64) = sqlx::query_as(
         "SELECT reserved_experiments,reserved_cpu_seconds FROM app.research_cycles WHERE id=$1",
     )
@@ -1016,11 +728,6 @@ async fn forecast_requires_accepted_model_and_replay_retains_one_trial(pool: PgP
         forecast(&store, &f, &lease, experiment)
     );
     let (a, b) = (a.unwrap(), b.unwrap());
-    assert!(store
-        .next_mission_experiment(lease.run.id, &lease.fence)
-        .await
-        .unwrap()
-        .is_none());
     assert_eq!(a.resource.id, b.resource.id);
     assert_ne!(a.replayed, b.replayed);
     assert!(a.resource.deadline_at <= lease.run.deadline_at);
@@ -1159,9 +866,7 @@ async fn forecast_parameter_and_late_publication_failures_do_not_charge_a_trial(
                                 value["parameters"]["label_horizon_observations"] =
                                     serde_json::json!(6)
                             }
-                            "fuel" => {
-                                value["parameters"]["total_fuel"] = serde_json::json!("0")
-                            }
+                            "fuel" => value["parameters"]["total_fuel"] = serde_json::json!("0"),
                             "periods" => value["parameters"]["fast_period"] = serde_json::json!(5),
                             "model" => value["model_artifact_id"] = serde_json::json!(Id::new()),
                             _ => return Ok(Vec::new()),
@@ -1218,4 +923,62 @@ async fn forecast_parameter_and_late_publication_failures_do_not_charge_a_trial(
             .unwrap()
             .replayed
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn failed_compilation_retains_one_trial_without_scheduling_an_agent(pool: PgPool) {
+    use store::lifecycle::{FailureClass, NativeOutcome, TerminalObservation};
+    let (store, actor, f, parent, experiment) = setup(&pool).await;
+    let compiler = start(&store, &f, &parent, experiment)
+        .await
+        .unwrap()
+        .resource;
+    let message = validation_publication::message(&pool, compiler.id).await;
+    let Some(ClaimResult::Leased(lease)) = store
+        .claim_native_run(&message, "failed-compiler", 60)
+        .await
+        .unwrap()
+    else {
+        panic!("science lease required")
+    };
+    assert!(store
+        .begin_run_dispatch(compiler.id, &lease.fence)
+        .await
+        .unwrap());
+    store
+        .accept_run_terminal(
+            compiler.id,
+            &lease.fence,
+            &TerminalObservation {
+                schema_version: SchemaV1,
+                external_job_id: lease.external_job_id.clone(),
+                outcome: NativeOutcome::Failed,
+                manifest_artifact_id: None,
+                failure_class: Some(FailureClass::InvalidInput),
+                failure_code: Some("MODEL_COMPILE_FAILED".into()),
+                observed_at: sqlx::query_scalar("SELECT clock_timestamp()")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(trial_usage(&pool, &parent).await, (0, 1));
+    assert_eq!(
+        start(&store, &f, &parent, experiment)
+            .await
+            .unwrap()
+            .resource
+            .id,
+        compiler.id
+    );
+    assert!(forecast(&store, &f, &parent, experiment).await.is_err());
+    store.acknowledge_run(&message).await.unwrap();
+    assert_eq!(
+        store.get_run(&actor, compiler.id).await.unwrap().state,
+        contracts::runs::RunState::Failed
+    );
+    let facts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app.codex_sessions),(SELECT count(*) FROM app.model_turn_reservations),(SELECT count(*) FROM pgmq.q_model_turns)").fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (0, 0, 0));
 }

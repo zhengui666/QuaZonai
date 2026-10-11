@@ -463,13 +463,20 @@ fn retained_records_cross_the_former_size_boundary_without_losing_replay_bytes()
     fs::write(&path, &original[..split]).unwrap();
     let mut input = RetainedInput::open(&path).unwrap();
     assert!(input.next(true).unwrap().is_none());
-    OpenOptions::new().append(true).open(&path).unwrap()
-        .write_all(&original[split..]).unwrap();
+    OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(&original[split..])
+        .unwrap();
     let record = input.next(true).unwrap().unwrap();
     assert_eq!(record, original);
     let (request, observation) = prepare(&record).unwrap();
     assert_eq!(request.body.unwrap(), original);
-    assert_eq!(observation, serde_json::from_slice::<AccountObservationSubmitV1>(FIXTURE).unwrap());
+    assert_eq!(
+        observation,
+        serde_json::from_slice::<AccountObservationSubmitV1>(FIXTURE).unwrap()
+    );
     assert!(input.next(false).unwrap().is_none());
     assert_eq!(fs::read(path).unwrap(), original);
 }
@@ -490,7 +497,9 @@ async fn large_original_account_record_and_receipt_keep_the_same_replay_identity
         stream.write_all(&reply).unwrap();
     });
     let (request, expected) = prepare(&original).unwrap();
-    let received = submit(&connection, &request, &expected, Some(1), Duration::ZERO).await.unwrap();
+    let received = submit(&connection, &request, &expected, Some(1), Duration::ZERO)
+        .await
+        .unwrap();
     assert_eq!(received.resource.observation, expected);
     server.join().unwrap();
 }
@@ -499,12 +508,29 @@ async fn large_original_account_record_and_receipt_keep_the_same_replay_identity
 fn relay_attempts_are_absent_by_default_and_not_capped_at_one_hundred() {
     use clap::Parser;
     #[derive(Parser)]
-    struct TestParser { #[command(flatten)] relay: Arguments }
+    struct TestParser {
+        #[command(flatten)]
+        relay: Arguments,
+    }
     let request = TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson"]).unwrap();
     assert_eq!(request.relay.max_attempts, None);
-    let request = TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson", "--max-attempts", "101"]).unwrap();
+    let request = TestParser::try_parse_from([
+        "relay",
+        "--input",
+        "never-opened.ndjson",
+        "--max-attempts",
+        "101",
+    ])
+    .unwrap();
     assert_eq!(request.relay.max_attempts, Some(101));
-    assert!(TestParser::try_parse_from(["relay", "--input", "never-opened.ndjson", "--max-attempts", "0"]).is_err());
+    assert!(TestParser::try_parse_from([
+        "relay",
+        "--input",
+        "never-opened.ndjson",
+        "--max-attempts",
+        "0"
+    ])
+    .is_err());
 }
 
 #[tokio::test]
@@ -517,13 +543,23 @@ async fn absent_attempt_cap_retries_past_the_old_default_without_changing_the_en
             let (_, body) = receive(&mut stream);
             requests.push(body);
             if attempt == 6 {
-                respond(&mut stream, 201, "application/json", &receipt(FIXTURE, true));
+                respond(
+                    &mut stream,
+                    201,
+                    "application/json",
+                    &receipt(FIXTURE, true),
+                );
             }
         }
         requests
     });
     let (request, expected) = prepare(FIXTURE).unwrap();
-    assert!(submit(&connection, &request, &expected, None, Duration::ZERO).await.unwrap().replayed);
+    assert!(
+        submit(&connection, &request, &expected, None, Duration::ZERO)
+            .await
+            .unwrap()
+            .replayed
+    );
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 7);
     assert!(requests.iter().all(|bytes| bytes == FIXTURE));

@@ -52,7 +52,7 @@ async function session(page: Page) {
       authenticated_at: new Date().toISOString(), expires_at: new Date(Date.now() + 43_200_000).toISOString() });
     if (path === '/api/v2/projects') { reads++; return listing([project]); }
     if (path === `/api/v2/projects/${id}`) return reply(project);
-    if ([`/api/v2/projects/${id}/briefs`, `/api/v2/projects/${id}/cycles`, '/api/v2/runs', '/api/v2/settings/codex'].includes(path)) return listing([]);
+    if ([`/api/v2/projects/${id}/briefs`, `/api/v2/projects/${id}/cycles`, '/api/v2/runs'].includes(path)) return listing([]);
     if (path === '/api/v2/artifacts') return listing([artifact(firstReportId), artifact(secondReportId)]);
     if (path === `/api/v2/artifacts/${firstReportId}/agent-evaluation`) { reportReads.push(path); return reply(report); }
     if (path === `/api/v2/artifacts/${secondReportId}/agent-evaluation`) { reportReads.push(path); return reply(laterReport); }
@@ -63,6 +63,7 @@ async function session(page: Page) {
 
 async function openReports(page: Page) {
   await page.goto('/');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   await page.getByRole('button', { name: project.name, exact: true }).click();
   await page.getByRole('tab', { name: 'Agent 评估', exact: true }).click();
   await expect(page.getByRole('button', { name: firstReportId, exact: true })).toBeVisible();
@@ -83,7 +84,8 @@ test('validator request matching distinguishes sequence prefixes in dev and prod
 
 test('normal browser loading uses selective CJS interop without reaching the eager facade', async ({ page }) => {
   const state = await session(page); const requests: string[] = []; page.on('request', request => requests.push(request.url()));
-  await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
+  await page.goto('/'); await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
+  await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   expect(requests.some(url => isModuleRequest(url, listModule))).toBe(true);
   expect(requests.some(url => /\/generated\/responses\.cjs|response-contract\.js(?:\?|$)/.test(url))).toBe(false);
   expect(state.writes).toEqual([]);
@@ -93,13 +95,14 @@ test('a delayed response validator cannot replace a newer navigation choice', as
   const state = await session(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
   await page.route(url => isModuleRequest(url, listModule), async route => { pending++; await held; await route.continue(); });
   try {
-    await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
+    await page.goto('/'); await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '历史项目（可选）', exact: true })).toBeVisible();
     await expect.poll(() => pending).toBeGreaterThan(0);
     await page.getByRole('menuitem', { name: '运行', exact: true }).click();
     await expect(page.getByRole('heading', { name: '运行', exact: true })).toBeVisible();
   } finally { release(); }
   await page.waitForLoadState('networkidle');
-  await expect(page.getByRole('heading', { name: '研究', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '历史项目（可选）', exact: true })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: '运行', exact: true })).toHaveClass(/ant-menu-item-selected/);
   expect(state.writes).toEqual([]);
 });
@@ -255,7 +258,8 @@ test.describe('production PWA validator precache', () => {
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let blocked = 0;
     await context.route(url => isModuleRequest(url, deferredModule), route => { blocked++; return route.abort('failed'); });
-    await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
+    await page.goto('/'); await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
+    await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
     await expect.poll(() => blocked).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(async () => {
       const registration = await navigator.serviceWorker.getRegistration();
@@ -270,7 +274,8 @@ test.describe('production PWA validator precache', () => {
     const deferredModule = moduleFor('/api/v2/artifacts/{id}', 'get', 200);
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let pending = 0;
     await context.route(url => isModuleRequest(url, deferredModule), async route => { pending++; await held; await route.continue(); });
-    await page.goto('/'); await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
+    await page.goto('/'); await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
+    await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
     await expect.poll(() => pending).toBeGreaterThan(0);
     expect(await page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(false);
     release(); await page.evaluate(async () => { await navigator.serviceWorker.ready; });

@@ -46,14 +46,8 @@ where
     domain::execution::strategy_composition_result(&report.request, &report)
         .map_err(|_| StoreError::Integrity)?;
     let parameters_id = db::id(row.try_get("parameters_artifact_id")?)?;
-    let parameters = validation::read_document(
-        tx,
-        parameters_id,
-        None,
-        "qz.native_task",
-        read,
-    )
-    .await?;
+    let parameters =
+        validation::read_document(tx, parameters_id, None, "qz.native_task", read).await?;
     let parameters: Value =
         serde_json::from_slice(&parameters).map_err(|_| StoreError::Integrity)?;
     if parameters.get("operation").and_then(Value::as_str) != Some("COMPOSE_STRATEGY_TARGETS")

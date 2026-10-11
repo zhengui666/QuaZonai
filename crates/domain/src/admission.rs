@@ -1,8 +1,8 @@
 //! Arithmetic for an admission transaction, not an in-memory scheduler or queue.
 use contracts::{
-    DbCounter, DecimalValue, Id,
     budget::{BudgetV1, CostEnforcement, StopRuleV1},
     runs::ProjectState,
+    DbCounter, DecimalValue, Id,
 };
 
 use crate::DomainError;
@@ -86,7 +86,9 @@ pub fn validate_budget(budget: &BudgetV1, stop: &StopRuleV1) -> Result<(), Domai
             .max_output_bytes
             .is_some_and(|value| value.get() == 0)
         || budget.max_cycles_per_day == Some(0)
-        || budget.max_turns_per_mission.zip(budget.max_repair_turns)
+        || budget
+            .max_turns_per_mission
+            .zip(budget.max_repair_turns)
             .is_some_and(|(turns, repairs)| repairs > turns)
         || budget.max_tokens.is_some_and(|value| value.get() == 0)
     {
@@ -316,7 +318,10 @@ fn reserve_model_resources(
                 .used_turns
                 .checked_add(reserved_turns)
                 .ok_or(DomainError::BudgetExhausted("mission_turns"))?;
-            if budget.max_turns_per_mission.is_some_and(|limit| total > u64::from(limit)) {
+            if budget
+                .max_turns_per_mission
+                .is_some_and(|limit| total > u64::from(limit))
+            {
                 return Err(DomainError::BudgetExhausted("mission_turns"));
             }
             let reserved_repair_turns = known
@@ -327,7 +332,10 @@ fn reserve_model_resources(
                 .used_repair_turns
                 .checked_add(reserved_repair_turns)
                 .ok_or(DomainError::BudgetExhausted("repair_turns"))?;
-            if budget.max_repair_turns.is_some_and(|limit| repairs > u64::from(limit)) {
+            if budget
+                .max_repair_turns
+                .is_some_and(|limit| repairs > u64::from(limit))
+            {
                 return Err(DomainError::BudgetExhausted("repair_turns"));
             }
             Some(MissionUsage {

@@ -1,7 +1,7 @@
 //! Bounded as-of feature state. This validates caller declarations; it cannot
 //! establish that an external source or pretrained policy was historically PIT.
-use crate::{DomainError, control::text};
-use contracts::{DbCounter, Id, research::DataPartition, science::*};
+use crate::{control::text, DomainError};
+use contracts::{research::DataPartition, science::*, DbCounter, Id};
 use std::collections::BTreeSet;
 
 fn bad(field: &str) -> DomainError {
@@ -9,7 +9,7 @@ fn bad(field: &str) -> DomainError {
 }
 
 pub fn artifact_ids(ids: &[Id]) -> Result<(), DomainError> {
-    if ids.len() < 1 || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
+    if ids.is_empty() || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
         return Err(bad("feature_artifact_ids"));
     }
     Ok(())
@@ -64,7 +64,7 @@ pub fn observations(value: &FeatureObservationsV1) -> Result<(), DomainError> {
     if !matches!(
         value.partition,
         DataPartition::Discovery | DataPartition::Validation | DataPartition::Forward
-    ) || value.observations.len() < 1
+    ) || value.observations.is_empty()
     {
         return Err(bad("feature_observations"));
     }
@@ -88,7 +88,7 @@ pub fn bind_observations(
     partition: DataPartition,
 ) -> Result<(), DomainError> {
     schema(definitions)?;
-    if parts.len() < 1 {
+    if parts.is_empty() {
         return Err(bad("feature_parts"));
     }
     let mut count = 0usize;

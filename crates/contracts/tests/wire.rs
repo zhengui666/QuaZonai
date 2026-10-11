@@ -1,31 +1,40 @@
 use contracts::{
-    DbCounter, DecimalValue, Id, Revision, SchemaV1, budget::BudgetV1, evidence::MetricValueV1,
+    budget::BudgetV1, evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1,
 };
 use serde_json::{from_value, json, to_value};
 
 #[test]
-fn cycle_start_requires_both_explicit_profile_choices_with_exact_revision_strings() {
-    use contracts::cycles::CycleStartV1;
+fn retired_executor_commands_are_not_executable_but_original_receipts_remain_readable() {
+    use contracts::{
+        control::{OperatorCommand, OperatorOperation},
+        cycles::CodexProfileChoiceV1,
+    };
     let choice = json!({"profile_id":Id::new(),"expected_revision":"9007199254740993"});
-    let request = json!({"schema_version":1,"brief_id":Id::new(),"expected_revision":"1",
-        "researcher_profile":choice,"reviewer_profile":choice});
     assert_eq!(
-        to_value(from_value::<CycleStartV1>(request.clone()).unwrap()).unwrap(),
-        request
+        to_value(from_value::<CodexProfileChoiceV1>(choice.clone()).unwrap()).unwrap(),
+        choice
     );
-    for field in ["researcher_profile", "reviewer_profile"] {
-        let mut missing = request.clone();
-        missing.as_object_mut().unwrap().remove(field);
-        assert!(from_value::<CycleStartV1>(missing).is_err());
-        for value in [
-            json!(null),
-            json!({"profile_id":Id::new(),"expected_revision":1}),
-            json!({"profile_id":Id::new(),"expected_revision":"1","token":"fixture-forbidden-field"}),
-        ] {
-            let mut invalid = request.clone();
-            invalid[field] = value;
-            assert!(from_value::<CycleStartV1>(invalid).is_err());
-        }
+    for operation in [
+        "CODEX_PROFILE_CREATE",
+        "CODEX_PROFILE_UPDATE",
+        "CODEX_PROBE",
+        "CODEX_LOGIN_START",
+        "CODEX_LOGIN_CANCEL",
+        "CODEX_LOGOUT",
+        "CYCLE_START",
+    ] {
+        let original: OperatorOperation = from_value(json!(operation)).unwrap();
+        assert_eq!(to_value(original).unwrap(), json!(operation));
+        assert!(!original.creates());
+        assert!(
+            from_value::<OperatorCommand>(json!({"operation":operation,"request":{}})).is_err()
+        );
+    }
+    for invalid in [
+        json!({"profile_id":Id::new(),"expected_revision":1}),
+        json!({"profile_id":Id::new(),"expected_revision":"1","token":"fixture-forbidden-field"}),
+    ] {
+        assert!(from_value::<CodexProfileChoiceV1>(invalid).is_err());
     }
 }
 
@@ -137,12 +146,15 @@ fn command_objects_reject_unknown_fields_missing_booleans_and_null_integers() {
     let mut invalid = valid;
     invalid["max_experiments"] = json!(null);
     assert!(from_value::<BudgetV1>(invalid).is_err());
-    for invalid in [
-        json!({"schema_version":1,"saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false}),
-        json!({"schema_version":1,"use_default_model_settings":null,"saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false}),
-    ] {
-        assert!(from_value::<contracts::codex::SavedModelSettingsV1>(invalid).is_err());
-    }
+    let principal = json!({"schema_version":1,"name":"scientific client","kind":"CLI",
+        "project_id":null,"downstream_id":null,"enabled":true});
+    assert!(from_value::<contracts::control::PrincipalCreate>(principal.clone()).is_ok());
+    let mut missing_boolean = principal.clone();
+    missing_boolean.as_object_mut().unwrap().remove("enabled");
+    assert!(from_value::<contracts::control::PrincipalCreate>(missing_boolean).is_err());
+    let mut null_boolean = principal;
+    null_boolean["enabled"] = json!(null);
+    assert!(from_value::<contracts::control::PrincipalCreate>(null_boolean).is_err());
 }
 
 #[test]

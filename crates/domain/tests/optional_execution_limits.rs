@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use contracts::{DbCounter, budget::BudgetV1};
+use contracts::{budget::BudgetV1, DbCounter};
 use domain::{admission::job_resource_limits, execution_limits::*};
 
 fn budget() -> BudgetV1 {
@@ -29,15 +29,13 @@ fn absent_is_not_a_sentinel_or_a_bypass_for_a_finite_budget() {
     job_resource_limits(&b, Some(120), Some(1024), output).unwrap();
     b.max_output_bytes = output;
     assert!(job_resource_limits(&b, Some(120), Some(1024), None).is_err());
-    assert!(
-        job_resource_limits(
-            &b,
-            Some(120),
-            Some(1024),
-            Some(DbCounter::new(1025).unwrap())
-        )
-        .is_err()
-    );
+    assert!(job_resource_limits(
+        &b,
+        Some(120),
+        Some(1024),
+        Some(DbCounter::new(1025).unwrap())
+    )
+    .is_err());
 }
 
 #[test]
@@ -82,9 +80,15 @@ fn long_explicit_data_jobs_are_not_rejected_by_an_unrelated_day_cap() {
         output_bytes: None,
     };
     domain::data::bounded_native_limits(&limits).unwrap();
-    let absent = contracts::lifecycle::JobLimitsV1 { wall_seconds: None, ..limits.clone() };
+    let absent = contracts::lifecycle::JobLimitsV1 {
+        wall_seconds: None,
+        ..limits.clone()
+    };
     domain::data::bounded_native_limits(&absent).unwrap();
-    let zero = contracts::lifecycle::JobLimitsV1 { wall_seconds: Some(0), ..limits };
+    let zero = contracts::lifecycle::JobLimitsV1 {
+        wall_seconds: Some(0),
+        ..limits
+    };
     assert!(domain::data::bounded_native_limits(&zero).is_err());
 }
 

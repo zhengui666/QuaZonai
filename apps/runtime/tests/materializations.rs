@@ -21,9 +21,13 @@ struct Fixture {
 async fn fixture() -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let root = Arc::new(RuntimeRoot::open(&directory.path().join("runtime")).unwrap());
-    let journal = Journal::open(&root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
-        .await
-        .unwrap();
+    let journal = Journal::open(
+        &root.path.join("journal.sqlite"),
+        64 * 1024 * 1024,
+        Some(16),
+    )
+    .await
+    .unwrap();
     let code_id = Id::new();
     journal.put_object(code_id, "1", CODE).await.unwrap();
     let parameters = NativeTaskParametersV1::CompileModel {
@@ -272,9 +276,13 @@ async fn concurrent_admission_reserves_disk_once_and_replays_do_not_charge_again
     );
     assert_eq!(fs::read_dir(f.root.path.join("jobs")).unwrap().count(), 0);
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
-        .await
-        .unwrap();
+    let reopened = Journal::open(
+        &f.root.path.join("journal.sqlite"),
+        64 * 1024 * 1024,
+        Some(16),
+    )
+    .await
+    .unwrap();
     assert!(reopened.submit(accepted, &f.capability).await.unwrap().1);
     assert_eq!(
         reopened
@@ -363,9 +371,13 @@ async fn interrupted_staging_before_spec_write_recovers_from_the_exact_durable_r
     fs::create_dir(staging.join("input")).unwrap();
     fs::write(staging.join("input/partial"), b"interrupted private copy").unwrap();
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
-        .await
-        .unwrap();
+    let reopened = Journal::open(
+        &f.root.path.join("journal.sqlite"),
+        64 * 1024 * 1024,
+        Some(16),
+    )
+    .await
+    .unwrap();
     materialize::recover(f.root.clone(), &reopened)
         .await
         .unwrap();
@@ -408,9 +420,13 @@ async fn interrupted_terminal_cache_deletion_cannot_release_quota_early_or_destr
         .unwrap()
         .is_some());
     f.journal.close().await;
-    let reopened = Journal::open(&f.root.path.join("journal.sqlite"), 64 * 1024 * 1024, Some(16))
-        .await
-        .unwrap();
+    let reopened = Journal::open(
+        &f.root.path.join("journal.sqlite"),
+        64 * 1024 * 1024,
+        Some(16),
+    )
+    .await
+    .unwrap();
     materialize::recover(f.root.clone(), &reopened)
         .await
         .unwrap();

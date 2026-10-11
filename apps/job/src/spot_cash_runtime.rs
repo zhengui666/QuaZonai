@@ -7,14 +7,14 @@ use crate::{
         SpotCashObservationTape,
     },
 };
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
-    DbCounter, Id, SchemaV1,
     portfolio::NativeModelRefV1,
     science::{NativeSimulationRequestV1, NativeStatisticGroup, NativeStatisticV1},
     spot_cash::*,
     spot_cash_report::*,
     spot_fees::*,
+    DbCounter, Id, SchemaV1,
 };
 use domain::spot_cash::SpotCashContext;
 use nautilus_analysis::{

@@ -16,6 +16,11 @@ async function session(page: Page, failProjects = false) {
     if (path === '/api/v2/auth/status') return reply({ schema_version: 1, setup_required: false });
     if (path === '/api/v2/auth/session') return reply({ schema_version: 1,
       authenticated_at: new Date().toISOString(), expires_at: new Date(Date.now() + 43_200_000).toISOString() });
+    if (path === '/api/v2/auth/cli/devices') return reply([]);
+    if (path === '/api/v2/research') return reply({ items: [] });
+    if (path === '/api/v2/research/models') return reply([]);
+    if (path === '/api/v2/research/tasks') return reply({ scheduling: 'running', tasks: [], submissions: [] });
+    if (path === '/api/v2/research/usage') return reply({ models: {}, tools: {} });
     if (path === '/api/v2/projects') {
       reads++;
       if (failProjects && reads === 1) return route.fulfill({ status: 429,
@@ -27,7 +32,7 @@ async function session(page: Page, failProjects = false) {
       });
       return reply({ schema_version: 1, items: [], next_cursor: null });
     }
-    if (['/api/v2/runs', '/api/v2/settings/codex', '/api/v2/integrations/runtimes'].includes(path))
+    if (['/api/v2/runs', '/api/v2/integrations/runtimes'].includes(path))
       return reply({ schema_version: 1, items: [], next_cursor: null });
     return route.abort('blockedbyclient');
   });
@@ -106,6 +111,7 @@ test('retry countdown expires without replaying the request automatically', asyn
   const { reads, writes } = await session(page, true);
   await page.clock.install();
   await page.goto('/');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   const retry = page.getByRole('button', { name: '重新载入', exact: true });
   await expect(retry).toBeDisabled();
   await expect(page.getByText('2 秒后可重试', { exact: true })).toBeVisible();
@@ -122,7 +128,8 @@ test('retry countdown expires without replaying the request automatically', asyn
 test('research workbench explains external authoring and keeps read-only shortcuts usable', async ({ page }) => {
   await session(page);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '历史研究项目', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '尚无研究项目' })).toBeVisible();
   await expect(page.getByLabel('搜索本页研究项目')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '下一页', exact: true })).toHaveCount(0);
@@ -145,6 +152,7 @@ test('project cards search only the loaded page and clear the filter when paging
       items: next ? [project(3, '第三个研究')] : [project(1, '动量研究'), project(2, '均值回归')], next_cursor: next ? null : '01990000-0000-7000-8000-000000000002' } });
   });
   await page.goto('/');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   const search = page.getByLabel('搜索本页研究项目');
   await expect(page.getByRole('article')).toHaveCount(2);
   await search.fill('动量');
@@ -210,6 +218,7 @@ async function researchWorkspace(page: Page, options: { archived?: boolean; curr
     return route.abort('blockedbyclient');
   });
   await page.goto('/');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   await page.getByRole('button', { name: project.name, exact: true }).click();
   await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible();
   return { project, brief, cycle, input, frozen, requestedInputs, writes, briefReads: () => briefReads, failNextBrief: () => { failBrief = true; } };
@@ -239,7 +248,7 @@ test('project-scoped inputs show the chosen project records and permit read-only
   await expect.poll(() => state.requestedInputs.length).toBe(2);
   await page.getByRole('tab', { name: '研究 Brief', exact: true }).click();
   await expect(page.getByRole('heading', { name: state.brief.content.hypothesis, exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+  await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
   await expect(page.getByRole('button', { name: state.project.name, exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(state.writes).toEqual([]);
@@ -256,7 +265,8 @@ test('archived research retains readable frozen Briefs without allowing a new cy
   const detail = page.getByRole('dialog', { name: 'Brief · 版本 2', exact: true });
   await expect(detail.getByLabel('原完整 Brief', { exact: true })).toHaveText(JSON.stringify(state.brief, null, 2));
   await expect(detail.getByText(`${state.frozen.execution_context.runtime_id} / 3`, { exact: true })).toBeVisible();
-  await expect(detail.getByText(state.frozen.execution_context.sealed_input_set_id, { exact: true })).toBeVisible();
+  for (const field of ['discovery_input_set_id', 'validation_input_set_id', 'sealed_input_set_id'] as const)
+    await expect(detail.getByText(state.frozen.execution_context[field], { exact: true })).toBeVisible();
   await expect(detail.getByRole('textbox')).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(detail).toHaveCount(0);
@@ -301,7 +311,7 @@ test('a Brief draft remains original and readable across viewport and theme chan
   await expect(page.getByRole('dialog', { name: /放弃/ })).toHaveCount(0);
   await page.getByRole('tab', { name: '研究周期', exact: true }).click();
   await expect(page.getByText('核对输入边界', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+  await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
   await expect(page.getByRole('button', { name: state.project.name, exact: true })).toBeVisible();
   expect(state.writes).toEqual([]);
 });

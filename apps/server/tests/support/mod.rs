@@ -50,6 +50,22 @@ pub async fn fixture_with_key(
     exports: Option<server::migrations::HistoricalExports>,
     cookie_key: Key,
 ) -> Fixture {
+    fixture_with_services(pool, targets, exports, cookie_key, None).await
+}
+#[allow(dead_code)]
+pub async fn fixture_with_research_service(
+    pool: PgPool,
+    service: server::durable::ResearchService,
+) -> Fixture {
+    fixture_with_services(pool, None, None, Key::generate(), Some(service)).await
+}
+async fn fixture_with_services(
+    pool: PgPool,
+    targets: Option<server::runtime_transport::RuntimeTargets>,
+    exports: Option<server::migrations::HistoricalExports>,
+    cookie_key: Key,
+    research: Option<server::durable::ResearchService>,
+) -> Fixture {
     PostgresStore::new(pool.clone()).migrate().await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let secrets = root.path().join("secrets");
@@ -83,6 +99,9 @@ pub async fn fixture_with_key(
                 )
                 .unwrap(),
             );
+    }
+    if let Some(service) = research {
+        state = state.with_research_service(service);
     }
     let app = server::router(state, cookie_key);
     Fixture {

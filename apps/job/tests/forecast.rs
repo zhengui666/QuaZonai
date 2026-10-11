@@ -110,5 +110,8 @@ fn unmetered_forecast_keeps_complete_predictions_labels_and_instrument_isolation
     let actual = forecast(directory.path(), &request, &wasm).unwrap();
     assert_eq!(actual.consumed_fuel, None);
     metered.consumed_fuel = None;
-    assert_eq!(serde_json::to_value(actual).unwrap(), serde_json::to_value(metered).unwrap());
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(metered).unwrap()
+    );
 }

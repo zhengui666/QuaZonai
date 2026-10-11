@@ -9,7 +9,7 @@ REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
 BUNDLE_FILES = {"manage.sh", "json.awk", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
-                "codex.sh", "codex-update.sh", "codex-login.sh", "runtime.sh", "codex.apparmor", ".env.example"}
+                "runtime.sh", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
@@ -33,13 +33,12 @@ def version_precedence(value: str) -> tuple:
     return (*core, 1 if prerelease is None else 0, identifiers)
 
 def validate_manifest(value: dict, *, published: bool = False) -> dict:
-    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 2:
-        raise ValueError("This installer requires a version-2 deployment bundle with prebuilt images.")
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 3:
+        raise ValueError("This installer requires a version-3 deployment bundle with prebuilt images.")
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")
-    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime"),
-                              ("codex_image", "quazonai-codex")):
+    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime")):
         reference = value.get(field)
         # The pre-publication suite uses Docker's content-addressed IDs for its
         # already-built images. Public bundles contain only GHCR digests.
@@ -49,10 +48,6 @@ def validate_manifest(value: dict, *, published: bool = False) -> dict:
             or (not published and re.fullmatch(r"sha256:[0-9a-f]{64}", reference))
         ):
             raise ValueError(f"{field} must identify the prebuilt {repository} image by digest.")
-    codex_version = value.get("codex_version")
-    if not isinstance(codex_version, str) or codex_version.startswith("v"):
-        raise ValueError("codex_version must be an exact published version.")
-    version("v" + codex_version)
     if value["database_image"] != DATABASE_IMAGE:
         raise ValueError("This installer requires the release's supported PostgreSQL/PGMQ image.")
     return value

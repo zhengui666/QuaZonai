@@ -18,9 +18,9 @@ Native CSS extraction confirms the default duration is
 The reported colors are consistent with an intermediate disabled-to-enabled
 frame; enabled attributes do not imply the color fade has finished.
 
-[ChatgptAuth](../../../apps/web/src/chatgpt-auth.tsx) loads account operations
+[ChatgptAuth](https://github.com/zhengui666/QuaZonai/blob/de8d3b13efb1855ed10b33f7ea5ad105cbf79e9f/apps/web/src/chatgpt-auth.tsx) at that recorded revision loads account operations
 after the profile appears and reports busy state through an effect.
-[ProfileDetails](../../../apps/web/src/codex.tsx) can then start a probe, and
+[ProfileDetails](https://github.com/zhengui666/QuaZonai/blob/de8d3b13efb1855ed10b33f7ea5ad105cbf79e9f/apps/web/src/codex.tsx) can then start a probe, and
 terminal account observations can invalidate queries again. These paths permit
 new button transitions after the audit's finite animation snapshot. The artifact
 does not identify the exact request/effect ordering; no local browser replay is

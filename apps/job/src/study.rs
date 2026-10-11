@@ -1,6 +1,6 @@
 //! Offline rolling science, with one native account and no fabricated source identities.
-use anyhow::{Result, ensure};
-use contracts::{DbCounter, Id, SchemaV1, portfolio::*, science::*};
+use anyhow::{ensure, Result};
+use contracts::{portfolio::*, science::*, DbCounter, Id, SchemaV1};
 use std::{collections::BTreeMap, path::Path};
 
 fn count(value: u64) -> Result<DbCounter> {
@@ -92,9 +92,13 @@ pub fn evaluate(
         for (model, remaining) in models.iter_mut().zip(&prepared.remaining_fuel) {
             model.parameters.total_fuel = *remaining;
         }
-        consumed = consumed.zip(prepared.consumed_fuel).map(|(sum, next)| {
-            sum.checked_add(next.get()).ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
-        }).transpose()?;
+        consumed = consumed
+            .zip(prepared.consumed_fuel)
+            .map(|(sum, next)| {
+                sum.checked_add(next.get())
+                    .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
+            })
+            .transpose()?;
         let bar_notionals = if request.rolling_liquidity.is_some() {
             crate::catalog::last_bar_notionals(&market)?
         } else {

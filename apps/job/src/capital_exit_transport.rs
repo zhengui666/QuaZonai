@@ -1,17 +1,17 @@
 //! Existing scoped downstream credential transport. No native handle crosses an
 //! await. Unknown responses remain caller-visible and retry the unchanged DTO/key.
 use crate::paper_service::initial_execution::service_http;
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
-    Id,
     capital_exit::*,
     control::{CommandResult, Page},
+    Id,
 };
 use reqwest::{
+    header::{HeaderMap, HeaderValue, AUTHORIZATION},
     Client, Url,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue},
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::time::Duration;
 
 #[derive(Clone)]
@@ -29,9 +29,9 @@ mod tests {
     #[tokio::test]
     async fn registered_observation_requires_exact_single_source_header() {
         use axum::{
-            Json, Router,
             http::{HeaderMap, HeaderValue, StatusCode},
             routing::post,
+            Json, Router,
         };
         let observation: AccountObservationSubmitV1 = serde_json::from_str(include_str!(
             "../../../tests/contracts/native-account-paper-snapshot.json"
@@ -205,11 +205,9 @@ impl CapitalExitOwnerTransport {
         service_http::media(&response, "application/json").map_err(|_| {
             anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
         })?;
-        let bytes = service_http::body(response, None)
-            .await
-            .map_err(|_| {
-                anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
-            })?;
+        let bytes = service_http::body(response, None).await.map_err(|_| {
+            anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
+        })?;
         service_http::decode(&bytes, &self.credential).map_err(|_| {
             anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
         })
@@ -250,11 +248,9 @@ impl CapitalExitOwnerTransport {
         service_http::media(&response, "application/json").map_err(|_| {
             anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
         })?;
-        let bytes = service_http::body(response, None)
-            .await
-            .map_err(|_| {
-                anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
-            })?;
+        let bytes = service_http::body(response, None).await.map_err(|_| {
+            anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")
+        })?;
         let receipt: contracts::account_observation::AccountObservationReceiptV2 =
             service_http::decode(&bytes, &self.credential).map_err(|_| {
                 anyhow!("capital_exit_transport_outcome_unknown_reconcile_original_identity")

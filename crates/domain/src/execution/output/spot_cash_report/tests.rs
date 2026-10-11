@@ -4,11 +4,11 @@ use super::super::{
 };
 use super::*;
 use contracts::{
-    DbCounter, Id, SchemaV1,
     equity_curve::EquityCurveQuery,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
     spot_fees::*,
+    DbCounter, Id, SchemaV1,
 };
 use serde_json::json;
 #[path = "../../../../../../tests/support/execution_models.rs"]
@@ -91,7 +91,7 @@ fn snapshot(
         record: NativeSpotCashObservationKindV1::Snapshot {
             origin,
             native,
-            valuation: context.value(&frame),
+            valuation: Box::new(context.value(&frame)),
             frame,
         },
     }
@@ -605,7 +605,7 @@ fn refresh_derived(request: &NativeSimulationRequestV1, result: &mut NativeSimul
                 frame, valuation, ..
             } => {
                 frame.prices = latest.values().cloned().collect();
-                *valuation = context.value(frame);
+                **valuation = context.value(frame);
                 frames.push(frame.clone());
             }
         }
@@ -863,11 +863,9 @@ fn legacy_metrics_keep_the_original_native_observation_count_and_missingness() {
         },
     ];
     let (metrics, _) = simulation::metrics(Id::new(), Id::new(), &request, &result).unwrap();
-    assert!(
-        metrics
-            .iter()
-            .all(|metric| metric.observation_count.get() == 2 && metric.scope == "portfolio")
-    );
+    assert!(metrics
+        .iter()
+        .all(|metric| metric.observation_count.get() == 2 && metric.scope == "portfolio"));
     result.returns[1].value = None;
     result.returns[1].reason_code = Some("NATIVE_RETURN_UNAVAILABLE".into());
     result.returns_status = MetricStatus::Failed;

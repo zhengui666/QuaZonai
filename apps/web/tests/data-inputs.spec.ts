@@ -68,6 +68,7 @@ async function setup(page: Page) {
     return route.abort('blockedbyclient');
   });
   await page.goto('/');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   await page.getByRole('button', { name: project.name, exact: true }).click();
   await page.getByRole('tab', { name: '冻结输入', exact: true }).click();
   await expect(page.getByRole('button', { name: input.header.id, exact: true })).toBeVisible();
@@ -182,7 +183,7 @@ test('narrow offline view retains selected provenance and returns to research wi
   await noBusinessEditors(page);
   await context.setOffline(false);
   await expect(page.getByRole('button', { name: '刷新冻结输入', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+  await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
   await expect(page.getByRole('button', { name: state.project.name, exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(state.writes).toEqual([]);

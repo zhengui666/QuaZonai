@@ -1,5 +1,5 @@
 use contracts::research::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 fn request() -> Value {
     serde_json::from_str(include_str!(
         "../../../tests/contracts/research-policy.json"
@@ -44,12 +44,10 @@ fn input_union_rejects_mixed_references_and_unregistered_roles() {
     input["artifact_id"] = id.clone();
     assert!(serde_json::from_value::<InputItemV1>(input).is_err());
     for role in ["SECRET", "*", "LOG", "SEALED"] {
-        assert!(
-            serde_json::from_value::<InputItemV1>(
-                json!({"kind":"ARTIFACT","artifact_id":id,"role":role})
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_value::<InputItemV1>(
+            json!({"kind":"ARTIFACT","artifact_id":id,"role":role})
+        )
+        .is_err());
     }
 }
 #[test]

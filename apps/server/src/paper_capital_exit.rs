@@ -1,11 +1,11 @@
 //! Deployment opt-in for the already authenticated original Paper source.
 //! No credentials, HTTP registration endpoint, or caller-selected budget key.
 use contracts::{
-    Id, SchemaV1, account_observation::AccountObservationReceiptV2, forward::ForwardEnvironmentV1,
+    account_observation::AccountObservationReceiptV2, forward::ForwardEnvironmentV1, Id, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use store::{Store, StoreError, authority::Actor, capital_exit::CapitalExitOwnerRegistration};
+use store::{authority::Actor, capital_exit::CapitalExitOwnerRegistration, Store, StoreError};
 
 pub const REGISTERED_SOURCE_HEADER: &str = "x-qz-capital-exit-source";
 
@@ -151,12 +151,19 @@ mod tests {
         let raw = serde_json::to_string(&owners).unwrap();
         assert!(raw.len() > 65536);
         let parsed = PaperCapitalExitOwners::parse(&raw).unwrap();
-        assert_eq!(serde_json::to_value(&parsed.owners).unwrap(), serde_json::to_value(&owners).unwrap());
+        assert_eq!(
+            serde_json::to_value(&parsed.owners).unwrap(),
+            serde_json::to_value(&owners).unwrap()
+        );
         let mut duplicate = owners.clone();
         duplicate.push(owners[0].clone());
         assert!(PaperCapitalExitOwners::new(duplicate).is_err());
         let mut wrong_strategy = owners.clone();
-        wrong_strategy.last_mut().unwrap().controlled_strategy_ids.push("OTHER-001".into());
+        wrong_strategy
+            .last_mut()
+            .unwrap()
+            .controlled_strategy_ids
+            .push("OTHER-001".into());
         assert!(PaperCapitalExitOwners::new(wrong_strategy).is_err());
         let mut wrong_currency = owners;
         wrong_currency.last_mut().unwrap().collateral_currency = "UNKNOWN".into();
@@ -164,18 +171,14 @@ mod tests {
     }
     #[test]
     fn paper_capital_exit_configuration_is_explicit_closed_and_disabled_by_default() {
-        assert!(
-            PaperCapitalExitOwners::parse("[]")
-                .unwrap()
-                .owners
-                .is_empty()
-        );
-        assert!(
-            PaperCapitalExitOwners::parse(
-                "[{\"schema_version\":1,\"managed_account_key\":\"caller-key\"}]"
-            )
-            .is_err()
-        );
+        assert!(PaperCapitalExitOwners::parse("[]")
+            .unwrap()
+            .owners
+            .is_empty());
+        assert!(PaperCapitalExitOwners::parse(
+            "[{\"schema_version\":1,\"managed_account_key\":\"caller-key\"}]"
+        )
+        .is_err());
         let owner = PaperCapitalExitOwnerConfiguration {
             schema_version: SchemaV1,
             project_id: Id::new(),

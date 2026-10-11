@@ -395,11 +395,9 @@ async fn concurrent_administrative_validations_preserve_all_admissions_without_a
         assert_eq!(result.resource.state, RunState::Queued);
         assert_eq!(result.resource.kind, RunKind::DataValidate);
         assert!(result.resource.cycle_id.is_none());
-        assert!(
-            results[..index]
-                .iter()
-                .all(|(_, prior)| prior.resource.id != result.resource.id)
-        );
+        assert!(results[..index]
+            .iter()
+            .all(|(_, prior)| prior.resource.id != result.resource.id));
         let normalized: serde_json::Value =
             sqlx::query_scalar("SELECT normalized_request FROM app.run_admissions WHERE run_id=$1")
                 .bind(result.resource.id.as_uuid())

@@ -331,7 +331,6 @@ async fn incompatible_observation_committing_before_validation_aborts_the_entire
 
 #[sqlx::test(migrations = false)]
 async fn local_role_migration_never_reuses_legacy_system_or_provider_labels(pool: PgPool) {
-    use contracts::control::ListQuery;
     use serde_json::Value;
     use store::authority::Actor;
 
@@ -370,53 +369,30 @@ async fn local_role_migration_never_reuses_legacy_system_or_provider_labels(pool
     for (id, role, reference) in &roles {
         assert!(![old_system.as_uuid(), old_provider.as_uuid()].contains(id));
         assert_eq!(*reference, format!("local-{}-{id}", role.to_lowercase()));
-        domain::codex::settings::home_binding(reference).unwrap();
     }
-    let bindings = store.local_codex_bindings().await.unwrap();
-    assert_eq!(bindings.len(), 2);
-    for (_, _, reference) in &roles {
-        assert!(bindings
-            .iter()
-            .any(|binding| &binding.reference == reference));
-    }
-    assert!(!bindings.iter().any(
-        |binding| ["local-researcher", "local-reviewer"].contains(&binding.reference.as_str())
-    ));
     let login = store.local_browser().await.unwrap();
     let actor = Actor::Browser { login_id: login.id };
-    let listing = store
-        .codex_profiles(
-            &actor,
-            &ListQuery {
-                limit: 100,
-                cursor: None,
-            },
-        )
+    for (id, _, _) in &roles {
+        let id: Id = id.to_string().try_into().unwrap();
+        let profile = store.historical_agent_profile(&actor, id).await.unwrap();
+        assert_eq!(profile["id"], id.to_string());
+        assert!(profile.get("codex_home_ref").is_none());
+    }
+    let original_system = store
+        .historical_agent_profile(&actor, old_system)
         .await
         .unwrap();
-    assert_eq!(listing.items.len(), 2);
-    assert!(listing
-        .items
-        .iter()
-        .all(|profile| roles.iter().any(|(id, _, _)| *id == profile.id.as_uuid())));
-    assert_eq!(
-        store
-            .codex_profile(&actor, old_system)
-            .await
-            .unwrap()
-            .home_binding
-            .as_deref(),
-        Some("local-researcher")
-    );
-    assert!(matches!(
-        store.codex_profile(&actor, old_provider).await,
-        Err(StoreError::NotFound)
-    ));
+    let original_provider = store
+        .historical_agent_profile(&actor, old_provider)
+        .await
+        .unwrap();
+    assert_eq!(original_system["connection_mode"], "SYSTEM");
+    assert_eq!(original_provider["connection_mode"], "CUSTOM_PROVIDER");
+    assert!(original_provider.get("custom_api_key_ref").is_none());
 
     // The supported runner is idempotent; it cannot create another pair or
     // reinterpret either old row on an ordinary restart/upgrade check.
     store.migrate().await.unwrap();
-    assert_eq!(store.local_codex_bindings().await.unwrap().len(), 2);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app.codex_profiles")
             .fetch_one(&pool)

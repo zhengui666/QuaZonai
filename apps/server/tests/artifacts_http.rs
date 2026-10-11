@@ -189,9 +189,7 @@ async fn upload_download_and_same_length_replay_use_real_original_bytes(pool: Pg
         .unwrap()
         .starts_with("attachment;"));
     assert_eq!(
-        &to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap()[..],
+        &to_bytes(response.into_body(), usize::MAX).await.unwrap()[..],
         text.as_bytes()
     );
     let replay = send(
@@ -417,15 +415,30 @@ async fn rejects_forged_provenance_bad_documents_and_byte_overflow_before_public
     }
     let large = "界".repeat(2 * 1024 * 1024 / 3 + 1);
     let created = send(
-        &f, "POST", "/api/v2/artifacts", "large-original",
-        upload(project, &large), Some(&cookie), None,
-    ).await;
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "large-original",
+        upload(project, &large),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(created.status, StatusCode::CREATED);
-    assert_eq!(created.body["resource"]["byte_count"], large.len().to_string());
+    assert_eq!(
+        created.body["resource"]["byte_count"],
+        large.len().to_string()
+    );
     let id = created.body["resource"]["id"].as_str().unwrap();
     let response = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(to_bytes(response.into_body(), usize::MAX).await.unwrap().as_ref(), large.as_bytes());
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        large.as_bytes()
+    );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
         .fetch_one(&pool)
         .await
@@ -558,23 +571,50 @@ async fn database_failure_preserves_orphan_without_publishing_a_false_receipt(po
 #[sqlx::test(migrations = "../../migrations")]
 async fn artifact_downloads_cross_four_concurrent_streams_without_rejecting_uploads(pool: PgPool) {
     let (f, cookie, project) = setup(&pool).await;
-    let created = send(&f, "POST", "/api/v2/artifacts", "source", upload(project, "original"), Some(&cookie), None).await;
+    let created = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "source",
+        upload(project, "original"),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(created.status, StatusCode::CREATED);
-    let path = format!("/api/v2/artifacts/{}/content", created.body["resource"]["id"].as_str().unwrap());
+    let path = format!(
+        "/api/v2/artifacts/{}/content",
+        created.body["resource"]["id"].as_str().unwrap()
+    );
     let mut responses = Vec::new();
     for _ in 0..5 {
         let response = raw(&f, &path, &cookie).await;
         assert_eq!(response.status(), StatusCode::OK);
         responses.push(response);
     }
-    let next = send(&f, "POST", "/api/v2/artifacts", "parallel-upload", upload(project, "next"), Some(&cookie), None).await;
+    let next = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "parallel-upload",
+        upload(project, "next"),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(next.status, StatusCode::CREATED);
     responses.pop();
     for response in responses {
-        assert_eq!(to_bytes(response.into_body(), 64).await.unwrap().as_ref(), b"original");
+        assert_eq!(
+            to_bytes(response.into_body(), 64).await.unwrap().as_ref(),
+            b"original"
+        );
     }
     let replay = raw(&f, &path, &cookie).await;
-    assert_eq!(to_bytes(replay.into_body(), 64).await.unwrap().as_ref(), b"original");
+    assert_eq!(
+        to_bytes(replay.into_body(), 64).await.unwrap().as_ref(),
+        b"original"
+    );
 }
 
 async fn mission_token(
@@ -911,18 +951,14 @@ async fn agent_report_retains_immutable_bytes_and_replay(pool: PgPool) {
     assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let typed: Value = serde_json::from_slice(&bytes).unwrap();
     let mut expected = report.clone();
     expected["recorded_at"] = json!("2026-09-30T00:00:00Z");
     assert_eq!(typed, expected);
     let original = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
     assert_eq!(original.status(), StatusCode::OK);
-    let original = to_bytes(original.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let original = to_bytes(original.into_body(), usize::MAX).await.unwrap();
     assert_eq!(original.as_ref(), report.to_string().as_bytes());
     let qualifications: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
         .fetch_one(&pool)

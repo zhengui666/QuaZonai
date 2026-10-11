@@ -26,14 +26,24 @@ export function retryAt(value: string | null, now = Date.now()): number {
   const timestamp = /^\d+$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);
   return Number.isFinite(timestamp) && timestamp > now ? timestamp : 0;
 }
+function researchPath(path: string): boolean {
+  return path === '/api/v2/research' || path === '/api/v2/research/{id}' || path === '/api/v2/research/{id}/stop'
+    || ['/api/v2/research/models', '/api/v2/research/tasks', '/api/v2/research/usage'].includes(path);
+}
+function nativeResearchError(value: unknown): value is { error: string } {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === 1 && 'error' in value && typeof value.error === 'string' && value.error.length > 0;
+}
 export async function responseFailure(response: Response, schemaPath: string, method: string, signal?: AbortSignal): Promise<ApiFailure> {
   signal?.throwIfAborted();
   const contentType = response.headers.get('content-type');
   const media = contentType?.split(';', 1)[0]?.trim().toLowerCase();
   const declared = media === 'application/problem+json' && response.status >= 400
     && responseKind(schemaPath, method, response.status, contentType) === 'json';
+  const declaredNative = researchPath(schemaPath) && media === 'application/json' && response.status >= 400
+    && responseKind(schemaPath, method, response.status, contentType) === 'json';
   let value: unknown;
-  if (declared) {
+  if (declared || declaredNative) {
     try { value = await response.json(); } catch { signal?.throwIfAborted(); value = undefined; }
   }
   let failure: ApiFailure;
@@ -41,6 +51,9 @@ export async function responseFailure(response: Response, schemaPath: string, me
     if (declared && validateProblem(value) && value.status === response.status
       && await validateResponseAsync(schemaPath, method, response.status, value, contentType)) {
       failure = new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
+    } else if (declaredNative && nativeResearchError(value)
+      && await validateResponseAsync(schemaPath, method, response.status, value, contentType)) {
+      failure = new ApiFailure('RESEARCH_NATIVE_ERROR', `原生研究错误：${value.error}`, response.status, undefined, retryAt(response.headers.get('retry-after')));
     } else failure = new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
   } catch (error) {
     signal?.throwIfAborted();
@@ -48,7 +61,7 @@ export async function responseFailure(response: Response, schemaPath: string, me
     failure = validatorLoadFailure();
   }
   signal?.throwIfAborted();
-  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR', 'RESPONSE_VALIDATOR_UNAVAILABLE'].includes(failure.code)) {
+  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR', 'RESPONSE_VALIDATOR_UNAVAILABLE', 'RESEARCH_NATIVE_ERROR'].includes(failure.code)) {
     authenticationEvents.dispatchEvent(new Event('required'));
   }
   return failure;

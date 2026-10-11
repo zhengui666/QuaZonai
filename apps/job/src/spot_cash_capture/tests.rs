@@ -1,12 +1,12 @@
 //! Controlled native components only. These rows are not market/PIT evidence.
 use super::*;
 use contracts::{
-    SchemaV1,
     science::{NativeAccountKind, NativeFeeRateV1},
+    SchemaV1,
 };
 use nautilus_backtest::config::{BacktestEngineConfig, SimulatedVenueConfig};
 use nautilus_common::{clock::TestClock, logging::logger::LoggerConfig};
-use nautilus_core::{UUID4, UnixNanos};
+use nautilus_core::{UnixNanos, UUID4};
 use nautilus_model::{
     data::{BarType, Data},
     enums::{BookType, OmsType},
@@ -143,30 +143,26 @@ fn snapshot() -> PortfolioSnapshot {
 fn frozen_source_bar_and_closed_boundary_must_match_exactly() {
     let (market, mut rows) = market();
     rows[0].native.close = Price::from("3.00");
-    assert!(
-        State::new(
-            &settings(),
-            UUID4::new().to_string().parse().unwrap(),
-            Id::new(),
-            &market,
-            rows,
-            Some(10)
-        )
-        .is_err()
-    );
+    assert!(State::new(
+        &settings(),
+        UUID4::new().to_string().parse().unwrap(),
+        Id::new(),
+        &market,
+        rows,
+        Some(10)
+    )
+    .is_err());
     let (market, mut rows) = self::market();
     rows[0].bar_open_ns = rows[0].bar_close_ns;
-    assert!(
-        State::new(
-            &settings(),
-            UUID4::new().to_string().parse().unwrap(),
-            Id::new(),
-            &market,
-            rows,
-            Some(10)
-        )
-        .is_err()
-    );
+    assert!(State::new(
+        &settings(),
+        UUID4::new().to_string().parse().unwrap(),
+        Id::new(),
+        &market,
+        rows,
+        Some(10)
+    )
+    .is_err());
 }
 
 #[test]
@@ -176,11 +172,9 @@ fn unknown_repeated_or_rewritten_native_bar_is_rejected() {
     let bar = rows[0].native;
     let mut modified = bar;
     modified.close = Price::from("3.00");
-    assert!(
-        state
-            .observe_bar(&modified, modified.ts_init.as_u64())
-            .is_err()
-    );
+    assert!(state
+        .observe_bar(&modified, modified.ts_init.as_u64())
+        .is_err());
     state.observe_bar(&bar, bar.ts_init.as_u64()).unwrap();
     assert!(state.observe_bar(&bar, bar.ts_init.as_u64()).is_err());
 }
@@ -248,17 +242,13 @@ fn late_or_wrong_clock_snapshot_is_not_backdated() {
     let mut state = state(10);
     let mut native = snapshot();
     native.ts_event = (native_portfolio::FIRST_TIME - 1).into();
-    assert!(
-        state
-            .observe_snapshot(&native, native_portfolio::FIRST_TIME)
-            .is_err()
-    );
+    assert!(state
+        .observe_snapshot(&native, native_portfolio::FIRST_TIME)
+        .is_err());
     native.ts_event = native.ts_init;
-    assert!(
-        state
-            .observe_snapshot(&native, native_portfolio::SECOND_TIME)
-            .is_err()
-    );
+    assert!(state
+        .observe_snapshot(&native, native_portfolio::SECOND_TIME)
+        .is_err());
 }
 
 #[test]
@@ -266,18 +256,14 @@ fn wrong_native_cash_kind_or_currency_is_not_projected() {
     let mut state = state(10);
     let mut native = snapshot();
     native.base_currency = Some(Currency::from_str("USD").unwrap());
-    assert!(
-        state
-            .observe_snapshot(&native, native_portfolio::FIRST_TIME)
-            .is_err()
-    );
+    assert!(state
+        .observe_snapshot(&native, native_portfolio::FIRST_TIME)
+        .is_err());
     native.base_currency = None;
     native.account_type = AccountType::Margin;
-    assert!(
-        state
-            .observe_snapshot(&native, native_portfolio::FIRST_TIME)
-            .is_err()
-    );
+    assert!(state
+        .observe_snapshot(&native, native_portfolio::FIRST_TIME)
+        .is_err());
 }
 
 #[test]
@@ -288,20 +274,16 @@ fn bounded_capture_and_snapshot_event_identity_fail_closed() {
     limited
         .observe_bar(&rows[0].native, native_portfolio::FIRST_TIME)
         .unwrap();
-    assert!(
-        limited
-            .observe_snapshot(&native, native_portfolio::FIRST_TIME)
-            .is_err()
-    );
+    assert!(limited
+        .observe_snapshot(&native, native_portfolio::FIRST_TIME)
+        .is_err());
     let mut state = state(10);
     state
         .observe_snapshot(&native, native_portfolio::FIRST_TIME)
         .unwrap();
-    assert!(
-        state
-            .observe_snapshot(&native, native_portfolio::FIRST_TIME)
-            .is_err()
-    );
+    assert!(state
+        .observe_snapshot(&native, native_portfolio::FIRST_TIME)
+        .is_err());
 }
 
 #[test]
@@ -344,15 +326,13 @@ fn native_callback_failure_survives_the_callback_boundary() {
     let mut changed = rows[0].native;
     changed.close = Price::from("9.00");
     msgbus::publish_bar(format!("data.bars.{}", changed.bar_type).into(), &changed);
-    assert!(
-        capture
-            .state
-            .borrow()
-            .failure
-            .as_ref()
-            .unwrap()
-            .contains("BAR_OR_CLOCK_MISMATCH")
-    );
+    assert!(capture
+        .state
+        .borrow()
+        .failure
+        .as_ref()
+        .unwrap()
+        .contains("BAR_OR_CLOCK_MISMATCH"));
     assert!(capture.state.borrow().records.is_empty());
 }
 
@@ -413,11 +393,10 @@ fn fresh_official_backtest_records_real_run_identity_without_claiming_no_flows()
             .count(),
         2
     );
-    assert!(
-        tape.records
-            .iter()
-            .any(|r| matches!(r, ObservedSpotCashRecord::Snapshot { .. }))
-    );
+    assert!(tape
+        .records
+        .iter()
+        .any(|r| matches!(r, ObservedSpotCashRecord::Snapshot { .. })));
 }
 
 #[test]
@@ -425,17 +404,15 @@ fn numeric_equality_does_not_allow_native_precision_rewrites() {
     let (market, mut rows) = market();
     rows[0].native.close = Price::from("2.000");
     assert_eq!(market.series[0].bars[0], rows[0].native);
-    assert!(
-        State::new(
-            &settings(),
-            UUID4::new().to_string().parse().unwrap(),
-            Id::new(),
-            &market,
-            rows,
-            Some(10)
-        )
-        .is_err()
-    );
+    assert!(State::new(
+        &settings(),
+        UUID4::new().to_string().parse().unwrap(),
+        Id::new(),
+        &market,
+        rows,
+        Some(10)
+    )
+    .is_err());
     for volume in [false, true] {
         let mut state = state(10);
         let (_, rows) = self::market();
@@ -498,14 +475,12 @@ fn cleanup_cannot_panic_or_record_more_when_the_current_other_bus_is_borrowed() 
     drop(capture);
     drop(borrowed);
     assert!(Rc::ptr_eq(&msgbus::get_message_bus(), &bus_b));
-    assert!(
-        retained
-            .borrow()
-            .failure
-            .as_ref()
-            .unwrap()
-            .contains("CLEANUP_BUS_BUSY")
-    );
+    assert!(retained
+        .borrow()
+        .failure
+        .as_ref()
+        .unwrap()
+        .contains("CLEANUP_BUS_BUSY"));
     msgbus::set_message_bus(bus_a);
     let (_, rows) = market();
     msgbus::publish_bar(

@@ -59,7 +59,6 @@ jobs:
         working-directory: .
         run: |
           node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs
-          bash deploy/docker/codex-shell.test.sh
       - name: Install locked dependencies without lifecycle hooks
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check native acceptance script syntax

@@ -1,6 +1,6 @@
 //! Causal forecast-output associations, without evaluating or fitting the model.
 use super::{bad, instruments};
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use contracts::science::{ForecastMissingReason, NativeForecastRequestV1, NativeForecastResultV1};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +11,7 @@ pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
         ("wasmi".to_owned(), "2.0.0".to_owned()),
     ]);
     if value.native_versions != expected
-        || value.points.len() < 1
+        || value.points.is_empty()
         || value.consumed_fuel == Some(contracts::DbCounter::ZERO)
     {
         return Err(bad("native_output.forecast"));
@@ -76,7 +76,10 @@ pub(super) fn binding(
     if parameters.fast_period == 0
         || parameters.slow_period <= parameters.fast_period
         || parameters.label_horizon_observations == 0
-        || !crate::execution::fuel_within_budget(value.consumed_fuel, parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
+        || !crate::execution::fuel_within_budget(
+            value.consumed_fuel,
+            parameters.total_fuel.map(|fuel| u128::from(fuel.get())),
+        )
         || value.points.len() > request.selection.maximum_rows as usize
     {
         return Err(bad("native_output.forecast_parameters"));

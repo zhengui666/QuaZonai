@@ -26,7 +26,7 @@ The CLI does not automatically reconnect. Bounded completion, Ctrl-C and a broke
 
 ## Cancellation is a separate write
 
-Only an explicit cancellation request with appropriate current authority may use `run cancel RUN_ID`, native `RunCancelV1`, the original request key and any exact authorization the server requires. Preview it first. A bound research Mission has no cancellation tool and must return the request to its launcher.
+Only an explicit cancellation request with current authority may use `run cancel RUN_ID`, native `RunCancelV1`, its original key and required authorization. Durable research instead uses `research stop CONVERSATION_ID`; neither stops work merely by closing an observer.
 
 A cancellation request receipt does not prove the remote process stopped. Continue reconciling the same Run and report the server's observed state. Do not kill host processes or invoke downstream exchange controls. Unknown or late remote outcomes remain unknown until the service reconciles them.
 

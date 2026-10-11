@@ -1,6 +1,6 @@
 # Third-party notices
 
-Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software retains its upstream license. The authoritative application dependency inputs are Cargo.toml/Cargo.lock, apps/web/package.json/package-lock.json and runtimes/codex/package.json/package-lock.json. The current Ant Design frontend is a release input; deleted legacy Python/frontend manifests are not.
+Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software keeps upstream licenses. Current dependency inputs are Cargo.toml/Cargo.lock and apps/{web,research}/package.json/package-lock.json. Historical notices remain even when an execution component is retired.
 
 The selected components below explain integration and attribution. The generated inventory and original lockfiles, not this abbreviated table, identify the complete source dependency set.
 
@@ -11,7 +11,9 @@ The selected components below explain integration and attribution. The generated
 | Apache Arrow Rust 56.2.0 / 59.3.0 | Apache-2.0 | Native arrays/schema/IPC; both versions occur in the resolved source graph |
 | Serde, UUID, Chrono, BigDecimal, utoipa, thiserror, proptest | Resolved upstream license texts | Wire types, standard scalar implementations, schema and testing |
 | iso_currency 0.7.0 | Upstream license and versioned data attribution | ISO-code membership; not an online authoritative ISO service |
-| OpenAI Codex (0.156.1 native CI fixture; independent container version in deployment `.env`) | Apache-2.0 | Official App Server package in a separately built Debian image, including its native sandbox resources and upstream package notices; no copied Agent loop |
+| OpenAI Codex (historical component, retired from production) | Apache-2.0 | Original attribution is retained; no current App Server/image/login dependency |
+| @earendil-works/pi-durable / pi-ai / chord 1.1.0 | MIT | Official persistent Harness, model/providers, conversations, submissions, tasks, extensions, recovery, cancellation, views and usage; normal npm packages, no copied Agent implementation |
+| WABT 1.0.39 | Apache-2.0 | Official published JavaScript bindings for WAT-to-Wasm compilation |
 | PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Native application persistence, transactions and durable work delivery |
 | axum-0.8.9 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | tower-sessions-0.15.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
@@ -25,17 +27,14 @@ The selected components below explain integration and attribution. The generated
 | libsqlite3-sys-0.37.0 | MIT | Native SQLite binding, shared with SQLx; no separate persistence framework |
 | Bundled SQLite 3.51.3 | [Public domain](https://www.sqlite.org/copyright.html) | Runtime WAL journal; upstream WAL-reset fix |
 | time-0.3.47 | MIT OR Apache-2.0 | Native session expiry serialization |
-| rmcp / rmcp-macros 3.2.0 | Apache-2.0 | Official native MCP stdio transport, protocol lifecycle, tool routing and strict argument schemas; no copied JSON-RPC implementation |
-| reqwest 0.12.23 | MIT OR Apache-2.0 | Fixed-route Mission control API client; no redirects, automatic retries, ambient proxy or browser authority |
+| rmcp / rmcp-macros 3.2.0 (historical component, retired) | Apache-2.0 | Original attribution retained; old Mission MCP adapter and dependencies are removed |
+| reqwest 0.12.23 | MIT OR Apache-2.0 | Thin fixed-route service/CLI/durable transport; no redirects or automatic writes |
 
-The MCP adapter is `apps/server/src/mcp/`; its transport regression is
-`apps/server/tests/mcp_transport.rs`. The official SDK pin is
-https://github.com/modelcontextprotocol/rust-sdk/tree/rmcp-v3.2.0 .
-Only `server`, `macros`, `transport-io` and the test-only `client` features are
-requested. Resource bounds and Mission authorization adapt existing domain/API
-contracts; the SDK owns protocol parsing and service lifecycle. The native
-`Cargo.lock` records the exact transitive graph. Protocol fixture tests do not
-establish a complete Codex research loop or a finished license audit.
+Research dependencies are exact published official packages in npm lockfiles.
+Their upstream license files remain in the installed packages. Node's built-in
+SQLite storage is used through the official durable adapter, not a QZ session store.
+Deterministic execution tests use the official Faux Provider only; they do not
+establish paid inference, model quality or a completed license audit.
 
 A dependency inventory is not a completed license audit. Before distribution, inspect the complete resolved graph's upstream license texts and NOTICE requirements and comply with LGPL redistribution/linking obligations, including applicable relinking/source requirements. The committed lockfiles support that work but do not replace it. No license is changed by a directory rename or rewrite. Component implementations are unmodified official packages resolved outside the source tree; QuaZonai integration code uses their public APIs. The repository does not vendor or patch dependency implementations or toolchains. Existing license notices and applied database compatibility migrations remain preserved.
 
@@ -45,7 +44,7 @@ The optional offline archive preparation path retains the original license texts
 for its 16 added registry package versions in
 [archive preparation notices](licenses/archive-source/README.md). Exact duplicate
 texts are stored once, with every package mapped to its applicable texts. The
-application image includes these files and verifies their recorded byte digests.
+application image includes these retained license files.
 This scoped addition does not claim a complete repository license audit.
 
 The committed Cargo/npm lockfiles identify resolved dependency versions. Use

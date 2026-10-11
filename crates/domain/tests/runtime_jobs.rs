@@ -1,7 +1,6 @@
 //! Wire/domain boundary tests, not a substitute for native OCI acceptance.
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runs::RunKind,
     runtime::{
@@ -9,6 +8,7 @@ use contracts::{
         RuntimeDataKind, RuntimeImageV1,
     },
     runtime_jobs::*,
+    DbCounter, Id, Revision, SchemaV1,
 };
 use domain::runtime_jobs::*;
 use serde_json::json;

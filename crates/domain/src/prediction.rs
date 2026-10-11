@@ -2,7 +2,7 @@
 //! This module does not calculate fills, settlement or transaction commissions.
 use crate::DomainError;
 use bigdecimal::BigDecimal;
-use contracts::{DecimalValue, portfolio::NativeModelRefV1};
+use contracts::{portfolio::NativeModelRefV1, DecimalValue};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -30,7 +30,11 @@ pub fn uses_native_fee(model: &NativeModelRefV1) -> bool {
 /// UTC daily portfolio returns: continuous prediction markets use a calendar year.
 /// Existing non-prediction studies retain their frozen 252-day convention.
 pub fn portfolio_annualization_days(model: &NativeModelRefV1) -> usize {
-    if uses_native_fee(model) { 365 } else { 252 }
+    if uses_native_fee(model) {
+        365
+    } else {
+        252
+    }
 }
 
 /// Inspect original Rust BinaryOption payloads. These checks do not grant PIT status.

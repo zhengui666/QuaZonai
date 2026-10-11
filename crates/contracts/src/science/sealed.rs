@@ -1,6 +1,6 @@
 //! Restricted held-out results. No fitting inputs or qualification authority.
 use super::{NativeForecastRequestV1, NativeForecastResultV1, NativeValidationMetricV1};
-use crate::{DbCounter, Id, SchemaV1, brief::TargetKind};
+use crate::{brief::TargetKind, DbCounter, Id, SchemaV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;

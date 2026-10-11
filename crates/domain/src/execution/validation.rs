@@ -1,5 +1,5 @@
 //! Shared checked adapter to the pinned native splitters. No model execution or qualification.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::research::{SplitKind, SplitPolicyV1};
 use solow_cv::{CombinatorialPurgedKFold, Split, Splitter, TimeSeriesSplit};
 

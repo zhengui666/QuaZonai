@@ -1,12 +1,12 @@
 //! Owner audit access to Dataset-bound immutable registration evidence only.
 //! This route grants no native snapshot access or new research eligibility.
-use crate::{Store, StoreError, authority, authority::Actor, data, db};
+use crate::{authority, authority::Actor, data, db, Store, StoreError};
 use contracts::{
-    DbCounter, Id, SchemaV1,
     catalogs::RuntimeCatalogMetadataV1,
     data::{DataProviderKind, DatasetEvidenceViewV1, DatasetQualitySummaryV1, DatasetView},
     execution::NativeDataQualityReportV1,
     research::{DataOrigin, DataPartition},
+    DbCounter, Id, SchemaV1,
 };
 use serde::de::DeserializeOwned;
 use sqlx::{Postgres, Row, Transaction};
@@ -76,7 +76,7 @@ fn quality_summary(
 ) -> Result<DatasetQualitySummaryV1, StoreError> {
     // The source-local quality ID predates Dataset registration. Do not
     // rewrite it or pretend it is the newly assigned Dataset revision ID.
-    if serde_json::to_value(&quality).map_err(|_| StoreError::Integrity)?
+    if serde_json::to_value(quality).map_err(|_| StoreError::Integrity)?
         != serde_json::to_value(native).map_err(|_| StoreError::Integrity)?
     {
         return Err(StoreError::Integrity);

@@ -18,11 +18,11 @@ const linuxStackBash = process.env.QUAZONAI_TEST_LINUX_BASH || nativeBash;
 // Record the installer shell before it starts; do not let child fixture shells
 // replace its version. Startup-file $0 is only the script name in Bash 5.2+.
 const shellVersionWitness = 'printf "%s" "$BASH_VERSION" > "$TEST_SHELL_LOG"\nunset BASH_ENV\n';
-const bundleFiles = ['manage.sh', 'json.awk', 'codex.sh', 'deploy.sh', 'update.sh', 'compose.yaml',
-  'release.json', 'README.md', 'codex-update.sh', 'codex-login.sh', 'runtime.sh', 'codex.apparmor', '.env.example'];
+const bundleFiles = ['manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml',
+  'release.json', 'README.md', 'runtime.sh', '.env.example'];
 const releaseAssets = ['install.sh', 'install.ps1', 'release.json', 'quazonai-deploy.tar.gz', 'README.md',
   'quazonai-cli-linux-x86_64.tar.gz', 'quazonai-cli-macos-x86_64.tar.gz', 'quazonai-cli-macos-aarch64.tar.gz',
-  'quazonai-cli-windows-x86_64.zip', ...['application', 'runtime', 'codex', 'database'].map(x => `quazonai-image-${x}.tar.gz`)];
+  'quazonai-cli-windows-x86_64.zip', ...['application', 'runtime', 'database'].map(x => `quazonai-image-${x}.tar.gz`)];
 
 function succeeds(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 10_000, ...options });
@@ -44,7 +44,7 @@ test('documented deployment entrypoints expose shell help without creating an in
   const root = await mkdtemp(join(tmpdir(), 'quazonai-guide-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const options = { cwd: root, env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config') } };
-  for (const script of ['deploy.sh', 'update.sh', 'codex-login.sh', 'codex-update.sh', 'runtime.sh']) {
+  for (const script of ['deploy.sh', 'update.sh', 'runtime.sh']) {
     assert.ok(guide.includes(script), `Missing documented entrypoint: ${script}`);
     const help = succeeds('bash', [join(bundle, script), '--help'], options);
     assert.match(help, /usage:/i);

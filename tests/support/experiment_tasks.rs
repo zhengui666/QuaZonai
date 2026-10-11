@@ -1,6 +1,8 @@
 //! Controlled native protocol fixtures, not rustc/Wasmi execution or market evidence.
 #![allow(dead_code)]
 use super::{cycle_support, mission_support, runtime_support};
+#[path = "historical_alpha.rs"]
+pub mod historical_alpha;
 use contracts::{
     artifacts::{ArtifactCreate, ResearchArtifactKind},
     experiments::ExperimentProposalV1,
@@ -37,30 +39,6 @@ pub async fn trial_usage(pool: &PgPool, lease: &RunLease) -> (i64, i64) {
     .fetch_one(pool)
     .await
     .unwrap()
-}
-
-pub async fn result_turn(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-) -> Result<bool, StoreError> {
-    let reading = f.objects.clone();
-    let writing = f.objects.clone();
-    store
-        .prepare_mission_result_turn(
-            lease.run.id,
-            &lease.fence,
-            move |id, size| {
-                let objects = reading.clone();
-                async move { objects.read(id, size).map_err(|_| StoreError::Integrity) }
-            },
-            move |object| async move {
-                writing
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
 }
 
 pub async fn start(
@@ -174,17 +152,23 @@ async fn upload(
 pub async fn setup(pool: &PgPool) -> (Store, Actor, cycle_support::Fixture, RunLease, Id) {
     let (store, actor, f, cycle, preparation) = mission_support::setup(pool).await;
     mission_support::complete(pool, &store, &f, preparation, false).await;
-    assert!(store.advance_initial_cycle(preparation).await.unwrap());
-    let message = store.read_mission_messages(60, 1).await.unwrap().remove(0);
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_mission(&message, "compiler-parent", 120)
+    let message_id: i64 =
+        sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(preparation.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    store
+        .acknowledge_run(&store::lifecycle::RunMessage {
+            message_id,
+            run_id: preparation,
+            read_count: 1,
+        })
         .await
-        .unwrap()
-    else {
-        panic!("Mission lease required")
-    };
+        .unwrap();
+    let lease = historical_alpha::parent(pool, &store, &actor, &f, cycle).await;
     let experiment = propose(pool, &store, &actor, &f, cycle).await;
-    (store, actor, f, *lease, experiment)
+    (store, actor, f, lease, experiment)
 }
 pub fn capabilities(
     now: chrono::DateTime<chrono::Utc>,
@@ -365,13 +349,17 @@ async fn complete_native(
     let lease = if let Some(lease) = claimed {
         lease
     } else {
-        let message = store
-            .read_native_run_messages(1, 100)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|m| m.run_id == run)
-            .unwrap();
+        let message_id: i64 =
+            sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+                .bind(run.to_string())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let message = store::lifecycle::RunMessage {
+            message_id,
+            run_id: run,
+            read_count: 1,
+        };
         let Some(ClaimResult::Leased(lease)) = store
             .claim_native_run(&message, "compile-result", 60)
             .await

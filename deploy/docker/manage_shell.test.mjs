@@ -11,7 +11,7 @@ async function fixture(t){const root=await mkdtemp(join(tmpdir(),'quazonai-shell
 function run(root,body){return spawnSync('bash',['-c',`source ${quote(join(bundle,'manage.sh'))}\nQZ_WORK=${quote(join(root,'work'))}\n${body}`],{encoding:'utf8',timeout:20000});}
 function success(result){assert.equal(result.status,0,result.stderr);return result.stdout;}
 const digest='a'.repeat(64),revision='b'.repeat(40);
-function release(version){return {schema_version:2,version,revision,image:`ghcr.io/zhengui666/quazonai@sha256:${digest}`,runtime_image:`ghcr.io/zhengui666/quazonai-runtime@sha256:${digest}`,codex_image:`ghcr.io/zhengui666/quazonai-codex@sha256:${digest}`,codex_version:'0.157.0',database_image:'ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6'};}
+function release(version){return {schema_version:3,version,revision,image:`ghcr.io/zhengui666/quazonai@sha256:${digest}`,runtime_image:`ghcr.io/zhengui666/quazonai-runtime@sha256:${digest}`,database_image:'ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6'};}
 async function installation(root){const home=join(root,'home 中文 % [x]'),dir=join(home,'cluster');await mkdir(dir,{recursive:true});return {...release('v1.0.0'),root:dir,uid:userInfo().uid,gid:userInfo().gid,home,codex_home:join(home,'codex'),unit_directory:join(home,'units'),path:'/usr/bin:/bin',port:8081,database_port:55432,password:'c'.repeat(64),project:'quazonai-fixture',bundle:join(dir,'releases/v1.0.0/deployment'),docker_socket:'/var/run/docker.sock',docker_socket_gid:1000,codex_runtime_image:'quazonai-codex:quazonai-fixture',runtime_targets:[{origin:'https://运行.example',addresses:['127.0.0.1:443']}],downstream_targets:[],unknown:{keep:'exact'}};}
 test('strict JSON preserves old escaped Unicode and exact numbers; malformed data fails',async t=>{
  const root=await fixture(t),file=join(root,'state.json');await writeFile(file,'{"root":"/home/\\u996d\\u996d/\\ud83d\\ude80 [x] %","large":900719925474099399999}');
@@ -44,7 +44,7 @@ qz_prepare() { echo prepare >> "$LOG"; QZ_PREPARED=${quote(join(root,'candidate.
 qz_manifest() { :; }
 qz_get() { if [[ "$1" == "$QZ_BUNDLE/release.json" && "$2" == version ]]; then printf v1.0.1; else LC_ALL=C awk -v mode=get -v path="$2" -f "$QZ_BUNDLE/json.awk" "$1"; fi; }
 qz_require_idle() { echo idle >> "$LOG"; }
-qz_codex_require_stopped() { echo codex-stopped >> "$LOG"; }
+qz_require_research_idle() { echo research-idle >> "$LOG"; }
 qz_restarts() { echo "restarts $2" >> "$LOG"; }
 qz_configure_worker() { echo configure-worker >> "$LOG"; }
 systemctl() { echo "systemctl $*" >> "$LOG"; if [[ " $* " == *' --property=MainPID '* ]]; then printf '123\\n'; fi; }
@@ -98,3 +98,53 @@ test('preparing retry with an active Run stops before shutdown or migration',asy
 test('new install rejects occupied ports before persisting identity',async t=>{const root=await fixture(t),dir=join(root,'new-cluster');const result=run(root,`QZ_PORT=8081; QZ_DATABASE_PORT=55432; QZ_CODEX_HOME=\nqz_manifest() { :; }\nqz_preflight() { :; }\ntimeout() { return 1; }\nqz_deploy ${quote(dir)}`);assert.notEqual(result.status,0);assert.match(result.stderr,/ports are unavailable/);await assert.rejects(readFile(join(dir,'installation.json')),{code:'ENOENT'});});
 test('deterministic nested Unicode fixtures roundtrip through strict canonical JSON',async t=>{const root=await fixture(t),file=join(root,'roundtrip.json');for(let n=0;n<30;n++){const value={['key '+n]:[n,n/10,null,true,false,'饭饭 🚀 \\ " \n'],nested:{['% [x] '+n]:{keep:'$(never)',array:[{n},{}]}},empty:[]};await writeFile(file,JSON.stringify(value));assert.deepEqual(JSON.parse(success(run(root,`qz_raw ${quote(file)} ''`))),value);}});
 test('Docker mapping requires a reported string array and rejects rootless or remapped daemons',async t=>{const root=await fixture(t);for(const [data,allowed] of [['["name=seccomp,profile=builtin","name=apparmor"]',true],['[]',true],['null',false],['[3]',false],['["name=rootless"]',false],['["name=userns"]',false]]){const file=join(root,'security.json');await writeFile(file,data);const result=run(root,`docker() { cat ${quote(file)}; }\nqz_docker_mapping`);assert.equal(result.status===0,allowed,data+' '+result.stderr);}});
+
+test('Bash installation creates persistent research config once and never sources provider credentials',async t=>{
+ const root=await fixture(t); success(run(root,`qz_research_configuration ${quote(root)}`));
+ const directory=join(root,'data/research'),file=join(directory,'config.json'),original=JSON.parse(await readFile(file,'utf8'));
+ assert.equal(original.database,join(directory,'research.sqlite')); assert.equal(original.port,8092);
+ assert.deepEqual(original.modules,['research','factor-wasm','heldout-wasm'].map(name=>`/opt/quazonai/research/plugins/${name}.ts`));
+ assert.equal(success(run(root,`stat -c %a ${quote(file)} ${quote(join(directory,'provider.env'))}`)).trim(),'600\n600');
+ const customized={...original,providerModules:['./plugins/provider.ts']}; await writeFile(file,JSON.stringify(customized));
+ const provider='PROVIDER_TEST=not-a-real-secret\n$(touch NEVER_EXECUTE)\n'; await writeFile(join(directory,'provider.env'),provider);
+ success(run(root,`qz_research_configuration ${quote(root)}`)); assert.deepEqual(JSON.parse(await readFile(file,'utf8')),customized);
+ assert.equal(await readFile(join(directory,'provider.env'),'utf8'),provider); await assert.rejects(readFile(join(root,'NEVER_EXECUTE')),{code:'ENOENT'});
+});
+test('real task-idle helper accepts only observed empty native graph and rejects unknown outcomes',async t=>{
+ const root=await fixture(t),config=await installation(root),file=join(root,'config.json'),snapshot=join(root,'snapshot.json'); await writeFile(file,JSON.stringify(config));
+ const boundary=`qz_compose() { if [[ " $* " == *' ps '* ]]; then printf app-container; else cat ${quote(snapshot)}; fi; }\ndocker() { printf 'true false'; }\n`;
+ for(const [value,allowed] of [[{tasks:[]},true],[{tasks:[{id:9,status:'running'}]},false],[{tasks:[{id:9,status:'stopping'}]},false],[{},false]]){
+  await writeFile(snapshot,JSON.stringify(value)); const result=run(root,boundary+`qz_require_research_idle ${quote(file)}`); assert.equal(result.status===0,allowed,result.stderr);
+ }
+ for(const state of ['false true','false false']){assert.notEqual(run(root,boundary+`docker() { printf ${quote(state)}; }\nqz_require_research_idle ${quote(file)}`).status,0);}
+ await writeFile(join(config.root,'pending.json'),JSON.stringify({phase:'migrating'}));
+ success(run(root,boundary+`docker() { printf 'false false'; }\nqz_require_research_idle ${quote(file)}`));
+});
+test('unfinished legacy Missions reject cutover without rewriting or inventing cancellation',async t=>{
+ const root=await fixture(t),config=await installation(root),file=join(root,'config.json'); await writeFile(file,JSON.stringify(config));
+ const result=run(root,`qz_sql() { printf 1; }\nqz_require_idle ${quote(file)}`); assert.notEqual(result.status,0); assert.match(result.stderr,/legacy Missions.*Reconcile/);
+ assert.deepEqual(JSON.parse(await readFile(file,'utf8')),config);
+});
+
+test('packaged entrypoint stops console siblings on durable, API or Caddy exit without launching models',async t=>{
+ const root=await fixture(t),script=join(bundle,'entrypoint.sh'),events=join(root,'children');
+ for(const [failed,code] of [['node',37],['server',38],['caddy',39],['node',0]]){
+  await writeFile(events,'');
+  const program=`set -euo pipefail\nEVENTS=${quote(events)}\nFAILED=${quote(failed)}\nCODE=${code}\nQZ_RESEARCH_CONFIG=${quote(join(root,'config.json'))}\nQZ_RESEARCH_PROVIDER_ENV=${quote(join(root,'provider.env'))}\n
+child() {
+ local name=$1
+ printf '%s started\\n' "$name" >> "$EVENTS"
+ if [[ "$name" == "$FAILED" ]]; then /bin/sleep 0.1; return "$CODE"; fi
+ trap 'printf "%s stopped\\n" "$name" >> "$EVENTS"; exit 0' TERM
+ while :; do /bin/sleep 0.05; done
+}
+function /usr/local/bin/node { [[ "$1" == "--env-file=$QZ_RESEARCH_PROVIDER_ENV" && "$2" == --experimental-strip-types && "$3" == /opt/quazonai/research/src/main.ts ]]; child node; }
+function /opt/quazonai/bin/server { [[ "$1" == serve ]]; child server; }
+function /usr/bin/caddy { [[ "$1" == run ]]; child caddy; }
+source ${quote(script)} console`;
+  const result=spawnSync('bash',['-c',program],{encoding:'utf8',timeout:5000}); assert.equal(result.status,code || 1,result.stderr);
+  const log=await readFile(events,'utf8'); for(const name of ['node','server','caddy']){assert.match(log,new RegExp(`${name} started`)); if(name!==failed)assert.match(log,new RegExp(`${name} stopped`));}
+ }
+ const cli=spawnSync('bash',['-c',`function exec { [[ "$1" == /opt/quazonai/bin/server ]]; printf 'standalone:%s' "$2"; exit 0; }; source ${quote(script)} --version`],{encoding:'utf8',timeout:5000});
+ assert.equal(cli.status,0,cli.stderr); assert.equal(cli.stdout,'standalone:--version');
+});

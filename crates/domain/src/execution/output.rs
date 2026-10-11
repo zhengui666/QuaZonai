@@ -1,7 +1,7 @@
 //! Fixed native result structure and exact task associations. These checks do not
 //! rerun a model, fit statistics, confer PIT, or replace independent qualification.
-use super::{NativeTaskParametersV1, selection};
-use crate::{DomainError, control::text, research::invalid};
+use super::{selection, NativeTaskParametersV1};
+use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
@@ -87,7 +87,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| bad("native_output.checked_at"))?;
     if value.native_version != "nautilus-persistence/0.63.0"
-        || value.datasets.len() < 1
+        || value.datasets.is_empty()
         || !value
             .checked_at
             .timestamp_subsec_nanos()
@@ -170,7 +170,7 @@ fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
         text(reason, 1, 120, false)?;
     }
     if let Some(targets) = &value.targets {
-        if targets.len() < 1
+        if targets.is_empty()
             || value.objective_value.is_none()
             || value.primal_residual.is_none()
             || value.dual_residual.is_none()
@@ -204,11 +204,7 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         return Err(bad("native_output"));
     }
     match contract.name {
-        "qz.wasm_model"
-            if bytes.starts_with(b"\0asm\x01\0\0\0") =>
-        {
-            Ok(())
-        }
+        "qz.wasm_model" if bytes.starts_with(b"\0asm\x01\0\0\0") => Ok(()),
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),

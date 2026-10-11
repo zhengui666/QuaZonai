@@ -8,13 +8,11 @@ use store::{
     lifecycle::{
         native::{NativeJob, NativePayloads},
         ClaimResult, NativeOutcome, NextRuntimeAction, RunLease, RunMessage, TerminalObservation,
+        WorkerFence,
     },
-    turns::WorkerFence,
     Store, StoreError,
 };
 use tokio::{sync::watch, task::JoinSet};
-
-pub mod mission;
 
 #[derive(Debug)]
 enum RebalanceStage {
@@ -31,7 +29,6 @@ pub struct Worker {
     targets: Arc<RuntimeTargets>,
     parallelism: Option<usize>,
     downstream_targets: Arc<RuntimeTargets>,
-    missions: Option<Arc<mission::MissionLauncher>>,
 }
 
 #[derive(Debug)]
@@ -41,7 +38,6 @@ pub enum WorkerFailure {
     Runtime,
     TaskKind,
     Contract,
-    Codex(&'static str, crate::codex_native::NativeFailure),
 }
 impl std::fmt::Display for WorkerFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -51,9 +47,6 @@ impl std::fmt::Display for WorkerFailure {
             Self::Runtime => "native Runtime is unavailable or the remote outcome is unknown",
             Self::TaskKind => "this Run requires a different registered task driver",
             Self::Contract => "native task input or output violates its fixed contract",
-            Self::Codex(_, _) => {
-                "native Mission connection is unavailable; original Thread identity is preserved"
-            }
         })
     }
 }
@@ -88,7 +81,6 @@ impl Worker {
             targets: Arc::new(targets),
             parallelism,
             downstream_targets: Arc::new(RuntimeTargets::default()),
-            missions: None,
         })
     }
 
@@ -97,15 +89,9 @@ impl Worker {
         self
     }
 
-    pub fn with_missions(mut self, launcher: Arc<mission::MissionLauncher>) -> Self {
-        self.missions = Some(launcher);
-        self
-    }
-
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<(), WorkerFailure> {
         let owner = format!("worker/{}", Id::new());
         let mut jobs = JoinSet::new();
-        let mut missions = JoinSet::new();
         let mut probes = JoinSet::new();
         let mut automation: JoinSet<(Option<Id>, Result<(), WorkerFailure>)> = JoinSet::new();
         let mut automation_cursor = None;
@@ -117,11 +103,6 @@ impl Worker {
             while let Some(result) = jobs.try_join_next() {
                 if !matches!(result, Ok(Ok(()))) {
                     tracing::warn!("worker task deferred for native reconciliation");
-                }
-            }
-            while let Some(result) = missions.try_join_next() {
-                if !matches!(result, Ok(Ok(()))) {
-                    tracing::warn!("Mission deferred with its original identity and reservation");
                 }
             }
             while let Some(result) = probes.try_join_next() {
@@ -158,7 +139,10 @@ impl Worker {
             }
             if self.parallelism.is_none_or(|maximum| jobs.len() < maximum) {
                 // PGMQ batch width, not a total execution/concurrency ceiling.
-                let remaining = self.parallelism.map_or(32, |maximum| (maximum - jobs.len()).min(32)) as i32;
+                let remaining = self
+                    .parallelism
+                    .map_or(32, |maximum| (maximum - jobs.len()).min(32))
+                    as i32;
                 match self.store.read_native_run_messages(60, remaining).await {
                     Ok(messages) => {
                         for message in messages {
@@ -177,34 +161,11 @@ impl Worker {
                     ),
                 }
             }
-            if self.missions.is_some() && self.parallelism.is_none_or(|maximum| missions.len() < maximum) {
-                let remaining = self.parallelism.map_or(32, |maximum| (maximum - missions.len()).min(32)) as i32;
-                match self.store.read_mission_messages(60, remaining).await {
-                    Ok(messages) => {
-                        for message in messages {
-                            let worker = self.clone();
-                            let owner = format!("{owner}/{}", Id::new());
-                            let shutdown = shutdown.clone();
-                            missions.spawn(async move {
-                                worker
-                                    .process_mission_message(message, &owner, shutdown)
-                                    .await
-                            });
-                        }
-                    }
-                    Err(_) => {
-                        tracing::warn!("Mission PGMQ read unavailable; preserving pending work")
-                    }
-                }
-            }
             tokio::select! {
                 changed = shutdown.changed() => { if changed.is_err() { break; } }
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
                 result = jobs.join_next(), if !jobs.is_empty() => {
                     if !matches!(result, Some(Ok(Ok(())))) { tracing::warn!("worker task deferred for native reconciliation"); }
-                }
-                result = missions.join_next(), if !missions.is_empty() => {
-                    if !matches!(result, Some(Ok(Ok(())))) { tracing::warn!("Mission deferred with its original identity and reservation"); }
                 }
             }
         }
@@ -223,11 +184,6 @@ impl Worker {
         while let Some(result) = jobs.join_next().await {
             if !matches!(result, Ok(Ok(()))) {
                 tracing::warn!("worker shutdown left a durable task for reconciliation");
-            }
-        }
-        while let Some(result) = missions.join_next().await {
-            if !matches!(result, Ok(Ok(()))) {
-                tracing::warn!("worker shutdown preserved an unfinished Mission");
             }
         }
         Ok(())
@@ -281,7 +237,6 @@ impl Worker {
         let release =
             Box::pin(self.process_rebalance_stage(project, RebalanceStage::Release)).await;
         let feedback = self.process_forward(project).await;
-        let wake = self.process_wake(project).await;
         (
             Some(project),
             result
@@ -291,8 +246,7 @@ impl Worker {
                 .and(rebalance)
                 .and(study)
                 .and(release)
-                .and(feedback)
-                .and(wake),
+                .and(feedback),
         )
     }
 
@@ -418,58 +372,6 @@ impl Worker {
         Ok(())
     }
 
-    async fn process_wake(&self, project: Id) -> Result<(), WorkerFailure> {
-        let Some(wake) = self.store.prepare_degradation_wake(project).await? else {
-            return Ok(());
-        };
-        let reading = self.objects.clone();
-        let publishing = self.objects.clone();
-        let mut allocated = Vec::new();
-        let result = self
-            .store
-            .consume_degradation_wake(
-                wake,
-                move |id, size| {
-                    let objects = reading.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || objects.read(id, size))
-                            .await
-                            .map_err(|_| StoreError::Integrity)?
-                            .map_err(|_| StoreError::Integrity)
-                    }
-                },
-                |object| {
-                    allocated.push(object.id);
-                    let objects = publishing.clone();
-                    async move {
-                        tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
-                            .await
-                            .map_err(|_| StoreError::Integrity)?
-                            .map_err(crate::error::artifact_storage)
-                    }
-                },
-            )
-            .await;
-        for id in allocated.into_iter().filter(|_| result.is_err()) {
-            let objects = self.objects.clone();
-            if self
-                .store
-                .discard_unpublished_forward_artifact(project, id, move |id| async move {
-                    tokio::task::spawn_blocking(move || objects.discard_unpublished(id))
-                        .await
-                        .map_err(|_| StoreError::Integrity)?
-                        .map_err(|_| StoreError::Integrity)
-                })
-                .await
-                .is_err()
-            {
-                tracing::warn!(artifact_id=%id,"Wake parameter cleanup deferred");
-            }
-        }
-        result?;
-        Ok(())
-    }
-
     /// The same method is exercised by native PostgreSQL/TCP fault tests. It is
     /// not an HTTP route or an Agent capability and receives a trusted Store.
     pub async fn process_message(
@@ -564,9 +466,7 @@ impl Worker {
         result?;
         self.advance_external_experiment(message.run_id).await?;
         self.store.observe_forward(message.run_id).await?;
-        if self.store.advance_initial_cycle(message.run_id).await? {
-            self.store.acknowledge_run(message).await?;
-        }
+        self.store.acknowledge_run(message).await?;
         Ok(())
     }
 

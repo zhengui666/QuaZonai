@@ -1,8 +1,8 @@
 //! Offline operator preparation; original provenance is declared, native facts are measured.
 use crate::catalog::{
-    NativeMarketData, measure_catalog, quality_report, select_instrument_versions,
+    measure_catalog, quality_report, select_instrument_versions, NativeMarketData,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use contracts::{
     catalogs::RuntimeCatalogMetadataV1, execution::NativeDatasetSelectionV1,

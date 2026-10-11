@@ -87,37 +87,31 @@ fn audit_accepts_posted_native_cash_and_keeps_it_unchanged() {
 #[test]
 fn audit_rejects_logged_fill_when_native_cash_posting_was_rolled_back() {
     let (account, pair, fill) = fixture(false);
-    assert!(
-        reconcile(&account, &[fill], &[pair], 1, 3)
-            .unwrap_err()
-            .to_string()
-            .contains("SPOT_NATIVE_BALANCE_MISSING")
-    );
+    assert!(reconcile(&account, &[fill], &[pair], 1, 3)
+        .unwrap_err()
+        .to_string()
+        .contains("SPOT_NATIVE_BALANCE_MISSING"));
 }
 #[test]
 fn audit_rejects_missing_duplicated_or_unknown_fee_fill_evidence() {
     let (account, pair, fill) = fixture(true);
     assert!(reconcile(&account, &[], &[pair.clone()], 1, 3).is_err());
-    assert!(
-        reconcile(
-            &account,
-            &[fill.clone(), fill.clone()],
-            &[pair.clone()],
-            1,
-            3
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("REPLAY")
-    );
+    assert!(reconcile(
+        &account,
+        &[fill.clone(), fill.clone()],
+        &[pair.clone()],
+        1,
+        3
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("REPLAY"));
     let mut unknown = fill;
     unknown.commission = None;
-    assert!(
-        reconcile(&account, &[unknown], &[pair], 1, 3)
-            .unwrap_err()
-            .to_string()
-            .contains("COMMISSION_UNKNOWN")
-    );
+    assert!(reconcile(&account, &[unknown], &[pair], 1, 3)
+        .unwrap_err()
+        .to_string()
+        .contains("COMMISSION_UNKNOWN"));
 }
 #[test]
 fn audit_rejects_unexplained_external_cash_flow() {
@@ -132,12 +126,10 @@ fn audit_rejects_unexplained_external_cash_flow() {
 fn audit_rejects_unfunded_execution_even_if_account_remained_nonnegative() {
     let (account, pair, mut fill) = fixture(false);
     fill.last_qty = Quantity::from("11.0000");
-    assert!(
-        reconcile(&account, &[fill], &[pair], 1, 3)
-            .unwrap_err()
-            .to_string()
-            .contains("UNFUNDED_OR_ROLLED_BACK")
-    );
+    assert!(reconcile(&account, &[fill], &[pair], 1, 3)
+        .unwrap_err()
+        .to_string()
+        .contains("UNFUNDED_OR_ROLLED_BACK"));
 }
 
 #[test]

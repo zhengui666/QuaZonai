@@ -971,12 +971,10 @@ mod tests {
             START * 1_000_000_000 + 2_005_000_000
         );
         assert_eq!(archive.closes.len(), 2);
-        assert!(
-            archive
-                .closes
-                .iter()
-                .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000)
-        );
+        assert!(archive
+            .closes
+            .iter()
+            .all(|c| c.ts_init.as_u64() == START * 1_000_000_000 + 65_005_000_000));
         assert_eq!(
             archive.instruments[0].ts_init().as_u64(),
             (START - 10) * 1_000_000_000

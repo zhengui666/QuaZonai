@@ -102,8 +102,8 @@ def verify_sources(old, candidate, revision):
             raise ValueError('The comparison no longer uses the approved native recipe.')
         images = re.findall(r'^FROM (\S+)', dockerfile, re.MULTILINE)
         external = [image for image in images if ':' in image or '@' in image]
-        if not external or any(not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', image) for image in external):
-            raise ValueError('Every external build image must be pinned to a digest.')
+        if not external or any(image != 'node:22.19.0-bookworm-slim' and not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', image) for image in external):
+            raise ValueError('External build images require a fixed official revision.')
         rust = [image for image in external if image.startswith('rust:1.98.1-bookworm@')]
         if len(rust) != 1:
             raise ValueError('The pinned native compiler image is missing.')

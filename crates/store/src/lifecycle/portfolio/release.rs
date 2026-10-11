@@ -268,14 +268,7 @@ where
         return Err(StoreError::Integrity);
     };
     let parameters = db::id(binding.try_get("parameters_artifact_id")?)?;
-    let bytes = validation::read_document(
-        tx,
-        parameters,
-        None,
-        "qz.native_task",
-        read,
-    )
-    .await?;
+    let bytes = validation::read_document(tx, parameters, None, "qz.native_task", read).await?;
     // Delivery revalidation reaches this decode through a deep lifecycle poll
     // chain. Decode only owned bytes off that stack; keep SQL with this task.
     let (forward_dataset, frozen) = tokio::task::spawn_blocking(move || {
@@ -302,14 +295,7 @@ where
     }
     paper_initial::validate(tx, project, &build, &frozen.current_weights).await?;
     let report_id = db::id(binding.try_get("report_id")?)?;
-    let bytes = validation::read_document(
-        tx,
-        report_id,
-        None,
-        "qz.native_portfolio",
-        read,
-    )
-    .await?;
+    let bytes = validation::read_document(tx, report_id, None, "qz.native_portfolio", read).await?;
     // Decode and validate on the blocking stack, then keep the report boxed.
     // Its inline JoinHandle output and poll storage would otherwise return
     // to the nested lifecycle stack; source checks stay with this transaction.

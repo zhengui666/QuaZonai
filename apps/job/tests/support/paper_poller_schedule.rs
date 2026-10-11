@@ -238,8 +238,8 @@ async fn fixture(
 }
 
 #[tokio::test]
-async fn confirmed_continuations_complete_delayed_resume_chain_without_discovery_or_freshness_shortcuts()
- {
+async fn confirmed_continuations_complete_delayed_resume_chain_without_discovery_or_freshness_shortcuts(
+) {
     let (poller, inbox, probe, server, _root) = fixture(Duration::from_millis(550)).await;
     let original_command = probe.state.lock().unwrap().view.command_id;
     let (status, _) =
@@ -426,12 +426,10 @@ async fn new_stop_command_is_refetched_before_confirmed_continuation() {
                     };
                     assert_eq!(view.command_id, next_command);
                     assert_eq!(view.owner_command.instruction, instruction);
-                    assert!(
-                        envelope
-                            .reply
-                            .send(Ok(NativeResponse::Evidence(evidence(&view, fence(), 30))))
-                            .is_ok()
-                    );
+                    assert!(envelope
+                        .reply
+                        .send(Ok(NativeResponse::Evidence(evidence(&view, fence(), 30))))
+                        .is_ok());
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -484,12 +482,10 @@ async fn consecutive_observation_only_acknowledgements_do_not_create_continuatio
                     let NativeRequest::Bind(receipt) = envelope.request else {
                         panic!("observation acknowledgement changed native dispatch");
                     };
-                    assert!(
-                        envelope
-                            .reply
-                            .send(Ok(NativeResponse::Bound(receipt.resource.source_id)))
-                            .is_ok()
-                    );
+                    assert!(envelope
+                        .reply
+                        .send(Ok(NativeResponse::Bound(receipt.resource.source_id)))
+                        .is_ok());
                     break;
                 }
                 tokio::task::yield_now().await;

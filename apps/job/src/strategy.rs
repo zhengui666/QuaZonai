@@ -1,10 +1,10 @@
 //! Reuse FeatureReplay and one native target account. Historical members supply
 //! their original targets; a current decision executes the frozen MODEL from its
 //! original fold boundary, preserving WASM state and ordinal on every call.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::BigDecimal;
 use contracts::{
-    DbCounter, Id, SchemaV1, research::DataPartition, science::*, strategy_portfolio::*,
+    research::DataPartition, science::*, strategy_portfolio::*, DbCounter, Id, SchemaV1,
 };
 use nautilus_model::instruments::Instrument;
 use std::{collections::BTreeMap, path::Path};
@@ -204,8 +204,10 @@ pub fn compose(
                         .all(|row| ids.insert((row.feature_index, row.sequence))),
                     "STRATEGY_FEATURE_SEQUENCE_COLLISION"
                 );
-                let module =
-                    crate::signals::SignalModule::new(&read(member.policy.model_artifact_id)?, fuel.is_some())?;
+                let module = crate::signals::SignalModule::new(
+                    &read(member.policy.model_artifact_id)?,
+                    fuel.is_some(),
+                )?;
                 let decisions = crate::experiment::replay_features(
                     &member.policy.feature_schema,
                     &observations,
@@ -288,10 +290,17 @@ pub fn compose(
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),
-        consumed_fuel: if matches!(request.purpose, StrategyPortfolioPurposeV1::HistoricalReplay {}) {
+        consumed_fuel: if matches!(
+            request.purpose,
+            StrategyPortfolioPurposeV1::HistoricalReplay {}
+        ) {
             Some(DbCounter::ZERO)
         } else {
-            request.total_fuel.zip(fuel).map(|(total, left)| count(total.get() - left)).transpose()?
+            request
+                .total_fuel
+                .zip(fuel)
+                .map(|(total, left)| count(total.get() - left))
+                .transpose()?
         },
         outcome,
     };

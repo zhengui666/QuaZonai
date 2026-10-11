@@ -489,11 +489,18 @@ pub(crate) async fn capital_exit(
 ) -> Result<Prepared, StoreError> {
     key(idempotency_key)?;
     let previous = prior(tx, &scope, operation, idempotency_key, &request).await?;
-    if previous.as_ref().is_some_and(|p| target.is_some_and(|id| id != p.target)) {
+    if previous
+        .as_ref()
+        .is_some_and(|p| target.is_some_and(|id| id != p.target))
+    {
         return Err(StoreError::IdempotencyConflict);
     }
     Ok(Prepared {
-        target: previous.as_ref().map(|p| p.target).or(target).unwrap_or_default(),
+        target: previous
+            .as_ref()
+            .map(|p| p.target)
+            .or(target)
+            .unwrap_or_default(),
         scope,
         operation,
         key: idempotency_key.into(),

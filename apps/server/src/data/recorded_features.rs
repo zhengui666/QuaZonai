@@ -19,9 +19,9 @@ pub async fn list(
                 let objects = objects.clone();
                 async move {
                     tokio::task::spawn_blocking(move || objects.read(id, size))
-                    .await
-                    .map_err(|_| StoreError::Integrity)?
-                    .map_err(|_| StoreError::Integrity)
+                        .await
+                        .map_err(|_| StoreError::Integrity)?
+                        .map_err(|_| StoreError::Integrity)
                 }
             })
             .await?,

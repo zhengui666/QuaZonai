@@ -2,17 +2,17 @@
 use super::bars::{
     bar_type, candle, definitions, digest, exact, no_symlinks, publish, read, write_catalog,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate, Utc};
 use clap::Parser;
 use nautilus_model::instruments::Instrument;
 use rust_decimal::Decimal;
 use serde::{
-    Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, fs,

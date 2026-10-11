@@ -675,7 +675,10 @@ fn complete_native_snapshot_collection_crosses_the_old_million_point_gate() {
     let (parameters, mut result) = simulation();
     let first = result.canonical_result["portfolio_snapshots"][0].clone();
     let start = result.canonical_result["run"]["backtest_start_ns"]
-        .as_str().unwrap().parse::<u64>().unwrap();
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
     let snapshots: Vec<_> = (0..1_000_003)
         .map(|index| {
             let mut snapshot = first.clone();
@@ -702,7 +705,9 @@ fn full_native_statistic_and_summary_collections_keep_binding_and_duplicate_chec
         })
         .collect();
     for index in 0..8190 {
-        result.summary.insert(format!("native-summary-{index}"), "recorded".into());
+        result
+            .summary
+            .insert(format!("native-summary-{index}"), "recorded".into());
     }
     result.canonical_result["summary"] = serde_json::to_value(&result.summary).unwrap();
     assert_eq!(result.summary.len(), 8193);

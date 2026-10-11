@@ -1,7 +1,7 @@
 //! The wire boundary is not an executor or a qualification engine.
-use crate::{DomainError, control::text, research::invalid, runtime};
+use crate::{control::text, research::invalid, runtime, DomainError};
 use chrono::{DateTime, Duration, Utc};
-use contracts::{Id, research::ArtifactInputRole, runtime::RuntimeCapabilitiesV1, runtime_jobs::*};
+use contracts::{research::ArtifactInputRole, runtime::RuntimeCapabilitiesV1, runtime_jobs::*, Id};
 use std::collections::BTreeSet;
 
 /// The fixed native job reports fresh, local compiler cgroup OOM evidence with

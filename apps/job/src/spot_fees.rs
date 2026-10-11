@@ -64,7 +64,8 @@ impl FrozenSpotFeeModel {
         fill_end_ns: u64,
     ) -> Result<Self> {
         ensure!(
-            schedule.source.status == SpotFeeEvidenceStatusV1::PublicRateScenarioUnverifiedApplicability,
+            schedule.source.status
+                == SpotFeeEvidenceStatusV1::PublicRateScenarioUnverifiedApplicability,
             "SPOT_FEE_EXPLICIT_PUBLIC_SCENARIO_REQUIRED"
         );
         Self::build(schedule, instruments, fill_start_ns, fill_end_ns, true)
@@ -99,8 +100,14 @@ impl FrozenSpotFeeModel {
                 bail!("SPOT_FEE_CONSERVATIVE_REQUIRES_SOURCE_COVERAGE_VERIFIER")
             }
             SpotFeeEvidenceStatusV1::PublicRateScenarioUnverifiedApplicability => {
-                ensure!(allow_unverified_public_scenario, "SPOT_FEE_PUBLIC_SCENARIO_POLICY_OPT_IN_REQUIRED");
-                ensure!(source.source_uri == HYPERLIQUID_PUBLIC_FEE_SOURCE, "SPOT_FEE_PUBLIC_SOURCE_REQUIRED");
+                ensure!(
+                    allow_unverified_public_scenario,
+                    "SPOT_FEE_PUBLIC_SCENARIO_POLICY_OPT_IN_REQUIRED"
+                );
+                ensure!(
+                    source.source_uri == HYPERLIQUID_PUBLIC_FEE_SOURCE,
+                    "SPOT_FEE_PUBLIC_SOURCE_REQUIRED"
+                );
             }
             SpotFeeEvidenceStatusV1::Synthetic => {}
         }
@@ -113,7 +120,10 @@ impl FrozenSpotFeeModel {
             let pair = spot_pair(instrument)?;
             ensure!(
                 admitted
-                    .insert(pair.id.to_string(), (pair.base_currency, pair.quote_currency))
+                    .insert(
+                        pair.id.to_string(),
+                        (pair.base_currency, pair.quote_currency)
+                    )
                     .is_none(),
                 "SPOT_FEE_DUPLICATE_INSTRUMENT"
             );
@@ -135,7 +145,10 @@ impl FrozenSpotFeeModel {
                 "SPOT_FEE_CURRENCY_DEFINITION_MISMATCH"
             );
             let rate = rule.rate.as_decimal();
-            ensure!(rate.abs() < BigDecimal::from(1), "SPOT_FEE_RATE_OUT_OF_RANGE");
+            ensure!(
+                rate.abs() < BigDecimal::from(1),
+                "SPOT_FEE_RATE_OUT_OF_RANGE"
+            );
             if source.status == SpotFeeEvidenceStatusV1::PublicRateScenarioUnverifiedApplicability {
                 // The inspected table's tier-0 rate is a scenario input, NOT a
                 // conservative historical bound or a verified personal fee.
@@ -143,26 +156,43 @@ impl FrozenSpotFeeModel {
                     SpotFeeLiquidityV1::Maker => BigDecimal::new(4.into(), 4),
                     SpotFeeLiquidityV1::Taker => BigDecimal::new(7.into(), 4),
                 };
-                ensure!(rate == &public_rate, "SPOT_FEE_PUBLIC_SCENARIO_RATE_MISMATCH");
+                ensure!(
+                    rate == &public_rate,
+                    "SPOT_FEE_PUBLIC_SCENARIO_RATE_MISMATCH"
+                );
                 ensure!(
                     matches!(
                         (rule.order_side, rule.basis, rule.fee_currency),
-                        (SpotFeeOrderSideV1::Buy, SpotFeeBasisV1::BaseQuantity, SpotFeeCurrencyV1::Base)
-                            | (SpotFeeOrderSideV1::Sell, SpotFeeBasisV1::QuoteNotional, SpotFeeCurrencyV1::Quote)
+                        (
+                            SpotFeeOrderSideV1::Buy,
+                            SpotFeeBasisV1::BaseQuantity,
+                            SpotFeeCurrencyV1::Base
+                        ) | (
+                            SpotFeeOrderSideV1::Sell,
+                            SpotFeeBasisV1::QuoteNotional,
+                            SpotFeeCurrencyV1::Quote
+                        )
                     ),
                     "SPOT_FEE_UNSUPPORTED_PUBLIC_SCENARIO_CURRENCY"
                 );
             }
             ensure!(
                 rules
-                    .insert((rule.instrument_id.clone(), rule.order_side, rule.liquidity), rule.clone())
+                    .insert(
+                        (rule.instrument_id.clone(), rule.order_side, rule.liquidity),
+                        rule.clone()
+                    )
                     .is_none(),
                 "SPOT_FEE_DUPLICATE_RULE"
             );
         }
         // Each key has only two allowed sides and two liquidity variants, so
         // exact cardinality plus unique in-scope keys proves complete coverage.
-        Ok(Self { schedule, instruments: admitted, rules })
+        Ok(Self {
+            schedule,
+            instruments: admitted,
+            rules,
+        })
     }
 
     pub fn schedule(&self) -> &FrozenSpotFeeScheduleV1 {
@@ -183,9 +213,17 @@ impl FeeModel for FrozenSpotFeeModel {
         instrument: &InstrumentAny,
     ) -> Result<Money> {
         let pair = spot_pair(instrument)?;
-        ensure!(order.instrument_id() == pair.id, "SPOT_FEE_ORDER_INSTRUMENT_MISMATCH");
-        ensure!(!order.is_quote_quantity(), "SPOT_FEE_QUOTE_QUANTITY_UNSUPPORTED");
-        let admitted = self.instruments.get(&pair.id.to_string())
+        ensure!(
+            order.instrument_id() == pair.id,
+            "SPOT_FEE_ORDER_INSTRUMENT_MISMATCH"
+        );
+        ensure!(
+            !order.is_quote_quantity(),
+            "SPOT_FEE_QUOTE_QUANTITY_UNSUPPORTED"
+        );
+        let admitted = self
+            .instruments
+            .get(&pair.id.to_string())
             .context("SPOT_FEE_INSTRUMENT_NOT_ADMITTED")?;
         ensure!(
             *admitted == (pair.base_currency, pair.quote_currency)
@@ -196,14 +234,15 @@ impl FeeModel for FrozenSpotFeeModel {
         let side = match order.order_side() {
             OrderSide::Buy => SpotFeeOrderSideV1::Buy,
             OrderSide::Sell => SpotFeeOrderSideV1::Sell,
-            _ => bail!("SPOT_FEE_ORDER_SIDE_REQUIRED"),
         };
         let liquidity = match order.liquidity_side() {
             Some(LiquiditySide::Maker) => SpotFeeLiquidityV1::Maker,
             Some(LiquiditySide::Taker) => SpotFeeLiquidityV1::Taker,
             _ => bail!("SPOT_FEE_LIQUIDITY_SIDE_REQUIRED"),
         };
-        let rule = self.rules.get(&(pair.id.to_string(), side, liquidity))
+        let rule = self
+            .rules
+            .get(&(pair.id.to_string(), side, liquidity))
             .context("SPOT_FEE_RULE_MISSING")?;
         ensure!(
             fill_quantity.as_decimal() > Decimal::ZERO && fill_px.as_decimal() > Decimal::ZERO,
@@ -219,8 +258,9 @@ impl FeeModel for FrozenSpotFeeModel {
         let currency = rule_currency(rule, pair.base_currency, pair.quote_currency)?;
         let amount = basis * rule.rate.as_decimal();
         let rounded = match rule.rounding {
-            SpotFeeRoundingV1::HalfEvenCurrencyPrecision =>
-                amount.with_scale_round(i64::from(currency.precision), RoundingMode::HalfEven),
+            SpotFeeRoundingV1::HalfEvenCurrencyPrecision => {
+                amount.with_scale_round(i64::from(currency.precision), RoundingMode::HalfEven)
+            }
         };
         // Exact decimal until one declared currency-precision rounding. Money is
         // the public native conversion/range boundary; no f64 conversion or clamp.

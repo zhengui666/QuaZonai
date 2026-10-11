@@ -80,18 +80,18 @@ pub(crate) fn media(response: &Response, expected: &str) -> Result<()> {
 
 /// Read the complete response. An optional expected length comes only from the
 /// immutable artifact metadata, never from an adapter-specific payload quota.
-pub(crate) async fn body(
-    mut response: Response,
-    expected_bytes: Option<usize>,
-) -> Result<Vec<u8>> {
+pub(crate) async fn body(mut response: Response, expected_bytes: Option<usize>) -> Result<Vec<u8>> {
     if expected_bytes.is_some_and(|expected| {
-        response.content_length().is_some_and(|size| size > expected as u64)
+        response
+            .content_length()
+            .is_some_and(|size| size > expected as u64)
     }) {
         return Err(Failure::ResponseLimit);
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Failure::Unavailable)? {
-        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len())) {
+        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len()))
+        {
             return Err(Failure::ResponseLimit);
         }
         bytes.extend_from_slice(&chunk);

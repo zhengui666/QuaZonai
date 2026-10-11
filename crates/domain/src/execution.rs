@@ -1,11 +1,11 @@
 //! Bind fixed native operations to the already admitted immutable job inputs.
-use crate::{DomainError, research::invalid};
+use crate::{research::invalid, DomainError};
 use contracts::{
-    Id,
     execution::NativeTaskParametersV1,
     research::ArtifactInputRole,
     runtime_jobs::{JobSpecV1, RuntimeInputV1},
     science::NativeBarSelectionV1,
+    Id,
 };
 use std::collections::BTreeSet;
 
@@ -49,7 +49,7 @@ pub(crate) fn fuel_within_budget(
 }
 
 fn selection(value: &NativeBarSelectionV1) -> Result<(), DomainError> {
-    if value.bar_types.len() < 1
+    if value.bar_types.is_empty()
         || value.maximum_rows < 1
         || value.event_start_ns >= value.event_end_ns
         || value.event_end_ns > value.decision_cutoff_ns
@@ -239,7 +239,7 @@ pub fn task(spec: &JobSpecV1, parameters: &NativeTaskParametersV1) -> Result<(),
             }
         }
         NativeTaskParametersV1::ValidateData { selections, .. } => {
-            if selections.len() < 1 {
+            if selections.is_empty() {
                 return Err(bad("selections"));
             }
             let mut seen = BTreeSet::new();

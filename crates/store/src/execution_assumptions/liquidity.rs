@@ -92,17 +92,9 @@ where
     if bound_runtime != Some(runtime.as_uuid()) {
         return Err(StoreError::Invalid("bar_liquidity_runtime"));
     }
-    let parameters: NativeTaskParametersV1 = serde_json::from_slice(
-        &document(
-            tx,
-            project,
-            parameter,
-            "qz.native_task",
-            read,
-        )
-        .await?,
-    )
-    .map_err(|_| StoreError::Integrity)?;
+    let parameters: NativeTaskParametersV1 =
+        serde_json::from_slice(&document(tx, project, parameter, "qz.native_task", read).await?)
+            .map_err(|_| StoreError::Integrity)?;
     domain::execution::task(&spec, &parameters).map_err(|_| StoreError::Integrity)?;
     let NativeTaskParametersV1::ValidateData { selections, .. } = &parameters else {
         return Err(StoreError::Integrity);
@@ -156,14 +148,7 @@ where
     if output.storage_ref.as_uuid() != row.try_get::<uuid::Uuid, _>("remote_storage_ref")? {
         return Err(StoreError::Integrity);
     }
-    let bytes = document(
-        tx,
-        project,
-        report,
-        "qz.data_quality",
-        read,
-    )
-    .await?;
+    let bytes = document(tx, project, report, "qz.data_quality", read).await?;
     domain::execution::output_bindings(
         &parameters,
         None,
@@ -233,14 +218,7 @@ where
     if !declared {
         return Err(StoreError::Integrity);
     }
-    let bytes = document(
-        tx,
-        project,
-        id,
-        "qz.rolling_bar_liquidity",
-        read,
-    )
-    .await?;
+    let bytes = document(tx, project, id, "qz.rolling_bar_liquidity", read).await?;
     let original: contracts::science::NativeRollingBarLiquidityPolicyV1 =
         serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
     if original != policy {

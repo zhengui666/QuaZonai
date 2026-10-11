@@ -1,5 +1,5 @@
-//! Human research startup and durable cycle views. None of these requests can
-//! inject a worker result, qualification, expanded budget, or a data permission.
+//! Historical research-cycle views and optional owner-managed scientific startup.
+//! No embedded Agent execution or profile-bound startup requests.
 use crate::{
     brief::BriefView, budget::BudgetV1, runs::RunSnapshotV1, DbCounter, Id, Revision, SchemaV1,
 };
@@ -32,17 +32,6 @@ pub struct FrozenBriefV1 {
     pub schema_version: SchemaV1,
     pub brief: BriefView,
     pub execution_context: BriefExecutionContextV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CycleStartV1 {
-    pub schema_version: SchemaV1,
-    pub brief_id: Id,
-    /// The Project revision; the Brief and execution context are immutable.
-    pub expected_revision: Revision,
-    pub researcher_profile: CodexProfileChoiceV1,
-    pub reviewer_profile: CodexProfileChoiceV1,
 }
 
 /// An owner-managed scientific cycle. No embedded researcher/reviewer session.
@@ -79,19 +68,12 @@ pub struct CycleFinishExternalIntent {
     pub request: CycleFinishExternalV1,
 }
 
+/// Original Codex profile reference retained only in historical cycle views.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodexProfileChoiceV1 {
     pub profile_id: Id,
     pub expected_revision: Revision,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CycleStartIntent {
-    pub schema_version: SchemaV1,
-    pub project_id: Id,
-    pub request: CycleStartV1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -216,7 +198,7 @@ pub struct CycleViewV1 {
     pub used_experiments: u32,
     pub reserved_cpu_seconds: DbCounter,
     pub initial_run_id: Option<Id>,
-    /// Historical Cycles without an explicit choice cannot launch a Mission.
+    /// Original retired executor choices; never used to start a durable task.
     pub researcher_profile: Option<CodexProfileChoiceV1>,
     pub reviewer_profile: Option<CodexProfileChoiceV1>,
     pub next_action: Option<String>,

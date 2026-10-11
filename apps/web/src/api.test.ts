@@ -30,15 +30,19 @@ describe('strict API values and response parsing', () => {
     expect(failure.code).toBe('HTTP_CONTRACT_ERROR');
     expect(failure.message).not.toContain('private proxy');
   });
-  it('accepts only canonical Codex response operations', () => {
-    const collection = '/api/v2/settings/codex';
-    expect(validateResponse(collection, 'GET', 200, {
-      schema_version: 1, items: [], next_cursor: null,
-    })).toBe(true);
-    expect(validateResponse('/api/v2/settings/codex/{id}', 'PATCH', 409, problem, 'application/problem+json')).toBe(true);
-    // A valid Problem would have been accepted by the removed wrapper operation.
-    expect(validateResponse(collection, 'PATCH', 409, problem, 'application/problem+json')).toBe(false);
-    expect(validateResponse(collection, 'POST', 409, problem, 'application/problem+json')).toBe(false);
+  it('accepts declared native research errors only on research operations', async () => {
+    const failure = await responseFailure(Response.json({ error: 'request_id_conflict' }, { status: 409 }), '/api/v2/research', 'POST');
+    expect(failure).toMatchObject({ code: 'RESEARCH_NATIVE_ERROR', status: 409 });
+    expect(failure.message).toContain('request_id_conflict');
+    for (const value of [{ error: '' }, { error: 42 }, { error: 'bad', private: 'not declared' }, null]) {
+      expect((await responseFailure(Response.json(value, { status: 409 }), '/api/v2/research', 'POST')).code).toBe('HTTP_CONTRACT_ERROR');
+    }
+    expect((await responseFailure(Response.json({ error: 'bad' }, { status: 409 }), '/api/v2/projects', 'POST')).code).toBe('HTTP_CONTRACT_ERROR');
+  });
+  it('keeps native admission opaque while validating the declared 202 receipt', async () => {
+    const response = Response.json({ conversationId: 0, submissionId: 1 }, { status: 202 });
+    expect(await validateSuccessfulResponse(response, '/api/v2/research', 'POST')).toBe(response);
+    expect(response.bodyUsed).toBe(false);
   });
   it('validates password auth responses and rejects the removed bootstrap contract', () => {
     expect(validateResponse('/api/v2/auth/session', 'GET', 200, {

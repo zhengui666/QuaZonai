@@ -2,10 +2,10 @@
 //! A parsed REST response's actual observation proves current retrieval only.
 //! No Hyper network collection, metadata refresh or polling is exposed here.
 use crate::{catalog, spot_cash_capture::ClosedBarSourceRow};
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use contracts::{
-    DbCounter, SchemaV1, science::NativeBarSelectionV1, spot_cash::NativeSpotBarEventTimeV1,
-    spot_cash_source::*,
+    science::NativeBarSelectionV1, spot_cash::NativeSpotBarEventTimeV1, spot_cash_source::*,
+    DbCounter, SchemaV1,
 };
 use nautilus_hyperliquid::websocket::{messages::CandleData, parse::parse_ws_candle};
 use nautilus_model::{

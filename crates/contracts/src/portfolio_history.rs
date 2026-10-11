@@ -1,8 +1,8 @@
 //! Exact target-history wire format, shared by the native writer and artifact adoption.
 //! No optimizer, simulated account, qualification or filesystem policy lives here.
 use crate::{
-    DecimalValue,
     science::{NativePortfolioStudyRequestV1, NativePortfolioStudyResultV1},
+    DecimalValue,
 };
 use arrow_array::{ArrayRef, Decimal128Array, RecordBatch, StringArray, TimestampNanosecondArray};
 use arrow_ipc::{reader::FileReader, writer::FileWriter};
@@ -69,7 +69,7 @@ pub fn batch(
     request: &NativePortfolioStudyRequestV1,
     result: &NativePortfolioStudyResultV1,
 ) -> Result<RecordBatch, ArrowError> {
-    if request.assets.len() < 1 || result.frames.len() < 1 {
+    if request.assets.is_empty() || result.frames.is_empty() {
         return Err(invalid());
     }
     let mut cutoffs = Vec::new();

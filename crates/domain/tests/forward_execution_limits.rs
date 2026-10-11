@@ -34,7 +34,10 @@ fn finite_measurement_preserves_exact_source_without_hidden_clamps() {
     ] {
         assert_eq!(
             forward_evaluation(&input).unwrap(),
-            JobLimitsV1 { experiments: 0, ..input }
+            JobLimitsV1 {
+                experiments: 0,
+                ..input
+            }
         );
     }
 }

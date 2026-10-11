@@ -1,9 +1,9 @@
 //! DTO dispatch on the existing Polymarket engine thread. The asynchronous
 //! transport never receives a native handle; the native side never waits on HTTP.
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1, account_observation::*, capital_exit::*,
-    strategy_portfolio::HandoffClaimViewV2,
+    account_observation::*, capital_exit::*, strategy_portfolio::HandoffClaimViewV2, DbCounter, Id,
+    Revision, SchemaV1,
 };
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_common::actor::registry::try_get_actor_unchecked;
@@ -334,7 +334,11 @@ pub(crate) struct Poller {
     progress_ready_command: Option<Id>,
     stopped_command: Option<Id>,
     assessment_due: bool,
-    assessed_requests: Vec<(Revision, CapitalExitPreviewRequestV1, chrono::DateTime<chrono::Utc>)>,
+    assessed_requests: Vec<(
+        Revision,
+        CapitalExitPreviewRequestV1,
+        chrono::DateTime<chrono::Utc>,
+    )>,
     observation_at: Option<std::time::Instant>,
     observation_required: bool,
     confirmed_continuation: bool,
@@ -380,7 +384,11 @@ impl Poller {
                     return Err(anyhow!("capital_exit_native_response_kind"));
                 };
                 self.source = Some(source);
-                if self.receipt.as_ref().is_none_or(|old| old.resource.id != receipt.resource.id) {
+                if self
+                    .receipt
+                    .as_ref()
+                    .is_none_or(|old| old.resource.id != receipt.resource.id)
+                {
                     self.assessed_requests.clear();
                 }
                 self.receipt = Some(receipt);
@@ -440,9 +448,8 @@ impl Poller {
                 if let CapitalExitEvidenceKindV1::NativeProgress { phase, .. } = &request.evidence {
                     // A FENCE also projects WAITING_EVIDENCE in Store, but does
                     // not prove Advance cancelled/reduced the original work.
-                    self.confirmed_continuation =
-                        *phase == CapitalExitStateV1::WaitingEvidence
-                            && self.progress_ready_command != Some(request.command_id);
+                    self.confirmed_continuation = *phase == CapitalExitStateV1::WaitingEvidence
+                        && self.progress_ready_command != Some(request.command_id);
                     self.progress_ready_command = if *phase == CapitalExitStateV1::WaitingEvidence {
                         Some(request.command_id)
                     } else {
@@ -545,7 +552,8 @@ impl Poller {
                         }
                         continue;
                     }
-                    if domain::capital_exit::preview_request(&request, chrono::Utc::now()).is_err() {
+                    if domain::capital_exit::preview_request(&request, chrono::Utc::now()).is_err()
+                    {
                         continue;
                     }
                     // A stale/unpriceable preview cannot starve later controls.
@@ -970,7 +978,10 @@ mod tests {
         response_mode.store(mode, std::sync::atomic::Ordering::SeqCst);
         let result = availability_step(&mut poller, &inbox, &availability, mode == 1).await;
         assert_eq!(result.is_ok(), mode == 0);
-        assert!(!poller.confirmed_continuation, "Availability and every failure retain ordinary pacing");
+        assert!(
+            !poller.confirmed_continuation,
+            "Availability and every failure retain ordinary pacing"
+        );
         assert!(
             poller.assessment_due,
             "first attempt must restore later Resume discovery even on failure"
@@ -994,7 +1005,10 @@ mod tests {
             let before_retry = attempts.lock().unwrap().len();
             response_mode.store(0, std::sync::atomic::Ordering::SeqCst);
             poller.step().await.unwrap();
-            assert!(!poller.confirmed_continuation, "unknown Availability replay must not start a busy loop");
+            assert!(
+                !poller.confirmed_continuation,
+                "unknown Availability replay must not start a busy loop"
+            );
             let calls = attempts.lock().unwrap();
             assert_eq!(
                 calls.len(),
@@ -1053,11 +1067,9 @@ mod tests {
         let (mut poller, request) = fixture();
         let revision = Revision::INITIAL;
         let checked: chrono::DateTime<chrono::Utc> = "2026-10-08T01:39:00Z".parse().unwrap();
-        assert!(
-            poller
-                .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
-                .is_none()
-        );
+        assert!(poller
+            .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
+            .is_none());
         let native_deadline: chrono::DateTime<chrono::Utc> =
             "2026-10-08T01:39:05Z".parse().unwrap();
         poller
@@ -1067,16 +1079,12 @@ mod tests {
             poller.acknowledged_assessment_is_fresh(&request, Some(revision), checked),
             Some(true)
         );
-        assert!(
-            poller
-                .acknowledged_assessment_is_fresh(&request, None, checked)
-                .is_none()
-        );
-        assert!(
-            poller
-                .acknowledged_assessment_is_fresh(&request, revision.next(), checked)
-                .is_none()
-        );
+        assert!(poller
+            .acknowledged_assessment_is_fresh(&request, None, checked)
+            .is_none());
+        assert!(poller
+            .acknowledged_assessment_is_fresh(&request, revision.next(), checked)
+            .is_none());
         // Store admits only valid_until > checked. The ACK keeps that exact
         // native boundary, without borrowing an expired discovery-preview TTL.
         for (at, fresh) in [
@@ -1142,11 +1150,9 @@ mod tests {
         }
         // A new authenticated observation clears only this Poller's local ACKs.
         poller.assessed_requests.clear();
-        assert!(
-            poller
-                .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
-                .is_none()
-        );
+        assert!(poller
+            .acknowledged_assessment_is_fresh(&request, Some(revision), checked)
+            .is_none());
     }
 
     #[test]
@@ -1198,28 +1204,20 @@ mod tests {
             assert_eq!(serde_json::to_vec(retained).unwrap(), original_body);
             assert_eq!(retained.external_message_id, "synthetic-unit-assessment-1");
             assert!(!poller.observation_required);
-            assert!(
-                poller
-                    .acknowledged_assessment_is_fresh(
-                        &request,
-                        Some(Revision::INITIAL),
-                        chrono::Utc::now()
-                    )
-                    .is_none()
-            );
-        }
-        poller.reject_definite_write("capital_exit_transport_write_status:409");
-        assert!(poller.pending.is_none());
-        assert!(poller.observation_required);
-        assert!(
-            poller
+            assert!(poller
                 .acknowledged_assessment_is_fresh(
                     &request,
                     Some(Revision::INITIAL),
                     chrono::Utc::now()
                 )
-                .is_none()
-        );
+                .is_none());
+        }
+        poller.reject_definite_write("capital_exit_transport_write_status:409");
+        assert!(poller.pending.is_none());
+        assert!(poller.observation_required);
+        assert!(poller
+            .acknowledged_assessment_is_fresh(&request, Some(Revision::INITIAL), chrono::Utc::now())
+            .is_none());
     }
 }
 

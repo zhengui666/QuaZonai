@@ -17,7 +17,7 @@ pub(crate) struct ForwardSourcePlan {
 
 impl ForwardSourcePlan {
     pub(crate) fn native(&self) -> anyhow::Result<(nautilus_model::data::BarType, u64)> {
-        use anyhow::{Context, ensure};
+        use anyhow::{ensure, Context};
         use nautilus_model::{
             data::BarType,
             enums::{BarAggregation, PriceType},

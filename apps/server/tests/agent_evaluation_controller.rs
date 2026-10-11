@@ -533,7 +533,10 @@ fn path_traversal_absolute_paths_and_ambiguous_components_are_rejected() {
 fn complete_large_json_scenario_source_and_aggregate_reads_are_preserved() {
     let mut json = b"{\"schema_version\":1}".to_vec();
     json.resize(2 * 1024 * 1024 + 1, b' ');
-    assert_eq!(io::parse::<Value>(&json).unwrap(), json!({"schema_version":1}));
+    assert_eq!(
+        io::parse::<Value>(&json).unwrap(),
+        json!({"schema_version":1})
+    );
     let pack = Pack::new();
     let scenario = vec![b'x'; 256 * 1024 + 1];
     fs::write(pack.input.join("scenario-0.txt"), &scenario).unwrap();
@@ -541,7 +544,10 @@ fn complete_large_json_scenario_source_and_aggregate_reads_are_preserved() {
     fs::write(pack.input.join("source.txt"), &source).unwrap();
     let mut budget = io::Budget::default();
     assert_eq!(budget.read(&pack.input.join("source.txt")).unwrap(), source);
-    assert_eq!(budget.read(&pack.input.join("scenario-0.txt")).unwrap(), scenario);
+    assert_eq!(
+        budget.read(&pack.input.join("scenario-0.txt")).unwrap(),
+        scenario
+    );
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("repeated");
     let original = vec![b'x'; 1024 * 1024];
@@ -677,15 +683,13 @@ fn duplicate_identities_reject_but_complete_case_and_assertion_sets_are_preserve
     for n in 0..501 {
         let mut case = case.clone();
         case["id"] = json!(format!("many-{n}"));
-        case["assertions"] = json!(
-            (0..101)
-                .map(|n| {
-                    let mut assertion = assertion.clone();
-                    assertion["id"] = json!(format!("assertion-{n}"));
-                    assertion
-                })
-                .collect::<Vec<_>>()
-        );
+        case["assertions"] = json!((0..101)
+            .map(|n| {
+                let mut assertion = assertion.clone();
+                assertion["id"] = json!(format!("assertion-{n}"));
+                assertion
+            })
+            .collect::<Vec<_>>());
         cases.push(case);
     }
     pack.suite["tuning"]["cases"] = json!(cases);
@@ -718,14 +722,12 @@ fn duplicate_identities_reject_but_complete_case_and_assertion_sets_are_preserve
             assert_eq!(actual["status"], "UNRUN");
             assert_eq!(
                 actual["required_assertions"],
-                json!(
-                    case["assertions"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|assertion| &assertion["id"])
-                        .collect::<Vec<_>>()
-                )
+                json!(case["assertions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|assertion| &assertion["id"])
+                    .collect::<Vec<_>>())
             );
             assert_eq!(frozen[index]["id"], case["id"]);
             assert_eq!(frozen[index]["assertions"], case["assertions"]);

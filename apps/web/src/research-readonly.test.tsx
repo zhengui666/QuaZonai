@@ -38,14 +38,14 @@ const artifact: Schema['ArtifactView'] = { id: 'report', project_id: project.id,
   schema_name: 'qz.agent_evaluation_report', schema_version: '1', access_class: 'RESEARCH', byte_count: '1234', origin: 'FIXTURE', created_by: 'OPERATOR', created_at: now };
 const report: AgentReport = JSON.parse(readFileSync(new URL('../../../tests/fixtures/agent-evaluation/unrun-v1.json', import.meta.url), 'utf8'));
 
-describe('Research and Agent reports are observation-only', () => {
+describe('Historical projects and Agent reports are observation-only', () => {
   it('keeps the empty research view useful without a create shortcut', () => {
     const html = render(<Projects />, [[['projects', undefined], empty]]);
     expect(html).toContain('尚无研究项目'); expect(html).toContain('CLI/Skill'); expect(html).toContain('刷新');
   });
   it('keeps original project names, timestamps, search and navigation without edit controls', () => {
     const html = render(<Projects onNavigate={() => {}} />, [[['projects', undefined], { ...empty, items: [project] }]]);
-    for (const value of [project.name, project.description!, project.updated_at, '搜索本页研究项目', '进入研究', '组合记录']) expect(html).toContain(value);
+    for (const value of [project.name, project.description!, project.updated_at, '搜索本页研究项目', '查看历史项目', '历史项目（可选）', '组合记录']) expect(html).toContain(value);
     expect(html).not.toContain('>编辑<');
   });
   it('keeps the project revision, observed state and research sections in the original detail', () => {

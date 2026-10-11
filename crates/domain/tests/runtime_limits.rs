@@ -96,15 +96,22 @@ fn optional_wall_capability_preserves_uncapped_jobs_with_a_finite_request_ceilin
     let now = Utc::now();
     let mut capabilities = support::capabilities(now);
     capabilities.max_wall_seconds = None;
-    let limits = JobLimitsV1 { schema_version: SchemaV1, experiments: 0,
-        cpu_seconds: None, wall_seconds: None,
-        memory_mib: Some(capabilities.max_memory_mib), output_bytes: None };
+    let limits = JobLimitsV1 {
+        schema_version: SchemaV1,
+        experiments: 0,
+        cpu_seconds: None,
+        wall_seconds: None,
+        memory_mib: Some(capabilities.max_memory_mib),
+        output_bytes: None,
+    };
     runtime::job_limits(&capabilities, &limits).unwrap();
     capabilities.max_wall_seconds = Some(3600);
     runtime::job_limits(&capabilities, &limits).unwrap();
     capabilities.engine_versions.remove("optional-wall-time");
-    assert!(matches!(runtime::job_limits(&capabilities, &limits),
-        Err(DomainError::CapabilityUnavailable("runtime_wall_seconds"))));
+    assert!(matches!(
+        runtime::job_limits(&capabilities, &limits),
+        Err(DomainError::CapabilityUnavailable("runtime_wall_seconds"))
+    ));
     capabilities.max_wall_seconds = Some(0);
     assert!(runtime::capabilities(&capabilities, now).is_err());
 }
@@ -141,8 +148,12 @@ fn absent_output_capacity_has_no_default_and_explicit_capacity_is_authoritative(
 fn new_absent_resource_quotas_require_both_capabilities_independently() {
     let capabilities = support::capabilities(Utc::now());
     let limits = JobLimitsV1 {
-        schema_version: SchemaV1, experiments: 0, cpu_seconds: None,
-        wall_seconds: None, memory_mib: None, output_bytes: None,
+        schema_version: SchemaV1,
+        experiments: 0,
+        cpu_seconds: None,
+        wall_seconds: None,
+        memory_mib: None,
+        output_bytes: None,
     };
     runtime::job_limits(&capabilities, &limits).unwrap();
     for name in ["optional-cpu-rate", "optional-memory-limit"] {

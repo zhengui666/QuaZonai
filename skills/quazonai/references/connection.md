@@ -27,7 +27,7 @@ A trusted host may still supply a restricted machine credential for a specific p
 quazonai client --origin "$QZ_ORIGIN" --credential-file "$QZ_CREDENTIAL_FILE" identity
 ```
 
-Keep these flags paired; the CLI reads the credential internally. Check `kind`, `scope_codes`, `project_id`, `run_id` and `expires_at`; a null project is not unrestricted authority. Scoped credentials still require an exact Operator grant where indicated. A bound Mission uses its original MCP connection, never this CLI login flow.
+Keep these flags paired; the CLI reads the credential internally. Check `kind`, `scope_codes`, `project_id`, `run_id` and `expires_at`; a null project is not unrestricted authority. Scoped credentials still require an exact Operator grant where indicated. Historical restricted Mission credentials preserve their old binding, never this CLI login flow; they cannot operate new durable research.
 
 ## Discover fields, not source files
 
@@ -67,4 +67,4 @@ Lists support `--limit 1..100` and unchanged `--cursor` values. Stop when enough
 
 The prebuilt CLI runs on Linux, macOS and Windows. Unix profiles use `$XDG_CONFIG_HOME/quazonai/client.json` (or `$HOME/.config/quazonai/client.json`) with owner-only permissions. Windows profiles use `%APPDATA%\quazonai\client.json` with an owner-only ACL managed through the built-in Windows PowerShell; existing scoped credential files must also grant access only to the current user.
 
-A remote HTTP CLI origin must be explicitly allowed by the server's `CLI_HTTP_ORIGIN`; local loopback deployments keep working without it. This allows native CLI login and cookie-free owner-device (`qzc`) commands at that exact origin while browser, MCP and Runtime policies stay unchanged. Scoped machine/Mission (`qz2`) credentials retain the existing HTTPS/loopback policy: the CLI rejects remote HTTP before sending them, and the server also rejects them at this extra origin. Ask the service owner to apply the installed deployment guide's **Remote HTTP CLI** configuration when the server rejects `INVALID_HOST` or `INVALID_ORIGIN`; do not rewrite Host/Origin, borrow browser cookies or downgrade TLS automatically.
+A remote HTTP CLI origin must be explicitly allowed by `CLI_HTTP_ORIGIN`; loopback needs no extra configuration. Native cookie-free owner devices operate only at the configured origin. Existing scoped (`qz2`) scientific credentials retain their HTTPS/loopback policy. Do not rewrite Host/Origin, borrow browser cookies or silently downgrade HTTPS.

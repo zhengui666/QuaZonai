@@ -29,13 +29,13 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
   const projects = query.data?.items ?? [];
   const visible = projects.filter(project => `${project.name} ${project.description ?? ''}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   if (selected) return <Space orientation="vertical" size="large" className="full-width">
-    <Button type="text" icon={<ArrowLeftOutlined aria-hidden />} onClick={returnToProjects}>返回研究列表</Button>
+    <Button type="text" icon={<ArrowLeftOutlined aria-hidden />} onClick={returnToProjects}>返回历史项目列表</Button>
     <ProjectDetail id={selected.id} />
   </Space>;
   return <div className="research-workspace">
     <header className="research-heading">
-      <div><div className="eyebrow">RESEARCH WORKSPACE</div><Typography.Title level={1}>研究</Typography.Title>
-        <p>只读查看研究与证据；创建和修改由外部 Agent 通过 CLI/Skill 执行。</p></div>
+      <div><div className="eyebrow">HISTORICAL PROJECTS · OPTIONAL</div><Typography.Title level={1}>历史项目（可选）</Typography.Title>
+        <p>只读保留既有项目、科学证据与周期选择；不再从这里启动研究 Mission。</p></div>
     </header>
     <section className="research-intro" aria-label="研究工作流">
       <div className="intro-copy"><span className="eyebrow">从想法到证据</span><h2>定义 · 实验<br />验证 · 交付</h2><p>定义目标与预算，冻结研究输入，再通过独立评估检验假设。</p></div>
@@ -47,7 +47,7 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
     </section>
     <div className="workspace-columns">
       <section className="project-collection" aria-labelledby="project-collection-title">
-        <div className="collection-heading"><div><h2 id="project-collection-title">研究项目</h2><p>继续已有研究，或探索新的假设</p></div>
+        <div className="collection-heading"><div><h2 id="project-collection-title">历史研究项目</h2><p>查看既有研究与原始证据；新的无人值守研究从「研究」提交。</p></div>
           <Button type="text" icon={<ReloadOutlined aria-hidden />} aria-label="刷新" aria-busy={query.isFetching} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新</Button></div>
         <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
           {projects.length > 0 && <div className="project-tools"><Input prefix={<SearchOutlined aria-hidden />} aria-label="搜索本页研究项目" placeholder="搜索本页项目" value={search} allowClear onChange={event => setSearch(event.target.value)} /><span>{projects.length} 个项目 · 本页</span></div>}
@@ -57,7 +57,7 @@ export function Projects({ onNavigate }: { onNavigate?: (section: string) => voi
             <p className="project-description">{project.description || '尚未填写研究说明。打开项目，定义研究目标与约束。'}</p>
             <div className="project-brief" title={project.current_brief_id ?? undefined}><span className={project.current_brief_id ? 'brief-dot ready' : 'brief-dot'} />{project.current_brief_id ? '已关联研究 Brief' : '下一步：建立研究 Brief'}</div>
             <div className="project-card-bottom"><time dateTime={project.updated_at}>更新于 {displayTime(project.updated_at)}</time></div>
-            <Button className="project-open" onClick={() => setSelected(project)}>进入研究 <ArrowRightOutlined aria-hidden /></Button>
+            <Button className="project-open" onClick={() => setSelected(project)}>查看历史项目 <ArrowRightOutlined aria-hidden /></Button>
           </article>)}</div>}
           {(history.length > 1 || query.data?.next_cursor) && <Pager history={history} next={query.data?.next_cursor} loading={query.isFetching} move={next => { setHistory(next); setSearch(''); }} />}
         </QueryPanel>

@@ -23,7 +23,6 @@ class ShellHarnessTests(unittest.TestCase):
         self.bundle.mkdir()
         self.installation = self.root / 'installation with spaces [native] %n $HOME'
         self.log = self.root / 'commands'
-        (self.bundle / 'codex.sh').write_text('# CI fixture; no services\n')
         self.manager('')
 
     def manager(self, body):
@@ -180,12 +179,12 @@ qz_main() {
         self.assertIn('"$RUNNER_TEMP/release-assets/release_support.py"', workflow)
         self.assertLess(workflow.index('tar -xzf "$RUNNER_TEMP/release-assets/quazonai-deploy.tar.gz"'),
                         workflow.index('cp "$RUNNER_TEMP/release-assets/smoke.py"'))
-        self.assertIn('test -f manage.sh && test -f codex.sh && test -f json.awk', workflow)
-        self.assertIn('test ! -e manage.py && test ! -e codex.py', workflow)
+        self.assertIn('test -f manage.sh && test -f json.awk', workflow)
+        self.assertIn('test ! -e manage.py', workflow)
         action = (root / '.github/actions/container/action.yml').read_text()
         syntax = next(line for line in action.splitlines() if 'for script in' in line)
         self.assertIn('deploy/docker/manage.sh', syntax)
-        self.assertIn('deploy/docker/codex.sh', syntax)
+        self.assertNotIn('deploy/docker/codex.sh', syntax)
 
     def test_no_host_python_guard_keeps_ci_itself_allowed(self):
         # The fixture never delegates to a real Docker binary. Only blocked

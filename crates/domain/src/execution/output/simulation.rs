@@ -2,12 +2,12 @@
 //! Canonical encoding and fills stay native. Opt-in cash reports use the separate
 //! session-bound valuation and UTC-boundary rules, never native position fallbacks.
 use super::{bad, instruments, spot_cash_report};
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use bigdecimal::BigDecimal;
 use contracts::{
-    DbCounter, Id, SchemaV1,
     evidence::{MetricStatus, MetricValueV1},
     science::*,
+    DbCounter, Id, SchemaV1,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;

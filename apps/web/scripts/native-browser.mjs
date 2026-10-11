@@ -353,6 +353,20 @@ async function main() {
     throw new Error('Controlled data peer did not publish its explicit fixture contract');
   }
   privateValues.add(dataFixture.credential);
+  // Real official durable Host, with no provider credentials or inference calls.
+  const researchPort = await freePort();
+  const researchConfig = resolve(privateDir, 'research.json');
+  await writeFile(researchConfig, JSON.stringify({ database: resolve(privateDir, 'research.sqlite'), port: researchPort, modules: [], providerModules: [] }), { mode: 0o600 });
+  const research = launch(process.execPath, ['src/main.ts'], { cwd: resolve(repo, 'apps/research'), env: { ...childEnv, QZ_RESEARCH_CONFIG: researchConfig } });
+  research.name = 'research-host'; research.expectedStopExitCode = 0; services.push(research);
+  let researchReady = false;
+  for (const deadline = Date.now() + 30_000; Date.now() < deadline && !stopping;) {
+    if (research.exited) throw new Error('Official research Host exited before readiness; install apps/research dependencies first');
+    try { researchReady = (await fetch(`http://127.0.0.1:${researchPort}/health/live`, { signal: AbortSignal.timeout(2000) })).ok; } catch { /* Await this test-owned host only. */ }
+    if (researchReady) break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!researchReady) throw new Error('Official research Host readiness timed out');
   userServices = new NativeUserServices({
     repo, root: privateDir, release, binary: installedBinary, run, env: childEnv,
     interrupted: () => stopping,
@@ -360,9 +374,7 @@ async function main() {
   await userServices.install({
     DATABASE_URL: applicationUrl, STATE_DIR: state, BIND: `127.0.0.1:${backendPort}`,
     PUBLIC_URL: baseUrl, DEVELOPMENT_HTTP: 'true', WORKER_PARALLELISM: '1',
-    // An explicit unavailable deployment prevents discovery of the host owner's
-    // native Codex account during browser login fault-injection tests.
-    CODEX_IMAGE: 'quazonai-web-test-unavailable:missing',
+    QZ_RESEARCH_ORIGIN: `http://127.0.0.1:${researchPort}`,
     RUNTIME_TARGETS: JSON.stringify(dataFixture.runtime_targets), DOWNSTREAM_TARGETS: '[]', RUST_LOG: 'warn',
   });
   const first = await userServices.start('api');
@@ -500,7 +512,7 @@ async function main() {
 
   for (const mode of ['light', 'dark']) {
     for (const width of [1440, 768, 390]) {
-      for (const surface of ['projects', 'codex', 'project-workspace', 'project-briefs', 'project-inputs', 'project-cycles']) {
+      for (const surface of ['projects', 'auth-settings', 'project-workspace', 'project-briefs', 'project-inputs', 'project-cycles']) {
         const name = `${surface}-${mode}-${width}.png`;
         screenshots.push({ name, bytes: await readFile(resolve(privateDir, name)) });
       }

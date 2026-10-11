@@ -1,7 +1,7 @@
 //! One authenticated server-side consume for one foreground Paper owner.
 //! Files and old command receipts are diagnostics, never launch capabilities.
 //! The shared QZ transport supplies redirect/retry/proxy and response safeguards.
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::Id;
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -206,10 +206,10 @@ impl InitialExecutionAuthority {
         expected: &contracts::strategy_portfolio::HandoffClaimViewV2,
     ) -> Result<InitialCapitalPermit> {
         use contracts::{
-            SchemaV1,
             control::CommandResult,
             delivery::{PaperInitialExecutionConsumeV1, PaperInitialExecutionViewV1},
             strategy_portfolio::TargetPackageEnvelopeV2,
+            SchemaV1,
         };
         ensure!(!self.attempted, "PAPER_INITIAL_EXECUTION_ALREADY_ATTEMPTED");
         let TargetPackageEnvelopeV2::Forecast(package) = &expected.package else {
@@ -281,19 +281,19 @@ impl InitialExecutionAuthority {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use axum::{Json, Router, extract::State, routing::post};
+    use axum::{extract::State, routing::post, Json, Router};
     use contracts::{
-        SchemaV1,
         control::CommandResult,
         delivery::{
             PaperInitialExecutionConsumeV1, PaperInitialExecutionStateV1,
             PaperInitialExecutionViewV1,
         },
         strategy_portfolio::HandoffClaimViewV2,
+        SchemaV1,
     };
     use std::sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     };
 
     #[derive(Clone)]
@@ -313,16 +313,12 @@ pub(crate) mod tests {
         Json(request): Json<PaperInitialExecutionConsumeV1>,
     ) -> Json<CommandResult<PaperInitialExecutionViewV1>> {
         assert_eq!(handoff_id, state.claim.handoff.id);
-        assert!(
-            headers
-                .get("authorization")
-                .is_some_and(|h| h == state.authorization.as_str())
-        );
-        assert!(
-            headers
-                .get("idempotency-key")
-                .is_some_and(|h| h == request.owner_instance_id.to_string().as_str())
-        );
+        assert!(headers
+            .get("authorization")
+            .is_some_and(|h| h == state.authorization.as_str()));
+        assert!(headers
+            .get("idempotency-key")
+            .is_some_and(|h| h == request.owner_instance_id.to_string().as_str()));
         let previous = state.count.fetch_add(1, Ordering::SeqCst);
         if let Some(stop) = &state.stop_on_response {
             stop.send_replace(true);

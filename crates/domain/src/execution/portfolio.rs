@@ -55,7 +55,7 @@ fn target_source(
         || point.valid_until_ns != until
         || point.targets != target.targets
         || point.cash_weight != target.cash_weight
-        || target.targets.len() < 1
+        || target.targets.is_empty()
         || target
             .targets
             .iter()
@@ -391,9 +391,7 @@ pub fn portfolio_study_cutoffs(
     };
     let ttl = u64::from(schedule.target_ttl_seconds) * 1_000_000_000;
     let n = cutoffs.len() as u64;
-    if n < 2
-        || cutoffs.first() != Some(&request.evaluation_start_ns)
-    {
+    if n < 2 || cutoffs.first() != Some(&request.evaluation_start_ns) {
         return Err(bad("portfolio_study.limits"));
     }
     for (i, cutoff) in cutoffs.iter().enumerate() {

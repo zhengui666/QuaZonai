@@ -78,7 +78,7 @@ class PublishedBundleCurlTests(unittest.TestCase):
 
     def console(self):
         config = self.root / "config.json"
-        config.write_text(json.dumps({"port": self.port}))
+        config.write_text(json.dumps({"port": self.port, "schema_version": 2}))
         return subprocess.run(["bash", "-c", 'source "$1"; QZ_WORK=$2; qz_verify_console "$3"',
                                "readiness-test", str(Path(smoke.__file__).with_name("manage.sh")),
                                str(self.root), str(config)], env=self.env, capture_output=True, timeout=20)
@@ -237,7 +237,8 @@ class RuntimeFailureTests(unittest.TestCase):
                         value = self.status
                     return io.BytesIO(json.dumps(value).encode())
 
-                def docker(config, *args, **kwargs):
+                def docker(args, **kwargs):
+                    args = tuple(args[1:])
                     events.append(args[0])
                     if args[0] == "ps":
                         self.assertEqual(args, ("ps", "--all", "--quiet", "--filter", "label=io.quazonai.run=owned-run"))
@@ -250,11 +251,11 @@ class RuntimeFailureTests(unittest.TestCase):
                 output = io.StringIO()
                 config = {"root": str(root / "installation"), "bundle": str(root / "bundle"),
                           "runtime_image": "owned-image", "docker_socket": str(root / "docker.sock")}
-                with patch.object(smoke.manage, "run"), patch.object(smoke, "ports", return_value=(12345, 12346)), \
+                with patch.object(smoke.manage, "run", side_effect=lambda args, **kwargs: docker(args, **kwargs) if args[0] == 'docker' else ''), patch.object(smoke, "ports", return_value=(12345, 12346)), \
                      patch.object(smoke, "fixture_id", side_effect=("owned-run", "source", "parameters", "inputs")), \
                      patch.object(smoke.urllib.request, "build_opener", return_value=opener), \
                      patch.object(smoke.subprocess, "Popen", return_value=process), \
-                     patch.object(smoke.codex, "docker", side_effect=docker), contextlib.redirect_stderr(output):
+                     contextlib.redirect_stderr(output):
                     with self.assertRaises(AssertionError) as raised:
                         smoke.verify_runtime(config)
                 self.assertEqual(raised.exception.args, (self.status,))

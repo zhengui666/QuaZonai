@@ -45,7 +45,7 @@ use contracts::{
     execution::NativeTaskParametersV1, runtime_jobs::RuntimeInputV1, DbCounter, Id, SchemaV1,
 };
 use experiment_support::{
-    complete_compilation, forecast, limits, result_turn, setup, start, trial_usage, validation,
+    complete_compilation, forecast, limits, setup, start, trial_usage, validation,
 };
 use sqlx::{PgPool, Row};
 use store::{
@@ -1157,15 +1157,9 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                 // A valid original bearer with a different downstream binding
                 // reaches authorization and must remain forbidden, not unauthenticated.
                 let mut wrong_scope = body.clone();
-                wrong_scope["paper_initialization"]["downstream_id"] =
-                    serde_json::json!(Id::new());
-                let (status, problem) = send(
-                    Some(token.clone()),
-                    None,
-                    Some(key.clone()),
-                    wrong_scope,
-                )
-                .await;
+                wrong_scope["paper_initialization"]["downstream_id"] = serde_json::json!(Id::new());
+                let (status, problem) =
+                    send(Some(token.clone()), None, Some(key.clone()), wrong_scope).await;
                 assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
                 assert_eq!(problem["code"], "FORBIDDEN", "{problem}");
                 assert_eq!(
@@ -1175,7 +1169,9 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                 let mut extra = body.clone();
                 extra["targets"] = serde_json::json!([]);
                 assert_eq!(
-                    send(Some(token.clone()), None, Some(key.clone()), extra).await.0,
+                    send(Some(token.clone()), None, Some(key.clone()), extra)
+                        .await
+                        .0,
                     StatusCode::UNPROCESSABLE_ENTITY
                 );
                 let (status, first) =
@@ -1188,7 +1184,8 @@ async fn paper_initial_execution_http_authenticates_original_claim_and_replays_o
                     serde_json::to_value(&first.resource.claim).unwrap(),
                     serde_json::to_value(&claim).unwrap()
                 );
-                let (status, replay) = send(Some(token.clone()), None, Some(key), body.clone()).await;
+                let (status, replay) =
+                    send(Some(token.clone()), None, Some(key), body.clone()).await;
                 assert_eq!(status, StatusCode::OK);
                 assert_eq!(replay["replayed"], true);
                 let mut restarted = body;

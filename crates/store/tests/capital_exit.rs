@@ -2,7 +2,7 @@
 mod capital_exit_support;
 use capital_exit_support::*;
 use contracts::{
-    DbCounter, Id, SchemaV1, account_observation::*, capital_exit::*, control::ListQuery,
+    account_observation::*, capital_exit::*, control::ListQuery, DbCounter, Id, SchemaV1,
 };
 use sqlx::{PgPool, Row};
 use store::StoreError;
@@ -14,11 +14,9 @@ async fn capital_exit_missing_owner_is_blocked_and_preview_cannot_reserve(pool: 
     assert_eq!(preview.capability, CapitalExitCapabilityV1::Blocked);
     assert_eq!(preview.managed_account_key, None);
     assert_eq!(preview.funds.verified_idle_cash, None);
-    assert!(
-        preview
-            .reason_codes
-            .contains(&"account_owner_binding_unavailable".into())
-    );
+    assert!(preview
+        .reason_codes
+        .contains(&"account_owner_binding_unavailable".into()));
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.capital_exit_intents")
         .fetch_one(&pool)
         .await
@@ -82,13 +80,13 @@ async fn capital_exit_start_replay_preserves_one_account_reserve_and_physical_al
     let amount: contracts::DecimalValue = row.get::<String, _>("amount").parse().unwrap();
     assert_eq!(amount, money("100").amount);
     assert_eq!(row.get::<i64, _>("account_control_epoch"), 1);
-    assert!(
-        sqlx::query("UPDATE app.capital_exit_intents SET original_request='{}'::jsonb WHERE id=$1")
-            .bind(view.id.as_uuid())
-            .execute(&pool)
-            .await
-            .is_err()
-    );
+    assert!(sqlx::query(
+        "UPDATE app.capital_exit_intents SET original_request='{}'::jsonb WHERE id=$1"
+    )
+    .bind(view.id.as_uuid())
+    .execute(&pool)
+    .await
+    .is_err());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -174,18 +172,17 @@ async fn capital_exit_old_epoch_cannot_report_ready_and_pause_keeps_reserve(pool
     assert!(paused.account_control_epoch > fenced.account_control_epoch);
     available.external_message_id = "old-epoch-new-message".into();
     available.sequence = DbCounter::new(3).unwrap();
-    assert!(
-        f.store
-            .submit_capital_exit_evidence(
-                &f.actor,
-                view.id,
-                &available.external_message_id,
-                &available,
-                |_| async { Ok(()) }
-            )
-            .await
-            .is_err()
-    );
+    assert!(f
+        .store
+        .submit_capital_exit_evidence(
+            &f.actor,
+            view.id,
+            &available.external_message_id,
+            &available,
+            |_| async { Ok(()) }
+        )
+        .await
+        .is_err());
     let claimed = f.claim(&paused, "claim-pause").await;
     let fenced = f.fence(&claimed, 3).await;
     let progress = f.evidence(

@@ -5,8 +5,8 @@ use super::{
     NativeSimulationSettingsV1,
 };
 use crate::{
-    DbCounter, DecimalValue, Id, SchemaV1,
     research::{DataPartition, SplitPolicyV1},
+    DbCounter, DecimalValue, Id, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

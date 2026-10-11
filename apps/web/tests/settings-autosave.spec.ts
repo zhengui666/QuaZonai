@@ -72,7 +72,6 @@ async function setup(page: Page, acceptedPackageVersions: Schema['PackageSchemaV
     if (path === '/api/v2/auth/session') return reply({ schema_version: 1, authenticated_at: now, expires_at: new Date(Date.now() + 43_200_000).toISOString() });
     if (path === '/api/v2/auth/cli/devices') return reply([]);
     if (path === '/api/v2/projects') return reply({ schema_version: 1, items: [], next_cursor: null });
-    if (path === '/api/v2/settings/codex') return reply({ schema_version: 1, items: [], next_cursor: null });
     if (path === '/api/v2/settings/credentials') {
       const body: Schema['IntegrationSecretCreate'] = request.postDataJSON();
       if (holdSecret) { await holdSecret; holdSecret = undefined; }
@@ -229,7 +228,7 @@ test('existing Runtime, Downstream and data source edits save without a Save act
   expect(writes.map(write => write.kind)).toEqual(['runtime', 'runtime', 'runtime', 'runtime', 'runtime', 'runtime', 'runtime', 'runtime', 'downstream', 'source']);
   await page.getByRole('tab', { name: '鉴权管理', exact: true }).click();
   await page.getByRole('textbox', { name: '当前密码' }).fill('test-only-password');
-  await page.getByRole('tab', { name: 'Codex', exact: true }).click();
+  await page.getByRole('tab', { name: '集成', exact: true }).click();
   await page.getByRole('menuitem', { name: '研究', exact: true }).click();
   await expect(page.getByText('请先保存或取消更改')).toHaveCount(0);
 });
@@ -963,6 +962,7 @@ test('browsing and filtering original projects never creates pending Settings wo
   await page.route(/\/api\/v2\/projects(?:\?|$)/, route => route.request().method() === 'GET'
     ? route.fulfill({ json: { schema_version: 1, items: [project], next_cursor: null } }) : route.fallback());
   await page.reload();
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   const search = page.getByRole('textbox', { name: '搜索本页研究项目', exact: true });
   await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   await search.fill('只读');
@@ -975,9 +975,10 @@ test('browsing and filtering original projects never creates pending Settings wo
   await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog', { name: /放弃|丢失/ })).toHaveCount(0);
-  await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   await browserReload(page, 'clean');
+  await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   await expect(page.getByRole('button', { name: project.name, exact: true })).toBeVisible();
   expect(mutations).toHaveLength(0);
   expect(writes).toHaveLength(0);
@@ -1574,7 +1575,7 @@ test('a pending password change retains its result across settings navigation', 
   await page.getByRole('textbox', { name: '确认新密码' }).fill('new-password-123');
   await page.getByRole('button', { name: '修改密码并重新登录' }).click();
   await expect.poll(() => attempts).toBe(1);
-  await page.getByRole('tab', { name: 'Codex' }).click();
+  await page.getByRole('tab', { name: '集成' }).click();
   await expect.poll(() => page.evaluate(async () => {
     const modulePath = '/src/settings-work.ts';
     return (await import(modulePath)).settingsWorkActive();

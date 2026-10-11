@@ -8,26 +8,26 @@
 extern crate self as store;
 
 mod account_observation;
-pub mod capital_exit;
 pub mod artifacts;
 pub mod auth;
 pub mod authority;
 mod automation;
 pub mod brief;
-pub mod codex_profiles;
+pub mod capital_exit;
 mod commands;
 pub mod control;
 pub mod cycles;
 pub mod data;
-mod dataset_evidence;
 pub mod data_registration;
 pub mod data_validation;
+mod dataset_evidence;
 mod db;
 pub mod downstream;
 pub mod evidence;
 pub mod execution_assumptions;
 pub mod experiments;
 pub mod forward;
+pub mod historical_agent;
 mod historical_import;
 pub use historical_import::{HistoricalArtifactPublication, HistoricalImportSource};
 mod historical_rows;
@@ -41,7 +41,6 @@ pub mod research;
 pub mod runtime;
 mod selection;
 pub mod settings;
-pub mod turns;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::time::Duration;
@@ -82,8 +81,6 @@ pub enum StoreError {
     NotFound,
     #[error("conflicting immutable command or native identity")]
     Conflict,
-    #[error("mission already has an unresolved model turn")]
-    TurnPending,
     #[error("invalid store contract: {0}")]
     Invalid(&'static str),
     #[error("domain command rejected: {0}")]

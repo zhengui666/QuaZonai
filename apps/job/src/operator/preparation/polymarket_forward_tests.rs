@@ -346,12 +346,10 @@ fn missing_real_close_observation_cannot_use_native_timer_time() {
 fn unknown_feature_meaning_is_unsupported() {
     let mut s = schema();
     s[0].source_ref = "unrelated-macro-source".into();
-    assert!(
-        quote_fields(&s, ID)
-            .unwrap_err()
-            .to_string()
-            .contains("UNSUPPORTED")
-    );
+    assert!(quote_fields(&s, ID)
+        .unwrap_err()
+        .to_string()
+        .contains("UNSUPPORTED"));
     s = schema();
     s[0].source_key = "future_label".into();
     assert!(quote_fields(&s, ID).is_err());
@@ -369,17 +367,15 @@ fn partial_start_and_market_close_are_unavailable() {
 fn partial_line_and_trailing_records_are_rejected() {
     let mut b = bytes(&records());
     b.pop();
-    assert!(
-        project(
-            &mut b.as_slice(),
-            &plan(),
-            &schema(),
-            &instrument(),
-            &BTreeMap::new(),
-            0
-        )
-        .is_err()
-    );
+    assert!(project(
+        &mut b.as_slice(),
+        &plan(),
+        &schema(),
+        &instrument(),
+        &BTreeMap::new(),
+        0
+    )
+    .is_err());
     let mut r = records();
     r.push(SourceRecord {
         schema_version: SchemaV1,
@@ -397,12 +393,10 @@ fn source_bar_prices_must_match_official_replay() {
     for field in ["open", "high", "low", "close"] {
         record_mut(&mut r, "bar_close", 1).payload[field] = json!("0.56");
     }
-    assert!(
-        run(&r)
-            .unwrap_err()
-            .to_string()
-            .contains("NATIVE_BAR_REPLAY_OR_INITIAL_PARTIAL_UNSUPPORTED")
-    );
+    assert!(run(&r)
+        .unwrap_err()
+        .to_string()
+        .contains("NATIVE_BAR_REPLAY_OR_INITIAL_PARTIAL_UNSUPPORTED"));
 }
 
 #[test]
@@ -422,12 +416,10 @@ fn actual_lifecycle_ready_and_drain_records_are_required() {
     let mut records = records();
     record_mut(&mut records, "lifecycle_coverage", 0).payload["parsed_message_channel_drained"] =
         json!(false);
-    assert!(
-        run(&records)
-            .unwrap_err()
-            .to_string()
-            .contains("DRAIN_FACTS")
-    );
+    assert!(run(&records)
+        .unwrap_err()
+        .to_string()
+        .contains("DRAIN_FACTS"));
 }
 
 #[test]
@@ -461,12 +453,10 @@ fn unselected_original_bars_remain_in_source_without_becoming_forward_rows() {
     assert_eq!(projected.bars[0].ts_event.as_u64(), 3 * STEP);
     // An absent early close or an unrecorded native skip/reset cannot be guessed.
     record_mut(&mut records, "bar_close", 1).kind = "source_phase".into();
-    assert!(
-        run(&records)
-            .unwrap_err()
-            .to_string()
-            .contains("INITIAL_PARTIAL_UNSUPPORTED")
-    );
+    assert!(run(&records)
+        .unwrap_err()
+        .to_string()
+        .contains("INITIAL_PARTIAL_UNSUPPORTED"));
 }
 
 #[test]
@@ -478,12 +468,10 @@ fn source_ready_alone_cannot_certify_a_late_started_first_partial_bar() {
         !((r.kind == "trade" || r.kind == "bar_close") && r.observed_at_ns.get() < 2 * STEP)
     });
     resequence(&mut r);
-    assert!(
-        run(&r)
-            .unwrap_err()
-            .to_string()
-            .contains("AGGREGATION_START_EVIDENCE_REQUIRED")
-    );
+    assert!(run(&r)
+        .unwrap_err()
+        .to_string()
+        .contains("AGGREGATION_START_EVIDENCE_REQUIRED"));
 }
 
 #[test]

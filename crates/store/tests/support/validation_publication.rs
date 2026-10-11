@@ -93,29 +93,12 @@ async fn decision(pool: &PgPool, evaluation: Id) -> (String, String, String) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn mission_cancellation_preserves_validation_publication_and_original_trial(pool: PgPool) {
+async fn historical_parent_cancellation_preserves_explicit_validation_and_original_trial(
+    pool: PgPool,
+) {
     let (store, actor, f, lease, experiment, validation) = prepared(&pool).await;
-    store
-        .begin_run_dispatch(lease.run.id, &lease.fence)
-        .await
-        .unwrap();
+    experiment_support::historical_alpha::terminal(&pool, &lease).await;
     let parent = store.get_run(&actor, lease.run.id).await.unwrap();
-    store
-        .cancel_run(
-            &actor,
-            "cancel-parent",
-            parent.id,
-            &contracts::lifecycle::RunCancelV1 {
-                schema_version: SchemaV1,
-                expected_revision: parent.revision,
-            },
-        )
-        .await
-        .unwrap();
-    assert!(!store
-        .complete_mission(parent.id, &lease.fence)
-        .await
-        .unwrap());
     let child = store.get_run(&actor, validation).await.unwrap();
     assert_eq!(
         child.state,
@@ -142,24 +125,9 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
     .await
     .unwrap();
     assert_eq!(receipt, ("CANCELLED".into(), None));
-    assert!(store
-        .complete_mission(parent.id, &lease.fence)
-        .await
-        .unwrap());
-    let observation: serde_json::Value =
-        sqlx::query_scalar("SELECT observation FROM app.run_terminal_receipts WHERE run_id=$1")
-            .bind(parent.id.as_uuid())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(observation["formal_evaluation_count"], "0");
-    assert_ne!(observation["formal_evaluation"], "PUBLISHED");
     empty(&pool, experiment).await;
     let parent_message = message(&pool, parent.id).await;
-    assert!(matches!(
-        store.acknowledge_run(&parent_message).await,
-        Err(StoreError::Conflict)
-    ));
+    store.acknowledge_run(&parent_message).await.unwrap();
     assert!(matches!(
         store
             .cycle_selection(&actor, lease.run.cycle_id.unwrap())
@@ -182,6 +150,10 @@ async fn mission_cancellation_preserves_validation_publication_and_original_tria
     );
     store.acknowledge_run(&pending).await.unwrap();
     store.acknowledge_run(&parent_message).await.unwrap();
+    store
+        .freeze_cycle_selection(&actor, parent.id)
+        .await
+        .unwrap();
     let selection = store
         .cycle_selection(&actor, lease.run.cycle_id.unwrap())
         .await
@@ -460,8 +432,11 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
             .unwrap(),
         1
     );
-    for query in ["UPDATE app.calibrations SET estimator_version='changed'", "DELETE FROM app.calibrations",
-        "INSERT INTO app.calibrations(estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id) SELECT estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id FROM app.calibrations"] {
+    for query in [
+        "UPDATE app.calibrations SET estimator_version='changed'",
+        "DELETE FROM app.calibrations",
+        "INSERT INTO app.calibrations(estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id) SELECT estimator_kind,estimator_version,model_artifact_id,train_input_set_id,fit_end_available_at,output_unit,horizon_kind,horizon_value,validation_evaluation_id FROM app.calibrations",
+    ] {
         assert!(sqlx::query(query).execute(&pool).await.is_err());
     }
     assert!(raw_report.get("folds").is_none());
@@ -570,16 +545,15 @@ async fn complete_validation_publication_is_atomic_unique_producer_bound_and_pre
         store.alpha_calibration(&cli, derived.id).await.unwrap().id,
         calibration.id
     );
-    let verifier = Id::new();
-    let credential = store
-        .issue_mission_credential(lease.run.id, &lease.fence, Id::new(), verifier)
-        .await
-        .unwrap();
-    let mission = Actor::Machine {
-        credential_id: credential,
-        verifier_ref: verifier,
-        operator_grant: None,
-    };
+    let principal = proposal_support::machine(
+        &pool,
+        f.data.project,
+        Some(lease.run.id),
+        "MISSION",
+        &["EVIDENCE_READ"],
+    )
+    .await;
+    let mission = principal;
     assert!(matches!(
         store.alpha_calibration(&mission, derived.id).await,
         Err(StoreError::Forbidden)

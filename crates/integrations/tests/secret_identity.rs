@@ -67,14 +67,26 @@ fn large_ca_ciphertext_reopens_exactly_and_retains_identity_authentication() {
     assert!(plaintext.len() > 65536);
     let id = vault.put("TLS_CA", &plaintext).unwrap();
     let path = root.path().join("secrets").join(id.to_string());
-    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o400);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o400
+    );
     let original = fs::read(&path).unwrap();
-    assert!(!original.windows(plaintext.len()).any(|bytes| bytes == plaintext));
+    assert!(!original
+        .windows(plaintext.len())
+        .any(|bytes| bytes == plaintext));
     assert!(vault.put_at(id, "TLS_CA", b"replacement").is_err());
     assert!(vault.put("RUNTIME", &plaintext).is_err());
     drop(vault);
-    let reopened = SecretVault::open(&root.path().join("secrets"), &root.path().join("master.key")).unwrap();
-    assert!(reopened.read(id, "TLS_CA").unwrap() == plaintext, "complete native CA bytes changed");
+    let reopened = SecretVault::open(
+        &root.path().join("secrets"),
+        &root.path().join("master.key"),
+    )
+    .unwrap();
+    assert!(
+        reopened.read(id, "TLS_CA").unwrap() == plaintext,
+        "complete native CA bytes changed"
+    );
     for purpose in ["RUNTIME", "DOWNSTREAM", "SESSION_KEY", "MACHINE_VERIFIER"] {
         assert!(reopened.read(id, purpose).is_err());
     }

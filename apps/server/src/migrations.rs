@@ -55,9 +55,7 @@ impl HistoricalExports {
                 return Err(invalid());
             }
             let files = MissionFiles::open(&registration.directory).map_err(|_| invalid())?;
-            let bytes = files
-                .read_text("report.json")
-                .map_err(|_| invalid())?;
+            let bytes = files.read_text("report.json").map_err(|_| invalid())?;
             let report: HistoricalRowExportV1 =
                 serde_json::from_str(&bytes).map_err(|_| invalid())?;
             if report.inspection.tables.len() != report.tables.len() {
@@ -85,9 +83,7 @@ impl HistoricalExports {
             }
             let artifacts = if let Some(directory) = registration.artifact_directory {
                 let files = MissionFiles::open(&directory).map_err(|_| invalid())?;
-                let bytes = files
-                    .read_text("report.json")
-                    .map_err(|_| invalid())?;
+                let bytes = files.read_text("report.json").map_err(|_| invalid())?;
                 let artifacts: HistoricalArtifactExportV1 =
                     serde_json::from_str(&bytes).map_err(|_| invalid())?;
                 if artifacts.source_installation_id != report.source_installation_id {
@@ -115,9 +111,7 @@ impl HistoricalExports {
                     let reference = item.object_ref.ok_or_else(invalid)?;
                     let size = item.byte_count.ok_or_else(invalid)?.get();
                     total = total.checked_add(size).ok_or_else(invalid)?;
-                    if size == 0
-                        || objects.contains_key(&reference)
-                    {
+                    if size == 0 || objects.contains_key(&reference) {
                         return Err(invalid());
                     }
                     let mut snapshot = files
@@ -415,19 +409,46 @@ mod artifact_tests {
     }
 
     #[test]
-    fn historical_registration_accepts_more_than_thirty_two_and_large_json_but_rejects_duplicates() {
+    fn historical_registration_accepts_more_than_thirty_two_and_large_json_but_rejects_duplicates()
+    {
         let root = tempfile::tempdir().unwrap();
         let report = empty_report(Id::new()).to_string();
         fs::write(root.path().join("report.json"), &report).unwrap();
-        let registrations = (0..33).map(|_| ExportRegistration { export_ref: Id::new(), directory: root.path().to_owned(), artifact_directory: None }).collect();
-        assert_eq!(HistoricalExports::load(registrations).unwrap().entries.len(), 33);
+        let registrations = (0..33)
+            .map(|_| ExportRegistration {
+                export_ref: Id::new(),
+                directory: root.path().to_owned(),
+                artifact_directory: None,
+            })
+            .collect();
+        assert_eq!(
+            HistoricalExports::load(registrations)
+                .unwrap()
+                .entries
+                .len(),
+            33
+        );
         // Whitespace is valid JSON and makes the old byte ceiling observable
         // without weakening report fields or inventing source data.
         let padded = format!("{}{}", " ".repeat(4 * 1024 * 1024 + 1), report);
         fs::write(root.path().join("report.json"), padded).unwrap();
         let reference = Id::new();
-        assert!(HistoricalExports::load(vec![ExportRegistration { export_ref: reference, directory: root.path().to_owned(), artifact_directory: None }]).is_ok());
-        assert!(HistoricalExports::load((0..2).map(|_| ExportRegistration { export_ref: reference, directory: root.path().to_owned(), artifact_directory: None }).collect()).is_err());
+        assert!(HistoricalExports::load(vec![ExportRegistration {
+            export_ref: reference,
+            directory: root.path().to_owned(),
+            artifact_directory: None
+        }])
+        .is_ok());
+        assert!(HistoricalExports::load(
+            (0..2)
+                .map(|_| ExportRegistration {
+                    export_ref: reference,
+                    directory: root.path().to_owned(),
+                    artifact_directory: None
+                })
+                .collect()
+        )
+        .is_err());
     }
 
     #[test]
@@ -439,25 +460,44 @@ mod artifact_tests {
         fs::create_dir(&artifacts).unwrap();
         fs::create_dir(artifacts.join("objects")).unwrap();
         let installation = Id::new();
-        fs::write(rows.join("report.json"), empty_report(installation).to_string()).unwrap();
+        fs::write(
+            rows.join("report.json"),
+            empty_report(installation).to_string(),
+        )
+        .unwrap();
         let object = Id::new();
         let length = 64 * 1024 * 1024 + 1;
         let file = fs::File::create(artifacts.join(format!("objects/{object}"))).unwrap();
         file.set_len(length).unwrap();
-        let mut items = vec![serde_json::json!({"identity":{"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":Id::new()},"outcome":"COPIED","object_ref":object,"byte_count":length.to_string()})];
+        let mut items = vec![
+            serde_json::json!({"identity":{"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":Id::new()},"outcome":"COPIED","object_ref":object,"byte_count":length.to_string()}),
+        ];
         for _ in 0..10_000 {
             items.push(serde_json::json!({"identity":{"kind":"ARTIFACT","source_table":"mission_artifacts","source_id":Id::new()},"outcome":"SEALED_RETAINED","object_ref":null,"byte_count":null}));
         }
         let report = serde_json::json!({"schema_version":1,"source_installation_id":installation,"exported_at":"2020-01-01T00:00:00Z","artifacts":items});
         fs::write(artifacts.join("report.json"), report.to_string()).unwrap();
         let reference = Id::new();
-        let exports = HistoricalExports::load(vec![ExportRegistration { export_ref: reference, directory: rows.clone(), artifact_directory: Some(artifacts.clone()) }]).unwrap();
+        let exports = HistoricalExports::load(vec![ExportRegistration {
+            export_ref: reference,
+            directory: rows.clone(),
+            artifact_directory: Some(artifacts.clone()),
+        }])
+        .unwrap();
         assert_eq!(exports.entries[&reference].objects.len(), 1);
         let mut snapshot = exports.object(reference, object).unwrap();
         assert_eq!(snapshot.seek(SeekFrom::End(0)).unwrap(), length);
         file.set_len(1).unwrap();
         assert_eq!(snapshot.seek(SeekFrom::End(0)).unwrap(), length);
-        assert!(HistoricalExports::load(vec![ExportRegistration { export_ref: reference, directory: rows, artifact_directory: Some(artifacts) }]).is_err(), "exact length remains mandatory");
+        assert!(
+            HistoricalExports::load(vec![ExportRegistration {
+                export_ref: reference,
+                directory: rows,
+                artifact_directory: Some(artifacts)
+            }])
+            .is_err(),
+            "exact length remains mandatory"
+        );
     }
 
     #[test]

@@ -3,11 +3,11 @@ use super::{artifact, bad, features, selection};
 use crate::DomainError;
 use bigdecimal::BigDecimal;
 use contracts::{
-    DbCounter, DecimalValue, Id, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runtime_jobs::{JobSpecV1, RuntimeInputV1},
     science::*,
     strategy_portfolio::*,
+    DbCounter, DecimalValue, Id, SchemaV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,7 +38,7 @@ pub fn mandate(value: &StrategyMandateContentV1) -> Result<(), DomainError> {
 
 pub fn build(value: &StrategyPortfolioBuildV1) -> Result<(), DomainError> {
     crate::data::bounded_native_limits(&value.limits)?;
-    if value.members.len() < 1
+    if value.members.is_empty()
         || value
             .members
             .iter()
@@ -101,7 +101,7 @@ pub fn request(value: &NativeStrategyCompositionRequestV1) -> Result<(), DomainE
     selection(&value.selection)?;
     mandate(&value.mandate)?;
     crate::portfolio::simulation_settings(&value.settings)?;
-    if value.members.len() < 1
+    if value.members.is_empty()
         || value.total_fuel == Some(contracts::DbCounter::ZERO)
         || value.settings.base_currency != value.mandate.base_currency
         || value.settings.starting_capital != value.mandate.capital_assumption
@@ -133,7 +133,7 @@ pub fn request(value: &NativeStrategyCompositionRequestV1) -> Result<(), DomainE
         let policy = &member.policy;
         features::schema(&policy.feature_schema)?;
         features::artifact_ids(&policy.feature_artifact_ids)?;
-        if member.feature_artifact_ids.len() < 1
+        if member.feature_artifact_ids.is_empty()
             || member
                 .feature_artifact_ids
                 .iter()
@@ -458,8 +458,13 @@ pub fn result(
 ) -> Result<(), DomainError> {
     self::request(request)?;
     if serde_json::to_value(request).ok() != serde_json::to_value(&value.request).ok()
-        || matches!(request.purpose, StrategyPortfolioPurposeV1::CurrentDecision { .. })
-            && !super::fuel_within_budget(value.consumed_fuel, request.total_fuel.map(|fuel| u128::from(fuel.get())))
+        || matches!(
+            request.purpose,
+            StrategyPortfolioPurposeV1::CurrentDecision { .. }
+        ) && !super::fuel_within_budget(
+            value.consumed_fuel,
+            request.total_fuel.map(|fuel| u128::from(fuel.get())),
+        )
         || value.native_versions
             != BTreeMap::from([
                 ("nautilus-backtest".into(), "0.63.0".into()),

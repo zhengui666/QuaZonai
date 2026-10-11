@@ -1,0 +1,111 @@
+# Durable factor research platform
+
+<a id="task"></a>
+## Task
+
+**Task ID:** durable-factor-platform
+
+Owner-approved goal: replace production Codex/Pi Coding Agent execution with official Pi Durable, simplify the SOP around overfitting prevention, and deliver an extensible unattended factor-research foundation. No legacy interface/configuration compatibility is required. Target branch is `dev`; production deployment and paid inference are not authorized.
+
+Baseline: remote `dev` at `b8f2d704`. Isolated branch `refactor/durable-factor-platform`; the original workspace's AGENTS change, deleted license and untracked files are untouched.
+
+<a id="intent"></a>
+## Intent
+
+The current execution stack ties native Agent sessions, research admission, factor experiments, target policies and portfolio approval together. A factor need not be a single-instrument long-only target strategy. Research should follow goal/data → proposal/computation → out-of-sample evaluation → recorded feedback/iterate/stop. Portfolios and target delivery are optional consumers.
+
+Preserve history, applied migrations, source/PIT evidence, independent held-out evaluation, complete trial accounting, honest failures and real scientific results. Do not rebuild upstream Agent loops, task schedulers, session storage, indicators, matching or accounting.
+
+<a id="spec"></a>
+## Requirements and design
+
+- `apps/research`: a Node/TypeScript host using pinned official `@earendil-works/pi-durable`, `pi-ai` and Chord 1.1.0. Official persistent storage owns conversations, tasks, deduplicated submissions, cancellation, extension registration, views and usage. Project documents hold research inputs and trial facts, not duplicate native execution state.
+- Extensions are official `Extension` modules loaded from configuration. Data/market, factors, evaluators and workflow policy can be added without editing the host or core database schema.
+- Rust scientific adapters reuse native Nautilus catalogs, Instrument/Bar data, indicators and the existing Wasmi feature-model execution. A generic factor-only evaluation path returns scores/statistics without creating targets, qualifications, offers or broker orders.
+- Explicit researcher-visible discovery/validation feedback is separate from a final, non-tunable held-out evaluation. Trial selection and exposure remain recorded; failed attempts are not erased.
+- Web/CLI display the native durable views, task graph, recorded research results, failures and actual usage. Preserve historical reads without running the retired Codex backend.
+- Remove production Codex startup, profile/login/model configuration, native Mission driving and Codex images. Keep database migrations and historical facts; do not translate past Codex activity into new durable identities.
+
+The public extension/API surface is experimental upstream; lockfiles pin exact published packages. No third-party source is vendored or patched.
+
+<a id="plan"></a>
+## Implementation plan
+
+1. Audit native entrypoints and callers across contracts/domain/store/integrations, server/runtime/job/CLI/Web, data tools, deployment and CI; record concrete retain/delete/replace decisions here.
+2. Build the official durable host and native factor-only adapter in independent paths; verify durable storage, extension loading and real calculations before removing the old execution chain.
+3. Switch research, frontend/CLI and deployment to the durable entry; remove retired production modules and stale registration while retaining history and optional native science.
+4. Verify plugin additions, different asset classes, multi-asset/factor-only experiments, temporal/split boundaries, unattended iterations, restart/replay/cancel and child-task behavior.
+5. Run all goal checks and applicable native image/browser/install workflows, resolve findings, and verify the final remote `dev` merge.
+
+<a id="verification"></a>
+## Verification
+
+Local prerequisites: Rust 1.98.1, Node 26.7.0, Docker 29.7.2, systemd user manager and GitHub write access. Low-parallelism compilation reuses existing caches; unrelated outputs and original-workspace changes remain untouched.
+
+### Implemented dispositions
+
+The component entrypoints below cover every first-party Cargo crate, both application npm packages, data/runtime tools, interfaces, persistence, deployment and validation. Internal numerical/consumer modules remain under their component's exported source tree; retained names in history do not authorize new executor work.
+
+| Area / source authority | Implemented disposition and reason |
+| --- | --- |
+| Research policy and SOP | Rewritten around original input, complete trials, train/validation feedback and separately exposed final evidence. Alpha counts, long-only targets, simulation, portfolio creation and staged approvals are not factor prerequisites; optional consumers retain their own explicit policies. |
+| [Durable host](../../../apps/research/src/host.ts) | Added pinned official Harness/storage/Conversation/Submission/Task execution, native identities, replay, abort, children, recovery, models, views and usage. Documents store scientific facts only. No alternate Agent loop or task/session authority. |
+| [Registered plugins](../../../apps/research/plugins) | Workflow, catalog data, signed Wasm/volume factors, validation comparison and final evaluation are separate official Extensions. Extra factor/data/evaluation registration requires no host/schema change. Unsupported inputs/failures are recorded, not fabricated. |
+| [Contracts](../../../crates/contracts/src/lib.rs) | Added open durable transport DTOs and generic raw factor contracts. Deleted Codex profile/account/model request modules and executable Codex/CycleStart command bodies. Original receipt operation names, historical cycle choices, experiment CODEX provenance, budgets and scientific/target DTOs remain truthful decoders. Generated snapshots come from source. |
+| [Domain](../../../crates/domain/src/lib.rs) | Deleted Codex configuration/catalog resolution. Retained original numerical, PIT, provenance, split, budget/unit, result and optional consumer rules; generic factors allow arbitrary finite signed scores and shared temporal boundaries without targets. |
+| [Store](../../../crates/store/src/lib.rs) | Deleted active profiles, sessions/turns/prompts, Mission resource/credential/reviewer driving and degradation wake execution. ACK only archives the original receipt. Shared WorkerFence/native CPU accounting moved into lifecycle/scientific resources; explicit preparation uses SCIENTIFIC_CYCLE_PREPARE, not the retired CYCLE_START receipt. Scientific transactions, source registrations, selection facts, native publication, optional portfolios/forward/delivery and recovery remain. |
+| [Historical Agent readers](../../../crates/store/src/historical_agent.rs) | Narrow read-only original profile/session/turn/usage/wake facts. Unknown usage stays null; CODEX history is not relabeled and unresolved work gets no invented cancellation/terminal receipt. Applied tables and migrations remain. |
+| [Integrations](../../../crates/integrations/src/lib.rs) | Retained artifact, auth, secret and strict JSON/file adapters. mission_files is still the held-file snapshot reader used by native historical import/export, not an Agent tool, prompt or launcher. No standalone Pi Coding Agent integration existed in the baseline. |
+| [Server](../../../apps/server/src/lib.rs) and [Worker](../../../apps/server/src/worker.rs) | Deleted unconditional Codex discovery/startup, native RPC/container/profile/account/Mission modules, MCP and hidden NativeCodexExec. Added owner-authenticated loopback durable transport; existing auth, source/history/scientific/optional consumer routes remain. Worker only processes scientific PGMQ and optional consumer automation. GET observation does not schedule a research round. |
+| [Native client](../../../apps/server/src/client/commands.rs) and [portable CLI](../../../apps/cli) | Added research models/start/list/get/tasks/usage/stop using the captured request and native receipt. Removed project Codex/Mission commands and extra research grants. Existing owner authentication, artifact/source/scientific/target commands and offline generated contracts remain. |
+| [Scientific job](../../../apps/job/src/lib.rs) | Added evaluate-factor; reused forecast/catalog/Wasmi/Nautilus EMA and ndarray-stats. Deleted the Codex protocol probe. Retained original catalog preparation, validation, optional forecasts, simulation, optimization, strategy/study, settlement/fees, paper/Sandbox and target-only native clients; no replacement indicator, matching, accounting or equity engine. |
+| [Runtime](../../../apps/runtime/src/lib.rs) | Retained explicit scientific OCI launch, journal, input materialization, result publication, cancellation and recovery. No model execution. Native compilation/direct CLI/portfolio/paper regressions remain; Codex-thread/reviewer-specific acceptance is replaced by actual official durable feedback/recovery and retirement tests. |
+| [Data/source tools](../../../runtimes/data) | Retained existing official source adapters, native Parquet/catalog preparation, membership/PIT/availability and explicit synthetic/unverified provenance. Market-specific fees, settlement and permission belong to chosen adapters, not core asset branches. |
+| [Web](../../../apps/web/src/App.tsx) | Default durable research form/results, native trials/tasks/usage/final evidence and truthful stop requests. Deleted Codex/ChatGPT settings and staged scheduling controls. Historical projects, optional scientific/portfolio/target views, owner auth, PWA, themes and generated response validation remain. |
+| [Deployment](../../../deploy/docker/Dockerfile), [manager](../../../deploy/docker/manage.sh) and installers | Package official Node 22.19.0/research dependencies and matching job in the app; supervise Node/Rust/Caddy together. Persistent research config/SQLite/provider environment is initialized only when absent and stopped before archives. Deleted Codex images/helpers/login/update/AppArmor/package production; manifest schema 3 has application/science/database images. Installation identity, historical homes/records, user data and backups remain. Formal branches/tags/release strategy are unchanged. |
+| [Migrations](../../../migrations), [native import](../../../apps/server/src/migrations.rs), [licenses](../../../THIRD_PARTY_NOTICES.md) | Retained applied migrations, compatibility history, original import/export byte/ownership checks, existing license files and retired attribution. Added official MIT durable/AI/Chord and Apache-2.0 WABT attribution, not copied third-party implementation. |
+| [Service Skill](../../../skills/quazonai/SKILL.md), README and [operations](../../operations.md) | Rewritten installed-service workflow to native durable CLI/configuration/recovery; retired Mission guide removed. Product/architecture/task describe the same minimal loop; optional consumer boundaries and actual verification scope stay explicit. |
+| [CI](../../../.github/workflows), [Makefile](../../../Makefile) and [tests](../../../tests/native) | Removed production Codex setup/image jobs and incidental empty feature flags. Added durable types/native factors/generated Web checks; retain PG/PGMQ/science/target/OCI/browser/install/upgrade/restore and full Rust regression. Independent Agent evaluation remains an optional assessed-agent capability, not a production executor or a substitute for this task's independent review. |
+
+No original data, applied migration, backup or unrelated parent-workspace edit was deleted by these dispositions. Remaining work is final integrated verification/review/delivery, not a planned executable compatibility layer.
+
+### Native capability ownership
+
+| Capability | Authority |
+| --- | --- |
+| Model calls/tools/conversations/submit replay/recovery/abort/children/usage/views | Official Pi Durable + pi-ai + Chord; host calls public APIs directly. |
+| Conversation and task persistence | Official Node SQLite storage, one owner process; no QZ Agent state tables. |
+| Dataset/Instrument/BAR catalog and default causal EMA features | Official Nautilus persistence/model/indicator APIs already used by native `forecast`. |
+| Model evaluation and text compilation | Existing official Wasmi and published WABT bindings; model source and native request remain research facts. |
+| Pearson IC | Existing ndarray-stats calculation, with unavailable/null numerical results—not invented qualification. |
+| Matching/simulated account/fees/equity and optional optimization | Existing official Nautilus simulation and Clarabel adapters. |
+| QZ-owned glue | Research intent/trial/selection/exposure facts, temporal isolation, extension tools, authenticated transport and native result binding. |
+
+### Checks observed so far
+
+- `npm --prefix apps/research run typecheck`: passed.
+- `make check-research`: passed (10 durable tests and 15 Rust factor tests), with real official SQLite/Harness/Conversation/Submission execution, exact replay/conflict, missing-input failure retention, termination, zero-budget stop, real HTTP, abort/child ownership and SIGKILL/reopen for safe and unsafe tools. Official Faux Provider controls model protocol; no paid inference or account claims.
+- `cargo test --locked -p job --test factors -- --test-threads=1`: 15 passed. Includes raw signed multi-asset CurrencyPair/Equity factors, EMA-spread and volume structures, shared temporal cuts, availability/horizon censoring, honest unavailable IC, strict CLI, and a Rust-launched Node integration with two real-science subcases. Added catalog/factor/validation extensions require registration only. The unattended model chooses using actual validation output, final metrics remain owner-only, forks inherit all trials/final facts, and a new root cannot reuse exposed samples.
+- Existing scientific targets forecast/signals/catalog/feature_model/validation/alpha_validation/sealed: 69 passed, one existing ignored subprocess fixture, before the subsequent factor-only boundary integration.
+- Source domain/API generation, Web generation/typecheck, Rust formatting and full all-target/all-feature compile passed. `make check-architecture` passed. Cargo.lock removes unused MCP packages/feature edges without dependency upgrades.
+- Integrated affected Store regressions: 62 passed (agent_retirement, budget_authority, cycles and experiment_compilations), including scientific publication, original historical selection, Sealed/qualification and optional portfolio/target recovery assertions.
+- `make check-web`: passed, including generated drift, validator adapter, 708 unit tests, production/PWA build and modular build measurement. Seven Research Chromium cases passed, including both themes at 1440/768/390px, exact request replay, native cursor/results/usage/stop, focus, reduced motion, overflow and Axe. A dark final-link contrast defect was observed, fixed and retested without relaxing assertions.
+- Deployment bounded local checks: 62 Node shell/install, 11 deploy Python and 295 Docker-helper Python tests passed (including RELEASE_BRANCH=dev), plus Bash syntax/diff checks. These do not establish real image/install/upgrade/backup acceptance.
+- `make check`: passed in full after the original 30-minute attempt exceeded its command window. The completed retry included all-target/all-feature compilation, linked production binaries, classified Rust tests, 10 durable/15 factor cases and both actual PostgreSQL portfolio-release stack regressions. Subsequent lint-only/layout corrections still require the final integrated rerun.
+- Original Native Runtime `cargo clippy --locked -p runtime --all-targets --features native-oci -- -D warnings`: passed without weakening flags or blanket warning suppression. Removed retired-only helpers, retained used Artifact identity and catalog lifetime, corrected exact empty-collection/Copy/borrow warnings and boxed internal large fields; exact final source exports must confirm unchanged wire JSON.
+- Official Node 22.19.0 downloaded to session scratch: all 10 durable tests passed on the actual packaged version. Web CI partition discovery now includes the seven new Research cases; 7 script tests passed, and inventory reconciled 72 interactions, 22 Capital-exit cases and 22 validators (2 original dev-PWA skips).
+- The single bounded independent read-only review found two concrete defects: iterative exposure was absent from the session document, and unmetered native requests incorrectly normalized fuel to null. Both are corrected: actual iterative intervals are committed before calculation, final reservations reject any prior exposure, and absent/null fuel follows Rust's omission semantics while all other request fields remain exactly associated. Real native-science regressions now cover two roots separated by SQLite reopen and both unmetered forms through finalization; their execution is still pending the serial scientific regression.
+- Updated installed acceptance now admits a real Conversation/Submission using an official test-only controlled Provider, checks native termination/replay across restart and Node SIGKILL supervision/update, and reopens the stopped backup with the actual packaged Harness. This replaces empty-list/header-only checks; fresh image execution is still pending.
+- Full `make check-regression` is now running serially against the disposable PostgreSQL/PGMQ instance. Applicable fresh image/installation/native-browser acceptance, docs/CLI/source-export consistency, final independent/hosted reviews and remote dev merge remain unfinished.
+
+### Minimum loop
+
+| Stage | Input → recorded result | Owner / verification |
+| --- | --- | --- |
+| Submit | Original goal, native model reference, extension data and original policy → Conversation/Submission receipt | Official durable + `src/host.ts`; SQLite/HTTP replay tests |
+| Propose/compute | Falsifiable hypothesis and model → all STARTED/FAILED/REJECTED/COMPUTED scientific trials with native task IDs | Extension tools and child Tasks; `job::factors`; real native integration |
+| Iterative evaluation | Original train/validation windows → raw native validation statistics, including null/unavailable status | Native temporal/availability rules and ndarray-stats; factor regressions |
+| Select/finish | Complete compared trial set and one selected model → stop reason or separately reserved final evidence | Workflow/final evaluator extensions; final criteria/exposure/fork checks |
+| Optional consume | Original research evidence → explicit Alpha/portfolio/simulation/target workflow | Existing Rust adapters and native Nautilus/Clarabel; PG/OCI/target regressions, not factor prerequisites |
+
+Synthetic native catalogs in tests establish real computation and protocol behavior only. They are not real-source PIT evidence, independent model-quality evaluation, profitability or qualification. Full final-tree checks, browser/install/image acceptance and hosted delivery remain unfinished until observed.

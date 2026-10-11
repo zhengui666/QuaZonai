@@ -428,7 +428,11 @@ mod tests {
         assert!(http_client(&https, Some(&path), header::HeaderMap::new()).is_ok());
         let http = Url::parse("http://127.0.0.1:8080").unwrap();
         assert!(http_client(&http, Some(&path), header::HeaderMap::new()).is_err());
-        for invalid in ["", "not a PEM certificate", "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"] {
+        for invalid in [
+            "",
+            "not a PEM certificate",
+            "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----",
+        ] {
             fs::write(&path, invalid).unwrap();
             assert!(http_client(&https, Some(&path), header::HeaderMap::new()).is_err());
         }

@@ -2,11 +2,11 @@
 #[path = "../../../tests/support/execution_models.rs"]
 mod models;
 use contracts::{
-    DbCounter, Id, SchemaV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
     spot_cash::*,
     spot_fees::*,
+    DbCounter, Id, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},
@@ -287,11 +287,9 @@ fn real_native_buy_base_fee_then_sell_quote_fee_uses_actual_inventory() {
     let (metrics, _) =
         domain::execution::portfolio_simulation_metrics(Id::new(), Id::new(), &request, &result)
             .unwrap();
-    assert!(
-        metrics
-            .iter()
-            .all(|metric| metric.status == contracts::evidence::MetricStatus::InsufficientData)
-    );
+    assert!(metrics
+        .iter()
+        .all(|metric| metric.status == contracts::evidence::MetricStatus::InsufficientData));
     let curve = domain::execution::portfolio_equity_curve(
         &request,
         &result,
@@ -308,10 +306,13 @@ fn old_entrypoint_stays_closed_and_policy_acceptance_is_required() {
     let (dir, mut request, sources) = fixture(6);
     assert!(job::simulation::simulate(dir.path(), &request).is_err());
     request.settings.fee_model = models::fee();
-    assert!(
-        job::simulation::simulate_spot_cash_candidate(dir.path(), &request, Id::new(), sources)
-            .is_err()
-    );
+    assert!(job::simulation::simulate_spot_cash_candidate(
+        dir.path(),
+        &request,
+        Id::new(),
+        sources
+    )
+    .is_err());
 }
 #[test]
 fn fee_scenario_must_cover_the_entire_owned_execution_horizon() {
@@ -322,10 +323,13 @@ fn fee_scenario_must_cover_the_entire_owned_execution_horizon() {
         panic!("fee scenario missing")
     };
     parameters.schedule.valid_until_ns = count(START + MINUTE);
-    assert!(
-        job::simulation::simulate_spot_cash_candidate(dir.path(), &request, Id::new(), sources)
-            .is_err()
-    );
+    assert!(job::simulation::simulate_spot_cash_candidate(
+        dir.path(),
+        &request,
+        Id::new(),
+        sources
+    )
+    .is_err());
 }
 
 #[test]
@@ -341,12 +345,10 @@ fn complete_utc_day_from_real_publications_feeds_official_report_statistics() {
     assert!((day.value.unwrap() - (-0.000699755)).abs() < 1e-12);
     assert_eq!(report.daily_returns.annualization_days, 365);
     assert!(result.returns.is_empty());
-    assert!(
-        result
-            .statistics
-            .iter()
-            .all(|stat| stat.group != NativeStatisticGroup::Returns)
-    );
+    assert!(result
+        .statistics
+        .iter()
+        .all(|stat| stat.group != NativeStatisticGroup::Returns));
     let (metrics, _) =
         domain::execution::portfolio_simulation_metrics(Id::new(), Id::new(), &request, &result)
             .unwrap();

@@ -2,10 +2,10 @@
 use super::{bad, forecast, validation};
 use crate::DomainError;
 use contracts::{
-    Id, SchemaV1,
     brief::TargetKind,
     evidence::{MetricRequirementV1, MetricStatus, MetricValueV1},
     science::*,
+    Id, SchemaV1,
 };
 use std::collections::BTreeMap;
 
@@ -21,10 +21,7 @@ pub fn policy(
         )
     };
     let instruments = super::instruments(bars)?;
-    if requirements.is_empty()
-        || horizon == 0
-        || !requirements.iter().any(|r| r.required)
-    {
+    if requirements.is_empty() || horizon == 0 || !requirements.iter().any(|r| r.required) {
         return Err(invalid());
     }
     for r in requirements.iter().filter(|r| r.required) {

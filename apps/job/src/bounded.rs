@@ -1,7 +1,7 @@
 //! Native GNU timeout owns configured wall deadlines even after the Runtime gateway exits.
 //! Explicit absent wall limits execute directly; resource limits and cancellation remain.
 //! The OCI init/cgroup owns process-tree cleanup; there is no application watchdog daemon.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::runtime_jobs::JobSpecV1;
 use std::{fs::OpenOptions, io::Read, process::Command};
 

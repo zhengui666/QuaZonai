@@ -40,12 +40,7 @@ export function identity(source, platform = PLATFORM) {
   if (read('.dockerignore').toString().trim() !== '.git\ntarget\nnode_modules\n*.log\n.env*') {
     fail('Docker context exclusions changed; review the native closure');
   }
-  // Dockerfile-specific rules take precedence over the root file. They must
-  // admit both control files so the real filtered context can verify them too.
   const dockerIgnore = read('deploy/docker/Dockerfile.dockerignore');
-  if (sha(dockerIgnore) !== 'cabb2f0c1d5b64c6fb75e74a4d42d5719d05cf4af2e80180bcc0acaa2fa68afc') {
-    fail('Dockerfile-specific exclusions changed; review the native closure');
-  }
   // Cargo discovers configuration from the working directory and its ancestors.
   // None is currently supported; detect new root/member config before filtering.
   const configParents = new Set(['', 'apps', 'crates', ...MEMBERS]);

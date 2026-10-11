@@ -47,11 +47,6 @@ pub fn scopes(request: &CredentialIssue) -> Result<(), DomainError> {
 }
 pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
     match request {
-        OperatorCommand::CodexProfileUpdate(r) => crate::codex::settings::profile_update(r),
-        OperatorCommand::CodexProbe(_)
-        | OperatorCommand::CodexLoginStart(_)
-        | OperatorCommand::CodexLoginCancel(_)
-        | OperatorCommand::CodexLogout(_) => Ok(()),
         OperatorCommand::BriefFreeze(_) => Ok(()),
         OperatorCommand::DataSourceCreate(r) => crate::data::source_create(r),
         OperatorCommand::DataSourceUpdate(r) => crate::data::source_update(r),
@@ -87,8 +82,7 @@ pub fn command(request: &OperatorCommand) -> Result<(), DomainError> {
         OperatorCommand::ReleaseReopen(r) => {
             crate::delivery::decision_reason(&r.reason_code, &r.reason)
         }
-        OperatorCommand::CycleStart(_)
-        | OperatorCommand::CycleStartExternal(_)
+        OperatorCommand::CycleStartExternal(_)
         | OperatorCommand::CycleFinishExternal(_)
         | OperatorCommand::MigrationImport(_) => Ok(()),
         OperatorCommand::IntegrationSecretRegister(r) => crate::settings::secret_intent(r),

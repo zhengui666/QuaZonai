@@ -203,22 +203,19 @@ pub(crate) async fn native_content(
     .map_err(|_| ApiError::internal())??;
     buffered_content(bytes, id)
 }
-fn buffered_content(
-    bytes: Vec<u8>,
-    id: Id,
-) -> Result<Response, ApiError> {
+fn buffered_content(bytes: Vec<u8>, id: Id) -> Result<Response, ApiError> {
     // Bytes slices share the original complete allocation, which can stay live
     // until its final slice is dropped at EOF or disconnect. Concurrent responses
     // are not given an application memory ceiling; the immutable object is unchanged.
-    let stream = futures_util::stream::unfold(
-        axum::body::Bytes::from(bytes),
-        |mut bytes| async move {
-            if bytes.is_empty() { None } else {
+    let stream =
+        futures_util::stream::unfold(axum::body::Bytes::from(bytes), |mut bytes| async move {
+            if bytes.is_empty() {
+                None
+            } else {
                 let chunk = bytes.split_to(bytes.len().min(64 * 1024));
                 Some((Ok::<_, std::convert::Infallible>(chunk), bytes))
             }
-        },
-    );
+        });
     let mut response = axum::body::Body::from_stream(stream).into_response();
     let headers = response.headers_mut();
     headers.insert(

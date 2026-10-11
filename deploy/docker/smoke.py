@@ -29,7 +29,6 @@ import uuid
 import zipfile
 
 import smoke_shell as manage
-from smoke_shell import codex
 import release
 
 # One disposable password per smoke process, retained across its upgrades.
@@ -47,12 +46,11 @@ def ports() -> tuple[int, int]:
 def make_bundle(root: Path, tag: str, revision: str, images: dict) -> Path:
     assets, bundle = root / (tag + "-assets"), root / tag
     release.bundle(tag, revision, images["image"], assets,
-                   runtime_image=images["runtime_image"], codex_version=images["codex_version"],
-                   codex_image=images["codex_image"])
+                   runtime_image=images["runtime_image"])
     bundle.mkdir()
     manage.unpack((assets / "quazonai-deploy.tar.gz").read_bytes(), bundle)
-    assert all((bundle / name).is_file() for name in ("manage.sh", "codex.sh", "json.awk"))
-    assert all(not (bundle / name).exists() for name in ("manage.py", "codex.py", "Codex.Dockerfile", "smoke_shell.py"))
+    assert all((bundle / name).is_file() for name in ("manage.sh", "json.awk"))
+    assert all(not (bundle / name).exists() for name in ("manage.py", "smoke_shell.py"))
     return bundle
 
 
@@ -66,7 +64,28 @@ def fingerprint(root: Path) -> str:
     return hashlib.sha256((root / "data/state/master.key").read_bytes()).hexdigest()
 
 
-def verify_container_codex(config: dict) -> None:
+def durable_json(opener, origin: str, route: str, body: dict | None = None):
+    request = urllib.request.Request(origin + '/api/v2/' + route,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={'Content-Type': 'application/json', 'Origin': origin})
+    with opener.open(request, timeout=10) as response:
+        assert response.status == (202 if body is not None else 200)
+        return json.load(response)
+
+
+def wait_console(config: dict) -> None:
+    for _ in range(90):
+        try:
+            manage.verify_console(config)
+            manage.compose(config, 'exec', '-T', 'app', 'curl', '--fail', '--silent',
+                           'http://127.0.0.1:8092/health/live', capture=True)
+            return
+        except (subprocess.CalledProcessError, urllib.error.URLError):
+            time.sleep(1)
+    raise AssertionError('Packaged durable host did not recover')
+
+
+def verify_durable(config: dict, *, restart: bool = False, expected: dict | None = None) -> dict:
     binaries = Path(config['root']) / 'releases' / config['version'] / 'bin'
     assert (binaries / 'quazonai').samefile(binaries / 'server')
     for args in (['client', '--help'], ['client', 'forward', 'weights', 'submit', '--help'],
@@ -75,15 +94,25 @@ def verify_container_codex(config: dict) -> None:
         assert 'Usage: quazonai' in help_text
         container_help = manage.compose(config, 'exec', '-T', 'app', 'quazonai', *args, capture=True)
         assert 'Usage: quazonai' in container_help
-    assert not (binaries / 'codex').exists()
-    manage.compose(config, 'exec', '-T', 'app', '/bin/sh', '-c', 'test ! -e /opt/quazonai/bin/codex')
-    server = str(binaries / 'server')
-    codex.docker(config, 'run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
-                 '--security-opt', 'no-new-privileges:true', '--user', f'{config["uid"]}:{config["gid"]}',
-                 '--volume', server + ':' + server + ':ro', '--entrypoint', server,
-                 codex.image_tag(config), '--version')
-    # The actual running API must launch and initialize the separate container.
-    # An unavailable deployment/transport is a failure, not equivalent to no login.
+    directory = Path(config['root']) / 'data/research'
+    settings = json.loads((directory / 'config.json').read_text())
+    assert settings['port'] == 8092
+    assert settings['database'] == str(directory / 'research.sqlite')
+    assert settings['modules'] == ['/opt/quazonai/research/plugins/' + name + '.ts' for name in ('research', 'factor-wasm', 'heldout-wasm')]
+    assert stat.S_IMODE((directory / 'provider.env').stat().st_mode) == 0o600
+    if expected is None:
+        # Only this disposable installation loads the official controlled Provider.
+        # Production defaults and real model credentials are never changed.
+        provider = directory / 'smoke-provider.mjs'
+        provider.write_text("import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '/opt/quazonai/research/node_modules/@earendil-works/pi-ai/dist/index.js';\n"
+                            "const faux = fauxProvider({ provider: 'installed-smoke', models: [{ id: 'controlled-finish' }], tokensPerSecond: 100000 });\n"
+                            "faux.setResponses([fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Installed persistence smoke; no market or qualification claim.' }), { stopReason: 'toolUse' })]);\n"
+                            "export default faux.provider;\n")
+        provider.chmod(0o600)
+        settings['providerModules'] = [str(provider)]
+        (directory / 'config.json').write_text(json.dumps(settings) + '\n')
+        manage.compose(config, 'restart', 'app')
+        wait_console(config)
     origin = f'http://localhost:{config["port"]}'
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
                                         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -95,49 +124,103 @@ def verify_container_codex(config: dict) -> None:
                                    headers={'Content-Type': 'application/json', 'Origin': origin})
     with opener.open(login, timeout=10) as response:
         assert response.status == 200
-    with opener.open(origin + '/api/v2/settings/codex', timeout=10) as response:
-        profiles = json.load(response)['items']
-    assert profiles
-    profile = profiles[0]
-    body = json.dumps({'schema_version': 1, 'profile_id': profile['id'],
-                       'expected_revision': profile['revision']}).encode()
-    request = urllib.request.Request(origin + '/api/v2/codex/probe', data=body, headers={
-        'Content-Type': 'application/json', 'Origin': origin, 'Idempotency-Key': str(uuid.uuid4()),
-    })
-    with opener.open(request, timeout=40) as response:
-        outcome = json.load(response)['resource']['outcome']
-    assert outcome == {'status': 'UNAVAILABLE', 'reason': 'AUTHENTICATION_REQUIRED'}, outcome
-    codex.require_stopped(config)
+    for route in ('research', 'research/tasks', 'research/usage', 'research/models'):
+        durable_json(opener, origin, route)
+    manage.compose(config, 'exec', '-T', 'app', 'job', 'evaluate-factor', '--help', capture=True)
+    version = manage.compose(config, 'exec', '-T', 'app', '/usr/local/bin/node', '--version', capture=True)
+    assert version == 'v22.19.0', version
+    body = expected['request'] if expected else {
+        'requestId': 'installed-durable-persistence',
+        'input': {'goal': 'Verify installed native identity, termination and persistence, not factor quality.',
+                  'model': {'provider': 'installed-smoke', 'modelId': 'controlled-finish'},
+                  'data': {}, 'policy': {'max_trials': 0}},
+    }
+    receipt = durable_json(opener, origin, 'research', body)
+    for _ in range(90):
+        view = durable_json(opener, origin, f'research/{receipt["conversationId"]}')
+        if view['research']['final'] is not None and durable_json(opener, origin, 'research/tasks')['tasks'] == []:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError('The installed native Submission did not execute research_finish')
+    view = durable_json(opener, origin, f'research/{receipt["conversationId"]}')
+    assert view['research']['input'] == body['input']
+    assert view['research']['trials'] == []
+    assert view['research']['final']['status'] == 'STOPPED'
+    assert view['research']['final']['result'] is None
+    assert view['entries']
+    snapshot = {'request': body, 'receipt': receipt, 'research': view['research'], 'entries': view['entries']}
+    if expected is not None:
+        assert snapshot == expected
+    if restart:
+        before = (directory / 'config.json').read_bytes()
+        manage.compose(config, 'restart', 'app')
+        wait_console(config)
+        assert durable_json(opener, origin, 'research', body) == receipt
+        recovered = durable_json(opener, origin, f'research/{receipt["conversationId"]}')
+        assert recovered['research'] == snapshot['research']
+        assert recovered['entries'] == snapshot['entries']
+        assert (directory / 'config.json').read_bytes() == before
+        container = manage.compose(config, 'ps', '-q', 'app', capture=True)
+        count = int(manage.run(['docker', 'inspect', '--format', '{{.RestartCount}}', container], capture=True))
+        # A real native-host SIGKILL must stop its siblings and restart the whole
+        # console, rather than leave Rust/Caddy advertising an absent executor.
+        manage.compose(config, 'exec', '-T', 'app', '/usr/local/bin/node', '-e',
+                       "const fs = require('node:fs'); const ids = fs.readdirSync('/proc').filter(x => /^\\d+$/.test(x) && Number(x) !== process.pid).filter(x => { try { return fs.readFileSync('/proc/' + x + '/cmdline', 'utf8').includes('/opt/quazonai/research/src/main.ts'); } catch { return false; } }); if (ids.length !== 1) throw new Error('native owner count'); process.kill(Number(ids[0]), 'SIGKILL');")
+        for _ in range(90):
+            if int(manage.run(['docker', 'inspect', '--format', '{{.RestartCount}}', container], capture=True)) > count:
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError('Native host exit did not restart the console')
+        wait_console(config)
+        assert durable_json(opener, origin, 'research', body) == receipt
+        recovered = durable_json(opener, origin, f'research/{receipt["conversationId"]}')
+        assert recovered['research'] == snapshot['research']
+        assert recovered['entries'] == snapshot['entries']
+    return snapshot
 
 
-def verify_codex_update(config: dict, selected: tuple[str, str], previous: tuple[str, str]) -> None:
-    root, home = Path(config['root']), Path(config['codex_home'])
-    sentinel = home / 'container-deployment-smoke.txt'
-    sentinel.write_text('persistent native directory, not an authentication fixture\n')
-    before = sentinel.read_bytes()
-    original = codex.image_id(config)
-    assert codex.read_env(root / '.env')[0] == previous[0]
-    codex.update(root, selected[0], reference=selected[1])
-    if selected != previous:
-        assert codex.image_id(config) != original
-    assert codex.read_env(root / '.env')[0] == selected[0]
-    assert sentinel.read_bytes() == before
-    verify_container_codex(config)
-    container = codex.docker(config, 'run', '-d', '--rm', '--label',
-                             'io.quazonai.codex.image=' + codex.image_tag(config),
-                             '--entrypoint', '/usr/bin/sleep', codex.image_tag(config), '120', capture=True)
+def verify_durable_restore(config: dict, backup: Path, expected: dict) -> None:
+    restored = Path(config['root']).parent / 'restored-native-research'
+    restored.mkdir()
+    manage.run(['systemctl', '--user', 'stop', manage.unit(config)])
+    manage.compose(config, 'stop', 'app')
     try:
-        identity = codex.image_id(config)
-        try:
-            codex.update(root, previous[0], reference=previous[1])
-            raise AssertionError('An active Codex container did not block its version update')
-        except ValueError as error:
-            assert 'Codex sessions still exist' in str(error), str(error)
-        assert codex.image_id(config) == identity
-        assert codex.read_env(root / '.env')[0] == selected[0]
+        with tarfile.open(backup / 'data.tar.gz') as archive:
+            members = [member for member in archive.getmembers() if member.name.startswith('data/research/')]
+            assert any(member.name == 'data/research/research.sqlite' for member in members)
+            archive.extractall(restored, members=members, filter='data')
+        # Use the actual packaged Harness to reopen the stopped backup and replay
+        # its original request. No original/restored SQLite writers run together.
+        script = """
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { openResearch } from '/opt/quazonai/research/src/host.ts';
+import { configuredModels } from '/opt/quazonai/research/src/models.ts';
+const expected = JSON.parse(readFileSync(0, 'utf8'));
+const settings = JSON.parse(readFileSync(process.env.QZ_RESEARCH_CONFIG, 'utf8'));
+const host = await openResearch({ database: settings.database, modules: settings.modules, models: await configuredModels(settings.providerModules) });
+try {
+  assert.deepEqual(await host.start(expected.request.requestId, expected.request.input), expected.receipt);
+  const view = await host.view(expected.receipt.conversationId);
+  assert.deepEqual(view.research, expected.research);
+  assert.deepEqual(view.entries, expected.entries);
+  console.log('restored original native Conversation/Submission and research facts');
+} finally { await host.close(); }
+"""
+        directory = str(Path(config['root']) / 'data/research')
+        subprocess.run(['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only', '--tmpfs', '/tmp',
+                        '--mount', f'type=bind,source={restored / "data/research"},target={directory}',
+                        '--env', 'QZ_RESEARCH_CONFIG=' + directory + '/config.json',
+                        '--entrypoint', '/usr/local/bin/node', config['image'],
+                        '--experimental-strip-types', '--input-type=module', '-e', script],
+                       input=json.dumps(expected), text=True, check=True, timeout=120)
     finally:
-        codex.docker(config, 'container', 'rm', '--force', container, capture=True)
-    assert sentinel.read_bytes() == before
+        manage.compose(config, 'up', '-d', '--wait', '--wait-timeout', '120', 'app')
+        manage.run(['systemctl', '--user', 'start', manage.unit(config)])
+        shutil.rmtree(restored)
+    verify_durable(config, expected=expected)
 
 
 def verify_orphaned_volume(root: Path, bundle: Path) -> None:
@@ -147,8 +230,7 @@ def verify_orphaned_volume(root: Path, bundle: Path) -> None:
     web, database = ports()
     manage.run(['docker', 'volume', 'create', '--label', 'com.docker.compose.project=' + project, volume], capture=True)
     try:
-        invoke(bundle, 'deploy', installation, '--port', str(web), '--database-port', str(database),
-               '--codex-home', str(root / 'orphan-native-home'), succeeds=False)
+        invoke(bundle, 'deploy', installation, '--port', str(web), '--database-port', str(database), succeeds=False)
         assert not (installation / 'installation.json').exists()
         assert not (installation / 'data').exists()
         manage.run(['docker', 'volume', 'inspect', volume], capture=True)
@@ -197,25 +279,17 @@ def faulted_invoke(bundle: Path, mode: str, command: str, installation: Path, *a
     assert result.returncode == expected, (mode, result.returncode)
 
 
-def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str]) -> None:
+def exercise(root: Path, images: dict, revision: str) -> None:
     installation = root / "installation with spaces [native] %n $HOME"
     installation.mkdir()
-    (installation / '.env').write_text('CODEX_VERSION=' + previous[0] + '\n')
     web_port, database_port = ports()
-    original_images = {**images, "codex_version": previous[0], "codex_image": previous[1]}
-    one = make_bundle(root, "v0.0.0-ci.1", revision, original_images)
+    one = make_bundle(root, "v0.0.0-ci.1", revision, images)
     two = make_bundle(root, "v0.0.0-ci.2", revision, images)
     three = make_bundle(root, "v0.0.0-ci.3", revision, images)
     verify_orphaned_volume(root, one)
-    overlapping = root / 'overlapping-installation'
-    invoke(one, 'deploy', overlapping, '--port', str(web_port), '--database-port', str(database_port),
-           '--codex-home', str(overlapping / 'data/state/native'), succeeds=False)
-    assert not (overlapping / 'installation.json').exists()
-    assert not (overlapping / 'data').exists()
     try:
         faulted_invoke(one, 'before-activation', 'deploy', installation,
-                       '--port', str(web_port), '--database-port', str(database_port),
-                       '--codex-home', str(root / 'native-home'))
+                       '--port', str(web_port), '--database-port', str(database_port))
         original = manage.configuration(installation)
         assert json.loads((installation / 'pending.json').read_text())['phase'] == 'starting'
         assert not (installation / 'current').is_symlink()
@@ -224,8 +298,7 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
         assert processor_identity(original) == initial_processors
         assert not (installation / 'pending.json').exists()
         verify_app_restart(original, 'unless-stopped')
-        verify_container_codex(original)
-        verify_codex_update(original, (images["codex_version"], images["codex_image"]), previous)
+        durable = verify_durable(original, restart=True)
         verify_runtime(original)
         verify_installed_sources(original)
         key = fingerprint(installation)
@@ -277,6 +350,7 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
         assert updated["password"] == original["password"]
         assert updated["project"] == original["project"]
         assert fingerprint(installation) == key
+        verify_durable(updated, expected=durable)
         assert manage.sql(updated, "SELECT value FROM public.container_release_smoke") == "persisted"
         backups = list((installation / "backups").iterdir())
         assert len(backups) == 1
@@ -290,6 +364,8 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
         with tarfile.open(backups[0] / "data.tar.gz") as archive:
             assert "data/state/master.key" not in archive.getnames()
             assert "data/state/session-key.ref" in archive.getnames()
+            assert 'data/research/research.sqlite' in archive.getnames()
+            assert 'data/research/config.json' in archive.getnames()
         assert (backups[0] / "database.dump").read_bytes().startswith(b"PGDMP")
 
         # Cause a real PostgreSQL connection/migration failure after a recovery
@@ -342,11 +418,79 @@ def exercise(root: Path, images: dict, revision: str, previous: tuple[str, str])
         restored = manage.compose(latest, "exec", "-T", "database", "psql", "-X", "-U", "quazonai", "-d", "release_restore",
                                    "-Atc", "SELECT value FROM public.container_release_smoke", capture=True)
         assert restored == "persisted"
+        verify_durable(latest, expected=durable)
+        verify_durable_restore(latest, backups[0], durable)
         verify_runtime(latest)
         verify_installed_sources(latest)
         print(f"Real install/update/failure-retry/restart/PG-restore passed: {revision}")
     finally:
         cleanup_installation(installation)
+
+
+def verify_schema2_upgrade(root: Path, images: dict, revision: str) -> None:
+    # The actual published baseline, not a schema-3 manifest relabeled as legacy.
+    tag = 'v2.0.0-dev.20261011054724.38115925301'
+    archive_path = root / 'schema2-original-deploy.tar.gz'
+    url = f'https://github.com/{manage.REPOSITORY}/releases/download/{tag}/quazonai-deploy.tar.gz'
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=60) as response:
+        archive_path.write_bytes(response.read())
+    legacy = root / 'schema2-original-bundle'
+    legacy.mkdir()
+    with tarfile.open(archive_path) as archive:
+        archive.extractall(legacy, filter='data')
+    release_identity = manage.manifest(legacy)
+    assert release_identity['schema_version'] == 2
+    assert release_identity['revision'] == 'b8f2d70467eddfe84cffe1b58c10263b8506b30d'
+    installation = root / 'schema2-original-installation'
+    candidate = make_bundle(root, 'v2.0.1-ci.1', revision, images)
+    web, database = ports()
+    project = None
+    try:
+        invoke(legacy, 'deploy', installation, '--port', str(web), '--database-port', str(database))
+        original = manage.configuration(installation)
+        assert original['schema_version'] == 2
+        project = original['project']
+        origin = f'http://localhost:{web}'
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        request = urllib.request.Request(origin + '/api/v2/auth/setup',
+            data=json.dumps({'schema_version': 1, 'password': SMOKE_PASSWORD, 'remember_device': False}).encode(),
+            headers={'Content-Type': 'application/json', 'Origin': origin})
+        with opener.open(request, timeout=10) as response:
+            assert response.status == 200
+        request = urllib.request.Request(origin + '/api/v2/projects',
+            data=json.dumps({'schema_version': 1, 'name': 'Original schema-2 research intent',
+                             'description': 'Actual legacy API record; no Agent execution requested.',
+                             'fork_from_project_id': None}).encode(),
+            headers={'Content-Type': 'application/json', 'Origin': origin, 'Idempotency-Key': fixture_id()})
+        with opener.open(request, timeout=10) as response:
+            assert response.status == 201
+            assert json.load(response)['resource']['name'] == 'Original schema-2 research intent'
+        statement = "SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb) FROM app.projects p"
+        historical = manage.sql(original, statement)
+        assert len(json.loads(historical)) == 1
+        assert manage.sql(original, 'SELECT count(*) FROM app.runs') == '0'
+        home = Path(original['codex_home'])
+        retained = home / 'original-installation-smoke.txt'
+        retained.write_text('Original private historical directory; not an execution or credential.\n')
+        key = (installation / 'data/state/master.key').read_bytes()
+        invoke(candidate, 'apply-update', installation)
+        updated = manage.configuration(installation)
+        assert updated['schema_version'] == 3
+        assert all(updated[field] == original[field] for field in ('root', 'project', 'uid', 'gid', 'password', 'port', 'database_port'))
+        assert (installation / 'data/state/master.key').read_bytes() == key
+        assert manage.sql(updated, statement) == historical
+        assert manage.sql(updated, 'SELECT count(*) FROM app.runs') == '0'
+        assert retained.read_text() == 'Original private historical directory; not an execution or credential.\n'
+        assert len(list((installation / 'backups').iterdir())) == 1
+        verify_durable(updated, restart=True)
+        print('Real published schema-2 to schema-3 upgrade retained original project/identity/private history')
+    finally:
+        cleanup_installation(installation)
+        if project is not None:
+            # This alias alone was created by the disposable original installer;
+            # preserve all original published images and unrelated installations.
+            subprocess.run(['docker', 'image', 'rm', 'quazonai-codex:' + project], check=False)
 
 
 def cleanup_installation(installation: Path) -> None:
@@ -363,9 +507,6 @@ def cleanup_installation(installation: Path) -> None:
         (Path(config["unit_directory"]) / manage.unit(config)).unlink(missing_ok=True)
         manage.run(["systemctl", "--user", "daemon-reload"])
         manage.compose(config, "down", "--volumes", "--remove-orphans")
-        if config.get('codex_image'):
-            with contextlib.suppress(subprocess.CalledProcessError):
-                codex.docker(config, 'image', 'rm', codex.image_tag(config), capture=True)
 
 
 @contextlib.contextmanager
@@ -1086,14 +1227,14 @@ def verify_runtime(config: dict) -> None:
             if child and child.poll() is None:
                 child.terminate()
                 child.wait(timeout=20)
-            containers = codex.docker(config, "ps", "--all", "--quiet", "--filter", "label=io.quazonai.run=" + run_id, capture=True)
+            containers = manage.run(["docker", "ps", "--all", "--quiet", "--filter", "label=io.quazonai.run=" + run_id], capture=True)
             if containers:
-                codex.docker(config, "rm", "--force", *containers.splitlines(), capture=True)
+                manage.run(["docker", "rm", "--force", *containers.splitlines()], capture=True)
 
 
 def verify_published_bundle(root: Path, bundle: Path, assets: Path | None = None) -> None:
     # First consumer on the fresh runner: the exact shipped archive, including
-    # its original version and default Codex digest. No synthetic manifest here.
+    # its original version and application/scientific image digests.
     selected = manage.manifest(bundle)
     installation = root / "published-installation"
     web, database = ports()
@@ -1135,9 +1276,8 @@ def verify_published_bundle(root: Path, bundle: Path, assets: Path | None = None
         manage.run(command, env=env)
         config = manage.configuration(installation)
         assert all(config[name] == value for name, value in selected.items())
-        assert codex.read_env(installation / ".env")[0] == selected["codex_version"]
         original_key = fingerprint(installation)
-        verify_container_codex(config)
+        verify_durable(config, restart=True)
         verify_runtime(config)
         verify_installed_sources(config)
         if assets:
@@ -1157,10 +1297,6 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--image")
     parser.add_argument("--runtime-image")
-    parser.add_argument("--codex-image")
-    parser.add_argument("--codex-version")
-    parser.add_argument("--previous-codex-image")
-    parser.add_argument("--previous-codex-version")
     parser.add_argument("--revision")
     parser.add_argument("--assert-cold", action="store_true")
     parser.add_argument("--installer-assets", type=Path)
@@ -1171,23 +1307,16 @@ def main() -> None:
         images = manage.validate_manifest(json.loads(args.manifest.read_text()), published=True)
         revision = images["revision"]
     else:
-        if not all((args.image, args.runtime_image, args.codex_image, args.codex_version, args.revision)):
+        if not all((args.image, args.runtime_image, args.revision)):
             parser.error("Provide a published manifest or all prebuilt test images and their versions")
         images = {field: manage.run(["docker", "image", "inspect", "--format", "{{.Id}}", getattr(args, field)], capture=True)
-                  for field in ("image", "runtime_image", "codex_image")}
-        images["codex_version"] = args.codex_version
+                  for field in ("image", "runtime_image")}
         revision = args.revision
-    previous = (images["codex_version"], images["codex_image"])
-    if args.previous_codex_image:
-        if not args.previous_codex_version:
-            parser.error("--previous-codex-image requires --previous-codex-version")
-        previous = (args.previous_codex_version, manage.run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", args.previous_codex_image], capture=True))
     if args.assert_cold:
         manage.run(["docker", "info"], capture=True)
         if not args.manifest:
             parser.error("--assert-cold requires a published manifest")
-        for field in ("image", "runtime_image", "codex_image", "database_image"):
+        for field in ("image", "runtime_image", "database_image"):
             result = subprocess.run(["docker", "image", "inspect", images[field]],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             assert result.returncode != 0, "Clean installation unexpectedly found a cached image"
@@ -1197,7 +1326,8 @@ def main() -> None:
             if args.manifest:
                 verify_published_bundle(root, args.manifest.resolve().parent,
                                         args.installer_assets.resolve() if args.installer_assets else None)
-            exercise(root, images, revision, previous)
+            exercise(root, images, revision)
+            verify_schema2_upgrade(root, images, revision)
             commands = [json.loads(line) for line in log.read_text().splitlines()]
             assert not any(command["blocked"] for command in commands)
         if args.report:
@@ -1207,6 +1337,8 @@ def main() -> None:
                 "published_bundle_install": "passed" if args.manifest else "not_run",
                 "one_line_installer_and_cli": "passed" if args.installer_assets else "not_run",
                 "install_update_restore": "passed", "native_runtime_compile_restart": "passed",
+                "durable_submission_restart_supervision_update_sqlite_restore": "passed",
+                "published_schema2_to_schema3_original_history": "passed",
                 "installed_source_conversion_preparation": "passed",
                 "installed_archive_freeze_conversion_preparation": "passed",
                 "source_successful_invocation_terminal_observation": "passed",

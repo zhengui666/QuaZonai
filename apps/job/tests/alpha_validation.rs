@@ -416,7 +416,11 @@ fn native_output_adoption_requires_every_original_fold_source_and_metric() {
                     .insert("solow-cv".into(), "unverified".into());
             }
             15 => bad.unique_test_observations = count(actual.unique_test_observations.get() + 1),
-            16 => bad.consumed_fuel = Some(count(request.forecast.parameters.total_fuel.unwrap().get() + 1)),
+            16 => {
+                bad.consumed_fuel = Some(count(
+                    request.forecast.parameters.total_fuel.unwrap().get() + 1,
+                ))
+            }
             17 => bad.folds[0].training_end_available_ns = count(0),
             18 => {
                 bad.folds[0].training_end_available_ns =
@@ -579,11 +583,10 @@ fn projected_native_metrics_preserve_every_fold_and_feed_the_existing_threshold_
             .collect();
         assert_eq!(fold.train, expected_train);
         assert!(fold.train.len() >= combinatorial.train_size.get() as usize);
-        assert!(
-            fold.train
-                .iter()
-                .all(|row| fold.test.binary_search(row).is_err())
-        );
+        assert!(fold
+            .train
+            .iter()
+            .all(|row| fold.test.binary_search(row).is_err()));
     }
     // Enumerate all eight-bit subsets independently of the native recurrence:
     // no missing, duplicate, truncated or substituted combinations may pass.

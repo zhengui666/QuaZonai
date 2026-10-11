@@ -543,7 +543,7 @@ where
         dataset: dataset.selection.dataset_revision_id,
         policy: policy.id,
         image,
-        cpu: experiment::native_cpu(&request.limits, &cap)?,
+        cpu: resources::native_cpu(&request.limits, &cap)?,
         capability: db::id(capability)?,
     })
 }

@@ -1,5 +1,5 @@
 //! Immutable target-only package body, never an approval or execution instruction.
-use crate::{DecimalValue, Id, portfolio::PortfolioConstraintsV1, settings::PackageSchemaVersion};
+use crate::{portfolio::PortfolioConstraintsV1, settings::PackageSchemaVersion, DecimalValue, Id};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -88,14 +88,14 @@ pub struct DownstreamCapabilitiesV1 {
 
 // The active capability contract advertises V2 only. A persisted observation is
 // audit data and may retain V1; it never restores permission for a new delivery.
-fn historical_downstream_capabilities_schema()
--> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+fn historical_downstream_capabilities_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        PartialSchema,
         openapi::{
-            RefOr,
             schema::{ArrayBuilder, ObjectBuilder, Schema, Type},
+            RefOr,
         },
+        PartialSchema,
     };
     let RefOr::T(Schema::Object(mut object)) = DownstreamCapabilitiesV1::schema() else {
         unreachable!("downstream capabilities is an object schema");

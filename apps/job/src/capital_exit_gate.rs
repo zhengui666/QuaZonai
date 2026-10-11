@@ -1,7 +1,7 @@
 //! Durable owner-thread capital fence. This is control metadata, never an order
 //! ledger or native recovery engine. Existing records always restart quarantined.
-use anyhow::{Result, anyhow, ensure};
-use contracts::{DbCounter, Id, capital_exit::CapitalExitViewV1};
+use anyhow::{anyhow, ensure, Result};
+use contracts::{capital_exit::CapitalExitViewV1, DbCounter, Id};
 use nautilus_model::orders::{Order, OrderAny};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -65,6 +65,7 @@ impl CapitalExitGate {
     /// handoff is its durable boot scope; account-label reuse by another claim
     /// must not merge independent simulations. The host supplies the checked
     /// original claim, never a user-selected control request or filesystem alias.
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn open_fresh_paper(
         root: &Path,
         managed_account_key: &str,
@@ -189,6 +190,7 @@ impl CapitalExitGate {
     /// Only the checked Paper adapter calls this after the authenticated native
     /// intake echoes its retained original observation. A source is bound once,
     /// before capital commands, and survives in the same original-claim journal.
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn bind_paper_source(&self, source: Id) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -240,13 +242,16 @@ impl CapitalExitGate {
         }
         Ok(DbCounter::ZERO)
     }
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn original_target_claim_refs(&self) -> Vec<String> {
         self.0.borrow().record.target_claim_refs.clone()
     }
 
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn opening_order_ids(&self) -> Option<Vec<String>> {
         self.0.borrow().record.opening_order_ids.clone()
     }
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn retain_original_openers(&self, ids: Vec<String>) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -261,6 +266,7 @@ impl CapitalExitGate {
         gate.persist()
     }
 
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn retained_control_report(&self) -> Result<serde_json::Value> {
         Ok(serde_json::to_value(&self.0.borrow().record)?)
     }
@@ -300,6 +306,7 @@ impl CapitalExitGate {
 
     /// Original owner evidence is durable before network transmission. These
     /// immutable reports are an outbox for exact replay, never an order ledger.
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn retain_original_message(
         &self,
         kind: &str,
@@ -348,6 +355,7 @@ impl CapitalExitGate {
         result
     }
 
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn apply_control(&self, control: &CapitalExitViewV1) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -384,6 +392,7 @@ impl CapitalExitGate {
         gate.persist()
     }
 
+    #[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
     pub(crate) fn record_order_before_submit(&self, intent: Id, id: &str) -> Result<()> {
         let mut gate = self.0.borrow_mut();
         ensure!(
@@ -404,6 +413,7 @@ impl CapitalExitGate {
 
 /// One authority predicate for both durable refencing and synchronous submit.
 /// View revision/state/reasons/evidence and financial *progress* are not authority.
+#[cfg(any(test, feature = "native-paper", feature = "native-sandbox-test"))]
 pub(crate) fn same_control_binding(a: &CapitalExitViewV1, b: &CapitalExitViewV1) -> bool {
     a.id == b.id
         && a.project_id == b.project_id

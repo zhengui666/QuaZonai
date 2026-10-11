@@ -3,8 +3,8 @@
 //! No credentials, venue network, real cancellation, transfer or withdrawal.
 use chrono::{Duration as ChronoDuration, Utc};
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1, account_observation::AccountMoneyV1, capital_exit::*,
-    forward::ForwardEnvironmentV1,
+    account_observation::AccountMoneyV1, capital_exit::*, forward::ForwardEnvironmentV1, DbCounter,
+    Id, Revision, SchemaV1,
 };
 use job::{
     capital_exit_gate::CapitalExitGate,
@@ -22,7 +22,7 @@ use nautilus_model::{
     enums::{AccountType, OrderSide, OrderStatus, TimeInForce},
     events::{OrderCanceled, OrderFilled},
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, TraderId, Venue},
-    instruments::{InstrumentAny, stubs::binary_option},
+    instruments::{stubs::binary_option, InstrumentAny},
     orders::Order,
     types::{Currency, Money, Price, Quantity},
 };
@@ -629,20 +629,21 @@ fn durable_gate_cannot_reset_by_session_alias_or_restart() {
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
     assert!(!first.recovery_required());
-    assert!(
-        CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
-            .is_err()
-    );
+    assert!(CapitalExitGate::open_fresh_sandbox(
+        directory.path(),
+        "physical-a",
+        "owner-a",
+        ACCOUNT
+    )
+    .is_err());
     drop(first);
-    assert!(
-        CapitalExitGate::open_fresh_sandbox(
-            directory.path(),
-            "project-session-alias",
-            "owner-a",
-            ACCOUNT
-        )
-        .is_err()
-    );
+    assert!(CapitalExitGate::open_fresh_sandbox(
+        directory.path(),
+        "project-session-alias",
+        "owner-a",
+        ACCOUNT
+    )
+    .is_err());
     let restarted =
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
@@ -669,12 +670,11 @@ fn unguarded_algorithm_emulator_child_and_wrong_epoch_are_rejected() {
         .quantity(Quantity::from("1.00"))
         .build();
     gate.check_target(DbCounter::ZERO, &ordinary).unwrap();
-    assert!(
-        gate.check_target(DbCounter::new(1).unwrap(), &ordinary)
-            .unwrap_err()
-            .to_string()
-            .contains("obsolete_target_epoch")
-    );
+    assert!(gate
+        .check_target(DbCounter::new(1).unwrap(), &ordinary)
+        .unwrap_err()
+        .to_string()
+        .contains("obsolete_target_epoch"));
     let algorithm = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(InstrumentId::from(INSTRUMENT))
         .quantity(Quantity::from("1.00"))
@@ -698,24 +698,21 @@ fn unguarded_algorithm_emulator_child_and_wrong_epoch_are_rejected() {
         .emulation_trigger(TriggerType::BidAsk)
         .build();
     for order in [algorithm, child, spawned, emulated] {
-        assert!(
-            gate.check_target(DbCounter::ZERO, &order)
-                .unwrap_err()
-                .to_string()
-                .contains("child_path_unsupported")
-        );
+        assert!(gate
+            .check_target(DbCounter::ZERO, &order)
+            .unwrap_err()
+            .to_string()
+            .contains("child_path_unsupported"));
     }
     drop(gate);
     let restarted =
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
-    assert!(
-        restarted
-            .check_target(DbCounter::ZERO, &ordinary)
-            .unwrap_err()
-            .to_string()
-            .contains("recovery_required")
-    );
+    assert!(restarted
+        .check_target(DbCounter::ZERO, &ordinary)
+        .unwrap_err()
+        .to_string()
+        .contains("recovery_required"));
 }
 
 #[path = "support/capital_exit_lifecycle.rs"]

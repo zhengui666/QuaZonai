@@ -28,9 +28,8 @@ impl RuntimeTransport {
             .send()
             .await
             .map_err(|_| RuntimeRequestError::Unavailable)?;
-        let (metadata, raw_document): (RuntimeCatalogMetadataV1, _) = self
-            .json_response(response, &[StatusCode::OK])
-            .await?;
+        let (metadata, raw_document): (RuntimeCatalogMetadataV1, _) =
+            self.json_response(response, &[StatusCode::OK]).await?;
         if metadata.registered_ref != registered_ref || metadata.storage_version != storage_version
         {
             return Err(RuntimeRequestError::Contract);

@@ -75,17 +75,17 @@ pub async fn complete(
     run: Id,
     invalid: bool,
 ) {
-    assert!(
-        !store.advance_initial_cycle(run).await.unwrap(),
-        "queued preparation cannot admit a Mission"
-    );
-    let message = store
-        .read_native_run_messages(1, 100)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|message| message.run_id == run)
-        .unwrap();
+    let message_id: i64 =
+        sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(run.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        run_id: run,
+        read_count: 1,
+    };
     let Some(ClaimResult::Leased(lease)) = store
         .claim_native_run(&message, "cycle-preparation-fixture", 60)
         .await

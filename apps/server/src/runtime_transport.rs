@@ -287,7 +287,9 @@ mod capacity_tests {
             let (_, addresses) = targets.target(&entry.origin, false).unwrap();
             assert_eq!(addresses, entry.addresses);
         }
-        assert!(targets.target("https://not-registered.example", false).is_err());
+        assert!(targets
+            .target("https://not-registered.example", false)
+            .is_err());
     }
 
     #[test]
@@ -298,7 +300,11 @@ mod capacity_tests {
         assert!(RuntimeTargets::new(duplicate_origin, false).is_err());
         for replacement in ["10.0.0.1:443", "10.0.0.18:8443", "169.254.169.254:443"] {
             let mut invalid = input.clone();
-            invalid.last_mut().unwrap().addresses.push(replacement.parse().unwrap());
+            invalid
+                .last_mut()
+                .unwrap()
+                .addresses
+                .push(replacement.parse().unwrap());
             assert!(RuntimeTargets::new(invalid, false).is_err());
         }
         let mut empty = input.clone();

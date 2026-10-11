@@ -138,7 +138,9 @@ impl ArtifactStore {
         }
         let capacity = usize::try_from(count).map_err(|_| ArtifactError::Invalid)?;
         let mut bytes = Vec::new();
-        bytes.try_reserve_exact(capacity).map_err(|_| ArtifactError::Invalid)?;
+        bytes
+            .try_reserve_exact(capacity)
+            .map_err(|_| ArtifactError::Invalid)?;
         Read::by_ref(&mut file)
             .take(count + 1)
             .read_to_end(&mut bytes)?;
@@ -225,10 +227,7 @@ mod tests {
         assert!(store.put(Id::new(), b"").is_err());
         assert!(store.read(Id::new(), DbCounter::ZERO).is_err());
         assert!(store
-            .read(
-                Id::new(),
-                DbCounter::new(64 * 1024 * 1024 + 1).unwrap()
-            )
+            .read(Id::new(), DbCounter::new(64 * 1024 * 1024 + 1).unwrap())
             .is_err());
     }
 

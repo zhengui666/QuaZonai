@@ -65,10 +65,7 @@ async fn upload_authority(
         Actor::Machine { .. } => {
             // Obtain write locks in their original order, not SHARE then UPDATE.
             let machine = authority::machine(tx, actor, true).await?;
-            if !matches!(
-                machine.kind,
-                PrincipalKind::Cli | PrincipalKind::Automation | PrincipalKind::Mission
-            ) {
+            if !matches!(machine.kind, PrincipalKind::Cli | PrincipalKind::Automation) {
                 return Err(StoreError::Forbidden);
             }
             machine.requires(MachineScope::ArtifactSubmit)?;
@@ -92,11 +89,7 @@ async fn upload_authority(
                 scope: format!("CREDENTIAL:{}", machine.credential_id),
                 run: machine.run_id,
                 attempt,
-                producer: if machine.kind == PrincipalKind::Mission {
-                    "AGENT"
-                } else {
-                    "OPERATOR"
-                },
+                producer: "OPERATOR",
             })
         }
     }

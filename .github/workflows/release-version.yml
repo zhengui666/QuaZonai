@@ -66,16 +66,11 @@ jobs:
       - name: Push the tested images and freeze the bundle
         env:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime-image }}
-          CODEX_IMAGE: ${{ steps.images.outputs.codex-image }}
-          CODEX_VERSION: ${{ steps.images.outputs.codex-version }}
         run: |
           set -euo pipefail
-          sudo apparmor_parser -r deploy/docker/codex.apparmor
-          trap 'sudo apparmor_parser -R deploy/docker/codex.apparmor' EXIT
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py push-images --version "$VERSION" --revision "$REVISION" \
-            --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" \
-            --codex-version "$CODEX_VERSION" --output "$RUNNER_TEMP/release-assets"
+            --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --output "$RUNNER_TEMP/release-assets"
           # Test drivers are sidecars, never part of the user deployment archive.
           cp deploy/docker/smoke.py deploy/docker/smoke_shell.py deploy/docker/release.py deploy/docker/release_support.py "$RUNNER_TEMP/release-assets/"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -153,12 +148,9 @@ jobs:
           cd "$RUNNER_TEMP/deployment-only"
           test ! -e Cargo.toml
           test ! -d .git
-          test ! -e Codex.Dockerfile
           # These come from the shipped archive; Python remains a CI sidecar only.
-          test -f manage.sh && test -f codex.sh && test -f json.awk
-          test ! -e manage.py && test ! -e codex.py
-          sudo apparmor_parser -r codex.apparmor
-          trap 'sudo apparmor_parser -R codex.apparmor' EXIT
+          test -f manage.sh && test -f json.awk
+          test ! -e manage.py
           uid=$(id -u)
           sudo loginctl enable-linger "$uid"
           sudo systemctl start "user@$uid.service"
@@ -213,7 +205,4 @@ jobs:
           set -euo pipefail
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
-          if [ "$RELEASE_BRANCH" = main ]; then
-            python3 -B deploy/docker/release.py codex-latest --output "$RUNNER_TEMP/release-assets"
-          fi
           python3 -B deploy/docker/release.py publish --output "$RUNNER_TEMP/release-assets"

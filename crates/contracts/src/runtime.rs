@@ -1,5 +1,5 @@
 //! Runtime observations are transport evidence, not scientific qualification.
-use crate::{DbCounter, Id, Revision, SchemaV1, runs::RunKind};
+use crate::{runs::RunKind, DbCounter, Id, Revision, SchemaV1};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

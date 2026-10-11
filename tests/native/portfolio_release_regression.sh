@@ -45,6 +45,6 @@ run_target() {
 store_status=0
 run_target store -p store --test experiment_compilations || store_status=$?
 server_status=0
-run_target server -p server --features native-codex --test portfolio_study_http || server_status=$?
+run_target server -p server --test portfolio_study_http || server_status=$?
 printf 'store=%s\nserver=%s\n' "$store_status" "$server_status" > "$evidence/combined-status.txt"
 if ((store_status != 0 || server_status != 0)); then exit 1; fi

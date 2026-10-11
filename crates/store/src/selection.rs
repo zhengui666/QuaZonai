@@ -1,5 +1,4 @@
-//! Freeze the original trial ledger in the Mission ACK transaction. PostgreSQL
-//! owns sorting and membership; no new queue, estimator, or mutable winner list.
+//! Original trial-ledger selection and historical reads; never an ACK scheduler.
 use crate::{authority::Actor, control::page, db, evidence, Store, StoreError};
 use contracts::{
     control::{ListQuery, Page},

@@ -26,7 +26,7 @@ REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
 BUNDLE_FILES = {"manage.sh", "json.awk", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
-                "codex.sh", "codex-update.sh", "codex-login.sh", "runtime.sh", "codex.apparmor", ".env.example"}
+                "runtime.sh", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
@@ -52,13 +52,12 @@ def version_precedence(value: str) -> tuple:
 
 
 def validate_manifest(value: dict, *, published: bool = False) -> dict:
-    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 2:
-        raise ValueError("This installer requires a version-2 deployment bundle with prebuilt images.")
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 3:
+        raise ValueError("This installer requires a version-3 deployment bundle with prebuilt images.")
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")
-    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime"),
-                              ("codex_image", "quazonai-codex")):
+    for field, repository in (("image", "quazonai"), ("runtime_image", "quazonai-runtime")):
         reference = value.get(field)
         # The pre-publication suite uses Docker's content-addressed IDs for its
         # already-built images. Public bundles contain only GHCR digests.
@@ -68,10 +67,6 @@ def validate_manifest(value: dict, *, published: bool = False) -> dict:
             or (not published and re.fullmatch(r"sha256:[0-9a-f]{64}", reference))
         ):
             raise ValueError(f"{field} must identify the prebuilt {repository} image by digest.")
-    codex_version = value.get("codex_version")
-    if not isinstance(codex_version, str) or codex_version.startswith("v"):
-        raise ValueError("codex_version must be an exact published version.")
-    version("v" + codex_version)
     if value["database_image"] != DATABASE_IMAGE:
         raise ValueError("This installer requires the release's supported PostgreSQL/PGMQ image.")
     return value
@@ -127,7 +122,7 @@ def save(path: Path, value: dict) -> None:
 
 def sync_tree(path: Path) -> None:
     # Only our prepared release, initialized state or recovery directory is used;
-    # never walk the native Codex home or follow links outside that tree.
+    # never follow links outside that tree.
     def fail(error):
         raise error
     for directory, _, files in os.walk(path, topdown=False, onerror=fail, followlinks=False):
@@ -190,9 +185,7 @@ def announce(message: str) -> None:
 
 def preflight() -> None:
     if sys.platform != "linux" or os.getuid() == 0:
-        raise ValueError("Run as the Linux user who owns Codex, not with sudo.")
-    if not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
-        raise ValueError("Native Missions require cgroup v2.")
+        raise ValueError("Run as the original Linux installation owner, not with sudo.")
     for binary in ("docker", "systemctl", "systemd-analyze", "git"):
         if not shutil.which(binary):
             raise ValueError(f"Required executable is missing: {binary}")
@@ -213,19 +206,18 @@ def preflight() -> None:
         raise ValueError('Enable persistent user services first: loginctl enable-linger "$USER"')
 
 
-def container_codex_configuration(config: dict) -> dict:
+def container_configuration(config: dict) -> dict:
     endpoint = os.environ.get('DOCKER_HOST') or run(
         ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], capture=True)
     if not endpoint.startswith('unix://'):
-        raise ValueError('Codex containers require a local Docker Unix socket.')
+        raise ValueError('Use the original local Docker Unix socket.')
     path = Path(endpoint.removeprefix('unix://')).resolve()
     metadata = path.stat()
     if not stat.S_ISSOCK(metadata.st_mode):
         raise ValueError('The configured Docker endpoint is not a Unix socket.')
     if config.get('docker_socket', str(path)) != str(path):
         raise ValueError('Use this installation\'s original Docker socket.')
-    return {**config, 'codex_runtime_image': 'quazonai-codex:' + config['project'],
-            'docker_socket': str(path), 'docker_socket_gid': metadata.st_gid}
+    return {**config, 'docker_socket': str(path)}
 
 
 def validate_ports(web: int, database: int, *, available: bool = False) -> None:
@@ -250,17 +242,14 @@ def compose(config: dict, *args: str, capture: bool = False, output=None) -> str
         "DATABASE_PASSWORD": config["password"], "INSTALL_DIR": config["root"],
         "WEB_PORT": str(config["port"]), "DATABASE_PORT": str(config["database_port"]),
         "HOST_UID": str(config["uid"]), "HOST_GID": str(config["gid"]),
-        "NATIVE_CODEX_HOME": config["codex_home"],
-        "CODEX_IMAGE": config.get('codex_runtime_image', 'quazonai-codex:' + config['project']),
-        "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
-        "DOCKER_SOCKET_GID": str(config.get('docker_socket_gid', config['gid'])),
         "APP_RESTART_POLICY": 'unless-stopped' if (Path(config['root']) / 'current').is_symlink()
         and not (Path(config['root']) / 'pending.json').exists() else 'no',
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
         "DOWNSTREAM_TARGETS": json.dumps(config.get("downstream_targets", [])),
     })
+    bundle = Path(config["bundle"]) if config.get("schema_version") == 3 else BUNDLE
     command = ["docker", "compose", "--project-name", config["project"], "--env-file", "/dev/null",
-               "-f", str(Path(config["bundle"]) / "compose.yaml")]
+               "-f", str(bundle / "compose.yaml")]
     override = Path(config["root"]) / "compose.override.yaml"
     if override.is_file():
         command += ["-f", str(override)]
@@ -284,6 +273,14 @@ def sql(config: dict, statement: str) -> str:
 
 
 def require_idle(config: dict) -> None:
+    if config.get('schema_version') in (1, 2):
+        image = config.get('codex_runtime_image', 'quazonai-codex:' + config['project'])
+        containers = run(['docker', '--host=unix://' + config.get('docker_socket', '/var/run/docker.sock'),
+                          'container', 'ls', '--all', '--quiet', '--filter', 'label=io.quazonai.codex.image=' + image], capture=True)
+        if containers:
+            raise ValueError('Original legacy Agent containers remain. Reconcile original remote outcomes before cutover; no process exit was interpreted as cancellation.')
+    if sql(config, "SELECT count(*) FROM app.runs r WHERE finished_at IS NULL AND EXISTS (SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)") != "0":
+        raise ValueError("Unfinished legacy Missions exist. Reconcile original remote outcomes before cutover; task records and old homes were not changed.")
     if sql(config, "SELECT count(*) FROM app.runs WHERE finished_at IS NULL") != "0":
         raise ValueError("Unfinished Runs exist. Finish or cancel/reconcile them before updating; no task records were changed.")
 
@@ -291,10 +288,7 @@ def require_idle(config: dict) -> None:
 def prepare(bundle: Path, config: dict) -> dict:
     validate_configuration_paths(config)
     release = manifest(bundle)
-    candidate = container_codex_configuration({**config, **release})
-    # Selected Codex versions survive app updates. No deployment path builds images.
-    import codex
-    codex.prepare(candidate, bundle)
+    candidate = container_configuration({**config, **release})
     for field in ("image", "runtime_image"):
         image = release[field]
         if not image.startswith("sha256:"):
@@ -359,15 +353,11 @@ def unit_path(path: Path, *, environment_file: bool = False) -> str:
 
 
 def validate_configuration_paths(config: dict) -> None:
-    for name in ("root", "home", "codex_home", "unit_directory"):
+    for name in ("root", "home", "unit_directory"):
         unit_path(Path(config[name]))
     if any(x in config["root"] for x in (':', '"', '\\')):
         raise ValueError("Installation directory cannot contain colon, double quote or backslash; PATH and systemd cannot represent its executable location.")
-    root = Path(config['root']).resolve()
-    codex_home = Path(config['codex_home']).resolve()
-    if codex_home.is_relative_to(root) or root.is_relative_to(codex_home):
-        raise ValueError('CODEX_HOME must be separate from the managed installation directory, including its state and backups.')
-    for name in ("home", "codex_home", "path"):
+    for name in ("home", "path"):
         quote(config[name], specifiers=False)
 
 
@@ -400,6 +390,7 @@ def verify_native_binaries(directory: Path) -> None:
     for binary in ("server", "runtime"):
         run([str(directory / binary), "--version"])
     run([str(directory / "quazonai"), "client", "--help"])
+    run([str(directory / "job"), "evaluate-factor", "--help"])
 
 
 def configure_worker(config: dict) -> None:
@@ -408,10 +399,6 @@ def configure_worker(config: dict) -> None:
     environment = {
         "DATABASE_URL": f'postgresql://quazonai:{config["password"]}@127.0.0.1:{config["database_port"]}/quazonai',
         "STATE_DIR": str(root / "data/state"), "HOME": config["home"],
-        "CODEX_HOME": config["codex_home"], "PUBLIC_URL": f'http://localhost:{config["port"]}',
-        "CODEX_IMAGE": config.get('codex_runtime_image', 'quazonai-codex:' + config['project']),
-        "CODEX_DOCKER_SOCKET": config.get('docker_socket', '/var/run/docker.sock'),
-        "CODEX_LOCK_FILE": str(root / '.deployment.lock'),
         "DEVELOPMENT_HTTP": "true", "PATH": f'{binary.parent}:{config["path"]}',
         "RUNTIME_TARGETS": json.dumps(config.get("runtime_targets", [])),
         "DOWNSTREAM_TARGETS": json.dumps(config.get("downstream_targets", [])),
@@ -445,10 +432,42 @@ def verify_console(config: dict) -> None:
     with opener.open(origin + "/health/live", timeout=10) as response:
         if response.status != 204:
             raise ValueError("API liveness check failed.")
+    if config.get('schema_version') == 3:
+        compose(config, 'exec', '-T', 'app', 'curl', '--fail', '--silent', '--show-error', '--max-time', '10', 'http://127.0.0.1:8092/health/live', capture=True)
     request = urllib.request.Request(origin + "/", headers={"Accept": "text/html"})
     with opener.open(request, timeout=10) as response:
         if b"<!doctype html>" not in response.read(4096).lower():
             raise ValueError("Production frontend was not served.")
+
+
+def research_configuration(root: Path) -> None:
+    directory = root / 'data/research'
+    durable_directory(directory)
+    durable_directory(directory / 'plugins')
+    if not (directory / 'config.json').exists():
+        save(directory / 'config.json', {'database': str(directory / 'research.sqlite'),
+             'modules': ['/opt/quazonai/research/plugins/' + name + '.ts' for name in ('research', 'factor-wasm', 'heldout-wasm')], 'port': 8092})
+    if not (directory / 'provider.env').exists():
+        atomic_text(directory / 'provider.env', '# Native pi-ai provider environment; keep this file private.\n')
+
+
+def require_research_idle(config: dict) -> None:
+    if config.get('schema_version') != 3:
+        return
+    container = compose(config, 'ps', '--all', '--quiet', 'app', capture=True)
+    if not container:
+        raise ValueError('Research service absent; restore the original app and inspect persisted native tasks before maintenance.')
+    observation = run(['docker', 'inspect', '--format', '{{.State.Running}} {{.State.Restarting}}', container], capture=True)
+    if observation == 'false false':
+        pending = Path(config['root']) / 'pending.json'
+        if pending.is_file() and json.loads(pending.read_text()).get('phase') == 'migrating':
+            return
+        raise ValueError('Stopped research service is not proof of task-idle; start the original app and inspect persisted native tasks before maintenance.')
+    if observation != 'true false':
+        raise ValueError('Research outcome unknown while app restarts; inspect persisted tasks before maintenance.')
+    snapshot = json.loads(compose(config, 'exec', '-T', 'app', 'curl', '--fail', '--silent', '--show-error', '--max-time', '10', 'http://127.0.0.1:8092/tasks', capture=True))
+    if not isinstance(snapshot.get('tasks'), list) or snapshot['tasks']:
+        raise ValueError('Active durable tasks exist. Stop/reconcile and inspect native outcomes before maintenance; no cancellation inferred.')
 
 
 def initialize_state(config: dict) -> None:
@@ -573,17 +592,15 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
                 raise ValueError("Existing deployment files have no installation manifest; restore it rather than reinitialize.")
             validate_ports(args.port, args.database_port, available=True)
             home = Path.home()
-            codex_home = Path(args.codex_home or str(root.with_name(root.name + '-codex'))).expanduser().resolve()
             config = {
                 **release, "root": str(root), "uid": os.getuid(), "gid": os.getgid(),
-                "home": str(home), "codex_home": str(codex_home), "path": os.environ.get("PATH", os.defpath),
+                "home": str(home), "path": os.environ.get("PATH", os.defpath),
                 "unit_directory": str(Path(os.environ.get("XDG_CONFIG_HOME", str(home / ".config"))) / "systemd/user"),
                 "port": args.port, "database_port": args.database_port, "password": secrets.token_hex(32),
                 "project": "quazonai-" + hashlib.sha256(str(root).encode()).hexdigest()[:12],
             }
             validate_configuration_paths(config)
             require_new_docker_project(config['project'])
-            codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
             # Persist ownership and credentials before downloading or creating any state.
             config["bundle"] = str(BUNDLE)
             save(root / "installation.json", config)
@@ -591,6 +608,7 @@ def deploy(root: Path, args: argparse.Namespace) -> None:
         config = prepare(BUNDLE, config)
         save(root / "installation.json", config)
         durable_directory(root / 'data')
+        research_configuration(root)
         compose(config, 'up', '-d', '--wait', '--wait-timeout', '120', 'database')
         require_install_stopped(config)
         initialize_state(config)
@@ -641,9 +659,7 @@ def apply_update(root: Path) -> None:
         # Every retry checks before shutdown, including preparing retries whose
         # old app may have admitted Runs while the installer was absent.
         require_idle(old)
-        if old.get('codex_image'):
-            import codex
-            codex.require_stopped(old, recover_created=True)
+        require_research_idle(old)
         if not pending:
             pending = {'operation': 'update', 'phase': 'preparing', 'previous': old,
                        'target': candidate, 'backup': None}
@@ -651,15 +667,13 @@ def apply_update(root: Path) -> None:
             save(pending_file, pending)
         try:
             configure_app_restarts(old, False)
+            require_research_idle(old)
             compose(old, 'stop', 'app')
             # Closing admissions can finish a request which raced the first
             # observation. Discover its Run before stopping its Worker.
             require_idle(old)
             run(['systemctl', '--user', 'disable', '--now', unit(old)])
             require_idle(old)
-            if old.get('codex_image'):
-                import codex
-                codex.require_stopped(old, recover_created=True)
             if phase == 'preparing':
                 recovery = backup(old)
         except Exception:
@@ -678,6 +692,7 @@ def apply_update(root: Path) -> None:
             save(pending_file, pending)
         # Processors remain stopped on any DDL/configuration failure. Never
         # enable old executables against a possibly forward-migrated schema.
+        research_configuration(root)
         compose(candidate, 'run', '--rm', '--no-deps', 'app', 'migrate')
         configure_worker(candidate)
         # Replace the stopped old container with the target image/config without
@@ -886,7 +901,6 @@ def main() -> None:
     parser.add_argument("--directory", type=Path, default=Path.home() / ".local/share/quazonai")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--database-port", type=int, default=55432)
-    parser.add_argument("--codex-home")
     parser.add_argument("--config", type=Path)
     args = parser.parse_args()
     root = args.directory.expanduser().resolve()

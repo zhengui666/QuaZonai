@@ -71,7 +71,7 @@ jobs:
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
           rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > apps/web/test-results/native-summary/rustc.txt
           rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all -- --check
-          # The native-science feature enables unrelated Codex work. It is
+          # This data/browser check enables only its original scientific fixture.
           # deliberately absent: this path only needs the default shipped Worker.
           rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server -p runtime -p job --bin server --bin runtime --bin job
           rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p job --features catalog-prepare --bin catalog-prepare --example browser_catalog_fixture

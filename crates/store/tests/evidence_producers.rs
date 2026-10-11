@@ -64,7 +64,7 @@ async fn evaluation_reports_must_come_from_the_exact_project_run_and_role(pool: 
     let f = fixture(&pool, budget()).await;
     let other = fixture(&pool, budget()).await;
     let (_, _, base) = portfolio(&pool, &f).await;
-    let (other_run, _, _, _) = mission(&pool, f.project, f.cycle, f.input_set, f.profile).await;
+    let (other_run, _, _) = scientific_run(&pool, f.project, f.cycle, f.input_set).await;
     let wrong_run = copy_report(&pool, &f, Some(f.project), Some(other_run), "REPORT").await;
     let missing_run = copy_report(&pool, &f, Some(f.project), None, "REPORT").await;
     let no_project = copy_report(&pool, &f, None, None, "REPORT").await;
@@ -104,7 +104,7 @@ async fn metric_source_cannot_lend_unrelated_evidence_to_a_valid_report(pool: Pg
     let f = fixture(&pool, budget()).await;
     let other = fixture(&pool, budget()).await;
     let (_, _, base) = portfolio(&pool, &f).await;
-    let metric_sql="INSERT INTO app.metric_values(evaluation_id,metric_code,scope,value,status,unit,period_start,period_end,observation_count,frequency,method_id,method_version,source_artifact_id) VALUES($1,'mean','total',0.1,'OK','ratio',now()-interval '1 hour',now(),30,'DAY','fixture','1',$2)";
+    let metric_sql = "INSERT INTO app.metric_values(evaluation_id,metric_code,scope,value,status,unit,period_start,period_end,observation_count,frequency,method_id,method_version,source_artifact_id) VALUES($1,'mean','total',0.1,'OK','ratio',now()-interval '1 hour',now(),30,'DAY','fixture','1',$2)";
     for bad in [other.report, f.artifact] {
         let mut tx = pool.begin().await.unwrap();
         let e = evaluation(&mut tx, base, f.report, f.report).await.unwrap();

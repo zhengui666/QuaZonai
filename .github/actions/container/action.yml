@@ -1,5 +1,5 @@
 name: Verify production container
-description: Build exact-source application, scientific and Codex images; install without building.
+description: Build exact-source application/durable host and scientific images; install without building.
 inputs:
   source:
     description: Source checkout directory, relative to the workspace.
@@ -26,12 +26,6 @@ outputs:
   runtime-image:
     description: Already-tested native scientific image ID.
     value: ${{ steps.native.outputs.image }}
-  codex-image:
-    description: Already-tested native Codex image ID.
-    value: ${{ steps.codex.outputs.image }}
-  codex-version:
-    description: Exact Codex version in the tested image.
-    value: ${{ steps.codex.outputs.version }}
 runs:
   using: composite
   steps:
@@ -45,12 +39,12 @@ runs:
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
         test -f deploy/docker/runtime.sh
-        for script in deploy/docker/entrypoint.sh deploy/docker/manage.sh deploy/docker/codex.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/codex-update.sh deploy/docker/codex-login.sh deploy/docker/runtime.sh; do
+        for script in deploy/docker/entrypoint.sh deploy/docker/manage.sh deploy/docker/deploy.sh deploy/docker/update.sh deploy/docker/runtime.sh; do
           bash -n "$script"
         done
+        node --test deploy/docker/manage_shell.test.mjs deploy/install.test.mjs
         python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
         RELEASE_BRANCH=dev python3 -B -m unittest discover -s deploy/docker -p '*_test.py' -v
-        sudo apparmor_parser -r deploy/docker/codex.apparmor
         python3 -B deploy/docker/setup_ripgrep.py
         uid=$(id -u)
         sudo loginctl enable-linger "$uid"
@@ -152,19 +146,6 @@ runs:
         # The image now owns its executable/toolchain. Save dependencies before
         # freeing this job's output for the independent application build.
         rm -rf target/release
-    - name: Build independent Codex images before installation
-      id: codex
-      shell: bash
-      working-directory: ${{ inputs.source }}
-      env:
-        PYTHONDONTWRITEBYTECODE: '1'
-      run: |
-        set -euo pipefail
-        version=$(sed -n 's/^CODEX_VERSION=//p' deploy/docker/.env.example)
-        python3 -B deploy/docker/release.py build-codex --codex-version "$version" --image quazonai-codex-candidate
-        python3 -B deploy/docker/release.py build-codex --codex-version 0.156.1 --image quazonai-codex-previous
-        echo "image=$(docker image inspect quazonai-codex-candidate --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
     - name: Start normal candidate build measurement
       shell: bash
       working-directory: ${{ inputs.source }}
@@ -228,17 +209,13 @@ runs:
         IMAGE: ${{ inputs.image }}
         REVISION: ${{ inputs.revision }}
         RUNTIME_IMAGE: ${{ steps.native.outputs.image }}
-        CODEX_IMAGE: ${{ steps.codex.outputs.image }}
-        CODEX_VERSION: ${{ steps.codex.outputs.version }}
         PYTHONDONTWRITEBYTECODE: '1'
       run: |
         set -euo pipefail
         docker run --rm "$IMAGE" --version
         docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint /usr/bin/caddy "$IMAGE" validate --config /opt/quazonai/Caddyfile --adapter caddyfile
-        docker run --rm --entrypoint /bin/sh "$IMAGE" -c '! command -v codex'
         python3 -B deploy/docker/smoke.py --image "$IMAGE" --revision "$REVISION" \
-          --runtime-image "$RUNTIME_IMAGE" --codex-image "$CODEX_IMAGE" --codex-version "$CODEX_VERSION" \
-          --previous-codex-image quazonai-codex-previous --previous-codex-version 0.156.1
+          --runtime-image "$RUNTIME_IMAGE"
     - name: Verify one bounded same-builder native cache reuse
       id: native-input-cache
       if: inputs.verify-native-input-cache == 'true'
@@ -273,8 +250,3 @@ runs:
         path: ${{ runner.temp }}/quazonai-source*/diagnostics/*.json
         retention-days: 7
         if-no-files-found: ignore
-    - name: Remove the test host's Codex user namespace profile
-      if: always()
-      shell: bash
-      working-directory: ${{ inputs.source }}
-      run: sudo apparmor_parser -R deploy/docker/codex.apparmor

@@ -97,7 +97,13 @@ fn offline_catalog_roundtrip_preserves_existing_source_bundle() {
         serde_json::to_value(read_bundle(root.path()).unwrap()).unwrap(),
         serde_json::to_value(&original).unwrap()
     );
-    assert_eq!(load_closed_rows(root.path(), &selection).unwrap().rows.len(), 3);
+    assert_eq!(
+        load_closed_rows(root.path(), &selection)
+            .unwrap()
+            .rows
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -214,13 +220,11 @@ fn malformed_ohlcv_is_an_error_before_the_official_unchecked_bar_constructor() {
     source.responses[0].response[0]["c"] = serde_json::json!("99.00");
     let result = std::panic::catch_unwind(|| source_rows(&source));
     assert!(result.is_ok(), "source validation must not panic");
-    assert!(
-        result
-            .unwrap()
-            .unwrap_err()
-            .to_string()
-            .contains("SPOT_SOURCE_OHLCV_INVALID")
-    );
+    assert!(result
+        .unwrap()
+        .unwrap_err()
+        .to_string()
+        .contains("SPOT_SOURCE_OHLCV_INVALID"));
 }
 
 #[test]
@@ -254,9 +258,7 @@ fn omitting_a_row_from_both_selector_and_parquet_cannot_hide_original_evidence()
     let error = load_closed_rows(root.path(), &selection)
         .err()
         .expect("omitted original row must fail");
-    assert!(
-        error
-            .to_string()
-            .contains("SPOT_SOURCE_ELIGIBLE_ROW_OMITTED")
-    );
+    assert!(error
+        .to_string()
+        .contains("SPOT_SOURCE_ELIGIBLE_ROW_OMITTED"));
 }

@@ -44,14 +44,8 @@ where
         serde_json::from_value(binding.try_get("request")?).map_err(|_| StoreError::Integrity)?;
     domain::portfolio::build_selection(&request).map_err(|_| StoreError::Integrity)?;
     let parameter = db::id(binding.try_get("parameters_artifact_id")?)?;
-    let bytes = validation::read_document(
-        &mut tx,
-        parameter,
-        None,
-        "qz.native_task",
-        &mut read,
-    )
-    .await?;
+    let bytes =
+        validation::read_document(&mut tx, parameter, None, "qz.native_task", &mut read).await?;
     let task: NativeTaskParametersV1 =
         serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?;
     let NativeTaskParametersV1::BuildPortfolio {

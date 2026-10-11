@@ -50,14 +50,8 @@ where
         return Err(StoreError::Integrity);
     }
     let parameter = db::id(binding.try_get("parameters_artifact_id")?)?;
-    let raw = validation::read_document(
-        &mut tx,
-        parameter,
-        None,
-        "qz.native_task",
-        &mut read,
-    )
-    .await?;
+    let raw =
+        validation::read_document(&mut tx, parameter, None, "qz.native_task", &mut read).await?;
     let task: NativeTaskParametersV1 =
         serde_json::from_slice(&raw).map_err(|_| StoreError::Integrity)?;
     let NativeTaskParametersV1::ComposeStrategyTargets {
@@ -258,8 +252,11 @@ where
         .zip(&sources)
         .map(|(member, source)| {
             let fold = domain::execution::strategy::source(&member.policy, source)?;
-            domain::prediction::binary_option_source(source.request.binary_option.as_ref(),
-                report.request.binary_option.as_ref(), &fold.simulation_request.selection)?;
+            domain::prediction::binary_option_source(
+                source.request.binary_option.as_ref(),
+                report.request.binary_option.as_ref(),
+                &fold.simulation_request.selection,
+            )?;
             Ok::<_, DomainError>(fold)
         })
         .collect::<Result<Vec<_>, _>>()?;

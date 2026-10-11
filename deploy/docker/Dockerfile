@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS node
+FROM node:22.19.0-bookworm-slim AS node
 
 FROM node AS native-inputs
 WORKDIR /source
@@ -15,6 +15,13 @@ COPY apps/web ./apps/web
 COPY contracts/generated ./contracts/generated
 COPY tests/contracts ./tests/contracts
 RUN npm --prefix apps/web run build
+
+FROM node AS research
+WORKDIR /opt/quazonai/research
+COPY apps/research/package.json apps/research/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/research/src ./src
+COPY apps/research/plugins ./plugins
 
 FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS server
 ENV RUSTUP_TOOLCHAIN=1.98.1 CARGO_BUILD_JOBS=2
@@ -38,7 +45,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep tini libssl3 libstdc++6 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home quazonai
-COPY --from=server /out/server /out/runtime /opt/quazonai/bin/
+COPY --from=server /out/server /out/runtime /out/job /opt/quazonai/bin/
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/LICENSE /usr/share/doc/quazonai/node-LICENSE
+COPY --from=research /opt/quazonai/research/ /opt/quazonai/research/
 RUN ln -s server /opt/quazonai/bin/quazonai
 COPY --from=web /build/apps/web/dist/ /opt/quazonai/web/
 COPY --from=caddy /usr/bin/caddy /tmp/caddy
@@ -48,7 +58,6 @@ COPY --from=caddy /usr/bin/caddy /tmp/caddy
 RUN install -m 0755 /tmp/caddy /usr/bin/caddy && rm /tmp/caddy
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
 COPY licenses/ /usr/share/doc/quazonai/licenses/
-RUN cd /usr/share/doc/quazonai/licenses/archive-source && sha256sum --check SHA256SUMS
 COPY deploy/docker/Caddyfile /opt/quazonai/Caddyfile
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
 ARG VERSION=development
@@ -58,12 +67,14 @@ LABEL org.opencontainers.image.title="QuaZonai" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
 ENV PATH=/opt/quazonai/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    BIND=127.0.0.1:8080 DEVELOPMENT_HTTP=true PUBLIC_URL=http://localhost:8081
+    BIND=127.0.0.1:8080 DEVELOPMENT_HTTP=true PUBLIC_URL=http://localhost:8081 \
+    QZ_RESEARCH_ORIGIN=http://127.0.0.1:8092 QZ_JOB_BINARY=/opt/quazonai/bin/job
 USER 1000:1000
 EXPOSE 8081
 HEALTHCHECK --interval=10s --timeout=12s --start-period=30s --retries=6 \
  CMD curl -fsS --max-time 5 -H "Host: ${PUBLIC_URL#http://}" http://127.0.0.1:8081/health/live >/dev/null \
-  && curl -fsS --max-time 5 -H 'Accept: text/html' http://127.0.0.1:8081/ >/dev/null
+  && curl -fsS --max-time 5 -H 'Accept: text/html' http://127.0.0.1:8081/ >/dev/null \
+  && curl -fsS --max-time 5 http://127.0.0.1:8092/health/live >/dev/null
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/quazonai/entrypoint.sh"]
 CMD ["console"]
 

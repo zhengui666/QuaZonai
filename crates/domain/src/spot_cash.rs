@@ -3,9 +3,9 @@
 use crate::DomainError;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use contracts::{
-    DbCounter, DecimalValue, SchemaV1,
     science::{NativeAccountKind, NativeSimulationSettingsV1},
     spot_cash::*,
+    DbCounter, DecimalValue, SchemaV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -85,7 +85,7 @@ pub fn account_plan(
         || policy.report_currency != settings.base_currency
         || !contracts::research_currency::supported(&policy.report_currency)
         || policy.maximum_price_age_ns.get() == 0
-        || policy.allowed_instrument_ids.len() < 1
+        || policy.allowed_instrument_ids.is_empty()
         || !(1..=86_400_000).contains(&settings.snapshot_interval_ms)
     {
         return Err(invalid("spot_cash_settings"));
