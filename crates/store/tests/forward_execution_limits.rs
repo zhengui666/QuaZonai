@@ -390,3 +390,121 @@ async fn forward_parallel_choice_preserves_normalized_identity_without_fixed_two
         assert_eq!(error.as_database_error().unwrap().code().as_deref(), Some("23514"));
     }
 }
+
+// Opt-in source diagnosis at the c8 revision. This retains a real RED result,
+// is never routine acceptance, and does not modify the original upgrade test.
+#[sqlx::test(migrations = false)]
+#[ignore = "Explicit PR190 PG cached-plan RED diagnosis, not an acceptance gate"]
+async fn pr190_pg_upgrade_red_warmed_handoff_star_on_two_backends(pool: PgPool) {
+    use sqlx::{Column, Connection, PgConnection, Row, postgres::{PgPoolOptions, PgRow}};
+    use std::sync::{Arc, Mutex};
+
+    // Exact business-query text from c8 submit_forward_message. Values stay
+    // bound; evidence records only backend IDs, field names and error metadata.
+    const HANDOFF_SQL: &str = "SELECT h.*,r.environment AS release_environment,c.project_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1 AND h.downstream_id=$2 AND c.project_id=$3 FOR SHARE OF h";
+    async fn handoff_row(connection: &mut PgConnection, handoff: Id, downstream: Id, project: Id)
+        -> Result<PgRow, sqlx::Error>
+    {
+        sqlx::query(HANDOFF_SQL).bind(handoff.as_uuid()).bind(downstream.as_uuid())
+            .bind(project.as_uuid()).fetch_one(connection).await
+    }
+    fn fields(row: &PgRow) -> Vec<String> {
+        row.columns().iter().map(|column| column.name().to_owned()).collect()
+    }
+    fn error_code(result: &Result<PgRow, sqlx::Error>) -> Option<String> {
+        result.as_ref().err().and_then(|error| error.as_database_error())
+            .and_then(|error| error.code()).map(|code| code.into_owned())
+    }
+    fn error_message(result: &Result<PgRow, sqlx::Error>) -> Option<String> {
+        result.as_ref().err().and_then(|error| error.as_database_error())
+            .map(|error| error.message().to_owned())
+    }
+
+    sqlx::migrate!("../../migrations").run_to(202610060103, &pool).await.unwrap();
+    let seed = forward_support::setup(&pool).await;
+    let historical_version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(historical_version, 202610060103);
+    let options = pool.connect_options().as_ref().clone();
+    let connected = Arc::new(Mutex::new(Vec::<i32>::new()));
+    let tracked = Arc::clone(&connected);
+    // Two held, idle (not transactional) application sessions force Store's
+    // existing migration API to acquire and detach a third distinct session.
+    let controlled = PgPoolOptions::new().max_connections(3).min_connections(0)
+        .idle_timeout(None).max_lifetime(None)
+        .after_connect(move |connection, _| {
+            let tracked = Arc::clone(&tracked);
+            Box::pin(async move {
+                let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(connection).await?;
+                tracked.lock().expect("backend evidence mutex").push(pid);
+                Ok(())
+            })
+        }).connect_lazy_with(options.clone());
+    let mut old_a = controlled.acquire().await.unwrap();
+    let pid_a: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *old_a).await.unwrap();
+    let fields_a = fields(&handoff_row(&mut old_a, seed.handoff, seed.original.downstream_id, seed.f.project)
+        .await.unwrap());
+    let prepared_a: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_prepared_statements WHERE statement=$1")
+        .bind(HANDOFF_SQL).fetch_one(&mut *old_a).await.unwrap();
+    let mut old_b = controlled.acquire().await.unwrap();
+    let pid_b: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *old_b).await.unwrap();
+    let fields_b = fields(&handoff_row(&mut old_b, seed.handoff, seed.original.downstream_id, seed.f.project)
+        .await.unwrap());
+    let prepared_b: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_prepared_statements WHERE statement=$1")
+        .bind(HANDOFF_SQL).fetch_one(&mut *old_b).await.unwrap();
+    eprintln!("PR190_DIAGNOSTIC {}", json!({"phase":"historical_103_warmed",
+        "backend_a":pid_a,"backend_b":pid_b,"prepared_a":prepared_a,"prepared_b":prepared_b,
+        "field_count_a":fields_a.len(),"field_count_b":fields_b.len(),"fields_a":fields_a,"fields_b":fields_b}));
+    assert_ne!(pid_a, pid_b);
+    assert_eq!(fields_a, fields_b);
+    assert!(prepared_a > 0 && prepared_b > 0, "both native prepared statements must exist before migration");
+    assert!(!fields_a.iter().any(|field| field == "paper_claim_credential_id"));
+
+    let migrated = store::Store::from_pool(controlled.clone()).migrate().await;
+    let migration_backends = connected.lock().expect("backend evidence mutex").clone();
+    eprintln!("PR190_DIAGNOSTIC {}", json!({"phase":"real_store_migration",
+        "connected_backend_pids":migration_backends,"migration_succeeded":migrated.is_ok()}));
+    migrated.unwrap();
+    assert_eq!(migration_backends.len(), 3, "migration must use exactly the third controlled connection");
+    assert_eq!(&migration_backends[..2], &[pid_a, pid_b]);
+    assert_ne!(migration_backends[2], pid_a);
+    assert_ne!(migration_backends[2], pid_b);
+
+    let result_a = handoff_row(&mut old_a, seed.handoff, seed.original.downstream_id, seed.f.project).await;
+    let result_b = handoff_row(&mut old_b, seed.handoff, seed.original.downstream_id, seed.f.project).await;
+    let code_a = error_code(&result_a);
+    let code_b = error_code(&result_b);
+    eprintln!("PR190_DIAGNOSTIC {}", json!({"phase":"old_backends_after_migration",
+        "backend_a":pid_a,"backend_b":pid_b,"code_a":code_a,"code_b":code_b,
+        "message_a":error_message(&result_a),"message_b":error_message(&result_b)}));
+
+    let mut fresh = PgConnection::connect_with(&options).await.unwrap();
+    let fresh_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut fresh).await.unwrap();
+    let latest_version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+        .fetch_one(&mut fresh).await.unwrap();
+    let fresh_result = handoff_row(&mut fresh, seed.handoff, seed.original.downstream_id, seed.f.project).await;
+    let fresh_fields = fresh_result.as_ref().ok().map(fields);
+    eprintln!("PR190_DIAGNOSTIC {}", json!({"phase":"fresh_backend_after_migration",
+        "backend":fresh_pid,"latest_version":latest_version,"query_succeeded":fresh_result.is_ok(),
+        "error_code":error_code(&fresh_result),"fields":fresh_fields,
+        "field_count":fresh_fields.as_ref().map(Vec::len)}));
+    assert!(!migration_backends.contains(&fresh_pid));
+    assert_eq!(latest_version, sqlx::migrate!("../../migrations").iter().last().unwrap().version);
+    let fresh_fields = fresh_fields.expect("fresh native backend must accept the post-migration query");
+    assert!(fresh_fields.iter().any(|field| field == "paper_claim_credential_id"));
+    assert!(fresh_fields.len() > fields_a.len());
+    for field in &fields_a { assert!(fresh_fields.contains(field)); }
+    fresh.close().await.unwrap();
+    drop(old_a);
+    drop(old_b);
+    controlled.close().await;
+    assert_eq!(code_a.as_deref(), Some("0A000"), "old backend A must expose the native cached-plan error");
+    assert_eq!(code_b.as_deref(), Some("0A000"), "old backend B must expose the native cached-plan error");
+    // Retain the actual PostgreSQL failure after gathering all four backend
+    // results. Expected RED is evidence of this hypothesis, never a pass.
+    let _ = result_a.expect("PR190 RED: warmed native plan failed after the actual Store migration");
+}
