@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiFailure, dataOf, displayTime, uuidPattern, type Schema } from './api';
 import { ResourceSelect } from './resource-select';
 import { ErrorNotice, NoData, Pager, QueryPanel, ResourceFacts, useClock, useOnline } from './ui';
-import { createExitResultReader, ExitSession, money, nonnegativeDecimal, positiveDecimal, previewCanStart, remainingReduction, withdrawableDisplay, type ExitAction, type ExitPreview, type ExitRequest, type ExitResult, type ExitView } from './capital-exit-state';
+import { createExitResultReader, ExitSession, exitPhaseLabel, exitStateDisplay, money, nonnegativeDecimal, positiveDecimal, previewCanStart, remainingReduction, withdrawableDisplay, type ExitAction, type ExitPreview, type ExitRequest, type ExitResult, type ExitView } from './capital-exit-state';
 import { exitActionAllowed, futureDeadline, resumeFormValues, type FormValues } from './capital-exit-form';
 
 const sessions = new Map<string, ExitSession>();
@@ -29,9 +29,6 @@ async function send(request: ExitRequest, key: string): Promise<ExitResult> {
   const paths = { PAUSE: '/api/v2/capital-exits/{id}/pause', CANCEL: '/api/v2/capital-exits/{id}/cancel', RESUME: '/api/v2/capital-exits/{id}/resume', RECONCILE_WITHDRAWAL: '/api/v2/capital-exits/{id}/reconcile-withdrawal' } as const;
   return { kind: 'INTENT', value: dataOf(await api.POST(paths[request.body.action], { body: request.body, params: { path: { id: request.id }, header } })).resource };
 }
-const states: Record<ExitView['state'], string> = {
-  REQUESTED: '已请求，等待原生确认', FENCING: '正在禁止新增资金占用', CANCELLING_OPENERS: '正在核对开仓撤单', REDUCING: '正在限价减仓', WAITING_EVIDENCE: '等待原生成交、结算或可用资金证据', PAUSED: '已暂停，资金仍保留', CANCELLING_EXIT: '正在取消后续退出', CANCELLED_RESERVED: '后续退出已取消，资金仍保留', RECONCILING_WITHDRAWAL: '正在核对自行提款', COMPLETED: '原生证据已核对提款', BLOCKED: '已阻止，需处理原因',
-};
 const required = { required: true, whitespace: true, message: '请填写此项' };
 const decimalRule = { validator: (_: unknown, value: string) => positiveDecimal(value ?? '') ? Promise.resolve() : Promise.reject(new Error('请输入精确的正十进制金额或数量')) };
 const idRule = { pattern: uuidPattern, message: '请输入原记录 UUID' };
@@ -78,7 +75,7 @@ function ProjectAccounts({ project }: { project: string }) {
     <Button disabled={!online || exits.isFetching} onClick={() => { void exits.refetch(); }}>刷新原退出记录</Button>
     <QueryPanel pending={exits.isPending} error={exits.error} stale={!!exits.data} reload={() => { void exits.refetch(); }}>
       {exits.data?.items.map(exit => <Card key={exit.id} size="small"><Space orientation="vertical" className="full-width">
-        <Environment value={exit.environment} /><Typography.Text>{states[exit.state]} · 申请 {money(exit.funds.requested_amount)} · 保留 {money(exit.funds.reserved_amount)}</Typography.Text>
+        <Environment value={exit.environment} /><Typography.Text role="status">{exitStateDisplay(exit, online && !exits.isError && !exits.isFetching)} · 申请 {money(exit.funds.requested_amount)} · 保留 {money(exit.funds.reserved_amount)}</Typography.Text>
         <Button onClick={() => setSelected({ source: exit.account_source_id, intent: exit.id })}>查看退出 {exit.id}</Button>
       </Space></Card>)}
       {exits.data?.items.length === 0 && <NoData text="暂无退出记录；空列表不代表任何未确认请求已取消" />}
@@ -93,13 +90,12 @@ function AccountEvidenceClock({ project, source }: { project: string; source: st
   return <Typography.Paragraph type="secondary">原生快照时间（纳秒）：{query.isError ? '读取失败，暂无当前证据' : query.data?.latest_snapshot?.observation.snapshot?.ts_event ?? '暂无证据'}</Typography.Paragraph>;
 }
 
-const splitIds = (value: string) => value.split(/[\s,]+/).filter(Boolean);
 export function CapitalExitDrawer({ project, source, initialIntent, close }: { project: string; source: string; initialIntent?: string; close: () => void }) {
   const session = sessionFor(project, source); const work = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const [intentId, setIntentId] = useState(initialIntent ?? work.lastIntent);
   const [readResult] = useState(() => createExitResultReader(initialIntent, work.result));
   const [preview, setPreview] = useState<ExitPreview>(); const [approved, setApproved] = useState(false);
-  const [form] = Form.useForm<FormValues>(); const policy = Form.useWatch('policy', form); const scope = Form.useWatch('scope', form);
+  const [form] = Form.useForm<FormValues>(); const policy = Form.useWatch('policy', form);
   const deadline = Form.useWatch('deadline', form);
   const [action, setAction] = useState<'PAUSE' | 'CANCEL' | 'RESUME' | 'RECONCILE_WITHDRAWAL'>();
   const [reported, setReported] = useState(''); const [transfer, setTransfer] = useState(''); const [actionApproved, setActionApproved] = useState(false);
@@ -108,7 +104,8 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
   const detail = useQuery({ queryKey: ['capital-exit', intentId], enabled: !!intentId, refetchInterval: online ? 5000 : false, queryFn: async ({ signal }) => { const value = dataOf(await api.GET('/api/v2/capital-exits/{id}', { params: { path: { id: intentId! } }, signal })); if (value.project_id !== project || value.account_source_id !== source) throw new ApiFailure('HTTP_CONTRACT_ERROR', '退出记录与当前账户不匹配'); return value; } });
   const exit = detail.data; const observation = current.data?.latest_snapshot;
   const resumeValues = exit ? resumeFormValues(exit) : undefined;
-  const actionAllowed = !!exit && !!action && exitActionAllowed(exit.state, action);
+  const actionAllowed = !!exit && !!action && exitActionAllowed(exit.state, action)
+    && (action !== 'RESUME' || exit.scope.kind === 'AMOUNT');
   useEffect(() => {
     const result = readResult(work.result);
     if (result?.kind === 'PREVIEW') { setPreview(result.value); setApproved(false); setActionApproved(false); }
@@ -125,13 +122,16 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
   const canStart = !!preview && previewCanStart(preview, now, observation?.id) && !current.isError && !current.isFetching
     && (preview.policy.kind === 'CASH_ONLY' || futureDeadline(preview.policy.deadline, now));
   async function previewRequest(values: FormValues) {
+    if (values.scope !== 'AMOUNT' || (action === 'RESUME' && exit?.scope.kind !== 'AMOUNT')) {
+      form.setFields([{ name: 'scope', errors: ['组合目标流退出尚未实现，仅支持指定金额退出'] }]); return;
+    }
     if (!observation || busy || !online) return;
     if (values.policy === 'BOUNDED_LIMIT' && !futureDeadline(values.deadline, Date.now())) {
       form.setFields([{ name: 'deadline', errors: ['截止时间已过期或无效，请手动修改后重新预览'] }]); return;
     }
     const moneyScope = { amount: values.amount, currency: values.currency };
     const body: Schema['CapitalExitPreviewRequestV1'] = { schema_version: 1, account_source_id: source, expected_source_observation_id: observation.id,
-      scope: values.scope === 'AMOUNT' ? { kind: 'AMOUNT', ...moneyScope } : { kind: 'PORTFOLIO_SCOPE', ...moneyScope, stream_ids: splitIds(values.streamIds), release_ids: splitIds(values.releaseIds) },
+      scope: { kind: 'AMOUNT', ...moneyScope },
       policy: values.policy === 'CASH_ONLY' ? { kind: 'CASH_ONLY' } : { kind: 'BOUNDED_LIMIT', deadline: values.deadline,
         legs: [{ instrument_id: values.instrument, maximum_reduction_quantity: values.quantity, minimum_sell_price: values.price }],
         max_execution_cost: { amount: values.cost, currency: values.currency, reference_evidence_id: values.costEvidence } },
@@ -149,7 +149,7 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
     if (!exit || !action || !actionAllowed || busy || !online || !actionApproved || detail.isError || detail.isFetching) return;
     const common = { schema_version: 1 as const, expected_revision: exit.revision };
     let body: ExitAction;
-    if (action === 'RESUME') { if (!preview || !canStart || !approved || !resumeValues
+    if (action === 'RESUME') { if (exit.scope.kind !== 'AMOUNT' || !preview || !canStart || !approved || !resumeValues
       || (preview.policy.kind === 'BOUNDED_LIMIT' && !futureDeadline(preview.policy.deadline, Date.now()))) return; body = { ...common, action, preview_id: preview.id }; }
     else if (action === 'RECONCILE_WITHDRAWAL') { if (!positiveDecimal(reported)) return; body = { ...common, action, user_reported_amount: reported, currency: exit.funds.requested_amount.currency, external_transfer_ref: transfer || null }; }
     else body = { ...common, action };
@@ -175,29 +175,28 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
       </Space>} />}
       <ErrorNotice error={work.error} />
       {intentId && <QueryPanel pending={detail.isPending} error={detail.error} stale={!!exit} reload={() => { void detail.refetch(); }}>
-        {exit && <><CapitalExitFacts exit={exit} now={now} readCurrent={!detail.isError && !detail.isFetching} />
+        {exit && <><CapitalExitFacts exit={exit} now={now} readCurrent={online && !detail.isError && !detail.isFetching} />
           <Space wrap>
             <Button disabled={!online || detail.isFetching} onClick={() => { void detail.refetch(); void current.refetch(); }}>刷新可提证据</Button>
             {exit.state === 'COMPLETED' && <Button disabled={busy || !online || detail.isError} onClick={() => { if (!session.forgetCompletedView()) return; setIntentId(undefined); setPreview(undefined); setApproved(false); form.resetFields(); }}>新建资金退出</Button>}
             {exit.state !== 'COMPLETED' && <>
               <Button disabled={busy || !online || detail.isError || !exitActionAllowed(exit.state, 'PAUSE')} onClick={() => { setAction('PAUSE'); setActionApproved(false); }}>暂停退出</Button>
               <Button disabled={busy || !online || detail.isError} onClick={() => { setAction('CANCEL'); setActionApproved(false); }}>取消后续退出</Button>
-              <Button disabled={busy || !online || detail.isError || !exitActionAllowed(exit.state, 'RESUME') || !resumeValues} onClick={() => { if (!resumeValues || !exitActionAllowed(exit.state, 'RESUME')) return; setAction('RESUME'); setActionApproved(false); setPreview(undefined); setApproved(false); form.setFieldsValue(resumeValues); }}>继续退出</Button>
+              <Button disabled={busy || !online || detail.isError || !exitActionAllowed(exit.state, 'RESUME') || !resumeValues} onClick={() => { if (exit.scope.kind !== 'AMOUNT' || !resumeValues || !exitActionAllowed(exit.state, 'RESUME')) return; setAction('RESUME'); setActionApproved(false); setPreview(undefined); setApproved(false); form.setFieldsValue(resumeValues); }}>继续退出</Button>
               <Button disabled={busy || !online || detail.isError || exit.environment !== 'LIVE'} onClick={() => { setAction('RECONCILE_WITHDRAWAL'); setActionApproved(false); }}>我已自行提款，核对余额</Button>
             </>}
           </Space>
-          {!resumeValues && <Alert type="warning" showIcon title="当前仅支持单腿限价减仓，无法继续此退出" description="原记录的减仓腿不会被截断或替换；请核对原始计划。" />}
+          {exit.scope.kind !== 'AMOUNT'
+            ? <Alert type="warning" showIcon title="组合目标流退出尚未实现，不能新建或继续" description="原范围和执行约束完整保留；仍可按当前状态请求暂停或取消后续退出。" />
+            : !resumeValues && <Alert type="warning" showIcon title="当前仅支持单腿限价减仓，无法继续此退出" description="原记录的减仓腿不会被截断或替换；请核对原始计划。" />}
           <Alert type="info" showIcon title="手动提款前请刷新，并核对交易所当前提款页面" description="刷新仅读取当前原生证据，不会制造新证明。资金保留不是钱包锁；其他交易或转账可能立即使证据失效。模拟资金不能真实提款。" />
         </>}
       </QueryPanel>}
-      {(!intentId || action === 'RESUME') && <>
+      {(!intentId || (action === 'RESUME' && exit?.scope.kind === 'AMOUNT')) && <>
         <Steps size="small" current={preview ? 2 : 0} items={[{ title: '选择退出范围' }, { title: '预览影响' }, { title: '确认退出约束' }]} />
         {action === 'RESUME' && <Alert type="info" title="为同一退出刷新剩余范围与约束；继续退出不会恢复买入" />}
         <Form form={form} layout="vertical" initialValues={{ scope: 'AMOUNT', policy: 'CASH_ONLY' }} disabled={busy || !online} onValuesChange={() => { setPreview(undefined); setApproved(false); setActionApproved(false); }} onFinish={previewRequest}>
-          <Form.Item name="scope" label="退出范围" rules={[required]}><Select options={[{ value: 'AMOUNT', label: '指定资金金额' }, { value: 'PORTFOLIO_SCOPE', label: '指定已有组合目标流' }]} /></Form.Item>
-          {scope === 'PORTFOLIO_SCOPE' && <><Alert showIcon type="info" title="多个 Alpha 共用账户净持仓，不是各自可提款的独立资金" />
-            <Form.Item name="streamIds" label="已有目标流 ID（以逗号或换行分隔）" rules={[required, { validator: (_, value: string) => splitIds(value ?? '').every(id => uuidPattern.test(id)) ? Promise.resolve() : Promise.reject(new Error('请使用原目标流 UUID')) }]}><Input.TextArea rows={2} /></Form.Item>
-            <Form.Item name="releaseIds" label="已有发布 ID（以逗号或换行分隔）" rules={[required, { validator: (_, value: string) => splitIds(value ?? '').every(id => uuidPattern.test(id)) ? Promise.resolve() : Promise.reject(new Error('请使用原发布 UUID')) }]}><Input.TextArea rows={2} /></Form.Item></>}
+          <Form.Item name="scope" label="退出范围" rules={[required]} help="组合目标流退出尚未实现；当前仅能创建指定金额退出"><Select options={[{ value: 'AMOUNT', label: '指定资金金额' }, { value: 'PORTFOLIO_SCOPE', label: '指定已有组合目标流（尚未实现）', disabled: true }]} /></Form.Item>
           <Form.Item name="amount" label="申请退出金额" rules={[required, decimalRule]}><Input inputMode="decimal" /></Form.Item>
           <Form.Item name="currency" label="账户抵押币种" rules={[required]}><Input maxLength={32} /></Form.Item>
           <Form.Item name="policy" label="执行约束" rules={[required]}><Select options={[{ value: 'CASH_ONLY', label: '仅使用有证据的闲置现金' }, { value: 'BOUNDED_LIMIT', label: '允许明确约束的限价减仓' }]} /></Form.Item>
@@ -210,7 +209,7 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
             {deadline && Date.parse(deadline) <= now && <Alert type="warning" showIcon title="截止时间已过期，请手动修改后重新预览" description="原截止时间原样保留，不会自动延长或放宽执行约束。" />}
             <Form.Item name="cost" label="最大增量执行成本（同币种）" rules={[required, { validator: (_, value: string) => nonnegativeDecimal(value ?? '') ? Promise.resolve() : Promise.reject(new Error('请输入非负精确十进制值')) }]}><Input inputMode="decimal" /></Form.Item>
             <Form.Item name="costEvidence" label="原始价格 / 成本参考证据 ID" rules={[required, idRule]}><Input /></Form.Item>
-            <Alert type="warning" showIcon title="到期只会暂停并保留资金，不自动市价卖出" description="成本上限约束订单准入，不保证没有损失；原有投资盈亏另列。不会自行放宽价格、数量或成本上限。" />
+            <Alert type="warning" showIcon title="到期等待原生暂停 / 撤单证据，资金仍保留；不自动市价卖出" description="成本上限约束订单准入，不保证没有损失；原有投资盈亏另列。不会自行放宽价格、数量或成本上限。" />
           </>}
           <Button htmlType="submit" loading={work.pending} disabled={!online || busy || !observation || current.isError || current.isFetching}>预览影响</Button>
         </Form>
@@ -222,7 +221,7 @@ export function CapitalExitDrawer({ project, source, initialIntent, close }: { p
       </>}
       {action && exit && <Card title={action === 'PAUSE' ? '确认暂停退出' : action === 'CANCEL' ? '确认取消后续退出' : action === 'RESUME' ? '确认继续退出' : '核对自行提款'}>
         <Space orientation="vertical" className="full-width">
-          <Typography.Paragraph>{action === 'RECONCILE_WITHDRAWAL' ? '这只提交你已自行完成的提款报告，需原生转账证据匹配；不会发起任何提款。' : action === 'RESUME' ? '只继续剩余减仓，不恢复新增买入；必须批准新的有效预览。' : '停止后续退出工作并核对未完成订单。已成交交易保留，资金仍禁止再投入，不会买回。'}</Typography.Paragraph>
+          <Typography.Paragraph>{action === 'RECONCILE_WITHDRAWAL' ? '这只提交你已自行完成的提款报告，需原生转账证据匹配；不会发起任何提款。' : action === 'RESUME' ? '只继续剩余减仓，不恢复新增买入；必须批准新的有效预览。' : '提交停止后续退出的请求，等待原生所有者核对未完成订单。请求受理不等于订单已停；已成交交易保留，资金仍禁止再投入，不会买回。'}</Typography.Paragraph>
           {action === 'RECONCILE_WITHDRAWAL' && <><Input aria-label="已自行提款金额" value={reported} onChange={event => { setReported(event.target.value); setActionApproved(false); }} inputMode="decimal" /><Typography.Text>{exit.funds.requested_amount.currency}</Typography.Text><Input aria-label="原转账参考（可选）" value={transfer} onChange={event => { setTransfer(event.target.value); setActionApproved(false); }} /></>}
           <Checkbox checked={actionApproved} disabled={busy} onChange={event => setActionApproved(event.target.checked)}>确认此操作及上述后果</Checkbox>
           <Space wrap><Button onClick={() => { setAction(undefined); setActionApproved(false); }}>返回详情</Button><Button disabled={!actionAllowed || !actionApproved || busy || !online || detail.isError || detail.isFetching || (action === 'RESUME' && (!approved || !canStart || !resumeValues)) || (action === 'RECONCILE_WITHDRAWAL' && !positiveDecimal(reported))} loading={work.pending} onClick={submitAction}>提交此操作</Button></Space>
@@ -257,7 +256,8 @@ export function CapitalExitPreviewFacts({ preview, now }: { preview: ExitPreview
 }
 export function CapitalExitFacts({ exit, now, readCurrent = true }: { exit: ExitView; now: number; readCurrent?: boolean }) {
   const available = withdrawableDisplay(exit, now, readCurrent);
-  return <Card title={states[exit.state]}><Space orientation="vertical" className="full-width">
+  const status = exitStateDisplay(exit, readCurrent);
+  return <Card title={<span role="status">{status}</span>}><Space orientation="vertical" className="full-width">
     <Environment value={exit.environment} /><ResourceFacts id={exit.id} revision={exit.revision} updated={exit.updated_at} />
     <Descriptions column={{ xs: 1, sm: 2 }} items={[
       { key: 'requested', label: '申请退出', children: money(exit.funds.requested_amount) }, { key: 'reserved', label: '禁止再投入', children: money(exit.funds.reserved_amount) },
@@ -265,9 +265,11 @@ export function CapitalExitFacts({ exit, now, readCurrent = true }: { exit: Exit
       { key: 'unreleased', label: '尚未释放', children: money(exit.funds.unreleased_amount) }, { key: 'reconciled', label: exit.environment === 'LIVE' ? '已匹配提款' : '模拟核对金额', children: money(exit.funds.reconciled_withdrawal_amount) },
       { key: 'asof', label: '资金证据原始时间', children: displayTime(exit.funds.evidence_asof) }, { key: 'until', label: '资金证据有效至', children: displayTime(exit.funds.evidence_valid_until) },
       { key: 'remaining', label: '剩余交易', children: exit.remaining_trading === 'FENCED_PENDING_TARGET' ? '等待合格兼容目标，新增买入仍受限制；保护性风险管理保留' : '通过当前所有者的资金预算检查继续' },
+      { key: 'scope', label: '原始退出范围（只读）', children: <Typography.Text className="break-word">{JSON.stringify(exit.scope)}</Typography.Text> },
+      { key: 'policy', label: '原始执行约束（只读）', children: <Typography.Text className="break-word">{JSON.stringify(exit.policy)}</Typography.Text> },
     ]} />
     {exit.reason_codes.length > 0 && <Alert type="warning" showIcon title="待处理原因" description={exit.reason_codes.join(' · ')} />}
-    <Timeline items={[{ content: `${displayTime(exit.created_at)} · 原退出申请已保存` }, { content: `${displayTime(exit.updated_at)} · 最近记录阶段：${states[exit.last_phase]}；当前状态：${states[exit.state]}` }]} />
+    <Timeline items={[{ content: `${displayTime(exit.created_at)} · 原退出申请已保存` }, { content: `${displayTime(exit.updated_at)} · 最近记录阶段：${exitPhaseLabel(exit.last_phase)}；${readCurrent ? '当前记录状态' : '上次记录状态'}：${status}` }]} />
     <Typography.Link href={`/api/v2/artifacts/${exit.plan_artifact_id}/content`} target="_blank" rel="noreferrer">原始计划证据</Typography.Link><Evidence ids={exit.evidence_refs} />
   </Space></Card>;
 }

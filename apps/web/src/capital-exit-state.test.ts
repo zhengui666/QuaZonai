@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiFailure } from './api';
-import { createExitResultReader, ExitSession, money, positiveDecimal, previewCanStart, remainingReduction, withdrawableDisplay, type ExitRequest, type ExitResult } from './capital-exit-state';
-import { id, source, intent, preview, exit, amount, time, until } from './capital-exit-fixtures';
+import { createExitResultReader, ExitSession, exitPhaseLabel, exitStateDisplay, money, positiveDecimal, previewCanStart, remainingReduction, withdrawableDisplay, type ExitRequest, type ExitResult } from './capital-exit-state';
+import { id, source, intent, preview, exit, amount, time, until, pausePendingExits, pendingCancelExit } from './capital-exit-fixtures';
 const request: ExitRequest = { kind: 'START', project: id, source, body: { schema_version: 1, preview_id: id, expected_account_control_revision: '9007199254740993', acknowledged_plan_artifact_id: id, expected_source_observation_id: id } };
 const result: ExitResult = { kind: 'INTENT', value: exit };
 function memory() { const values = new Map<string, string>(); return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } }; }
@@ -160,6 +160,25 @@ describe('capital exit Drawer completion selection', () => {
   });
 });
 describe('capital exit display authority', () => {
+  it('projects every pending pause reason without claiming native orders stopped', () => {
+    const pending = ['请求已受理，等待原生 owner', '等待隔离确认', '仍有未决订单', '等待截止暂停 / 撤单证据'];
+    pausePendingExits.forEach((record, index) => {
+      expect(exitStateDisplay(record)).toContain(pending[index]);
+      expect(exitStateDisplay(record)).toContain('订单停止尚未核实');
+      expect(exitStateDisplay(record)).not.toContain('已暂停');
+    });
+    expect(exitStateDisplay({ ...exit, reason_codes: [] })).toBe('暂停控制状态，资金仍保留；订单停止尚未核实');
+    expect(exitStateDisplay(pendingCancelExit)).toContain('尚未确认完成');
+    expect(exitStateDisplay(pendingCancelExit)).not.toContain('后续退出已取消');
+  });
+  it('keeps all pending reasons, marks old reads and uses neutral historical phases', () => {
+    const record = { ...exit, reason_codes: pausePendingExits.flatMap(value => value.reason_codes) };
+    expect(exitStateDisplay(record, false)).toMatch(/^上次记录：暂停控制状态/);
+    for (const text of ['等待原生 owner', '等待隔离确认', '仍有未决订单', '等待截止暂停 / 撤单证据']) expect(exitStateDisplay(record)).toContain(text);
+    expect(exitPhaseLabel('REDUCING')).toBe('限价减仓阶段');
+    expect(exitPhaseLabel('PAUSED')).toBe('暂停控制阶段');
+    expect(exitStateDisplay({ ...exit, state: 'REDUCING', reason_codes: ['capital_exit_deadline_pause_evidence_pending'] })).toContain('等待截止暂停 / 撤单证据');
+  });
   it('rejects stale, unsupported, wrong-observation and missing-revision plans', () => {
     const now = Date.parse(time);
     expect(previewCanStart(preview, now, id)).toBe(true);
@@ -168,6 +187,7 @@ describe('capital exit display authority', () => {
     expect(previewCanStart(preview, Date.parse(until), id)).toBe(false);
     expect(previewCanStart(preview, now, source)).toBe(false);
     expect(previewCanStart({ ...preview, expected_account_control_revision: null }, now, id)).toBe(false);
+    expect(previewCanStart({ ...preview, scope: { kind: 'PORTFOLIO_SCOPE', ...amount, stream_ids: [id, source], release_ids: [intent, id] }, capability: 'SUPPORTED' }, now, id)).toBe(false);
   });
   it('never labels paper funds as verified real withdrawal even with an inconsistent status', () => {
     const now = Date.parse(time);

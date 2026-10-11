@@ -1,12 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
-import { id, source, exit, preview } from '../src/capital-exit-fixtures';
+import { id, source, exit, preview, pausePendingExits, pendingCancelExit } from '../src/capital-exit-fixtures';
 import type { ExitView } from '../src/capital-exit-state';
 const endpoint = '/tests/fixtures/capital-exits.html';
-async function fixture(page: Page, mode: 'normal' | 'unknown' | 'blocked' | 'conflict' = 'normal', storedExit?: ExitView) {
+async function fixture(page: Page, mode: 'normal' | 'unknown' | 'blocked' | 'conflict' | 'portfolio-preview' = 'normal', storedExit?: ExitView) {
   const writes: { path: string; key: string | undefined; body: any }[] = [];
   let latest = storedExit; let startCount = 0; let previewCount = 0; let latestPreview = preview;
+  let exitReadFailure = false;
   const future = new Date(Date.now() + 3600_000).toISOString();
-  const initial = { ...exit, state: 'REQUESTED' as const, funds: { ...exit.funds, evidence_asof: new Date().toISOString(), evidence_valid_until: future } };
+  const initial = { ...exit, state: 'REQUESTED' as const, owner_command: { ...exit.owner_command, instruction: { action: 'START' as const } }, funds: { ...exit.funds, evidence_asof: new Date().toISOString(), evidence_valid_until: future } };
   const current = { source: { binding: { native_account_id: 'CASH-001', environment: 'PAPER' }, id: source }, valuation: 'PRICED', latest_snapshot: { id, received_at: new Date().toISOString(), observation: { snapshot: { ts_event: '1791331200000000000' } } } };
   // Only the local component server and intercepted fixture transport are used.
   // Abort native API/proxy and external requests even if the UI regresses.
@@ -21,11 +22,13 @@ async function fixture(page: Page, mode: 'normal' | 'unknown' | 'blocked' | 'con
   await page.route('**/fixture-api/**', async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
     if (request.method() === 'GET') {
+      if (exitReadFailure && !path.endsWith('/current')) { await route.abort(); return; }
       await route.fulfill({ json: path.endsWith('/current') ? current : latest ?? initial }); return;
     }
     const body = request.postDataJSON(); writes.push({ path, key: request.headers()['idempotency-key'], body });
     if (path.endsWith('/capital-exit-previews')) {
       latestPreview = { ...preview, id: ++previewCount === 1 ? id : source, original_observation_id: body.expected_source_observation_id, valid_until: future, scope: body.scope, policy: body.policy, funds: { ...preview.funds, requested: { amount: body.scope.amount, currency: body.scope.currency } }, capability: mode === 'blocked' ? 'BLOCKED' : 'SUPPORTED', reason_codes: mode === 'blocked' ? ['account_owner_binding_unavailable'] : [] };
+      if (mode === 'portfolio-preview') latestPreview.scope = { kind: 'PORTFOLIO_SCOPE', amount: body.scope.amount, currency: body.scope.currency, stream_ids: [id, source], release_ids: [exit.id, id] };
       await route.fulfill({ status: 201, json: { resource: latestPreview } }); return;
     }
     if (path.endsWith('/capital-exits')) {
@@ -33,12 +36,12 @@ async function fixture(page: Page, mode: 'normal' | 'unknown' | 'blocked' | 'con
       if (mode === 'conflict') { await route.fulfill({ status: 409, json: { code: 'STALE_PREVIEW', detail: 'Preview changed; refresh required', status: 409, request_id: id, field_errors: [] } }); return; }
       latest = initial;
       if (mode === 'unknown' && startCount === 1) { await route.abort(); return; }
-    } else if (body.action === 'CANCEL') latest = { ...initial, state: 'CANCELLED_RESERVED', last_phase: 'REDUCING' };
-    else if (body.action === 'PAUSE') latest = { ...initial, state: 'PAUSED', last_phase: 'REDUCING' };
+    } else if (body.action === 'CANCEL') latest = { ...(latest ?? initial), state: 'CANCELLING_EXIT', last_phase: 'REDUCING', reason_codes: pendingCancelExit.reason_codes, owner_command: pendingCancelExit.owner_command };
+    else if (body.action === 'PAUSE') latest = { ...(latest ?? initial), state: 'PAUSED', last_phase: 'REDUCING', reason_codes: ['capital_exit_owner_command_pending'], owner_command: exit.owner_command };
     else if (body.action === 'RESUME') latest = { ...(latest ?? initial), state: 'REQUESTED', preview_id: latestPreview.id, scope: latestPreview.scope, policy: latestPreview.policy };
     await route.fulfill({ status: 202, json: { resource: latest } });
   });
-  return { writes, setExit: (value: ExitView) => { latest = value; }, setObservation: (value: string) => { current.latest_snapshot.id = value; } };
+  return { writes, setExit: (value: ExitView) => { latest = value; }, setObservation: (value: string) => { current.latest_snapshot.id = value; }, setExitReadFailure: (value: boolean) => { exitReadFailure = value; } };
 }
 async function plan(page: Page) {
   await page.getByLabel('申请退出金额', { exact: true }).fill('9007199254740993.123456789');
@@ -47,7 +50,7 @@ async function plan(page: Page) {
   await expect(page.getByText('原始退出影响预览', { exact: true })).toBeVisible();
 }
 test('duplicate start, close and reopen retain one intent; cancel retains partial funds', async ({ page }) => {
-  const { writes } = await fixture(page); await page.goto(endpoint); await plan(page);
+  const { writes, setExit } = await fixture(page); await page.goto(endpoint); await plan(page);
   await page.getByRole('checkbox', { name: '我已核对账户' }).check();
   await page.getByRole('button', { name: '开始退出', exact: true }).dblclick();
   await expect(page.getByText('已请求，等待原生确认', { exact: true })).toBeVisible();
@@ -59,6 +62,11 @@ test('duplicate start, close and reopen retain one intent; cancel retains partia
   await page.getByRole('button', { name: '取消后续退出', exact: true }).click();
   await page.getByRole('checkbox', { name: '确认此操作及上述后果' }).check();
   await page.getByRole('button', { name: '提交此操作', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '请求已受理，等待原生 owner' })).toBeVisible();
+  await expect(page.getByText('后续退出已取消，资金仍保留', { exact: true })).toHaveCount(0);
+  expect(writes.filter(write => write.body.action === 'CANCEL')).toHaveLength(1);
+  setExit({ ...pendingCancelExit, state: 'CANCELLED_RESERVED', last_phase: 'CANCELLING_EXIT', reason_codes: [] });
+  await page.getByRole('button', { name: '刷新可提证据', exact: true }).click();
   await expect(page.getByText('后续退出已取消，资金仍保留', { exact: true })).toBeVisible();
   expect(writes.at(-1)?.body.action).toBe('CANCEL');
   await expect(page.getByText('10 USD', { exact: true }).first()).toBeVisible();
@@ -93,7 +101,7 @@ test('mobile retains constraints and honest blocked simulation without horizonta
 function boundedRecord(deadline: string): ExitView {
   return {
     ...exit,
-    scope: { kind: 'PORTFOLIO_SCOPE', amount: exit.scope.amount, currency: 'USD', stream_ids: [id, source], release_ids: [exit.id, id] },
+    scope: { kind: 'AMOUNT', amount: exit.scope.amount, currency: 'USD' },
     funds: { ...exit.funds, reserved_amount: { amount: '9007199254740992.000000001', currency: 'USD' } },
     policy: {
       kind: 'BOUNDED_LIMIT', deadline,
@@ -103,16 +111,15 @@ function boundedRecord(deadline: string): ExitView {
   };
 }
 async function restoredFields(page: Page, record: ExitView) {
-  if (record.policy.kind !== 'BOUNDED_LIMIT' || record.scope.kind !== 'PORTFOLIO_SCOPE') throw new Error('bounded portfolio fixture required');
+  if (record.policy.kind !== 'BOUNDED_LIMIT' || record.scope.kind !== 'AMOUNT') throw new Error('bounded amount fixture required');
   const leg = record.policy.legs[0]!;
   for (const [label, value] of [
     ['申请退出金额', record.funds.reserved_amount.amount], ['账户抵押币种', record.funds.reserved_amount.currency],
-    ['已有目标流 ID（以逗号或换行分隔）', record.scope.stream_ids.join('\n')], ['已有发布 ID（以逗号或换行分隔）', record.scope.release_ids.join('\n')],
     ['原生交易标的 ID', leg.instrument_id], ['最大累计减仓数量', leg.maximum_reduction_quantity], ['最低卖出价格', leg.minimum_sell_price],
     ['截止时间（RFC 3339，含时区）', record.policy.deadline], ['最大增量执行成本（同币种）', record.policy.max_execution_cost.amount],
     ['原始价格 / 成本参考证据 ID', record.policy.max_execution_cost.reference_evidence_id],
   ]) await expect(page.getByLabel(label!, { exact: true })).toHaveValue(value!);
-  await expect(page.getByText('指定已有组合目标流', { exact: true })).toBeVisible();
+  await expect(page.getByText('指定资金金额', { exact: true })).toBeVisible();
   await expect(page.getByText('允许明确约束的限价减仓', { exact: true })).toBeVisible();
 }
 
@@ -237,4 +244,99 @@ test('an unsupported multiple-leg record cannot silently become a single-leg res
   await expect(page.getByText('当前仅支持单腿限价减仓，无法继续此退出', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '继续退出', exact: true })).toBeDisabled();
   expect(writes).toHaveLength(0);
+});
+
+test('pause acceptance, pending evidence and a cleared FenceApplied reason never prove all orders stopped', async ({ page }) => {
+  const { writes, setExit } = await fixture(page, 'normal', { ...exit, state: 'REDUCING' }); await page.goto(endpoint);
+  await page.getByRole('button', { name: '暂停退出', exact: true }).click();
+  await page.getByRole('checkbox', { name: '确认此操作及上述后果' }).check();
+  await page.getByRole('button', { name: '提交此操作', exact: true }).click();
+  const status = page.getByRole('status').filter({ hasText: '暂停控制状态' });
+  await expect(status).toContainText('请求已受理，等待原生 owner');
+  const pending = ['等待隔离确认', '仍有未决订单，等待原生撤单确认', '等待截止暂停 / 撤单证据'];
+  for (const [index, record] of pausePendingExits.slice(1).entries()) {
+    setExit(record); await page.getByRole('button', { name: '刷新可提证据', exact: true }).click();
+    await expect(status).toHaveText(`暂停控制状态，资金仍保留；订单停止尚未核实；${pending[index]}`);
+  }
+  setExit({ ...exit, reason_codes: [] });
+  await page.getByRole('button', { name: '刷新可提证据', exact: true }).click();
+  await expect(status).toHaveText('暂停控制状态，资金仍保留；订单停止尚未核实');
+  await expect(page.getByText('已暂停，资金仍保留', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('最近记录阶段：限价减仓阶段', { exact: false })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, action: 'PAUSE', expected_revision: exit.revision });
+});
+
+test('failed refresh and offline reads retain pending cancellation as a previous record', async ({ page, context }) => {
+  const { writes, setExitReadFailure } = await fixture(page, 'normal', pendingCancelExit); await page.goto(endpoint);
+  const status = page.getByRole('status').filter({ hasText: '正在取消后续退出' });
+  await expect(status).toContainText('请求已受理，等待原生 owner');
+  setExitReadFailure(true); await page.getByRole('button', { name: '刷新可提证据', exact: true }).click();
+  await expect(page.getByText('数据未更新', { exact: true })).toBeVisible();
+  await expect(status).toContainText('上次记录：'); await expect(status).toContainText('尚未确认完成');
+  await context.setOffline(true);
+  await expect(status).toContainText('上次记录：');
+  await expect(page.getByRole('button', { name: '取消后续退出', exact: true })).toBeDisabled();
+  await expect(page.getByText('后续退出已取消，资金仍保留', { exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
+test('portfolio history stays complete and read-only without new writes or losing safe stop controls', async ({ page }) => {
+  const record = boundedRecord('2099-10-09T02:03:04.123456789+02:30');
+  record.scope = { kind: 'PORTFOLIO_SCOPE', amount: exit.scope.amount, currency: 'USD', stream_ids: [id, source], release_ids: [exit.id, id] };
+  if (record.policy.kind !== 'BOUNDED_LIMIT') throw new Error('bounded fixture required');
+  record.policy.legs.push({ ...record.policy.legs[0]!, instrument_id: 'ETH-USD.NATIVE' });
+  record.evidence_refs = [id, source, exit.id];
+  const { writes } = await fixture(page, 'normal', record); await page.goto(endpoint);
+  await expect(page.getByText(JSON.stringify(record.scope), { exact: true })).toBeVisible();
+  await expect(page.getByText(JSON.stringify(record.policy), { exact: true })).toBeVisible();
+  for (const ref of record.evidence_refs) await expect(page.getByText(ref, { exact: true }).first()).toBeVisible();
+  const resume = page.getByRole('button', { name: '继续退出', exact: true });
+  await expect(resume).toBeDisabled(); await resume.evaluate(element => (element as HTMLButtonElement).click());
+  await expect(page.getByRole('button', { name: '预览影响', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '开始退出', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '暂停退出', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '取消后续退出', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: /^关\s*闭$/ }).click();
+  await page.getByRole('button', { name: '重新打开账户', exact: true }).click();
+  await expect(page.getByText(JSON.stringify(record.scope), { exact: true })).toBeVisible();
+  await expect(page.getByText(JSON.stringify(record.policy), { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(0);
+});
+
+for (const action of ['PAUSE', 'CANCEL'] as const) test(`portfolio history still permits backend-allowed ${action}`, async ({ page }) => {
+  const record = { ...exit, scope: { kind: 'PORTFOLIO_SCOPE' as const, amount: exit.scope.amount, currency: 'USD', stream_ids: [id, source], release_ids: [exit.id, id] } };
+  const { writes } = await fixture(page, 'normal', record); await page.goto(endpoint);
+  await page.getByRole('button', { name: action === 'PAUSE' ? '暂停退出' : '取消后续退出', exact: true }).click();
+  await page.getByRole('checkbox', { name: '确认此操作及上述后果' }).check();
+  await page.getByRole('button', { name: '提交此操作', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '请求已受理，等待原生 owner' })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]!.body).toEqual({ schema_version: 1, action, expected_revision: record.revision });
+});
+
+test('a supported portfolio preview cannot start even if the fixture advertises SUPPORTED', async ({ page }) => {
+  const { writes } = await fixture(page, 'portfolio-preview'); await page.goto(endpoint); await plan(page);
+  await expect(page.getByRole('button', { name: '开始退出', exact: true })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: '我已核对账户' })).toBeDisabled();
+  await page.getByRole('button', { name: '开始退出', exact: true }).evaluate(element => (element as HTMLButtonElement).click());
+  expect(writes).toHaveLength(1); expect(writes[0]!.body.scope.kind).toBe('AMOUNT');
+  expect(writes.filter(write => write.path.endsWith('/capital-exits'))).toHaveLength(0);
+});
+
+test('a scope change while confirming resume prevents submitting the stale action', async ({ page }) => {
+  const record = boundedRecord('2099-10-09T02:03:04.123456789+02:30');
+  const { writes, setExit } = await fixture(page, 'normal', record); await page.goto(endpoint);
+  await page.getByRole('button', { name: '继续退出', exact: true }).click();
+  await page.getByRole('button', { name: '预览影响', exact: true }).click();
+  await page.getByRole('checkbox', { name: '我已核对账户' }).check();
+  await page.getByRole('checkbox', { name: '确认此操作及上述后果' }).check();
+  await expect(page.getByRole('button', { name: '提交此操作', exact: true })).toBeEnabled();
+  setExit({ ...record, scope: { kind: 'PORTFOLIO_SCOPE', amount: record.scope.amount, currency: 'USD', stream_ids: [id, source], release_ids: [exit.id, id] } });
+  await page.getByRole('button', { name: '刷新可提证据', exact: true }).click();
+  await expect(page.getByText('组合目标流退出尚未实现，不能新建或继续', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '预览影响', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '提交此操作', exact: true })).toBeDisabled();
+  expect(writes).toHaveLength(1);
+  expect(writes.filter(write => write.body.action === 'RESUME')).toHaveLength(0);
 });

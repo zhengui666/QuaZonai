@@ -239,7 +239,8 @@ pub enum ForwardAccounts {
 
 #[derive(Subcommand)]
 pub enum CapitalExits {
-    /// Request an evidence-bound server preview from stdin (no execution).
+    /// Request an evidence-bound AMOUNT server preview from stdin (no execution).
+    /// New PORTFOLIO_SCOPE previews are unsupported; historical portfolio exits remain readable.
     /// The generic --preview only validates local transport syntax and sends nothing.
     Preview { #[arg(long)] project_id: String },
     /// Start the exact approved preview from stdin; may activate native reductions.
@@ -247,11 +248,14 @@ pub enum CapitalExits {
     Start { #[arg(long)] project_id: String },
     List(ProjectList),
     Show { id: String },
-    /// Pause new reductions and resolve exit-owned pending orders; reserve remains.
+    /// Request a pause of new reductions and resolution of exit-owned orders; reserve remains.
+    /// 202 means accepted. PAUSED, even without reasons, does not prove all orders stopped.
     Pause { id: String },
-    /// Cancel only future exit work; filled trades remain and reserve is not reinvested.
+    /// Request cancellation of future exit work; filled trades remain and reserve is not reinvested.
+    /// 202 means accepted; wait for original native cancellation evidence.
     Cancel { id: String },
-    /// Continue remaining reductions using a fresh approved preview; never buy back.
+    /// Request remaining reductions using a fresh approved preview; never buy back.
+    /// 202 means accepted, not reductions completed; the server admits the original preview.
     Resume { id: String },
     /// Report your own withdrawal for native verification; never performs a transfer.
     Reconcile { id: String },
@@ -261,8 +265,7 @@ impl CapitalExits {
     fn request(self) -> Result<Request> {
         use contracts::capital_exit::*;
         match self {
-            Self::Preview { project_id } => Request::write::<CapitalExitPreviewRequestV1, CommandResult<CapitalExitPreviewV1>>(
-                Method::POST, action("/api/v2/projects", project_id, "capital-exit-previews")?, 201, true),
+            Self::Preview { project_id } => Self::preview_input(project_id, std::io::stdin().lock()),
             Self::Start { project_id } => Request::write::<CapitalExitStartV1, CommandResult<CapitalExitViewV1>>(
                 Method::POST, action("/api/v2/projects", project_id, "capital-exits")?, 202, true),
             Self::List(list) => Request::get::<Page<CapitalExitViewV1>>(action("/api/v2/projects", list.project_id, "capital-exits")?).page(list.page),
@@ -272,6 +275,15 @@ impl CapitalExits {
             Self::Resume { id } => Self::action_input(id, "resume", "RESUME", std::io::stdin().lock()),
             Self::Reconcile { id } => Self::action_input(id, "reconcile-withdrawal", "RECONCILE_WITHDRAWAL", std::io::stdin().lock()),
         }
+    }
+    fn preview_input(project_id: String, input: impl Read) -> Result<Request> {
+        use contracts::capital_exit::{CapitalExitPreviewRequestV1, CapitalExitPreviewV1, CapitalExitScopeV1};
+        let request = Request::write_input::<CapitalExitPreviewRequestV1, CommandResult<CapitalExitPreviewV1>>(
+            Method::POST, action("/api/v2/projects", project_id, "capital-exit-previews")?, 201, true, input)?;
+        let body: CapitalExitPreviewRequestV1 = serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
+            .map_err(|_| Failure::Input)?;
+        if !matches!(body.scope, CapitalExitScopeV1::Amount { .. }) { return Err(Failure::Input); }
+        Ok(request)
     }
     fn action_input(id: String, suffix: &str, expected_action: &str, input: impl Read) -> Result<Request> {
         use contracts::capital_exit::{CapitalExitActionV1, CapitalExitViewV1};
@@ -2467,6 +2479,56 @@ mod target_delivery_v2_tests {
 mod capital_exit_cli_tests {
     use super::*;
     const ID: &str = "018fc823-8e40-7000-8000-000000000001";
+    #[test]
+    fn capital_exit_preview_accepts_only_amount_and_preserves_typed_bounds() {
+        let body = serde_json::json!({"schema_version":1,"account_source_id":ID,"expected_source_observation_id":ID,
+            "scope":{"kind":"AMOUNT","amount":"1234567890.123456789012345678","currency":"USD"},
+            "policy":{"kind":"BOUNDED_LIMIT","deadline":"2027-10-10T12:00:00Z",
+                "legs":[{"instrument_id":"TEST.SIM","maximum_reduction_quantity":"1.123456789012345678","minimum_sell_price":"100.123456789012345678"}],
+                "max_execution_cost":{"amount":"0.000000000000000001","currency":"USD","reference_evidence_id":ID}}});
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let request = CapitalExits::preview_input(ID.into(), bytes.as_slice()).unwrap();
+        assert_eq!(request.route, format!("/api/v2/projects/{ID}/capital-exit-previews"));
+        assert_eq!(request.method, Method::POST);
+        assert_eq!(request.status, 201);
+        assert!(request.operator && request.requires_idempotency_key());
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap()).unwrap(), body);
+        let mut portfolio = body.clone();
+        portfolio["scope"]["kind"] = "PORTFOLIO_SCOPE".into();
+        portfolio["scope"]["stream_ids"] = serde_json::json!([ID]);
+        portfolio["scope"]["release_ids"] = serde_json::json!([ID]);
+        let bytes = serde_json::to_vec(&portfolio).unwrap();
+        assert!(matches!(CapitalExits::preview_input(ID.into(), bytes.as_slice()), Err(Failure::Input)));
+        let mut unknown = body;
+        unknown["scope"]["unknown_field"] = true.into();
+        let bytes = serde_json::to_vec(&unknown).unwrap();
+        assert!(matches!(CapitalExits::preview_input(ID.into(), bytes.as_slice()), Err(Failure::Input)));
+    }
+    #[test]
+    fn capital_exit_reads_preserve_full_historical_portfolio_and_multiple_legs() {
+        let view = serde_json::json!({
+            "schema_version":1,"id":ID,"project_id":ID,"account_source_id":ID,"environment":"PAPER",
+            "managed_account_key":"controlled-historical-account","owner_binding_ref":"controlled-historical-owner",
+            "account_control_epoch":"9007199254740993","account_control_revision":"9007199254740993","revision":"9007199254740993",
+            "state":"PAUSED","last_phase":"REDUCING","reason_codes":[],"preview_id":ID,"plan_artifact_id":ID,
+            "scope":{"kind":"PORTFOLIO_SCOPE","stream_ids":[ID],"release_ids":[ID],"amount":"1234567890.123456789012345678","currency":"USD"},
+            "policy":{"kind":"BOUNDED_LIMIT","deadline":"2026-10-07T12:00:00Z","legs":[
+                {"instrument_id":"FIRST.SIM","maximum_reduction_quantity":"1.123456789012345678","minimum_sell_price":"100.123456789012345678"},
+                {"instrument_id":"SECOND.SIM","maximum_reduction_quantity":"2.123456789012345678","minimum_sell_price":"200.123456789012345678"}],
+                "max_execution_cost":{"amount":"0.000000000000000001","currency":"USD","reference_evidence_id":ID}},
+            "command_id":ID,"owner_command":{"schema_version":1,"command_id":ID,"account_control_epoch":"9007199254740993","instruction":{"action":"PAUSE"}},
+            "external_claim_id":"original-claim","remaining_trading":"FENCED_PENDING_TARGET",
+            "funds":{"requested_amount":{"amount":"1234567890.123456789012345678","currency":"USD"},
+                "reserved_amount":{"amount":"1234567890.123456789012345678","currency":"USD"},
+                "released_cash_amount":null,"verified_withdrawable_amount":null,"reconciled_withdrawal_amount":{"amount":"0","currency":"USD"},
+                "unreleased_amount":null,"evidence_asof":null,"evidence_valid_until":null,"withdrawability":"UNVERIFIED"},
+            "evidence_refs":[ID],"created_at":"2026-10-07T11:00:00Z","updated_at":"2026-10-07T12:00:00Z"});
+        let Output::Json(decode) = CapitalExits::Show { id: ID.into() }.request().unwrap().output else { panic!("typed show required"); };
+        assert_eq!(decode(&serde_json::to_vec(&view).unwrap()).unwrap(), view);
+        let page = serde_json::json!({"schema_version":1,"items":[view],"next_cursor":ID});
+        let Output::Json(decode) = CapitalExits::List(ProjectList { project_id: ID.into(), page: List { cursor: None, limit: 25 } }).request().unwrap().output else { panic!("typed list required"); };
+        assert_eq!(decode(&serde_json::to_vec(&page).unwrap()).unwrap(), page);
+    }
     #[test]
     fn capital_exit_reads_use_original_paginated_routes() {
         let request = CapitalExits::List(ProjectList { project_id: ID.into(), page: List { cursor: None, limit: 25 } }).request().unwrap();
