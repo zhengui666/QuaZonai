@@ -155,19 +155,21 @@ fn amount_preview_start_and_resume_send_exact_bodies_keys_and_auth_without_extra
                 "code":"CONTROLLED_FIXTURE","detail":"Transport only","request_id":ID,"retryable":false,"field_errors":[],"safe_next_actions":[]})).unwrap();
             write!(socket, "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/problem+json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", problem.len()).unwrap();
             socket.write_all(&problem).unwrap();
-            (header.lines().next().unwrap().to_owned(), headers, bytes[header_end..header_end+length].to_vec())
+            (header.lines().next().unwrap().to_owned(), headers, bytes[header_end..header_end+length].to_vec(), problem)
         });
         let mut args = vec!["client", "--origin", &origin, "--credential-file", credential.to_str().unwrap(),
             "--idempotency-key", "original-capital-exit-operation", "--operator-grant", ID, "forward", "accounts", "exits"];
         args.extend(tail);
         let result = invoke(&args, Some(expected.clone()));
+        let (line, headers, body, problem) = server.join().unwrap();
         assert!(!result.status.success());
-        assert!(String::from_utf8(result.stderr).unwrap().contains("CLI_SERVER_REJECTED_REQUEST"));
-        let (line, headers, body) = server.join().unwrap();
+        assert!(result.stdout.is_empty());
+        assert_eq!(serde_json::from_slice::<Value>(&result.stderr).unwrap(), serde_json::from_slice::<Value>(&problem).unwrap());
         assert_eq!(line, format!("POST {route} HTTP/1.1"));
         assert_eq!(headers["idempotency-key"], "original-capital-exit-operation");
         assert_eq!(headers["authorization"], format!("Bearer {token}"));
         assert_eq!(headers["x-operator-grant"], ID);
         assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), expected);
+        eprintln!("controlled capital-exit transport verified: POST {route}");
     }
 }
