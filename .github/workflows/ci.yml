@@ -4,16 +4,28 @@ on:
   push:
     branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      pr190_pg_upgrade_diagnostic:
+        description: 'Only scoped PR190 Forward upgrade regression; skipped acceptance gates are not PR validation'
+        required: false
+        type: boolean
+        default: false
+      pr190_forward_submit_green:
+        description: 'After proven RED and the production fix, also run the whole forward_execution_limits target'
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 env:
   EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
   RUSTUP_TOOLCHAIN: '1.98.1'
 concurrency:
-  group: native-ci-${{ github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
+  group: native-ci-${{ github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.pr190_pg_upgrade_diagnostic && '-pr190-pg-diagnostic' || '' }}
   cancel-in-progress: true
 jobs:
   rust-native-contracts:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pr190_pg_upgrade_diagnostic) }}
     runs-on: ubuntu-24.04
     env:
       CARGO_BUILD_JOBS: '2'
@@ -82,6 +94,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
   store-postgres:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pr190_pg_upgrade_diagnostic) }}
     runs-on: ubuntu-24.04
     env:
       CARGO_BUILD_JOBS: '2'
@@ -271,9 +284,119 @@ jobs:
         if: always()
         run: docker rm --force --volumes store-database
   full-rust-regression:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.pr190_pg_upgrade_diagnostic }}
     needs: [rust-native-contracts, store-postgres]
     uses: ./.github/workflows/rust-regression.yml
     with:
       revision: ${{ github.sha }}
       artifact_label: manual-full
+  pr190-pg-upgrade-diagnostic:
+    name: PR190 Forward upgrade regression (diagnostic, not acceptance)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.pr190_pg_upgrade_diagnostic }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PGMQ_IMAGE: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Mark the separate diagnostic scope
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr190-pg-diagnostic
+          git rev-parse HEAD > /tmp/pr190-pg-diagnostic/tested-commit.txt
+          printf '%s\n' 'PR190 actual Forward replay RED/GREEN regression only. Formal native, Store and full Rust acceptance jobs are intentionally skipped in this explicit mode. This run never establishes PR-wide acceptance. Original upgrade assertions remain unchanged. The business regression is not ignored; the separate raw h.* RED case is absent from this branch.' > /tmp/pr190-pg-diagnostic/SCOPE.txt
+          printf 'green_full_file_requested=%s\n' '${{ inputs.pr190_forward_submit_green }}' >> /tmp/pr190-pg-diagnostic/SCOPE.txt
+      - name: Start the existing isolated PostgreSQL and verify PGMQ
+        run: |
+          set -euo pipefail
+          database_password=$(openssl rand -hex 24)
+          echo "::add-mask::$database_password"
+          echo "DATABASE_URL=postgres://postgres:${database_password}@127.0.0.1:55432/postgres" >> "$GITHUB_ENV"
+          docker pull "$PGMQ_IMAGE"
+          docker run --detach --name pr190-diagnostic-database --publish 127.0.0.1:55432:5432 --env "POSTGRES_PASSWORD=$database_password" "$PGMQ_IMAGE"
+          for attempt in $(seq 1 60); do
+            if docker exec pr190-diagnostic-database pg_isready -h 127.0.0.1 -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec pr190-diagnostic-database pg_isready -h 127.0.0.1 -U postgres
+          docker exec -i --env "PGPASSWORD=$database_password" pr190-diagnostic-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 < tests/native/pgmq_contract.sql | tee /tmp/pr190-pg-diagnostic/pgmq-contract.log
+          docker exec --env "PGPASSWORD=$database_password" pr190-diagnostic-database psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c 'SELECT version()' > /tmp/pr190-pg-diagnostic/database-version.txt
+      - name: Install the existing pinned Rust toolchain
+        id: toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv > /tmp/pr190-pg-diagnostic/rustc.txt
+      - name: Restore the existing dependency-only Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-native-deps-v1
+          key: ubuntu-24.04-host-dev-test-pr190-pg-upgrade-diagnostic
+          workspaces: ". -> target"
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-all-crates: false
+          cache-on-failure: true
+      - name: Compile only the Store target and prove both exact selectors
+        id: exact_list
+        run: |
+          set -euo pipefail
+          cargo=(rustup run "$RUSTUP_TOOLCHAIN" cargo)
+          for case in migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_bypass forward_submit_replays_on_both_warmed_backends_after_real_upgrade; do
+            "${cargo[@]}" test --locked -p store --test forward_execution_limits "$case" -- --exact --list 2>&1 | tee "/tmp/pr190-pg-diagnostic/$case-list.log"
+            matches=$(grep -cFx "$case: test" "/tmp/pr190-pg-diagnostic/$case-list.log" || true)
+            printf 'exact_matches=%s\n' "$matches" > "/tmp/pr190-pg-diagnostic/$case-list-status.txt"
+            [[ "$matches" == 1 ]]
+          done
+      - name: Run the unchanged original upgrade test
+        id: exact_original
+        if: ${{ !cancelled() && steps.exact_list.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          case=migration_103_to_104_preserves_existing_receipt_and_rejects_new_legacy_bypass
+          set +e
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store --test forward_execution_limits "$case" -- --exact --nocapture --test-threads=1 2>&1 | tee "/tmp/pr190-pg-diagnostic/$case-test.log"
+          status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'test_exit=%s\ntee_exit=%s\n' "${status[0]}" "${status[1]}" > "/tmp/pr190-pg-diagnostic/$case-test-status.txt"
+          if (( status[0] != 0 )); then exit "${status[0]}"; fi
+          exit "${status[1]}"
+      - name: Run the actual two-backend Forward replay regression
+        id: exact_business
+        if: ${{ !cancelled() && steps.exact_list.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          case=forward_submit_replays_on_both_warmed_backends_after_real_upgrade
+          set +e
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store --test forward_execution_limits "$case" -- --exact --nocapture --test-threads=1 2>&1 | tee "/tmp/pr190-pg-diagnostic/$case-test.log"
+          status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'test_exit=%s\ntee_exit=%s\n' "${status[0]}" "${status[1]}" > "/tmp/pr190-pg-diagnostic/$case-test-status.txt"
+          if (( status[0] != 0 )); then exit "${status[0]}"; fi
+          exit "${status[1]}"
+      - name: GREEN - run the complete forward_execution_limits target
+        if: ${{ !cancelled() && inputs.pr190_forward_submit_green && steps.exact_original.outcome == 'success' && steps.exact_business.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          set +e
+          rustup run "$RUSTUP_TOOLCHAIN" cargo test --locked -p store --test forward_execution_limits -- --nocapture --test-threads=4 2>&1 | tee /tmp/pr190-pg-diagnostic/forward-execution-limits-full-test.log
+          status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'test_exit=%s\ntee_exit=%s\n' "${status[0]}" "${status[1]}" > /tmp/pr190-pg-diagnostic/forward-execution-limits-full-test-status.txt
+          if (( status[0] != 0 )); then exit "${status[0]}"; fi
+          exit "${status[1]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pr190-forward-submit-regression-${{ github.run_id }}
+          path: /tmp/pr190-pg-diagnostic/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove only this disposable diagnostic database
+        if: always()
+        run: docker rm --force --volumes pr190-diagnostic-database
