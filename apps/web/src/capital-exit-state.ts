@@ -108,8 +108,33 @@ export function createExitResultReader(initialIntent: string | undefined, initia
 export function positiveDecimal(value: string) { return isDecimal(value) && !value.startsWith('-') && /[1-9]/.test(value); }
 export function nonnegativeDecimal(value: string) { return isDecimal(value) && !value.startsWith('-'); }
 export function money(value: Schema['AccountMoneyV1'] | null | undefined) { return value ? `${value.amount} ${value.currency}` : '暂无证据'; }
+const exitStates: Record<ExitView['state'], string> = {
+  REQUESTED: '已请求，等待原生确认', FENCING: '正在禁止新增资金占用', CANCELLING_OPENERS: '正在核对开仓撤单',
+  REDUCING: '正在限价减仓', WAITING_EVIDENCE: '等待原生成交、结算或可用资金证据',
+  PAUSED: '暂停控制状态，资金仍保留；订单停止尚未核实', CANCELLING_EXIT: '正在取消后续退出，尚未确认完成；资金仍保留',
+  CANCELLED_RESERVED: '后续退出已取消，资金仍保留', RECONCILING_WITHDRAWAL: '正在核对自行提款',
+  COMPLETED: '原生证据已核对提款', BLOCKED: '已阻止，需处理原因',
+};
+const pendingReasons = new Map([
+  ['owner_command_pending', '请求已受理，等待原生 owner'], ['owner_fence_pending', '等待隔离确认'],
+  ['native_cancellation_pending', '仍有未决订单，等待原生撤单确认'], ['deadline_pause_evidence_pending', '等待截止暂停 / 撤单证据'],
+]);
+/** PAUSED is a control state, including after FenceApplied clears reasons.
+ * Neither that state nor a 202 receipt proves every native order has stopped. */
+export function exitStateDisplay(exit: Pick<ExitView, 'state' | 'reason_codes'>, readCurrent = true) {
+  const pending = exit.reason_codes.map(code => pendingReasons.get(code.replace(/^capital_exit_/, ''))).filter(Boolean);
+  return `${readCurrent ? '' : '上次记录：'}${exitStates[exit.state]}${pending.length ? `；${pending.join('；')}` : ''}`;
+}
+export function exitPhaseLabel(phase: ExitView['last_phase']) {
+  const phases: Record<ExitView['last_phase'], string> = {
+    REQUESTED: '请求阶段', FENCING: '隔离阶段', CANCELLING_OPENERS: '开仓撤单阶段', REDUCING: '限价减仓阶段',
+    WAITING_EVIDENCE: '证据等待阶段', PAUSED: '暂停控制阶段', CANCELLING_EXIT: '后续退出取消阶段',
+    CANCELLED_RESERVED: '取消保留阶段', RECONCILING_WITHDRAWAL: '提款核对阶段', COMPLETED: '提款核对完成阶段', BLOCKED: '阻止阶段',
+  };
+  return phases[phase];
+}
 export function previewCanStart(preview: ExitPreview, now: number, observation?: string) {
-  return preview.capability === 'SUPPORTED' && preview.expected_account_control_revision != null
+  return preview.scope.kind === 'AMOUNT' && preview.capability === 'SUPPORTED' && preview.expected_account_control_revision != null
     && Date.parse(preview.valid_until) > now && preview.original_observation_id === observation;
 }
 export function withdrawableDisplay(exit: ExitView, now: number, readCurrent = true) {

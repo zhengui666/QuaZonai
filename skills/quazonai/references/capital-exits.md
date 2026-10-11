@@ -7,6 +7,13 @@ external native owner can cancel selected opening work and submit authorized
 price-bounded reductions. A reservation prevents that owner's reinvestment; it is
 not a wallet lock against the user or another program.
 
+Current execution capability supports only `AMOUNT`. New `PORTFOLIO_SCOPE`
+previews are unsupported and the CLI rejects them before sending. The wire
+contract still represents historical portfolio scopes: list/show retain their
+stream/release IDs, multiple reduction legs and evidence for read-only inspection.
+Their presence is not executable capability; never convert them to an amount
+scope or start/resume an unsupported historical preview.
+
 ## Resolve and preview
 
 1. Resolve the exact project, account source, native account and environment using
@@ -18,8 +25,8 @@ not a wallet lock against the user or another program.
 2. Inspect `quazonai client forward accounts exits preview --help` and
    `quazonai openapi --schema CapitalExitPreviewRequestV1` as needed. Keep amounts,
    quantities and revisions as exact decimal strings, never binary floating point.
-3. Prepare `AMOUNT`, or the exact `PORTFOLIO_SCOPE` stream IDs/release IDs plus the
-   requested amount/currency. Alphas share net account holdings; they are not
+3. Prepare only `AMOUNT` with the exact requested amount/currency. Alphas share
+   net account holdings; they are not
    independent withdrawable lots. Select `CASH_ONLY`, or obtain the user's explicit
    `BOUNDED_LIMIT` price floors, maximum quantities, deadline, maximum incremental
    execution cost and original reference evidence. Never choose or widen these
@@ -48,7 +55,10 @@ approval of material changes, never silent acceptance of a replacement.
 Use `CapitalExitStartV1` with the returned preview ID, plan artifact ID, original
 observation ID and account-control revision. Retain the body/key before invoking:
 `quazonai client --idempotency-key ORIGINAL_START_KEY forward accounts exits start --project-id PROJECT_ID`.
-A 202 response means requested. Follow its original intent ID:
+A 202 response means the service accepted the request, not that native reductions
+or cancellation completed. Start and resume pass the original preview ID to the
+server's admission rules; the CLI performs no extra GET and never rewrites its
+scope. Follow its original intent ID:
 
 - `quazonai client forward accounts exits list --project-id PROJECT_ID`
 - `quazonai client forward accounts exits show INTENT_ID`
@@ -63,20 +73,38 @@ an uncertain outcome. A source/session/project alias cannot create a fresh budge
 Each command below takes `CapitalExitActionV1` JSON on stdin and its own retained
 idempotency key. The top-level action tag must match the selected command.
 
-- `quazonai client forward accounts exits pause INTENT_ID`: `PAUSE` stops new
-  reductions, resolves/cancels this exit's unfilled orders and keeps its reserve
+- `quazonai client forward accounts exits pause INTENT_ID`: `PAUSE` requests that
+  the native owner stop new reductions and resolve/cancel this exit's unfilled
+  orders; its reserve remains. 202 is acceptance, not proof the orders stopped
 - `quazonai client forward accounts exits cancel INTENT_ID`: `CANCEL` cancels
   future exit work; CANCELLED_RESERVED retains capital. Filled trades remain;
-  cancellation does not buy back assets, undo fills or restore reinvestment
+  cancellation does not buy back assets, undo fills or restore reinvestment.
+  202 is acceptance; original native cancellation evidence is still required
 - `quazonai client forward accounts exits resume INTENT_ID`: `RESUME` requires a
   valid refreshed preview for the same remaining exit and expected revision. It
-  continues approved reductions, never new additions or buybacks
+  continues approved reductions, never new additions or buybacks. 202 is acceptance,
+  not completion, and does not relax the approved price, quantity, cost or deadline
 - `quazonai client forward accounts exits reconcile INTENT_ID`:
   `RECONCILE_WITHDRAWAL` reports the user's own amount/currency and optional original
   transfer reference for verification. It neither initiates a transfer nor proves
   the report. Wait for matching original native cash-movement evidence; a balance
   drop alone could be fees, PnL or another transfer. Partial withdrawal retains the
   remaining reserve and must not subtract the amount twice from observed cash
+
+`PAUSED`, even with an empty `reason_codes`, does not prove all native orders have
+stopped. A `FenceApplied` report can clear pending reasons while the exit remains
+paused; it proves the reported strategy gate, not order cancellation. Keep the
+funds reserved and inspect the original owner command, fence coverage and order
+evidence separately. `capital_exit_owner_command_pending` means the owner
+instruction still needs native application evidence; `capital_exit_owner_fence_pending`
+means the original native gate still needs coverage evidence. Cancellation remains
+pending until the original exit-owned orders have native closure/cancellation
+evidence; an accepted command or cleared reason is insufficient.
+`capital_exit_deadline_pause_evidence_pending` means the bounded deadline has
+elapsed while pause evidence is still missing. It never extends the deadline or
+permits a market/forced-exit fallback. Unknown or late native effects remain
+explicit; do not assume a pause/cancel request, heartbeat or local process exit
+has stopped them.
 
 Immediately before the user withdraws manually, refresh the original intent's
 available-cash evidence and have them check the venue's current withdrawal screen.
