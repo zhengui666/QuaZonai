@@ -124,7 +124,7 @@ impl Store {
         .bind(downstream.as_uuid())
         .fetch_one(&mut *tx)
         .await?;
-        let handoff=sqlx::query("SELECT h.*,r.environment AS release_environment,c.project_id FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1 AND h.downstream_id=$2 AND c.project_id=$3 FOR SHARE OF h")
+        let handoff=sqlx::query("SELECT h.release_id,h.environment,h.external_claim_id,h.state,h.claimed_at,r.environment AS release_environment FROM app.handoff_offers h JOIN app.releases r ON r.id=h.release_id JOIN app.portfolio_candidates c ON c.id=r.candidate_id WHERE h.id=$1 AND h.downstream_id=$2 AND c.project_id=$3 FOR SHARE OF h")
             .bind(report.handoff_id.as_uuid()).bind(downstream.as_uuid()).bind(report.project_id.as_uuid()).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
         let release_origin: String = handoff.try_get("release_environment")?;
         let origin = if release_origin == "REAL" {
