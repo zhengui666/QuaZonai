@@ -54,14 +54,16 @@ const labels: Record<string, string> = {
   active: '运行中', accepted: '已接纳', submitted: '已提交', delivered: '已交付',
   acknowledged: '已确认', expired: '已过期', rejected: '已拒绝', issued: '已签发',
   done: '已完成', complete: '已完成', success: '成功', stopping_requested: '停止中',
+  computed: '已计算', observing: '观测中', idle: '空闲', uncertain: '待核对', not_offered: '未交付',
 };
-export function isActive(status: string) { return ['queued', 'pending', 'running', 'active'].includes(status); }
-export function isReady(status: string) { return status === 'ready'; }
+export function isActive(status: string) { return ['queued', 'pending', 'running', 'active', 'observing'].includes(status.toLowerCase()); }
+export function isReady(status: string) { return ['ready', 'computed'].includes(status.toLowerCase()); }
 export function Status({ value }: { value: string | null | undefined }) {
-  const tone = value && ['ready', 'completed', 'succeeded', 'loaded', 'acknowledged', 'success', 'done', 'complete'].includes(value) ? 'good'
-    : value && ['failed', 'error', 'rejected'].includes(value) ? 'bad'
-      : value && ['running', 'active', 'pending', 'queued', 'stopping', 'pending_restart', 'issued', 'submitted'].includes(value) ? 'busy' : 'quiet';
-  return <Tag className={`status status-${tone}`}><span aria-hidden className="status-dot" />{value ? labels[value] ?? value : '—'}</Tag>;
+  const status = value?.toLowerCase();
+  const tone = status && ['ready', 'computed', 'completed', 'succeeded', 'loaded', 'acknowledged', 'success', 'done', 'complete'].includes(status) ? 'good'
+    : status && ['failed', 'error', 'rejected'].includes(status) ? 'bad'
+      : status && ['running', 'active', 'observing', 'pending', 'queued', 'stopping', 'pending_restart', 'issued', 'submitted', 'uncertain'].includes(status) ? 'busy' : 'quiet';
+  return <Tag className={`status status-${tone}`}><span aria-hidden className="status-dot" />{status ? labels[status] ?? value : '—'}</Tag>;
 }
 export function display(value: string | number | null | undefined) { return value === null || value === undefined || value === '' ? '—' : value; }
 export function number(value: string | number | null | undefined) {

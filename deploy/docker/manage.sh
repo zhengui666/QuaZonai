@@ -190,7 +190,11 @@ qz_restore() {
     printf '{"operation":"restore","phase":"restoring","source":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup")" "$(qz_raw "$file")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
     qz_compose "$QZ_CONFIG" exec -T database pg_restore -U quazonai -d quazonai --clean --if-exists --single-transaction --exit-on-error < "$backup/database.dump"
     mv "$root/data" "$destination"; mv "$root/data.restore/data" "$root/data"; rmdir "$root/data.restore"
-    if [[ -e "$backup/compose.override.yaml" ]]; then cp "$backup/compose.override.yaml" "$root/compose.override.yaml"; fi
+    if [[ -e "$backup/compose.override.yaml" ]]; then
+        cp "$backup/compose.override.yaml" "$root/compose.override.yaml"
+    else
+        rm -f -- "$root/compose.override.yaml"
+    fi
     qz_save "$root/installation.json" < "$file"
     printf '{"operation":"restore","phase":"starting","source":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup")" "$(qz_raw "$file")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
     qz_activate "$root" "$file" --force-recreate

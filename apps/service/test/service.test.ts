@@ -29,6 +29,11 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     assert.equal(full.statusCode, 202, full.body);
     await (await state.service.research.harness.submission(full.json().submissionId, context))!.wait(context);
     assert.deepEqual((await app.inject({ url: `${api}/research/${full.json().conversationId}`, headers: state.headers })).json().input, original);
+    const invalid = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
+      payload: { requestId: 'invalid-full-input', input: { ...original, policy: { budget: 9007199254740992 } } } });
+    assert.equal(invalid.statusCode, 400); assert.equal(invalid.json().error, 'invalid_json_number');
+    assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests['request:invalid-full-input'], undefined);
+    assert.equal((await state.service.research.harness.snapshot(Requests, context))!.requests['request:invalid-full-input'], undefined);
     state.faux.setResponses([fauxAssistantMessage('Original conversation retained.')]);
     const legacyInput = { goal: 'Existing durable admission', model: state.model, data: { previousCatalog: 'retired-original-source' }, policy: {} };
     const legacy = await state.service.research.start('existing-native-request', legacyInput);

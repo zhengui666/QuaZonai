@@ -47,7 +47,7 @@ function ObservationRecord({ value, stale }: { value: ObservationView; stale: bo
 function ObservationForm({ mode, close, started }: { mode: ObservationMode; close: () => void; started: (value: ObservationView) => void }) {
   const portfolios = useResource<PortfolioView[]>('/portfolios'); const settings = useResource<SettingsView>('/settings'); const client = useQueryClient(); const { message } = App.useApp();
   const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(); const [pending, setPending] = useState<{ fields: string; body: ObservationStart }>();
-  const ready = portfolios.data?.filter(item => isReady(item.status)) ?? []; const connections = settings.data?.connections.filter(item => item.mode === mode && item.connected) ?? [];
+  const ready = portfolios.data?.filter(item => isReady(item.status)) ?? []; const connections = settings.data?.connections.filter(item => item.mode === mode) ?? [];
   async function submit(values: { portfolioId: string; connectionId: string }) {
     setBusy(true); setError(undefined); const fields = JSON.stringify(values); const body = pending?.fields === fields ? pending.body : { requestId: crypto.randomUUID(), mode, ...values }; setPending({ fields, body });
     try {

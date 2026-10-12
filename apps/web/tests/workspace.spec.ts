@@ -9,20 +9,19 @@ async function contract(page: BrowserPage, setup = false) {
   const dataset: DatasetView = { id: 'test-data', name: '测试数据', assetClass: 'equity', currency: 'CNY', source: 'test', start: null, end: null, ready: true };
   let session: SessionView = { setupRequired: setup, authenticated: !setup };
   let settings: SettingsView = { name: 'QuaZonai', defaultModel: model, maxTrials: 4, taskTimeoutSeconds: 60, nativeTimeoutSeconds: 120, connections: [
-    { id: 'paper-test', name: '测试模拟连接', mode: 'paper', connected: true }, { id: 'live-test', name: '测试实盘连接', mode: 'live', connected: true },
-    { id: 'offline-test', name: '测试离线连接', mode: 'paper', connected: false },
+    { id: 'paper-test', name: '测试模拟连接', mode: 'paper', connected: false }, { id: 'live-test', name: '测试实盘连接', mode: 'live', connected: false },
   ] };
   let studies: ResearchSummary[] = [
-    { id: 7, title: '测试 · 低波动与动量', status: 'running', trials: 2, model: '测试模型', createdAt: at, updatedAt: at },
-    { id: 8, title: '测试 · 横截面价值', status: 'completed', trials: 4, model: '测试模型', createdAt: at, updatedAt: at },
-    { id: 9, title: '测试 · ' + 'LongResearchName'.repeat(7), status: 'failed', trials: 1, model: '测试模型', createdAt: null, updatedAt: null },
+    { id: 7, title: '测试 · 低波动与动量', status: 'RUNNING', trials: 2, model: '测试模型', createdAt: at, updatedAt: at },
+    { id: 8, title: '测试 · 横截面价值', status: 'COMPUTED', trials: 4, model: '测试模型', createdAt: at, updatedAt: at },
+    { id: 9, title: '测试 · ' + 'LongResearchName'.repeat(7), status: 'FAILED', trials: 1, model: '测试模型', createdAt: null, updatedAt: null },
   ];
-  const detail = (): ResearchDetail => ({ ...studies[0]!, input: { goal: 'test', model, data: { hidden: 'SHOULD_NOT_RENDER' }, policy: {} }, final: { status: 'pending', trialId: null, reason: 'SHOULD_NOT_RENDER', metrics: [{ key: 'ic', label: 'IC', value: null }] }, trialRecords: [{ id: 11, hypothesis: '测试 · 流动性假设', status: 'completed', metrics: [{ key: 'ic', label: 'IC', value: 0.04 }], error: null }], tasks: [{ id: 12, name: '测试计算', status: 'running', error: null }] });
-  const portfolio: PortfolioView = { id: 'p1', name: '测试 · 多因子组合', researchIds: [7, 8], datasetId: dataset.id, status: 'ready', capital: '100000.25', currency: 'CNY', createdAt: at, taskId: 12, error: null, metrics: [{ key: 'return', label: '收益率', value: '3.25', unit: '%' }], curve: [
+  const detail = (): ResearchDetail => ({ ...studies[0]!, input: { goal: 'test', model, data: { hidden: 'SHOULD_NOT_RENDER' }, policy: {} }, final: { status: 'PENDING', trialId: null, reason: 'SHOULD_NOT_RENDER', metrics: [{ key: 'ic', label: 'IC', value: null }] }, trialRecords: [{ id: 11, hypothesis: '测试 · 流动性假设', status: 'COMPUTED', metrics: [{ key: 'ic', label: 'IC', value: 0.04 }], error: null }], tasks: [{ id: 12, name: '测试计算', status: 'running', error: null }] });
+  const portfolio: PortfolioView = { id: 'p1', name: '测试 · 多因子组合', researchIds: [7, 8], datasetId: dataset.id, status: 'COMPUTED', capital: '100000.25', currency: 'CNY', createdAt: at, taskId: 12, error: null, metrics: [{ key: 'return', label: '收益率', value: '3.25', unit: '%' }], curve: [
     { at: '2026-09-01', value: '100000.25' }, { at: '2026-09-02', value: null }, { at: '2026-09-03', value: '101000.10' }, { at: '2026-09-04', value: '103250.26' },
   ], targets: [{ instrumentId: 'TEST.CN', weight: '0.25' }] };
   let portfolios = [portfolio];
-  const observation: ObservationView = { id: 'o1', name: '测试 · 模拟账户', portfolioId: portfolio.id, mode: 'paper', status: 'running', currency: 'CNY', equity: '103250.26', cash: null, updatedAt: at, positions: [{ instrumentId: 'TEST.CN', quantity: '100', value: null, pnl: '0' }], curve: portfolio.curve, receipt: { id: 'test-receipt', status: 'issued', externalId: null, expiresAt: at, acknowledgedAt: null }, error: null };
+  const observation: ObservationView = { id: 'o1', name: '测试 · 模拟账户', portfolioId: portfolio.id, mode: 'paper', status: 'OBSERVING', currency: 'CNY', equity: '103250.26', cash: null, updatedAt: at, positions: [{ instrumentId: 'TEST.CN', quantity: '100', value: null, pnl: '0' }], curve: portfolio.curve, receipt: { id: 'test-receipt', status: 'ACKNOWLEDGED', externalId: null, expiresAt: at, acknowledgedAt: null }, error: null };
   let observations = [observation];
   let extensions: ExtensionView[] = [{ name: '测试原生扩展', kind: 'native', version: '1.0', enabled: false, state: 'disabled', error: null }];
   const usage: UsageView = { activeTasks: 1, inputTokens: null, outputTokens: 2400, cost: null };
@@ -47,7 +46,7 @@ async function contract(page: BrowserPage, setup = false) {
       if (heldResearch) await heldResearch;
       return reply({ items: studies });
     }
-    if (path === '/research/7/stop') { studies[0]!.status = 'stopping'; return reply(detail(), 202); }
+    if (path === '/research/7/stop') { studies[0]!.status = 'STOPPED'; return reply(detail(), 202); }
     if (path === '/research/7') return reply(detail());
     if (path === '/portfolios') {
       if (method === 'POST') {
@@ -61,7 +60,7 @@ async function contract(page: BrowserPage, setup = false) {
       if (method === 'POST') { const input = request.postDataJSON(); const value = { ...observation, id: 'o2', mode: input.mode }; observations = [...observations, value]; return reply(value, 202); }
       return reply(observations);
     }
-    if (path.startsWith('/observations/')) { const value = observations.find(item => item.id === path.split('/')[2])!; if (path.endsWith('/stop')) value.status = 'stopping'; else value.cash = '1000.25'; return reply(value); }
+    if (path.startsWith('/observations/')) { const value = observations.find(item => item.id === path.split('/')[2])!; if (path.endsWith('/stop')) value.status = 'STOPPED'; else value.cash = '1000.25'; return reply(value); }
     if (path === '/extensions') return missingExtensions ? reply({ error: 'not_found' }, 404) : reply(extensions);
     if (path.startsWith('/extensions/')) { extensions = [{ ...extensions[0]!, enabled: request.postDataJSON().enabled, state: 'pending_restart' }]; return reply(extensions[0]); }
     return reply({ error: 'not_found' }, 404);
@@ -69,7 +68,11 @@ async function contract(page: BrowserPage, setup = false) {
   return { writes, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
-async function audit(page: BrowserPage) { expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]); }
+async function audit(page: BrowserPage) {
+  await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0);
+  await expect(page.locator('.ant-message-notice')).toHaveCount(0);
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+}
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); }
 
 test('auth setup/login and persisted research retry keep the exact v3 body', async ({ page }, info) => {
@@ -80,7 +83,9 @@ test('auth setup/login and persisted research retry keep the exact v3 body', asy
   await page.getByRole('button', { name: '设置并登录', exact: true }).click(); await expect(page.getByRole('heading', { name: '研究看板', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '退出登录', exact: true }).click(); await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible();
   await page.getByLabel('密码', { exact: true }).fill('test-only-password'); await page.getByRole('checkbox', { name: '记住登录' }).check(); await page.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '研究看板', exact: true })).toBeVisible(); await expect(page.locator('.study-card')).toHaveCount(3); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('research-1440.png'), fullPage: true }); await page.getByRole('button', { name: '新建研究', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '研究看板', exact: true })).toBeVisible(); await expect(page.locator('.study-card')).toHaveCount(3);
+  await choose(page, '研究状态', '进行中'); await expect(page.locator('.study-card')).toHaveCount(1); await choose(page, '研究状态', '全部状态'); await expect(page.locator('.study-card')).toHaveCount(3);
+  await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('research-1440.png'), fullPage: true }); await page.getByRole('button', { name: '新建研究', exact: true }).click();
   await page.getByLabel('研究目标', { exact: true }).fill('测试目标'); await choose(page, '数据集', '测试数据 · CNY'); await choose(page, '模型', '测试模型 · test');
   await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
   const first = state.writes.find(value => value.path === '/research')!.raw!; const original = JSON.parse(first);
@@ -90,7 +95,7 @@ test('auth setup/login and persisted research retry keep the exact v3 body', asy
   await page.getByRole('button', { name: '重试提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '测试 · 低波动与动量', exact: true })).toBeVisible();
   expect(state.writes.filter(value => value.path === '/research').map(value => value.raw)).toEqual([first, first]);
   await expect(page.locator('body')).not.toContainText('SHOULD_NOT_RENDER'); await expect(page.locator('pre')).toHaveCount(0);
-  await page.getByRole('button', { name: '停止研究', exact: true }).click(); await expect(page.getByText('停止中', { exact: true }).last()).toBeVisible(); await expect(page.getByRole('button', { name: '停止研究' })).toBeDisabled();
+  await page.getByRole('button', { name: '停止研究', exact: true }).click(); await expect(page.getByText('已停止', { exact: true }).last()).toBeVisible(); await expect(page.getByRole('button', { name: '停止研究' })).toBeDisabled();
   await fits(page, 1440); await page.screenshot({ path: info.outputPath('research-detail-1440.png'), fullPage: true });
 });
 
@@ -105,7 +110,7 @@ test('portfolio, account observation, settings and extension actions use real DT
   const portfolioRequest = JSON.parse(state.writes.find(value => value.path === '/portfolios')!.raw!); expect(portfolioRequest).toMatchObject({ researchIds: [7], weights: [{ researchId: 7, weight: '1' }], datasetId: 'test-data', capital: '100000.25', name: '测试新组合' });
   await page.getByRole('link', { name: '实盘/模拟盘观测', exact: true }).click(); await expect(page.getByRole('heading', { name: '账户曲线' })).toBeVisible();
   await page.getByRole('button', { name: '新建观测' }).click(); await choose(page, '策略组合', '测试 · 多因子组合'); await page.getByLabel('连接', { exact: true }).click();
-  await expect(page.getByRole('option', { name: '测试实盘连接' })).toHaveCount(0); await expect(page.getByRole('option', { name: '测试离线连接' })).toHaveCount(0); await page.getByRole('option', { name: '测试模拟连接' }).click();
+  await expect(page.getByRole('option', { name: '测试实盘连接' })).toHaveCount(0); await expect(page.getByRole('option', { name: '测试模拟连接' })).toBeVisible(); await page.getByRole('option', { name: '测试模拟连接' }).click();
   await page.getByRole('button', { name: '开始观测' }).click(); await expect(page.getByRole('dialog')).toHaveCount(0); expect(JSON.parse(state.writes.find(value => value.path === '/observations')!.raw!)).toMatchObject({ portfolioId: 'p1', mode: 'paper', connectionId: 'paper-test' });
   await page.getByRole('button', { name: '刷新账户' }).click(); await expect(page.locator('.account-grid')).toContainText('1,000.25'); await page.getByRole('button', { name: '停止观测' }).click(); await expect(page.getByRole('button', { name: '停止观测' })).toBeDisabled();
   await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('observations-1440.png'), fullPage: true });

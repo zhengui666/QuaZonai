@@ -43,3 +43,47 @@ test('stopped official storage inspection rejects unresolved native work, never 
   await assert.rejects(requireIdle(config), /Unresolved durable task/);
   const readback = await openNodeSqliteStorage(database); assert.equal((await readback.task(id, context)).state.status, 'pending'); await readback.close(context);
 });
+
+test('restore an override-free backup preserves the newer override only in pre-restore recovery, including starting retry', async (t) => {
+  const root = await directory(t); const bundle = join(root, 'bundle');
+  for (const name of ['data', 'work', 'bundle']) await mkdir(join(root, name));
+  const image = `sha256:${'a'.repeat(64)}`;
+  const config = { schema_version: 4, version: 'v0.0.0-ci.1', revision: 'b'.repeat(40), root, uid: process.getuid(),
+    project: 'restore-test', password: 'test-only', image, runtime_image: image, database_image: image, bundle };
+  await writeFile(join(bundle, 'release.json'), JSON.stringify(config));
+  await writeFile(join(root, 'installation.json'), JSON.stringify(config));
+  await writeFile(join(root, 'data/original'), 'selected backup data');
+  // Files, archives, recovery markers and backup/restore code are real; only
+  // the Docker process boundary and activation failure are controlled here.
+  const shell = (body, backup = '') => spawnSync('bash', ['-c', `source "$1"
+ROOT=$2; QZ_WORK="$ROOT/work"
+qz_stop() { :; }; qz_idle() { :; }
+qz_compose() {
+  case " $* " in
+    *" pg_dump "*) printf 'test-only PG dump';;
+    *" pg_restore "*) cat >/dev/null; printf 'restore\\n' >> "$ROOT/pg-restores";;
+    *) return 1;;
+  esac
+}
+${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.url)), root, backup], { encoding: 'utf8', timeout: 20_000 });
+  let result = shell('qz_backup "$ROOT/installation.json"; printf %s "$QZ_BACKUP" > "$ROOT/selected-backup"');
+  assert.equal(result.status, 0, result.stderr);
+  const selected = await readFile(join(root, 'selected-backup'), 'utf8');
+  await assert.rejects(readFile(join(selected, 'compose.override.yaml')), { code: 'ENOENT' });
+  const newerOverride = 'services:\n  app:\n    environment:\n      NEWER_SETTING: newer\n';
+  await writeFile(join(root, 'compose.override.yaml'), newerOverride);
+  await writeFile(join(root, 'data/original'), 'pre-restore data');
+  result = shell('qz_start() { return 23; }; qz_restore "$ROOT" "$3"', selected);
+  assert.equal(result.status, 23, result.stderr);
+  const pending = JSON.parse(await readFile(join(root, 'pending.json'), 'utf8'));
+  assert.equal(pending.phase, 'starting'); assert.equal(pending.source, selected);
+  assert.equal(await readFile(join(pending.backup, 'compose.override.yaml'), 'utf8'), newerOverride);
+  assert.equal(await readFile(join(pending.backup, 'data.original/original'), 'utf8'), 'pre-restore data');
+  await assert.rejects(readFile(join(root, 'compose.override.yaml')), { code: 'ENOENT' });
+  result = shell('qz_start() { [[ ! -e "$ROOT/compose.override.yaml" ]]; }; qz_restore "$ROOT" "$3"', selected);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(join(root, 'data/original'), 'utf8'), 'selected backup data');
+  assert.equal(await readFile(join(root, 'pg-restores'), 'utf8'), 'restore\n');
+  assert.equal((await readdir(join(root, 'backups'))).length, 2, 'starting retry must not replace the pre-restore backup');
+  await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
+});

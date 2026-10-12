@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput as NativeResearchInput } from '../../research/src/documents.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
+import { researchInput } from '../../research/src/input.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
@@ -64,12 +65,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (!host.models.getModel(String(model.provider), String(model.modelId))) throw new Problem('model_unavailable', 409);
     const policy = object(input.policy, 'policy');
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
+    const validated = researchInput(input);
     await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(input) };
+      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated) };
     }, context);
-    return host.start(requestId, json(input) as NativeResearchInput);
+    return host.start(requestId, validated);
   }
   async function getPortfolio(id: string) {
     const found = (await snapshot())!.portfolios[id]; if (!found) throw new Problem('portfolio_not_found', 404);
