@@ -103,9 +103,11 @@ if (config.phase === 'before-restart') {
       await expect(page.getByLabel('当前密码', { exact: true })).toHaveValue('');
       expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
       await changePassword(page, config.password, newPassword);
-      await secondPage.getByRole('button', { name: '刷新', exact: true }).click();
+      // Recheck the original session, not the retired Projects refresh control.
+      await secondPage.reload();
       await expect(secondPage.getByRole('heading', { name: '登录 QuaZonai', exact: true })).toBeVisible();
       await expect(secondPage.getByRole('heading', { level: 1, name: '研究', exact: true })).toHaveCount(0);
+      expect((await secondPage.request.get('/api/v2/auth/session')).status()).toBe(401);
       expect((await cli.request.get('/api/v2/auth/cli/session', { headers })).status()).toBe(200);
       await loginNative(page, config, true, newPassword);
       await openAuthSettings(page);

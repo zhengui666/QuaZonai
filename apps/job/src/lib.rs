@@ -34,7 +34,10 @@ pub mod polymarket_execution_preflight;
 pub mod polymarket_paper_host;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_paper_service;
-#[cfg(feature = "native-paper")]
+#[cfg(any(
+    feature = "native-paper",
+    all(feature = "catalog-prepare", feature = "polymarket-history")
+))]
 mod polymarket_source_record;
 #[cfg(feature = "native-paper")]
 pub mod polymarket_streaming_paper;

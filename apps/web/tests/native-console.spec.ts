@@ -440,7 +440,8 @@ if (config.phase === 'before-restart') {
       await page.goto('/');
       await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
-      await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+      await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state)).toBe('activated');
+      console.info('native PWA: original service worker activated');
       await page.reload();
       await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
       const cached = await page.evaluate(async () => {
@@ -450,6 +451,7 @@ if (config.phase === 'before-restart') {
       });
       expect(cached.some(path => path.startsWith('/assets/'))).toBe(true);
       expect(cached.some(path => path.startsWith('/api/') || path.startsWith('/health/'))).toBe(false);
+      console.info('native PWA: static cache excludes authenticated API data');
       await page.getByRole('menuitem', { name: '设置', exact: true }).click();
       await expect(page.getByRole('heading', { name: '鉴权管理', exact: true })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'Codex', exact: true })).toHaveCount(0);
@@ -458,7 +460,8 @@ if (config.phase === 'before-restart') {
       const editor = page.getByRole('dialog', { name: '登记 Runtime', exact: true });
       // A disposable integration secret is not a model credential and makes no provider call.
       const secret = randomUUID().replaceAll('-', ''); rememberPrivateValue(config, secret);
-      await editor.getByRole('textbox', { name: '新的 RUNTIME 凭据', exact: true }).fill(secret);
+      await editor.getByLabel('新的 RUNTIME 凭据', { exact: true }).fill(secret);
+      console.info('native PWA: generic Runtime credential editor ready');
       await context.route(credentialPath, async route => {
         const response = await route.fetch({ maxRetries: 0 }); expect(response.status()).toBe(201);
         committed.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'], receipt: await response.json() });
@@ -467,15 +470,23 @@ if (config.phase === 'before-restart') {
       const register = editor.getByRole('button', { name: '登记凭据', exact: true });
       await context.setOffline(true); await expect(register).toBeDisabled(); await context.setOffline(false);
       await register.click(); await expect.poll(() => committed.length).toBe(1);
+      console.info('native PWA: original credential committed with acknowledgement held');
       appendFileSync(workerFile, `\n// Native update ${randomUUID()}\n`);
       await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
       await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
-      await page.getByRole('button', { name: '稍后', exact: true }).click();
+      console.info('native PWA: update disabled during the pending request');
+      await page.getByRole('dialog', { name: '检测到新的前端版本' }).getByRole('button', { name: '稍后', exact: true }).click({ timeout: 20_000 });
       releaseAck(); await expect(editor.getByRole('button', { name: '重试登记', exact: true })).toBeVisible();
+      // The Runtime modal masks the header. Closing it must retain the original unresolved request.
+      await editor.getByRole('button', { name: '返回', exact: true }).click();
+      await expect(editor).toBeHidden();
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
+      console.info('native PWA: update disabled after lost acknowledgement');
+      await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+      await expect(editor.getByRole('button', { name: '重试登记', exact: true })).toBeVisible();
       await context.unroute(credentialPath);
       const replayed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/settings/credentials' && response.request().method() === 'POST');
       await editor.getByRole('button', { name: '重试登记', exact: true }).click();
@@ -484,11 +495,14 @@ if (config.phase === 'before-restart') {
       expect(response.request().postDataJSON()).toEqual(committed[0]!.body);
       expect(await response.json()).toEqual({ ...committed[0]!.receipt, replayed: true });
       await expect(editor.getByText('凭据已登记', { exact: true })).toBeVisible();
+      console.info('native PWA: exact original credential replay verified');
       await editor.getByRole('button', { name: '放弃本次绑定', exact: true }).click();
       await editor.getByRole('button', { name: '返回', exact: true }).click();
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeEnabled();
+      console.info('native PWA: resolved work permits the actual update');
       const reloaded = page.waitForEvent('load'); await page.getByRole('button', { name: '确认更新', exact: true }).click(); await reloaded;
+      console.info('native PWA: updated controller reloaded the page');
       await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       const saved: Checkpoint = JSON.parse(readFileSync(projectFile, 'utf8'));
       const listing = await page.request.get('/api/v2/projects?limit=100'); expect(listing.status()).toBe(200);

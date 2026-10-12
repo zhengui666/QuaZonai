@@ -107,6 +107,7 @@ test('native API commands freeze and admit once while the data observation page 
   });
   async function openInputs() {
     await page.goto('/');
+    await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
     await page.getByRole('button', { name: project.name, exact: true }).click();
     await page.getByRole('tab', { name: '冻结输入', exact: true }).click();
     await page.getByRole('button', { name: inputId, exact: true }).click();
