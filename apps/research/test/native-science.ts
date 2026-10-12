@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { openResearch } from '../src/host.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
+import { Continuation } from '../src/continuation.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 
 const context = BACKGROUND_CONTEXT;
@@ -46,8 +47,9 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
       assert.equal(result.points, undefined);
       assert.equal(((result.partitions as JsonObject[])[2]!.metric as JsonObject).pearson_ic !== undefined, true);
       assert.equal((((result.partitions as JsonObject[])[2]!.metric as JsonObject).counts as JsonObject).observations, '0');
-      return tool('factor_volume', { hypothesis: 'Signed volume deviation predicts future return.', center: 50 });
+      return fauxAssistantMessage('The first native trial is recorded, but the original study is still unfinished.');
     },
+    () => tool('factor_volume', { hypothesis: 'Signed volume deviation predicts future return.', center: 50 }),
     (transcript) => { assert.ok(textResult(transcript, 'factor_volume').trialId); return tool('validation_compare', {}); },
     (transcript) => {
       const result = textResult(transcript, 'validation_compare');
@@ -78,7 +80,9 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.deepEqual(study.final!.comparedTrials, study.trials.map((trial) => trial.taskId));
     const heldout = ((study.final!.result as JsonObject).partitions as JsonObject[])[2]!;
     assert.notEqual((((heldout.metric as JsonObject).counts as JsonObject).observations), '0');
-    assert.equal(setup_.faux.state.callCount, 6);
+    assert.equal(setup_.faux.state.callCount, 7);
+    const continuation = (await host.harness.snapshot(Continuation, receipt.conversationId, context))!;
+    assert.equal(continuation.yields, 1); assert.equal(continuation.trials, 1); assert.equal(continuation.noProgress, 0);
     const terminalTools = JSON.stringify(view.entries.filter((entry) => JSON.stringify(entry).includes('Research ended.')));
     assert.equal(terminalTools.includes('pearson_ic'), false);
     const exposures = await host.harness.snapshot(Exposures, context);

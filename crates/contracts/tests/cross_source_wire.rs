@@ -41,31 +41,3 @@ fn strict_feature_wire_preserves_null_and_observed_zero() {
     extra["observations"][0]["pit_verified"] = true.into();
     assert!(serde_json::from_value::<FeatureObservationsV1>(extra).is_err());
 }
-
-#[test]
-fn external_cycle_finish_targets_original_cycle_and_revision() {
-    use contracts::{
-        control::{OperatorCommand, OperatorOperation},
-        cycles::{CycleFinishExternalIntent, CycleFinishExternalV1},
-        Revision,
-    };
-    let intent = CycleFinishExternalIntent {
-        schema_version: SchemaV1,
-        cycle_id: Id::new(),
-        request: CycleFinishExternalV1 {
-            schema_version: SchemaV1,
-            expected_revision: Revision::try_from("3".to_owned()).unwrap(),
-        },
-    };
-    let command = OperatorCommand::CycleFinishExternal(intent.clone());
-    assert_eq!(command.operation(), OperatorOperation::CycleFinishExternal);
-    assert_eq!(command.operation().code(), "CYCLE_FINISH_EXTERNAL");
-    assert!(!command.operation().creates());
-    assert_eq!(
-        command.normalized_request().unwrap(),
-        serde_json::to_value(&intent).unwrap()
-    );
-    let mut invalid = serde_json::to_value(intent).unwrap();
-    invalid["request"]["outcome"] = "PASS".into();
-    assert!(serde_json::from_value::<CycleFinishExternalIntent>(invalid).is_err());
-}

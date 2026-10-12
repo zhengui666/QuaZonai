@@ -1,69 +1,28 @@
-param([Parameter(Mandatory = $true)][string]$Binary)
+param([Parameter(Mandatory = $true)][string]$Archive, [Parameter(Mandatory = $true)][string]$Version)
 $ErrorActionPreference = 'Stop'
-$Root = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
-$OriginalLocalAppData = $env:LOCALAPPDATA
+$Root = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetRandomFileName())
 $OriginalPath = $env:Path
 $OriginalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$Version = 'v2.0.0-dev.20260928000101'
-$Archive = 'quazonai-cli-windows-x86_64.zip'
-$Downloads = [Collections.Generic.List[string]]::new()
-function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 function Invoke-WebRequest {
     param([Parameter(Position = 0)][string]$Uri, [switch]$UseBasicParsing, [string]$OutFile)
-    Assert ($Uri.StartsWith("https://github.com/zhengui666/QuaZonai/releases/download/$Version/")) 'Unexpected download URL.'
-    $Downloads.Add($Uri)
-    Copy-Item -LiteralPath (Join-Path $Assets ($Uri.Split('/')[-1])) -Destination $OutFile
+    if ($Uri -ne "https://github.com/zhengui666/QuaZonai/releases/download/$Version/quazonai-cli-windows-x86_64.zip") { throw 'Unexpected download.' }
+    Copy-Item -LiteralPath $Archive -Destination $OutFile
 }
 try {
-    $Assets = Join-Path $Root 'assets'
-    $Source = Join-Path $Root 'source'
-    [IO.Directory]::CreateDirectory($Assets) | Out-Null
-    [IO.Directory]::CreateDirectory($Source) | Out-Null
-    $env:LOCALAPPDATA = Join-Path $Root 'local app data'
-    Copy-Item -LiteralPath $Binary -Destination (Join-Path $Source 'quazonai.exe')
-    foreach ($Name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')) {
-        Set-Content -LiteralPath (Join-Path $Source $Name) -Value $Name
+    $Directory = Join-Path $Root 'installed cli'
+    [IO.Directory]::CreateDirectory($Directory) | Out-Null
+    $Config = Join-Path $Directory 'original-client.json'
+    [IO.File]::WriteAllText($Config, 'original device connection')
+    for ($Index = 0; $Index -lt 2; $Index++) {
+        & (Join-Path $PSScriptRoot 'install.ps1') -Version $Version -Directory $Directory
+        $Actual = & (Join-Path $Directory 'bin/quazonai.cmd') --version
+        if ($LASTEXITCODE -ne 0 -or $Actual -ne "quazonai $Version") { throw 'Installed bundled Node CLI failed.' }
     }
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $ZipPath = Join-Path $Assets $Archive
-    [IO.Compression.ZipFile]::CreateFromDirectory($Source, $ZipPath)
-    $Checksum = (Get-FileHash -Algorithm SHA256 $ZipPath).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath (Join-Path $Assets 'SHA256SUMS') -Value "$Checksum  $Archive" -Encoding ascii
-    $Installer = Join-Path $Root 'install.ps1'
-    $Template = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'install.ps1')
-    Set-Content -LiteralPath $Installer -Value $Template.Replace('@QUAZONAI_VERSION@', $Version) -Encoding utf8
-    & $Installer
-    $Destination = Join-Path $env:LOCALAPPDATA 'QuaZonai/bin/quazonai.exe'
-    $VsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-    $Dumpbin = & $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
-    Assert ($LASTEXITCODE -eq 0 -and $Dumpbin) 'Native PE dependency inspector is unavailable.'
-    $Imports = & $Dumpbin /DEPENDENTS $Destination
-    Assert ($LASTEXITCODE -eq 0) 'Cannot inspect the installed CLI dependencies.'
-    Assert (-not ($Imports -match '(?i)\b(?:VCRUNTIME|MSVCP)\d\w*\.dll\b')) 'The CLI requires a separately installed VC runtime.'
-    $Expected = (Get-FileHash -Algorithm SHA256 $Binary).Hash
-    Assert ((Get-FileHash -Algorithm SHA256 $Destination).Hash -eq $Expected) 'Installed binary differs from its release.'
-    & $Installer # Exercise native atomic replacement of an existing executable.
-    Assert ((Get-FileHash -Algorithm SHA256 $Destination).Hash -eq $Expected) 'Updated binary differs from its release.'
-    $Bin = Split-Path $Destination
-    Assert ($Bin -in ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';')) 'The CLI directory is absent from the user PATH.'
-    Assert (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA "QuaZonai/licenses/$Version/LICENSE")) 'License is missing.'
-    Set-Content -LiteralPath $ZipPath -Value 'corrupt download'
-    $Rejected = $false
-    try { & $Installer } catch { $Rejected = $_.Exception.Message -match 'Checksum mismatch' }
-    Assert $Rejected 'A corrupt download was accepted.'
-    Assert ((Get-FileHash -Algorithm SHA256 $Destination).Hash -eq $Expected) 'Failed update changed the installed CLI.'
-    $Before = $Downloads.Count
-    foreach ($Invalid in @('../main', 'v02.0.0', 'v2.0.0-dev.01', 'v2.0.0+metadata')) {
-        $Rejected = $false
-        try { & $Installer -Version $Invalid } catch { $Rejected = $true }
-        Assert $Rejected 'Invalid release tag was accepted.'
-    }
-    Assert ($Downloads.Count -eq $Before) 'Invalid tags reached the download layer.'
-    Assert ((Get-ChildItem -LiteralPath $Bin).Count -eq 1) 'Temporary executable was not removed.'
-    Write-Host 'Windows prebuilt installer smoke passed: install, replacement, hash failure, version validation and PATH.'
+    if ([IO.File]::ReadAllText($Config) -ne 'original device connection') { throw 'Client config was overwritten.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $Directory "releases/$Version/runtime/LICENSE"))) { throw 'Official Node license missing.' }
+    Write-Host 'Bundled Node install/repeat and original config preservation passed.'
 } finally {
-    $env:LOCALAPPDATA = $OriginalLocalAppData
-    $env:Path = $OriginalPath
     [Environment]::SetEnvironmentVariable('Path', $OriginalUserPath, 'User')
+    $env:Path = $OriginalPath
     if (Test-Path -LiteralPath $Root) { Remove-Item -LiteralPath $Root -Recurse -Force }
 }

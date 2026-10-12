@@ -3,43 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    "./response-contract": "./src/generated/responses.cjs",
-    "./response-contract/cost-currency": "./src/generated/response-contract/cost-currency.cjs",
-    "./response-contract/base-currency": "./src/generated/response-contract/base-currency.cjs",
-    "./response-contract/problem": "./src/generated/response-contract/problem.cjs",
-    "./response-contract/decimal": "./src/generated/response-contract/decimal.cjs",
-    "./response-contract/cost-amount": "./src/generated/response-contract/cost-amount.cjs",
-    "./response-contract/catalog-key": "./src/generated/response-contract/catalog-key.cjs",
-    "./response-contract/metadata": "./src/generated/response-contract/metadata.cjs",
-    "./response-contract/lazy": "./src/generated/response-contract/lazy.mjs",
-    "./response-contract/modules/*": "./src/generated/response-contract/modules/*.cjs"
-  },
-  "engines": {
-    "node": ">=22.12.0"
-  },
+  "engines": { "node": ">=22.12.0" },
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "generate": "openapi-typescript ../../contracts/generated/api-v2.openapi.json -o src/generated/api.d.ts && node scripts/generate-validators.mjs",
+    "dev": "vite --configLoader runner --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "build": "npm run generate && npm run typecheck && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
-    "test": "vitest run",
-    "test:auth-ui": "playwright test --config playwright.auth.config.ts",
-    "test:capital-exits-ui": "playwright test --config playwright.capital-exits.config.ts",
-    "test:e2e": "node --test scripts/native-cleanup.test.mjs && node scripts/native-browser.mjs",
-    "check:generated": "node scripts/generate-validators.mjs --check --require-tracked",
-    "test:validator-adapter": "node --test scripts/validator-*.test.mjs scripts/response-loader.test.mjs",
-    "test:validator-ui": "playwright test --config playwright.validators.config.ts"
+    "build": "npm run typecheck && vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner --host 127.0.0.1 --port 4173 --strictPort",
+    "test": "vitest run --configLoader runner",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ant-design/icons": "6.3.1",
-    "@microsoft/fetch-event-source": "2.0.1",
     "@tanstack/react-query": "^5.90.0",
     "antd": "6.5.2",
     "echarts": "6.1.0",
     "echarts-for-react": "3.0.6",
-    "openapi-fetch": "^0.14.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -50,12 +28,8 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.4",
-    "ajv": "8.17.1",
-    "ajv-formats": "3.0.1",
-    "openapi-typescript": "^7.10.1",
     "typescript": "5.9.3",
     "vite": "7.3.3",
-    "vite-plugin-pwa": "^1.0.3",
     "vitest": "4.1.7"
   }
 }

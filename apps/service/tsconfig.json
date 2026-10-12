@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler",
+    "paths": { "@earendil-works/*": ["./node_modules/@earendil-works/*"], "wabt": ["./node_modules/wabt"] },
+    "strict": true, "noEmit": true, "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true, "skipLibCheck": true, "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

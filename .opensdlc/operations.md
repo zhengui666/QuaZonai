@@ -3,267 +3,87 @@
 <a id="controls"></a>
 ## Action boundaries
 
-[AGENTS](../AGENTS.md) defines authorship and executor roles. Tests use disposable services, accounts with no real credentials, and task-owned directories. Do not attach production data or change an existing installation during normal CI. The owner authorizes releases, deployment, account login and data recovery separately from a code merge.
+Develop on a branch from current remote `dev`, in an isolated worktree. Preserve unrelated source changes, installations, credentials, datasets, migrations, journals and backups. Tests use task-owned directories and disposable services. A code merge does not authorize production deployment, paid inference, broker orders or restoring a user's database.
 
 <a id="delivery"></a>
 ## Delivery
 
-Create a branch from the authorized delivery base (main or dev), run the relevant [checks](project.md#commands), open a PR and satisfy [review](review.md). Use the PR's exact final Head for checks/review; the native Issue/PR/Actions record owns the result. A source revert does not downgrade a database.
-
-The password-auth migration invalidates pre-password browser sessions. The first browser visit then sets the instance password; it never imports database or ChatGPT passwords. The existing offline `recover-access` cutover also revokes permanent CLI devices while retaining the password hash and historical records. Re-enter the instance password in the browser or native CLI after recovery. Password changes alone invalidate browser sessions; explicitly remove CLI machines in authentication settings when those devices should lose access.
+The task and [review policy](review.md) define acceptance. Check the exact PR Head, resolve concrete findings, rerun affected checks and verify the actual remote `dev` merge. GitHub PR/Actions records own hosted outcomes. Do not call an unrun, skipped, cancelled or old-Head check a pass.
 
 <a id="container-release"></a>
-### Versioned images
+## Images and publication
 
-[release.yml](../.github/workflows/release.yml) observes main/tag pushes and check completion. A release tag is `vMAJOR.MINOR.PATCH[-prerelease]`, without leading zeros, build metadata or a floating alias. Its dereferenced commit must be an ancestor of current main; squash/rebase does not move an old tag.
+The application packages official Node, the TypeScript service/CLI, Web assets, production npm packages and the matching native scientific entrypoints. Pi Durable runs under one application process; the retired Rust server/Worker/runtime/CLI are not deployment dependencies. Keep upstream package/toolchain/license files and the published version's exact source revision.
 
-Release selection/waiting requires successful current-source [Rust CI](../.github/workflows/ci.yml). The [version workflow](../.github/workflows/release-version.yml) then directly calls [Rust regression](../.github/workflows/rust-regression.yml) at `inputs.revision`; image production depends on its success. It builds and validates the application (including the official Node Pi Durable host), scientific job and PostgreSQL images, publishes those same images to GHCR, and tests installation/update/recovery on a fresh runner without checkout, cached product images or host compilation. Native Linux x86_64, Windows x86_64 and macOS Intel/Apple Silicon CLIs and all three Docker archives retain their existing release checks. Existing release asset metadata, version immutability and draft-completion rules remain unchanged: no rebuilding a different image after testing, overwriting a complete version, floating application `latest`, or release from an untagged main push.
-
-Push the chosen immutable tag only within release authorization. Reconcile an existing tag/draft before retrying. Verify the published revision, image digest, package visibility and `quazonai-deploy.tar.gz`; repository visibility alone does not set GHCR visibility. Deployment uses the [versioned bundle](../deploy/docker/README.md), not a developer checkout.
-
-Installed source preparation uses the same application image digest through
-`manage.sh source`; it adds no service, fourth image or deployment archive member.
-The source tools stay outside `/opt/quazonai/bin`, which the installer extracts
-onto the host. The existing no-checkout smoke executes real packaged candle
-conversion/preparation and preserves explicit fixture/unverified status before
-and after update. This does not qualify live or historical data.
-
-Container CI publishes `operator-cost-<revision>-<run>-<attempt>` with actual
-stripped executable sizes, same-source baseline/candidate image and compressed
-archive bytes, native operator build time, normal candidate elapsed time and disk
-observations. The normal candidate builds first with configured caches; the
-`application-base` comparison is built afterward and can reuse those layers.
-Neither timing is an independent cold-build comparison. Native-stage timing is
-recorded in the producer image and may be reused with a cached stage. Before
-merging packaging changes, review these measured costs and the existing archive
-limit; missing measurements or failed installed acceptance are not a pass. Debug
-binary sizes are not release-size estimates.
-
-Failed source acceptance retains a `source-invocations-*` CI artifact containing
-only bounded invocation identities, state, exit and cleanup facts. Raw source
-payloads, declarations and stdout/stderr are excluded. When container ownership
-or terminal state cannot be confirmed, the smoke keeps its mount roots outside
-the installation's temporary cleanup; a local CLI exit is not cancellation proof.
+Build native scientific binaries once with a consistent feature selection and reuse them for application and scientific images. TypeScript/Web changes should reuse that scientific build rather than recompile it. Use official npm/Cargo/Buildx caches; do not add handwritten checksum or cache-validation machinery. Publish the same artifacts that passed installed acceptance, not a different rebuild.
 
 <a id="dev-release"></a>
-### Automatic development releases
+### Development releases
 
-Every push to remote `dev` runs [Dev release](../.github/workflows/dev-release.yml).
-It creates `v<workspace core>-dev.<UTC YYYYMMDDHHMMSS>.<Actions run ID>` at the
-exact push SHA, then waits for routine Rust CI and calls the same
-[version publisher](../.github/workflows/release-version.yml) with `branch=dev`.
-The publisher requires the complete former Rust regression at that revision
-before its image build/push job; this also applies to automatic dev versions.
-Absent, pending, skipped, cancelled or failed Rust CI cannot authorize publication. Manual acceptance fixtures do not grant source permission or PIT qualification.
-The run creation timestamp and ID make retries reuse the existing tag; a tag
-pointing elsewhere is rejected. Successive dev pushes keep their own source CI.
-Main release selection excludes these automatic timestamped tags even after their source is merged into main; the original dev run owns retries. The source must remain contained in dev. Force-pushing it away prevents release.
-
-
-The reusable workflow call is intentional: GitHub does not run tag-push workflows
-for tags created by GITHUB_TOKEN. No extra PAT, recursive commit, floating image
-alias or production deployment is introduced. The root README resolves the latest
-complete published dev Release; each Release README/notes and extracted deployment
-README contains its concrete tag. Retry the failed Actions run after fixing or
-rerunning its exact-source checks; do not move or replace its tag.
-
-Each complete Release contains the deployment bundle, four native CLI archives,
-three separately reload-tested Docker archives, `install.sh`, `install.ps1`,
-`README.md`, `release.json` and the existing asset metadata. Application manifest
-schema 3 contains application/scientific/database image identities; retired Codex
-images are not produced or required. Schema 2 installations use the new installer
-for this cutover, preserving original identity, data, history and backups.
-Image installation remains immutable GHCR digest pulls, without local compilation.
-Standalone CLI connections support explicit HTTP URLs; public connections use HTTPS.
+A `dev` release consumes successful exact-source core CI, builds each artifact once, exercises the compact installed start/restart/backup path and publishes those assets. It must not repeat the deleted Rust-service regression before another cold compilation. Retain formal main/tag selection and immutable completed-version semantics; a failed draft/tag operation must be reconciled before retrying.
 
 <a id="dev-image"></a>
 ### Development images
 
-Run **Dev image** on workflow ref `main`, setting `source_branch` to an existing branch in this repository. The source branch needs the current container build/deployment files but need not contain the workflow. It is resolved to a fixed SHA; tags, arbitrary SHAs and fork PR refs are not inputs.
-
-```sh
-gh workflow run dev-image.yml --repo zhengui666/QuaZonai --ref main \
-  -f source_branch=your-development-branch
-```
-
-The read-only build uses the workflow's [container action](../.github/actions/container/action.yml) and actual install/update/recovery checks. [Dev image publish](../.github/workflows/dev-image-publish.yml) is loaded from the default branch, accepts the successful manual build from main, validates the archive/image identity, and publishes `ghcr.io/zhengui666/quazonai:dev-<full-sha>-<run-id>-<build-attempt>`. The publisher never executes development source.
-
-Use the digest in the publisher's successful Summary. A publisher retry reuses the same build artifact/tag; rerunning the build resolves the branch again. Build artifacts expire after seven days. Both workflows must succeed. This channel creates no Release or deployment bundle and never switches an installation; dev tags are not inputs to `update.sh`.
+Use the repository's actual [workflows](../.github/workflows) for isolated image verification/publication. A built or published image does not switch a user's installation. Do not infer a successful install from an image tag or `--version` output.
 
 <a id="research-host"></a>
-### Durable research host
+## Service and durable host
 
-The application packages official Node 22.19.0 and the pinned Pi Durable/pi-ai/Chord dependencies. One supervised Node process owns the native SQLite database; Rust authenticates owner Web/CLI requests and forwards native submissions, views, tasks and usage. The private loopback host is not a public service and receives no owner cookie or control-plane token. An unexpected Node/Rust/Caddy exit stops the sibling processes rather than presenting a healthy partial application.
+The TypeScript [service](../apps/service) opens the original database through [openResearch](../apps/research/src/host.ts); do not also start the standalone research host against that database. Native SQLite owns conversations, submissions, task graph, replay and usage. Current application facts are native documents, not another task queue or copied Agent state.
 
-The installer creates `data/research/config.json`, `provider.env` and persistent SQLite storage only when absent. Configuration selects trusted official Extension/Provider modules; provider credentials belong only in the private environment file, never model inputs, logs or child scientific environments. See [research host configuration](../apps/research/README.md). GET observation does not schedule a research iteration; HTTP 202 and stop admission are not terminal-outcome proof.
+`QZ_CONFIG` selects the private service configuration. Keep original `research.database`, registered extension/provider modules, dataset inputs and downstream bindings. Resolve relative paths from that file, not from a later working directory. Provider credentials stay in explicitly configured host-side storage/environment; native science does not inherit them. Missing model/data/connection is an honest unavailable state, never demo success.
 
-Before update, configuration change or backup, settle native durable tasks and scientific Runs using their original identities. The installed manager first closes new private HTTP research admissions and drains starts already admitted, then observes the actual durable task graph while the host remains available. Active tasks reject maintenance without cancellation; pre-stop failures reopen admissions. Both the application owner and scientific Worker stop before archiving application data. Preserve the complete stopped research directory, including SQLite/WAL, original configuration/provider environment and any owner-managed source catalogs. Do not run retained/restored SQLite owners simultaneously or copy a live database as a consistent backup. Restore the same paths/configuration and inspect original submissions/tasks/results before new work; safe versus interrupted recovery is upstream behavior, not permission to regenerate a failed trial or exposed final window.
+Restart reopens the same database, repairs original admitted-but-unsubmitted requests and resumes original native work. Official retry, stream timeout, compaction and progress settings are public Harness configuration; native task inspection remains the execution authority. Retryable model failures and exhausted authentication/quota are different outcomes. Unsupported models never silently fall back.
+
+Graceful shutdown closes admissions and observers, then closes the Harness so interrupted work retains its native recovery semantics. Container restart supervision may reopen the process; it cannot prove an external job or account action was cancelled. Short deterministic recovery tests do not establish a literal 24-hour observation or real-model research quality.
 
 <a id="scientific-runtime"></a>
-## Scientific Runtime
+## Scientific execution and data
 
-The installer pulls the manifest's scientific job image and extracts the matching gateway from the application image. The gateway is a host process that owns its journal and Docker connection; real catalogs and its private configuration remain independently managed. Use the installed `runtime.sh` and `release.json.runtime_image`, not a source checkout.
+Scientific processes use the matching [native job](../apps/job) and original typed inputs. Reuse official Task/NodeExecutionEnv lifecycle, explicit bounded model execution and native Nautilus/Clarabel/Arrow behavior. Preserve request/model/provenance association and the original deadline across recovery. Computation is not qualification, equity comes from the native shared account and missing values remain null.
 
-Use a Linux x86_64 Runtime owner with local Docker Engine/cgroup v2 and the gateway's native ABI libraries. Choose absolute, owner-managed paths and write a private `runtime.json` matching [RuntimeConfig](../apps/runtime/src/config.rs). Replace every example path and image placeholder before use:
-
-```json
-{
-  "schema_version": 1,
-  "state_dir": "/srv/quazonai-runtime/state",
-  "credential_file": "/srv/quazonai-runtime/runtime-credential",
-  "docker_socket": "/var/run/docker.sock",
-  "bind": "127.0.0.1:8790",
-  "images": [
-    {"job_kind": "DATA_VALIDATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
-    {"job_kind": "ALPHA_EVALUATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
-    {"job_kind": "PORTFOLIO_BUILD", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"},
-    {"job_kind": "PORTFOLIO_SIMULATE", "image_ref": "REPLACE_WITH_RELEASE_RUNTIME_DIGEST"}
-  ],
-  "catalogs": [],
-  "max_cpu": null,
-  "max_memory_mib": null,
-  "max_wall_seconds": null,
-  "max_output_bytes": null,
-  "max_parallel_jobs": 2,
-  "max_pending_jobs": 64,
-  "storage_quota_bytes": 10737418240
-}
-```
-
-`max_output_bytes` may be omitted or null to advertise no application-defined bound on explicit output budgets. Existing numeric configurations remain readable without rewriting them. A Job with no output budget keeps the existing `optional-output-budget` protocol behavior; an explicit Job budget counts its typed artifact payloads, not the index or result-envelope metadata. File, database and disk failures remain real failures, never truncated successful results.
-
-`max_cpu` and `max_memory_mib` may also be omitted or null to leave their corresponding application-defined ceilings unset. Positive values still impose an explicit Runtime ceiling; zero is invalid. A Job's nullable `cpu` is its CPU rate limit, distinct from the cumulative `cpu_seconds` budget. Its nullable `memory_mib` is its memory limit. Existing positive Job values and frozen numeric replay keep their meaning; absence is never replaced with one core or a fabricated memory allowance.
-
-Images built with the nullable CPU/memory Job decoder carry `io.quazonai.optional-resource-quotas=1` in the [native job image](../runtimes/native/native-job.Dockerfile). The gateway verifies the label on the actual pinned image, independently of the existing native-stack contract. It advertises `optional-cpu-rate/1` or `optional-memory-limit/1` only when every configured job image supports that label and the corresponding Runtime ceiling is unset. An unlabeled old image, or a mixture of old and new images, therefore withholds these new capabilities without invalidating finite old Jobs or changing existing optional wall-time/output-budget behavior. The selected image is checked again before launch; unsupported null limits fail rather than silently falling back to finite defaults. Do not add the label to an older image whose Job decoder requires numeric CPU/memory values.
-
-An absent Job memory limit removes the application memory/swap cap and the size/inode caps on its private `/tmp` and `/dev/shm` tmpfs mounts. The explicit tmpfs options `size=0,nr_inodes=0` have the [kernel's unlimited-instance meaning](https://docs.kernel.org/filesystems/tmpfs.html); setting Docker's `ShmSize` to zero alone instead selects the [daemon's default](https://github.com/moby/moby/blob/master/daemon/daemon_unix.go), normally 64 MiB. Host, parent-cgroup and physical resource limits still apply, and exhaustion remains a real failure. Finite memory Jobs retain their explicit container and temporary-filesystem limits.
-
-The state parent belongs to the Runtime owner; the state directory is mode 0700. Provision a mode-0600 regular credential file for that owner containing 32–8192 printable, non-whitespace ASCII bytes, optionally ending with one newline. Bind the same credential through the control plane's Runtime settings; do not put it in the JSON, URL, command arguments, repository or logs. Keep existing credentials and state when restarting or upgrading.
-
-Each catalog registration is `{ "root": "/absolute/immutable/catalog", "metadata_file": "/absolute/catalog-metadata.json" }`. The metadata must satisfy [RuntimeCatalogMetadataV1](../crates/contracts/src/catalogs.rs), including the original snapshot/version, partition, instruments, historical membership, quality and availability provenance. Roots must not overlap each other or the state, credential or Docker socket. Empty catalogs permit configuration inspection, not a research dataset; missing data remains missing.
-
-Set every `images[].image_ref` above to the installed `<installation>/current/deployment/release.json` field `runtime_image`. Check and start the image-extracted gateway using the edited configuration:
-
-```sh
-bash "$HOME/.local/share/quazonai/current/deployment/runtime.sh" doctor --config /absolute/runtime.json
-bash "$HOME/.local/share/quazonai/current/deployment/runtime.sh" serve --config /absolute/runtime.json
-```
-
-`runtime doctor` checks the real Docker/image/resource prerequisites. `runtime serve` uses the original state directory; its existing-task status remains available during a Docker outage, but new execution cannot succeed without Docker. Use the same installation owner, configuration and paths when supervising or restarting it; append `--directory` for a non-default installation. Before changing the application version, finish its jobs and stop the gateway. Preserve its journal/catalogs, select the target manifest's `runtime_image`, restart through that version's helper, and probe capabilities again. Neither command replaces execution/cancellation/restore tests.
-
-The gateway accepts only a loopback listener. Expose it through an existing same-host trusted HTTPS reverse proxy whose origin is reachable from both the Docker API container and host Worker. Inside the API container, `127.0.0.1` is not the host, and the gateway has no Unix-socket HTTP listener. Preserve certificate/Host validation. After configuration changes, probe the new capabilities; existing jobs retain their original launch and remote identity.
+Source acquisition and catalog preparation remain at [data tools](../runtimes/data/README.md) and [source plugins](../runtimes/data/source-plugins.md). Catalog paths, partitions, fees, availability and rights are actual owner configuration; preparation does not establish PIT, source permission or profitability.
 
 <a id="runtime-targets"></a>
-### Apply control-plane targets
+### Configuration changes
 
-`runtime_targets` in the private `installation.json` is an array of [RuntimeTarget](../apps/server/src/runtime_transport.rs): each `origin` is the exact HTTPS origin and `addresses` lists reachable `IP:port` destinations with the same port. Create a separate `runtime-targets.json` containing the complete desired array; replace this example with the actual proxy hostname and address:
-
-```json
-[
-  {"origin": "https://runtime.example.org", "addresses": ["192.168.1.20:443"]}
-]
-```
-
-Editing the manifest alone, restarting only the Worker, or rerunning the same release's installer does not apply both environments. Settle durable tasks and scientific Runs. As the installation owner, run the following maintenance command from the directory containing `runtime-targets.json`. It uses the installed manager, retains the previous manifest and rechecks native idle state before rewriting either environment. It recreates only the app container; it does not migrate, change images or touch the database volume.
-
-```sh
-bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" apply-config \
-  --runtime-targets "$PWD/runtime-targets.json"
-```
-
-Add `--directory /absolute/installation` for a non-default installation. Native server startup validates the target entries; a startup failure is not a successful apply. Do not edit other installation fields or use a Compose override that replaces `RUNTIME_TARGETS` with different values. After both processes start, register the same endpoint and credential through Runtime settings, run its probe, and register the real catalogs.
-
-If interrupted **before** the prepared message, correct the cause and rerun the same apply command; its idle check prevents replacing processors that acquired work. To undo the target edit, use the selected checkpoint's `runtime_targets` array as the next input and repeat the idle maintenance procedure. When the original manifest omits `runtime_targets`, the rollback input is `[]`, not `null`; that restores the default empty allowlist. This is configuration recovery, not a database restore.
-
-If either prepared processor may already be running, resume without recreating containers or rewriting files. This also restores boot recovery after the checks succeed:
-
-```sh
-bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" resume-config
-```
+Change settings through the current API/CLI or the installed version's supported configuration command. Extension changes must expose their actual loaded/disabled/pending-restart state. Keep the task definitions and original input needed by pending work; toggling a plugin must not silently rewrite an admitted study or erase its results. A configuration file write is not a successful reload or connection probe.
 
 <a id="recovery"></a>
-## Recovery
+## Backup, upgrade and restore
 
-Application update/retry/backup procedures are maintained in the [deployment bundle](../deploy/docker/README.md#recovery). Phase and identity invariants are in [architecture](architecture.md#container-release). Application updates do not upgrade PostgreSQL or downgrade schemas.
+Use the [installed bundle's instructions](../deploy/docker/README.md), not a removed `server worker`, `runtime doctor` or an old executable against a new schema. Before maintenance, close new admission, inspect the actual task graph and reconcile existing science/downstream work. Drain requests already admitted before deciding the application is idle. Maintenance does not create cancellation receipts.
 
-For a cold restore, stop admissions, reconcile actual durable and remote scientific tasks, then stop every writer, including the Node SQLite owner and original Worker. Preserve matching PostgreSQL/application artifacts, `master.key`, private installation manifest, complete research directory and independent Runtime journals/catalogs. Retain old Codex homes/records as history without activating that executor or inventing terminal outcomes. Restore original paths and ownership. Never replace an original backup with a partly migrated database or start an old executable against a newer schema.
+Stop every writer before archiving the complete persistent directory: durable SQLite and sidecars, auth/config/provider state, user extensions, catalogs and scientific objects. Preserve installation root/owner/ports, historical PostgreSQL, `master.key`, original encrypted secrets, independent journals, pending records and backups. A live directory copy is not a consistent backup. Restore the original paths and ownership and run only one owner.
+
+Upgrade must adopt original durable state rather than create an empty replacement database. Existing applied SQL and Runtime SQLite migrations are retained unchanged under [migrations](../migrations). Historical Runs/Attempts and external identities remain their original facts. If an installed legacy control plane cannot be safely continued, reject the cutover with its concrete reason; do not clear the queue, infer cancellation or manufacture successful migrated Tasks. New installation checks do not prove an unperformed legacy upgrade.
 
 <a id="access-cutover"></a>
-### Restored database access cutover
+### Access recovery
 
-After restoring the control database, keep API/Worker stopped and end old transactions. The database migration owner, not a restricted application role, runs the matching `server recover-access`. It invalidates restored access, not data or remote execution. Preserve original ciphertext/key material and use a private interactive terminal; the connection URL must name the restored database with its migration-owner role.
-
-The command below uses `<installation>/releases/<restored-version>/bin/server`, selected from the restored `installation.json`, not a binary on PATH or a newer `current` target. The restored manifest's `bundle` must point to that same preserved release. Install a util-linux `uuidgen` that supports `--time-v7`; the command calls it only when creating a new operation record. Select an unused record filename inside an existing mode-0700 owner directory for each distinct restore; retries use the same file. Replace `/absolute/restore-record.json` before running:
-
-```sh
-bash "$HOME/.local/share/quazonai/current/deployment/manage.sh" recover-access \
-  /absolute/restore-record.json
-```
-
-The URL is read without echo and passed only in the child environment, not command arguments, saved records or printed output. Keep the recovery record and receipt: verify `schema_version`, the original `recovery_id`, increasing `previous_epoch`/`new_epoch` and decimal-string `revoked_machine_credentials`. A timeout, nonzero exit or missing receipt is an unknown/failed outcome, not completed recovery; replay the same command and record. A separate database restore needs a new record/ID, even if it restores the same backup.
-
-Reissue required machine connections and reconcile the original remote task identities before resuming. Do not regenerate the original master key or interpret cutover as data restoration or remote cancellation. Native checks: [recovery_access](../apps/server/tests/recovery_access.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs).
+Preserve original password/device verifiers and revocation facts. Recovery of access, data restoration, remote cancellation and model-provider login are separate actions. Enter secrets only in the user-controlled private terminal or browser; never place passwords, tokens or provider values in a task, URL, argv, source or logs. Do not guess new identities to make an old denied client work.
 
 <a id="runtime-recovery"></a>
-### Runtime cold backup and restore
+### Historical Runtime state
 
-First stop scheduling and admissions, finish/cancel Runs and reconcile their actual remote terminal state. Stop the original control-plane Worker. Stop the foreground `runtime serve` with Ctrl-C, or stop its actual supervisor unit and disable its restart policy; confirm that no Runtime writer remains. Keep the same source revision, image, configuration, credential and catalog snapshots alongside the coordinated control-plane backup. A running directory copy is not a consistent checkpoint.
-
-The following archive preserves the complete stopped state, including SQLite/WAL, objects, manifests, instance identity and cancellation records. Replace paths with the actual Runtime state and an existing, owner-managed backup parent. Only archive ownership operations need administrator permission:
-
-```sh
-set -eu
-umask 077
-state=/srv/quazonai-runtime/state
-backup_parent=/srv/quazonai-runtime/backups
-test -d "$state" && test ! -L "$state"
-test -d "$backup_parent" && test ! -L "$backup_parent"
-checkpoint=$(mktemp -d "$backup_parent/runtime-XXXXXXXX")
-: > "$checkpoint/state.tar"
-sudo tar --create --numeric-owner --file "$checkpoint/state.tar" --directory "$state" .
-sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
-```
-
-Check and explicitly select the recovery point; do not automatically select the latest directory. Keep all writers stopped. Restore the entire checkpoint to the original path, preserving the previous directory at an unused sibling path. Replace both `REPLACE_WITH` values before executing:
-
-```sh
-set -eu
-umask 077
-state=/srv/quazonai-runtime/state
-checkpoint=/srv/quazonai-runtime/backups/REPLACE_WITH_SELECTED_CHECKPOINT
-retained=/srv/quazonai-runtime/REPLACE_WITH_UNUSED_RETAINED_DIRECTORY
-test -s "$checkpoint/state.tar"
-test -d "$state" && test ! -L "$state"
-test ! -e "$retained" && test ! -L "$retained"
-mv --no-target-directory --no-clobber -- "$state" "$retained"
-mkdir -m 0700 -- "$state"
-sudo tar --extract --numeric-owner --same-owner --preserve-permissions \
-  --file "$checkpoint/state.tar" --directory "$state"
-sudo tar --compare --numeric-owner --file "$checkpoint/state.tar" --directory "$state"
-```
-
-Do not mix SQLite/WAL/objects from different checkpoints or start the retained and restored instances together. Start `runtime serve --config /absolute/runtime.json` with the original owner, binary and paths; use the matching control-plane restore above when its database was restored too. Re-read original job identities, state, timestamps, manifests and output bytes. Verify cancellation tombstones and same-key replay before accepting new work; the Worker must reconcile the original Attempt/external ID rather than restart an old container or submit replacements. Then perform one bounded new task using the original data and reopen scheduling/admissions. Keep the checkpoint and retained directory until verification completes. Missing original images, catalogs or outputs are recovery failures, not permission to regenerate evidence.
-
-[native_restore](../apps/runtime/tests/native_restore.rs) and [native_control_restore](../apps/runtime/tests/native_control_restore.rs) exercise the archive/ownership and coordinated recovery boundaries with disposable resources. A Runtime-only restore is not a coordinated control-plane restore.
+Keep original journals/catalogs/objects and the four applied migration files. Do not start the retained legacy gateway or its Worker during normal Node startup, relabel its unresolved jobs as durable or mix files from different recovery points. An unresolved remote identity needs actual reconciliation before cutover; having retained its SQLite file is not completed recovery.
 
 <a id="observe"></a>
 ## Observe and diagnose
 
-Use the installed manager's `status`, native research/Submission/Task/usage views, scientific Run/Attempt snapshots, safe event streams and the exact failing CI job. Keep original identities, requests/keys and receipts; exclude credentials and private model/data content.
-
 | Observation | Action |
 | --- | --- |
-| HTTP 202, submission timeout or lost acknowledgement | Read the original native Submission/Task or scientific Run/receipt; replay only the captured original request when needed |
-| Cancellation pending or remote identity unknown | Reconcile the original remote task; do not infer termination from local exit or issue another Run |
-| `preparing` update failure | Retry the same target; preserve identity and original processors if Runs were admitted |
-| `migrating` / `starting` marker | Keep the recovery point and candidate; follow the same-target recovery path, not an old executable |
-| Missing model/data/Runtime capability | Repair the actual prerequisite; no fabricated output or fallback source |
-| Failed check | Inspect that Head's job/step, fix the owning source, rerun affected checks and review the new Head |
+| 202, timeout or lost reply | Read original native submission/task/receipt; replay only the original request and identity |
+| Unsafe interrupted or unknown downstream result | Reconcile original external identity; do not create a replacement effect |
+| Scientific failure or missing metric | Keep the original failed trial and reason; no zero fill or fallback source |
+| Stopped observer | Inspect native work separately; observation ending does not cancel research |
+| Missing model/dataset/connection or blocked plugin | Repair the concrete configuration; no fake readiness or task-state translation |
+| Failed build/check | Inspect that Head's actual job, fix the owning path and rerun affected checks |
 
-No unattended production monitor is installed by these documents. Actual automation is defined in [workflows](../.github/workflows); the service owner triages operational faults and opens a task for a reproducible fix.
+The code refactor does not install an unattended production monitor or perform a real account run. Target-only paper/live observation records the configured downstream/account source; QZ does not send financial orders.
 
 <a id="metrics"></a>
 ## Measurements
 
-Report observed duration, workload, profile, source revision and outcome. Keep execution success, evidence validity, review, merge and deployment separate. A microbenchmark does not establish a whole-system speedup; a disposable smoke test does not exercise a real account or market-data entitlement.
-
+Record source revision, actual elapsed time, workload/cache state and outcome. The pre-refactor `66353559` hosted logs show routine Rust CI 35m11s, PG 25m35s and dev release 3h41m53s; three native image compiles account for 87m54s. These are a measured baseline, not the new implementation's performance. Keep new CI/build measurements in the task or Actions rather than creating another metrics ledger.

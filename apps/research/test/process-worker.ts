@@ -3,9 +3,10 @@ import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { configure, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { evaluateTrial } from '../src/trials.ts';
+import { Requests, Study } from '../src/documents.ts';
 
 const directory = process.argv[2]!;
 const failed = process.argv[3] === 'failed';
@@ -32,6 +33,25 @@ const plugin = defineExtension({ name: 'crash-probe', tools: [defineTool({
   },
 })] });
 const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [plugin] });
+if (process.argv[3] === 'admission') {
+  const input = { goal: 'Recover the original admitted objective', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { max_trials: 3 } };
+  const ids = await host.harness.commit(async (tx) => {
+    const requests = await tx.doc(Requests);
+    const ids = [];
+    for (const requestId of ['admission-gap', 'stopped-gap', 'final-gap']) {
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      await configure(tx, conversation.id, { model: input.model, instructions: input.goal });
+      const study = await tx.doc(Study, conversation.id); study.input = input;
+      if (requestId !== 'admission-gap') study.final = { status: requestId === 'stopped-gap' ? 'STOPPED' : 'COMPUTED', reason: requestId };
+      requests.requests[`request:${requestId}`] = { conversationId: conversation.id, input };
+      ids.push(conversation.id);
+    }
+    return ids;
+  }, BACKGROUND_CONTEXT);
+  setInterval(() => {}, 1000); // Keep the crash probe alive; parent kills at the committed stdout boundary.
+  process.stdout.write(`${JSON.stringify({ entered: true, ids, input })}\n`);
+  await new Promise<void>(() => {});
+}
 const receipt = await host.start('original-request', { goal: 'Crash recovery protocol test', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: {} });
 process.stdout.write(`${JSON.stringify(receipt)}\n`);
 await (await host.harness.submission(receipt.submissionId, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT);

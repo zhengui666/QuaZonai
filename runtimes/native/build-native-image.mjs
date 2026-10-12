@@ -12,6 +12,7 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const { values } = parseArgs({ options: {
   profile: { type: 'string', default: 'release' },
   'image-version': { type: 'string', default: 'development' },
+  'job-binary': { type: 'string' },
   'output-dir': { type: 'string' },
   'isolation-probe': { type: 'string' },
   'prepare-only': { type: 'boolean', default: false },
@@ -29,7 +30,7 @@ const context = path.join(directory, 'context');
 fs.mkdirSync(context, { mode: 0o755 });
 const root = path.join(context, 'native-root');
 fs.mkdirSync(root, { mode: 0o755 });
-const executable = path.join(repository, 'target', values.profile, 'job');
+const executable = path.resolve(values['job-binary'] ?? path.join(process.env.CARGO_TARGET_DIR ?? path.join(repository, 'target'), values.profile, 'job'));
 const env = Object.fromEntries(['PATH', 'HOME', 'RUSTUP_HOME', 'CARGO_HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'DOCKER_HOST', 'DOCKER_CONTEXT'].filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
 const commands = [];
 function run(name, binary, args, allowed = [0]) {

@@ -267,42 +267,6 @@ fn malformed_money_or_conflicting_native_equity_cannot_become_a_summary() {
 mod strategy_fixture;
 use contracts::strategy_portfolio::*;
 
-fn candidate_for(report: &NativeStrategyCompositionResultV1) -> StrategyPortfolioCandidateV1 {
-    let target = match &report.outcome {
-        StrategyCompositionOutcomeV1::HistoricalReplay {
-            simulation_request, ..
-        } => simulation_request.target_points.last().unwrap(),
-        StrategyCompositionOutcomeV1::CurrentDecision { target, .. } => target,
-    };
-    StrategyPortfolioCandidateV1 {
-        schema_version: SchemaV1,
-        source_kind: StrategyPortfolioSourceV1::StrategyAlpha,
-        id: Id::new(),
-        project_id: Id::new(),
-        mandate_id: Id::new(),
-        input_set_id: Id::new(),
-        run_id: Id::new(),
-        accepted_attempt_id: Id::new(),
-        report_artifact_id: Id::new(),
-        allocation_method: StrategyAllocationMethodV1::FixedTargetWeights,
-        purpose: report.request.purpose.clone(),
-        input_provenance: report.request.input_provenance.clone(),
-        members: report
-            .request
-            .members
-            .iter()
-            .map(|member| StrategyMemberSelectionV1 {
-                alpha_version_id: member.alpha_version_id,
-                ensemble_weight: member.ensemble_weight.clone(),
-            })
-            .collect(),
-        targets: target.targets.clone(),
-        cash_weight: target.cash_weight.clone(),
-        decision_asof: chrono::DateTime::from_timestamp_nanos(target.asof_ns.get() as i64),
-        created_at: chrono::Utc::now(),
-    }
-}
-
 fn historical_strategy(
     source: &NativeExperimentEvaluationResultV1,
 ) -> NativeStrategyCompositionResultV1 {
@@ -337,15 +301,8 @@ fn historical_strategy(
 fn strategy_replay_reuses_exact_native_statistics_missingness_and_bounded_equity() {
     let source = report(true);
     let report = historical_strategy(&source);
-    let candidate = candidate_for(&report);
-    let summary = domain::execution::strategy_portfolio_summary(&candidate, &report).unwrap();
-    assert_eq!(summary.candidate_id, candidate.id);
-    assert_eq!(summary.accepted_attempt_id, candidate.accepted_attempt_id);
-    assert_eq!(summary.report_artifact_id, candidate.report_artifact_id);
-    assert!(summary
-        .interpretation
-        .contains("no scientific qualification"));
-    let StrategyPortfolioSummaryOutcomeV1::HistoricalReplay { simulation } = summary.outcome else {
+    let summary = domain::execution::strategy_portfolio_summary(&report).unwrap();
+    let StrategyPortfolioSummaryOutcomeV1::HistoricalReplay { simulation } = summary else {
         panic!("historical simulation");
     };
     let mut expected = serde_json::to_value(
@@ -367,27 +324,37 @@ fn strategy_replay_reuses_exact_native_statistics_missingness_and_bounded_equity
 }
 
 #[test]
-fn current_strategy_is_explicitly_target_only_and_mismatched_sources_are_rejected() {
+fn current_strategy_is_target_only_and_corrupt_native_outcomes_are_rejected() {
     let report = strategy_fixture::current_report();
-    let candidate = candidate_for(&report);
-    let summary = domain::execution::strategy_portfolio_summary(&candidate, &report).unwrap();
+    let summary = domain::execution::strategy_portfolio_summary(&report).unwrap();
     let wire = serde_json::to_value(summary).unwrap();
     assert_eq!(
-        wire["outcome"],
+        wire,
         json!({
             "purpose": "CURRENT_DECISION",
             "reason_code": "CURRENT_DECISION_TARGET_ONLY_NO_HISTORICAL_SIMULATION"
         })
     );
     for case in 0..5 {
-        let mut altered = candidate.clone();
+        let mut altered = report.clone();
+        let StrategyCompositionOutcomeV1::CurrentDecision {
+            account_start,
+            target,
+            predictions_per_member,
+        } = &mut altered.outcome
+        else {
+            unreachable!()
+        };
         match case {
-            0 => altered.input_provenance.dataset_revision_id = Id::new(),
-            1 => altered.members[0].alpha_version_id = Id::new(),
-            2 => altered.targets[0].weight = "0.5".parse().unwrap(),
-            3 => altered.decision_asof += chrono::Duration::nanoseconds(1),
-            _ => altered.purpose = StrategyPortfolioPurposeV1::HistoricalReplay {},
+            0 => account_start.account_id = "DIFFERENT".into(),
+            1 => predictions_per_member.clear(),
+            2 => target.targets[0].weight = "0.5".parse().unwrap(),
+            3 => target.asof_ns = DbCounter::new(45_000_000_000).unwrap(),
+            _ => altered.request.purpose = StrategyPortfolioPurposeV1::HistoricalReplay {},
         }
-        assert!(domain::execution::strategy_portfolio_summary(&altered, &report).is_err());
+        assert!(
+            domain::execution::strategy_portfolio_summary(&altered).is_err(),
+            "case {case}"
+        );
     }
 }

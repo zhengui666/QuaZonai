@@ -9,7 +9,7 @@ export default defineExtension({
   name: 'qz.factor-volume',
   tools: [defineTool({
     name: 'factor_volume', description: 'Additional factor plugin: signed volume deviation, computed by the same native Wasm evaluator. No positions or portfolio required.',
-    parameters: Type.Object({ hypothesis: Type.String(), center: Type.Number() }), replay: 'safe',
+    parameters: Type.Object({ hypothesis: Type.String(), center: Type.Number() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       const model = `(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) local.get 4 f64.const ${args.center} f64.sub))`;

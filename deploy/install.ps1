@@ -1,74 +1,65 @@
-# Published with the exact release tag substituted by the release producer.
+# Published installers contain an exact release tag. Bundled Node needs no host npm.
 [CmdletBinding()]
-param(
-    [string]$Version = '@QUAZONAI_VERSION@'
-)
+param([string]$Version = '@QUAZONAI_VERSION@', [string]$Directory = (Join-Path $env:LOCALAPPDATA 'QuaZonai'))
 $ErrorActionPreference = 'Stop'
-if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or
-    $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') {
-    throw 'This installer supports Windows x86_64. Use install.sh on Linux or macOS.'
+if ($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
+    throw 'Supported host: Windows x86_64. Use install.sh on Linux or macOS.'
 }
-$Tag = [regex]::Match($Version, '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$')
-if ($Version.Length -gt 128 -or -not $Tag.Success) {
-    throw 'Expected a published vMAJOR.MINOR.PATCH[-prerelease] tag.'
+$Repository = 'https://api.github.com/repos/zhengui666/QuaZonai'
+if ($Version -eq ('@QUAZONAI_' + 'VERSION@') -or $Version -eq 'latest') {
+    $Releases = @(); $Page = 1
+    do {
+        $Items = @(Invoke-RestMethod "$Repository/releases?per_page=100&page=$Page")
+        $Releases += $Items; $Page++
+    } while ($Items.Count -eq 100)
+    $Required = @('install.sh','install.ps1','release.json','quazonai-deploy.tar.gz','README.md','quazonai-cli-linux-x86_64.tar.gz','quazonai-cli-macos-x86_64.tar.gz','quazonai-cli-macos-aarch64.tar.gz','quazonai-cli-windows-x86_64.zip','quazonai-image-application.tar.gz','quazonai-image-runtime.tar.gz','quazonai-image-database.tar.gz')
+    $Release = $Releases | Where-Object {
+        $Names = @($_.assets | Where-Object { $_.state -eq 'uploaded' -and $_.size -gt 0 } | ForEach-Object name)
+        -not $_.draft -and $_.tag_name -match '^v\d+\.\d+\.\d+-dev\.\d{14}\.\d+$' -and @($Required | Where-Object { $_ -notin $Names }).Count -eq 0
+    } | Sort-Object tag_name -Descending | Select-Object -First 1
+    if (-not $Release) { throw 'No complete dev release. Supply -Version TAG explicitly.' }
+    $Version = $Release.tag_name
 }
-if ($Tag.Groups[4].Success) {
-    foreach ($Identifier in $Tag.Groups[4].Value.Split('.')) {
-        if ($Identifier -match '^0[0-9]+$') { throw 'Numeric prerelease identifiers cannot have leading zeroes.' }
-    }
-}
+if ($Version -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw 'Expected an exact vMAJOR.MINOR.PATCH[-prerelease] tag.' }
 $Base = "https://github.com/zhengui666/QuaZonai/releases/download/$Version"
-$Archive = 'quazonai-cli-windows-x86_64.zip'
-$Root = Join-Path $env:LOCALAPPDATA 'QuaZonai'
-$Bin = Join-Path $Root 'bin'
 $Work = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
-$Staged = $null
+$Bin = Join-Path $Directory 'bin'
+$ReleaseDirectory = Join-Path $Directory "releases/$Version"
 [IO.Directory]::CreateDirectory($Work) | Out-Null
 try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -UseBasicParsing "$Base/SHA256SUMS" -OutFile (Join-Path $Work 'SHA256SUMS')
-    $Checksums = @(Get-Content (Join-Path $Work 'SHA256SUMS') | Where-Object { $_ -cmatch ('^[0-9a-f]{64}  ' + [regex]::Escape($Archive) + '$') })
-    if ($Checksums.Count -ne 1) { throw "Missing or duplicate checksum for $Archive" }
-    $Expected = $Checksums[0].Substring(0, 64)
-    $ZipPath = Join-Path $Work $Archive
-    Invoke-WebRequest -UseBasicParsing "$Base/$Archive" -OutFile $ZipPath
-    if ((Get-FileHash -Algorithm SHA256 $ZipPath).Hash -ne $Expected) { throw "Checksum mismatch for $Archive" }
+    $ZipPath = Join-Path $Work 'cli.zip'
+    Invoke-WebRequest -UseBasicParsing "$Base/quazonai-cli-windows-x86_64.zip" -OutFile $ZipPath
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $Zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    $Candidate = Join-Path $Work 'distribution'
+    [IO.Directory]::CreateDirectory($Candidate) | Out-Null
     try {
-        if ($Zip.Entries.Count -ne 4) { throw 'Unexpected CLI archive files.' }
-        foreach ($Name in @('quazonai.exe', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')) {
-            $Entries = @($Zip.Entries | Where-Object { $_.FullName -ceq $Name })
-            if ($Entries.Count -ne 1) { throw "Expected exactly one $Name in the CLI archive." }
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($Entries[0], (Join-Path $Work $Name))
+        foreach ($Entry in $Zip.Entries) {
+            if ($Entry.FullName -match '(^[/\\]|(^|/)\.\.(/|$)|\\)' -or $Entry.FullName.EndsWith('/')) { throw 'Invalid CLI archive member.' }
+            $Target = Join-Path $Candidate $Entry.FullName
+            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Target)) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($Entry, $Target)
         }
     } finally { $Zip.Dispose() }
-    $Candidate = Join-Path $Work 'quazonai.exe'
-    & $Candidate --version
-    if ($LASTEXITCODE -ne 0) { throw 'The downloaded CLI could not run on this computer.' }
-    $Licenses = Join-Path $Root "licenses/$Version"
-    [IO.Directory]::CreateDirectory($Licenses) | Out-Null
-    foreach ($Name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md')) {
-        Copy-Item -LiteralPath (Join-Path $Work $Name) -Destination $Licenses -Force
+    foreach ($Name in @('runtime/node.exe','runtime/LICENSE','app/apps/cli/src/main.ts','quazonai.cmd','distribution.json','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Candidate $Name) -PathType Leaf)) { throw "Incomplete JS/Node CLI: $Name" }
     }
+    $Actual = & (Join-Path $Candidate 'quazonai.cmd') --version
+    if ($LASTEXITCODE -ne 0 -or $Actual -ne "quazonai $Version") { throw 'Bundled Node CLI version does not match.' }
+    [IO.Directory]::CreateDirectory((Split-Path $ReleaseDirectory)) | Out-Null
+    if (-not (Test-Path -LiteralPath $ReleaseDirectory)) { Move-Item -LiteralPath $Candidate -Destination $ReleaseDirectory }
+    $Installed = & (Join-Path $ReleaseDirectory 'quazonai.cmd') --version
+    if ($LASTEXITCODE -ne 0 -or $Installed -ne "quazonai $Version") { throw 'Preserve incomplete installed distribution before retrying.' }
     [IO.Directory]::CreateDirectory($Bin) | Out-Null
+    # An old .exe would precede .cmd in PATHEXT. Retain it rather than delete it.
+    $OldExe = Join-Path $Bin 'quazonai.exe'
+    if (Test-Path -LiteralPath $OldExe) { Move-Item -LiteralPath $OldExe -Destination (Join-Path $Directory ('legacy-cli-' + [IO.Path]::GetRandomFileName() + '.exe')) }
     $Staged = Join-Path $Bin ([IO.Path]::GetRandomFileName())
-    Copy-Item -LiteralPath $Candidate -Destination $Staged
-    $Destination = Join-Path $Bin 'quazonai.exe'
+    [IO.File]::WriteAllText($Staged, "@echo off`r`ncall `"$ReleaseDirectory\quazonai.cmd`" %*`r`nexit /b %errorlevel%`r`n")
+    $Destination = Join-Path $Bin 'quazonai.cmd'
+    if ([IO.File]::Exists($Destination)) { [IO.File]::Replace($Staged, $Destination, $null) } else { [IO.File]::Move($Staged, $Destination) }
     $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($Bin -notin ($UserPath -split ';')) {
-        [Environment]::SetEnvironmentVariable('Path', ($Bin + ';' + $UserPath), 'User')
-    }
-    if ([IO.File]::Exists($Destination)) {
-        [IO.File]::Replace($Staged, $Destination, [NullString]::Value)
-    } else {
-        [IO.File]::Move($Staged, $Destination)
-    }
-    $Staged = $null
-    if ($Bin -notin ($env:Path -split ';')) { $env:Path = $Bin + ';' + $env:Path }
-    Write-Host "Installed QuaZonai CLI from ${Version}: $Destination"
-    Write-Host 'The Docker stack runs on Linux x86_64; connect this CLI to that instance.'
-} finally {
-    if ($Staged -and [IO.File]::Exists($Staged)) { Remove-Item -LiteralPath $Staged -Force }
-    Remove-Item -LiteralPath $Work -Recurse -Force
-}
+    if ($Bin -notin ($UserPath -split ';')) { [Environment]::SetEnvironmentVariable('Path', "$Bin;$UserPath", 'User') }
+    if ($Bin -notin ($env:Path -split ';')) { $env:Path = "$Bin;$env:Path" }
+    Write-Host "Installed bundled Node CLI $Version at $Destination"
+} finally { Remove-Item -LiteralPath $Work -Recurse -Force }

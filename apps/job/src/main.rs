@@ -27,9 +27,6 @@ enum Operation {
     /// Foreground native Sandbox execution with explicitly configured public live data.
     #[cfg(feature = "native-paper")]
     Paper(job::paper_node::Arguments),
-    /// Real current public data to native Paper simulation; no financial orders.
-    #[cfg(feature = "native-paper")]
-    PolymarketPaper(job::polymarket_paper_host::Arguments),
     /// Apply the immutable native wall deadline before executing the fixed job entrypoint.
     RunBounded,
     /// Project official native snapshots into downstream account observation envelopes.
@@ -43,6 +40,8 @@ enum Operation {
     },
     /// Solve one frozen allocation request read from stdin.
     Allocate,
+    /// Blend explicit aligned native target rows using exact decimal member weights.
+    BlendTargets,
     /// Predict using one immutable native catalog and a bounded Wasm artifact.
     Forecast {
         #[arg(long)]
@@ -159,8 +158,6 @@ fn run(operation: Operation) -> Result<()> {
         #[cfg(feature = "native-node-observer")]
         Operation::PolymarketDataProbe(args) => job::polymarket_data_probe::run(args),
         #[cfg(feature = "native-paper")]
-        Operation::PolymarketPaper(args) => job::polymarket_paper_host::run(args),
-        #[cfg(feature = "native-paper")]
         Operation::Paper(args) => {
             job::paper_node::run(args)?;
             Ok(())
@@ -181,6 +178,7 @@ fn run(operation: Operation) -> Result<()> {
             Ok(())
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
+        Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,
             &input()?,
@@ -605,107 +603,24 @@ mod tests {
 
     #[cfg(feature = "native-paper")]
     #[test]
-    fn polymarket_paper_run_is_reachable_without_venue_credentials() {
+    fn native_paper_uses_file_inputs_without_http_control() {
         assert!(matches!(
             Arguments::try_parse_from([
                 "job",
-                "polymarket-paper",
+                "paper",
                 "run",
                 "--config",
-                "original-config.json",
+                "native-config.json",
                 "--claim",
-                "original-claim.json",
-                "--frozen-metadata",
-                "original-metadata.json",
-                "--dataset-revision",
-                "original-dataset.json",
-                "--source-output",
-                "new-source.ndjson",
-                "--report-output",
-                "new-report.json",
-                "--snapshots-output",
-                "new-snapshots.ndjson",
-                "--binding-output",
-                "new-binding.json",
-                "--max-seconds",
-                "30",
-                "--proxy-env",
-                "QZ_EXPLICIT_PUBLIC_PROXY",
+                "native-claim.json",
             ])
             .unwrap()
             .command,
-            Operation::PolymarketPaper(_)
+            Operation::Paper(_)
         ));
-        assert!(Arguments::try_parse_from([
-            "job",
-            "polymarket-paper",
-            "source",
-            "--instrument-id",
-            "condition-1.POLYMARKET",
-            "--output",
-            "source.ndjson",
-            "--private-key",
-            "not-supported",
-        ])
-        .is_err());
-    }
-
-    #[cfg(feature = "native-paper")]
-    #[test]
-    fn polymarket_downstream_control_is_reachable_without_order_credentials() {
-        for args in [
-            vec![
-                "job",
-                "polymarket-paper",
-                "serve",
-                "--config",
-                "existing-service.json",
-            ],
-            vec![
-                "job",
-                "polymarket-paper",
-                "apply",
-                "--origin",
-                "http://127.0.0.1:19001",
-                "--credential-file",
-                "existing-control-token",
-                "--claim",
-                "original-claim.json",
-            ],
-            vec![
-                "job",
-                "polymarket-paper",
-                "status",
-                "--origin",
-                "http://127.0.0.1:19001",
-                "--credential-file",
-                "existing-control-token",
-            ],
-            vec![
-                "job",
-                "polymarket-paper",
-                "stop",
-                "--origin",
-                "http://127.0.0.1:19001",
-                "--credential-file",
-                "existing-control-token",
-            ],
-        ] {
-            assert!(matches!(
-                Arguments::try_parse_from(args).unwrap().command,
-                Operation::PolymarketPaper(_)
-            ));
+        for operation in ["serve", "apply", "status", "stop"] {
+            assert!(Arguments::try_parse_from(["job", "paper", operation]).is_err());
         }
-        assert!(Arguments::try_parse_from([
-            "job",
-            "polymarket-paper",
-            "serve",
-            "--config",
-            "existing-service.json",
-            "--private-key",
-            "unsupported"
-        ])
-        .is_err());
     }
 
     #[cfg(not(feature = "native-paper"))]

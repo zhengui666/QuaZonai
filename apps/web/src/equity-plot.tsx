@@ -1,80 +1,33 @@
-import { Collapse, Table, theme } from 'antd';
-import { useMemo, useState } from 'react';
+import { Collapse, Table } from 'antd';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import type { LineSeriesOption } from 'echarts/charts';
-import { AriaComponent, DataZoomComponent, GridComponent, TooltipComponent } from 'echarts/components';
-import type { AriaComponentOption, DataZoomComponentOption, GridComponentOption, TooltipComponentOption } from 'echarts/components';
+import { AriaComponent, GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import { equityCoordinates, equityTime, equityTimeText } from './equity-data';
-import type { EquityPoint, EquitySeries } from './equity-data';
+import type { EquityPoint } from '../../../packages/contracts/src/index.ts';
+import { display, NoData, number } from './ui';
 
-// There is one renderer and one chart type; no all-in-one ECharts import.
-echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, AriaComponent, CanvasRenderer]);
-type Option = echarts.ComposeOption<LineSeriesOption | GridComponentOption | TooltipComponentOption | DataZoomComponentOption | AriaComponentOption>;
-
-function zoomValues(event: unknown): { start: number; end: number } | undefined {
-  if (!event || typeof event !== 'object') return;
-  if ('batch' in event && Array.isArray(event.batch)) return zoomValues(event.batch[0]);
-  if (!('start' in event) || !('end' in event) || typeof event.start !== 'number' || typeof event.end !== 'number') return;
-  if (!Number.isFinite(event.start) || !Number.isFinite(event.end) || event.start < 0 || event.end > 100 || event.start > event.end) return;
-  return { start: event.start, end: event.end };
+echarts.use([LineChart, GridComponent, TooltipComponent, AriaComponent, CanvasRenderer]);
+export function equityValues(points: EquityPoint[]) {
+  return points.map(point => point.value === null || point.value.trim() === '' || !Number.isFinite(Number(point.value)) ? null : Number(point.value));
 }
-
-export default function EquityPlot({ series }: { series: EquitySeries }) {
-  const { token } = theme.useToken();
-  const [zoom, setZoom] = useState({ start: 0, end: 100 });
-  const data = useMemo(() => series.points.map(equityCoordinates), [series]);
-  const onEvents = useMemo(() => ({ datazoom: (event: unknown) => {
-    const value = zoomValues(event);
-    if (value) setZoom(previous => previous.start === value.start && previous.end === value.end ? previous : value);
-  } }), []);
-  const option = useMemo<Option>(() => ({
-    animation: false,
-    useUTC: true,
-    backgroundColor: token.colorBgContainer,
-    textStyle: { color: token.colorText, fontFamily: token.fontFamily },
-    aria: { enabled: true, label: { description: `组合价值，${series.base_currency}，UTC。下方明细提供原始时间和金额。` } },
-    grid: { left: 20, right: 20, top: 24, bottom: 90, containLabel: true },
-    xAxis: { type: 'time', boundaryGap: [0, 0], axisLine: { lineStyle: { color: token.colorBorder } }, axisLabel: { hideOverlap: true, color: token.colorTextSecondary } },
-    yAxis: { type: 'value', scale: true, axisLabel: { color: token.colorTextSecondary }, splitLine: { lineStyle: { color: token.colorSplit } } },
-    tooltip: {
-      trigger: 'axis', confine: true, renderMode: 'richText',
-      backgroundColor: token.colorBgElevated, borderColor: token.colorBorder,
-      textStyle: { color: token.colorText },
-      formatter: params => {
-        const item = Array.isArray(params) ? params[0] : params;
-        const point = item && series.points[item.dataIndex];
-        return point ? `${equityTimeText(point.timestamp_ns)}\n${point.value ?? '缺值'} ${series.base_currency}` : '';
-      },
-    },
-    dataZoom: [
-      { type: 'inside', start: zoom.start, end: zoom.end, zoomOnMouseWheel: 'ctrl', moveOnMouseMove: false, moveOnMouseWheel: false, preventDefaultMouseMove: false, filterMode: 'none' },
-      { type: 'slider', start: zoom.start, end: zoom.end, bottom: 12, height: 44, showDetail: false, filterMode: 'none', borderColor: token.colorBorder, textStyle: { color: token.colorTextSecondary } },
-    ],
-    series: [{ id: 'equity', name: '组合价值', type: 'line', data, smooth: false, connectNulls: false,
-      showSymbol: series.points.length === 1, symbolSize: 8, lineStyle: { width: 2, color: token.colorPrimary }, itemStyle: { color: token.colorPrimary } }],
-  }), [data, series, token, zoom]);
-  const visible = useMemo(() => {
-    if (!series.points.length) return [];
-    const first = equityTime(series.points[0]!.timestamp_ns);
-    const last = equityTime(series.points[series.points.length - 1]!.timestamp_ns);
-    const start = first + (last - first) * zoom.start / 100;
-    const end = first + (last - first) * zoom.end / 100;
-    return series.points.filter(point => { const time = equityTime(point.timestamp_ns); return time >= start && time <= end; });
-  }, [series, zoom]);
-  return <>
-    <div data-testid="equity-chart" style={{ width: '100%', minWidth: 0 }}>
-      <ReactEChartsCore echarts={echarts} option={option} onEvents={onEvents}
-        opts={{ renderer: 'canvas' }} style={{ height: 360, width: '100%' }} />
-    </div>
-    <Collapse items={[{ key: 'points', label: `明细（${visible.length}）`, children:
-      <Table<EquityPoint> rowKey="timestamp_ns" dataSource={visible} size="small" scroll={{ x: 560 }}
-        pagination={{ pageSize: 50, showSizeChanger: false }} columns={[
-          { title: '时间（UTC）', dataIndex: 'timestamp_ns', render: equityTimeText },
-          { title: `价值（${series.base_currency}）`, dataIndex: 'value', render: (value: string | null) => value ?? '缺值' },
-        ]} />,
-    }]} />
-  </>;
+export default function EquityPlot({ points, currency, title }: { points: EquityPoint[]; currency: string; title: string }) {
+  const values = equityValues(points);
+  const option = {
+    animation: false, useUTC: true, backgroundColor: 'transparent', textStyle: { color: '#756152', fontFamily: 'sans-serif' },
+    aria: { enabled: true, label: { description: `${title} · ${currency}` } },
+    grid: { left: 8, right: 16, top: 32, bottom: 12, containLabel: true },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: '#dfd1c2' } }, axisTick: { show: false }, axisLabel: { color: '#756152', hideOverlap: true } },
+    yAxis: { type: 'value', scale: true, splitNumber: 4, axisLabel: { color: '#756152', formatter: (value: number) => number(value) }, splitLine: { lineStyle: { color: '#eee5d9', type: 'dashed' } } },
+    tooltip: { trigger: 'axis', confine: true, renderMode: 'richText', backgroundColor: '#fffcf7', borderColor: '#dfd1c2', textStyle: { color: '#49352a' },
+      formatter: (params: { dataIndex: number }[]) => { const point = points[params[0]?.dataIndex ?? -1]; return point ? `${point.at}\n${display(point.value)} ${currency}` : ''; } },
+    series: [{ name: title, type: 'line', data: points.map((point, index) => [Date.parse(point.at), values[index]]), connectNulls: false, smooth: false, showSymbol: points.length <= 200, symbolSize: 4,
+      lineStyle: { color: '#bf674b', width: 2.5 }, itemStyle: { color: '#bf674b' }, areaStyle: { color: '#bf674b', opacity: 0.055 } }],
+  };
+  return <div className="chart-panel"><div className="chart-title"><h2>{title}</h2><span className="muted">{display(currency)}</span></div>
+    {values.some(value => value !== null) ? <div className="equity-chart" data-testid="equity-chart"><ReactEChartsCore echarts={echarts} option={option} notMerge style={{ height: '100%', width: '100%' }} opts={{ renderer: 'canvas' }} /></div> : <NoData text="暂无曲线" />}
+    {points.length > 0 && <Collapse ghost className="chart-table" items={[{ key: 'values', label: '曲线明细', children: <Table<EquityPoint> rowKey={(_, index) => String(index)} dataSource={points} size="small" pagination={{ pageSize: 8, size: 'small', showSizeChanger: false }} columns={[
+      { title: '时间', dataIndex: 'at', render: display }, { title: '账户净值', dataIndex: 'value', align: 'right', render: display },
+    ]} /> }]} />}
+  </div>;
 }

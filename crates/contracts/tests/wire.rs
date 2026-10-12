@@ -1,42 +1,5 @@
-use contracts::{
-    budget::BudgetV1, evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1,
-};
+use contracts::{evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1};
 use serde_json::{from_value, json, to_value};
-
-#[test]
-fn retired_executor_commands_are_not_executable_but_original_receipts_remain_readable() {
-    use contracts::{
-        control::{OperatorCommand, OperatorOperation},
-        cycles::CodexProfileChoiceV1,
-    };
-    let choice = json!({"profile_id":Id::new(),"expected_revision":"9007199254740993"});
-    assert_eq!(
-        to_value(from_value::<CodexProfileChoiceV1>(choice.clone()).unwrap()).unwrap(),
-        choice
-    );
-    for operation in [
-        "CODEX_PROFILE_CREATE",
-        "CODEX_PROFILE_UPDATE",
-        "CODEX_PROBE",
-        "CODEX_LOGIN_START",
-        "CODEX_LOGIN_CANCEL",
-        "CODEX_LOGOUT",
-        "CYCLE_START",
-    ] {
-        let original: OperatorOperation = from_value(json!(operation)).unwrap();
-        assert_eq!(to_value(original).unwrap(), json!(operation));
-        assert!(!original.creates());
-        assert!(
-            from_value::<OperatorCommand>(json!({"operation":operation,"request":{}})).is_err()
-        );
-    }
-    for invalid in [
-        json!({"profile_id":Id::new(),"expected_revision":1}),
-        json!({"profile_id":Id::new(),"expected_revision":"1","token":"fixture-forbidden-field"}),
-    ] {
-        assert!(from_value::<CodexProfileChoiceV1>(invalid).is_err());
-    }
-}
 
 #[test]
 fn precise_database_values_never_cross_json_as_numbers() {
@@ -130,34 +93,6 @@ fn schema_versions_and_local_identity_are_explicit() {
 }
 
 #[test]
-fn command_objects_reject_unknown_fields_missing_booleans_and_null_integers() {
-    let valid = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":2,
-        "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,
-        "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
-        "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
-        "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
-    assert!(from_value::<BudgetV1>(valid.clone()).is_ok());
-    let mut unknown = valid.clone();
-    unknown["skip_budget_gate"] = json!(true);
-    assert!(from_value::<BudgetV1>(unknown).is_err());
-    let mut missing = valid.clone();
-    missing.as_object_mut().unwrap().remove("schema_version");
-    assert!(from_value::<BudgetV1>(missing).is_err());
-    let mut invalid = valid;
-    invalid["max_experiments"] = json!(null);
-    assert!(from_value::<BudgetV1>(invalid).is_err());
-    let principal = json!({"schema_version":1,"name":"scientific client","kind":"CLI",
-        "project_id":null,"downstream_id":null,"enabled":true});
-    assert!(from_value::<contracts::control::PrincipalCreate>(principal.clone()).is_ok());
-    let mut missing_boolean = principal.clone();
-    missing_boolean.as_object_mut().unwrap().remove("enabled");
-    assert!(from_value::<contracts::control::PrincipalCreate>(missing_boolean).is_err());
-    let mut null_boolean = principal;
-    null_boolean["enabled"] = json!(null);
-    assert!(from_value::<contracts::control::PrincipalCreate>(null_boolean).is_err());
-}
-
-#[test]
 fn nonfinite_native_metrics_cannot_be_serialized_into_innocent_nulls() {
     let value = json!({"schema_version":1,"evaluation_id":Id::new(),"metric_code":"risk","scope":"total",
         "value":0.1,"status":"OK","reason_code":null,"unit":"fraction","period_start":"2026-01-01T00:00:00Z",
@@ -196,27 +131,14 @@ fn generated_schema_describes_initial_slice_not_nonexistent_http_routes() {
         "string"
     );
     assert_eq!(schema["components"]["schemas"]["SchemaV1"]["minimum"], 1);
-    assert_eq!(
-        schema["components"]["schemas"]["BudgetV1"]["allOf"][0]["additionalProperties"],
-        false
-    );
 }
 
 #[test]
-fn native_domain_export_is_compact_deterministic_and_matches_the_committed_values() {
+fn native_scientific_export_is_compact_and_deterministic() {
     let generated = contracts::openapi_json().unwrap();
     let document: serde_json::Value = serde_json::from_str(&generated).unwrap();
-    let committed = include_str!("../../../contracts/generated/domain-v1.openapi.json");
-    assert_eq!(
-        document,
-        serde_json::from_str::<serde_json::Value>(committed).unwrap()
-    );
     assert_eq!(generated, serde_json::to_string(&document).unwrap() + "\n");
     assert_eq!(generated, contracts::openapi_json().unwrap());
-    assert_eq!(
-        generated, committed,
-        "regenerate the native domain artifact"
-    );
 }
 
 #[test]
@@ -283,61 +205,5 @@ fn generated_bigint_schemas_share_the_native_postgres_boundary() {
             other => panic!("unknown scalar in shared corpus: {other}"),
         };
         assert_eq!(accepted, case["valid"].as_bool().unwrap(), "{case}");
-    }
-}
-
-#[test]
-fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
-    let schema: serde_json::Value =
-        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
-    for (name, fields, maximum) in [
-        (
-            "StopRuleV1",
-            vec!["stop_on_qualified_count", "stop_on_no_improvement_trials"],
-            65535u64,
-        ),
-        (
-            "BudgetV1",
-            vec!["max_experiments", "min_cycle_interval_seconds"],
-            4294967295u64,
-        ),
-        ("RunSnapshotV1", vec!["current_attempt_no"], 4294967295u64),
-    ] {
-        let object = if name == "BudgetV1" {
-            &schema["components"]["schemas"][name]["allOf"][0]
-        } else {
-            &schema["components"]["schemas"][name]
-        };
-        for field in fields {
-            assert_eq!(
-                object["properties"][field]["maximum"],
-                json!(maximum),
-                "{name}.{field}"
-            );
-        }
-    }
-    let valid = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":2,
-        "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,
-        "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
-        "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
-        "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
-    let mut parallel = valid.clone();
-    parallel["max_parallel_runs"] = json!(u64::from(u32::MAX) + 1);
-    assert!(from_value::<BudgetV1>(parallel).is_err());
-    for field in [
-        "max_parallel_runs",
-        "max_turns_per_mission",
-        "max_repair_turns",
-        "max_cycles_per_day",
-        "max_memory_mib",
-    ] {
-        let optional =
-            &schema["components"]["schemas"]["BudgetV1"]["allOf"][0]["properties"][field]["oneOf"];
-        assert_eq!(optional[1]["maximum"], json!(u32::MAX));
-        let mut value = valid.clone();
-        value[field] = json!(u32::MAX);
-        assert!(from_value::<BudgetV1>(value.clone()).is_ok());
-        value[field] = json!(u64::from(u32::MAX) + 1);
-        assert!(from_value::<BudgetV1>(value).is_err());
     }
 }

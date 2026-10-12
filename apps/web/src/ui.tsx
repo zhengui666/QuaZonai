@@ -1,138 +1,84 @@
-import { Alert, Button, Descriptions, Empty, Skeleton, Space, Tag, Typography } from 'antd';
-import { createContext, useCallback, useContext, useEffect, useId, useState, useSyncExternalStore } from 'react';
-import type { ReactNode } from 'react';
-import { ApiFailure, displayTime } from './api';
-import { settingsWorkActive, useSettingsWork } from './settings-work';
+import { Alert, Button, Empty, Skeleton, Tag } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { JsonObject, Metric, ModelRef, Page, ResearchSummary } from '../../../packages/contracts/src/index.ts';
+import { api, shortError } from './api';
 
-export const GuardContext = createContext({
-  blocked: false,
-  setGuard: (_id: string, _active: boolean) => {},
-});
-const protectedWorkIds = new Set<string>();
-export const protectedWorkActive = () => protectedWorkIds.size > 0;
-export function GuardProvider({ children }: { children: ReactNode }) {
-  const [guards, setGuards] = useState<Set<string>>(new Set());
-  const blocked = guards.size > 0;
-  const settingsWork = useSettingsWork();
-  // Detached Settings work permits in-app navigation but still belongs to this document.
-  const unloadBlocked = blocked || settingsWork;
+export function useResource<T>(path: string, poll: number | false = false, enabled = true) {
+  return useQuery({ queryKey: [path], queryFn: ({ signal }) => api<T>(path, { signal }), refetchInterval: poll, enabled });
+}
+export function useResearch(poll: number | false = false) {
+  const query = useInfiniteQuery({
+    queryKey: ['/research'], initialPageParam: undefined as JsonObject | undefined,
+    queryFn: ({ signal, pageParam }) => api<Page<ResearchSummary>>('/research' + (pageParam ? `?cursor=${encodeURIComponent(JSON.stringify(pageParam))}` : ''), { signal }),
+    getNextPageParam: page => page.cursor, refetchInterval: poll,
+  });
+  const items = query.data ? [...new Map(query.data.pages.flatMap(page => page.items).map(item => [item.id, item])).values()] : undefined;
+  return { ...query, data: items ? { items } : undefined };
+}
+export function MoreResearch({ query }: { query: { hasNextPage: boolean; isFetching: boolean; fetchNextPage: () => Promise<unknown> } }) {
+  return query.hasNextPage ? <Button onClick={() => { void query.fetchNextPage(); }} loading={query.isFetching}>载入更多</Button> : null;
+}
+export function useMedia(query: string) {
+  const [matches, setMatches] = useState(() => matchMedia(query).matches);
   useEffect(() => {
-    if (!unloadBlocked) return;
-    const stop = (event: BeforeUnloadEvent) => {
-      if (!protectedWorkActive() && !settingsWorkActive()) return;
-      event.preventDefault(); event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', stop);
-    return () => window.removeEventListener('beforeunload', stop);
-  }, [unloadBlocked]);
-  const setGuard = useCallback((id: string, active: boolean) => {
-    if (active) protectedWorkIds.add(id); else protectedWorkIds.delete(id);
-    setGuards(previous => {
-      if (previous.has(id) === active) return previous;
-      const next = new Set(previous);
-      if (active) next.add(id); else next.delete(id);
-      return next;
-    });
-  }, []);
-  return <GuardContext.Provider value={{ blocked, setGuard }}>{children}</GuardContext.Provider>;
-}
-export function useGuard(active: boolean) {
-  const id = useId();
-  const { setGuard } = useContext(GuardContext);
-  useEffect(() => {
-    setGuard(id, active);
-    return () => setGuard(id, false);
-  }, [id, active, setGuard]);
-}
-function subscribeOnline(callback: () => void) {
-  window.addEventListener('online', callback);
-  window.addEventListener('offline', callback);
-  return () => { window.removeEventListener('online', callback); window.removeEventListener('offline', callback); };
-}
-export function useOnline() {
-  return useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => false);
-}
-const motionQuery = '(prefers-reduced-motion: reduce)';
-function subscribeMotion(callback: () => void) {
-  const preference = window.matchMedia(motionQuery);
-  preference.addEventListener('change', callback);
-  return () => preference.removeEventListener('change', callback);
-}
-export function useReducedMotion() {
-  return useSyncExternalStore(subscribeMotion, () => window.matchMedia(motionQuery).matches, () => true);
-}
-export function useClock() {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
-  return now;
+    const media = matchMedia(query); const update = () => setMatches(media.matches);
+    update(); media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [query]);
+  return matches;
 }
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  if (error === null || error === undefined) return null;
-  return <FailureNotice error={error} retry={retry} />;
+  return error ? <Alert className="error-notice" role="alert" type="error" showIcon title={shortError(error)}
+    action={retry && <Button size="small" onClick={retry}>重试</Button>} /> : null;
 }
-function FailureNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  const failure = error instanceof ApiFailure ? error : undefined;
-  const deadline = failure?.retryAt ?? 0;
-  const [, update] = useState(0);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const schedule = () => {
-      const remaining = deadline - Date.now();
-      if (Number.isFinite(remaining) && remaining > 0) {
-        timer = setTimeout(() => { update(value => value + 1); schedule(); }, Math.min(1000, remaining));
-      }
-    };
-    schedule();
-    return () => clearTimeout(timer);
-  }, [deadline]);
-  const wait = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
-  return <Alert type="error" showIcon title={failure?.message ?? '请求失败，请重试'}
-    description={<Space orientation="vertical" size="small">
-      {failure?.problem && <>
-        <Typography.Text>{failure.code} · {failure.problem.request_id}</Typography.Text>
-        {failure.problem.current_revision !== undefined && <Typography.Text>当前版本：{failure.problem.current_revision}，请重新载入</Typography.Text>}
-        {failure.problem.field_errors.map(field => <Typography.Text key={`${field.field}:${field.code}`}>{field.field}：{field.message}</Typography.Text>)}
-      </>}
-      {wait > 0 && <Typography.Text>{wait} 秒后可重试</Typography.Text>}
-      {retry && <Button disabled={wait > 0} onClick={retry}>重新载入</Button>}
-    </Space>} />;
+type QueryState = { isPending: boolean; error: unknown; data?: unknown; refetch: () => Promise<unknown> };
+export function QueryPanel({ query, children }: { query: QueryState; children: ReactNode }) {
+  if (query.isPending) return <div role="status" aria-label="加载中" className="loading-state"><Skeleton active={false} paragraph={{ rows: 3 }} /></div>;
+  return <><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.data !== undefined && children}</>;
 }
-export function QueryPanel({ pending, error, stale, reload, children }: {
-  pending: boolean; error: unknown; stale?: boolean; reload: () => void; children: ReactNode;
-}) {
-  if (pending) return <div role="status" aria-label="正在载入"><Skeleton active paragraph={{ rows: 5 }} /></div>;
-  if (error && !stale) return <ErrorNotice error={error} retry={reload} />;
-  return <Space orientation="vertical" className="full-width" size="middle">
-    {error ? <><Alert type="warning" title="数据未更新" showIcon /><ErrorNotice error={error} retry={reload} /></> : null}
-    {/* AntD Space flattens fragments and keys unkeyed children by position.
-        Keep forms mounted when a stale-query warning is inserted or removed. */}
-    <Space key="query-content" orientation="vertical" className="full-width" size="middle">{children}</Space>
-  </Space>;
+export function NoData({ text = '暂无记录' }: { text?: string }) {
+  return <div className="empty-state"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={text} /></div>;
 }
-const states: Record<string, string> = {
-  DRAFT: '草稿', ACTIVE: '启用', PAUSED: '暂停', ARCHIVED: '归档', FROZEN: '已冻结',
-  QUEUED: '排队', DISPATCHING: '派发中', RUNNING: '运行中', RECONCILING: '核对结果',
-  CANCEL_REQUESTED: '已请求取消', SUCCEEDED: '运行成功', FAILED: '运行失败', CANCELLED: '已取消',
-  WAITING_INPUT: '等待输入', PAUSING: '暂停中', COMPLETED: '周期已结束',
+export function PageHeading({ title, count, action }: { title: string; count?: number; action?: ReactNode }) {
+  return <header className="page-heading"><div><h1>{title}</h1>{count !== undefined && <span className="heading-count">{count} 项</span>}</div><div className="heading-actions">{action}</div></header>;
+}
+export function RefreshButton({ loading, onClick, label = '刷新' }: { loading: boolean; onClick: () => void; label?: string }) {
+  return <Button className="refresh-button" icon={<ReloadOutlined aria-hidden />} loading={loading} aria-label={label} title={label} onClick={onClick} />;
+}
+const labels: Record<string, string> = {
+  queued: '排队中', pending: '等待中', running: '运行中', stopping: '停止中', stopped: '已停止',
+  cancelled: '已取消', completed: '已完成', succeeded: '已完成', failed: '失败', error: '异常',
+  ready: '就绪', loaded: '已加载', disabled: '已停用', pending_restart: '待重启',
+  active: '运行中', accepted: '已接纳', submitted: '已提交', delivered: '已交付',
+  acknowledged: '已确认', expired: '已过期', rejected: '已拒绝', issued: '已签发',
+  done: '已完成', complete: '已完成', success: '成功', stopping_requested: '停止中',
 };
-export function StateTag({ value }: { value: string }) {
-  return <Tag>{states[value] ?? value}</Tag>;
+export function isActive(status: string) { return ['queued', 'pending', 'running', 'active'].includes(status); }
+export function isReady(status: string) { return status === 'ready'; }
+export function Status({ value }: { value: string | null | undefined }) {
+  const tone = value && ['ready', 'completed', 'succeeded', 'loaded', 'acknowledged', 'success', 'done', 'complete'].includes(value) ? 'good'
+    : value && ['failed', 'error', 'rejected'].includes(value) ? 'bad'
+      : value && ['running', 'active', 'pending', 'queued', 'stopping', 'pending_restart', 'issued', 'submitted'].includes(value) ? 'busy' : 'quiet';
+  return <Tag className={`status status-${tone}`}><span aria-hidden className="status-dot" />{value ? labels[value] ?? value : '—'}</Tag>;
 }
-export function Pager({ next, history, loading, move }: {
-  next: string | null | undefined; history: (string | undefined)[]; loading: boolean;
-  move: (history: (string | undefined)[]) => void;
-}) {
-  return <Space wrap><Button disabled={loading || history.length <= 1} onClick={() => move(history.slice(0, -1))}>上一页</Button>
-    <Typography.Text>第 {history.length} 页</Typography.Text>
-    <Button disabled={loading || !next} onClick={() => { if (next) move([...history, next]); }}>下一页</Button></Space>;
+export function display(value: string | number | null | undefined) { return value === null || value === undefined || value === '' ? '—' : value; }
+export function number(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '—';
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(parsed) : '—';
 }
-export function NoData({ text }: { text: string }) {
-  return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={text} />;
+export function time(value: string | null | undefined) {
+  if (!value || Number.isNaN(Date.parse(value))) return '—';
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 }
-export function ResourceFacts({ id, revision, updated }: { id: string; revision: string; updated: string }) {
-  return <Descriptions size="small" column={1} items={[
-    { key: 'id', label: '记录编号', children: <Typography.Text className="break-word" copyable>{id}</Typography.Text> },
-    { key: 'revision', label: '版本', children: revision },
-    { key: 'updated', label: '最后更新', children: displayTime(updated) },
-  ]} />;
+export function modelKey(model: ModelRef | null | undefined) { return model ? `${model.provider}::${model.modelId}` : undefined; }
+export function MetricGrid({ metrics }: { metrics: Metric[] }) {
+  return metrics.length ? <dl className="metric-grid">{metrics.map(metric => <div key={metric.key}>
+    <dt>{metric.label}</dt><dd>{display(metric.value)}{metric.value !== null && metric.value !== '' && metric.unit && <small>{metric.unit}</small>}</dd>
+  </div>)}</dl> : <div className="muted metric-empty">暂无指标</div>;
+}
+export function Surface({ title, extra, children, className = '' }: { title?: string; extra?: ReactNode; children: ReactNode; className?: string }) {
+  return <section className={`surface ${className}`}>{title && <div className="section-heading"><h2>{title}</h2>{extra}</div>}{children}</section>;
 }

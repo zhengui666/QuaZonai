@@ -374,39 +374,10 @@ fn accepted_current_result_cannot_hide_an_expired_member_behind_shorter_mandate_
 }
 
 #[test]
-fn legacy_wire_and_specific_runtime_capability_cannot_be_substituted_by_venue() {
+fn legacy_scientific_wire_preserves_original_shape_without_inferred_context() {
     let old = strategy_fixture::current_report();
     let bytes = serde_json::to_vec(&old).unwrap();
     assert!(!String::from_utf8_lossy(&bytes).contains("binary_option"));
     let decoded: NativeStrategyCompositionResultV1 = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(bytes, serde_json::to_vec(&decoded).unwrap());
-    let (_, request, _) = fixture(40, 100 * prediction::STEP);
-    let mut capabilities: contracts::runtime::RuntimeCapabilitiesV1 = serde_json::from_str(
-        include_str!("../../../tests/contracts/runtime-capabilities.fixture.json"),
-    )
-    .unwrap();
-    capabilities
-        .engine_versions
-        .insert("polymarket-research".into(), "1".into());
-    domain::prediction::binary_option_capability(None, &capabilities).unwrap();
-    assert!(domain::prediction::binary_option_capability(
-        request.binary_option.as_ref(),
-        &capabilities
-    )
-    .is_err());
-    capabilities.engine_versions.insert(
-        contracts::settlement::BINARY_OPTION_V2_CAPABILITY.into(),
-        "0".into(),
-    );
-    assert!(domain::prediction::binary_option_capability(
-        request.binary_option.as_ref(),
-        &capabilities
-    )
-    .is_err());
-    capabilities.engine_versions.insert(
-        contracts::settlement::BINARY_OPTION_V2_CAPABILITY.into(),
-        "1".into(),
-    );
-    domain::prediction::binary_option_capability(request.binary_option.as_ref(), &capabilities)
-        .unwrap();
 }

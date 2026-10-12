@@ -1,10 +1,5 @@
-//! Engineering acceptance only. Local tokens, instruments and quotes below
-//! are synthetic fixtures, never research qualification or real performance.
-//! QZ_NATIVE_STRATEGY_CLAIM_FILE optionally reads the original SQL claim and
-//! assumptions exported by native_research_loop's actual OCI producer test.
-//! QZ_NATIVE_PAPER_OBSERVATIONS_FILE optionally exports the unchanged retained
-//! stream after every assertion succeeds, for that still-live producer's readback.
-//! Only the HTTP control uses loopback; no exchange, account or feed is contacted.
+//! Synthetic engineering inputs, never research qualification or real performance.
+//! No HTTP service, database, exchange account or external feed is involved.
 //! The test replaces the data factory, never the native target strategy, Sandbox
 //! execution client, matching engine, portfolio or retained account observer.
 
@@ -24,9 +19,8 @@ use job::{
     account_observer::project_snapshot,
     paper_node::{
         data_config, data_engine_config, preflight_envelope as preflight, PaperConfig,
-        PaperDataSource, PaperLatencyModel, PaperNode, DATA_CLIENT,
+        PaperDataSource, PaperLatencyModel, PaperNode, PaperState, PaperStatus, DATA_CLIENT,
     },
-    paper_service::{start_control, PaperState},
 };
 use nautilus_binance::{
     common::enums::{BinanceEnvironment, BinanceProductType},
@@ -53,100 +47,12 @@ use nautilus_model::{
     instruments::{stubs::currency_pair_btcusdt, InstrumentAny},
     types::{Money, Price, Quantity},
 };
-use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::{any::Any, cell::RefCell, collections::HashMap, path::Path, rc::Rc, time::Duration};
 
-const TOKEN: &str = "synthetic-paper-acceptance-only";
 const INSTRUMENT: &str = "BTCUSDT.BINANCE";
 const ACCOUNT: &str = "BINANCE-PAPER01";
 const CAPABILITY: &str = "synthetic-paper-acceptance/1";
-
-/// Exercise the shipped command rather than the acceptance harness's HTTP
-/// client. Proxy variables are isolated to the child, never changed process-wide.
-#[test]
-fn production_loopback_control_ignores_ambient_proxy() {
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        process::Command,
-        time::Instant,
-    };
-    let directory = tempfile::tempdir().unwrap();
-    let credential = directory.path().join("synthetic-control-token");
-    std::fs::write(&credential, TOKEN).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    listener.set_nonblocking(true).unwrap();
-    let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
-    proxy.set_nonblocking(true).unwrap();
-    let proxy_origin = format!("http://{}", proxy.local_addr().unwrap());
-    let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut connection = loop {
-            match listener.accept() {
-                Ok((connection, _)) => break connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(
-                        Instant::now() < deadline,
-                        "local control request never arrived"
-                    );
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Err(error) => panic!("local acceptance listener: {error}"),
-            }
-        };
-        // Accepted sockets can inherit the listener's nonblocking mode.
-        connection.set_nonblocking(false).unwrap();
-        connection
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut request = Vec::new();
-        let mut bytes = [0_u8; 1024];
-        while !request.windows(4).any(|part| part == b"\r\n\r\n") {
-            let read = connection.read(&mut bytes).unwrap();
-            assert!(read > 0 && request.len() + read <= 8192);
-            request.extend_from_slice(&bytes[..read]);
-        }
-        let request = String::from_utf8(request).unwrap();
-        assert!(request.starts_with("GET /downstream/v1/status HTTP/1.1\r\n"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains(&format!("authorization: bearer {TOKEN}")));
-        let body = br#"{"state":"idle","source":"local-control-fixture"}"#;
-        write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-        connection.write_all(body).unwrap();
-    });
-    let output = Command::new(env!("CARGO_BIN_EXE_job"))
-        .args(["paper", "status", "--origin", &origin, "--credential-file"])
-        .arg(&credential)
-        .env("HTTP_PROXY", &proxy_origin)
-        .env("http_proxy", &proxy_origin)
-        .env("ALL_PROXY", &proxy_origin)
-        .env("all_proxy", &proxy_origin)
-        .env("NO_PROXY", "")
-        .env("no_proxy", "")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "production local control must bypass ambient proxy"
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap()["source"],
-        "local-control-fixture"
-    );
-    server.join().unwrap();
-    match proxy.accept() {
-        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock),
-        Ok(_) => panic!("control credentials were sent to an ambient proxy"),
-    }
-}
 
 #[derive(Debug, Default)]
 struct FeedState {
@@ -314,10 +220,7 @@ fn fixture(directory: &Path) -> (PaperConfig, HandoffClaimViewV2) {
         source: PaperDataSource::BinanceSpotPublic {
             bar_interval_seconds: 1,
         },
-        claim_state_directory: directory.join("claim-state"),
         observations_file: directory.join("paper.ndjson"),
-        credential_file: directory.join("not-created.test-token"),
-        bind: "127.0.0.1:0".parse().unwrap(),
     };
     let input: Value = serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"
@@ -489,10 +392,7 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV2) {
         checked.restart_policy,
         "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE"
     );
-    assert_eq!(
-        checked.claim_replay_scope,
-        "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM"
-    );
+    assert_eq!(checked.claim_replay_scope, "EXTERNAL_TYPESCRIPT_SERVICE");
     assert_eq!(checked.market_data_source, "BINANCE_SPOT_PUBLIC_JSON");
     assert_eq!(
         checked.market_time_basis,
@@ -578,7 +478,6 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV2) {
         );
     }
     assert!(!config.observations_file.exists());
-    assert!(!config.credential_file.exists());
 }
 
 fn quote(marked: bool) -> QuoteTick {
@@ -594,109 +493,22 @@ fn quote(marked: bool) -> QuoteTick {
     )
 }
 
-async fn get(client: &Client, origin: &str, path: &str) -> Value {
-    client
-        .get(format!("{origin}/downstream/v1/{path}"))
-        .bearer_auth(TOKEN)
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap()
-}
-
 // One test owns the native globals/event thread for the complete lifecycle.
 #[tokio::test(flavor = "current_thread")]
 async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown() {
     let directory = tempfile::tempdir().unwrap();
-    let (mut config, claim) = fixture(directory.path());
+    let (config, claim) = fixture(directory.path());
     source_contract(&config, &claim);
-    let from_sql = std::env::var_os("QZ_NATIVE_STRATEGY_CLAIM_FILE");
-    let wire_claim = if let Some(path) = &from_sql {
-        // This is the original output of runtime/direct_native_strategy_research_to_claim.
-        // Never manufacture source IDs or refresh accepted target/claim clocks.
-        let path = std::path::Path::new(path);
-        assert!(path.is_absolute());
-        let document: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let original: HandoffClaimViewV2 =
-            serde_json::from_value(document["claim"].clone()).unwrap();
-        let TargetPackageEnvelopeV2::TargetDecision(package) = &original.package else {
-            panic!("native SQL producer must export its original V2 claim");
-        };
-        assert_eq!(
-            package.source.input_provenance.market_data_origin,
-            contracts::research::DataOrigin::Fixture
-        );
-        assert_eq!(
-            package.source.input_provenance.pit_status,
-            contracts::research::PitStatus::Unverified
-        );
-        assert_eq!(package.source.alpha_version_ids.len(), 1);
-        assert_eq!(package.targets.len(), 1);
-        assert_eq!(package.targets[0].instrument_id, INSTRUMENT);
-        assert_eq!(package.targets[0].target_weight, "0.5".parse().unwrap());
-        assert_eq!(package.capital_assumption, "10000".parse().unwrap());
-        assert!(package.valid_from <= Utc::now());
-        config.project_id = package.project_id;
-        config.downstream_id = package.account_start.downstream_id;
-        config.trader_id = package.account_start.trader_id.clone();
-        config.account_id = package.account_start.account_id.clone();
-        config.execution_assumptions =
-            serde_json::from_value(document["execution_assumptions"].clone()).unwrap();
-        config.market_capability_version = config
-            .execution_assumptions
-            .as_ref()
-            .unwrap()
-            .venue_capability_ref
-            .clone();
-        assert_eq!(config.account_id, ACCOUNT);
-        original
-    } else {
-        match std::env::var("QZ_TEST_PAPER_PACKAGE_VERSION").as_deref() {
-            Err(std::env::VarError::NotPresent) | Ok("2") => strategy_claim(&config, &claim),
-            _ => panic!(
-                "QZ_TEST_PAPER_PACKAGE_VERSION must be 2; Forecast initialization is unsupported"
-            ),
-        }
-    };
+    let wire_claim = strategy_claim(&config, &claim);
     let package = domain::delivery::package_delivery(&wire_claim.package);
     job::paper_node::preflight_envelope(&config, &wire_claim).unwrap();
-    let mut control = start_control(
-        config.bind,
-        TOKEN.as_bytes().to_vec(),
-        config.market_capability_version.clone(),
-        &config.claim_state_directory,
-    )
-    .await
-    .unwrap();
-    let origin = format!("http://{}", control.local_addr);
-    let client = Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .unwrap();
-    let endpoint = format!("{origin}/downstream/v1/targets");
-
-    let unauthorized = client
-        .get(format!("{origin}/downstream/v1/capabilities"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
-    let capabilities = get(&client, &origin, "capabilities").await;
-    assert_eq!(capabilities["delivery_mode"], "TARGET_ONLY");
-    assert_eq!(capabilities["environments"], json!(["PAPER"]));
-    assert_eq!(capabilities["accepted_package_versions"], json!(["2"]));
-    assert_eq!(
-        capabilities["market_capability_versions"],
-        json!([config.market_capability_version])
-    );
-    assert_eq!(capabilities["accepting_targets"], true);
-    assert_eq!(get(&client, &origin, "status").await["state"], "idle");
-
+    let (stop_sender, stop_receiver) = tokio::sync::watch::channel(false);
+    let (status, current) = tokio::sync::watch::channel(PaperStatus {
+        state: PaperState::Starting,
+        target_points_consumed: 0,
+        reason_code: None,
+        updated_at: Utc::now(),
+    });
     let mut stale = wire_claim.clone();
     match &mut stale.package {
         TargetPackageEnvelopeV2::Forecast(package) => {
@@ -715,32 +527,17 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
     future_claim.handoff.expires_at = Utc::now() + ChronoDuration::seconds(40);
     for rejected in [stale, future_claim] {
         assert!(job::paper_node::preflight_envelope(&config, &rejected).is_err());
-        let response = client
-            .post(&endpoint)
-            .bearer_auth(TOKEN)
-            .json(&rejected)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(control.requests.try_recv().is_err());
-        assert_eq!(control.status.borrow().state, PaperState::Idle);
     }
 
     let feed = Rc::new(RefCell::new(FeedState::default()));
     let events = Rc::new(RefCell::new(NativeEvents::default()));
     let session = Rc::new(RefCell::new(None::<String>));
-    let status = control.status.clone();
-    let stop = control.stop.clone();
+    let status = status.clone();
+    let stop = stop_receiver.clone();
     let native = async {
-        let request = control.requests.recv().await.unwrap();
-        assert_eq!(
-            serde_json::to_value(&request.claim).unwrap(),
-            serde_json::to_value(&wire_claim).unwrap()
-        );
         let node = PaperNode::build_with_data_factory_envelope(
             &config,
-            &request.claim,
+            &wire_claim,
             Box::new(SyntheticFactory(feed.clone())),
             Box::new(SyntheticConfig),
         )
@@ -751,7 +548,6 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
             "construction must not connect data"
         );
         *session.borrow_mut() = Some(node.session_id());
-        status.send_modify(|current| current.native_session_id = Some(node.session_id()));
 
         let observed = events.clone();
         let quotes =
@@ -776,7 +572,6 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
             snapshots.clone(),
             None,
         );
-        request.reply.send(Ok(())).unwrap();
         let result = node.run(stop, status).await;
         msgbus::unsubscribe_quotes("data.quotes.*".into(), &quotes);
         msgbus::unsubscribe_bars("data.bars.*".into(), &bars);
@@ -788,33 +583,9 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         result
     };
     let operator = async {
-        let applied = client
-            .post(&endpoint)
-            .bearer_auth(TOKEN)
-            .json(&wire_claim)
-            .send()
-            .await
-            .unwrap();
-        assert!(matches!(
-            applied.status(),
-            StatusCode::OK | StatusCode::ACCEPTED
-        ));
-        let applied: Value = applied.json().await.unwrap();
-        assert_eq!(applied["handoff_id"], json!(wire_claim.handoff.id));
-        assert_eq!(applied["release_id"], json!(package.release_id));
-        assert_eq!(
-            applied["external_claim_id"],
-            json!(wire_claim.handoff.external_claim_id)
-        );
-        assert_eq!(
-            get(&client, &origin, "capabilities").await["accepting_targets"],
-            false
-        );
-
         let mut interval = tokio::time::interval(Duration::from_millis(20));
         let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
         let mut sent = Vec::new();
-        let mut replayed = false;
         let mut premature_bar = false;
         let mut bars_at_fill = None;
         loop {
@@ -822,10 +593,10 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "native target did not complete: {:?}",
-                control.status.borrow()
+                current.borrow()
             );
-            assert_ne!(control.status.borrow().state, PaperState::Failed);
-            if control.status.borrow().state != PaperState::Running {
+            assert_ne!(current.borrow().state, PaperState::Failed);
+            if current.borrow().state != PaperState::Running {
                 continue;
             }
             assert!(feed
@@ -839,43 +610,11 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
                 );
                 premature_bar |= !events.borrow().bars.is_empty();
             }
-            if !replayed {
-                let replay = client
-                    .post(&endpoint)
-                    .bearer_auth(TOKEN)
-                    .json(&wire_claim)
-                    .send()
-                    .await
-                    .unwrap();
-                assert_eq!(replay.status(), StatusCode::OK);
-                assert_eq!(
-                    replay.json::<Value>().await.unwrap()["native_session_id"],
-                    json!(*session.borrow())
-                );
-                let mut changed = wire_claim.clone();
-                match &mut changed.package {
-                    TargetPackageEnvelopeV2::Forecast(p) => {
-                        p.targets[0].target_weight = "0.25".parse().unwrap()
-                    }
-                    TargetPackageEnvelopeV2::TargetDecision(p) => {
-                        p.targets[0].target_weight = "0.25".parse().unwrap()
-                    }
-                }
-                let conflict = client
-                    .post(&endpoint)
-                    .bearer_auth(TOKEN)
-                    .json(&changed)
-                    .send()
-                    .await
-                    .unwrap();
-                assert_eq!(conflict.status(), StatusCode::CONFLICT);
-                replayed = true;
-            }
             let filled = !events.borrow().fills.is_empty();
             if filled {
                 let count = *bars_at_fill.get_or_insert(events.borrow().bars.len());
                 // Further native bars and marked portfolio snapshots must not
-                // replay the target or create another order after HTTP retry.
+                // replay the target or create another order.
                 if events.borrow().bars.len() >= count + 2 {
                     break;
                 }
@@ -886,23 +625,14 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
                 .send(DataEvent::Data(Data::Quote(input)))
                 .unwrap();
         }
-        if from_sql.is_none() {
-            assert!(
-                premature_bar,
-                "native bars must be observed while future target waits"
-            );
-        }
-        let stopping = client
-            .post(format!("{origin}/downstream/v1/stop"))
-            .bearer_auth(TOKEN)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(stopping.status(), StatusCode::ACCEPTED);
-        let stopping: Value = stopping.json().await.unwrap();
-        assert_eq!(stopping["stop_requested"], true);
+        assert!(
+            premature_bar,
+            "native bars must be observed while future target waits"
+        );
+        stop_sender.send_replace(true);
         assert_eq!(
-            stopping["state"], "running",
+            current.borrow().state,
+            PaperState::Running,
             "stop intent is not completed native shutdown"
         );
         sent
@@ -913,29 +643,11 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
     .await
     .unwrap();
     native_result.unwrap();
-    assert_eq!(control.status.borrow().state, PaperState::Stopped);
-    assert!(
-        control.requests.try_recv().is_err(),
-        "retries must not create another native request"
-    );
+    assert_eq!(current.borrow().state, PaperState::Stopped);
+    assert_eq!(current.borrow().target_points_consumed, 1);
     assert_eq!(feed.borrow().connects, 1);
     assert!(feed.borrow().disconnects >= 1 && !feed.borrow().connected);
     assert_eq!(feed.borrow().external_bar_subscriptions, 0);
-    let terminal = get(&client, &origin, "status").await;
-    assert_eq!(terminal["state"], "stopped");
-    assert_eq!(terminal["target_points_consumed"], 1);
-    let replay = client
-        .post(&endpoint)
-        .bearer_auth(TOKEN)
-        .json(&wire_claim)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(replay.status(), StatusCode::OK);
-    assert_eq!(replay.json::<Value>().await.unwrap()["state"], "stopped");
-    assert!(control.requests.try_recv().is_err());
-    control.shutdown.send_replace(true);
-    control.task.await.unwrap().unwrap();
 
     let captured = events.borrow();
     assert_eq!(
@@ -1032,31 +744,6 @@ async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown()
         AccountConnectionV1::Disconnected
     );
     assert!(records.last().unwrap().snapshot.is_none());
-    assert!(
-        !config.credential_file.exists(),
-        "test must not create authentication credentials"
-    );
-    if let Some(path) = std::env::var_os("QZ_NATIVE_PAPER_OBSERVATIONS_FILE") {
-        use std::io::Write;
-        assert!(
-            from_sql.is_some(),
-            "joined export requires the original SQL claim"
-        );
-        let path = Path::new(&path);
-        assert!(
-            path.is_absolute(),
-            "retained output must be an explicit absolute path"
-        );
-        let bytes = std::fs::read(&config.observations_file).unwrap();
-        let mut output = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .unwrap();
-        output.write_all(&bytes).unwrap();
-        output.sync_all().unwrap();
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
-    }
 }
 
 #[test]

@@ -20,8 +20,4 @@ ndarray = "=0.17.1"
 ndarray-stats = "=0.7.0"
 serde.workspace = true
 serde_json.workspace = true
-url = "=2.5.8"
 oci-spec = { version = "=0.10.0", default-features = false, features = ["distribution"] }
-
-[dev-dependencies]
-proptest = "=1.7.0"

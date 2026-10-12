@@ -650,10 +650,6 @@ fn durable_gate_cannot_reset_by_session_alias_or_restart() {
     assert!(restarted.recovery_required());
 }
 
-#[cfg(feature = "native-paper")]
-#[path = "support/capital_exit_http_pipeline.rs"]
-mod capital_exit_http_pipeline;
-
 #[test]
 fn unguarded_algorithm_emulator_child_and_wrong_epoch_are_rejected() {
     use nautilus_model::{

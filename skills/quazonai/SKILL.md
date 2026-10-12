@@ -1,38 +1,40 @@
 ---
 name: quazonai
-description: Operate an existing QuaZonai service through its native CLI. Submit and observe durable factor research, inspect original data and evidence, use optional scientific/portfolio/target workflows, and recover uncertain operations. Not for implementing, building, testing or deploying QuaZonai.
-compatibility: Requires the installed quazonai executable and an owner login or an already provisioned scoped connection for supported non-research operations.
+description: Operate an existing QuaZonai research workbench through its installed HTTP CLI. Submit finite factor studies, inspect trials and independent evidence, build optional shared-account portfolios/backtests, and observe target-only downstream/account bindings. Not a development or deployment workflow.
+compatibility: Requires the installed quazonai CLI, Node 22.19+ and a saved owner-device login to a compatible /api/v3 service.
 ---
 
 # Operate QuaZonai
 
-Operate within the user's requested scope and report actual observations. This directory needs no repository checkout. Development, service startup and migrations are outside this Skill.
+Use the installed `quazonai` executable and the user's requested scope. No repository checkout, service startup or model inference probe is needed to connect.
 
-## Connect and choose the operation
+## Connect
 
-Use installed `quazonai client` and native request contracts. Read [connection and discovery](references/connection.md) on first use, when the connection changes, or on an identity error. Reuse the saved device connection. If no login exists, have the user run `quazonai client login` in their own terminal and enter the frontend address and hidden password there. Never ask for the password in chat or read the saved profile/token yourself.
+Run `quazonai identity`. Without a login, have the user run `quazonai login --origin THEIR_ORIGIN` in their own terminal; password input is hidden. Never collect passwords in chat or read saved tokens. New-instance password setup belongs in the authentication UI. See [connection](references/connection.md).
 
-New AI factor research uses `research` commands backed by official Pi Durable, not the retired Codex/Mission MCP surface. Research views/start/stop require current owner authority. Scoped scientific/Downstream credentials keep their own permissions; never replace one with owner login to bypass a denial, self-issue grants, or change criteria to force a pass.
+## Idea → trials → optional consumers
 
-| Intent | Procedure |
+| Intent | Commands / reference |
 | --- | --- |
-| Submit a research objective; inspect data/policy, trials, native tasks and actual usage | [Research](references/research.md) |
-| Follow an optional scientific Run, observe events or cancel it | [Runs](references/runs.md) |
-| Explain original Alpha/portfolio/target evidence and delivery | [Results](references/results.md) |
-| Inspect original account sources or relay already-produced native observations | [Account observations and transport](references/account-transport.md) |
-| Control a requested partial managed-capital exit or inspect cash | [Capital exits](references/capital-exits.md) |
-| Unknown outcome, conflict, failure or exhausted budget | [Recovery](references/recovery.md) |
+| Choose an actual configured model and dataset | `research models`, `datasets` |
+| Submit a finite goal or an original request file | [Research](references/research.md) |
+| Read trials, selection, failure and independent result | `research get ID`; [evidence and portfolios](references/results.md) |
+| Observe or stop the original study | [Bounded observation](references/runs.md) |
+| Build a requested shared-account portfolio/backtest | `portfolio build --file FILE`, `portfolio list`, `portfolio get ID` |
+| Bind Paper/Live account observation and target receipts | [Observations](references/account-transport.md) |
+| Inspect/update requested settings or installed extensions | `settings get`, `settings set --file FILE`, `extensions list`, `extensions enable NAME`, `extensions disable NAME` |
+| Unknown outcome, conflict or failure | [Recovery](references/recovery.md) |
 
-Discover unfamiliar fields with the exact command's `--help`, `quazonai openapi --schema NAME` for HTTP inputs or `quazonai openapi --domain --schema NAME` for scientific content. Report unsupported capabilities rather than inventing routes or installing an alternate engine. Optional portfolios and target delivery are not prerequisites for factor research.
+Use `quazonai --help` and offline `schema list` / `schema show NAME` for unfamiliar inputs; `--domain` selects native scientific schemas when installed. `client` is only a spelling alias, not the retired command surface. Unsupported adapters and missing evidence are explicit failures; never invent routes or commands.
 
-## Execute and return a receipt
+## Operation notes
 
-1. Reuse original resource IDs. Native durable Conversation/Submission/Task IDs are numbers; existing scientific IDs remain UUIDs and big counters/clock values remain decimal strings. Do not interchange them.
-2. Preserve original goal, dataset identity and evaluation/selection/stop criteria. Inspect real source/PIT/coverage/permission limitations; a source name or existing path proves none of them.
-3. For research, retain the exact submission file and `requestId`; same-body replay returns native identities. Existing scientific writes retain their original idempotency key and expected revision. Preview validates local syntax, not authority or scientific eligibility.
-4. Submit once and inspect the original persistent state. HTTP 202 is admission/stop requested, not execution or cancellation proof. Do not treat stopped observation as stopped work; use [recovery](references/recovery.md) after uncertain writes.
-5. Stop at requested scope or an actual unresolved boundary. Return operation → IDs → observed state → evidence/limitations → next action. Distinguish failed, running, unknown, not attempted and computed-but-unqualified.
+- Retain the original request file and `requestId`. Replaying the same body/ID obtains original identities; changing the body conflicts. Never make a new key after an unknown outcome.
+- Native research IDs are numbers. Portfolio/observation IDs are opaque strings; large clocks, quantities and money remain exact decimal strings.
+- HTTP 202 is admission, not settled science or proof of cancellation. `wait` uses the native submission projection; empty tasks, IDLE or a final record alone do not establish settlement. Detaching a watcher leaves admitted work running.
+- Keep all failed/rejected trials, the compared set, selection and original criteria. Computation is not independently evaluated evidence, qualification or profitability. Never tune against final held-out values or relabel exposed samples as unseen.
+- Missing/stale values stay unavailable, not zero. Real portfolio equity must come from a shared native account, never summed factor curves. A configured source alone proves no licensing, PIT, data quality or usable account.
+- Model credentials stay in the configured service host environment/provider modules. Model availability is metadata/auth configuration, not a billed test. Never disclose secrets, hidden reasoning or raw Sealed values.
+- Paper/Live describe observed source bindings. QuaZonai is target-only: no broker orders, trading launch, capital-exit control or withdrawals. A target ACK is not a fill; local exit or a stop receipt does not prove remote cancellation.
 
-Keep failed/rejected trials and disclose the compared set and selection. Never tune against final held-out evidence, relabel exposed samples as unseen, invent missing metrics/values, or claim success from an exit code. Provider credentials stay in trusted host configuration, not requests or conversations. Never expose credentials, hidden reasoning, raw Sealed values or unrequested artifact contents.
-
-Target-only delivery creates no real broker orders or real-account execution. Optional capital-exit control uses only its already-supported native owner boundary and never transfers or withdraws funds.
+Return the original IDs, observed state, actual evidence/limitations and next required action. Do not expand authority or start optional portfolio/observation work merely because factor research completed.

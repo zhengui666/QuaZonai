@@ -8,8 +8,7 @@ import subprocess
 REPOSITORY = "zhengui666/QuaZonai"
 DATABASE_IMAGE = "ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6"
 BUNDLE = Path(__file__).resolve().parent
-BUNDLE_FILES = {"manage.sh", "json.awk", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md",
-                "runtime.sh", ".env.example"}
+BUNDLE_FILES = {"manage.sh", "json.awk", "deploy.sh", "update.sh", "compose.yaml", "release.json", "README.md", ".env.example"}
 SEMVER = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 
@@ -33,8 +32,8 @@ def version_precedence(value: str) -> tuple:
     return (*core, 1 if prerelease is None else 0, identifiers)
 
 def validate_manifest(value: dict, *, published: bool = False) -> dict:
-    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 3:
-        raise ValueError("This installer requires a version-3 deployment bundle with prebuilt images.")
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 4:
+        raise ValueError("This installer requires a schema-4 prebuilt Node deployment bundle.")
     version(value["version"])
     if not re.fullmatch(r"[0-9a-f]{40}", value["revision"]):
         raise ValueError("A release must identify its exact source revision.")

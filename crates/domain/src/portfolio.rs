@@ -16,33 +16,6 @@ fn invalid() -> DomainError {
     DomainError::Invalid("portfolio_allocation")
 }
 
-pub fn build_selection(request: &PortfolioBuildRequestV1) -> Result<(), DomainError> {
-    if let PortfolioBuildWeightsV1::PaperInitialCapital {
-        trader_id,
-        account_id,
-        ..
-    } = &request.current_weights_source
-    {
-        paper_account_scope(trader_id, account_id)?;
-        if request.environment != contracts::forward::ForwardEnvironmentV1::Paper {
-            return Err(DomainError::Invalid("paper_initial_capital_environment"));
-        }
-    }
-    crate::data::bounded_native_limits(&request.limits)?;
-    if request.members.len() < 2 {
-        return Err(DomainError::Invalid("portfolio_members"));
-    }
-    let mut qualifications = BTreeSet::new();
-    if request
-        .members
-        .iter()
-        .any(|m| !qualifications.insert(m.qualification_id))
-    {
-        return Err(DomainError::Invalid("portfolio_duplicate_qualification"));
-    }
-    ensemble_weights(request.members.iter().map(|m| &m.ensemble_weight))
-}
-
 /// Identity is preserved verbatim. Empty, padded or control-bearing aliases must
 /// not create additional initialization scopes for the same native account.
 pub fn paper_account_scope(trader_id: &str, account_id: &str) -> Result<(), DomainError> {

@@ -1,274 +1,31 @@
 name: Web console
-# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-env:
-  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-  RUSTUP_TOOLCHAIN: '1.98.1'
-  CARGO_BUILD_JOBS: '2'
-  CARGO_PROFILE_DEV_DEBUG: '0'
-concurrency:
-  group: web-console-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
-  cancel-in-progress: true
 jobs:
-  source:
-    name: Web / source and contracts
+  browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: apps/web
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Require exact event Head
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version: '22.19.0'
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - name: Verify portable skill installation with the official Skills CLI
-        working-directory: .
+      - run: npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
+      - run: make check-web
+      - run: node apps/web/node_modules/@playwright/test/cli.js install --with-deps chromium
+      - run: npm --prefix apps/web run test:e2e
         env:
-          DISABLE_TELEMETRY: '1'
-        run: |
-          set -euo pipefail
-          sandbox=$(mktemp -d)
-          trap 'rm -rf "$sandbox"' EXIT
-          export HOME="$sandbox/home"
-          export XDG_CONFIG_HOME="$sandbox/config"
-          export CODEX_HOME="$HOME/.codex"
-          export CLAUDE_CONFIG_DIR="$HOME/.claude"
-          export npm_config_cache="$sandbox/npm-cache"
-          mkdir -p "$HOME" "$sandbox/project"
-          cd "$sandbox/project"
-          npx --yes skills@1.7.0 add "$GITHUB_WORKSPACE" --skill quazonai --agent codex claude-code --yes
-          diff -r "$GITHUB_WORKSPACE/skills/quazonai" .agents/skills/quazonai
-          diff -r "$GITHUB_WORKSPACE/skills/quazonai" .claude/skills/quazonai
-          npx --yes skills@1.7.0 add "https://github.com/${GITHUB_REPOSITORY}/tree/${EXPECTED_HEAD}/skills/quazonai" --skill quazonai --agent codex claude-code --global --copy --yes
-          # Codex uses the universal skills directory, including at global scope.
-          diff -r "$GITHUB_WORKSPACE/skills/quazonai" "$HOME/.agents/skills/quazonai"
-          diff -r "$GITHUB_WORKSPACE/skills/quazonai" "$CLAUDE_CONFIG_DIR/skills/quazonai"
-      - name: Verify installation shell semantics with native Git and coreutils
-        working-directory: .
-        run: |
-          node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs
-      - name: Install locked dependencies without lifecycle hooks
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Check native acceptance script syntax
-        run: |
-          node --check scripts/native-browser.mjs
-          node --check scripts/native-user-services.mjs
-          node --check scripts/native-cleanup.test.mjs
-          node --test scripts/native-user-services.test.mjs
-      - name: Verify Web partition, gate and font installer regressions
-        run: |
-          node --test scripts/web-ci.test.mjs scripts/ensure-cjk-fonts.test.mjs
-          node scripts/web-ci.mjs inventory
-      - name: Verify generated client and runtime validators
-        run: |
-          npm --ignore-scripts run check:generated
-          npm --ignore-scripts run test:validator-adapter
-          npm --ignore-scripts run generate
-          git diff --exit-code -- src/generated/
-          test -z "$(git ls-files --others --exclude-standard -- src/generated/)"
-      - name: Typecheck and unit tests
-        run: |
-          npm --ignore-scripts run typecheck
-          npm --ignore-scripts run test
-      - name: Build production static assets
-        run: node node_modules/vite/bin/vite.js build
-      - name: Verify complete lazy asset precache and startup closure
-        run: node scripts/measure-validator-build.mjs --assert-modular
-      - name: Require unchanged generated and handwritten source
-        run: |
-          npm --ignore-scripts run check:generated
-          git diff --exit-code
-          test -z "$(git ls-files --others --exclude-standard -- src/generated/)"
-      - name: Require unchanged checkout
-        working-directory: .
-        run: |
-          git diff --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
-  synthetic-a:
-    name: Web / settings interactions
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+          PI_SCRATCH_DIR: ${{ runner.temp }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: failure()
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Require exact event Head
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install locked dependencies without lifecycle hooks
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install Chromium and native browser dependencies
-        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
-      - name: Settings browser interactions and exact execution coverage
-        run: node scripts/web-ci.mjs synthetic-a
-      - name: Require unchanged checkout
-        working-directory: .
-        run: |
-          git diff --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
-  synthetic-b:
-    name: Web / other interactions and validators
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Require exact event Head
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install locked dependencies without lifecycle hooks
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Build production static assets
-        run: node node_modules/vite/bin/vite.js build
-      - name: Install Chromium and native browser dependencies
-        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
-      - name: Other interactions, full validator suite and exact execution coverage
-        run: node scripts/web-ci.mjs synthetic-b
-      - name: Require unchanged checkout
-        working-directory: .
-        run: |
-          git diff --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
-  native:
-    name: Web / ordered native acceptance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    services:
-      postgres:
-        image: ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: native-web-ci-only
-          POSTGRES_DB: postgres
-        ports:
-          - 127.0.0.1:55434:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Require exact event Head
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install locked dependencies without lifecycle hooks
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm ci --prefix ../research --ignore-scripts --no-audit --no-fund
-      - name: Build production static assets
-        run: node node_modules/vite/bin/vite.js build
-      - name: Install Chromium and native browser dependencies
-        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
-      - name: Verify official CJK fonts for native browser acceptance
-        run: bash scripts/ensure-cjk-fonts.sh
-      - name: Build real Rust API and verify native HTTP contract
-        working-directory: .
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
-          rustup run "$RUSTUP_TOOLCHAIN" cargo build --locked -p server --bin server --example browser_data_fixture
-          rustup run "$RUSTUP_TOOLCHAIN" cargo run --locked -q -p server -- openapi > /tmp/web-http.openapi.json
-          diff -u contracts/generated/api-v2.openapi.json /tmp/web-http.openapi.json
-      - name: Prepare the pinned native production gateway
-        run: |
-          set -euo pipefail
-          container=$(docker create caddy:2.11.4)
-          trap 'docker rm "$container" >/dev/null' EXIT
-          docker cp "$container:/usr/bin/caddy" "$RUNNER_TEMP/caddy"
-          chmod +x "$RUNNER_TEMP/caddy"
-          "$RUNNER_TEMP/caddy" version
-      - name: Prepare the native service user manager
-        working-directory: .
-        run: |
-          set -euo pipefail
-          service_uid=$(id -u)
-          test "$service_uid" -ne 0
-          sudo loginctl enable-linger "$service_uid"
-          sudo systemctl start "user@$service_uid.service"
-          export XDG_RUNTIME_DIR="/run/user/$service_uid"
-          systemctl --user show --property=Version
-          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-      - name: Real hosted user services, restart, accessibility and PWA
-        env:
-          QUAZONAI_WEB_TEST_ADMIN_URL: postgresql://postgres:native-web-ci-only@127.0.0.1:55434/postgres
-          CADDY_BIN: ${{ runner.temp }}/caddy
-        run: npm --ignore-scripts run test:e2e
-      - name: Require unchanged checkout
-        working-directory: .
-        run: |
-          git diff --exit-code
-          test -z "$(git ls-files --others --exclude-standard)"
-      - name: Preserve sanitized native acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: native-web-acceptance-${{ env.EXPECTED_HEAD }}
-          path: apps/web/test-results/native-summary/
-          if-no-files-found: warn
+          name: web-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/quazonai-web-playwright/
+          if-no-files-found: ignore
           retention-days: 7
-          # Raw Playwright diagnostics and enrollment fixtures stay in private tmp.
-  web-console:
-    name: Web / contracts, browser and real Rust API
-    if: ${{ always() }}
-    needs: [source, synthetic-a, synthetic-b, native]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Require exact event Head
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Require every applicable Web job to succeed
-        working-directory: .
-        env:
-          WEB_JOB_RESULTS: ${{ toJSON(needs) }}
-        run: node apps/web/scripts/web-ci.mjs gate
-
