@@ -15,6 +15,7 @@ use contracts::{
 };
 use reqwest::{Client, Method, Url};
 use store::authority::Actor;
+use url::Host;
 
 pub struct ResearchService {
     origin: Url,
@@ -30,16 +31,19 @@ impl ResearchService {
     pub fn new(origin: &str) -> Result<Self, &'static str> {
         let origin = Url::parse(origin).map_err(|_| "QZ_RESEARCH_ORIGIN must be an HTTP origin")?;
         if !matches!(origin.scheme(), "http" | "https")
-            || origin.host().is_none()
+            || !matches!(origin.host(), Some(Host::Ipv4(ip)) if ip.is_loopback())
+                && !matches!(origin.host(), Some(Host::Ipv6(ip)) if ip.is_loopback())
+                && !matches!(origin.host(), Some(Host::Domain("localhost")))
             || !origin.username().is_empty()
             || origin.password().is_some()
             || origin.path() != "/"
             || origin.query().is_some()
             || origin.fragment().is_some()
         {
-            return Err("QZ_RESEARCH_ORIGIN must contain only an HTTP origin");
+            return Err("QZ_RESEARCH_ORIGIN must contain only a loopback HTTP origin");
         }
         let client = service_http::builder(HeaderMap::new())
+            .no_proxy()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|_| "research HTTP transport unavailable")?;
@@ -220,4 +224,33 @@ pub async fn usage(
             Bytes::new(),
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResearchService;
+
+    #[test]
+    fn private_research_origin_is_loopback_only() {
+        for origin in [
+            "http://127.0.0.1:8092",
+            "https://localhost:8092",
+            "http://[::1]:8092",
+        ] {
+            assert!(ResearchService::new(origin).is_ok(), "{origin}");
+        }
+        for origin in [
+            "https://example.com",
+            "http://192.168.1.2:8092",
+            "http://0.0.0.0:8092",
+            "http://[::]:8092",
+            "http://localhost.example.com",
+            "http://user@localhost",
+            "http://127.0.0.1/path",
+            "http://127.0.0.1?query=1",
+            "http://127.0.0.1#fragment",
+        ] {
+            assert!(ResearchService::new(origin).is_err(), "{origin}");
+        }
+    }
 }

@@ -183,7 +183,10 @@ def verify_durable(config: dict, *, restart: bool = False, expected: dict | None
 
 def verify_durable_restore(config: dict, backup: Path, expected: dict) -> None:
     restored = Path(config['root']).parent / 'restored-native-research'
-    restored.mkdir()
+    restored.mkdir(mode=0o700)
+    # tar's data filter intentionally discards directory modes. Keep the native
+    # research directory private before extraction, as in the installation.
+    (restored / 'data/research').mkdir(parents=True, mode=0o700)
     manage.run(['systemctl', '--user', 'stop', manage.unit(config)])
     manage.compose(config, 'stop', 'app')
     try:
@@ -211,6 +214,7 @@ try {
 """
         directory = str(Path(config['root']) / 'data/research')
         subprocess.run(['docker', 'run', '--rm', '-i', '--network', 'none', '--read-only', '--tmpfs', '/tmp',
+                        '--user', f'{config["uid"]}:{config["gid"]}', '--workdir', directory,
                         '--mount', f'type=bind,source={restored / "data/research"},target={directory}',
                         '--env', 'QZ_RESEARCH_CONFIG=' + directory + '/config.json',
                         '--entrypoint', '/usr/local/bin/node', config['image'],

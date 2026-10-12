@@ -89,3 +89,27 @@ pub struct RunRebalanceV1 {
     pub study_run_id: Option<Id>,
     pub release_id: Option<Id>,
 }
+
+/// Original retired Agent facts, never durable identities or reconstructed outcomes.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalAgentHistoryV1 {
+    pub schema_version: SchemaV1,
+    pub execution: serde_json::Value,
+    pub profile: Option<serde_json::Value>,
+    pub turns: crate::control::Page<serde_json::Value>,
+    pub wakes: crate::control::Page<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoricalAgentHistoryQuery {
+    pub turn_cursor: Option<Id>,
+    pub wake_cursor: Option<Id>,
+    #[serde(default = "history_page_limit")]
+    pub limit: u16,
+}
+
+fn history_page_limit() -> u16 {
+    25
+}

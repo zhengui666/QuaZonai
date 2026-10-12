@@ -829,7 +829,7 @@ class UpdateTests(unittest.TestCase):
                 if len(parts) == 4 and parts[2] == 'AS':
                     stages.add(parts[3])
         self.assertEqual(len(bases), 4)
-        self.assertEqual(bases[0], 'node:22.19.0-bookworm-slim')
+        self.assertEqual(bases[0], 'node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90')
         for image in bases[1:]:
             self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')
 

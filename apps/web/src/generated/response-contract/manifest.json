@@ -102,7 +102,7 @@
     },
     {
       "path": "response-contract/lazy.mjs",
-      "bytes": 19244,
+      "bytes": 19362,
       "importIds": [
         "@quazonai/web/response-contract/lazy"
       ],
@@ -250,13 +250,14 @@
           "@quazonai/web/response-contract/modules/schema-725",
           "@quazonai/web/response-contract/modules/schema-727",
           "@quazonai/web/response-contract/modules/schema-729",
-          "@quazonai/web/response-contract/modules/schema-737",
+          "@quazonai/web/response-contract/modules/schema-731",
+          "@quazonai/web/response-contract/modules/schema-739",
           "@quazonai/web/response-contract/modules/schema-74",
-          "@quazonai/web/response-contract/modules/schema-740",
           "@quazonai/web/response-contract/modules/schema-742",
           "@quazonai/web/response-contract/modules/schema-744",
-          "@quazonai/web/response-contract/modules/schema-745",
+          "@quazonai/web/response-contract/modules/schema-746",
           "@quazonai/web/response-contract/modules/schema-747",
+          "@quazonai/web/response-contract/modules/schema-749",
           "@quazonai/web/response-contract/modules/schema-80",
           "@quazonai/web/response-contract/modules/schema-82",
           "@quazonai/web/response-contract/modules/schema-84",
@@ -266,7 +267,7 @@
     },
     {
       "path": "response-contract/metadata.cjs",
-      "bytes": 238264,
+      "bytes": 239500,
       "importIds": [
         "@quazonai/web/response-contract/metadata"
       ],
@@ -11464,10 +11465,56 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-733.cjs",
+      "path": "response-contract/modules/schema-730.cjs",
+      "bytes": 2491,
+      "importIds": [
+        "@quazonai/web/response-contract/modules/schema-730"
+      ],
+      "provenance": {
+        "schemas": [
+          "#/components/schemas/Page_Value"
+        ],
+        "bindings": [
+          {
+            "name": "validate_434_0",
+            "kind": "function",
+            "schema": "#/components/schemas/Page_Value"
+          }
+        ],
+        "dependencies": [
+          "modules/schema-34.cjs",
+          "modules/schema-4.cjs"
+        ]
+      }
+    },
+    {
+      "path": "response-contract/modules/schema-731.cjs",
+      "bytes": 1963,
+      "importIds": [
+        "@quazonai/web/response-contract/modules/schema-731"
+      ],
+      "provenance": {
+        "schemas": [
+          "#/components/schemas/HistoricalAgentHistoryV1"
+        ],
+        "bindings": [
+          {
+            "name": "validate_435_0",
+            "kind": "function",
+            "schema": "#/components/schemas/HistoricalAgentHistoryV1"
+          }
+        ],
+        "dependencies": [
+          "modules/schema-34.cjs",
+          "modules/schema-730.cjs"
+        ]
+      }
+    },
+    {
+      "path": "response-contract/modules/schema-735.cjs",
       "bytes": 7098,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-733"
+        "@quazonai/web/response-contract/modules/schema-735"
       ],
       "provenance": {
         "schemas": [
@@ -11475,7 +11522,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_434_0",
+            "name": "validate_436_0",
             "kind": "function",
             "schema": "#/components/schemas/PortfolioBuildWeightsV1"
           },
@@ -11491,10 +11538,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-734.cjs",
+      "path": "response-contract/modules/schema-736.cjs",
       "bytes": 1706,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-734"
+        "@quazonai/web/response-contract/modules/schema-736"
       ],
       "provenance": {
         "schemas": [
@@ -11502,7 +11549,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_435_0",
+            "name": "validate_437_0",
             "kind": "function",
             "schema": "#/components/schemas/PortfolioMemberSelectionV1"
           }
@@ -11514,10 +11561,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-735.cjs",
+      "path": "response-contract/modules/schema-737.cjs",
       "bytes": 23308,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-735"
+        "@quazonai/web/response-contract/modules/schema-737"
       ],
       "provenance": {
         "schemas": [
@@ -11525,7 +11572,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_436_0",
+            "name": "validate_438_0",
             "kind": "function",
             "schema": "#/components/schemas/PortfolioBuildRequestV1"
           },
@@ -11539,8 +11586,8 @@
           "modules/schema-34.cjs",
           "modules/schema-4.cjs",
           "modules/schema-69.cjs",
-          "modules/schema-733.cjs",
-          "modules/schema-734.cjs",
+          "modules/schema-735.cjs",
+          "modules/schema-736.cjs",
           "modules/schema-9.cjs",
           "modules/shared-1.cjs",
           "modules/shared-27.cjs",
@@ -11550,10 +11597,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-736.cjs",
+      "path": "response-contract/modules/schema-738.cjs",
       "bytes": 6037,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-736"
+        "@quazonai/web/response-contract/modules/schema-738"
       ],
       "provenance": {
         "schemas": [
@@ -11561,7 +11608,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_437_0",
+            "name": "validate_439_0",
             "kind": "function",
             "schema": "#/components/schemas/RunRebalanceV1"
           },
@@ -11572,17 +11619,17 @@
         ],
         "dependencies": [
           "modules/schema-4.cjs",
-          "modules/schema-735.cjs",
+          "modules/schema-737.cjs",
           "modules/shared-1.cjs",
           "modules/shared-13.cjs"
         ]
       }
     },
     {
-      "path": "response-contract/modules/schema-737.cjs",
+      "path": "response-contract/modules/schema-739.cjs",
       "bytes": 2190,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-737"
+        "@quazonai/web/response-contract/modules/schema-739"
       ],
       "provenance": {
         "schemas": [
@@ -11590,39 +11637,15 @@
         ],
         "bindings": [
           {
-            "name": "validate_438_0",
+            "name": "validate_440_0",
             "kind": "function",
             "schema": "#/components/schemas/RunRebalanceViewV1"
           }
         ],
         "dependencies": [
           "modules/schema-34.cjs",
-          "modules/schema-736.cjs"
+          "modules/schema-738.cjs"
         ]
-      }
-    },
-    {
-      "path": "response-contract/modules/schema-739.cjs",
-      "bytes": 776,
-      "importIds": [
-        "@quazonai/web/response-contract/modules/schema-739"
-      ],
-      "provenance": {
-        "schemas": [
-          "#/components/schemas/IntegrationSecretPurpose"
-        ],
-        "bindings": [
-          {
-            "name": "validate_439_0",
-            "kind": "function",
-            "schema": "#/components/schemas/IntegrationSecretPurpose"
-          },
-          {
-            "name": "value_299",
-            "kind": "constant"
-          }
-        ],
-        "dependencies": []
       }
     },
     {
@@ -11654,10 +11677,34 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-740.cjs",
+      "path": "response-contract/modules/schema-741.cjs",
+      "bytes": 776,
+      "importIds": [
+        "@quazonai/web/response-contract/modules/schema-741"
+      ],
+      "provenance": {
+        "schemas": [
+          "#/components/schemas/IntegrationSecretPurpose"
+        ],
+        "bindings": [
+          {
+            "name": "validate_441_0",
+            "kind": "function",
+            "schema": "#/components/schemas/IntegrationSecretPurpose"
+          },
+          {
+            "name": "value_299",
+            "kind": "constant"
+          }
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "path": "response-contract/modules/schema-742.cjs",
       "bytes": 4008,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-740"
+        "@quazonai/web/response-contract/modules/schema-742"
       ],
       "provenance": {
         "schemas": [
@@ -11665,7 +11712,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_440_0",
+            "name": "validate_442_0",
             "kind": "function",
             "schema": "#/components/schemas/CommandResult_IntegrationSecretView"
           }
@@ -11673,16 +11720,16 @@
         "dependencies": [
           "modules/schema-34.cjs",
           "modules/schema-4.cjs",
-          "modules/schema-739.cjs",
+          "modules/schema-741.cjs",
           "modules/shared-13.cjs"
         ]
       }
     },
     {
-      "path": "response-contract/modules/schema-742.cjs",
+      "path": "response-contract/modules/schema-744.cjs",
       "bytes": 4859,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-742"
+        "@quazonai/web/response-contract/modules/schema-744"
       ],
       "provenance": {
         "schemas": [
@@ -11690,7 +11737,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_441_0",
+            "name": "validate_443_0",
             "kind": "function",
             "schema": "#/components/schemas/BudgetV1/allOf/0/properties/cost_currency"
           },
@@ -11705,10 +11752,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-744.cjs",
+      "path": "response-contract/modules/schema-746.cjs",
       "bytes": 5602,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-744"
+        "@quazonai/web/response-contract/modules/schema-746"
       ],
       "provenance": {
         "schemas": [
@@ -11716,7 +11763,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_442_0",
+            "name": "validate_444_0",
             "kind": "function",
             "schema": "#/components/schemas/BriefContentV1/oneOf/0/properties/base_currency"
           },
@@ -11731,10 +11778,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-745.cjs",
+      "path": "response-contract/modules/schema-747.cjs",
       "bytes": 1697,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-745"
+        "@quazonai/web/response-contract/modules/schema-747"
       ],
       "provenance": {
         "schemas": [
@@ -11742,7 +11789,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_443_0",
+            "name": "validate_445_0",
             "kind": "function",
             "schema": "#/components/schemas/BudgetV1/allOf/1/oneOf/1/properties/max_cost_decimal"
           }
@@ -11755,10 +11802,10 @@
       }
     },
     {
-      "path": "response-contract/modules/schema-747.cjs",
+      "path": "response-contract/modules/schema-749.cjs",
       "bytes": 2111,
       "importIds": [
-        "@quazonai/web/response-contract/modules/schema-747"
+        "@quazonai/web/response-contract/modules/schema-749"
       ],
       "provenance": {
         "schemas": [
@@ -11766,7 +11813,7 @@
         ],
         "bindings": [
           {
-            "name": "validate_444_0",
+            "name": "validate_446_0",
             "kind": "function",
             "schema": "#/components/schemas/DataSourceCreate/properties/native_catalog_ref"
           },
@@ -12386,7 +12433,7 @@
     },
     {
       "path": "response-contract/optimizer.json",
-      "bytes": 26990,
+      "bytes": 27106,
       "importIds": [],
       "provenance": {}
     },
@@ -12410,7 +12457,7 @@
     },
     {
       "path": "responses.cjs",
-      "bytes": 101993,
+      "bytes": 102523,
       "importIds": [
         "@quazonai/web/response-contract"
       ],
@@ -13288,27 +13335,33 @@
             "schema": "#/components/schemas/RunSnapshotV1"
           },
           {
-            "export": "response1140",
-            "path": "modules/schema-737.cjs",
-            "name": "validate_438_0",
+            "export": "response1126",
+            "path": "modules/schema-731.cjs",
+            "name": "validate_435_0",
+            "schema": "#/components/schemas/HistoricalAgentHistoryV1"
+          },
+          {
+            "export": "response1146",
+            "path": "modules/schema-739.cjs",
+            "name": "validate_440_0",
             "schema": "#/components/schemas/RunRebalanceViewV1"
           },
           {
-            "export": "response1145",
-            "path": "modules/schema-740.cjs",
-            "name": "validate_440_0",
+            "export": "response1151",
+            "path": "modules/schema-742.cjs",
+            "name": "validate_442_0",
             "schema": "#/components/schemas/CommandResult_IntegrationSecretView"
           },
           {
             "export": "nativeCostCurrency",
-            "path": "modules/schema-742.cjs",
-            "name": "validate_441_0",
+            "path": "modules/schema-744.cjs",
+            "name": "validate_443_0",
             "schema": "#/components/schemas/BudgetV1/allOf/0/properties/cost_currency"
           },
           {
             "export": "nativeBaseCurrency",
-            "path": "modules/schema-744.cjs",
-            "name": "validate_442_0",
+            "path": "modules/schema-746.cjs",
+            "name": "validate_444_0",
             "schema": "#/components/schemas/BriefContentV1/oneOf/0/properties/base_currency"
           },
           {
@@ -13319,14 +13372,14 @@
           },
           {
             "export": "nativeCostAmount",
-            "path": "modules/schema-745.cjs",
-            "name": "validate_443_0",
+            "path": "modules/schema-747.cjs",
+            "name": "validate_445_0",
             "schema": "#/components/schemas/BudgetV1/allOf/1/oneOf/1/properties/max_cost_decimal"
           },
           {
             "export": "nativeCatalogKey",
-            "path": "modules/schema-747.cjs",
-            "name": "validate_444_0",
+            "path": "modules/schema-749.cjs",
+            "name": "validate_446_0",
             "schema": "#/components/schemas/DataSourceCreate/properties/native_catalog_ref"
           },
           {
@@ -19216,12 +19269,6 @@
             "schema": "#/components/schemas/Problem"
           },
           {
-            "export": "response1126",
-            "path": "modules/schema-42.cjs",
-            "name": "validate_18_0",
-            "schema": "#/components/schemas/CommandResult_RunSnapshotV1"
-          },
-          {
             "export": "response1127",
             "path": "modules/schema-31.cjs",
             "name": "validate_13_0",
@@ -19253,9 +19300,9 @@
           },
           {
             "export": "response1132",
-            "path": "modules/schema-31.cjs",
-            "name": "validate_13_0",
-            "schema": "#/components/schemas/Problem"
+            "path": "modules/schema-42.cjs",
+            "name": "validate_18_0",
+            "schema": "#/components/schemas/CommandResult_RunSnapshotV1"
           },
           {
             "export": "response1133",
@@ -19300,6 +19347,12 @@
             "schema": "#/components/schemas/Problem"
           },
           {
+            "export": "response1140",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
             "export": "response1141",
             "path": "modules/schema-31.cjs",
             "name": "validate_13_0",
@@ -19324,7 +19377,7 @@
             "schema": "#/components/schemas/Problem"
           },
           {
-            "export": "response1146",
+            "export": "response1145",
             "path": "modules/schema-31.cjs",
             "name": "validate_13_0",
             "schema": "#/components/schemas/Problem"
@@ -19354,7 +19407,37 @@
             "schema": "#/components/schemas/Problem"
           },
           {
-            "export": "response1151",
+            "export": "response1152",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
+            "export": "response1153",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
+            "export": "response1154",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
+            "export": "response1155",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
+            "export": "response1156",
+            "path": "modules/schema-31.cjs",
+            "name": "validate_13_0",
+            "schema": "#/components/schemas/Problem"
+          },
+          {
+            "export": "response1157",
             "path": "modules/schema-31.cjs",
             "name": "validate_13_0",
             "schema": "#/components/schemas/Problem"

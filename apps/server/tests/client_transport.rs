@@ -725,6 +725,59 @@ async fn native_cli_reads_observation_and_wake_history_without_mutation() {
 }
 
 #[tokio::test]
+async fn native_cli_reads_original_agent_facts_and_independent_cursors_without_writes() {
+    let run = Id::new();
+    let turn = Id::new();
+    let wake = Id::new();
+    let response = json!({"schema_version":1,
+        "execution":{"source":"CODEX","run":{"id":run},"session":{"thread_id":"original-thread"}},
+        "profile":{"revision":"9007199254740993","name":"original-profile"},
+        "turns":{"schema_version":1,"items":[{"ordinal":"65536","usage":null,"terminal":null}],"next_cursor":turn},
+        "wakes":{"schema_version":1,"items":[{"reason":"original-wake"}],"next_cursor":wake}});
+    let f = Fixture::new(|_| vec![Reply::json(response.clone())]).await;
+    let result = f
+        .execute(
+            &args(&[
+                "run",
+                "history",
+                &run.to_string(),
+                "--turn-cursor",
+                &turn.to_string(),
+                "--wake-cursor",
+                &wake.to_string(),
+                "--limit",
+                "1",
+            ]),
+            b"",
+        )
+        .await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        response
+    );
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    let url = reqwest::Url::parse(&format!("{}{}", f.origin, seen[0].uri)).unwrap();
+    assert_eq!(url.path(), format!("/api/v2/runs/{run}/agent-history"));
+    for (key, value) in [
+        ("limit", "1".to_owned()),
+        ("turn_cursor", turn.to_string()),
+        ("wake_cursor", wake.to_string()),
+    ] {
+        assert!(url.query_pairs().any(|(k, v)| k == key && v == value));
+    }
+    assert_eq!(seen[0].method, "GET");
+    assert!(seen[0].body.is_empty());
+    assert!(seen[0].key.is_none());
+}
+
+#[tokio::test]
 async fn native_cli_keeps_complete_json_above_the_former_response_limit() {
     for chunked in [false, true] {
         let expected = json!({"schema_version":1,"items":[source(Id::new())],"next_cursor":null});

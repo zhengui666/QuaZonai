@@ -95,8 +95,8 @@ export function jsonObjectInput(text: string, label: string): ResearchSubmission
 }
 export function policyInput(text: string): ResearchSubmission['input']['policy'] {
   const policy = jsonObjectInput(text, '研究政策');
-  if (policy.max_trials !== undefined && (typeof policy.max_trials !== 'number' || !Number.isSafeInteger(policy.max_trials) || policy.max_trials <= 0)) {
-    throw new Error('max_trials 必须是正的安全整数。');
+  if (policy.max_trials !== undefined && (typeof policy.max_trials !== 'number' || !Number.isSafeInteger(policy.max_trials) || policy.max_trials < 0)) {
+    throw new Error('max_trials 必须是非负的安全整数。');
   }
   return policy;
 }

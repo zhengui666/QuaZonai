@@ -15,8 +15,9 @@ const wabt = await wabtFactory();
 function normalizedRequest(data: JsonObject): JsonObject {
   const request = structuredClone(object(data.request, 'native_request'));
   const parameters = object(object(request.forecast, 'forecast').parameters, 'parameters');
-  // Rust serializes None by omitting total_fuel, for both absent and null input.
-  if (parameters.total_fuel === null) delete parameters.total_fuel;
+  // Model-generated code always uses finite native fuel; the original study input
+  // remains unchanged, and the effective execution budget is echoed in results.
+  parameters.total_fuel ??= '10000000';
   return request;
 }
 
@@ -29,9 +30,18 @@ export function iterationRequest(data: JsonObject): JsonObject {
   return request;
 }
 
+function executionLimit(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name}_invalid`);
+  return value;
+}
+
 export async function evaluateWasm(model: string, data: JsonObject, context: Context): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(data);
+  const memoryKiB = executionLimit('QZ_FACTOR_MEMORY_MB', 2048) * 1024;
+  if (!Number.isSafeInteger(memoryKiB)) throw new Error('QZ_FACTOR_MEMORY_MB_invalid');
+  const timeout = executionLimit('QZ_FACTOR_TIMEOUT_SECONDS', 120);
   const directory = await mkdtemp(join(tmpdir(), 'qz-factor-'));
   const env = new NodeExecutionEnv({ cwd: directory });
   try {
@@ -42,10 +52,11 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
     let stdout = ''; let stderr = '';
     const result = getOrThrow(await env.exec([
-      'bash', '-c', 'exec "$1" evaluate-factor --catalog "$2" --model "$3" < "$4"',
+      'bash', '-c', 'ulimit -v "$5" || exit; exec "$1" evaluate-factor --catalog "$2" --model "$3" < "$4"',
       'qz-factor', process.env.QZ_JOB_BINARY ?? 'job', data.catalog,
-      join(directory, 'model.wasm'), join(directory, 'request.json'),
+      join(directory, 'model.wasm'), join(directory, 'request.json'), String(memoryKiB),
     ], {
+      timeout,
       inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
     }, context));

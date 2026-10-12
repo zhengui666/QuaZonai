@@ -2361,6 +2361,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/runs/{id}/agent-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One read-only owner projection of retained original Agent facts. */
+        get: operations["get_historical_agent_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/runs/{id}/cancel": {
         parameters: {
             query?: never;
@@ -5441,6 +5458,14 @@ export interface components {
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
         };
+        /** @description Original retired Agent facts, never durable identities or reconstructed outcomes. */
+        HistoricalAgentHistoryV1: {
+            execution: unknown;
+            profile?: unknown;
+            schema_version: components["schemas"]["SchemaV1"];
+            turns: components["schemas"]["Page_Value"];
+            wakes: components["schemas"]["Page_Value"];
+        };
         /** @enum {string} */
         HistoricalArtifactOutcomeV1: "COPIED" | "MISSING" | "UNSUPPORTED" | "UNREADABLE" | "SEALED_RETAINED" | "MANUAL_REVIEW_REQUIRED";
         HistoricalArtifactResultV1: {
@@ -7443,6 +7468,11 @@ export interface components {
                 /** Format: date-time */
                 selection_asof: string;
             }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_Value: {
+            items: unknown[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -20758,6 +20788,73 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_agent_history: {
+        parameters: {
+            query?: {
+                turn_cursor?: components["schemas"]["Id"];
+                wake_cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalAgentHistoryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

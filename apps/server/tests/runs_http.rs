@@ -613,3 +613,111 @@ async fn sse_stays_live_past_one_minute_then_revalidates_authority_and_cursor(po
         .unwrap();
     assert_eq!(state, "QUEUED");
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn original_agent_history_is_authenticated_paged_and_read_only(pool: PgPool) {
+    let (f, cookie) = authenticated(pool.clone()).await;
+    let original = domain_fixture::historical_fixture(&pool, domain_fixture::budget()).await;
+    let session: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM app.codex_sessions WHERE run_id=$1")
+            .bind(original.run.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for ordinal in [65536, 65537] {
+        let turn = Id::new();
+        sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) VALUES($1,$2,$3,$4,$5,$6,$7,'RESEARCH',NULL,$8,$9,1,1,$10)")
+            .bind(turn.as_uuid()).bind(original.project.as_uuid()).bind(original.cycle.as_uuid())
+            .bind(original.run.as_uuid()).bind(session).bind(original.fence.attempt_id.as_uuid())
+            .bind(format!("original-{ordinal}")).bind(original.artifact.as_uuid()).bind(original.deadline)
+            .bind(ordinal).execute(&pool).await.unwrap();
+        if ordinal == 65536 {
+            // Test-only original settled facts, not current execution or inference.
+            let native = format!("original/{turn}");
+            sqlx::query("INSERT INTO app.model_turn_dispatches(reservation_id,owner_epoch,rpc_request_id) VALUES($1,1,$2)")
+                .bind(turn.as_uuid()).bind(turn.to_string()).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO app.model_turn_bindings(reservation_id,session_id,native_turn_id) VALUES($1,$2,$3)")
+                .bind(turn.as_uuid()).bind(session).bind(&native).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO app.model_turn_terminals(reservation_id,native_turn_id,outcome,reason_code,observed_at) VALUES($1,$2,'FAILED','CONTROLLED_HISTORICAL_TEST',clock_timestamp())")
+                .bind(turn.as_uuid()).bind(&native).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO app.model_turn_receipts(reservation_id,outcome,actual_tokens,usage_source,reason_code) VALUES($1,'FAILED',$2,'NATIVE_REPORT','CONTROLLED_HISTORICAL_TEST')")
+                .bind(turn.as_uuid()).bind(9_007_199_254_740_993i64).execute(&pool).await.unwrap();
+        }
+    }
+    let wake = Id::new();
+    sqlx::query("INSERT INTO app.wake_events(id,project_id,trigger,state,not_before,reason) VALUES($1,$2,'OPERATOR','CANCELLED',clock_timestamp(),'original-history-wake')")
+        .bind(wake.as_uuid()).bind(original.project.as_uuid()).execute(&pool).await.unwrap();
+    let facts = "SELECT jsonb_build_object('runs',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM app.runs r WHERE project_id=$1),'sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM app.codex_sessions s WHERE project_id=$1),'profiles',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id) FROM app.codex_profiles p JOIN app.codex_sessions s ON s.profile_id=p.id WHERE s.project_id=$1),'turns',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM app.model_turn_reservations t WHERE project_id=$1),'terminals',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.id) FROM app.model_turn_terminals t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.project_id=$1),'usage',(SELECT jsonb_agg(to_jsonb(t) ORDER BY t.id) FROM app.model_turn_receipts t JOIN app.model_turn_reservations r ON r.id=t.reservation_id WHERE r.project_id=$1),'wakes',(SELECT jsonb_agg(to_jsonb(w) ORDER BY id) FROM app.wake_events w WHERE project_id=$1),'receipts',(SELECT count(*) FROM app.command_receipts))";
+    let before: Value = sqlx::query_scalar(facts)
+        .bind(original.project.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let http = Http::start(f.app.clone()).await;
+    let path = format!("/api/v2/runs/{}/agent-history", original.run);
+    json_reply(http.get(&path, None).await, StatusCode::UNAUTHORIZED).await;
+    let first = json_reply(
+        http.get(&format!("{path}?limit=1"), Some(&cookie)).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(first["execution"]["source"], "CODEX");
+    assert_eq!(first["execution"]["run"]["state"], "RUNNING");
+    assert_eq!(first["execution"]["session"]["id"], session.to_string());
+    assert_eq!(first["profile"]["name"], "historical-only fixture");
+    assert!(first["profile"].get("codex_home_ref").is_none());
+    assert_eq!(first["turns"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["turns"]["items"][0]["ordinal"], "65537");
+    for field in ["terminal", "usage", "reserved_tokens"] {
+        assert!(first["turns"]["items"][0][field].is_null());
+    }
+    assert_eq!(first["wakes"]["items"][0]["id"], wake.to_string());
+    assert_eq!(
+        first["wakes"]["items"][0]["reason"],
+        "original-history-wake"
+    );
+    let cursor = first["turns"]["next_cursor"].as_str().unwrap();
+    let second = json_reply(
+        http.get(
+            &format!("{path}?limit=1&turn_cursor={cursor}"),
+            Some(&cookie),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(second["turns"]["items"][0]["ordinal"], "65536");
+    assert_eq!(second["turns"]["items"][0]["terminal"]["outcome"], "FAILED");
+    assert_eq!(
+        second["turns"]["items"][0]["usage"]["actual_tokens"],
+        "9007199254740993"
+    );
+    assert!(second["turns"]["next_cursor"].is_null());
+    assert_eq!(second["wakes"], first["wakes"]);
+    for query in ["limit=0", "limit=101", "turn_cursor=invalid", "unknown=1"] {
+        json_reply(
+            http.get(&format!("{path}?{query}"), Some(&cookie)).await,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    let after: Value = sqlx::query_scalar(facts)
+        .bind(original.project.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "History reads never rewrite facts or create receipts"
+    );
+    let non_agent = admitted(&pool, &f, "history-is-not-science").await;
+    json_reply(
+        http.get(
+            &format!("/api/v2/runs/{}/agent-history", non_agent.id),
+            Some(&cookie),
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+}

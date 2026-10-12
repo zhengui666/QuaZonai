@@ -12,6 +12,9 @@ export async function evaluateTrial(
     const old = study.trials.find((trial) => trial.taskId === api.taskId);
     if (old) {
       if (canonical(old.proposal!) !== canonical(proposal)) throw new Error('trial_identity_conflict');
+      // A committed scientific failure is settled even if the native safe tool
+      // crashed before recording its terminal outcome. Only STARTED may resume.
+      if (old.status === 'FAILED') throw new Error(typeof old.error === 'string' ? old.error : 'factor_failed');
       return old.status === 'REJECTED' ? { rejected: true } : old.result;
     }
     if (study.final !== null) throw new Error('research_already_final');
@@ -36,8 +39,8 @@ export async function evaluateTrial(
     }, context);
     return result;
   } catch (error) {
-    // During close/abort the native task remains authoritative. Its intent is
-    // already recorded, and a safe replay resumes the same scientific attempt.
+    // If close/abort prevents this commit, STARTED can resume on native replay.
+    // Once FAILED commits, replay must disclose the same error without retrying.
     await api.commit(async (tx) => {
       const trial = (await tx.doc(Study, api.conversationId)).trials.find((item) => item.taskId === api.taskId)!;
       trial.status = 'FAILED'; trial.error = error instanceof Error ? error.message : 'factor_failed';

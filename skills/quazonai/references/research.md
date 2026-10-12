@@ -145,9 +145,12 @@ quazonai openapi --domain --schema FeatureObservationsV1
 JSON encoded once in the outer `ArtifactCreate.content` string, not as extra
 outer request fields. Follow the selected contract's transitive schemas for
 settings, feature definitions, nullable values and decimal-string counters.
-An omitted or null `total_fuel` disables Wasmi fuel metering; an explicit budget
-remains a decimal-string counter. Results report `consumed_fuel: null` for
-unmetered execution, which is distinct from a measured `"0"`.
+For trusted direct native scientific callers, omitted/null `total_fuel` disables
+Wasmi metering and `consumed_fuel: null` is unmeasured, not a measured `"0"`.
+The Durable model-code adapter instead supplies finite `"10000000"` fuel when
+omitted/null, plus a native process timeout and address-space bound; it retains
+the original input and echoes the effective request and actual fuel. Explicit
+budgets remain decimal-string counters; failures remain disclosed.
 The installed contract describes wire structure, not approved scientific
 choices or server eligibility. Do not infer model ABI or code requirements
 from a JSON schema; report an unavailable contract or unsupported workflow.

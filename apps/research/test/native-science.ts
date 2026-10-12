@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, cp } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -122,7 +122,7 @@ test('pure factor research needs no final sample, qualification or portfolio', {
   } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
 });
 
-test('iterative feedback cannot become unseen final evidence in another root after reopening SQLite', { timeout: 120_000 }, async () => {
+test('renamed dataset labels and copied catalogs cannot turn iterative feedback into unseen final evidence after SQLite reopen', { timeout: 120_000 }, async () => {
   const setup_ = await setup();
   const original = input(setup_.model);
   original.data = { ...original.data, datasetId: 'shared-exposure-data', sealed: { ...fixture, datasetId: 'shared-exposure-data' } };
@@ -143,6 +143,12 @@ test('iterative feedback cannot become unseen final evidence in another root aft
     const b = await host.start('exposure-root-b', broad);
     await (await host.harness.submission(b.submissionId, context))!.wait(context);
     assert.equal((await host.view(b.conversationId)).research!.trials[0]!.status, 'COMPUTED');
+    const copied = join(setup_.directory, 'copied-catalog');
+    await cp(fixture.catalog as string, copied, { recursive: true });
+    original.data.catalog = copied;
+    original.data.datasetId = 'renamed-exposure-data';
+    (original.data.sealed as JsonObject).catalog = copied;
+    (original.data.sealed as JsonObject).datasetId = 'another-final-label';
     await host.close();
     const restored = await openResearch(setup_.options);
     try {
@@ -168,7 +174,7 @@ test('iterative feedback cannot become unseen final evidence in another root aft
 function objectRequest(data: JsonObject): JsonObject { return data.request as JsonObject; }
 
 for (const fuel of ['omitted', 'null'] as const) {
-  test(`unmetered ${fuel} fuel preserves native request association through iteration and finalization`, { timeout: 120_000 }, async () => {
+  test(`${fuel} fuel receives a disclosed finite native budget through iteration and finalization`, { timeout: 120_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
@@ -178,12 +184,12 @@ for (const fuel of ['omitted', 'null'] as const) {
       else delete parameters.total_fuel;
     }
     setup_.faux.setResponses([
-      tool('factor_evaluate', { hypothesis: 'Evaluate without a Wasmi fuel budget.', model: ema }),
+      tool('factor_evaluate', { hypothesis: 'Evaluate with the model-code adapter default finite fuel.', model: ema }),
       (transcript) => {
         const result = textResult(transcript, 'factor_evaluate');
-        assert.equal(result.consumed_fuel, null);
-        assert.equal('total_fuel' in (((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject), false);
-        return tool('factor_finalize', { reason: 'Original unmetered request and recorded result match.', trialId: result.trialId });
+        assert.equal(typeof result.consumed_fuel, 'string');
+        assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '10000000');
+        return tool('factor_finalize', { reason: 'The effective finite request and recorded result match.', trialId: result.trialId });
       },
     ]);
     const host = await openResearch(setup_.options);
@@ -194,9 +200,39 @@ for (const fuel of ['omitted', 'null'] as const) {
       assert.deepEqual(study.input, original);
       assert.equal(study.trials[0]!.status, 'COMPUTED');
       assert.equal(study.final!.status, 'COMPUTED');
-      assert.equal((study.final!.result as JsonObject).consumed_fuel, null);
+      assert.equal(typeof (study.final!.result as JsonObject).consumed_fuel, 'string');
       const echoed = (((study.final!.result as JsonObject).request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      assert.equal('total_fuel' in echoed, false);
+      assert.equal(echoed.total_fuel, '10000000');
+    } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
+  });
+}
+
+for (const [name, model] of [
+  ['infinite-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) (loop $again br $again) f64.const 0))'],
+  ['oversized-memory', '(module (memory 65536) (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0))'],
+] as const) {
+  test(`model-generated ${name} fails finitely and keeps the original failed trial`, { timeout: 30_000 }, async () => {
+    const setup_ = await setup();
+    const original = input(setup_.model);
+    original.data = structuredClone(original.data);
+    delete (((original.data.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel;
+    delete original.data.sealed;
+    setup_.faux.setResponses([
+      tool('factor_evaluate', { hypothesis: 'Protocol-only invalid model: preserve the actual native failure.', model }),
+      tool('research_finish', { reason: 'Stop after the recorded failure; no result or qualification claimed.' }),
+    ]);
+    const host = await openResearch(setup_.options);
+    try {
+      const receipt = await host.start(name, original);
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      const study = (await host.view(receipt.conversationId)).research!;
+      assert.deepEqual(study.input, original);
+      assert.equal(study.trials.length, 1);
+      assert.equal(study.trials[0]!.status, 'FAILED');
+      assert.equal(study.trials[0]!.result, null);
+      assert.ok(study.trials[0]!.error);
+      assert.equal(study.final!.status, 'STOPPED');
+      assert.equal((await host.tasks()).tasks.length, 0);
     } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
   });
 }

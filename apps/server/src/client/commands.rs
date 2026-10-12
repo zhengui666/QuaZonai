@@ -751,6 +751,16 @@ pub enum Artifact {
 }
 #[derive(Subcommand)]
 pub enum Run {
+    /// Inspect original retired CODEX session/profile/turn/usage/wake facts; read-only.
+    History {
+        id: String,
+        #[arg(long)]
+        turn_cursor: Option<String>,
+        #[arg(long)]
+        wake_cursor: Option<String>,
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u16).range(1..=100))]
+        limit: u16,
+    },
     /// Read original automatic rebalance provenance.
     Rebalance {
         id: String,
@@ -1932,6 +1942,28 @@ impl Command {
             },
             Self::Run(command) => match command {
                 Run::Show { id } => Request::get::<RunSnapshotV1>(item("/api/v2/runs", id)?),
+                Run::History {
+                    id: run,
+                    turn_cursor,
+                    wake_cursor,
+                    limit,
+                } => {
+                    let mut request = Request::get::<contracts::runs::HistoricalAgentHistoryV1>(
+                        action("/api/v2/runs", run, "agent-history")?,
+                    );
+                    request.query.push(("limit".into(), limit.to_string()));
+                    if let Some(cursor) = turn_cursor {
+                        request
+                            .query
+                            .push(("turn_cursor".into(), id(cursor)?.to_string()));
+                    }
+                    if let Some(cursor) = wake_cursor {
+                        request
+                            .query
+                            .push(("wake_cursor".into(), id(cursor)?.to_string()));
+                    }
+                    request
+                }
                 Run::Rebalance { id } => Request::get::<contracts::runs::RunRebalanceViewV1>(
                     action("/api/v2/runs", id, "rebalance")?,
                 ),
@@ -2677,6 +2709,44 @@ mod uncapped_watch_tests {
         command: Command,
     }
     const RUN: &str = "018fc823-8e40-7000-8000-000000000001";
+
+    #[test]
+    fn agent_history_is_a_read_with_independent_original_cursors() {
+        let request = Arguments::try_parse_from([
+            "client",
+            "run",
+            "history",
+            RUN,
+            "--turn-cursor",
+            RUN,
+            "--wake-cursor",
+            RUN,
+            "--limit",
+            "1",
+        ])
+        .unwrap()
+        .command
+        .request()
+        .unwrap();
+        assert_eq!(request.method, reqwest::Method::GET);
+        assert_eq!(request.route, format!("/api/v2/runs/{RUN}/agent-history"));
+        assert!(request.body.is_none());
+        assert!(!request.operator);
+        assert_eq!(
+            request.query,
+            vec![
+                ("limit".into(), "1".into()),
+                ("turn_cursor".into(), RUN.into()),
+                ("wake_cursor".into(), RUN.into()),
+            ]
+        );
+        for limit in ["0", "101"] {
+            assert!(
+                Arguments::try_parse_from(["client", "run", "history", RUN, "--limit", limit])
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn watch_has_no_default_time_or_event_ceiling_and_preserves_explicit_values() {

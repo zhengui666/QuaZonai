@@ -289,6 +289,7 @@ use utoipa::OpenApi;
     runs::RunKind,
     runs::RunSnapshotV1,
     runs::RunRebalanceViewV1,
+    runs::HistoricalAgentHistoryV1,
     runs::RunRebalanceV1,
     lifecycle::JobLimitsV1,
     lifecycle::RunCancelV1,

@@ -15,12 +15,14 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
   const request = object(data.request, 'native_request');
   const selection = object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   if (!Array.isArray(selection.bar_types) || !selection.bar_types.every((id) => typeof id === 'string')) throw new Error('bar_types_required');
-  return { catalog: typeof data.datasetId === 'string' ? data.datasetId : await realpath(data.catalog), barTypes: [...selection.bar_types].sort(), start: request.validation_end_ns!, end: selection.event_end_ns! };
+  // Paths and owner labels are provenance, not freshness. The same native BAR
+  // identity and event interval stay exposed across labels, copies and revisions.
+  return { catalog: await realpath(data.catalog), barTypes: [...selection.bar_types].sort(), start: request.validation_end_ns!, end: selection.event_end_ns! };
 }
 
 function overlaps(left: JsonObject, right: JsonObject): boolean {
   const assets = left.barTypes as string[];
-  return left.catalog === right.catalog && (right.barTypes as string[]).some((asset) => assets.includes(asset))
+  return (right.barTypes as string[]).some((asset) => assets.includes(asset))
     && BigInt(left.start as string) < BigInt(right.end as string) && BigInt(right.start as string) < BigInt(left.end as string);
 }
 

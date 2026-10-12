@@ -49,6 +49,65 @@ pub async fn get(
 ) -> Result<Json<RunSnapshotV1>, ApiError> {
     Ok(Json(state.store.get_run(&actor, id(path)?).await?))
 }
+/// One read-only owner projection of retained original Agent facts.
+#[utoipa::path(get,path="/api/v2/runs/{id}/agent-history",operation_id="get_historical_agent_history",tag="Runs",params(("id"=Id,Path),("turn_cursor"=Option<Id>,Query),("wake_cursor"=Option<Id>,Query),("limit"=Option<u16>,Query,minimum=1,maximum=100)),responses((status=200,body=contracts::runs::HistoricalAgentHistoryV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem),(status=422,body=Problem)))]
+pub async fn history(
+    State(state): State<AppState>,
+    Authority(actor): Authority,
+    path: Result<Path<Id>, PathRejection>,
+    q: Result<Query<contracts::runs::HistoricalAgentHistoryQuery>, QueryRejection>,
+) -> Result<Json<contracts::runs::HistoricalAgentHistoryV1>, ApiError> {
+    if !matches!(actor, Actor::Browser { .. } | Actor::OwnerDevice { .. }) {
+        return Err(store::StoreError::Forbidden.into());
+    }
+    let Query(query) = q.map_err(|_| ApiError::validation())?;
+    let run = id(path)?;
+    let execution = state.store.historical_agent_run(&actor, run).await?;
+    let snapshot: RunSnapshotV1 = serde_json::from_value(execution["run"].clone())
+        .map_err(|_| store::StoreError::Integrity)?;
+    let profile = match execution["session"]["profile_id"].as_str() {
+        Some(value) => Some(
+            state
+                .store
+                .historical_agent_profile(
+                    &actor,
+                    Id::try_from(value.to_owned()).map_err(|_| store::StoreError::Integrity)?,
+                )
+                .await?,
+        ),
+        None => None,
+    };
+    let turns = state
+        .store
+        .historical_agent_turns(
+            &actor,
+            run,
+            &contracts::control::ListQuery {
+                cursor: query.turn_cursor,
+                limit: query.limit,
+            },
+        )
+        .await?;
+    let wakes = state
+        .store
+        .historical_degradation_wakes(
+            &actor,
+            snapshot.project_id,
+            &contracts::control::ListQuery {
+                cursor: query.wake_cursor,
+                limit: query.limit,
+            },
+        )
+        .await?;
+    Ok(Json(contracts::runs::HistoricalAgentHistoryV1 {
+        schema_version: contracts::SchemaV1,
+        execution,
+        profile,
+        turns,
+        wakes,
+    }))
+}
+
 #[utoipa::path(get,path="/api/v2/runs/{id}/rebalance",operation_id="get_run_rebalance",tag="Runs",params(("id"=Id,Path)),responses((status=200,body=contracts::runs::RunRebalanceViewV1),(status=401,body=Problem),(status=403,body=Problem),(status=404,body=Problem)))]
 pub async fn rebalance(
     State(state): State<AppState>,

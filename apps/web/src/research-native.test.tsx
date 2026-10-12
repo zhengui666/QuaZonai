@@ -29,7 +29,8 @@ describe('minimal native research projections', () => {
     expect(jsonObjectInput('{"plugin":{"ref":"owner-defined"}}', '数据')).toEqual({ plugin: { ref: 'owner-defined' } });
     expect(policyInput('{}')).toEqual({});
     for (const text of ['', 'null', '[]', 'true', '1', '{', '{"n":1e999}']) expect(() => jsonObjectInput(text, '数据')).toThrow();
-    for (const max_trials of [0, -1, 1.5, '2', null, Number.MAX_SAFE_INTEGER + 1]) expect(() => policyInput(JSON.stringify({ max_trials }))).toThrow();
+    for (const max_trials of [0, 1, Number.MAX_SAFE_INTEGER]) expect(policyInput(JSON.stringify({ max_trials }))).toEqual({ max_trials });
+    for (const max_trials of [-1, 1.5, '2', null, Number.MAX_SAFE_INTEGER + 1]) expect(() => policyInput(JSON.stringify({ max_trials }))).toThrow('非负');
   });
   it('preserves native cursor objects and complete conversation ancestry', () => {
     const raw = { items: [{ id: 0, parent: { conversationId: 1, at: 2 } }], cursor: { order: 'descending', offset: 8 } };

@@ -4,6 +4,20 @@
 
 Use a Run ID from the original accepted command receipt or `cycle show`. If the user supplied only a project, use `run list --project-id PROJECT_ID --limit 20` with the saved login (or the original scoped connection flags) and resolve the intended Run from returned metadata. `run show RUN_ID` reads its actual state and active Attempt. Do not start another Cycle or switch identities to get a more convenient result.
 
+## Retained Agent history
+
+With the saved owner/device login, use `quazonai client run history RUN_ID --limit 25`
+for an original `AGENT_RESEARCH` Run. This reads its original CODEX session,
+profile metadata, turn/usage facts and project wake facts; it cannot launch,
+resume, configure or cancel the retired Agent. Profile credentials and startup
+paths are not returned. Web exposes the same projection in Run details.
+
+Keep `turns.next_cursor` and `wakes.next_cursor` separately, passing them as
+`--turn-cursor ID` and `--wake-cursor ID` when needed. Null terminal/usage is
+unreported, not cancellation or zero. These original identities are not Durable
+Conversation/Task IDs. Non-Agent Runs have no such history and return 404.
+
+
 ## Bounded event observation
 
 ```sh
