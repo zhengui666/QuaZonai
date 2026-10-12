@@ -48,55 +48,6 @@ pub fn portfolio_study_plan(plan: &PortfolioStudyPlanV1) -> Result<(), DomainErr
     Ok(())
 }
 
-pub fn input_partition_allowed(purpose: InputPurpose, role: DataPartition) -> bool {
-    match purpose {
-        InputPurpose::Discovery => role == DataPartition::Discovery,
-        InputPurpose::Validation => role == DataPartition::Validation,
-        InputPurpose::Sealed => role == DataPartition::Sealed,
-        InputPurpose::Forward => role == DataPartition::Forward,
-        InputPurpose::Portfolio => {
-            matches!(role, DataPartition::Discovery | DataPartition::Validation)
-        }
-    }
-}
-
-pub fn input_set(request: &InputSetCreate) -> Result<(), DomainError> {
-    if !request
-        .decision_cutoff
-        .timestamp_subsec_nanos()
-        .is_multiple_of(1000)
-    {
-        return Err(invalid("decision_cutoff", "DATABASE_TIME_PRECISION"));
-    }
-    // Each persisted InputItemView ordinal is u16; reject an unrepresentable
-    // complete list before admission rather than truncating it on readback.
-    if request.items.is_empty() || u16::try_from(request.items.len() - 1).is_err() {
-        return Err(invalid("items", "ITEM_COUNT"));
-    }
-    let mut seen = BTreeSet::new();
-    for (index, item) in request.items.iter().enumerate() {
-        let identity = match item {
-            InputItemV1::Dataset {
-                dataset_revision_id,
-                role,
-            } => {
-                let allowed = input_partition_allowed(request.purpose, *role);
-                if !allowed {
-                    return Err(invalid(
-                        format!("items.{index}.role"),
-                        "PARTITION_PURPOSE_MISMATCH",
-                    ));
-                }
-                (0, *dataset_revision_id)
-            }
-            InputItemV1::Artifact { artifact_id, .. } => (1, *artifact_id),
-        };
-        if !seen.insert(identity) {
-            return Err(invalid(format!("items.{index}"), "DUPLICATE_INPUT"));
-        }
-    }
-    Ok(())
-}
 pub fn split(request: &SplitPolicyV1) -> Result<(), DomainError> {
     for (field, value) in [
         ("train_size", request.train_size),

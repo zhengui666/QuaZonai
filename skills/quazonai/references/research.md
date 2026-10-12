@@ -1,244 +1,30 @@
-# Research preparation and submission
+# Finite research
 
-Table entries follow `quazonai client` with the saved login or original scoped connection from [connection](connection.md).
-
-## Durable factor research
-
-The default loop is goal/data → proposals/native computation → validation feedback → recorded iteration or stop. Submit one original owner-authorized objective, not one approval per experiment. The installed host owns model credentials and official extensions; this Skill does not launch or configure another Agent.
-
-| Need | Native arguments |
-| --- | --- |
-| See actual configured model availability | `research models` |
-| Inspect the submission envelope | `quazonai openapi --schema DurableResearchStartV1` |
-| Inspect default factor-only science input | `quazonai openapi --domain --schema NativeFactorEvaluationRequestV1` |
-| Submit the original objective/data/policy file | `research start --file research-request.json` |
-| List persistent native studies | `research list` |
-| Read original input, complete trials, selection and native view | `research get CONVERSATION_ID` |
-| Observe native task graph/records and measured usage | `research tasks`; `research usage` |
-| Request stop of original work and owned children | `research stop CONVERSATION_ID` |
-
-`CONVERSATION_ID` is the native numeric receipt ID, not a scientific UUID. The file contains `requestId` and `input:{goal,model:{provider,modelId},data,policy}`. Extension data/criteria are open JSON objects; do not invent catalog paths, datasets, clocks or credentials. The default Wasm adapter uses an original prepared catalog, typed request and optional independent final data; choose only supported tools and actual available models.
-
-Retain the exact file and `requestId` through uncertainty. Same-input replay returns original identities; changed content under the same ID conflicts. HTTP 202 is admission, not completed science. View all failed/rejected trials and the complete comparison/selection; actual IC availability is not qualification or profit. Final evidence is owner-visible only, not another tuning signal. Respect original criteria and explicit limits; exposed samples cannot become unseen by a new study name or fork.
-
-The sections below are **optional scientific/portfolio consumers and historical inspection**, not mandatory stages of the durable factor loop.
-
-## Inspect before changing
-
-| Need | Native arguments |
-| --- | --- |
-| Resolve project | `project list --limit 20`; then `project show ID` |
-| Read the research objective | `brief list PROJECT_ID --limit 20`; then `brief show BRIEF_ID` |
-| Recover the frozen execution bindings | `brief execution-context BRIEF_ID` |
-| Read registered original feature parts | `data features list DATASET_REVISION_ID --project-id PROJECT_ID` |
-| Inspect frozen inputs and policy | `input-set list --project-id PROJECT_ID --limit 20`; `input-set show ID`; `policy show ID` |
-| Inspect registered source metadata | `data source show ID`; `data revision list --source-id ID --limit 20`; `data revision show ID` |
-| Inspect registered evidence summary (owner, non-Sealed) | `data revision evidence ID` |
-| Check optional science readiness | `runtime readiness ID` |
-| Find existing work | `cycle list PROJECT_ID --limit 20`; `cycle show ID`; `experiment list --project-id PROJECT_ID --limit 20` |
-
-Follow IDs from the Brief/InputSet rather than scanning all sources. Registration and prior readiness observations do not prove data quality, PIT, account usability or current eligibility. Report missing/stale prerequisites. Inspection does not authorize probes, login, permission changes or access to raw Sealed data/native storage paths.
-
-For dataset suitability, report the selected project/InputSet/revision and observed origin, licensing/PIT, coverage and readiness limitations; a provider name alone proves no compatibility.
-
-`data revision evidence DATASET_REVISION_ID` reads only that Dataset's registered
-metadata and quality documents, validates their stored associations, and returns
-a typed registration/quality summary. Use the saved owner login; scoped Machine,
-Mission and diagnostic CLI credentials cannot use this route. Sealed evidence is
-not exposed (`DATASET_EVIDENCE_SEALED_UNSUPPORTED`); use `data revision show ID`
-for its existing registration labels.
-The summary includes fixed source/partition types, immutable UUID references,
-counts and timestamps. It excludes free-text source explanations, URLs, native
-paths, raw documents, instruments, BAR values and settlements. It retains the registered PIT/origin labels and current license
-state, including expired or revoked licenses for historical audit. It does not
-reopen the native snapshot, establish historical availability, extend a license,
-or constitute fresh DATA_VALIDATE/PASS evidence. An artifact-route 404 alone
-never proves that registered evidence bytes are missing. Report failed evidence
-reads without re-registering or changing PIT labels.
-
-## Prepare a research operation
-
-| Requested operation | Native arguments | Request schema |
-| --- | --- | --- |
-| Freeze selected registered inputs | `input-set create` | `InputSetCreate` |
-| Create an evaluation policy version | `policy create` | `EvaluationPolicyCreate` |
-| Save/replace a Brief | `brief create PROJECT_ID` / `brief update BRIEF_ID` | `BriefCreate` / `BriefUpdate` |
-| Freeze the selected Brief | `brief freeze BRIEF_ID` | `BriefFreezeV1` |
-| Start an external-Agent Cycle | `cycle start-external PROJECT_ID` | `ExternalCycleStartV1` |
-| Close a settled external Cycle | `cycle finish-external CYCLE_ID` | `CycleFinishExternalV1` |
-| Validate a frozen InputSet | `data validate` | `DataValidateRequest` |
-| Register an original recorded feature part | `data features register DATASET_REVISION_ID` | `RecordedFeatureRegisterV1` |
-| Publish research content | `artifact submit` | `ArtifactCreate` |
-| Propose an experiment | `experiment propose` | `ExperimentProposalV1` |
-| Compile and independently evaluate the original proposal | `experiment evaluate EXPERIMENT_ID` | `ExperimentEvaluateV1` |
-| Adopt one accepted native fold as a target-weight Alpha | `experiment adopt-alpha EXPERIMENT_ID` | `StrategyAlphaAdoptV1` |
-| Build the original Forecast portfolio | `portfolio build` | `PortfolioBuildEnvelopeV2` → `PortfolioBuildRequestV1` |
-| Build the requested native target-weight portfolio | `portfolio build` | `PortfolioBuildEnvelopeV2` → `StrategyPortfolioBuildV1` |
-
-`input-set create` and `policy create` take no positional project ID or
-`--project-id` option. Both take their named DTO as JSON on stdin with
-`project_id` in that body and a retained `--idempotency-key`. Use the saved owner
-login or the original scoped identity's exact Operator grant. InputSet creation
-freezes the selected registered references; policy creation records a new version.
-Neither operation acquires data, validates quality or establishes evaluation PASS.
-
-Discover unfamiliar fields from the named schema. Use user intent and original current references; never invent scientific decisions, IDs, budgets, data roles or assumptions to make a request pass.
-
-Preserve `expected_revision` from the snapshot. A conflict requires rereading and reconsidering intent, not silently substituting the latest revision.
-
-Retain the original request and one idempotency key. Authorized routine writes can execute directly; preview complex new requests or those needing inspection, destructive-action checks or human review. Send once and follow the returned Run using [runs](runs.md). Frozen objects are immutable; a draft is not frozen and freezing is not evaluation PASS.
-
-## Submit research artifacts and experiments
-
-With `ARTIFACT_SUBMIT`, populate native `ArtifactCreate` from the selected project and encode the research content below as its `content` string. Do not add arbitrary paths, producer/origin claims, other Attempts or self-reported qualification. Local preview does not validate the inner document or scientific eligibility.
-
-With `EXPERIMENT_SUBMIT`, use `ExperimentProposalV1` with the original Cycle, inputs and registered artifact references. Preserve its ID and outcome; PENDING is not executed, evaluated or qualified. Budget failures return to the task owner; another Attempt/key must not evade them.
-
-
-## External native research sequence
-
-Use this sequence only for explicitly requested optional external scientific/target-policy work. Each write takes the table's DTO on stdin and its own retained `--idempotency-key`, as in [connection](connection.md); it is not the factor-only durable engine.
-
-1. `cycle start-external PROJECT_ID` uses the original frozen `brief_id` and
-   Project `expected_revision`. It creates a Cycle without internal researcher or
-   reviewer profiles; it does not invoke a model or create a scientific result.
-2. Submit the original artifacts and `experiment propose`, then read
-   `experiment show EXPERIMENT_ID`. `experiment evaluate EXPERIMENT_ID` uses that
-   Experiment's `expected_revision` and approved `compile_limits` and
-   `evaluation_limits`. Follow its returned Run with [runs](runs.md), then reread
-   the Experiment for the evaluation Run/result; compilation success alone is
-   not completed evaluation.
-3. Read `experiment summary EXPERIMENT_ID` and, when needed,
-   `experiment result EXPERIMENT_ID`. If adoption is requested, supply the current
-   Experiment revision, requested `name` and original `source_fold_index` to
-   `experiment adopt-alpha EXPERIMENT_ID`. Retain the returned Alpha/version and
-   accepted source IDs; adoption is reusable research policy, not qualification.
-4. For a native Build, use each returned version object's `id` as the member's
-   `alpha_version_id`, with its requested `ensemble_weight` in
-   `StrategyPortfolioBuildV1`. Retain the original Cycle,
-   mandate, InputSet, Runtime revision and limits. Choose the requested purpose:
-   `HISTORICAL_REPLAY` or `CURRENT_DECISION` with its original member inputs and
-   `FreshPaperCashV1` account start. Native target delivery is fresh Paper only;
-   this is separate from the Forecast funding procedure below. Follow the Build
-   Run, then inspect its original `portfolio candidate summary CANDIDATE_ID` and
-   [delivery/account evidence](results.md).
-5. After all admitted scientific work settles, reread `cycle show CYCLE_ID` and
-   use that Cycle's `expected_revision` for `cycle finish-external CYCLE_ID`.
-   Closing preserves unexecuted proposals as history and returns an inconclusive
-   batch outcome; it does not create a review, PASS, approval or Paper execution.
-
-## Research content
-
-CODE, PARAMETERS and REPORT are the permitted optional research artifact kinds. Content is nonblank UTF-8 without NUL; original bytes remain retained. CODE is source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`. This storage envelope does not establish scientific eligibility or source provenance.
-
-For scientific experiments, the generic JSON-object rule above is only the
-artifact storage envelope. Before writing a parameter artifact, discover its
-inner contract separately:
+The core is objective/data → disclosed hypotheses and native trials → validation feedback → selected independent assessment or a recorded stop. Portfolio/backtest and target/account observation are optional consumers, not prerequisites.
 
 ```sh
-quazonai openapi --domain --schema ExperimentEvaluationParametersV1
-quazonai openapi --domain --schema FeatureObservationsV1
+quazonai research models
+quazonai datasets
+quazonai research start --file original-request.json
+quazonai research list
+quazonai research get CONVERSATION_ID
+quazonai usage
 ```
 
-`ExperimentEvaluationParametersV1` is the experiment's parameter document;
-`FeatureObservationsV1` describes a feature-observation document. Keep each as
-JSON encoded once in the outer `ArtifactCreate.content` string, not as extra
-outer request fields. Follow the selected contract's transitive schemas for
-settings, feature definitions, nullable values and decimal-string counters.
-For trusted direct native scientific callers, omitted/null `total_fuel` disables
-Wasmi metering and `consumed_fuel: null` is unmeasured, not a measured `"0"`.
-The Durable model-code adapter instead supplies finite `"10000000"` fuel when
-omitted/null, plus a native process timeout and address-space bound; it retains
-the original input and echoes the effective request and actual fuel. Explicit
-budgets remain decimal-string counters; failures remain disclosed.
-The installed contract describes wire structure, not approved scientific
-choices or server eligibility. Do not infer model ABI or code requirements
-from a JSON schema; report an unavailable contract or unsupported workflow.
+A file is a complete `ResearchStart` with an explicit original `requestId`. It may contain `input:{goal,model:{provider,modelId},data,policy}` or the configured-dataset form `{requestId,goal,model,datasetId,maxTrials}`. Native input must match a service-registered dataset; never invent server paths or data. Keep exact bytes and IDs for replay. An optional `--request-id` checks the file's ID; it never replaces it.
 
-For native recorded feature registration, discover `RecordedFeatureRegisterV1`
-from the default HTTP scope and preserve the original attachment bytes. Schema
-discovery never authorizes synthesizing or relabeling feature observations;
-self-authored PARAMETERS uploads cannot establish recorded-source provenance.
-
-## Preserve original recorded feature provenance
-
-`brief execution-context BRIEF_ID` reads the existing `FrozenBriefV1`; it does not
-freeze again. Draft Briefs have no frozen execution context. Preserve the returned
-Runtime revision and Discovery/Validation/Sealed InputSet IDs rather than
-reconstructing them from newer records.
-
-Use `data features register DATASET_REVISION_ID` only for original recorded
-feature bytes already described in that Dataset's frozen native metadata. The
-body's `dataset_revision_id` must equal the route ID. Supply the original
-`feature_part_key`, project and unmodified UTF-8 attachment as `content`. There
-is no application encoded-content byte cap. Do not reserialize the inner JSON or replace
-missing clocks/values. The server retains the actual Dataset origin, PIT and
-license binding; callers cannot assert them. Raw Sealed feature registration is
-not supported.
-
-Keep the same original bytes and idempotency key for retries. Read back with
-`data features list DATASET_REVISION_ID --project-id PROJECT_ID`; the result
-contains all registered part descriptors and source bindings, not
-the original observations. An empty list is not permission to reconstruct an
-attachment. Normal `artifact submit` research parameters remain self-authored
-research artifacts and must not be substituted for native recorded feature
-provenance. Registration proves neither verified PIT nor evaluation success.
-
-
-## Explicit first Paper funding
-
-Use the existing `portfolio build` only when first Paper initialization is in the
-user's requested scope. It remains the original Forecast Build, not a different
-Alpha model, an account observation, a Live operation or an approval. Discover
-the current native fields before preparing the original request:
+For a new objective with an already configured dataset, explicit flags are sufficient:
 
 ```sh
-quazonai client portfolio build --help
-quazonai openapi --schema PortfolioBuildEnvelopeV2
-quazonai openapi --schema PortfolioBuildWeightsV1
+quazonai research start --goal 'THE_REQUESTED_OBJECTIVE' \
+  --dataset DATASET_ID --model PROVIDER:MODEL_ID \
+  --max-trials REQUESTED_LIMIT --request-id ORIGINAL_REQUEST_ID
 ```
 
-Retain the original Cycle, Mandate/InputSet, Runtime revision, qualified members,
-limits and frozen market bindings. Use Paper and this weight-source fragment only
-with the verified existing native scope supplied by the authorized operator:
+Use model IDs from actual configured availability. Discovery does not run inference, discover Desktop credentials or establish model quality. The host explicitly persists its capability-supported thinking level; hidden reasoning is not evidence to report.
 
-```json
-{
-  "environment": "PAPER",
-  "current_weights_source": {
-    "kind": "PAPER_INITIAL_CAPITAL",
-    "downstream_id": "<verified downstream UUID>",
-    "trader_id": "<original native trader ID>",
-    "account_id": "<original native account ID>"
-  }
-}
-```
+Retain the original policy, budget, source identity and selection/evaluation criteria. Zero trials allows no computation. Committed failures consume attempts and remain disclosed. Missing inputs or unsupported criteria are not permission to change budgets or create another study until something passes.
 
-This is only a fragment; keep the other required fields from the selected original
-Forecast request, and never submit placeholders or invent scope IDs. Do not supply
-an amount, currency, initialization/session ID or reset flag. Capital and currency
-come only from the original frozen execution settings and matching mandate; a
-missing or inconsistent original value is a blocker, not permission to fill one
-in. Market inputs must still satisfy the original REAL/PIT rules, with the same
-Alpha qualification and independent evaluation requirements.
+Use `research get` to inspect all trials, failures, comparison and final/stop reason. Native computation is not a qualification. Final held-out assessment is separate from iterative feedback; never tune against it or rename/copy/fork exposed data to call it unseen. The model-code adapter retains finite fuel, process timeout, owned child recovery and a provider-credential-free execution environment.
 
-Preserve one original request and idempotency key. An authorized Build uses the
-existing command and connection procedure; `--preview` is local wire inspection,
-not a server eligibility check or a funding event. Follow the original Run and
-its evidence. A queued Build does not prove initialization, qualification or
-native execution succeeded.
-
-The same Forecast Paper holding, claim or initialization root cannot be made
-empty by changing project, mandate, session, owner or output directory. Use its
-original verified Paper snapshot/LastTarget lineage for continuation; never
-request another funding event for that root or relabel its Synthetic economics
-as REAL/Live. For an uncertain result, preserve the same inputs and follow
-[recovery](recovery.md), without a new owner/key to evade the one-time boundary.
-See [Paper delivery results](results.md) before interpreting a Claim or receipt.
-
-An independently requested Native TargetDecision `FreshPaperCashV1` experiment
-retains its existing fresh-session semantics. Repeated trader/account labels alone
-do not make separate native sessions the same account source. Keep its new session,
-source and handoff/release identities distinct; never substitute that separate
-experiment for recovery of the original Forecast account or merge their returns.
-Switching research models still requires the user's corresponding intent.
+After an unknown start response, replay only the same original file or identical explicit flags with the same ID. HTTP 202 means admitted/replayed, not finished. Follow [observation](runs.md) and [recovery](recovery.md), without a replacement key.

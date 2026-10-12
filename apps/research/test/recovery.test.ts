@@ -12,6 +12,7 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { SubmissionId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { evaluateTrial } from '../src/trials.ts';
+import type { ResearchInput } from '../src/documents.ts';
 
 for (const replay of ['safe', 'unsafe', 'failed'] as const) {
   test(`SIGKILL recovery retains original identity and upstream ${replay} tool semantics`, { timeout: 15_000 }, async () => {
@@ -75,3 +76,32 @@ for (const replay of ['safe', 'unsafe', 'failed'] as const) {
     } finally { child.kill('SIGKILL'); await rm(directory, { recursive: true, force: true }); }
   });
 }
+
+test('SIGKILL after admission is repaired automatically on reopen, without replaying final/stopped studies', { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-admission-crash-'));
+  const child = spawn(process.execPath, ['--experimental-strip-types', fileURLToPath(new URL('./process-worker.ts', import.meta.url)), directory, 'admission'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let errors = ''; child.stderr.on('data', (part) => { errors += part; });
+  try {
+    const original = await new Promise<{ ids: number[]; input: ResearchInput }>((resolve, reject) => {
+      let bytes = '';
+      child.once('exit', (code) => reject(new Error(`admission child exited ${code}: ${errors}`)));
+      child.stdout.on('data', (part) => { bytes += part; if (bytes.includes('\n')) resolve(JSON.parse(bytes.slice(0, bytes.indexOf('\n')))); });
+    });
+    const exit = once(child, 'exit'); child.kill('SIGKILL'); assert.deepEqual(await exit, [null, 'SIGKILL']);
+    const faux = fauxProvider({ models: [{ id: 'crash-probe' }], tokensPerSecond: 100000 });
+    const models = createModels(); models.setProvider(faux.provider); faux.setResponses([fauxAssistantMessage('Original admission recovered.')]);
+    let host = await openResearch({ database: join(directory, 'research.sqlite'), models });
+    try {
+      const repaired = (await host.submissionFor(original.ids[0]!))!;
+      assert.equal((await (await host.harness.submission(repaired.id, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT)).status, 'done');
+      assert.equal(repaired.requestId, 'admission-gap');
+      assert.deepEqual((await host.view(original.ids[0]!)).research!.input, original.input);
+      assert.equal(await host.submissionFor(original.ids[1]!), null); assert.equal(await host.submissionFor(original.ids[2]!), null);
+      assert.equal(faux.state.callCount, 1);
+      await host.close(); host = await openResearch({ database: join(directory, 'research.sqlite'), models });
+      assert.deepEqual(await host.start('admission-gap', original.input), { conversationId: original.ids[0], submissionId: repaired.id });
+      assert.equal(faux.state.callCount, 1);
+      await assert.rejects(host.start('stopped-gap', original.input), /research_already_final/);
+    } finally { await host.close(); }
+  } finally { child.kill('SIGKILL'); await rm(directory, { recursive: true, force: true }); }
+});

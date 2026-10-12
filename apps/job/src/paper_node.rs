@@ -38,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
     collections::BTreeSet,
-    net::SocketAddr,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -48,12 +47,29 @@ use tokio::sync::watch;
 
 use crate::{
     native_node_observer::NativeNodeObserver,
-    paper_service::{PaperState, PaperStatus},
     simulation::{paper_target_strategy, ReplayStatus},
 };
 
 pub const EXECUTION_CLIENT: &str = "QZ-PAPER";
 pub const DATA_CLIENT: &str = "BINANCE-PUBLIC";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PaperState {
+    Starting,
+    Running,
+    Stopped,
+    Failed,
+}
+
+/// Native process status only; TypeScript owns claim admission and receipts.
+#[derive(Clone, Debug, Serialize)]
+pub struct PaperStatus {
+    pub state: PaperState,
+    pub target_points_consumed: usize,
+    pub reason_code: Option<String>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
 
 /// Deliberately one venue/product. No execution credentials or arbitrary adapter
 /// class names can be supplied through this configuration.
@@ -87,12 +103,6 @@ pub struct PaperConfig {
     pub paper_latency: PaperLatencyModel,
     /// A new segment for this invocation. Existing files are never overwritten.
     pub observations_file: PathBuf,
-    /// Stable private runtime volume; must be reused across invocations and outputs.
-    pub claim_state_directory: PathBuf,
-    /// Existing local downstream authentication; this command creates no token.
-    pub credential_file: PathBuf,
-    /// Existing trusted reverse proxy exposes the configured downstream endpoint.
-    pub bind: SocketAddr,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -120,11 +130,6 @@ pub struct PaperPreflight {
 
 impl PaperConfig {
     fn validate_runtime(&self) -> Result<()> {
-        ensure!(self.bind.ip().is_loopback(), "PAPER_BIND_LOOPBACK_REQUIRED");
-        ensure!(
-            self.claim_state_directory.is_absolute(),
-            "PAPER_STABLE_CLAIM_STATE_REQUIRED"
-        );
         ensure!(
             !self.market_capability_version.is_empty(),
             "PAPER_MARKET_CAPABILITY"
@@ -135,8 +140,7 @@ impl PaperConfig {
             "PAPER_ACCOUNT_VENUE"
         );
         ensure!(
-            !self.observations_file.as_os_str().is_empty()
-                && self.observations_file != self.credential_file,
+            !self.observations_file.as_os_str().is_empty(),
             "PAPER_OBSERVATION_PATH"
         );
         let PaperDataSource::BinanceSpotPublic {
@@ -265,14 +269,6 @@ pub(crate) fn forecast_initial_account(
         "PAPER_INITIAL_CAPITAL_ORIGINAL_BINDING"
     );
     Ok(Some(account_start))
-}
-
-pub(crate) fn forecast_initialization_blocker(package: &ForecastTargetPackageV2) -> &'static str {
-    if package.current_weights.paper_initialization.is_some() {
-        "PAPER_FORECAST_CONTINUATION_UNSUPPORTED"
-    } else {
-        "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
-    }
 }
 
 /// Validate only the immutable Forecast claim. No owner-authored assumptions,
@@ -579,7 +575,7 @@ pub fn preflight_envelope(
         execution_environment: "PAPER_SANDBOX",
         native_account_model: "MARGIN_LEVERAGE_ONE",
         restart_policy: "FRESH_ACCOUNT_AND_SESSION_NO_RESTORE",
-        claim_replay_scope: "DURABLE_RUNTIME_PROJECT_ADAPTER_CLAIM",
+        claim_replay_scope: "EXTERNAL_TYPESCRIPT_SERVICE",
         market_data_source: "BINANCE_SPOT_PUBLIC_JSON",
         market_time_basis:
             "NATIVE_ADAPTER_TIMESTAMPS_WITH_RECEIVE_TIME_FALLBACK_WHEN_EXCHANGE_TIME_ABSENT",
@@ -914,95 +910,28 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     Ok(serde_json::from_reader(file)?)
 }
 
-pub fn read_credential(path: &Path) -> Result<Vec<u8>> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    ensure!(metadata.is_file(), "PAPER_CREDENTIAL_FILE");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        ensure!(
-            metadata.permissions().mode() & 0o077 == 0,
-            "PAPER_CREDENTIAL_PERMISSIONS"
-        );
-    }
-    let mut bytes = std::fs::read(path)?;
-    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
-        bytes.pop();
-    }
-    ensure!(
-        !bytes.is_empty() && bytes.iter().all(|b| b.is_ascii_graphic()),
-        "PAPER_CREDENTIAL_FORMAT"
-    );
-    Ok(bytes)
-}
-
 #[derive(clap::Args)]
 pub struct Arguments {
     #[command(subcommand)]
-    command: Operation,
+    operation: Operation,
 }
 
 #[derive(clap::Subcommand)]
 enum Operation {
-    /// Check local claim/source bindings. Opens no network connection or node.
+    /// Validate supplied immutable native inputs without connecting a feed.
     Preflight {
         #[arg(long)]
         config: PathBuf,
         #[arg(long)]
         claim: PathBuf,
     },
-    /// Serve one fresh Paper account/session with durable cross-process lifecycle replay.
-    /// No position restore. New claims start public market data with declared capital.
-    /// Configuration requires the same persistent claim_state_directory on every restart.
-    Serve {
+    /// Run one native Sandbox session; admission and replay ownership are external.
+    Run {
         #[arg(long)]
         config: PathBuf,
-    },
-    /// Apply an original Q claim to an already running local foreground Paper host.
-    Apply {
-        #[arg(long)]
-        origin: String,
-        #[arg(long)]
-        credential_file: PathBuf,
         #[arg(long)]
         claim: PathBuf,
     },
-    /// Read native lifecycle status and the Paper model/source limitations.
-    Status {
-        #[arg(long)]
-        origin: String,
-        #[arg(long)]
-        credential_file: PathBuf,
-    },
-    /// Request native shutdown. A stopping request is not confirmation of shutdown.
-    Stop {
-        #[arg(long)]
-        origin: String,
-        #[arg(long)]
-        credential_file: PathBuf,
-    },
-}
-
-fn output(value: &impl Serialize) -> Result<()> {
-    use std::io::Write;
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, value)?;
-    writeln!(stdout)?;
-    stdout.flush()?;
-    Ok(())
-}
-
-fn read_claim(path: &Path) -> Result<HandoffClaimViewV2> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Claim {
-        Receipt(contracts::control::CommandResult<HandoffClaimViewV2>),
-        Body(HandoffClaimViewV2),
-    }
-    Ok(match read_json(path)? {
-        Claim::Receipt(receipt) => receipt.resource,
-        Claim::Body(claim) => claim,
-    })
 }
 
 pub(crate) async fn stop_signal() {
@@ -1024,159 +953,35 @@ pub(crate) async fn stop_signal() {
     }
 }
 
-async fn serve(config: PaperConfig) -> Result<()> {
-    use crate::paper_service::{start_control, PaperApplyError};
-    config.validate_runtime()?;
-    let mut control = start_control(
-        config.bind,
-        read_credential(&config.credential_file)?,
-        config.market_capability_version.clone(),
-        &config.claim_state_directory,
-    )
-    .await?;
-    output(&serde_json::json!({
-        "state": "idle", "bind": control.local_addr,
-        "environment": "PAPER", "market_data_connected": false,
-        "observations_file": config.observations_file,
-    }))?;
-    let request = tokio::select! {
-        request = control.requests.recv() => request,
-        _ = stop_signal() => None,
-        _ = control.stop.changed() => None,
-    };
-    let native_result = if let Some(request) = request {
-        match PaperNode::build_envelope(&config, &request.claim) {
-            Ok(node) => {
-                control
-                    .status
-                    .send_modify(|status| status.native_session_id = Some(node.session_id()));
-                let _ = request.reply.send(Ok(()));
-                node.run(control.stop.clone(), control.status.clone()).await
-            }
-            Err(error) => {
-                let unsupported =
-                    error.to_string() == "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED";
-                let code = if unsupported {
-                    "PAPER_FORECAST_ACCOUNT_INITIALIZATION_UNSUPPORTED"
-                } else {
-                    "PAPER_INVALID_CLAIM_OR_CONFIGURATION"
-                };
-                publish_state(&control.status, PaperState::Failed, Some(code));
-                let _ = request.reply.send(Err(if unsupported {
-                    PaperApplyError::UnsupportedForecastInitialization
-                } else {
-                    PaperApplyError::InvalidClaim
-                }));
-                Err(anyhow!(code))
-            }
-        }
-    } else {
-        publish_state(&control.status, PaperState::Stopped, None);
-        Ok(())
-    };
-    if native_result.is_err() && control.status.borrow().state != PaperState::Failed {
-        publish_state(
-            &control.status,
-            PaperState::Failed,
-            Some("PAPER_NATIVE_FAILED"),
-        );
-    }
-    let retained = control.retain_terminal_observation().await;
-    output(&control.status.borrow().clone())?;
-    // Final observation is also retained by the native observer. The short
-    // bounded drain lets an already-issued status/stop request see final state.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    control.shutdown.send_replace(true);
-    control.task.await??;
-    retained?;
-    native_result
-}
-
-pub(crate) async fn control_request(
-    origin: &str,
-    credential_file: &Path,
-    operation: &str,
-    claim: Option<HandoffClaimViewV2>,
-) -> Result<()> {
-    let mut url = reqwest::Url::parse(origin)?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow!("PAPER_CONTROL_ORIGIN"))?;
-    let address = host.trim_matches(['[', ']']).parse::<std::net::IpAddr>();
-    ensure!(
-        url.scheme() == "http"
-            && address.is_ok_and(|address| address.is_loopback())
-            && url.username().is_empty()
-            && url.password().is_none()
-            && (url.path().is_empty() || url.path() == "/")
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "PAPER_CONTROL_LOOPBACK_ORIGIN_REQUIRED"
-    );
-    url.set_path(&format!("/downstream/v1/{operation}"));
-    let credential = read_credential(credential_file)?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()?;
-    let request = if let Some(claim) = claim {
-        client.post(url).json(&claim)
-    } else if operation == "stop" {
-        client.post(url)
-    } else {
-        client.get(url)
-    };
-    let response = request
-        .bearer_auth(std::str::from_utf8(&credential)?)
-        .send()
-        .await?;
-    ensure!(
-        response.status().is_success(),
-        "PAPER_CONTROL_REQUEST_REJECTED"
-    );
-    let status: serde_json::Value = response.json().await?;
-    output(&status)
-}
-
 pub fn run(arguments: Arguments) -> Result<()> {
-    let command = match arguments.command {
-        Operation::Preflight { config, claim } => {
-            return output(&preflight_envelope(
-                &read_json(&config)?,
-                &read_claim(&claim)?,
-            )?);
+    use std::io::Write;
+    let result = match arguments.operation {
+        Operation::Preflight { config, claim } => serde_json::to_value(preflight_envelope(
+            &read_json(&config)?,
+            &read_json(&claim)?,
+        )?)?,
+        Operation::Run { config, claim } => {
+            let config: PaperConfig = read_json(&config)?;
+            let claim: HandoffClaimViewV2 = read_json(&claim)?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let (stop, receiver) = watch::channel(false);
+            let (status, current) = watch::channel(PaperStatus {
+                state: PaperState::Starting,
+                target_points_consumed: 0,
+                reason_code: None,
+                updated_at: chrono::Utc::now(),
+            });
+            runtime.block_on(PaperNode::build_envelope(&config, &claim)?.run(receiver, status))?;
+            drop(stop);
+            let terminal = current.borrow().clone();
+            serde_json::to_value(terminal)?
         }
-        command => command,
     };
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(async move {
-            match command {
-                Operation::Preflight { .. } => unreachable!(),
-                Operation::Serve { config } => serve(read_json(&config)?).await,
-                Operation::Apply {
-                    origin,
-                    credential_file,
-                    claim,
-                } => {
-                    control_request(
-                        &origin,
-                        &credential_file,
-                        "targets",
-                        Some(read_claim(&claim)?),
-                    )
-                    .await
-                }
-                Operation::Status {
-                    origin,
-                    credential_file,
-                } => control_request(&origin, &credential_file, "status", None).await,
-                Operation::Stop {
-                    origin,
-                    credential_file,
-                } => control_request(&origin, &credential_file, "stop", None).await,
-            }
-        })
+    let mut output = std::io::stdout().lock();
+    serde_json::to_writer(&mut output, &result)?;
+    writeln!(output)?;
+    output.flush()?;
+    Ok(())
 }

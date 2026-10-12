@@ -7,5 +7,11 @@
     "./plugins/heldout-wasm.ts",
     "./plugins/catalog-input.ts"
   ],
-  "providerModules": []
+  "providerModules": [],
+  "thinkingLevel": "medium",
+  "settings": {
+    "stream": { "timeoutMs": 120000, "maxRetries": 0 },
+    "retry": { "enabled": true, "maxRetries": 6, "baseDelayMs": 2000, "maxAgentDelayMs": 60000 },
+    "progress": { "partialIntervalMs": 250, "outputIntervalMs": 250 }
+  }
 }

@@ -36,42 +36,6 @@ pub fn mandate(value: &StrategyMandateContentV1) -> Result<(), DomainError> {
     Ok(())
 }
 
-pub fn build(value: &StrategyPortfolioBuildV1) -> Result<(), DomainError> {
-    crate::data::bounded_native_limits(&value.limits)?;
-    if value.members.is_empty()
-        || value
-            .members
-            .iter()
-            .map(|m| m.alpha_version_id)
-            .collect::<BTreeSet<_>>()
-            .len()
-            != value.members.len()
-    {
-        return Err(bad("strategy.members"));
-    }
-    weights(value.members.iter().map(|m| &m.ensemble_weight))?;
-    if let StrategyPortfolioPurposeV1::CurrentDecision {
-        account_start,
-        member_inputs,
-    } = &value.purpose
-    {
-        account(account_start)?;
-        let ids = member_inputs
-            .iter()
-            .map(|m| m.alpha_version_id)
-            .collect::<BTreeSet<_>>();
-        if ids.len() != member_inputs.len()
-            || ids != value.members.iter().map(|m| m.alpha_version_id).collect()
-        {
-            return Err(bad("strategy.current_members"));
-        }
-        for input in member_inputs {
-            features::artifact_ids(&input.feature_artifact_ids)?;
-        }
-    }
-    Ok(())
-}
-
 fn weights<'a>(values: impl Iterator<Item = &'a DecimalValue>) -> Result<(), DomainError> {
     let mut total = BigDecimal::from(0);
     for weight in values {
@@ -299,19 +263,56 @@ pub fn blend(
     points: &[&NativeTargetPointV1],
     ttl_seconds: u32,
 ) -> Result<NativeTargetPointV1, DomainError> {
-    if members.is_empty() || members.len() != points.len() {
+    let member_weights: Vec<_> = members.iter().map(|m| &m.ensemble_weight).collect();
+    blend_weighted(&member_weights, points, Some(ttl_seconds))
+}
+
+/// Blend explicit member targets without source IDs, equity or an expiry refresh.
+pub fn blend_targets(
+    request: &NativeTargetBlendRequestV1,
+) -> Result<NativeTargetBlendResultV1, DomainError> {
+    if request.rows.is_empty() {
+        return Err(bad("strategy.target_rows"));
+    }
+    let member_weights: Vec<_> = request.weights.iter().collect();
+    let target_points = request
+        .rows
+        .iter()
+        .map(|row| {
+            if row.first().is_none_or(|point| point.targets.is_empty()) {
+                return Err(bad("strategy.target_rows"));
+            }
+            let points: Vec<_> = row.iter().collect();
+            blend_weighted(&member_weights, &points, None)
+        })
+        .collect::<Result<_, DomainError>>()?;
+    Ok(NativeTargetBlendResultV1 {
+        schema_version: SchemaV1,
+        target_points,
+    })
+}
+
+fn blend_weighted(
+    member_weights: &[&DecimalValue],
+    points: &[&NativeTargetPointV1],
+    ttl_seconds: Option<u32>,
+) -> Result<NativeTargetPointV1, DomainError> {
+    if member_weights.is_empty() || member_weights.len() != points.len() {
         return Err(bad("strategy.target_members"));
     }
-    weights(members.iter().map(|m| &m.ensemble_weight))?;
+    weights(member_weights.iter().copied())?;
     let first = points[0];
-    let mut until = first
-        .asof_ns
-        .get()
-        .checked_add(u64::from(ttl_seconds) * 1_000_000_000)
-        .ok_or_else(|| bad("strategy.target_clock"))?;
+    let mut until = match ttl_seconds {
+        Some(ttl) => first
+            .asof_ns
+            .get()
+            .checked_add(u64::from(ttl) * 1_000_000_000)
+            .ok_or_else(|| bad("strategy.target_clock"))?,
+        None => first.valid_until_ns.get(),
+    };
     let mut assets = vec![BigDecimal::from(0); first.targets.len()];
     let mut cash = BigDecimal::from(0);
-    for (member, point) in members.iter().zip(points) {
+    for (weight, point) in member_weights.iter().zip(points) {
         if point.asof_ns != first.asof_ns
             || point.targets.len() != first.targets.len()
             || point.valid_until_ns <= point.asof_ns
@@ -328,12 +329,12 @@ pub fn blend(
                 return Err(bad("strategy.target_alignment"));
             }
             total += target.weight.as_decimal();
-            *sum += member.ensemble_weight.as_decimal() * target.weight.as_decimal();
+            *sum += weight.as_decimal() * target.weight.as_decimal();
         }
         if total != BigDecimal::from(1) {
             return Err(bad("strategy.target_sum"));
         }
-        cash += member.ensemble_weight.as_decimal() * point.cash_weight.as_decimal();
+        cash += weight.as_decimal() * point.cash_weight.as_decimal();
         until = until.min(point.valid_until_ns.get());
     }
     if until <= first.asof_ns.get() {

@@ -10,7 +10,7 @@ export default defineExtension({
   tools: [defineTool({
     name: 'factor_evaluate',
     description: 'Evaluate an arbitrary factor, not a position: Wasm text exports predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Values may have any finite sign or scale. Native validation statistics are feedback, not profitability or qualification.',
-    parameters: Type.Object({ hypothesis: Type.String(), model: Type.String() }), replay: 'safe',
+    parameters: Type.Object({ hypothesis: Type.String(), model: Type.String() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       // Record the proposal before input preparation, so missing/invalid data is

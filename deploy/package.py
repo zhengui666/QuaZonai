@@ -1,322 +1,207 @@
 #!/usr/bin/env python3
-"""Build and verify complete prebuilt release assets; Python standard library only."""
+"""Package JS/TypeScript + official prebuilt Node; no SEA, compilation or checksums."""
 from __future__ import annotations
-
 import argparse
-import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
-import stat
+import shutil
 import subprocess
 import tarfile
 import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-REPOSITORY = "zhengui666/QuaZonai"
-CLI_ARCHIVES = {
-    "linux-x86_64": "quazonai-cli-linux-x86_64.tar.gz",
-    "macos-x86_64": "quazonai-cli-macos-x86_64.tar.gz",
-    "macos-aarch64": "quazonai-cli-macos-aarch64.tar.gz",
-    "windows-x86_64": "quazonai-cli-windows-x86_64.zip",
-}
-IMAGE_ARCHIVES = {name: f"quazonai-image-{name}.tar.gz"
-                  for name in ("application", "runtime", "database")}
-NOTICES = {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
-DEPLOY_FILES = frozenset({"manage.sh", "json.awk", "deploy.sh", "update.sh",
-                         "compose.yaml", "release.json", "README.md", "runtime.sh", ".env.example"})
-REQUIRED_ASSETS = frozenset({"release.json", "quazonai-deploy.tar.gz", "README.md",
-                            "install.sh", "install.ps1", "SHA256SUMS"}
-                           | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
-MAX_ASSET = 2 * 1024**3 - 1  # GitHub requires each Release asset to be smaller than 2 GiB.
-MAX_CLI = 512 * 1024**2
-MAX_IMAGE = 64 * 1024**3
-MARKER = "@QUAZONAI_VERSION@"
-
+REPOSITORY = 'zhengui666/QuaZonai'
+NODE_VERSION = '22.19.0'
+CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suffix in (
+    ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
+    ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
+IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime', 'database')}
+NOTICES = {'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'}
+DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
+REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
+MARKER = '@QUAZONAI_VERSION@'
 
 def identity(version: str, revision: str) -> None:
-    match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?", version)
-    if not match or len(version) > 128 or (match[4] and any(
-            part.isdigit() and len(part) > 1 and part.startswith("0") for part in match[4].split("."))):
-        raise ValueError("Expected an exact vMAJOR.MINOR.PATCH[-prerelease] tag.")
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Expected the exact 40-character source revision.")
+    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', version) or not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Expected an exact release tag and source revision.')
 
-
-def regular(path: Path, maximum: int = MAX_ASSET) -> None:
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= maximum:
-        raise ValueError(f"Missing, empty, linked or oversized asset: {path.name}")
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
+def regular(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise ValueError(f'Missing or empty asset: {path.name}')
 
 def safe_name(name: str) -> bool:
-    path = PurePosixPath(name)
-    return bool(name) and not path.is_absolute() and ".." not in path.parts and "\\" not in name
-
+    value = PurePosixPath(name)
+    return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
 def cli_members(platform: str) -> set[str]:
-    return NOTICES | {"quazonai.exe" if platform.startswith("windows-") else "quazonai"}
-
+    return NOTICES | {'distribution.json', 'runtime/LICENSE',
+        'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
+        'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
+        'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
+        'app/package.json', 'app/apps/cli/package.json', 'app/apps/cli/src/main.ts', 'app/packages/contracts/src/index.ts'}
 
 def check_cli_archive(path: Path, platform: str) -> None:
-    regular(path, MAX_CLI)
-    expected = cli_members(platform)
-    if path.suffix == ".zip":
+    regular(path)
+    if path.suffix == '.zip':
         with zipfile.ZipFile(path) as archive:
-            members = archive.infolist()
-            if (len(members) != len(expected) or {member.filename for member in members} != expected
-                    or any(member.is_dir() or member.flag_bits & 1
-                           or stat.S_ISLNK(member.external_attr >> 16)
-                           or not 0 < member.file_size <= MAX_CLI for member in members)
-                    or sum(member.file_size for member in members) > MAX_CLI):
-                raise ValueError("CLI ZIP must contain only the binary and license notices.")
-            if archive.testzip() is not None:
-                raise ValueError("CLI ZIP checksum failed.")
+            names = [item.filename for item in archive.infolist()]
     else:
-        with tarfile.open(path, "r|gz") as archive:
-            names = set()
-            total = 0
-            for member in archive:
-                total += member.size
-                if (member.name not in expected or member.name in names or not member.isfile()
-                        or member.size <= 0 or total > MAX_CLI):
-                    raise ValueError("CLI archive must contain only the binary and license notices.")
-                names.add(member.name)
-                if member.name == "quazonai" and not member.mode & 0o111:
-                    raise ValueError("Packaged CLI must be executable.")
-            if names != expected:
-                raise ValueError("CLI archive must contain only the binary and license notices.")
+        with tarfile.open(path, 'r:gz') as archive:
+            members = archive.getmembers()
+            if any(not item.isfile() for item in members):
+                raise ValueError('CLI archives contain only regular files.')
+            names = [item.name for item in members]
+    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'licenses/'))
+    if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
+        raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
-
-def pack_cli(binary: Path, platform: str, destination: Path, version: str, revision: str) -> Path:
+def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revision: str) -> Path:
     identity(version, revision)
-    regular(binary, MAX_CLI)
+    windows = platform.startswith('windows-')
+    node = runtime / ('node.exe' if windows else 'bin/node')
+    regular(node); regular(runtime / 'LICENSE')
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / CLI_ARCHIVES[platform]
-    sources = {name: ROOT / name for name in NOTICES}
-    sources["quazonai.exe" if platform.startswith("windows-") else "quazonai"] = binary
-    for source in sources.values():
-        regular(source, MAX_CLI)
-    if output.suffix == ".zip":
-        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for name, source in sorted(sources.items()):
-                archive.write(source, arcname=name)
-    else:
-        with tarfile.open(output, "w:gz") as archive:
-            for name, source in sorted(sources.items()):
-                info = archive.gettarinfo(str(source), arcname=name)
-                info.uid = info.gid = info.mtime = 0
-                info.uname = info.gname = ""
-                info.mode = 0o755 if name == "quazonai" else 0o644
-                with source.open("rb") as stream:
-                    archive.addfile(info, stream)
+    with tempfile.TemporaryDirectory(prefix='quazonai-cli-', dir=os.environ.get('TMPDIR')) as temporary:
+        directory = Path(temporary)
+        cli = directory / 'app/apps/cli'
+        cli.mkdir(parents=True)
+        shutil.copytree(ROOT / 'apps/cli/src', cli / 'src')
+        for name in ('package.json', 'package-lock.json'):
+            shutil.copy2(ROOT / 'apps/cli' / name, cli / name)
+        package = json.loads((cli / 'package.json').read_text())
+        package['version'] = version.removeprefix('v')
+        (cli / 'package.json').write_text(json.dumps(package, indent=2) + '\n')
+        subprocess.run(['npm.cmd' if os.name == 'nt' else 'npm', 'ci', '--prefix', str(cli), '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], check=True)
+        shutil.copytree(ROOT / 'packages/contracts/src', directory / 'app/packages/contracts/src')
+        (directory / 'app/package.json').write_text('{"type":"module"}\n')
+        shutil.copytree(ROOT / 'contracts/generated', directory / 'app/contracts/generated')
+        shutil.copy2(ROOT / 'deploy/cli-launch.mjs', directory / 'app/launch.mjs')
+        (directory / 'runtime').mkdir()
+        shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
+        shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
+        for name in NOTICES:
+            shutil.copy2(ROOT / name, directory / name)
+        shutil.copytree(ROOT / 'licenses', directory / 'licenses')
+        (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
+        if windows:
+            (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
+        else:
+            launcher = directory / 'quazonai'
+            launcher.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
+            launcher.chmod(0o755)
+        # npm executable links are irrelevant to CLI runtime; do not ship them.
+        files = [file for file in directory.rglob('*') if file.is_file() and not file.is_symlink()]
+        if windows:
+            with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                for file in files:
+                    archive.write(file, file.relative_to(directory).as_posix())
+        else:
+            with tarfile.open(output, 'w:gz') as archive:
+                for file in files:
+                    archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
     check_cli_archive(output, platform)
     return output
 
-
 def smoke_cli(path: Path, platform: str, version: str) -> None:
     check_cli_archive(path, platform)
-    # Extraction accepts only the exact regular files checked above, never links or paths.
-    with tempfile.TemporaryDirectory(prefix="quazonai-cli-check-") as temporary:
-        root = Path(temporary)
-        if path.suffix == ".zip":
+    with tempfile.TemporaryDirectory(prefix='quazonai-cli-check-', dir=os.environ.get('TMPDIR')) as temporary:
+        directory = Path(temporary)
+        if path.suffix == '.zip':
             with zipfile.ZipFile(path) as archive:
-                archive.extractall(root)
+                archive.extractall(directory)
         else:
-            with tarfile.open(path, "r:gz") as archive:
-                archive.extractall(root)
-        binary = root / ("quazonai.exe" if platform.startswith("windows-") else "quazonai")
+            with tarfile.open(path, 'r:gz') as archive:
+                archive.extractall(directory, filter='data')
+        node = directory / ('runtime/node.exe' if platform.startswith('windows-') else 'runtime/node')
+        command = [str(node), '--experimental-strip-types', str(directory / 'app/launch.mjs')]
+        env = {**os.environ, 'QUAZONAI_VERSION': version, 'QZ_CLI_VERSION': version}
         def run(*args):
-            return subprocess.run([str(binary), *args], check=True, capture_output=True, text=True).stdout.strip()
-        if run("--version") != f"quazonai {version}":
-            raise ValueError("Packaged CLI version differs from the requested release tag.")
-        if "login" not in run("client", "--help"):
-            raise ValueError("Packaged CLI has no native client commands.")
-        if "ArtifactCreate" not in run("openapi", "--list-schemas"):
-            raise ValueError("Packaged CLI has no offline contract catalog.")
-        json.loads(run("openapi", "--schema", "ArtifactCreate"))
-
-
-def check_tar(path: Path, *, manifest: dict | None = None) -> None:
-    """Inspect headers and small metadata while streaming potentially large image layers."""
-    regular(path)
-    files = set()
-    regular_files = set()
-    total = 0
-    metadata = None
-    readme_text = None
-    maximum = MAX_CLI if manifest is not None else MAX_IMAGE
-    metadata_name = "release.json" if manifest is not None else "manifest.json"
-    with tarfile.open(path, "r|gz") as archive:
-        for member in archive:
-            if (not safe_name(member.name) or member.name in files
-                    or not (member.isfile() or member.isdir()) or member.size < 0):
-                raise ValueError(f"Unsafe archive member in {path.name}: {member.name}")
-            files.add(member.name)
-            if member.isfile():
-                regular_files.add(member.name)
-            total += member.size
-            if total > maximum or len(files) > 10000:
-                raise ValueError(f"Archive expands beyond its release limit: {path.name}")
-            if member.name == metadata_name:
-                if not member.isfile() or member.size > 4 * 1024**2:
-                    raise ValueError(f"Invalid archive manifest: {path.name}")
-                metadata = json.load(archive.extractfile(member))
-            if manifest is not None and member.name == "README.md":
-                if not member.isfile() or member.size > 4 * 1024**2:
-                    raise ValueError("Invalid deployment guide.")
-                readme_text = archive.extractfile(member).read().decode("utf-8")
-    if manifest is not None:
-        if files != DEPLOY_FILES or regular_files != DEPLOY_FILES:
-            raise ValueError("Deployment archive must contain the exact shell bundle file set.")
-        if metadata != manifest:
-            raise ValueError("Deployment archive must contain the exact release.json.")
-        if not readme_text or MARKER in readme_text or manifest["version"] not in readme_text:
-            raise ValueError("Deployment guide must be pinned to the exact release tag.")
-    elif (not isinstance(metadata, list) or len(metadata) != 1
-          or not isinstance(metadata[0], dict) or not metadata[0].get("Layers")
-          or not isinstance(metadata[0]["Layers"], list)
-          or any(not isinstance(name, str) or name not in regular_files
-                 for name in [metadata[0].get("Config"), *metadata[0]["Layers"]])):
-        raise ValueError(f"Image archive lacks its Docker config/layers: {path.name}")
-
+            return subprocess.run([*command, *args], env=env, check=True, capture_output=True, text=True).stdout.strip()
+        if run('--version') != f'quazonai {version}':
+            raise ValueError('Extracted CLI version differs from the release tag.')
+        help_text = run('--help')
+        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions')):
+            raise ValueError('Extracted CLI lacks workbench commands.')
+        json.loads(run('schema', 'list'))
+        json.loads(run('schema', 'list', '--domain'))
 
 def read_manifest(destination: Path) -> dict:
-    regular(destination / "release.json", 4 * 1024**2)
-    manifest = json.loads((destination / "release.json").read_text(encoding="utf-8"))
-    identity(manifest["version"], manifest["revision"])
+    manifest = json.loads((destination / 'release.json').read_text())
+    identity(manifest['version'], manifest['revision'])
+    if manifest['schema_version'] != 4:
+        raise ValueError('Node deployment requires schema version 4.')
     return manifest
 
-
 def readme(manifest: dict) -> str:
-    version, revision = manifest["version"], manifest["revision"]
-    base = f"https://github.com/{REPOSITORY}/releases/download/{version}"
-    return f"""# QuaZonai {version}
+    version = manifest['version']
+    base = f'https://github.com/{REPOSITORY}/releases/download/{version}'
+    return f'''# QuaZonai {version}
 
-Source revision: `{revision}`. Every command below installs or updates this exact
-release using prebuilt binaries and images; no local compilation or image build.
+Source revision: `{manifest['revision']}`. Prebuilt Node application, scientific
+image and four JS CLI archives with official Node {NODE_VERSION}; no host Node/npm.
 
-## Install or update
+Linux x86_64 (Docker Compose) or macOS (CLI): download `{base}/install.sh`,
+then run `bash install.sh`. Add `--cli-only` for a remote Linux client and
+`--directory PATH` for an existing non-default installation.
+Windows x86_64: download `{base}/install.ps1`, then run it with PowerShell.
 
-Linux x86_64: install/update the Docker cluster and native CLI. Requires Bash 4.4+,
-curl, tar, awk, GNU coreutils, util-linux, rootful Docker with Compose v2, and
-a working systemd user manager (including systemd-socket-activate).
-Run as the installation owner; preserve the installation directory when updating.
+`quazonai --version` prints `quazonai {version}`. Use `quazonai login --help`.
+The application listens at http://localhost:8081 by default; perform initial
+password setup in the browser. Configure original datasets and provider env;
+installation does not perform model inference or qualify evidence.
 
-```sh
-sh -c 'f=$(mktemp) || exit; cleanup() {{ rm -f -- "$f"; }}; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" {base}/install.sh && bash "$f" "$@"' sh
-```
-
-macOS Intel or Apple Silicon: install/update the native CLI for a remote QuaZonai
-service (requires Bash 3.2+, curl, tar and standard Unix tools; the Docker cluster runs on Linux x86_64).
-The same CLI-only command also works on Linux x86_64:
-
-```sh
-sh -c 'f=$(mktemp) || exit; cleanup() {{ rm -f -- "$f"; }}; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" {base}/install.sh && bash "$f" "$@"' sh --cli-only
-```
-
-Windows x86_64, PowerShell: install/update the native CLI for a remote service.
-
-```powershell
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing '{base}/install.ps1').Content))
-```
-
-Check `quazonai --version` after installation; it must print `quazonai {version}`.
-Use `quazonai client login --help` to connect to your service. First installation
-still requires account setup and external scientific data configuration.
-
-## Contents
-
-The release includes four native CLI archives, application/scientific Runtime/
-Codex/PostgreSQL images, the deployment bundle, manifest and installers. CLI
-archives contain the binary and LICENSE, NOTICE and THIRD_PARTY_NOTICES.md.
-`SHA256SUMS` verifies every downloadable asset except the checksum file itself.
-The shell installer validates versions and archive structure without a file checksum check.
-It needs no Python, Node.js or jq and performs no automatic package installation or sudo.
-The complete script is downloaded before execution; failed downloads are cleaned up.
-
-Read the [deployment guide](https://github.com/{REPOSITORY}/blob/{version}/deploy/docker/README.md)
-for prerequisites, custom directories, backup and recovery. For an existing
-non-default installation, pass `--directory PATH` to the Linux installer.
-"""
-
+Preserve the installation root, configuration, SQLite, keys, PostgreSQL,
+modules, journals and backups. Automatic migration of legacy Rust/PG Workers
+is explicitly unsupported until their active science/downstream work and auth
+archive have a reviewed cutover. No old service or data is silently replaced.
+See the deployment bundle README for stopped backup/restore and update commands.
+'''
 
 def prepare(destination: Path) -> None:
     manifest = read_manifest(destination)
-    for name in set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()) | {"quazonai-deploy.tar.gz"}:
-        regular(destination / name)
-    for name in ("install.sh", "install.ps1"):
-        template = (ROOT / "deploy" / name).read_text(encoding="utf-8")
-        if MARKER not in template:
-            raise ValueError(f"Installer template has no release version marker: {name}")
-        (destination / name).write_text(template.replace(MARKER, manifest["version"]), encoding="utf-8", newline="\n")
-    (destination / "README.md").write_text(readme(manifest), encoding="utf-8", newline="\n")
-    (destination / "SHA256SUMS").write_text("".join(
-        f"{sha256(destination / name)}  {name}\n" for name in sorted(REQUIRED_ASSETS - {"SHA256SUMS"})), encoding="ascii")
+    for name in ('install.sh', 'install.ps1'):
+        (destination / name).write_text((ROOT / 'deploy' / name).read_text().replace(MARKER, manifest['version']), newline='\n')
+    (destination / 'README.md').write_text(readme(manifest))
     verify(destination)
-
 
 def verify(destination: Path) -> dict:
     for name in REQUIRED_ASSETS:
         regular(destination / name)
     manifest = read_manifest(destination)
-    sums = {}
-    for line in (destination / "SHA256SUMS").read_text(encoding="ascii").splitlines():
-        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)", line)
-        if not match or match[2] in sums:
-            raise ValueError("Invalid or duplicated checksum entry.")
-        sums[match[2]] = match[1]
-    if set(sums) != REQUIRED_ASSETS - {"SHA256SUMS"}:
-        raise ValueError("The checksum file must cover every required asset exactly once.")
-    for name, digest in sums.items():
-        if sha256(destination / name) != digest:
-            raise ValueError(f"Release asset checksum failed: {name}")
     for platform, name in CLI_ARCHIVES.items():
         check_cli_archive(destination / name, platform)
-    check_tar(destination / "quazonai-deploy.tar.gz", manifest=manifest)
-    for name in IMAGE_ARCHIVES.values():
-        check_tar(destination / name)
-    for name in ("install.sh", "install.ps1", "README.md"):
-        content = (destination / name).read_text(encoding="utf-8")
-        if MARKER in content or manifest["version"] not in content:
-            raise ValueError(f"Release instructions are not pinned to the tag: {name}")
+    with tarfile.open(destination / 'quazonai-deploy.tar.gz', 'r:gz') as archive:
+        if set(archive.getnames()) != DEPLOY_FILES or json.load(archive.extractfile('release.json')) != manifest:
+            raise ValueError('Deployment bundle does not match release.json.')
+    for name in ('install.sh', 'install.ps1', 'README.md'):
+        content = (destination / name).read_text()
+        if MARKER in content or manifest['version'] not in content:
+            raise ValueError(f'Unpinned release instructions: {name}')
     return manifest
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    pack = commands.add_parser("pack-cli")
-    pack.add_argument("--binary", type=Path, required=True)
-    pack.add_argument("--output", type=Path, required=True)
-    pack.add_argument("--platform", choices=CLI_ARCHIVES, required=True)
-    pack.add_argument("--version", required=True)
-    pack.add_argument("--revision", required=True)
-    smoke = commands.add_parser("smoke-cli")
-    smoke.add_argument("--archive", type=Path, required=True)
-    smoke.add_argument("--platform", choices=CLI_ARCHIVES, required=True)
-    smoke.add_argument("--version", required=True)
-    for name in ("prepare", "verify"):
-        command = commands.add_parser(name)
-        command.add_argument("--output", type=Path, required=True)
+    commands = parser.add_subparsers(dest='command', required=True)
+    pack = commands.add_parser('pack-cli')
+    pack.add_argument('--runtime', type=Path, required=True)
+    pack.add_argument('--output', type=Path, required=True)
+    pack.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
+    pack.add_argument('--version', required=True)
+    pack.add_argument('--revision', required=True)
+    smoke = commands.add_parser('smoke-cli')
+    smoke.add_argument('--archive', type=Path, required=True)
+    smoke.add_argument('--platform', choices=CLI_ARCHIVES, required=True)
+    smoke.add_argument('--version', required=True)
+    for name in ('prepare', 'verify'):
+        commands.add_parser(name).add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "pack-cli":
-        print(pack_cli(args.binary, args.platform, args.output, args.version, args.revision))
-    elif args.command == "smoke-cli":
-        smoke_cli(args.archive, args.platform, args.version)
-    elif args.command == "prepare":
-        prepare(args.output)
-    else:
-        verify(args.output)
+    if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision))
+    elif args.command == 'smoke-cli': smoke_cli(args.archive, args.platform, args.version)
+    elif args.command == 'prepare': prepare(args.output)
+    else: verify(args.output)
 
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__': main()

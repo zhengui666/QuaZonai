@@ -4,7 +4,6 @@ import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import wabtFactory from 'wabt';
 import { object } from '../src/trials.ts';
@@ -43,7 +42,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
   const memoryKiB = executionLimit('QZ_FACTOR_MEMORY_MB', 2048) * 1024;
   if (!Number.isSafeInteger(memoryKiB)) throw new Error('QZ_FACTOR_MEMORY_MB_invalid');
   const timeout = executionLimit('QZ_FACTOR_TIMEOUT_SECONDS', 120);
-  const directory = await mkdtemp(join(tmpdir(), 'qz-factor-'));
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
   const env = new NodeExecutionEnv({ cwd: directory });
   try {
     const module = wabt.parseWat('factor.wat', model);

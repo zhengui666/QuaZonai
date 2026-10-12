@@ -1,4 +1,4 @@
-name: Portable CLI
+name: Portable Node CLI
 on:
   workflow_call:
     inputs:
@@ -10,100 +10,74 @@ on:
         type: string
 permissions:
   contents: read
-concurrency:
-  group: portable-cli-${{ inputs.version || (github.ref == 'refs/heads/dev' && github.sha || github.ref) }}
-  cancel-in-progress: true
 jobs:
-  native:
-    name: CLI / ${{ matrix.platform }}
+  package:
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: linux-x86_64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            executable: quazonai
-            archive: quazonai-cli-linux-x86_64.tar.gz
-          - platform: macos-x86_64
-            runner: macos-15-intel
-            target: x86_64-apple-darwin
-            executable: quazonai
-            archive: quazonai-cli-macos-x86_64.tar.gz
-          - platform: macos-aarch64
-            runner: macos-15
-            target: aarch64-apple-darwin
-            executable: quazonai
-            archive: quazonai-cli-macos-aarch64.tar.gz
-          - platform: windows-x86_64
-            runner: windows-2025
-            target: x86_64-pc-windows-msvc
-            executable: quazonai.exe
-            archive: quazonai-cli-windows-x86_64.zip
+          - {platform: linux-x86_64, runner: ubuntu-22.04, node: linux-x64, suffix: tar.gz}
+          - {platform: macos-x86_64, runner: macos-15-intel, node: darwin-x64, suffix: tar.gz}
+          - {platform: macos-aarch64, runner: macos-15, node: darwin-arm64, suffix: tar.gz}
+          - {platform: windows-x86_64, runner: windows-2025, node: win-x64, suffix: zip}
     env:
-      RUSTUP_TOOLCHAIN: '1.98.1'
-      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
-      EXPECTED_HEAD: ${{ inputs.revision || github.event.pull_request.head.sha || github.sha }}
-      QUAZONAI_VERSION: ${{ inputs.version || format('v0.0.0-ci.{0}', github.run_id) }}
-      PYTHONDONTWRITEBYTECODE: '1'
+      VERSION: ${{ inputs.version }}
+      REVISION: ${{ inputs.revision }}
+      NODE_VERSION: '22.19.0'
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ env.EXPECTED_HEAD }}
+          ref: ${{ inputs.revision }}
           persist-credentials: false
-      - name: Check exact-source native client and build its binary
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: apps/cli/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Fetch the official pinned platform runtime, not a custom executable
+        env:
+          NODE_PLATFORM: ${{ matrix.node }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target '${{ matrix.target }}'
-          cargo test --locked -p quazonai-cli --target '${{ matrix.target }}'
-          cargo build --locked --release -p quazonai-cli --bin quazonai --target '${{ matrix.target }}'
-      - name: Verify the portable packager
-        run: python -B -m unittest discover -s deploy -p 'package_test.py' -v
-      - name: Package and execute the extracted release binary
-        run: |
-          set -euo pipefail
-          python -B deploy/package.py pack-cli \
-            --binary 'target/${{ matrix.target }}/release/${{ matrix.executable }}' \
-            --platform '${{ matrix.platform }}' --version "$QUAZONAI_VERSION" \
-            --revision "$EXPECTED_HEAD" --output "$RUNNER_TEMP/cli-assets"
-          python -B deploy/package.py smoke-cli \
-            --archive "$RUNNER_TEMP/cli-assets/${{ matrix.archive }}" \
-            --platform '${{ matrix.platform }}' --version "$QUAZONAI_VERSION"
-      - name: Verify Unix installation and update without builds
-        if: runner.os != 'Windows'
-        run: |
-          set -euo pipefail
-          if [ "$RUNNER_OS" = macOS ]; then
-            # Linux dispatch fixtures need the Linux stack's Bash prerequisite.
-            # Keep /bin/bash and PATH unchanged for native macOS CLI coverage.
-            stack_bash="$(brew --prefix)/bin/bash"
-            if ! "$stack_bash" -c '[[ ${BASH_VERSINFO[0]} -gt 4 || ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -ge 4 ) ]]' 2>/dev/null; then
-              brew install bash
-            fi
-            stack_bash="$(brew --prefix bash)/bin/bash"
-            "$stack_bash" -c '[[ ${BASH_VERSINFO[0]} -gt 4 || ( ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -ge 4 ) ]]'
-            export QUAZONAI_TEST_LINUX_BASH="$stack_bash"
+          curl --fail --location --retry 3 --max-time 180 \
+            --output "$RUNNER_TEMP/node.$SUFFIX" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-$NODE_PLATFORM.$SUFFIX"
+          if [[ "$SUFFIX" == zip ]]; then
+            python -m zipfile -e "$RUNNER_TEMP/node.zip" "$RUNNER_TEMP"
+          else
+            tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
           fi
-          node --test deploy/install.test.mjs
-      - name: Verify Linux shell deployment recovery boundaries
-        if: runner.os == 'Linux'
+      - name: Package JS/dependencies and execute the extracted distribution
+        env:
+          NODE_PLATFORM: ${{ matrix.node }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
-          node --test deploy/docker/manage_shell.test.mjs
-      - name: Verify native Windows installation and update without builds
+          python -B deploy/package.py pack-cli --runtime "$RUNNER_TEMP/node-v$NODE_VERSION-$NODE_PLATFORM" \
+            --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
+          python -B deploy/package.py smoke-cli --archive "$RUNNER_TEMP/cli-assets/quazonai-cli-$PLATFORM.$SUFFIX" \
+            --platform "$PLATFORM" --version "$VERSION"
+      - name: Unix installer with the real archive and no host Node
+        if: runner.os != 'Windows'
+        env:
+          QZ_TEST_CLI_ARCHIVE: ${{ runner.temp }}/cli-assets/quazonai-cli-${{ matrix.platform }}.tar.gz
+          QZ_TEST_CLI_VERSION: ${{ inputs.version }}
+        run: node --test deploy/install.test.mjs
+      - name: Windows installer with the real bundled Node
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./deploy/install.test.ps1 -Binary 'target/${{ matrix.target }}/release/${{ matrix.executable }}'
+        run: ./deploy/install.test.ps1 -Archive "$env:RUNNER_TEMP/cli-assets/quazonai-cli-windows-x86_64.zip" -Version "$env:VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: inputs.version != ''
         with:
           name: cli-${{ inputs.version }}-${{ matrix.platform }}
-          path: ${{ runner.temp }}/cli-assets/${{ matrix.archive }}
-          retention-days: 7
+          path: ${{ runner.temp }}/cli-assets/
+          retention-days: 14
           if-no-files-found: error
-

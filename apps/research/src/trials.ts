@@ -15,6 +15,7 @@ export async function evaluateTrial(
       // A committed scientific failure is settled even if the native safe tool
       // crashed before recording its terminal outcome. Only STARTED may resume.
       if (old.status === 'FAILED') throw new Error(typeof old.error === 'string' ? old.error : 'factor_failed');
+      if (study.final !== null && old.status === 'STARTED') throw new Error('research_already_final');
       return old.status === 'REJECTED' ? { rejected: true } : old.result;
     }
     if (study.final !== null) throw new Error('research_already_final');
@@ -65,6 +66,7 @@ export async function trialFeedback(api: ToolExecutionApi, context: Context, eva
     const result = await evaluate();
     return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, ...result }) }] };
   } catch (error) {
+    if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
     if (!(error instanceof Error) || error.message !== 'trial_budget_exhausted') throw error;
     await api.commit(async (tx) => {
       const study = await tx.doc(Study, api.conversationId);

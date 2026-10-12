@@ -11,9 +11,9 @@ permissions:
 jobs:
   build:
     if: github.repository == 'zhengui666/QuaZonai'
-    # Keep the original published schema-2 sandbox intact during upgrade acceptance.
+    # Manual branch source build; native outputs are shared by both images.
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - name: Check out the workflow's container action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -31,7 +31,7 @@ jobs:
           ref: ${{ format('refs/heads/{0}', inputs.source_branch) }}
           path: source
           persist-credentials: false
-      - name: Freeze source revision and unique dev tag
+      - name: Record source revision and unique dev tag
         id: source
         working-directory: source
         run: |

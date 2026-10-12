@@ -1,34 +1,21 @@
 name: Container
-# Optional focused acceptance; ordinary PR/push validation is Rust CI.
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
 concurrency:
-  group: container-${{ github.ref == 'refs/heads/dev' && github.sha || github.ref }}
+  group: container-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  build-smoke:
-    name: Container / install, update and recovery
-    # Published schema-2 bwrap needs an unrestricted native userns host;
-    # avoid changing global AppArmor policy solely to bootstrap upgrade tests.
+  source-build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
-      - name: Record probe-only deadline within the existing job budget
-        id: probe-budget
-        run: echo "deadline=$(( $(date +%s) + 119 * 60 ))" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/container
         with:
-          image: quazonai-ci:${{ github.event.pull_request.head.sha || github.sha }}
-          revision: ${{ github.event.pull_request.head.sha || github.sha }}
+          image: quazonai-ci:${{ github.sha }}
+          revision: ${{ github.sha }}
           version: ci
-          verify-native-input-cache: 'true'
-          native-probe-deadline: ${{ steps.probe-budget.outputs.deadline }}
-          cache-native-dependencies: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'pull_request' && github.base_ref == 'dev') }}
-

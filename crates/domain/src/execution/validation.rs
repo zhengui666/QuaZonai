@@ -25,29 +25,6 @@ fn checked_fold_count(groups: usize, test_groups: usize) -> Result<usize> {
     Ok(count)
 }
 
-pub fn capabilities(
-    value: &contracts::runtime::RuntimeCapabilitiesV1,
-) -> Result<(), crate::DomainError> {
-    if !value.label_interval_support.fixed_bars
-        || !value
-            .artifact_schemas
-            .iter()
-            .any(|s| s.name == "qz.alpha_validation" && s.version == "1")
-        || [
-            ("solow-cv", "0.7.3"),
-            ("ndarray-stats", "0.7.0"),
-            ("linregress", "0.5.4"),
-        ]
-        .into_iter()
-        .any(|(name, version)| value.engine_versions.get(name).map(String::as_str) != Some(version))
-    {
-        return Err(crate::DomainError::CapabilityUnavailable(
-            "native_alpha_validation",
-        ));
-    }
-    Ok(())
-}
-
 /// Executable parameter bounds shared by Brief admission and the native task.
 /// This does not assert that unseen market rows contain enough eligible samples.
 pub fn policy_parameters(policy: &SplitPolicyV1, horizon: u64) -> Result<(), crate::DomainError> {

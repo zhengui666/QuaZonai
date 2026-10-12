@@ -5,6 +5,7 @@ import { object, studyInput } from '../src/trials.ts';
 import { runFactor } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
+import { finalizeGroup } from './heldout-group.ts';
 
 export default defineExtension({
   name: 'qz.heldout-wasm',
@@ -38,5 +39,5 @@ export default defineExtension({
       }
       return { content: [{ type: 'text', text: 'Research ended. Selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
     },
-  })],
+  }), finalizeGroup],
 });

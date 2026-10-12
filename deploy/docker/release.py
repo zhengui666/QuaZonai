@@ -20,8 +20,8 @@ import time
 
 from release_support import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, run, validate_manifest, version, version_precedence
 
-# Routine source validation is the Rust workflow. Image/CLI production and
-# installation remain in release-version.yml after this prerequisite succeeds.
+# Exact-push core CI owns the tested native release artifacts. Publication does
+# not rerun Rust regression for dev or rebuild those binaries.
 CI_PATHS = {".github/workflows/ci.yml"}
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
 
@@ -49,7 +49,7 @@ def ci_runs(revision: str) -> dict:
     for page in api(f"actions/runs?head_sha={revision}&per_page=100", pages=True):
         for item in page["workflow_runs"]:
             path = item["path"]
-            if path in CI_PATHS and item["head_sha"] == revision:
+            if path in CI_PATHS and item["head_sha"] == revision and item.get("event") == "push":
                 current = latest.get(path)
                 if current is None or item["id"] > current["id"]:
                     latest[path] = item
@@ -60,6 +60,13 @@ def ci_ready(revision: str) -> bool:
     latest = ci_runs(revision)
     return all(path in latest and latest[path]["status"] == "completed"
                and latest[path]["conclusion"] == "success" for path in CI_PATHS)
+
+
+def ci_run_id(revision: str) -> int:
+    runs = ci_runs(revision)
+    if not all(path in runs and runs[path]["status"] == "completed" and runs[path]["conclusion"] == "success" for path in CI_PATHS):
+        raise ValueError("Successful exact-push core CI is required; rerun CI if its artifacts expired.")
+    return runs[".github/workflows/ci.yml"]["id"]
 
 
 def tag_revision(tag: str) -> str:
@@ -181,7 +188,7 @@ def verify(tag: str, revision: str) -> None:
 def bundle(tag: str, revision: str, image: str, destination: Path, *,
            runtime_image: str, published: bool = False) -> dict:
     release = validate_manifest({
-        "schema_version": 3, "version": tag, "revision": revision,
+        "schema_version": 4, "version": tag, "revision": revision,
         "image": image, "database_image": DATABASE_IMAGE,
         "runtime_image": runtime_image,
     }, published=published)
@@ -231,8 +238,7 @@ def publish(assets: Path) -> None:
         for name in package.REQUIRED_ASSETS:
             item = uploaded_assets.get(name)
             if (item is None or item.get("state") != "uploaded"
-                    or item["size"] != (assets / name).stat().st_size
-                    or item.get("digest") != "sha256:" + package.sha256(assets / name)):
+                    or item["size"] != (assets / name).stat().st_size):
                 raise ValueError(f"GitHub did not confirm the complete uploaded asset: {name}")
         run(["gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=false", "--latest=false",
              f"--prerelease={'true' if '-' in tag else 'false'}", "--notes-file", str(notes_file)])
@@ -286,7 +292,7 @@ def push_image(image: str, repository: str, tag: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["select", "verify", "bundle", "publish", "push-images", "dev-tag", "wait-ci", "archive-images"])
+    parser.add_argument("command", choices=["select", "verify", "bundle", "publish", "push-images", "dev-tag", "wait-ci", "ci-run", "archive-images"])
     parser.add_argument("--version")
     parser.add_argument("--revision")
     parser.add_argument("--image")
@@ -302,6 +308,16 @@ def main() -> None:
                 stream.write(f"version={tag}\n")
     elif args.command == "wait-ci":
         wait_ci(args.revision)
+        run_id = ci_run_id(args.revision)
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+                stream.write(f"ci_run_id={run_id}\n")
+    elif args.command == "ci-run":
+        run_id = ci_run_id(args.revision)
+        print(run_id)
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+                stream.write(f"ci_run_id={run_id}\n")
     elif args.command == "archive-images":
         archive_images(args.output)
     elif args.command == "select":

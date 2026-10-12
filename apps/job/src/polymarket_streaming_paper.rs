@@ -113,19 +113,18 @@ pub struct PolymarketStreamingPaper {
     completed_batches: u64,
     native_started: bool,
     quote_covered_through: Option<u64>,
-    capital_exit: Option<crate::paper_capital_exit::NativePaperCapitalExit>,
 }
 
 impl PolymarketStreamingPaper {
-    pub(crate) fn session_id(&self) -> String {
+    pub fn session_id(&self) -> String {
         self.engine.instance_id().to_string()
     }
 
-    pub(crate) fn consumed_targets(&self) -> usize {
+    pub fn consumed_targets(&self) -> usize {
         self.replay.borrow().consumed
     }
 
-    pub(crate) fn has_started(&self) -> bool {
+    pub fn has_started(&self) -> bool {
         self.native_started
     }
 
@@ -146,43 +145,16 @@ impl PolymarketStreamingPaper {
             target,
             instruments,
             bar_types,
-            None,
         )
     }
 
-    #[cfg(all(test, feature = "native-paper-test"))]
-    pub(crate) fn new_managed(
+    fn new_inner(
         account_start: &FreshPaperCashV1,
         settings: &NativeSimulationSettingsV1,
         constraints: &PortfolioConstraintsV1,
         target: NativeTargetPointV1,
         instruments: Vec<InstrumentAny>,
         bar_types: Vec<BarType>,
-        claim: &contracts::strategy_portfolio::HandoffClaimViewV2,
-        stable_volume: &std::path::Path,
-    ) -> Result<Self> {
-        Self::new_inner(
-            account_start,
-            settings,
-            constraints,
-            target,
-            instruments,
-            bar_types,
-            Some((claim, stable_volume)),
-        )
-    }
-
-    pub(crate) fn new_inner(
-        account_start: &FreshPaperCashV1,
-        settings: &NativeSimulationSettingsV1,
-        constraints: &PortfolioConstraintsV1,
-        target: NativeTargetPointV1,
-        instruments: Vec<InstrumentAny>,
-        bar_types: Vec<BarType>,
-        managed: Option<(
-            &contracts::strategy_portfolio::HandoffClaimViewV2,
-            &std::path::Path,
-        )>,
     ) -> Result<Self> {
         ensure!(
             account_start.account_id == "POLYMARKET-001"
@@ -260,7 +232,6 @@ impl PolymarketStreamingPaper {
         let mut engine = BacktestEngine::new(config)?;
         let fee_model = crate::prediction::fee_model(settings);
         let fill_fees = crate::prediction::FillFeeObserver::default();
-        let mut capital_exit = None;
         let built = (|| -> Result<Rc<RefCell<ReplayStatus>>> {
             engine.add_venue(
                 SimulatedVenueConfig::builder()
@@ -316,23 +287,6 @@ impl PolymarketStreamingPaper {
                 settings.base_currency.clone(),
                 settings.exposure_tolerance.clone(),
             );
-            if let Some((claim, root)) = managed {
-                ensure!(
-                    metadata.series.len() == 1,
-                    "capital_exit_paper_single_instrument_required"
-                );
-                let native = crate::paper_capital_exit::NativePaperCapitalExit::attach(
-                    &engine,
-                    metadata.series[0].instrument.id(),
-                    settings,
-                    fee_model.clone(),
-                    claim,
-                    root,
-                )?;
-                strategy.require_capital_exit_gate(native.gate(), claim)?;
-                strategy.await_capital_exit_source();
-                capital_exit = Some(native);
-            }
             // The official engine creates a new Cash account and never restores
             // state; the existing LiveNode-only Margin assertion is not reused.
             engine.add_strategy(strategy)?;
@@ -356,35 +310,7 @@ impl PolymarketStreamingPaper {
             completed_batches: 0,
             native_started: false,
             quote_covered_through: None,
-            capital_exit,
         })
-    }
-
-    /// Called only by this engine's existing owner thread, between original
-    /// source batches. Neither control dispatch nor the queue drain advances
-    /// the native clock, adds a quote, or runs a matching pass.
-    pub(crate) fn control_capital_exit(
-        &mut self,
-        request: crate::paper_capital_exit::NativeRequest,
-    ) -> Result<crate::paper_capital_exit::NativeResponse> {
-        ensure!(self.native_started, "capital_exit_native_not_started");
-        let native = self
-            .capital_exit
-            .as_mut()
-            .ok_or_else(|| anyhow!("capital_exit_paper_owner_not_configured"))?;
-        let result = native.handle(&self.engine, request, self.failure.is_none());
-        nautilus_common::runner::drain_trading_cmd_queue();
-        result
-    }
-
-    pub(crate) fn capital_exit_deadline(&mut self) -> Result<()> {
-        if self.native_started {
-            if let Some(native) = &mut self.capital_exit {
-                native.deadline()?;
-                nautilus_common::runner::drain_trading_cmd_queue();
-            }
-        }
-        Ok(())
     }
 
     fn stop_accounting(&mut self, error: anyhow::Error) -> anyhow::Error {
@@ -585,15 +511,6 @@ impl PolymarketStreamingPaper {
         {
             self.stop_accounting(anyhow!("PAPER_STREAM_NATIVE_SNAPSHOTS_UNAVAILABLE"));
         }
-        let terminal_capital_observation = self.capital_exit.as_mut().and_then(|owner| match owner
-            .handle(
-                &self.engine,
-                crate::paper_capital_exit::NativeRequest::Observe,
-                false,
-            ) {
-            Ok(crate::paper_capital_exit::NativeResponse::Observation(value)) => Some(value),
-            _ => None,
-        });
         if let Err(error) = self.fill_fees.check() {
             self.stop_accounting(error);
         }
@@ -634,11 +551,6 @@ impl PolymarketStreamingPaper {
                 "last_px": failure.price.to_string(),
             });
         }
-        if self.capital_exit.is_some() {
-            report["capital_exit_terminal_observation"] = json!(terminal_capital_observation);
-            report["capital_exit_silent_market_semantics"] =
-                json!("CANCELLATION_REQUESTED_WAIT_FOR_ORIGINAL_NATIVE_TERMINAL_NO_CLOCK_ADVANCE");
-        }
         Ok(report)
     }
 }
@@ -650,10 +562,6 @@ impl Drop for PolymarketStreamingPaper {
         self.engine.dispose();
     }
 }
-
-#[cfg(all(test, feature = "native-paper-test"))]
-#[path = "../tests/support/polymarket_capital_exit.rs"]
-mod capital_exit_tests;
 
 #[cfg(test)]
 mod tests {

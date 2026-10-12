@@ -3,8 +3,6 @@ pub mod account_observation_cli;
 pub mod account_observer;
 pub mod bounded;
 pub mod capital_exit_gate;
-#[cfg(feature = "native-paper")]
-pub mod capital_exit_transport;
 pub mod catalog;
 pub mod experiment;
 pub mod factors;
@@ -20,20 +18,10 @@ pub mod native_node_observer;
 pub mod operator;
 mod optimization;
 #[cfg(feature = "native-paper")]
-mod paper_capital_exit;
-#[cfg(feature = "native-paper")]
-mod paper_claim_store;
-#[cfg(feature = "native-paper")]
 pub mod paper_node;
-#[cfg(feature = "native-paper")]
-pub mod paper_service;
 #[cfg(feature = "native-node-observer")]
 pub mod polymarket_data_probe;
 pub mod polymarket_execution_preflight;
-#[cfg(feature = "native-paper")]
-pub mod polymarket_paper_host;
-#[cfg(feature = "native-paper")]
-pub mod polymarket_paper_service;
 #[cfg(any(
     feature = "native-paper",
     all(feature = "catalog-prepare", feature = "polymarket-history")

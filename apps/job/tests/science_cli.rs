@@ -184,3 +184,88 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     let result: NativeSimulationResultV1 = serde_json::from_slice(&recovered.stdout).unwrap();
     assert_eq!(result.consumed_target_points.get(), 2);
 }
+
+fn target_blend_request() -> serde_json::Value {
+    use serde_json::json;
+    let row = |asof: u64| {
+        let point = |a: &str, b: &str, cash: &str, ttl: u64| {
+            json!({
+                "schema_version": 1, "asof_ns": asof.to_string(),
+                "valid_until_ns": (asof + ttl).to_string(),
+                "targets": [
+                    {"instrument_id": "A.SIM", "currency": "USD", "weight": a},
+                    {"instrument_id": "B.SIM", "currency": "USD", "weight": b}
+                ], "cash_weight": cash
+            })
+        };
+        vec![
+            point(
+                "0.10000000000000001",
+                "0.2",
+                "0.69999999999999999",
+                60_000_000_000,
+            ),
+            point("0.7", "0.1", "0.2", 30_000_000_000),
+        ]
+    };
+    json!({"schema_version": 1, "weights": ["0.3", "0.7"],
+        "rows": [row(9_007_199_254_740_993), row(9_007_289_254_740_993)]})
+}
+
+#[test]
+fn native_cli_blend_targets_preserves_exact_decimals_clocks_and_minimum_expiry() {
+    let request = target_blend_request();
+    let output = command(&["blend-targets".as_ref()], &request);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let result: contracts::science::NativeTargetBlendResultV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    let points: Vec<_> = request["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let mut expected = row[1].clone();
+            expected["targets"][0]["weight"] = "0.520000000000000003".into();
+            expected["targets"][1]["weight"] = "0.13".into();
+            expected["cash_weight"] = "0.349999999999999997".into();
+            expected
+        })
+        .collect();
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({"schema_version": 1, "target_points": points})
+    );
+}
+
+#[test]
+fn native_cli_blend_targets_rejects_bad_weights_and_original_point_misalignment() {
+    use serde_json::json;
+    for case in 0..13 {
+        let mut request = target_blend_request();
+        match case {
+            0 => request["rows"] = json!([]),
+            1 => request["rows"][0] = json!([]),
+            2 => {
+                request["rows"][0].as_array_mut().unwrap().pop();
+            }
+            3 => request["weights"] = json!(["0.3", "0.6"]),
+            4 => request["weights"] = json!(["-0.1", "1.1"]),
+            5 => request["weights"] = json!([0.3, 0.7]),
+            6 => request["rows"][0][1]["asof_ns"] = "9007199254740994".into(),
+            7 => request["rows"][0][1]["valid_until_ns"] = request["rows"][0][1]["asof_ns"].clone(),
+            8 => request["rows"][0][1]["targets"][0]["instrument_id"] = "OTHER.SIM".into(),
+            9 => request["rows"][0][1]["targets"][0]["currency"] = "EUR".into(),
+            10 => request["rows"][0][1]["cash_weight"] = "0".into(),
+            11 => request["rows"][0][1]["targets"][0]["weight"] = "-0.1".into(),
+            _ => request["rows"][0][0]["targets"] = json!([]),
+        }
+        let output = command(&["blend-targets".as_ref()], &request);
+        assert_eq!(output.status.code(), Some(1), "case {case}");
+        assert!(output.stdout.is_empty(), "case {case}");
+    }
+}

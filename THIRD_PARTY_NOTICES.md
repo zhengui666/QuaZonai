@@ -1,6 +1,6 @@
 # Third-party notices
 
-Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software keeps upstream licenses. Current dependency inputs are Cargo.toml/Cargo.lock and apps/{web,research}/package.json/package-lock.json. Historical notices remain even when an execution component is retired.
+Original QuaZonai code remains AGPL-3.0-only under LICENSE/NOTICE. Third-party software keeps upstream licenses. Current dependency inputs are Cargo.toml/Cargo.lock and apps/{service,research,cli,web}/package.json/package-lock.json. Historical notices remain even when an execution component is retired.
 
 The selected components below explain integration and attribution. The generated inventory and original lockfiles, not this abbreviated table, identify the complete source dependency set.
 
@@ -14,7 +14,12 @@ The selected components below explain integration and attribution. The generated
 | OpenAI Codex (historical component, retired from production) | Apache-2.0 | Original attribution is retained; no current App Server/image/login dependency |
 | @earendil-works/pi-durable / pi-ai / chord 1.1.0 | MIT | Official persistent Harness, model/providers, conversations, submissions, tasks, extensions, recovery, cancellation, views and usage; normal npm packages, no copied Agent implementation |
 | WABT 1.0.39 | Apache-2.0 | Official published JavaScript bindings for WAT-to-Wasm compilation |
-| PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Native application persistence, transactions and durable work delivery |
+| PostgreSQL / PGMQ | PostgreSQL License / PGMQ upstream license | Preserved historical database, migrations and previous work ledgers; current execution belongs to official Pi Durable |
+| Fastify 5.6.2, @fastify/cookie 11.0.2, @fastify/static 8.3.0 | MIT | Official HTTP, cookie and static-file plugins |
+| argon2 0.44.0 (npm), pg 8.16.3 | MIT | Owner password verification and read-only PostgreSQL archive access |
+| Undici 7.16.0 | MIT | Official Node HTTP client and custom CA support; no automatic write retries |
+| React 19.2.8, Ant Design 6.5.2, TanStack React Query 5.102.8 | MIT | Five-page browser workbench and server-state queries |
+| Apache ECharts 6.1.0 | Apache-2.0 | Display of actual native shared-account curves; no generated returns |
 | axum-0.8.9 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | tower-sessions-0.15.0 | MIT | Rust authentication / HTTP / persistence / CLI integration |
 | tower-sessions-sqlx-store at d18c9bf76f1d4fb73130dbe5aa643197f14b5d2d | MIT | Official SQLx0.9 Postgres adapter; fixed upstream Git revision, not a new published crate release |
@@ -29,6 +34,11 @@ The selected components below explain integration and attribution. The generated
 | time-0.3.47 | MIT OR Apache-2.0 | Native session expiry serialization |
 | rmcp / rmcp-macros 3.2.0 (historical component, retired) | Apache-2.0 | Original attribution retained; old Mission MCP adapter and dependencies are removed |
 | reqwest 0.12.23 | MIT OR Apache-2.0 | Thin fixed-route service/CLI/durable transport; no redirects or automatic writes |
+
+The Rust HTTP/authentication/storage/CLI notices above describe historical
+components; their implementations are retired from the current control plane.
+Node CLI distributions carry the official platform runtime with its upstream
+LICENSE. All installed npm packages retain their original license/NOTICE files.
 
 Research dependencies are exact published official packages in npm lockfiles.
 Their upstream license files remain in the installed packages. Node's built-in
@@ -59,8 +69,9 @@ are not proof that they are linked into a particular executable.
 `migrations/202609060009_native_sessions.sql` reuses the default DDL from
 `tower-sessions-sqlx-store 0.15.0`, upstream commit
 `b34a2f363217c0c557ee332c8847f4e2d1b5e6b4`, `sqlx-store/src/postgres_store.rs`.
-The SQL is executed by SQLx in the deployment transaction; the upstream Rust
-SessionStore remains unmodified. Upstream MIT notice follows:
+The SQL remains in the applied historical PostgreSQL migration ledger. The
+upstream Rust SessionStore was unmodified; it is not a current dependency.
+Upstream MIT notice follows:
 
 MIT License
 

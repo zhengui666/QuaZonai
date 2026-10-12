@@ -242,43 +242,46 @@ extract_files() {
 }
 archive="quazonai-cli-$platform.tar.gz"
 fetch "$base/$archive" "$work/$archive" || fail 'Could not download the CLI archive.'
-extract_files "$work/$archive" "$work/cli" quazonai LICENSE NOTICE THIRD_PARTY_NOTICES.md
-chmod 755 "$work/cli/quazonai"
-actual_version=$("$work/cli/quazonai" --version) || fail 'The downloaded CLI cannot run on this host.'
+# Distribution members are regular JS/dependency/license files and bundled Node.
+tar -tzf "$work/$archive" > "$work/members" || fail 'Invalid CLI archive.'
+LC_ALL=C awk '$0 ~ /^\// || $0 ~ /(^|\/)\.\.(\/|$)/ || $0 ~ /\\/ {exit 1}' "$work/members" || fail 'Invalid CLI archive paths.'
+tar -tvzf "$work/$archive" | LC_ALL=C awk 'substr($0,1,1)!="-" {exit 1}' || fail 'CLI archive members must be regular files.'
+mkdir "$work/cli"
+tar -xzf "$work/$archive" -C "$work/cli" || fail 'Could not extract JS/Node CLI.'
+test -f "$work/cli/runtime/node" && test -f "$work/cli/app/apps/cli/src/main.ts" && test -f "$work/cli/distribution.json" || fail 'Incomplete JS/Node CLI.'
+chmod 755 "$work/cli/quazonai" "$work/cli/runtime/node"
+actual_version=$("$work/cli/quazonai" --version) || fail 'The bundled Node CLI cannot run on this host.'
 [ "$actual_version" = "quazonai $version" ] || fail 'Downloaded CLI does not match the requested tag.'
-mkdir -p -- "$bin_directory"
-bin_directory=$(cd -- "$bin_directory" && pwd -P)
-[ ! -d "$bin_directory/quazonai" ] || fail 'The CLI destination is a directory.'
-staged=$(mktemp "$bin_directory/.quazonai.XXXXXX")
-cp "$work/cli/quazonai" "$staged"
-chmod 755 "$staged"
 if ! "$cli_only"; then
   fetch "$base/quazonai-deploy.tar.gz" "$work/quazonai-deploy.tar.gz" || fail 'Could not download the deployment bundle.'
   extract_files "$work/quazonai-deploy.tar.gz" "$work/deployment" \
-    manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md runtime.sh .env.example
+    manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md .env.example
   release_version=$(json_read field "$work/deployment/release.json" version) || fail 'Invalid deployment manifest.'
-  [ "$release_version" = "$version" ] || fail 'Downloaded deployment bundle does not match the requested tag.'
-  pending=''
-  if [ -e "$directory/pending.json" ] || [ -L "$directory/pending.json" ]; then
-    pending=$(json_read field "$directory/pending.json" operation) || fail 'Invalid pending installation record; preserve it for recovery.'
-    [ -f "$directory/installation.json" ] && { [ "$pending" = install ] || [ "$pending" = update ]; } || fail 'Preserve and reconcile the interrupted installation before retrying.'
+  [ "$release_version" = "$version" ] || fail 'Deployment bundle does not match the requested tag.'
+  command=deploy
+  if [ -f "$directory/installation.json" ]; then
+    command=apply-update
+    if [ -f "$directory/pending.json" ]; then
+      pending=$(json_read field "$directory/pending.json" operation) || fail 'Invalid pending installation record.'
+      if [ "$pending" = install ]; then command=deploy; fi
+    fi
   fi
-  command=apply-update
-  if [ ! -f "$directory/installation.json" ] || [ "$pending" = install ] || { [ -z "$pending" ] && [ ! -L "$directory/current" ]; }; then
-    command=deploy
-  fi
-  # Use the NEW manager even when the old installation used Python. The old
-  # update.sh cannot unpack this new bundle file set. No existing state is copied.
   bash "$work/deployment/manage.sh" "$command" --directory "$directory" ${deployment_args[@]+"${deployment_args[@]}"}
 fi
-licenses="$HOME/.local/share/quazonai-cli/licenses/$version"
-mkdir -p -- "$licenses"
-cp "$work/cli/LICENSE" "$work/cli/NOTICE" "$work/cli/THIRD_PARTY_NOTICES.md" "$licenses/"
-# Both paths are on the same filesystem; a failed download/deploy leaves the old CLI.
+cli_parent="$HOME/.local/share/quazonai-cli/releases/$version"
+cli_root="$cli_parent/$platform"
+mkdir -p -- "$cli_parent" "$bin_directory"
+if [ ! -d "$cli_root" ]; then
+  distribution=$(mktemp -d "$cli_parent/.distribution.XXXXXX")
+  cp -R "$work/cli/." "$distribution/"
+  mv -- "$distribution" "$cli_root"
+fi
+[ "$("$cli_root/quazonai" --version)" = "quazonai $version" ] || fail 'Preserve incomplete CLI distribution before retrying.'
+bin_directory=$(cd -- "$bin_directory" && pwd -P)
+staged=$(mktemp "$bin_directory/.quazonai.XXXXXX")
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$cli_root/quazonai" > "$staged"
+chmod 755 "$staged"
 mv -f -- "$staged" "$bin_directory/quazonai"
 staged=''
-printf 'Installed QuaZonai CLI from %s: %s/quazonai\n' "$version" "$bin_directory"
-case ":$PATH:" in
-  *":$bin_directory:"*) ;;
-  *) printf 'Add it to your shell PATH: export PATH=%q:"$PATH"\n' "$bin_directory" ;;
-esac
+printf 'Installed bundled Node CLI from %s: %s/quazonai\n' "$version" "$bin_directory"
+case ":$PATH:" in *":$bin_directory:"*) ;; *) printf 'Add to PATH: export PATH=%q:"$PATH"\n' "$bin_directory";; esac

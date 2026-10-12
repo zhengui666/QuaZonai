@@ -2,13 +2,13 @@
 
 ## 定位
 
-单人本机、可扩展、无人值守的 AI 因子研究与 target-only 交付。Rust 科学/事务，Node/TypeScript 官方 Pi Durable 宿主，React/TypeScript 前端；复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ。组合与模拟是可选消费者，不是因子研究前置步骤。
+单人本机、可扩展、无人值守的 AI 研究与 target-only 交付。HTTP、配置、业务编排、CLI、Harness 与 React 前端使用 TypeScript；Rust 只承担必要科学计算、原生引擎与科学合同／校验。复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel 和 Arrow，保留 PostgreSQL 历史与迁移。组合与模拟是可选消费者，不是因子研究前置步骤。
 
 ## 按任务定位
 
 | 改动 | 入口 |
 | --- | --- |
-| 领域、API、数据、组合、Worker、Runtime | [.opensdlc/architecture.md](.opensdlc/architecture.md) 的对应章节与源码链接 |
+| API、研究、科学计算、策略组合、观测 | [.opensdlc/architecture.md](.opensdlc/architecture.md) 的对应章节与源码链接 |
 | 开发环境、合同生成、检查命令 | [.opensdlc/project.md](.opensdlc/project.md#commands) |
 | 镜像发布、运行故障与恢复 | [.opensdlc/operations.md](.opensdlc/operations.md) |
 | 用户安装与更新 | [部署包手册](deploy/docker/README.md) |
@@ -16,7 +16,7 @@
 
 ## 实现边界
 
-Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`，传输与编排属于应用入口。依赖方向见[架构](.opensdlc/architecture.md#modules)。生成文件从原始合同生成，不手改 `contracts/generated/` 或 `apps/web/src/generated/`。
+当前 Wire 类型属于 `packages/contracts`，业务事实和编排属于 TypeScript service，Agent 执行状态属于官方 Pi Durable；必要科学类型／纯校验属于 Rust contracts／domain。依赖方向见[架构](.opensdlc/architecture.md#modules)。派生文件从原合同生成，不手改 `contracts/generated/` 或 `apps/web/src/generated/`。
 
 第三方组件只使用官方包或固定的官方上游修订，不在本仓库保存、复制或修改其实现源码，不通过源码补丁或 fork 替换。适配写在 QuaZonai 中并使用公开 API；官方能力不足时明确拒绝不支持的操作，不伪造成功。保留许可证声明及已应用的数据库兼容迁移。
 

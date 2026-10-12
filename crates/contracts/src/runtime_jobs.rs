@@ -1,4 +1,4 @@
-//! Control-plane-to-runtime wire contracts. Only trusted services can submit these.
+//! Immutable native file-protocol inputs and exact scientific output metadata.
 //! Neither a terminal process nor a declared artifact grants scientific qualification.
 use crate::{
     research::{ArtifactInputRole, DataPartition},
@@ -8,7 +8,6 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
 mod schema;
@@ -76,49 +75,6 @@ pub struct JobSpecV1 {
     pub deadline_at: Option<DateTime<Utc>>,
     #[schema(min_items = 1)]
     pub requested_output_schemas: Vec<RuntimeArtifactSchemaV1>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum RuntimeJobState {
-    Accepted,
-    Running,
-    CancelRequested,
-    Succeeded,
-    Failed,
-    Cancelled,
-}
-impl RuntimeJobState {
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeJobStatusV1 {
-    pub schema_version: SchemaV1,
-    pub run_id: Id,
-    #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
-    pub attempt_no: u32,
-    pub external_job_id: String,
-    pub state: RuntimeJobState,
-    pub has_result: bool,
-    pub submitted_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-}
-
-/// Cancellation is durable even when the original submission has not arrived yet.
-/// The native identity is closed; a later matching or conflicting POST cannot start it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeCancelV1 {
-    pub schema_version: SchemaV1,
-    pub run_id: Id,
-    #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
-    pub attempt_no: u32,
-    pub owner_epoch: Revision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -247,81 +203,4 @@ pub fn native_output_contract(name: &str, version: &str) -> Option<&'static Nati
     NATIVE_OUTPUT_CONTRACTS
         .iter()
         .find(|contract| contract.name == name)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeResourceUsageV1 {
-    pub wall_milliseconds: DbCounter,
-    /// Native cgroup measurement, or null when no exact final sample is available.
-    pub cpu_nanoseconds: Option<DbCounter>,
-    pub peak_memory_bytes: Option<DbCounter>,
-    /// Sum of the immutable output payload sizes, excluding the manifest envelope.
-    pub output_bytes: DbCounter,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum RuntimeFailureClass {
-    RetryableInfra,
-    PermanentConfig,
-    InvalidInput,
-    ResourceLimit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum RuntimeFailureCode {
-    EngineUnavailable,
-    ImageUnavailable,
-    ContractUnsupported,
-    InputUnavailable,
-    InvalidInput,
-    NativeJobFailed,
-    InvalidOutput,
-    CpuLimit,
-    MemoryLimit,
-    OutputLimit,
-    DeadlineExceeded,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeJobErrorV1 {
-    pub class: RuntimeFailureClass,
-    pub code: RuntimeFailureCode,
-    /// A code-derived static message, never native stderr, input text or an HTTP body.
-    #[schema(min_length = 1, max_length = 256)]
-    pub safe_message: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ResultManifestV1 {
-    pub schema_version: SchemaV1,
-    pub run_id: Id,
-    #[schema(minimum = 1, maximum = 4294967295u64, format = Int64)]
-    pub attempt_no: u32,
-    pub external_job_id: String,
-    pub input_set_id: Id,
-    pub state: RuntimeResultState,
-    #[schema(schema_with = crate::runtime::engine_versions_schema)]
-    pub engine_versions: BTreeMap<String, String>,
-    /// Null only when native execution was never started.
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: DateTime<Utc>,
-    pub resource_usage: RuntimeResourceUsageV1,
-    pub artifacts: Vec<RuntimeOutputV1>,
-    pub error: Option<RuntimeJobErrorV1>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeObjectReceiptV1 {
-    pub schema_version: SchemaV1,
-    pub artifact_id: Id,
-    #[schema(min_length = 1, max_length = 120)]
-    pub storage_version: String,
-    #[schema(schema_with = crate::scalars::positive_db_counter_schema)]
-    pub byte_count: DbCounter,
 }

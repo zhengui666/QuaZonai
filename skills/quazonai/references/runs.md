@@ -1,49 +1,24 @@
-# Observe and reconcile Runs
+# Bounded observation and stop
 
-## Find the original Run
-
-Use a Run ID from the original accepted command receipt or `cycle show`. If the user supplied only a project, use `run list --project-id PROJECT_ID --limit 20` with the saved login (or the original scoped connection flags) and resolve the intended Run from returned metadata. `run show RUN_ID` reads its actual state and active Attempt. Do not start another Cycle or switch identities to get a more convenient result.
-
-## Retained Agent history
-
-With the saved owner/device login, use `quazonai client run history RUN_ID --limit 25`
-for an original `AGENT_RESEARCH` Run. This reads its original CODEX session,
-profile metadata, turn/usage facts and project wake facts; it cannot launch,
-resume, configure or cancel the retired Agent. Profile credentials and startup
-paths are not returned. Web exposes the same projection in Run details.
-
-Keep `turns.next_cursor` and `wakes.next_cursor` separately, passing them as
-`--turn-cursor ID` and `--wake-cursor ID` when needed. Null terminal/usage is
-unreported, not cancellation or zero. These original identities are not Durable
-Conversation/Task IDs. Non-Agent Runs have no such history and return 404.
-
-
-## Bounded event observation
+Use the original numeric `conversationId` from the research admission receipt:
 
 ```sh
-quazonai client run watch "$RUN_ID" --max-seconds 30 --max-events 100
+quazonai research get CONVERSATION_ID
+quazonai research watch CONVERSATION_ID --timeout 30
+quazonai research wait CONVERSATION_ID --timeout 30
 ```
 
-The time and event limits above are explicit observation budgets. Both flags are
-optional; omitting one leaves that dimension uncapped. Omit both only when the
-user has requested ongoing observation.
+Timeout units are seconds; the default is 30. Watch emits NDJSON snapshots and a final observation result. Wait returns a result and exit 0 only for native submission `done`, exit 2 for native `unanswered`, or exit 124 when its observation budget ends before settlement. Done means the native submission settled, not that scientific evidence passed. A bounded watch ending normally says nothing about research completion.
 
-Add `--development-http` only for an explicitly configured HTTP connection. After a bounded observation, persist the last verified event ID and explicitly resume when the task still requires it:
+The service must project the original native submission status. If that projection is unavailable, the CLI reports `nativeSubmissionAvailable:false` and cannot declare settlement from IDLE, a final record, HTTP 202 or empty tasks. Report the service capability gap instead of inventing an endpoint or another status store.
+
+Ctrl-C/detachment stops only observation. It does not revoke the original admission, reset budgets or stop scientific work. Read the same research ID again when requested; polling is not a gap-free durable event history.
+
+Only an explicit request to stop work uses:
 
 ```sh
-quazonai client run watch "$RUN_ID" --after "$LAST_EVENT_ID" --max-seconds 30 --max-events 100
+quazonai research stop CONVERSATION_ID
+quazonai research get CONVERSATION_ID
 ```
 
-The cursor is the same Run's `UUIDv7:decimal-sequence`. Keep it verbatim. NDJSON events contain `schema_version`, `event_id` and `event`; the final observation summary contains `watch_ended`, `last_event_id`, `events_received` and `cancellation_requested=false`. That summary is the end of observation, not a terminal business result. After a relevant transition or a stream ending, read `run show` to report the current snapshot.
-
-The CLI does not automatically reconnect. Bounded completion, Ctrl-C and a broken stream never cancel the server Run. Report “still running; observed through cursor …” when appropriate. Respect response limits; do not follow indefinitely without an explicit ongoing task. For an incompatible event or cursor reset, use [recovery](recovery.md); do not fabricate a continuous event history.
-
-## Cancellation is a separate write
-
-Only an explicit cancellation request with current authority may use `run cancel RUN_ID`, native `RunCancelV1`, its original key and required authorization. Durable research instead uses `research stop CONVERSATION_ID`; neither stops work merely by closing an observer.
-
-A cancellation request receipt does not prove the remote process stopped. Continue reconciling the same Run and report the server's observed state. Do not kill host processes or invoke downstream exchange controls. Unknown or late remote outcomes remain unknown until the service reconciles them.
-
-## Completion statement
-
-Use actual Run and Attempt IDs, the observed state, observation time/cursor and returned outputs/failure information. Successful execution is not automatically scientific PASS; read the evaluation and qualification records needed for the user's question in [results](results.md).
+The host invokes native abort for owned work and children. A stop receipt or local process exit still cannot prove an external provider/downstream operation cancelled. Reconcile the original native state and retain unknown/late remote outcomes. Service shutdown suspends native work for reopen; it is not a cancel operation.

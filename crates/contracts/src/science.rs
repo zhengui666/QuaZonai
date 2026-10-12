@@ -154,6 +154,26 @@ pub struct NativeTargetPointV1 {
     pub cash_weight: DecimalValue,
 }
 
+/// Each row contains one original, aligned target point per member weight.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTargetBlendRequestV1 {
+    pub schema_version: SchemaV1,
+    #[schema(min_items = 1)]
+    pub weights: Vec<DecimalValue>,
+    #[schema(min_items = 1)]
+    pub rows: Vec<Vec<NativeTargetPointV1>>,
+}
+
+/// Exact weighted targets and cash; expiry is the minimum original member expiry.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTargetBlendResultV1 {
+    pub schema_version: SchemaV1,
+    #[schema(min_items = 1)]
+    pub target_points: Vec<NativeTargetPointV1>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationRequestV1 {

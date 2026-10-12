@@ -424,24 +424,6 @@ pub fn binary_option_source(
     }
 }
 
-pub fn binary_option_capability(
-    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
-    capabilities: &contracts::runtime::RuntimeCapabilitiesV1,
-) -> Result<(), DomainError> {
-    if context.is_some()
-        && capabilities
-            .engine_versions
-            .get(contracts::settlement::BINARY_OPTION_V2_CAPABILITY)
-            .map(String::as_str)
-            != Some("1")
-    {
-        return Err(DomainError::CapabilityUnavailable(
-            "polymarket_target_policy",
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

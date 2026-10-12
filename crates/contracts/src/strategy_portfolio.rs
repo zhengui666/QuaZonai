@@ -1,14 +1,13 @@
 //! Weight strategies share the existing Alpha, Run, candidate and delivery
 //! aggregates. Their outputs are target weights, never return forecasts.
 use crate::{
-    evidence::AlphaVersionView,
-    portfolio::{AllocationTargetV1, PortfolioConstraintsV1},
+    portfolio::PortfolioConstraintsV1,
     research::{DataOrigin, PitStatus},
     science::{
         FeatureDefinitionV1, NativeBarSelectionV1, NativeSimulationRequestV1,
         NativeSimulationResultV1, NativeSimulationSettingsV1, NativeTargetPointV1,
     },
-    DbCounter, DecimalValue, Id, Revision, SchemaV1,
+    DbCounter, DecimalValue, Id, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,25 +18,6 @@ use utoipa::ToSchema;
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StrategyOutputKindV1 {
     TargetWeight,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyAlphaAdoptV1 {
-    pub schema_version: SchemaV1,
-    pub expected_revision: Revision,
-    #[schema(min_length = 1, max_length = 200)]
-    pub name: String,
-    /// Selects an original fold; its clocks and ordinals are resolved by Store.
-    pub source_fold_index: u16,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyAlphaAdoptIntentV1 {
-    pub schema_version: SchemaV1,
-    pub experiment_id: Id,
-    pub request: StrategyAlphaAdoptV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -80,40 +60,10 @@ pub struct FrozenTargetPolicyV1 {
     pub runtime_image_ref: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyAlphaVersionV1 {
-    pub schema_version: SchemaV1,
-    pub output_kind: StrategyOutputKindV1,
-    pub id: Id,
-    pub project_id: Id,
-    pub alpha_id: Id,
-    pub version: Revision,
-    pub experiment_id: Id,
-    pub root_lineage_id: Id,
-    pub policy: FrozenTargetPolicyV1,
-    pub created_at: DateTime<Utc>,
-}
-
-/// Legacy forecast bytes keep their original shape; weight strategies carry an
-/// explicit output discriminator and no inapplicable forecast fields.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum AlphaVersionEnvelopeV2 {
-    Forecast(AlphaVersionView),
-    TargetWeight(StrategyAlphaVersionV1),
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StrategyAllocationMethodV1 {
     FixedTargetWeights,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum StrategyPortfolioSourceV1 {
-    StrategyAlpha,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -135,48 +85,6 @@ pub struct StrategyMandateContentV1 {
     pub exposure_tolerance: DecimalValue,
     pub max_input_age_seconds: u32,
     pub target_ttl_seconds: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyMandateCreateV1 {
-    pub schema_version: SchemaV1,
-    pub project_id: Id,
-    pub runtime_id: Id,
-    pub expected_runtime_revision: Revision,
-    pub content: StrategyMandateContentV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyMandateViewV1 {
-    pub schema_version: SchemaV1,
-    pub id: Id,
-    pub project_id: Id,
-    pub version: u32,
-    pub content: StrategyMandateContentV1,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum MandateCreateEnvelopeV2 {
-    Forecast(Box<crate::portfolio::MandateCreateV1>),
-    Strategy(Box<StrategyMandateCreateV1>),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum MandateViewEnvelopeV2 {
-    Forecast(Box<crate::portfolio::MandateViewV1>),
-    Strategy(Box<StrategyMandateViewV1>),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyMemberSelectionV1 {
-    pub alpha_version_id: Id,
-    pub ensemble_weight: DecimalValue,
 }
 
 /// Declared initialization of the next fresh Paper session, not an observed
@@ -212,30 +120,6 @@ pub enum StrategyPortfolioPurposeV1 {
         account_start: FreshPaperCashV1,
         member_inputs: Vec<StrategyCurrentInputsV1>,
     },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyPortfolioBuildV1 {
-    pub schema_version: SchemaV1,
-    pub source_kind: StrategyPortfolioSourceV1,
-    pub cycle_id: Id,
-    pub mandate_id: Id,
-    pub input_set_id: Id,
-    pub runtime_id: Id,
-    pub expected_runtime_revision: Revision,
-    #[schema(min_items = 1)]
-    pub members: Vec<StrategyMemberSelectionV1>,
-    pub purpose: StrategyPortfolioPurposeV1,
-    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
-    pub limits: crate::lifecycle::JobLimitsV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum PortfolioBuildEnvelopeV2 {
-    Forecast(crate::portfolio::PortfolioBuildRequestV1),
-    Strategy(StrategyPortfolioBuildV1),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -313,92 +197,6 @@ pub struct NativeStrategyCompositionResultV1 {
     #[schema(required = true)]
     pub consumed_fuel: Option<DbCounter>,
     pub outcome: StrategyCompositionOutcomeV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyPortfolioCandidateV1 {
-    pub schema_version: SchemaV1,
-    pub source_kind: StrategyPortfolioSourceV1,
-    pub id: Id,
-    pub project_id: Id,
-    pub mandate_id: Id,
-    pub input_set_id: Id,
-    pub run_id: Id,
-    pub accepted_attempt_id: Id,
-    pub report_artifact_id: Id,
-    pub allocation_method: StrategyAllocationMethodV1,
-    pub purpose: StrategyPortfolioPurposeV1,
-    pub input_provenance: StrategyInputProvenanceV1,
-    pub members: Vec<StrategyMemberSelectionV1>,
-    pub targets: Vec<AllocationTargetV1>,
-    pub cash_weight: DecimalValue,
-    pub decision_asof: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
-/// Bounded read-only projection of a published candidate's accepted native report.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyPortfolioSummaryV1 {
-    pub schema_version: SchemaV1,
-    pub candidate_id: Id,
-    pub project_id: Id,
-    pub run_id: Id,
-    pub accepted_attempt_id: Id,
-    pub report_artifact_id: Id,
-    pub input_provenance: StrategyInputProvenanceV1,
-    pub native_versions: BTreeMap<String, String>,
-    /// Accepted execution is not scientific qualification, PIT or delivery approval.
-    pub interpretation: String,
-    pub outcome: StrategyPortfolioSummaryOutcomeV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(
-    tag = "purpose",
-    rename_all = "SCREAMING_SNAKE_CASE",
-    deny_unknown_fields
-)]
-pub enum StrategyPortfolioSummaryOutcomeV1 {
-    HistoricalReplay {
-        /// One original shared-capital simulation; never summed member curves.
-        simulation: Box<crate::experiment_summary::NativeSimulationSummaryV1>,
-    },
-    CurrentDecision {
-        /// A target-only decision has no simulated returns or historical equity.
-        reason_code: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum PortfolioCandidateEnvelopeV2 {
-    Forecast(crate::portfolio::CandidateDetailV1),
-    Strategy(StrategyPortfolioCandidateV1),
-}
-
-/// List rows preserve the original flat forecast header, unlike detail responses.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum PortfolioCandidateListEnvelopeV2 {
-    Forecast(crate::portfolio::CandidateViewV1),
-    Strategy(StrategyPortfolioCandidateV1),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyReleaseCreateV1 {
-    pub schema_version: SchemaV1,
-    pub source_kind: StrategyReleaseSourceV1,
-    pub candidate_id: Id,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum ReleaseCreateEnvelopeV2 {
-    Forecast(crate::delivery::ReleaseCreateV1),
-    TargetDecision(StrategyReleaseCreateV1),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -488,29 +286,18 @@ pub struct HandoffClaimViewV2 {
     pub package: TargetPackageEnvelopeV2,
 }
 
+/// Projection of one native result, not a qualification or stored service view.
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyReleaseViewV1 {
-    pub schema_version: SchemaV1,
-    pub id: Id,
-    pub project_id: Id,
-    pub candidate_id: Id,
-    pub mandate_id: Id,
-    pub package_artifact_id: Id,
-    pub package_schema_version: TargetPackageVersionV2,
-    pub source_kind: StrategyReleaseSourceV1,
-    pub source: NativeTargetDecisionSourceV1,
-    pub execution_environment: crate::forward::ForwardEnvironmentV1,
-    pub market_capability_version: String,
-    pub asof: DateTime<Utc>,
-    pub valid_from: DateTime<Utc>,
-    pub valid_until: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub enum ReleaseViewEnvelopeV2 {
-    Forecast(crate::delivery::ReleaseViewV1),
-    TargetDecision(StrategyReleaseViewV1),
+#[serde(
+    tag = "purpose",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum StrategyPortfolioSummaryOutcomeV1 {
+    HistoricalReplay {
+        simulation: Box<crate::experiment_summary::NativeSimulationSummaryV1>,
+    },
+    CurrentDecision {
+        reason_code: String,
+    },
 }

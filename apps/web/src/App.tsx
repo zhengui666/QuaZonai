@@ -1,134 +1,60 @@
-import { App as AntApp, Alert, Button, ConfigProvider, Drawer, Grid, Layout, Menu, Skeleton, Space, theme } from 'antd';
+import { App as AntApp, Button, ConfigProvider, Drawer, Skeleton } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { ApartmentOutlined, ExperimentOutlined, ExportOutlined, FundOutlined, MenuOutlined, MoonOutlined, PlayCircleOutlined, SettingOutlined, SunOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, ExperimentOutlined, FundOutlined, LoadingOutlined, MenuOutlined, RadarChartOutlined, SettingOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { lazy, Suspense, useContext, useLayoutEffect, useState } from 'react';
-import type { ReactNode } from 'react';
-import AppErrorBoundary from './AppErrorBoundary';
-import { buttonConfig } from './button-config';
-import { PwaUpdate } from './pwa';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import type { SettingsView } from '../../../packages/contracts/src/index.ts';
 import { AuthGate, LogoutButton } from './auth';
-import { GuardContext, GuardProvider, useOnline, useReducedMotion } from './ui';
-import { useColorTheme } from './theme';
-import { SettingsCommandRecovery } from './settings-command';
-import type { ColorTheme } from './theme';
+import AppErrorBoundary from './AppErrorBoundary';
+import { useMedia, useResource } from './ui';
 
-// Load a section only when it is selected. Shared dialogs remain ordinary
-// module imports, and every emitted chunk stays in the existing PWA precache.
 const Research = lazy(() => import('./research').then(module => ({ default: module.Research })));
-const Projects = lazy(() => import('./projects').then(module => ({ default: module.Projects })));
-const Alphas = lazy(() => import('./alphas').then(module => ({ default: module.Alphas })));
 const Portfolios = lazy(() => import('./portfolio').then(module => ({ default: module.Portfolios })));
-const Delivery = lazy(() => import('./delivery').then(module => ({ default: module.Delivery })));
-const Runs = lazy(() => import('./runs').then(module => ({ default: module.Runs })));
+const Observations = lazy(() => import('./observations').then(module => ({ default: module.Observations })));
 const Settings = lazy(() => import('./settings').then(module => ({ default: module.Settings })));
-
-const queries = new QueryClient({ defaultOptions: {
-  queries: { retry: false, staleTime: 15_000, gcTime: 60_000, networkMode: 'always', refetchOnWindowFocus: true },
-  mutations: { retry: false, gcTime: 0, networkMode: 'always' },
+const Extensions = lazy(() => import('./extensions').then(module => ({ default: module.Extensions })));
+const client = new QueryClient({ defaultOptions: {
+  queries: { retry: false, staleTime: 10_000, refetchOnWindowFocus: true, networkMode: 'always' },
+  mutations: { retry: false },
 } });
 const navigation = [
-  { key: 'research', label: '研究', icon: <ExperimentOutlined aria-hidden /> },
-  { key: 'projects', label: '历史项目（可选）', icon: <ExperimentOutlined aria-hidden /> },
-  { key: 'alpha', label: 'Alpha', icon: <FundOutlined aria-hidden /> },
-  { key: 'portfolio', label: '组合', icon: <ApartmentOutlined aria-hidden /> },
-  { key: 'delivery', label: '交付', icon: <ExportOutlined aria-hidden /> },
-  { key: 'runs', label: '运行', icon: <PlayCircleOutlined aria-hidden /> },
+  { key: 'research', label: '研究看板', icon: <ExperimentOutlined aria-hidden /> },
+  { key: 'portfolios', label: '策略组合', icon: <FundOutlined aria-hidden /> },
+  { key: 'observations', label: '实盘/模拟盘观测', icon: <RadarChartOutlined aria-hidden /> },
   { key: 'settings', label: '设置', icon: <SettingOutlined aria-hidden /> },
+  { key: 'extensions', label: '扩展', icon: <AppstoreOutlined aria-hidden /> },
 ];
-function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTheme: () => void }) {
-  const [active, setActive] = useState('research');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const online = useOnline(); const screens = Grid.useBreakpoint(); const { blocked } = useContext(GuardContext);
-  const { modal } = AntApp.useApp();
-  function navigate(key: string) {
-    const change = () => { setActive(key); setMenuOpen(false); };
-    if (blocked && key !== active) modal.confirm({ title: '放弃未保存的更改？', okText: '放弃更改', cancelText: '继续编辑', onOk: change });
-    else change();
-  }
-  const menu = <Menu aria-label="主导航" theme={colorTheme} mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
-  let content: ReactNode;
-  switch (active) {
-    case 'projects': content = <Projects onNavigate={navigate} />; break;
-    case 'alpha': content = <Alphas />; break;
-    case 'portfolio': content = <Portfolios />; break;
-    case 'delivery': content = <Delivery />; break;
-    case 'runs': content = <Runs />; break;
-    case 'settings': content = <Settings />; break;
-    default: content = <Research />;
-  }
-  const themeLabel = colorTheme === 'light' ? '切换为深色主题' : '切换为浅色主题';
-  return <>
-    <section className="update-bar" aria-label="应用版本"><PwaUpdate /></section>
-    <Layout className="console-layout">
-      {screens.lg && <Layout.Sider width={224} theme={colorTheme} className="console-sidebar"><div className="brand"><span className="brand-mark" aria-hidden>Q</span><span>QuaZonai<small>QUANT RESEARCH</small></span></div><div className="nav-caption">工作空间</div>{menu}<div className="sidebar-footer"><span className="sidebar-footer-mark">QZ</span><div>研究 · 验证 · 交付<small>让决策建立在证据之上</small></div></div></Layout.Sider>}
-      <Layout>
-        <Layout.Header className="console-header">
-          <Space>{!screens.lg && <Button icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} />}<span className="header-location">工作空间 <span aria-hidden>/</span> <strong>{navigation.find(item => item.key === active)?.label}</strong></span></Space>
-          <Space><Button icon={colorTheme === 'light' ? <MoonOutlined aria-hidden /> : <SunOutlined aria-hidden />} aria-label={themeLabel} title={themeLabel} onClick={toggleTheme} /><LogoutButton /></Space>
-        </Layout.Header>
-        <Layout.Content className="console-content" id="main-content" tabIndex={-1}>
-          <a className="skip-link" href="#main-content">跳至主要内容</a>
-          {!online && <Alert className="global-notice" showIcon type="warning" title="离线，无法提交操作" />}
-          <SettingsCommandRecovery />
-          <AppErrorBoundary key={active} contained>
-            <Suspense fallback={<div role="status" aria-label="正在载入页面"><Skeleton active paragraph={{ rows: 5 }} /></div>}>
-              {content}
-            </Suspense>
-          </AppErrorBoundary>
-        </Layout.Content>
-      </Layout>
-      <Drawer title="主导航" placement="left" open={menuOpen && !screens.lg} onClose={() => setMenuOpen(false)} width={280}>{menu}</Drawer>
-    </Layout>
-  </>;
+function currentPage() { const key = location.hash.slice(1); return navigation.some(item => item.key === key) ? key : 'research'; }
+function Brand() { return <div className="brand"><span className="brand-mark" aria-hidden>Q</span><span>QuaZonai</span></div>; }
+function Console() {
+  const [active, setActive] = useState(currentPage); const [menuOpen, setMenuOpen] = useState(false); const mobile = useMedia('(max-width: 959px)');
+  const settings = useResource<SettingsView>('/settings');
+  useEffect(() => {
+    const navigate = () => { setActive(currentPage()); setMenuOpen(false); requestAnimationFrame(() => document.getElementById('main-content')?.focus()); };
+    window.addEventListener('hashchange', navigate); return () => window.removeEventListener('hashchange', navigate);
+  }, []);
+  useEffect(() => { document.title = `${navigation.find(item => item.key === active)?.label} · ${settings.data?.name || 'QuaZonai'}`; }, [active, settings.data?.name]);
+  const menu = <nav className="navigation" aria-label="主导航">{navigation.map(item => <a className="nav-item" key={item.key} href={`#${item.key}`} aria-current={active === item.key ? 'page' : undefined} onClick={() => setMenuOpen(false)}>{item.icon}<span>{item.label}</span></a>)}</nav>;
+  const content = active === 'portfolios' ? <Portfolios /> : active === 'observations' ? <Observations /> : active === 'settings' ? <Settings /> : active === 'extensions' ? <Extensions /> : <Research />;
+  return <><a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus(); }}>跳至内容</a><div className="app-layout">
+    <aside className="sidebar"><Brand /><div className="nav-label">工作空间</div>{menu}<div className="sidebar-foot"><span className="local-badge">本机</span></div></aside>
+    <div className="main-shell"><header className="topbar"><div className="topbar-location"><Button className="mobile-menu" icon={<MenuOutlined aria-hidden />} aria-label="打开主导航" onClick={() => setMenuOpen(true)} /><span className="location-root">{settings.data?.name || 'QuaZonai'}</span><span className="location-root" aria-hidden>/</span><strong>{navigation.find(item => item.key === active)?.label}</strong></div><div className="topbar-tools"><span className="local-badge">本机</span><LogoutButton /></div></header>
+      <main className="main-content" id="main-content" tabIndex={-1}><AppErrorBoundary key={active}><Suspense fallback={<div role="status" aria-label="加载中"><Skeleton paragraph={{ rows: 4 }} /></div>}>{content}</Suspense></AppErrorBoundary></main>
+    </div><Drawer title="主导航" placement="left" open={menuOpen && mobile} onClose={() => setMenuOpen(false)} width={280}><div className="mobile-navigation"><Brand /><div className="nav-label">工作空间</div>{menu}</div></Drawer>
+  </div></>;
 }
 export default function App() {
-  const reducedMotion = useReducedMotion();
-  const [colorTheme, toggleTheme] = useColorTheme();
-  // Establish Ant Design's MotionProvider before the first paint. A preference
-  // change must not remount a form or discard unsaved work.
-  const [motionProviderReady, setMotionProviderReady] = useState(false);
-  useLayoutEffect(() => { setMotionProviderReady(true); }, []);
-  const dark = colorTheme === 'dark';
-  return <ConfigProvider locale={zhCN} button={buttonConfig} theme={{
-    algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-    cssVar: { key: 'quazonai' },
-    components: {
-      Button: {
-        // Enabled actions must not inherit unreadable in-between disabled colors.
-        // This public component token leaves loading-icon (slow) motion intact.
-        motionDurationMid: '0s',
-        primaryColor: '#fff',
-        defaultHoverColor: dark ? '#b0ccff' : '#1f4796',
-        defaultHoverBorderColor: dark ? '#b0ccff' : '#1f4796',
-        defaultActiveColor: dark ? '#83b2ff' : '#183b80',
-        defaultActiveBorderColor: dark ? '#83b2ff' : '#183b80',
-      },
-      Tabs: {
-        itemSelectedColor: dark ? '#83b2ff' : '#2857b4',
-        itemHoverColor: dark ? '#b0ccff' : '#1f4796',
-        itemActiveColor: dark ? '#83b2ff' : '#183b80',
-        inkBarColor: dark ? '#83b2ff' : '#2857b4',
-      },
-    },
-    token: {
-      colorPrimary: '#216653',
-      colorLink: dark ? '#83b2ff' : '#2857b4',
-      colorLinkHover: dark ? '#b0ccff' : '#1f4796',
-      colorLinkActive: dark ? '#5f9cff' : '#183b80',
-      colorError: dark ? '#ff8b83' : '#b42318',
-      colorErrorHover: dark ? '#ffb1a9' : '#8f1c13',
-      colorErrorActive: dark ? '#f47068' : '#72160f',
-      colorTextSecondary: dark ? '#c1c7d0' : '#596273',
-      colorTextTertiary: dark ? '#c1c7d0' : '#596273',
-      colorTextDescription: dark ? '#c1c7d0' : '#596273',
-      colorTextPlaceholder: dark ? '#c1c7d0' : '#596273',
-      colorBgLayout: dark ? '#111a18' : '#f6f7f3',
-      colorBgContainer: dark ? '#192520' : '#ffffff',
-      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", "Noto Sans CJK SC", sans-serif',
-      borderRadius: 10, controlHeight: 44, fontSize: 15, motion: motionProviderReady && !reducedMotion,
-    },
-  }}>
-    <AntApp><QueryClientProvider client={queries}><AuthGate><GuardProvider><Console colorTheme={colorTheme} toggleTheme={toggleTheme} /></GuardProvider></AuthGate></QueryClientProvider></AntApp>
-  </ConfigProvider>;
+  const reducedMotion = useMedia('(prefers-reduced-motion: reduce)');
+  return <ConfigProvider locale={zhCN} virtual={false} button={{ autoInsertSpace: false, loadingIcon: <LoadingOutlined aria-hidden /> }} theme={{ token: {
+    colorPrimary: '#bf674b', colorLink: '#9d5038', colorText: '#49352a', colorTextSecondary: '#756152', colorTextDescription: '#756152', colorTextPlaceholder: '#756152',
+    colorBgBase: '#fffcf7', colorBgContainer: '#fffcf7', colorBgLayout: '#f8f3eb', colorBorder: '#dfd1c2', colorBorderSecondary: '#e8ded1',
+    colorSuccess: '#486754', colorWarning: '#80582c', colorError: '#a43c32', borderRadius: 12, controlHeight: 44,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+    motion: !reducedMotion, motionEaseOut: 'cubic-bezier(.2, .85, .2, 1)',
+  }, components: {
+    Button: { colorPrimary: '#a95439', colorPrimaryHover: '#95452e', colorPrimaryActive: '#843c28', primaryShadow: 'none' },
+    Table: { headerBg: '#f5eee4', headerColor: '#756152', rowHoverBg: '#f6efe6', cellPaddingInline: 12 },
+    Tabs: { itemSelectedColor: '#9d5038', inkBarColor: '#bf674b' },
+    Modal: { borderRadiusLG: 20 }, Drawer: { colorBgElevated: '#f8f3eb' },
+  } }}><QueryClientProvider client={client}><AntApp><AppErrorBoundary><AuthGate><Console /></AuthGate></AppErrorBoundary></AntApp></QueryClientProvider></ConfigProvider>;
 }

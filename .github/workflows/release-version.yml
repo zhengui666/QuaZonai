@@ -16,6 +16,7 @@ permissions:
   actions: read
 jobs:
   regression:
+    if: inputs.branch == 'main'
     uses: ./.github/workflows/rust-regression.yml
     with:
       revision: ${{ inputs.revision }}
@@ -27,9 +28,9 @@ jobs:
       revision: ${{ inputs.revision }}
   build:
     needs: regression
-    # Upgrade acceptance bootstraps the unmodified published schema-2 sandbox.
+    if: ${{ !cancelled() && (inputs.branch == 'dev' || needs.regression.result == 'success') }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 35
     permissions:
       contents: read
       packages: write
@@ -40,56 +41,65 @@ jobs:
       RELEASE_BRANCH: ${{ inputs.branch }}
       LOCAL_IMAGE: quazonai-release:${{ inputs.revision }}
       GH_TOKEN: ${{ github.token }}
-      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.revision }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify the immutable release source
+      - name: Resolve successful exact-push core CI and its tested binaries
+        id: core
         run: |
-          set -euo pipefail
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
+          python3 -B deploy/docker/release.py ci-run --revision "$REVISION"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-${{ inputs.revision }}
+          run-id: ${{ steps.core.outputs.ci_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/native-download
+      - name: Reuse exact tested artifacts; no Cargo build/test here
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-artifacts"
+          tar -xzf "$RUNNER_TEMP/native-download/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts"
+          test "$(cat "$RUNNER_TEMP/native-artifacts/tested-revision")" = "$REVISION"
       - uses: ./.github/actions/container
         id: images
         with:
           image: ${{ env.LOCAL_IMAGE }}
           revision: ${{ inputs.revision }}
           version: ${{ inputs.version }}
-          cache-native-dependencies: ${{ inputs.branch == 'dev' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          native-artifact-directory: ${{ runner.temp }}/native-artifacts
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Push the tested images and freeze the bundle
+      - name: Publish the same installation-tested images
         env:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime-image }}
         run: |
-          set -euo pipefail
-          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py push-images --version "$VERSION" --revision "$REVISION" \
             --image "$LOCAL_IMAGE" --runtime-image "$RUNTIME_IMAGE" --output "$RUNNER_TEMP/release-assets"
-          # Test drivers are sidecars, never part of the user deployment archive.
-          cp deploy/docker/smoke.py deploy/docker/smoke_shell.py deploy/docker/release.py deploy/docker/release_support.py "$RUNNER_TEMP/release-assets/"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: prebuilt-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/release-assets/
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: error
-
   assets:
     needs: [build, cli]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: read
       actions: read
     steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.revision }}
@@ -108,75 +118,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Archive and reload every image; assemble the complete checked release
+      - name: Roundtrip shipped archives, then assemble pinned installers
         run: |
           python3 -B deploy/docker/release.py archive-images --output "$RUNNER_TEMP/release-assets"
           python3 -B deploy/package.py prepare --output "$RUNNER_TEMP/release-assets"
+      - name: Narrow published installation check, not a second full regression
+        run: python3 -B deploy/docker/smoke.py --manifest "$RUNNER_TEMP/release-assets/release.json" --published-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: complete-${{ inputs.version }}-${{ inputs.revision }}
           path: ${{ runner.temp }}/release-assets/
-          retention-days: 7
+          retention-days: 14
           compression-level: 0
           if-no-files-found: error
-
-  install:
-    needs: assets
-    runs-on: ubuntu-22.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      packages: read
-      actions: read
-    steps:
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: complete-${{ inputs.version }}-${{ inputs.revision }}
-          path: ${{ runner.temp }}/release-assets
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify GHCR installation without a checkout or a build
-        env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: |
-          set -euo pipefail
-          mkdir "$RUNNER_TEMP/deployment-only"
-          tar -xzf "$RUNNER_TEMP/release-assets/quazonai-deploy.tar.gz" -C "$RUNNER_TEMP/deployment-only"
-          cp "$RUNNER_TEMP/release-assets/smoke.py" "$RUNNER_TEMP/release-assets/smoke_shell.py" "$RUNNER_TEMP/release-assets/release.py" "$RUNNER_TEMP/release-assets/release_support.py" "$RUNNER_TEMP/deployment-only/"
-          cd "$RUNNER_TEMP/deployment-only"
-          test ! -e Cargo.toml
-          test ! -d .git
-          # These come from the shipped archive; Python remains a CI sidecar only.
-          test -f manage.sh && test -f json.awk
-          test ! -e manage.py
-          uid=$(id -u)
-          sudo loginctl enable-linger "$uid"
-          sudo systemctl start "user@$uid.service"
-          export XDG_RUNTIME_DIR="/run/user/$uid"
-          python3 -B smoke.py --manifest release.json --assert-cold --installer-assets "$RUNNER_TEMP/release-assets" --report "$RUNNER_TEMP/ghcr-install.json"
-      - name: Retain bounded failed source invocation facts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: failure()
-        with:
-          name: source-invocations-cold-install-${{ inputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/quazonai-source*/diagnostics/*.json
-          retention-days: 7
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ghcr-install-${{ inputs.version }}-${{ inputs.revision }}
-          path: ${{ runner.temp }}/ghcr-install.json
-          retention-days: 7
-          if-no-files-found: error
-
   publish:
-    needs: install
+    needs: assets
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -188,7 +144,6 @@ jobs:
       REVISION: ${{ inputs.revision }}
       RELEASE_BRANCH: ${{ inputs.branch }}
       GH_TOKEN: ${{ github.token }}
-      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -204,9 +159,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Finalize only the installed revision
+      - name: Finalize only the installed revision, without rebuilding
         run: |
-          set -euo pipefail
           git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/heads/dev:refs/remotes/origin/dev' '+refs/tags/*:refs/tags/*'
           python3 -B deploy/docker/release.py verify --version "$VERSION" --revision "$REVISION"
           python3 -B deploy/docker/release.py publish --output "$RUNNER_TEMP/release-assets"

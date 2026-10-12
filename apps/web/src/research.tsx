@@ -1,225 +1,112 @@
-import { Alert, App, Button, Descriptions, Form, Input, Select, Space, Tag, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
-import { api, ApiFailure, dataOf } from './api';
-import { ErrorNotice, QueryPanel, useGuard, useOnline } from './ui';
-import { conversationsOf, jsonObjectInput, modelsOf, nativeText, object, policyInput, receiptOf, ResearchIntent, tasksOf, usageOf, viewOf } from './research-native';
-import type { NativeObject, ResearchSubmission } from './research-native';
-import { NativeJson, NativeUsage, ResearchFinal, ResearchTrials } from './research-results';
+import { App, Button, Drawer, Form, Input, InputNumber, Modal, Select, Table } from 'antd';
+import { ArrowRightOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import type { DatasetView, ModelView, ResearchDetail, ResearchReceipt, SettingsView, TaskView, UsageView } from '../../../packages/contracts/src/index.ts';
+import { api } from './api';
+import { captureResearchIntent, clearResearchIntent, readResearchIntent, type ResearchIntent } from './request-intent';
+import { display, ErrorNotice, isActive, MetricGrid, modelKey, MoreResearch, NoData, number, PageHeading, QueryPanel, RefreshButton, Status, Surface, time, useResearch, useResource } from './ui';
 
-const rootKey = ['durable-research'] as const;
 export function Research() {
-  const [selected, setSelected] = useState<number>();
-  const [creating, setCreating] = useState(true);
-  const [history, setHistory] = useState<(NativeObject | undefined)[]>([undefined]);
-  const [draftVersion, setDraftVersion] = useState(0);
-  const [admission, setAdmission] = useState<ReturnType<typeof receiptOf>>();
-  const cursor = history.at(-1); const online = useOnline();
-  const listing = useQuery({ queryKey: [...rootKey, 'list', cursor], refetchInterval: online ? 10_000 : false,
-    queryFn: async ({ signal }) => conversationsOf(dataOf(await api.GET('/api/v2/research', {
-      params: { query: { cursor: cursor ? JSON.stringify(cursor) : undefined } }, signal,
-    }))) });
-  return <div className="durable-workspace">
-    <header className="research-heading durable-heading"><div><span className="eyebrow">DURABLE RESEARCH</span><Typography.Title level={1}>研究</Typography.Title>
-      <p>定义目标与边界，由 Host 上的原生任务持续推进；这里观察实际研究记录。</p></div>
-      <Button type="primary" icon={<PlusOutlined aria-hidden />} onClick={() => { setDraftVersion(value => value + 1); setCreating(true); }} disabled={creating}>新建研究</Button>
-    </header>
-    {!creating && admission && admission.conversationId === selected && <Alert className="global-notice" type="success" showIcon title="研究提交已被接纳"
-      description={`Conversation #${admission.conversationId} · Submission #${admission.submissionId}。接纳回执不是计算成功证明。`} />}
-    <div className="durable-layout">
-      <aside className="durable-studies" aria-labelledby="durable-studies-title">
-        <div className="section-toolbar"><div><h2 id="durable-studies-title">已保存的研究</h2><p>原生会话 · 持久化于 Host</p></div>
-          <Button type="text" icon={<ReloadOutlined aria-hidden />} aria-label="刷新研究列表" loading={listing.isFetching} onClick={() => { void listing.refetch(); }} /></div>
-        <QueryPanel pending={listing.isPending} error={listing.error} stale={!!listing.data} reload={() => { void listing.refetch(); }}>
-          {listing.data?.items.length === 0 ? <div className="durable-empty"><h3>尚无研究记录</h3><p>填写研究目标、模型和插件输入后提交。不会自动填入数据或启动演示研究。</p></div>
-            : <ul className="durable-study-list">{listing.data?.items.map(item => <li key={item.id}>
-              <button aria-pressed={!creating && selected === item.id} onClick={() => { setSelected(item.id); setCreating(false); }}>
-                <strong>研究 #{item.id}</strong><span>{object(item.parent) ? `分支来源 #${nativeText(object(item.parent)?.conversationId)}` : '原生会话'}<span aria-hidden> →</span></span>
-              </button>
-            </li>)}</ul>}
-          <Space wrap className="durable-pager"><Button disabled={listing.isFetching || history.length <= 1} onClick={() => setHistory(history.slice(0, -1))}>上一页</Button>
-            <Typography.Text>第 {history.length} 页</Typography.Text><Button disabled={listing.isFetching || !listing.data?.cursor} onClick={() => {
-              if (listing.data?.cursor) setHistory([...history, listing.data.cursor]);
-            }}>下一页</Button></Space>
-          {listing.data && <NativeJson label="会话列表 · 原生 JSON" value={listing.data.raw} />}
-        </QueryPanel>
-      </aside>
-      <div className="durable-main">
-        {/* Keep this form intent mounted when inspecting an existing study. No agent state is persisted. */}
-        <section hidden={!creating} className="durable-compose"><ResearchForm draftVersion={draftVersion} onAdmitted={receipt => {
-          setAdmission(receipt); setSelected(receipt.conversationId); setCreating(false);
-        }} /></section>
-        {!creating && selected !== undefined && <ResearchDetail key={selected} id={selected} />}
-      </div>
+  const listing = useResearch(8000);
+  const usage = useResource<UsageView>('/usage', 8000);
+  const [creating, setCreating] = useState(false); const [selected, setSelected] = useState<number>();
+  const [search, setSearch] = useState(''); const [filter, setFilter] = useState('all');
+  const items = listing.data?.items.filter(item => item.title.toLowerCase().includes(search.toLowerCase()) && (filter === 'all' || (filter === 'active' ? isActive(item.status) : !isActive(item.status)))) ?? [];
+  return <div className="page">
+    <PageHeading title="研究看板" count={listing.data?.items.length} action={<><RefreshButton loading={listing.isFetching || usage.isFetching} label="刷新研究" onClick={() => { void listing.refetch(); void usage.refetch(); }} /><Button type="primary" icon={<PlusOutlined aria-hidden />} onClick={() => setCreating(true)}>新建研究</Button></>} />
+    <QueryPanel query={usage}><dl className="usage-grid surface" aria-label="用量">
+      <div><dt>运行任务</dt><dd>{number(usage.data?.activeTasks)}</dd></div>
+      <div><dt>输入 Token</dt><dd>{number(usage.data?.inputTokens)}</dd></div>
+      <div><dt>输出 Token</dt><dd>{number(usage.data?.outputTokens)}</dd></div>
+      <div><dt>费用</dt><dd>{number(usage.data?.cost)}</dd></div>
+    </dl></QueryPanel>
+    <div className="toolbar"><Input prefix={<SearchOutlined aria-hidden />} aria-label="搜索研究" placeholder="搜索研究" allowClear value={search} onChange={event => setSearch(event.target.value)} />
+      <Select aria-label="研究状态" value={filter} onChange={setFilter} options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '进行中' }, { value: 'finished', label: '已结束' }]} />
+      <span className="muted result-count">{listing.data ? `${items.length} 项` : '—'}</span>
     </div>
-    <HostSnapshot />
+    <QueryPanel query={listing}>{items.length ? <div className="study-grid">{items.map(item => <article className="study-card" key={item.id}>
+      <div className="card-top"><span className="study-number">#{item.id.toString().padStart(3, '0')}</span><Status value={item.status} /></div>
+      <h2><button className="title-button" onClick={() => setSelected(item.id)}>{display(item.title)}</button></h2>
+      <div className="study-meta"><span>{display(item.model)}</span><span>{number(item.trials)} 次试验</span></div>
+      <div className="card-bottom"><time dateTime={item.updatedAt ?? undefined}>{time(item.updatedAt)}</time><Button type="text" aria-label={`查看 ${item.title}`} icon={<ArrowRightOutlined aria-hidden />} onClick={() => setSelected(item.id)}>查看</Button></div>
+    </article>)}</div> : <Surface><NoData text={search || filter !== 'all' ? '无匹配研究' : '暂无研究'} /></Surface>}</QueryPanel>
+    <MoreResearch query={listing} />
+    {creating && <ResearchForm close={() => setCreating(false)} onStarted={id => { setCreating(false); setSelected(id); }} />}
+    {selected !== undefined && <ResearchRecord id={selected} close={() => setSelected(undefined)} />}
   </div>;
 }
-
-type Fields = { goal: string; model: string; data: string; policy: string };
-function ResearchForm({ draftVersion, onAdmitted }: { draftVersion: number; onAdmitted: (receipt: ReturnType<typeof receiptOf>) => void }) {
-  const [form] = Form.useForm<Fields>(); const online = useOnline(); const client = useQueryClient();
-  const [dirty, setDirty] = useState(false); const [captured, setCaptured] = useState<ResearchIntent>();
-  const intent = useRef<ResearchIntent | undefined>(undefined); const hadUnknown = useRef(false);
-  const models = useQuery({ queryKey: [...rootKey, 'models'], queryFn: async ({ signal }) => modelsOf(dataOf(await api.GET('/api/v2/research/models', { signal }))) });
-  const modelKey: string | undefined = Form.useWatch('model', form);
-  const selectedModel = models.data?.find(model => JSON.stringify([model.provider, model.modelId]) === modelKey);
-  const mutation = useMutation({ mutationFn: async (body: ResearchSubmission) => receiptOf(dataOf(await api.POST('/api/v2/research', { body }))),
-    onSuccess: receipt => {
-      setDirty(false);
-      void client.invalidateQueries({ queryKey: rootKey });
-      onAdmitted(receipt);
-    }, onError: error => {
-      const rejected = error instanceof ApiFailure && (error.code === 'OFFLINE'
-        || (error.status >= 400 && error.status < 500 && (!!error.problem || error.code === 'RESEARCH_NATIVE_ERROR')));
-      if (rejected && !hadUnknown.current) { intent.current = undefined; setCaptured(undefined); }
-      else hadUnknown.current = true;
-    } });
-  const held = !!captured && !mutation.isSuccess;
-  useGuard(dirty || held || mutation.isPending);
-  const canSubmit = online && !!selectedModel && !models.isError && !models.isPending && !mutation.isPending && !captured;
-  function submit(value: Fields) {
-    if (!canSubmit || intent.current || !selectedModel) return;
-    const request = new ResearchIntent({ goal: value.goal, model: { provider: selectedModel.provider, modelId: selectedModel.modelId },
-      data: jsonObjectInput(value.data, '数据输入'), policy: policyInput(value.policy) });
-    intent.current = request; setCaptured(request); mutation.mutate(request.body);
+type Fields = { goal: string; model: string; datasetId: string; maxTrials: number };
+function ResearchForm({ close, onStarted }: { close: () => void; onStarted: (id: number) => void }) {
+  const models = useResource<ModelView[]>('/research/models'); const datasets = useResource<DatasetView[]>('/datasets'); const settings = useResource<SettingsView>('/settings');
+  const client = useQueryClient(); const { message } = App.useApp();
+  const [form] = Form.useForm<Fields>(); const [intent, setIntent] = useState<ResearchIntent | undefined>(() => readResearchIntent());
+  const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>();
+  useEffect(() => {
+    if (intent || !settings.data) return;
+    if (!form.isFieldTouched('model')) form.setFieldValue('model', modelKey(settings.data.defaultModel));
+    if (!form.isFieldTouched('maxTrials')) form.setFieldValue('maxTrials', settings.data.maxTrials);
+  }, [settings.data, intent, form]);
+  const readyDatasets = datasets.data?.filter(item => item.ready) ?? [];
+  const unavailable = models.isError || datasets.isError || !models.data?.length || !readyDatasets.length;
+  async function submit(values: Fields) {
+    setBusy(true); setError(undefined);
+    try {
+      let pending = intent;
+      if (!pending) {
+        const model = models.data?.find(item => modelKey(item) === values.model);
+        if (!model) throw new Error('请选择模型');
+        pending = captureResearchIntent({ goal: values.goal.trim(), model: { provider: model.provider, modelId: model.modelId }, datasetId: values.datasetId, maxTrials: values.maxTrials });
+        setIntent(pending);
+      }
+      const receipt = await api<ResearchReceipt>('/research', { method: 'POST', rawBody: pending.raw });
+      clearResearchIntent(); await client.invalidateQueries({ queryKey: ['/research'] });
+      void client.invalidateQueries({ queryKey: ['/usage'] }); void message.success('已接纳'); onStarted(receipt.conversationId);
+    } catch (failure) { setError(failure); }
+    finally { setBusy(false); }
   }
-  function reset() {
-    if (!mutation.isSuccess) return;
-    intent.current = undefined; setCaptured(undefined); hadUnknown.current = false; setDirty(false);
-    mutation.reset(); form.resetFields();
-  }
-  useEffect(() => { if (draftVersion > 0 && mutation.isSuccess) reset(); }, [draftVersion]);
-  const jsonRule = (label: string, policy = false) => ({ validator: (_: unknown, value: string | undefined) => {
-    try { if (policy) policyInput(value ?? ''); else jsonObjectInput(value ?? '', label); return Promise.resolve(); }
-    catch (error) { return Promise.reject(error); }
-  } });
-  return <Space orientation="vertical" className="full-width" size="middle">
-    <div className="section-toolbar"><div><h2>提交研究目标</h2><p>模型负责插件通用研究；数据与政策由你明确提供。</p></div><Tag>原生 pi-durable</Tag></div>
-    {models.isPending && <div role="status">正在读取可用模型…</div>}
-    <ErrorNotice error={models.error} retry={() => { void models.refetch(); }} />
-    {models.data?.length === 0 && <Alert type="warning" showIcon title="Host 尚无可用模型" description={<>
-      在运行 research Host 的服务环境中配置官方 pi-ai Provider 凭据（例如 OPENAI_API_KEY 或 ANTHROPIC_API_KEY），或在 QZ_RESEARCH_CONFIG 指向的配置文件中设置 providerModules，然后重启 Host 并刷新模型列表。此页面不收集模型密钥，也不使用 Codex 登录。
-    </>} action={<Button onClick={() => { void models.refetch(); }} loading={models.isFetching}>刷新模型列表</Button>} />}
-    <ErrorNotice error={mutation.error} />
-    {held && mutation.isError && <Alert type="warning" showIcon title="原请求已保留，提交结果待确认" description="重试会发送完全相同的 requestId 与请求正文。请勿另开页面重复提交；本页不把超时视为失败，也不自动重试。" />}
-    {mutation.data && <Alert type="success" showIcon title="研究提交已被接纳" description={<>
-      Conversation #{mutation.data.conversationId} · Submission #{mutation.data.submissionId}。这是接纳回执，不是计算成功证明。
-    </>} action={<Button onClick={() => { if (mutation.data) onAdmitted(mutation.data); }}>查看研究</Button>} />}
-    <Form form={form} layout="vertical" onValuesChange={() => setDirty(true)} onFinish={submit} disabled={!!captured || mutation.isPending}>
-      <Form.Item name="goal" label="研究目标" rules={[{ required: true, whitespace: true, message: '请明确填写研究目标。' }]}>
-        <Input.TextArea autoSize={{ minRows: 3, maxRows: 12 }} placeholder="描述要探索的问题、预期证据与停止条件" />
-      </Form.Item>
-      <Form.Item name="model" label="可用模型" rules={[{ required: true, message: '请选择 Host 实际可用的模型。' }]}>
-        <Select aria-label="可用模型" virtual={false} showSearch optionFilterProp="label" placeholder="选择 provider / model" loading={models.isFetching}
-          disabled={!!captured || models.isPending || models.isError || models.data?.length === 0} options={models.data?.map(model => ({
-            value: JSON.stringify([model.provider, model.modelId]), label: `${model.name} · ${model.provider}/${model.modelId}${model.reasoning ? ' · reasoning' : ''}`,
-          }))} />
-      </Form.Item>
-      <div className="durable-input-grid">
-        <Form.Item name="data" label="数据输入 · JSON 对象" extra="按 Host 已安装插件提供真实数据引用和参数，不自动选择数据集。" rules={[jsonRule('数据输入')]}>
-          <Input.TextArea className="json-input" autoSize={{ minRows: 6, maxRows: 22 }} placeholder="输入插件要求的 data 对象" spellCheck={false} />
-        </Form.Item>
-        <Form.Item name="policy" label="研究政策 · JSON 对象" extra="按插件提供预算与边界；max_trials 如提供，必须为正整数。无额外政策时显式填写 {}。" rules={[jsonRule('研究政策', true)]}>
-          <Input.TextArea className="json-input" autoSize={{ minRows: 6, maxRows: 22 }} placeholder="输入 policy 对象" spellCheck={false} />
-        </Form.Item>
-      </div>
-      <p className="section-caption">HTTP 202 仅表示接纳。原生 Host 持续执行；浏览器刷新 GET 只是观察，不是调度器。</p>
-      {!captured && <Button type="primary" htmlType="submit" disabled={!canSubmit}>提交研究</Button>}
+  const saved = intent?.value;
+  return <Modal title="新建研究" open onCancel={close} footer={null} width={600} maskClosable={!busy} closable={!busy} keyboard={!busy} afterOpenChange={open => { if (open) form.getFieldInstance('goal')?.focus(); }}>
+    <ErrorNotice error={models.error} retry={() => { void models.refetch(); }} /><ErrorNotice error={datasets.error} retry={() => { void datasets.refetch(); }} />
+    {intent && <div className="intent-status"><span>待重试</span><Button size="small" disabled={busy} onClick={() => { clearResearchIntent(); setIntent(undefined); setError(undefined); form.resetFields(); }}>新请求</Button></div>}
+    <Form form={form} layout="vertical" requiredMark={false} disabled={busy || !!intent} initialValues={saved ? { ...saved, model: modelKey(saved.model) } : { maxTrials: settings.data?.maxTrials, model: modelKey(settings.data?.defaultModel) }} onFinish={submit}>
+      <Form.Item name="goal" label="研究目标" rules={[{ required: true, whitespace: true, message: '请输入研究目标' }]}><Input.TextArea rows={4} autoFocus /></Form.Item>
+      <div className="form-grid"><Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}>
+        <Select showSearch optionFilterProp="label" loading={datasets.isPending} placeholder="选择数据集" notFoundContent={datasets.isPending ? '加载中' : '暂无就绪数据集'} options={readyDatasets.map(item => ({ value: item.id, label: `${item.name} · ${item.currency}` }))} />
+      </Form.Item><Form.Item name="model" label="模型" rules={[{ required: true, message: '请选择模型' }]}>
+        <Select showSearch optionFilterProp="label" loading={models.isPending} placeholder="选择模型" notFoundContent={models.isPending ? '加载中' : '暂无模型'} options={models.data?.map(item => ({ value: modelKey(item), label: `${item.name} · ${item.provider}` }))} />
+      </Form.Item><Form.Item name="maxTrials" label="最多试验" rules={[{ required: true, message: '请输入试验次数' }]}><InputNumber min={1} precision={0} placeholder="—" /></Form.Item></div>
+      <ErrorNotice error={error} /><div className="form-actions"><Button disabled={busy} onClick={close}>关闭</Button>{intent
+        ? <Button type="primary" loading={busy} disabled={false} onClick={() => { void submit(form.getFieldsValue()); }}>重试提交</Button>
+        : <Button type="primary" htmlType="submit" loading={busy} disabled={unavailable}>开始研究</Button>}</div>
     </Form>
-    {captured && <>
-      <Typography.Text className="break-word" copyable>requestId：{captured.body.requestId}</Typography.Text>
-      <NativeJson label="本次提交 · 精确请求正文" value={captured.body} />
-      {mutation.isPending && <div role="status">正在等待原生提交回执…</div>}
-      {held && mutation.isError && <Button type="primary" disabled={!online || mutation.isPending} loading={mutation.isPending}
-        onClick={() => { if (intent.current) mutation.mutate(intent.current.body); }}>重试同一研究请求</Button>}
-      {mutation.isSuccess && <Button onClick={reset}>清空表单，开始新的研究</Button>}
-    </>}
-  </Space>;
+  </Modal>;
 }
-
-function ResearchDetail({ id }: { id: number }) {
-  const online = useOnline(); const client = useQueryClient(); const { modal } = App.useApp();
-  const query = useQuery({ queryKey: [...rootKey, 'view', id], refetchInterval: online ? 5_000 : false,
-    queryFn: async ({ signal }) => viewOf(dataOf(await api.GET('/api/v2/research/{id}', { params: { path: { id } }, signal })), id) });
-  const stop = useMutation({ mutationFn: async () => dataOf(await api.POST('/api/v2/research/{id}/stop', { params: { path: { id } } })),
-    onSuccess: () => { void client.invalidateQueries({ queryKey: rootKey }); } });
-  useGuard(stop.isPending);
-  const value = query.data; const input = object(value?.research.input); const live = object(value?.docs['pi.live']);
-  const run = object(live?.run); const generation = object(live?.generation);
-  function requestStop() {
-    modal.confirm({ title: `请求停止研究 #${id}？`, content: '请求会传给原生 Host，包括后台任务。接纳请求不证明任务已取消；以之后的原生任务快照为准。',
-      okText: '请求停止', cancelText: '继续观察', okButtonProps: { danger: true }, onOk: () => { stop.mutate(); } });
+function ResearchRecord({ id, close }: { id: number; close: () => void }) {
+  const detail = useResource<ResearchDetail>(`/research/${id}`, 5000); const client = useQueryClient();
+  const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>();
+  async function stop() {
+    setBusy(true); setError(undefined);
+    try { const value = await api<ResearchDetail>(`/research/${id}/stop`, { method: 'POST' }); client.setQueryData([`/research/${id}`], value); void client.invalidateQueries({ queryKey: ['/research'] }); }
+    catch (failure) { setError(failure); }
+    finally { setBusy(false); }
   }
-  return <section className="durable-detail" aria-label={`研究 #${id} 详情`}>
-    <div className="section-toolbar"><div><span className="eyebrow">CONVERSATION #{id}</span><h2>研究详情</h2></div>
-      <Space wrap><Button icon={<ReloadOutlined aria-hidden />} loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新研究</Button>
-        <Button danger disabled={!online || !value || query.isError || query.isFetching || stop.isPending || stop.isSuccess} loading={stop.isPending} onClick={requestStop}>请求停止</Button></Space></div>
-    <ErrorNotice error={stop.error} />
-    {stop.isSuccess && <Alert type="warning" showIcon title="已请求停止，等待原生状态确认" description="HTTP 202 不是取消证明。继续查看 pi.live 与 Host 任务快照；本地请求结束不等于远端任务结束。" />}
-    {stop.isError && <Alert type="warning" showIcon title="停止结果未确认" description="请刷新原生记录。再次点击请求停止只重发停止操作，不会新建研究。" />}
-    <QueryPanel pending={query.isPending} error={query.error} stale={!!value} reload={() => { void query.refetch(); }}>
-      {value && <Space orientation="vertical" className="full-width" size="large">
-        <div className="durable-goal"><h3>{typeof input?.goal === 'string' ? input.goal : '原生研究目标未报告'}</h3>
-          <p className="section-caption">模型：{nativeText(object(input?.model)?.provider)} / {nativeText(object(input?.model)?.modelId)}</p></div>
-        <section className="native-live" aria-label="原生活动状态"><h3>原生活动状态 · pi.live</h3>
-          <Descriptions size="small" column={1} items={[
-            { key: 'run', label: 'run.taskId', children: run ? nativeText(run.taskId) : '快照中无活动 run（不代表研究成功或已取消）' },
-            { key: 'attempt', label: 'generation.attempt', children: nativeText(generation?.attempt) },
-            { key: 'retry', label: 'generation.retry', children: nativeText(generation?.retry) },
-            { key: 'deferred', label: 'generation.deferred', children: nativeText(generation?.deferred) },
-          ]} />
-          <NativeJson label="pi.live · 原生 JSON" value={value.docs['pi.live']} />
-        </section>
-        <ResearchTrials trials={value.research.trials} />
-        <ResearchFinal value={value.research.final} />
-        <details className="native-json"><summary>本研究测量用量 · pi.usage</summary><NativeUsage value={value.docs['pi.usage']} label="本研究用量" /></details>
-        <NativeJson label="研究输入 · 原生 data / policy" value={value.research.input} />
-        <NativeJson label="完整原生 ConversationView · entries / docs / research" value={value.raw} />
-      </Space>}
-    </QueryPanel>
-  </section>;
-}
-
-function HostSnapshot() {
-  const online = useOnline();
-  const tasks = useQuery({ queryKey: [...rootKey, 'tasks'], refetchInterval: online ? 10_000 : false,
-    queryFn: async ({ signal }) => tasksOf(dataOf(await api.GET('/api/v2/research/tasks', { signal }))) });
-  const usage = useQuery({ queryKey: [...rootKey, 'usage'], refetchInterval: online ? 10_000 : false,
-    queryFn: async ({ signal }) => usageOf(dataOf(await api.GET('/api/v2/research/usage', { signal }))) });
-  return <details className="durable-host"><summary>Host 任务与用量 · 所有研究</summary>
-    <div className="durable-host-grid">
-      <section aria-labelledby="native-tasks-title"><div className="section-toolbar"><div><h2 id="native-tasks-title">原生任务快照</h2><p>Harness.inspect · 活动 / 可运行图，不是完整任务历史。</p></div>
-        <Button aria-label="刷新任务快照" icon={<ReloadOutlined aria-hidden />} loading={tasks.isFetching} onClick={() => { void tasks.refetch(); }} /></div>
-        <QueryPanel pending={tasks.isPending} error={tasks.error} stale={!!tasks.data} reload={() => { void tasks.refetch(); }}>
-          {tasks.data && <>
-            <Typography.Text>scheduling：{nativeText(tasks.data.scheduling)}</Typography.Text>
-            {tasks.data.tasks.length === 0 ? <p className="section-caption">快照中没有未结束任务，不推定成功或已取消。</p> : <div className="native-tasks">{tasks.data.tasks.map((task, index) => {
-              const record = object(task.record); const state = object(task.state);
-              return <article key={index}><div className="record-label"><strong>Task #{nativeText(record?.id)}</strong><Tag>{nativeText(state?.kind)}</Tag></div>
-                <Descriptions size="small" column={1} items={[
-                  { key: 'kind', label: 'record.kind', children: nativeText(record?.kind) },
-                  { key: 'conversation', label: 'conversationId', children: nativeText(record?.conversationId) },
-                  { key: 'state', label: 'record.state.status', children: nativeText(object(record?.state)?.status) },
-                  { key: 'abort', label: 'abortRequested（非取消证明）', children: nativeText(record?.abortRequested) },
-                  { key: 'background', label: 'background', children: nativeText(record?.background) },
-                  { key: 'on', label: '等待 on', children: nativeText(state?.on) },
-                  { key: 'reason', label: '原生阻塞原因', children: nativeText(state?.reason) },
-                  { key: 'error', label: '原生任务错误', children: nativeText(state?.error) },
-                ]} /><NativeJson label={`Task #${nativeText(record?.id)} · 原生 JSON`} value={task} />
-              </article>;
-            })}</div>}
-            <NativeJson label="Harness.inspect · 完整任务与 submissions JSON" value={tasks.data} />
-          </>}
-        </QueryPanel>
-      </section>
-      <section aria-labelledby="native-usage-title"><div className="section-toolbar"><div><h2 id="native-usage-title">Host 测量用量</h2><p>Harness.usage · 所有会话累计，非本研究独占。</p></div>
-        <Button aria-label="刷新 Host 用量" icon={<ReloadOutlined aria-hidden />} loading={usage.isFetching} onClick={() => { void usage.refetch(); }} /></div>
-        <QueryPanel pending={usage.isPending} error={usage.error} stale={!!usage.data} reload={() => { void usage.refetch(); }}>
-          {usage.data && <NativeUsage value={usage.data.raw} label="Host 用量" />}
-        </QueryPanel>
-      </section>
-    </div>
-  </details>;
+  const value = detail.data;
+  return <Drawer title={`研究 #${id}`} open onClose={close} width={760}>
+    <QueryPanel query={detail}>{value && <div className="detail-stack">
+      <div className="detail-heading"><h2>{display(value.title)}</h2><Status value={value.status} /></div>
+      <div className="record-meta"><span>{display(value.model)}</span><span>{number(value.trials)} 次试验</span><span>更新 {time(value.updatedAt)}</span></div>
+      <div className="toolbar"><RefreshButton loading={detail.isFetching} label="刷新研究详情" onClick={() => { void detail.refetch(); }} /><Button disabled={!isActive(value.status) || busy || detail.isError} loading={busy} onClick={stop}>停止研究</Button></div>
+      <ErrorNotice error={error} />
+      <Surface title="研究结果" extra={<Status value={value.final?.status} />}><div className="muted" style={{ marginBottom: 16 }}>选定试验 {value.final?.trialId == null ? '—' : `#${value.final.trialId}`}</div><MetricGrid metrics={value.final?.metrics ?? []} /></Surface>
+      <section><div className="section-heading"><h2>试验</h2><span className="muted">{value.trialRecords.length} 项</span></div>
+        {value.trialRecords.length ? <div className="trial-list">{value.trialRecords.map(trial => <article className="trial-row" key={trial.id}>
+          <div className="trial-top"><span>#{trial.id}</span><h3>{display(trial.hypothesis)}</h3><Status value={trial.status} /></div><MetricGrid metrics={trial.metrics} /><ErrorNotice error={trial.error} />
+        </article>)}</div> : <NoData text="暂无试验" />}
+      </section><Surface title="任务"><Table<TaskView> rowKey="id" dataSource={value.tasks} pagination={false} size="small" locale={{ emptyText: '暂无任务' }} columns={[
+        { title: '任务', dataIndex: 'name', render: display }, { title: '状态', dataIndex: 'status', width: 100, render: status => <Status value={status} /> },
+        { title: '错误', dataIndex: 'error', render: error => error ? <ErrorNotice error={error} /> : '—' },
+      ]} /></Surface>
+    </div>}</QueryPanel>
+  </Drawer>;
 }

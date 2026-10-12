@@ -4,7 +4,7 @@ mod portfolio_fixture;
 use contracts::{
     delivery::PackageOriginV1,
     forward::DownstreamWeightsSubmitV1,
-    portfolio::{AllocationInputV1, PortfolioBuildWeightsV1},
+    portfolio::AllocationInputV1,
     science::{PaperInitializationRefV1, PortfolioCurrentWeightsV1, PortfolioWeightsSourceV1},
     strategy_portfolio::FreshPaperCashV1,
     Id,
@@ -25,37 +25,6 @@ fn root() -> PaperInitializationRefV1 {
         downstream_id: Id::new(),
         trader_id: "TRADER-001".into(),
         account_id: "SIM-001".into(),
-    }
-}
-
-#[test]
-fn explicit_initial_capital_intent_accepts_scope_but_not_amounts_or_reset_ids() {
-    let wire = json!({"kind":"PAPER_INITIAL_CAPITAL","downstream_id":Id::new(),
-        "trader_id":"TRADER-001","account_id":"SIM-001"});
-    let parsed: PortfolioBuildWeightsV1 = serde_json::from_value(wire.clone()).unwrap();
-    assert_eq!(serde_json::to_value(parsed).unwrap(), wire);
-    for field in [
-        "starting_capital",
-        "base_currency",
-        "initialization_id",
-        "session_id",
-        "mandate_id",
-        "force_reset",
-    ] {
-        let mut changed = wire.clone();
-        changed[field] = json!("caller-supplied");
-        assert!(
-            serde_json::from_value::<PortfolioBuildWeightsV1>(changed).is_err(),
-            "{field}"
-        );
-    }
-    for field in ["downstream_id", "trader_id", "account_id"] {
-        let mut missing = wire.clone();
-        missing.as_object_mut().unwrap().remove(field);
-        assert!(
-            serde_json::from_value::<PortfolioBuildWeightsV1>(missing).is_err(),
-            "{field}"
-        );
     }
 }
 

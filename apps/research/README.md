@@ -1,88 +1,60 @@
 # Durable factor research host
 
-One official Pi Durable host owns model calls, conversations, submissions, tool execution, persistent tasks, children, recovery, cancellation, views and usage. QuaZonai adds original research inputs, trial/selection facts and small scientific extensions. It does not implement another Agent loop or session database.
+Official Pi Durable **1.1.0**, pi-ai **1.1.0** and Chord **1.1.0** own conversations, submissions, task execution, children, replay, cancellation, usage and compaction. QuaZonai adds original research/trial/selection/exposure facts and small native scientific adapters. There is no second task database, Agent loop, cron or imported internal scheduler.
 
-## Run from source
+## Host integration
 
-Requires Node 22.19+ (including built-in SQLite), npm, Bash and the matching Rust `job` executable. The installed application packages these; this section is for development, not a prerequisite for end users.
+`openResearch({database,extensions?,modules?,providerModules?,models?,storage?,settings?,thinkingLevel?})` returns `harness/models/registry/start/list/view/watch/stop/tasks/usage/availableModels/close`, plus `submission` and `submissionFor`. The `/api/v3` service opens this same database once and uses the host programmatically. Only one process may own its native SQLite and sidecars. Close suspends work; reopen resumes the same identities.
 
-```sh
-npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
-cp apps/research/research.example.json apps/research/research.json
-QZ_RESEARCH_CONFIG="$PWD/apps/research/research.json" \
-  QZ_JOB_BINARY="$PWD/target/debug/job" npm --prefix apps/research start
-```
+`start(requestId,input)` retains the original `{goal,model:{provider,modelId},data,policy}` and rejects changed input under the same ID. Startup reconciles committed Requests against public `tx.submissionByRequest` and repairs only missing submissions through `Conversation.submit`, using the original goal/ID. Native done/unanswered submissions and recorded stopped/final studies are never repeated. No raw `Tx.createSubmission` admission is used.
 
-`research.json` is local configuration. `database` and module paths are resolved relative to its directory. Keep the official SQLite database and its sidecars together; never run two owners against it. Serve binds loopback port 8092. Rust exposes owner-authenticated `/api/v2/research*` through `QZ_RESEARCH_ORIGIN`; do not expose the raw local Node port publicly.
+`view` includes native view, Study and the original native `submission` record. Public service projections should expose only submission ID/status, scientific facts and effective agent metadata—not hidden reasoning or raw private transcript. `tasks(cursor?)` paginates native stored records; inspection/usage remain upstream observations, not mirrored task status. `watch` is a disposable native watch; detachment does not abort work.
 
-### Models and extensions
+Close stops new admissions, drains admitted starts, detaches host watchers, then invokes `Harness.close`. Explicit `stop` records owner stop intent and invokes `Conversation.abort(...,{background:true})` for owned work. Neither shutdown nor a local process exit proves a remote provider/downstream cancellation.
 
-The host uses official pi-ai providers, catalogs and auth resolution. Configure provider credentials in the host's private environment or a trusted provider module, never in a research request, conversation, tool argument or browser form. No Codex CLI/App Server or project-specific account/profile discovery runs. `/models` returns the native configured availability, not a successful account test or fabricated fixed catalog.
+## Native tuning
 
-- `modules`: trusted modules whose default export is an official `Extension` built with `defineExtension`/`defineTool`/`defineTask`.
-- `providerModules`: optional trusted modules whose default export is an official pi-ai `Provider`. They register with native `Models.setProvider`; no alternate inference loop is added.
-- Missing providers, native capability or input data are explicit failures. No fake response or alternate engine is substituted.
+These are owner-configurable public `HarnessOptions.settings` starting values, **not** performance guarantees:
 
-Default extension roles:
-
-| Extension | Public behavior |
+| Setting | Default / unit |
 | --- | --- |
-| `research.ts` | Original brief, complete trial disclosure and stop reason; no asset or Wasm ABI in workflow logic |
-| `catalog-input.ts` | Configured native directory/iterative selection descriptor; explicitly not quality/PIT/permission evidence |
-| `factor-wasm.ts` | Arbitrary signed factors via existing native Wasmi/Nautilus features and real Pearson IC, without positions |
-| `heldout-wasm.ts` | One selected factor, original criteria and session-wide exposure reservation before independent final computation |
-| `factor-volume.ts` | Additional volume-factor module, enabled by adding only its registration |
-| `validation-compare.ts` | Additional evaluator that compares all disclosed trials under original `validation.pearson_ic` policy |
+| `stream.timeoutMs` | 120000 milliseconds per supported model request |
+| `stream.maxRetries` | 0 SDK retries; avoid multiplying durable attempts |
+| `retry` | enabled, six retries, exponential base 2000 ms, native delay cap 60000 ms |
+| `compaction` | official defaults: enabled; reserve 16384, recent 20000, background 32768 tokens |
+| `progress.partialIntervalMs/outputIntervalMs` | 250 milliseconds |
+| `contextRetentionMs` | 600000 milliseconds |
+| tool execution | native parallel reads; scientific mutation/finalization tools make their round sequential |
 
-Enable the last two by adding their paths to `modules`. `factor-wasm.ts` registers the shared scientific child Task used by those adapters. Data/market acquisition can reuse the existing [source tools](../../runtimes/data/source-plugins.md), or use another official Extension. The core does not enumerate assets, providers, factors or data sources.
+Load the same live host settings/modules on restart; settings themselves are not persisted. Model and effective thinking are persisted through native `configure`/`pi.agent`. The owner default is `medium`, explicitly clamped by public pi-ai capabilities (nonreasoning models resolve to `off`). Availability reports supported/effective levels, not reasoning content.
 
-## Submit and observe
+Quota/billing/auth failures remain final; there is no model/provider fallback. A stream timeout is not a task/24-hour deadline and provider support varies. Pi Durable 1.1.0 has **no public global numeric concurrency limit**; sequential is per round, not a limit across conversations.
 
-The Web research form and saved-owner CLI use the same Rust bridge. Login privately in the user terminal before operating the service:
+The research-specific native `GenerationTask.onYield` hook continues only studies lacking a final record, under the original trial budget/criteria. Conversation-scoped decisions/counters survive successor generations and crashes. Two consecutive yields without new trials stop with `no_progress_continuation_limit`; exhaustion or absent budget records a stop reason. This is not an unconditional self-loop or a per-generation budget reset.
 
-```sh
-quazonai client login
-quazonai client research models
-quazonai openapi --schema DurableResearchStartV1
-quazonai openapi --domain --schema NativeFactorEvaluationRequestV1
-quazonai client research start --file research-request.json
-quazonai client research list
-quazonai client research get 42
-quazonai client research tasks
-quazonai client research usage
-quazonai client research stop 42
-```
+Native `control.terminate` ends a round only when every tool returns it. Final tools should be called alone. The research `ToolTask.afterTool` hook marks subsequent successful read/error results terminal once final is recorded; scientific adapters refuse additional computation with terminal feedback. A read preceding final in a mixed round can still cause one more model request. Upstream engine semantics are unchanged.
 
-`42` illustrates a **native numeric conversation ID**, not a real installed study. A submission file contains `requestId` and `input`: original `goal`, native `model:{provider,modelId}`, extension-owned `data` and original `policy` objects. Select model IDs from actual availability. Input definitions are generated from [source contracts](../../crates/contracts/src/durable_research.rs).
+## Models and extensions
 
-HTTP 202 means admitted/replayed or a stop request received, not computation, qualification or proof of remote cancellation. Retain the exact original file and `requestId` after an unknown outcome; replay returns the original native identities. A changed body under the same ID is a conflict. Scientific failures and rejected proposals stay in the ledger. An explicit `policy.max_trials` is a nonnegative integer; zero allows no scientific attempt, and exhaustion terminates generation without claiming final evidence.
+Official `builtinModels` uses only configured host environment and trusted provider modules. It **does not** reuse Pi Desktop credentials automatically. No arbitrary credentials files are searched/read, secrets returned, or paid discovery probes run. Trusted `providerModules` default-export native pi-ai Providers; `models` can be supplied directly. Boot refresh is offline metadata-only.
 
-Extension-owned JSON numbers must be finite, and integer values must fit JavaScript's safe range. Use decimal strings for larger counts/timestamps so the original value is preserved; lossy inputs are rejected before storage or replay comparison.
+Trusted `modules` default-export official `defineExtension` bundles. Research/brief/finish are in `plugins/research.ts`; `factor-wasm.ts` registers the owned factor child, `heldout-wasm.ts` selects and assesses once, and optional catalog/volume/validation-compare modules use the same native facts. `factor_finalize_group` in the same heldout bundle assesses two or more original recorded selections together; every selection must be made before any final exposure, include the caller and use the same sealed criteria. It uses one shared exposure, retains each original native child/result and returns no tuning feedback. A previously finalized window cannot be reopened to add members. Missing adapters/data remain explicit failures. Keep task names/versions compatible when changing installed extensions so old work can resume.
 
-Native views contain conversations, transcript and built-in documents plus the scientific `research` document. Tasks expose native active inspection and a page of native stored records; usage comes directly from the Harness. These are observations, not a second authoritative Agent state. Stopping an observer does not stop research; the explicit stop calls native abort, including owned background children.
+## Scientific isolation
 
-## Scientific input and isolation
+The Wasm adapter uses a prepared `data.catalog` and original native request, with optional `data.sealed` for independent final evaluation. Preserve original licensing, source/PIT and availability facts; an existing directory establishes none of them. Iteration truncates the native selection at validation end, including labels. Shared half-open causal partitions use canonical decimal-string boundaries satisfying `start < train < validation <= end`.
 
-The default Wasm adapter takes an original prepared, versioned catalog path in `data.catalog`, and a `NativeFactorEvaluationRequestV1` in `data.request`. Paths come from trusted owner configuration, not model tool arguments. Preserve source identity, licensing/PIT evidence, Instrument definitions and original availability clocks; path presence alone does not establish any of them. Exposure is keyed by native BAR identity and original event windows across the whole session, independent of caller-supplied `datasetId`, catalog path, copies or revisions. Those labels and paths cannot make observed data unseen.
+Trials are recorded before computation; FAILED stays FAILED after recovery. Original proposals, comparison and selection persist. Session-wide exposure is keyed by actual native BAR identity/windows: renamed datasets, copied catalogs, new roots or forks cannot make exposed samples unseen. Final metrics/failure are owner-visible, never model-facing tuning feedback.
 
-All four native partition boundaries are canonical nonnegative decimal strings within the native `DbCounter` range and must satisfy `event_start < train_end < validation_end <= event_end`. The adapter validates them before recording an exposure, so a failed malformed request cannot poison later evaluation.
+WABT compiles model WAT; an owned official Task runs the real `job evaluate-factor --summary-only`. Omitted/null fuel becomes finite `"10000000"`; explicit budgets stay explicit and results echo effective request/consumed fuel. Process timeout is **120 seconds**, memory bound **2048 MiB**, configurable through positive `QZ_FACTOR_TIMEOUT_SECONDS` / `QZ_FACTOR_MEMORY_MB`. Provider credentials are not inherited; official environment cleanup joins local processes. Use `QZ_SCRATCH_DIR` for native temporary files (tests use `PI_SCRATCH_DIR`). Missing values stay null and computation is not qualification/profitability.
 
-`data.sealed`, when requested, contains the final evaluator's original catalog/request and same source identity. It is omitted from model-facing brief output. Final parameters must match the selected proposal's original criteria; only the end of its data range expands beyond validation. Iterative computation truncates the selected range at `validation_end_ns`, including the labels, so it cannot read the final suffix. Predictions use causal native features; label event horizon and availability must stay inside each shared half-open partition. All assets share time cuts rather than row-ordinal cuts.
+## CLI and verification
 
-`factor_finalize` records the selected trial and complete compared set before giving the evaluator read capability. Exposure is a native **session** document: crashes, new roots and backward forks cannot free that sample or erase past selection/trials. Final result/failure is owner-visible, and the tool terminates without returning metrics to the model. Exposed samples are not fresh independent evidence. No DSR/PBO/qualification/profit claim is inferred from finite IC or a successful process.
-
-The adapter preserves scores of any finite sign/scale, missing masks and original clocks; unavailable metrics are null with a reason. It compiles WAT with official WABT and calls the matching `job evaluate-factor --summary-only`, which serializes the original native metrics/provenance without per-observation point/label rows. Node never buffers those rows; request association is still checked. Native child execution receives no model-provider credentials. Portfolios, Nautilus simulation/accounting/fees and target-only delivery remain separate optional consumers.
-
-Model-generated Wasm always receives finite native fuel: omitted/null `total_fuel` uses `"10000000"`, while an explicit decimal-string budget remains explicit. The original study input is unchanged and results echo the effective execution request and actual consumed fuel. The adapter uses the official environment's process timeout (120 seconds) and Bash address-space limit (2048 MiB); trusted owner configuration can set positive `QZ_FACTOR_TIMEOUT_SECONDS` and `QZ_FACTOR_MEMORY_MB`. Exhaustion, timeout or allocation failure remains a failed trial, not a free retry. Trusted direct native Forecast/factor CLI callers retain their optional unmetered semantics.
-
-The installed manager closes private HTTP admissions through `/maintenance/quiesce`, drains starts already admitted and reads native tasks before stopping the app. Existing tasks, views and explicit stop remain available; new submissions receive `503 research_maintenance`. A rejected or failed pre-stop maintenance restores admissions through `/maintenance/resume`. These private process controls are not task state or public research APIs.
-
-## Verification
+Installed operations use the [CLI](../cli/README.md) and [service Skill](../../skills/quazonai/SKILL.md). The old Rust client/bridge commands are not this workbench's API. The optional `src/main.ts` is a private loopback-only host, not the public service; `research.example.json` documents native settings.
 
 ```sh
-make check-research
+npm --prefix apps/research run typecheck
+npm --prefix apps/research test
 ```
 
-This checks types, real SQLite/HTTP/replay/abort/SIGKILL safe/interrupted behavior, and native factor calculations. A scientific `FAILED` fact survives a crash before the safe tool becomes terminal: reopening rethrows the original error without recomputation. The Rust factor target launches Node integration against actual native mixed CurrencyPair/Equity catalogs, registers additional data/factor/evaluator modules, runs multiple proposals, selects using real validation feedback and verifies final isolation and exposure persistence across renamed labels and copied catalogs. Iterative reads are recorded before computation, so validation feedback cannot become unseen final evidence in another root after SQLite reopen. Omitted/null fuel receives the disclosed finite model-code budget through finalization; infinite prediction and oversized memory fail finitely. Official Faux Provider controls model behavior **only**. Synthetic catalogs are not real-market data quality, model quality, account authorization, profitability or qualification evidence.
-
-Full project, browser, installation and native OCI checks are listed in [.opensdlc/project.md](../../.opensdlc/project.md#commands); actual task outcomes remain in the [task record](../../.opensdlc/tasks/durable-factor-platform/task.md#verification).
+The short suite exercises actual official SQLite/Faux/HTTP/children, SIGKILL safe/unsafe/committed-failure and admission-gap recovery, persisted provider backoff/quota/auth, bounded yield continuation, mixed-final/read behavior and actual watcher detach. `apps/job/tests/factors.rs` launches `test/native-science.ts` with real mixed-asset native catalogs and the real kernel to verify IC, exposure/final isolation and finite fuel. Faux controls model protocol only: these checks prove neither model judgment, real-market/account quality, profitability nor 24-hour unattended acceptance.

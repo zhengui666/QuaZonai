@@ -2,7 +2,6 @@ use super::*;
 use chrono::{DateTime, Utc};
 use contracts::{
     catalogs::{RecordedFeatureFragmentV1, RecordedFeatureInputsV1},
-    control::{OperatorCommand, OperatorOperation},
     research::{DataOrigin, DataPartition},
     Id, SchemaV1,
 };
@@ -83,7 +82,7 @@ fn legacy_metadata_and_provenance_remain_readable_without_invented_bindings() {
 }
 
 #[test]
-fn original_upload_survives_wire_and_command_retains_source_identity() {
+fn original_upload_survives_wire_and_retains_source_identity() {
     let request = request();
     let encoded = serde_json::to_vec(&request).unwrap();
     let decoded: RecordedFeatureRegisterV1 = serde_json::from_slice(&encoded).unwrap();
@@ -92,22 +91,7 @@ fn original_upload_survives_wire_and_command_retains_source_identity() {
     assert_eq!(parsed.observations[1].value, None);
     assert_eq!(parsed.observations[0].sequence, DbCounter::ZERO);
     let intent = request.intent().unwrap();
-    let command = OperatorCommand::RecordedFeatureRegister(intent.clone());
-    crate::control::command(&command).unwrap();
-    assert_eq!(
-        command.operation(),
-        OperatorOperation::RecordedFeatureRegister
-    );
-    assert_eq!(command.operation().code(), "RECORDED_FEATURE_REGISTER");
-    assert!(!command.operation().creates());
-    assert_eq!(
-        command.normalized_request().unwrap(),
-        serde_json::to_value(&intent).unwrap()
-    );
-    let normalized = serde_json::to_string(&command).unwrap();
-    assert!(normalized.len() < 1024);
-    assert!(!normalized.contains("observations"));
-    assert!(!format!("{command:?}").contains("recorded_missing"));
+    recorded_feature_intent(&intent).unwrap();
     assert_eq!(intent.byte_count.get(), request.content.len() as u64);
     assert_eq!(intent.project_id, request.project_id);
     assert_eq!(intent.dataset_revision_id, request.dataset_revision_id);

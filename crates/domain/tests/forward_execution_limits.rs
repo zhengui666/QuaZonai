@@ -1,6 +1,4 @@
 //! Forward execution inheritance does not change scientific/source validity.
-#[path = "../../../tests/support/runtime.rs"]
-mod support;
 use contracts::{lifecycle::JobLimitsV1, DbCounter, SchemaV1};
 use domain::{execution_limits::forward_evaluation, DomainError};
 fn source(cpu: Option<u64>, wall: Option<u32>, memory: u32, output: Option<u64>) -> JobLimitsV1 {
@@ -60,23 +58,4 @@ fn invalid_original_limits_and_unenforced_cpu_are_refused() {
             "independent_cpu_enforcement"
         ))
     ));
-}
-#[test]
-fn absent_caps_require_each_native_runtime_capability() {
-    let result = forward_evaluation(&source(None, None, 512, None)).unwrap();
-    let caps = support::capabilities(chrono::Utc::now());
-    assert!(domain::runtime::job_limits(&caps, &result).is_ok());
-    for name in [
-        "optional-wall-time",
-        "optional-cpu-budget",
-        "optional-cpu-rate",
-        "optional-output-budget",
-    ] {
-        let mut old = caps.clone();
-        old.engine_versions.remove(name);
-        assert!(matches!(
-            domain::runtime::job_limits(&old, &result),
-            Err(DomainError::CapabilityUnavailable(_))
-        ));
-    }
 }
