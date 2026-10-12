@@ -192,7 +192,9 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - name: Install locked dependencies without lifecycle hooks
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix ../research --ignore-scripts --no-audit --no-fund
       - name: Build production static assets
         run: node node_modules/vite/bin/vite.js build
       - name: Install Chromium and native browser dependencies

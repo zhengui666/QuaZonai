@@ -39,7 +39,8 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         let report = serde_json::json!({"schema_version":1,"recovery_id":recovery,"previous_epoch":auth.try_get::<i64,_>("session_epoch")?.to_string(),"new_epoch":epoch.to_string(),"revoked_machine_credentials":revoked.to_string()});
-        sqlx::query("INSERT INTO app.command_receipts(principal_scope,operation,idempotency_key,normalized_nonsecret_request,resource_id,response_status,response_nonsecret_body) VALUES('SYSTEM_RECOVERY','AUTH_RESTORE_INVALIDATE',$1,$2,$3,200,$4)").bind(recovery.to_string()).bind(serde_json::json!({"schema_version":1,"recovery_id":recovery})).bind(auth.try_get::<uuid::Uuid,_>("id")?).bind(&report).execute(&mut *tx).await?;
+        // Return the stored JSONB representation on both admission and replay.
+        let report: serde_json::Value = sqlx::query_scalar("INSERT INTO app.command_receipts(principal_scope,operation,idempotency_key,normalized_nonsecret_request,resource_id,response_status,response_nonsecret_body) VALUES('SYSTEM_RECOVERY','AUTH_RESTORE_INVALIDATE',$1,$2,$3,200,$4) RETURNING response_nonsecret_body").bind(recovery.to_string()).bind(serde_json::json!({"schema_version":1,"recovery_id":recovery})).bind(auth.try_get::<uuid::Uuid,_>("id")?).bind(&report).fetch_one(&mut *tx).await?;
         tx.commit().await?;
         Ok(report)
     }

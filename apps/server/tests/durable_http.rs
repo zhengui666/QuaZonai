@@ -510,11 +510,13 @@ fn durable_openapi_is_native_json_owner_only_and_old_execution_routes_are_absent
             json!([{"BrowserSession":[]},{"OwnerDeviceBearer":[]}])
         );
     }
-    assert!(
-        document["paths"]["/api/v2/research/{id}/stop"]["post"]["responses"]["409"]["content"]
-            ["application/json"]
-            .is_object()
+    let stop = &document["paths"]["/api/v2/research/{id}/stop"]["post"]["responses"];
+    assert!(stop["202"]["content"]["application/json"].is_object());
+    assert_eq!(
+        stop["404"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/DurableResearchErrorV1"
     );
+    assert!(stop["409"].is_null());
     assert!(document["paths"]["/api/v2/projects/{id}/cycles"]["post"].is_null());
     assert!(document["paths"]
         .as_object()

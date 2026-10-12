@@ -56,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
+          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
           node --check apps/web/scripts/native-browser.mjs
           node --check apps/web/scripts/native-data-execution.mjs
           node --test apps/web/scripts/native-data-execution.test.mjs apps/web/scripts/native-user-services.test.mjs
