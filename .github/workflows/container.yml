@@ -11,7 +11,9 @@ concurrency:
 jobs:
   build-smoke:
     name: Container / install, update and recovery
-    runs-on: ubuntu-24.04
+    # Published schema-2 bwrap needs an unrestricted native userns host;
+    # avoid changing global AppArmor policy solely to bootstrap upgrade tests.
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
       - name: Record probe-only deadline within the existing job budget

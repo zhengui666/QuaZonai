@@ -52,6 +52,27 @@ runs:
         export XDG_RUNTIME_DIR="/run/user/$uid"
         systemctl --user show --property=Version
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+    - name: Probe the published schema-2 native sandbox before cold builds
+      shell: bash
+      working-directory: ${{ inputs.source }}
+      run: |
+        set -euo pipefail
+        baseline=$(mktemp -d "$RUNNER_TEMP/schema2-native-probe.XXXXXX")
+        trap 'rm -rf -- "$baseline"' EXIT
+        curl --fail --location --retry 3 --max-time 60 \
+          --output "$baseline/deploy.tar.gz" \
+          https://github.com/zhengui666/QuaZonai/releases/download/v2.0.0-dev.20261011054724.38115925301/quazonai-deploy.tar.gz
+        tar -xzf "$baseline/deploy.tar.gz" -C "$baseline"
+        source "$baseline/manage.sh"
+        source "$baseline/codex.sh"
+        printf '{"uid":%s,"gid":%s,"docker_socket":"/var/run/docker.sock"}\n' "$(id -u)" "$(id -g)" > "$baseline/probe.json"
+        image=$(qz_get "$baseline/release.json" codex_image)
+        version=$(qz_get "$baseline/release.json" codex_version)
+        docker pull "$image"
+        # Original version/sandbox code executes /usr/bin/true, never a model.
+        # No original file, native sandbox flags or global host policy is changed.
+        qz_codex_verify_candidate "$baseline/probe.json" "$version" "$image"
+        printf '%s\n' 'Published schema-2 native version/sandbox passed; full upgrade still follows.'
     - id: native-builder
       uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
     - name: Verify the real filtered native input context before compiling

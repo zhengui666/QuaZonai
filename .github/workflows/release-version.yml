@@ -27,8 +27,9 @@ jobs:
       revision: ${{ inputs.revision }}
   build:
     needs: regression
-    runs-on: ubuntu-24.04
-    timeout-minutes: 85
+    # Upgrade acceptance bootstraps the unmodified published schema-2 sandbox.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
@@ -121,7 +122,7 @@ jobs:
 
   install:
     needs: assets
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     permissions:
       contents: read
