@@ -145,6 +145,7 @@ for (const colorScheme of ['light', 'dark'] as const) test(`${colorScheme}: resp
     await page.setViewportSize({ width, height: 1000 });
     await expect(page.getByLabel('研究目标', { exact: true })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+    await expect(page.getByRole('combobox', { name: '可用模型', exact: true })).toBeEnabled();
     await page.getByLabel('研究目标', { exact: true }).focus(); await expect(page.getByLabel('研究目标', { exact: true })).toBeFocused();
     await page.keyboard.press('Tab'); await expect(page.getByRole('combobox', { name: '可用模型', exact: true })).toBeFocused();
     const study = page.getByRole('button', { name: /研究 #0 原生会话/ });
