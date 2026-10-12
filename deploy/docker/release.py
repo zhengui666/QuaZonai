@@ -23,7 +23,6 @@ from release_support import BUNDLE, BUNDLE_FILES, DATABASE_IMAGE, REPOSITORY, ru
 # Routine source validation is the Rust workflow. Image/CLI production and
 # installation remain in release-version.yml after this prerequisite succeeds.
 CI_PATHS = {".github/workflows/ci.yml"}
-CODEX_REPOSITORY = "ghcr.io/zhengui666/quazonai-codex"
 DEV_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]{14}\.[1-9][0-9]*")
 
 
@@ -180,11 +179,11 @@ def verify(tag: str, revision: str) -> None:
 
 
 def bundle(tag: str, revision: str, image: str, destination: Path, *,
-           runtime_image: str, codex_version: str, codex_image: str, published: bool = False) -> dict:
+           runtime_image: str, published: bool = False) -> dict:
     release = validate_manifest({
-        "schema_version": 2, "version": tag, "revision": revision,
+        "schema_version": 3, "version": tag, "revision": revision,
         "image": image, "database_image": DATABASE_IMAGE,
-        "runtime_image": runtime_image, "codex_version": codex_version, "codex_image": codex_image,
+        "runtime_image": runtime_image,
     }, published=published)
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "release.json").write_text(json.dumps(release, indent=2) + "\n")
@@ -245,8 +244,7 @@ def publish(assets: Path) -> None:
 
 def archive_images(assets: Path) -> None:
     release = validate_manifest(json.loads((assets / "release.json").read_text()), published=True)
-    for component, field in (("application", "image"), ("runtime", "runtime_image"),
-                             ("codex", "codex_image"), ("database", "database_image")):
+    for component, field in (("application", "image"), ("runtime", "runtime_image"), ("database", "database_image")):
         reference = release[field]
         run(["docker", "pull", "--platform", "linux/amd64", reference])
         identity = run(["docker", "image", "inspect", "--format", "{{.Id}}", reference], capture=True)
@@ -271,26 +269,6 @@ def archive_images(assets: Path) -> None:
         run(["docker", "image", "rm", local])
 
 
-def docker_configuration() -> dict:
-    endpoint = os.environ.get("DOCKER_HOST") or run(
-        ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], capture=True)
-    if not endpoint.startswith("unix://"):
-        raise ValueError("Image verification requires the local Docker daemon.")
-    return {"docker_socket": endpoint.removeprefix("unix://"), "uid": os.getuid(), "gid": os.getgid()}
-
-
-def build_codex(target: str, image: str) -> str:
-    import codex  # CI image producer only; not needed by cold-runner bundle assembly.
-    # CI-only producer. Neither this file nor the Dockerfile enters the deploy bundle.
-    target = codex.exact_version(target)
-    with tempfile.TemporaryDirectory(prefix="quazonai-codex-context-") as temporary:
-        run(["docker", "build", "--platform", "linux/amd64", "--build-arg", "CODEX_VERSION=" + target,
-             "--file", str(BUNDLE / "Codex.Dockerfile"), "--tag", image, temporary])
-    candidate = run(["docker", "image", "inspect", "--format", "{{.Id}}", image], capture=True)
-    codex.verify_candidate(docker_configuration(), target, candidate)
-    return candidate
-
-
 def push_image(image: str, repository: str, tag: str) -> str:
     identity = run(["docker", "image", "inspect", "--format", "{{.Id}}", image], capture=True)
     reference = repository + ":" + tag
@@ -306,54 +284,13 @@ def push_image(image: str, repository: str, tag: str) -> str:
     return matches[0]
 
 
-def published_codex_image(target: str) -> str | None:
-    import codex
-    # Main and standalone publishers share the workflow concurrency group; dev only reads this tag.
-    # Reuse an existing exact version even when a local rebuild has a new ID.
-    reference = CODEX_REPOSITORY + ":" + codex.exact_version(target)
-    result = subprocess.run(["docker", "pull", reference], capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        if any(message in result.stderr.lower() for message in ("manifest unknown", "no such manifest", "name unknown")):
-            return None
-        raise ValueError("Could not inspect the published Codex version; no image was pushed.")
-    metadata = json.loads(run(["docker", "image", "inspect", reference], capture=True))[0]
-    digests = metadata.get("RepoDigests") or []
-    matches = [value for value in digests if isinstance(value, str)
-               and re.fullmatch(re.escape(CODEX_REPOSITORY) + r"@sha256:[0-9a-f]{64}", value)]
-    if (len(matches) != 1 or metadata.get("Os") != "linux" or metadata.get("Architecture") != "amd64"
-            or metadata.get("Config", {}).get("Labels", {}).get("org.opencontainers.image.version") != target):
-        raise ValueError("Published Codex version has incompatible metadata; it was not overwritten.")
-    codex.verify_candidate(docker_configuration(), target, matches[0])
-    return matches[0]
-
-
-def advance_codex_latest(image: str, target: str) -> None:
-    import codex
-    target = codex.exact_version(target)
-    if "-" in target:
-        return
-    reference = CODEX_REPOSITORY + ":latest"
-    result = subprocess.run(["docker", "pull", reference], capture_output=True, text=True, check=False)
-    if result.returncode == 0:
-        previous = run(["docker", "image", "inspect", "--format",
-                        '{{index .Config.Labels "org.opencontainers.image.version"}}', reference], capture=True)
-        if version_precedence("v" + codex.exact_version(previous)) >= version_precedence("v" + target):
-            return
-    elif not any(message in result.stderr.lower() for message in ("manifest unknown", "no such manifest", "name unknown")):
-        raise ValueError("Could not inspect the published Codex latest version.")
-    run(["docker", "pull", image])
-    push_image(image, CODEX_REPOSITORY, "latest")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["select", "verify", "bundle", "publish", "build-codex", "push-images", "publish-codex", "codex-latest", "dev-tag", "wait-ci", "archive-images"])
+    parser.add_argument("command", choices=["select", "verify", "bundle", "publish", "push-images", "dev-tag", "wait-ci", "archive-images"])
     parser.add_argument("--version")
     parser.add_argument("--revision")
     parser.add_argument("--image")
     parser.add_argument("--runtime-image")
-    parser.add_argument("--codex-image")
-    parser.add_argument("--codex-version")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-id")
     args = parser.parse_args()
@@ -377,22 +314,7 @@ def main() -> None:
                     stream.write(f"{key}={value}\n")
     elif args.command == "verify":
         verify(args.version, args.revision)
-    elif args.command == "build-codex":
-        print(build_codex(args.codex_version, args.image))
-    elif args.command == "codex-latest":
-        selected = validate_manifest(json.loads((args.output / "release.json").read_text()), published=True)
-        advance_codex_latest(selected["codex_image"], selected["codex_version"])
-    elif args.command == "publish-codex":
-        import codex
-        target = codex.exact_version(args.codex_version)
-        codex.verify_candidate(docker_configuration(), target, args.image)
-        digest = published_codex_image(target)
-        if digest is None:
-            digest = push_image(args.image, CODEX_REPOSITORY, target)
-        advance_codex_latest(digest, target)
-        print(digest)
     elif args.command == "push-images":
-        import codex
         verify(args.version, args.revision)
         images = (("image", args.image, "quazonai"),
                   ("runtime_image", args.runtime_image, "quazonai-runtime"))
@@ -403,23 +325,13 @@ def main() -> None:
             if (labels.get("org.opencontainers.image.revision") != args.revision
                     or labels.get("org.opencontainers.image.version") != args.version):
                 raise ValueError("The tested image does not match the release version and source.")
-        target = codex.exact_version(args.codex_version)
-        codex.verify_candidate(docker_configuration(), target, args.codex_image)
-        codex_digest = published_codex_image(target)
         references = {field: push_image(image, "ghcr.io/zhengui666/" + repository, args.version)
                       for field, image, repository in images}
-        if codex_digest is None:
-            # Dev runs have unique release tags and never write a shared Codex
-            # version/latest tag, so they cannot race the default-branch publisher.
-            tag = args.version if os.environ.get("RELEASE_BRANCH") == "dev" else target
-            codex_digest = push_image(args.codex_image, CODEX_REPOSITORY, tag)
         bundle(args.version, args.revision, references["image"], args.output,
-               runtime_image=references["runtime_image"], codex_version=target,
-               codex_image=codex_digest, published=True)
+               runtime_image=references["runtime_image"], published=True)
     elif args.command == "bundle":
         bundle(args.version, args.revision, args.image, args.output,
-               runtime_image=args.runtime_image, codex_version=args.codex_version,
-               codex_image=args.codex_image, published=True)
+               runtime_image=args.runtime_image, published=True)
     else:
         publish(args.output)
 

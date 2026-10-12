@@ -182,9 +182,9 @@ fn early_original_close_redeems_both_positions_at_receipt_without_changing_expir
         })
         .filter(|core| {
             core["is_reduce_only"].as_bool().unwrap()
-                && core["tags"].as_array().is_some_and(|tags| {
-                    tags.iter().any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE")
-                })
+                && core["tags"]
+                    .as_array()
+                    .is_some_and(|tags| tags.iter().any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE"))
         })
         .collect::<Vec<_>>();
     let redemptions = fills
@@ -217,7 +217,10 @@ fn early_original_close_redeems_both_positions_at_receipt_without_changing_expir
             core["is_reduce_only"]
         );
         eprintln!("canonical early redemption: {context}");
-        assert_eq!(fill["client_order_id"], core["client_order_id"], "{context}");
+        assert_eq!(
+            fill["client_order_id"], core["client_order_id"],
+            "{context}"
+        );
         assert_eq!(fill["instrument_id"], core["instrument_id"], "{context}");
         assert_eq!(fill["last_px"], payout, "{context}");
         assert_eq!(fill["ts_event"], (9 * STEP).to_string(), "{context}");

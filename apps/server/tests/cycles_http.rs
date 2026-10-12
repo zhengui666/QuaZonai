@@ -1,7 +1,9 @@
-//! Actual local cookie sessions, Axum commands and PostgreSQL/PGMQ startup.
-//! Parent data/capability records are explicit fixtures, not production T42 evidence.
+//! Actual local cookie sessions, Axum reads/freeze and retained historical Store codecs.
+//! Explicit scientific startup and controlled original history never launch an Agent.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
+#[path = "../../../tests/support/historical_alpha.rs"]
+mod historical_alpha;
 #[path = "../../../tests/support/missions.rs"]
 mod mission_support;
 #[path = "../../../tests/support/research.rs"]
@@ -92,8 +94,96 @@ async fn activate(f: &Fixture, cookie: &str, project: contracts::Id) -> Value {
     updated.body["resource"].clone()
 }
 
+// Explicit data preparation through the Store, not the retired public start route.
+// Historical selection below uses marked test-only archived facts, not native inference.
+async fn scientific_start(
+    f: &Fixture,
+    data: &cycle_support::Fixture,
+    key: &str,
+    body: Value,
+) -> Reply {
+    use axum::response::IntoResponse;
+    let login: String = sqlx::query_scalar(
+        "SELECT id::text FROM app.browser_logins ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&f.store.native_pool())
+    .await
+    .unwrap();
+    let actor = Actor::Browser {
+        login_id: login.try_into().unwrap(),
+    };
+    let request = contracts::cycles::ExternalCycleStartIntent {
+        schema_version: contracts::SchemaV1,
+        project_id: data.data.project,
+        request: serde_json::from_value(body).unwrap(),
+    };
+    let reading = data.objects.clone();
+    let publishing = data.objects.clone();
+    let mut allocated = None;
+    let result = f
+        .store
+        .start_scientific_cycle(
+            &actor,
+            key,
+            &request,
+            move |id, size| {
+                let objects = reading.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.read(id, size))
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|_| store::StoreError::Integrity)
+                }
+            },
+            |object| {
+                allocated = Some(object.id);
+                let objects = publishing.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || objects.put(object.id, &object.bytes))
+                        .await
+                        .map_err(|_| store::StoreError::Integrity)?
+                        .map_err(|error| match error {
+                            integrations::artifacts::ArtifactError::Io(error)
+                                if error.kind() == std::io::ErrorKind::StorageFull =>
+                            {
+                                store::StoreError::StorageFull
+                            }
+                            _ => store::StoreError::Integrity,
+                        })
+                }
+            },
+        )
+        .await;
+    if let Some(id) = allocated.filter(|_| result.is_err()) {
+        let objects = data.objects.clone();
+        f.store
+            .discard_unpublished_operator_artifact(id, move |id| async move {
+                objects
+                    .discard_unpublished(id)
+                    .map_err(|_| store::StoreError::Integrity)
+            })
+            .await
+            .unwrap();
+    }
+    let response = match result {
+        Ok(result) => (StatusCode::ACCEPTED, axum::Json(result)).into_response(),
+        Err(error) => server::error::ApiError::from(error).into_response(),
+    };
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    Reply {
+        status,
+        headers,
+        body: serde_json::from_slice(&bytes).unwrap(),
+        cookie: None,
+    }
+}
+
 #[sqlx::test(migrations = "../../migrations")]
-async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_http_receipt(
+async fn authenticated_freeze_and_historical_cycle_keep_original_receipts_and_selection_reads(
     pool: PgPool,
 ) {
     let (f, cookie, data) = setup(&pool).await;
@@ -131,23 +221,14 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
     let body = json!({
         "schema_version": 1,
         "brief_id": data.brief.id,
-        "expected_revision": project["revision"],
-        "researcher_profile": data.researcher_profile,
-        "reviewer_profile": data.reviewer_profile
+        "expected_revision": project["revision"]
     });
-    let started = browser(&f, &cookie, "POST", &path, "start", body.clone()).await;
+    let started = scientific_start(&f, &data, "start", body.clone()).await;
     assert_eq!(started.status, StatusCode::ACCEPTED, "{}", started.body);
-    assert_eq!(started.headers[header::CACHE_CONTROL], "no-store");
     assert_eq!(started.body["resource"]["run"]["kind"], "DATA_VALIDATE");
     assert_eq!(started.body["resource"]["run"]["state"], "QUEUED");
-    assert_eq!(
-        started.body["resource"]["cycle"]["researcher_profile"],
-        body["researcher_profile"]
-    );
-    assert_eq!(
-        started.body["resource"]["cycle"]["reviewer_profile"],
-        body["reviewer_profile"]
-    );
+    assert!(started.body["resource"]["cycle"]["researcher_profile"].is_null());
+    assert!(started.body["resource"]["cycle"]["reviewer_profile"].is_null());
     let run_id = started.body["resource"]["run"]["id"].as_str().unwrap();
     let cycle_id = started.body["resource"]["cycle"]["id"].as_str().unwrap();
     let run = browser(
@@ -172,7 +253,7 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
     .await;
     assert_eq!(cycle.status, StatusCode::OK);
     assert_eq!(cycle.body["initial_run_id"], run_id);
-    let replay = browser(&f, &cookie, "POST", &path, "start", body).await;
+    let replay = scientific_start(&f, &data, "start", body).await;
     assert_eq!(replay.status, StatusCode::ACCEPTED);
     assert_eq!(replay.body["replayed"], true);
     assert_eq!(replay.body["resource"], started.body["resource"]);
@@ -198,25 +279,48 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
     }
     let preparation = contracts::Id::try_from(run_id.to_owned()).unwrap();
     mission_support::complete(&pool, &f.store, &data, preparation, false).await;
-    assert!(f.store.advance_initial_cycle(preparation).await.unwrap());
-    let message = f
-        .store
-        .read_mission_messages(60, 1)
-        .await
-        .unwrap()
-        .remove(0);
-    let Some(store::lifecycle::ClaimResult::Leased(lease)) = f
-        .store
-        .claim_mission(&message, "selection-http", 120)
-        .await
-        .unwrap()
-    else {
-        panic!("Mission lease")
-    };
-    f.store
-        .begin_run_dispatch(lease.run.id, &lease.fence)
+    let messages = f.store.read_native_run_messages(60, 100).await.unwrap();
+    let preparation_message = messages
+        .iter()
+        .find(|message| message.run_id == preparation)
+        .unwrap();
+    f.store.acknowledge_run(preparation_message).await.unwrap();
+    let retired: i64 = sqlx::query_scalar("SELECT count(*) FROM app.run_missions")
+        .fetch_one(&pool)
         .await
         .unwrap();
+    assert_eq!(
+        retired, 0,
+        "data completion and ACK do not schedule an Agent"
+    );
+    let login: String = sqlx::query_scalar(
+        "SELECT id::text FROM app.browser_logins ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let actor = Actor::Browser {
+        login_id: login.try_into().unwrap(),
+    };
+    let lease = historical_alpha::parent(
+        &pool,
+        &f.store,
+        &actor,
+        &data,
+        contracts::Id::try_from(cycle_id.to_owned()).unwrap(),
+    )
+    .await;
+    let message_id: i64 =
+        sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(lease.run.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let message = store::lifecycle::RunMessage {
+        message_id,
+        run_id: lease.run.id,
+        read_count: 1,
+    };
     let path = format!("/api/v2/runs/{}", lease.run.id);
     let current = browser(&f, &cookie, "GET", &path, "unused", Value::Null).await;
     let cancelled = browser(
@@ -228,12 +332,22 @@ async fn authenticated_freeze_and_cycle_start_publish_one_real_run_and_original_
         json!({"schema_version":1,"expected_revision":current.body["revision"]}),
     )
     .await;
-    assert_eq!(cancelled.status, StatusCode::ACCEPTED, "{}", cancelled.body);
-    assert!(f
-        .store
-        .complete_mission(lease.run.id, &lease.fence)
+    assert_eq!(
+        cancelled.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        cancelled.body
+    );
+    assert_eq!(
+        f.store.get_run(&actor, lease.run.id).await.unwrap(),
+        lease.run
+    );
+    // Only this marked archival fixture supplies an original terminal for read/selection checks.
+    historical_alpha::terminal(&pool, &lease).await;
+    f.store
+        .freeze_cycle_selection(&actor, lease.run.id)
         .await
-        .unwrap());
+        .unwrap();
     f.store.acknowledge_run(&message).await.unwrap();
     let path = format!("/api/v2/cycles/{cycle_id}/selection");
     let selection = browser(&f, &cookie, "GET", &path, "unused", Value::Null).await;
@@ -302,7 +416,7 @@ async fn startup_rejects_forged_success_stale_revision_and_invalid_machine_mutat
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn missing_artifact_deployment_is_unavailable_not_a_user_validation_failure(pool: PgPool) {
+async fn retired_cycle_start_cannot_admit_work_even_without_an_artifact_deployment(pool: PgPool) {
     let f = fixture(pool.clone()).await;
     let login = local_session(&f).await;
     assert_eq!(login.status, StatusCode::OK);
@@ -318,8 +432,7 @@ async fn missing_artifact_deployment_is_unavailable_not_a_user_validation_failur
             "reviewer_profile":{"profile_id":contracts::Id::new(),"expected_revision":"1"}}),
     )
     .await;
-    assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.body["code"], "INTEGRATION_UNAVAILABLE");
+    assert_eq!(response.status, StatusCode::METHOD_NOT_ALLOWED);
     let counts: (i64, i64) =
         sqlx::query_as("SELECT (SELECT count(*) FROM app.runs),(SELECT count(*) FROM pgmq.q_runs)")
             .fetch_one(&pool)
@@ -346,12 +459,6 @@ fn startup_routes_are_in_the_actual_native_http_contract() {
         ),
         (
             "/api/v2/projects/{id}/cycles",
-            "post",
-            "202",
-            "startResearchCycle",
-        ),
-        (
-            "/api/v2/projects/{id}/cycles",
             "get",
             "200",
             "listProjectResearchCycles",
@@ -363,6 +470,7 @@ fn startup_routes_are_in_the_actual_native_http_contract() {
         assert!(operation["responses"]["503"].is_object(), "{path}");
         assert_eq!(operation["operationId"], identity, "{path}");
     }
+    assert!(document["paths"]["/api/v2/projects/{id}/cycles"]["post"].is_null());
 }
 
 #[cfg(target_os = "linux")]
@@ -413,9 +521,7 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
     .await;
     assert_eq!(frozen.status, StatusCode::OK);
     let project = activate(&f, &cookie, data.data.project).await;
-    let path = format!("/api/v2/projects/{}/cycles", data.data.project);
-    let body = json!({"schema_version":1,"brief_id":data.brief.id,"expected_revision":project["revision"],
-        "researcher_profile":data.researcher_profile,"reviewer_profile":data.reviewer_profile});
+    let body = json!({"schema_version":1,"brief_id":data.brief.id,"expected_revision":project["revision"]});
     let objects = f._state.path().join("artifacts");
     let mut before = fs::read_dir(&objects)
         .unwrap()
@@ -443,15 +549,7 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
         }
     }
     assert!(full, "private 16 MiB tmpfs must exhaust before 32 MiB");
-    let rejected = browser(
-        &f,
-        &cookie,
-        "POST",
-        &path,
-        "full-filesystem-start",
-        body.clone(),
-    )
-    .await;
+    let rejected = scientific_start(&f, &data, "full-filesystem-start", body.clone()).await;
     assert_eq!(
         rejected.status,
         StatusCode::SERVICE_UNAVAILABLE,
@@ -464,7 +562,6 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
         .as_str()
         .unwrap()
         .contains("存储空间已满"));
-    assert_eq!(rejected.headers[header::CACHE_CONTROL], "no-store");
     // Independent database reads prove the failed request left no admitted work.
     for table in ["app.research_cycles", "app.runs", "pgmq.q_runs"] {
         let count: i64 =
@@ -491,21 +588,13 @@ async fn native_full_filesystem_rolls_back_cycle_admission_and_allows_same_inten
     );
     drop(filler);
     fs::remove_file(filler_path).unwrap();
-    let retry = browser(
-        &f,
-        &cookie,
-        "POST",
-        &path,
-        "full-filesystem-start",
-        body.clone(),
-    )
-    .await;
+    let retry = scientific_start(&f, &data, "full-filesystem-start", body.clone()).await;
     assert_eq!(retry.status, StatusCode::ACCEPTED, "{}", retry.body);
     assert_eq!(
         retry.body["replayed"], false,
         "failure did not persist a receipt"
     );
-    let replay = browser(&f, &cookie, "POST", &path, "full-filesystem-start", body).await;
+    let replay = scientific_start(&f, &data, "full-filesystem-start", body).await;
     assert_eq!(replay.status, StatusCode::ACCEPTED);
     assert_eq!(replay.body["replayed"], true);
     assert_eq!(replay.body["resource"], retry.body["resource"]);

@@ -116,11 +116,13 @@ impl NativeJob {
 }
 
 impl Journal {
-    pub async fn open(path: &Path, quota_bytes: u64, max_pending: impl Into<Option<u32>>) -> Result<Self> {
+    pub async fn open(
+        path: &Path,
+        quota_bytes: u64,
+        max_pending: impl Into<Option<u32>>,
+    ) -> Result<Self> {
         let max_pending = max_pending.into();
-        if quota_bytes == 0 || quota_bytes > i64::MAX as u64
-            || max_pending == Some(0)
-        {
+        if quota_bytes == 0 || quota_bytes > i64::MAX as u64 || max_pending == Some(0) {
             return Err(Failure::Invalid("journal_limits"));
         }
         let options = SqliteConnectOptions::new()

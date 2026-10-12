@@ -1,6 +1,5 @@
 //! Separate report-currency evidence, never a replacement for native canonical data.
 use crate::{
-    DbCounter, DecimalValue, SchemaV1,
     science::NativeStatisticV1,
     spot_cash::{
         NativeSpotBarEventTimeV1, NativeSpotCashFlowEvidenceV1, NativeSpotCashMoneyV1,
@@ -8,6 +7,7 @@ use crate::{
         NativeSpotValuationFrameV1, ReportCurrencyDailyReturnsV1, ReportCurrencyValuationV1,
     },
     spot_fees::FrozenSpotFeeScheduleV1,
+    DbCounter, DecimalValue, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -60,7 +60,7 @@ pub enum NativeSpotCashObservationKindV1 {
         /// Original complete PortfolioSnapshot, with its actual native event UUID.
         native: serde_json::Value,
         frame: NativeSpotValuationFrameV1,
-        valuation: ReportCurrencyValuationV1,
+        valuation: Box<ReportCurrencyValuationV1>,
     },
 }
 

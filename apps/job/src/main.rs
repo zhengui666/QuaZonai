@@ -50,6 +50,17 @@ enum Operation {
         #[arg(long)]
         model: PathBuf,
     },
+    /// Evaluate arbitrary factor scores with shared time cuts; no targets or accounts.
+    /// Catalog/model paths are trusted local CLI configuration only.
+    EvaluateFactor {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+        /// Omit per-observation rows; emit the same native metrics and provenance.
+        #[arg(long)]
+        summary_only: bool,
+    },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
         #[arg(long)]
@@ -175,6 +186,20 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
+        Operation::EvaluateFactor {
+            catalog,
+            model,
+            summary_only,
+        } => {
+            let result = job::factors::evaluate_factor(&catalog, &input()?, &model_bytes(&model)?)?;
+            if summary_only {
+                output(&contracts::factors::NativeFactorEvaluationSummaryV1::from(
+                    result,
+                ))
+            } else {
+                output(&result)
+            }
+        }
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,
@@ -191,10 +216,7 @@ fn run(operation: Operation) -> Result<()> {
             let request = input()?;
             let parts = features
                 .into_iter()
-                .map(|path| -> Result<_> {
-                    Ok(serde_json::from_slice(&model_bytes(
-                        &path)?)?)
-                })
+                .map(|path| -> Result<_> { Ok(serde_json::from_slice(&model_bytes(&path)?)?) })
                 .collect::<Result<Vec<_>>>()?;
             output(&job::experiment::evaluate(
                 &catalog,
@@ -225,7 +247,14 @@ fn run(operation: Operation) -> Result<()> {
                 calibration.as_ref(),
             )?)
         }
-        Operation::Simulate { catalog, dataset_revision_id } => output(&job::simulation::simulate_explicit(&catalog, &input()?, dataset_revision_id)?),
+        Operation::Simulate {
+            catalog,
+            dataset_revision_id,
+        } => output(&job::simulation::simulate_explicit(
+            &catalog,
+            &input()?,
+            dataset_revision_id,
+        )?),
         Operation::StudyPortfolio { catalog, objects } => {
             output(&job::study::evaluate(&catalog, &input()?, |id| {
                 model_bytes(&objects.join(id.to_string()))

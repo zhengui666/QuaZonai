@@ -21,11 +21,9 @@ import release
 
 
 def metadata(tag="v1.2.3"):
-    return {"schema_version": 2, "version": tag, "revision": "a" * 40,
+    return {"schema_version": 3, "version": tag, "revision": "a" * 40,
             "image": "ghcr.io/zhengui666/quazonai@sha256:" + "b" * 64,
             "runtime_image": "ghcr.io/zhengui666/quazonai-runtime@sha256:" + "c" * 64,
-            "codex_version": "0.157.0",
-            "codex_image": "ghcr.io/zhengui666/quazonai-codex@sha256:" + "d" * 64,
             "database_image": manage.DATABASE_IMAGE}
 
 
@@ -41,7 +39,7 @@ class ColdProducerTests(unittest.TestCase):
             program = """import json, pathlib, release, sys, tarfile
 assert 'manage' not in sys.modules and 'codex' not in sys.modules
 m=json.loads(sys.argv[1])
-r=release.bundle(m['version'],m['revision'],m['image'],pathlib.Path('assets'),runtime_image=m['runtime_image'],codex_version=m['codex_version'],codex_image=m['codex_image'],published=True)
+r=release.bundle(m['version'],m['revision'],m['image'],pathlib.Path('assets'),runtime_image=m['runtime_image'],published=True)
 assert r==m
 with tarfile.open('assets/quazonai-deploy.tar.gz') as archive:
     assert set(archive.getnames())==release.BUNDLE_FILES
@@ -62,7 +60,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_digest_and_database_binding(self):
         self.assertEqual(manage.validate_manifest(metadata()), metadata())
-        for changes in ({"schema_version": 3}, {"image": "ghcr.io/zhengui666/quazonai:latest"},
+        for changes in ({"schema_version": 2}, {"image": "ghcr.io/zhengui666/quazonai:latest"},
                         {"revision": "main"}, {"database_image": "postgres:18"}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 manage.validate_manifest({**metadata(), **changes})
@@ -72,14 +70,13 @@ class ManifestTests(unittest.TestCase):
             root = Path(temporary)
             selected = metadata()
             release.bundle(selected["version"], selected["revision"], selected["image"], root / "assets",
-                           runtime_image=selected["runtime_image"], codex_version=selected["codex_version"],
-                           codex_image=selected["codex_image"], published=True)
+                           runtime_image=selected["runtime_image"], published=True)
             (root / "unpacked").mkdir()
             manage.unpack((root / "assets/quazonai-deploy.tar.gz").read_bytes(), root / "unpacked")
             self.assertEqual({x.name for x in (root / "unpacked").iterdir()}, manage.BUNDLE_FILES)
             self.assertEqual(manage.manifest(root / "unpacked"), metadata())
-            self.assertEqual((root / 'unpacked/codex.apparmor').read_text(),
-                             (manage.BUNDLE / 'codex.apparmor').read_text())
+            self.assertEqual((root / 'unpacked/.env.example').read_text(),
+                             (manage.BUNDLE / '.env.example').read_text())
 
     def test_scripts_parse(self):
         for path in manage.BUNDLE.glob("*.py"):
@@ -158,7 +155,7 @@ class InstallationInputTests(unittest.TestCase):
             self.assertIn(f"WorkingDirectory={str(root).replace('%', '%%')}/data\n", content)
             self.assertIn(f"EnvironmentFile={str(root).replace('%', '%%')}/worker.env\n", content)
             self.assertIn('ExecStart=:"', content)
-            self.assertIn('PUBLIC_URL="http://localhost:8081"\n', (root / "worker.env").read_text())
+            self.assertNotIn('CODEX_', (root / "worker.env").read_text())
             for path in (Path("relative"), Path("/bad\npath")):
                 with self.assertRaises(ValueError):
                     manage.unit_path(path)
@@ -202,24 +199,23 @@ class DeploymentBoundaryTests(unittest.TestCase):
 
 
 class RestartAndLayoutTests(unittest.TestCase):
-    def test_codex_home_overlap_is_rejected_before_identity_or_state_creation(self):
+    def test_research_defaults_preserve_user_config_modules_and_provider_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
-            parent = Path(temporary)
-            root = parent / 'installation'
-            alias = parent / 'native-alias'
-            alias.symlink_to(root / 'data/state/native')
-            for native in (root, root / 'data/state', root / 'data/state/native', root / 'backups/native', parent, alias):
-                args = argparse.Namespace(port=18081, database_port=55432, codex_home=str(native))
-                with self.subTest(native=native), patch.object(manage, 'manifest', return_value=metadata()), patch.object(
-                    manage, 'preflight'
-                ), patch.object(manage, 'validate_ports'), patch.object(manage, 'require_new_docker_project') as project:
-                    with self.assertRaisesRegex(ValueError, 'CODEX_HOME must be separate'):
-                        manage.deploy(root, args)
-                    project.assert_not_called()
-                self.assertFalse((root / 'installation.json').exists())
-                self.assertFalse((root / 'pending.json').exists())
-                self.assertFalse((root / 'data').exists())
-                self.assertFalse((root / 'backups').exists())
+            root = Path(temporary)
+            manage.research_configuration(root)
+            directory = root / 'data/research'
+            original = json.loads((directory / 'config.json').read_text())
+            self.assertEqual(original['port'], 8092)
+            self.assertEqual(original['database'], str(directory / 'research.sqlite'))
+            self.assertEqual(len(original['modules']), 3)
+            customized = {**original, 'providerModules': ['./plugins/provider.ts']}
+            (directory / 'config.json').write_text(json.dumps(customized))
+            (directory / 'provider.env').write_text('NATIVE_PROVIDER_KEY=test-only\n')
+            (directory / 'plugins/provider.ts').write_text('// user-owned trusted module\n')
+            manage.research_configuration(root)
+            self.assertEqual(json.loads((directory / 'config.json').read_text()), customized)
+            self.assertEqual((directory / 'provider.env').read_text(), 'NATIVE_PROVIDER_KEY=test-only\n')
+            self.assertTrue((directory / 'plugins/provider.ts').exists())
 
     def test_compose_disables_restarts_for_initial_or_pending_candidates(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(manage, 'run', return_value='') as command:
@@ -283,6 +279,7 @@ class NativeDeploymentTests(unittest.TestCase):
                 [str(binaries / 'server'), '--version'],
                 [str(binaries / 'runtime'), '--version'],
                 [str(binaries / 'quazonai'), 'client', '--help'],
+                [str(binaries / 'job'), 'evaluate-factor', '--help'],
             ])
             (binaries / 'quazonai').unlink()
             (binaries / 'quazonai').touch()
@@ -557,7 +554,7 @@ class UpdateTests(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(manage, "preflight"))
-        self.stack.enter_context(patch("codex.require_stopped"))
+        self.stack.enter_context(patch.object(manage, "require_research_idle"))
         self.stack.enter_context(patch.object(manage, "prepare", return_value=self.new))
         self.stack.enter_context(patch.object(manage, "manifest", return_value=metadata("v1.0.1")))
         self.stack.enter_context(patch.object(manage, "verify_console"))
@@ -819,9 +816,9 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root / 'pending.json').read_text()), pending)
         self.assertEqual(manage.configuration(self.root), self.old)
 
-    def test_every_container_build_base_has_an_exact_digest(self):
+    def test_container_build_bases_use_fixed_official_revisions(self):
         bases = []
-        for name in ('Dockerfile', 'Codex.Dockerfile'):
+        for name in ('Dockerfile',):
             stages = set()
             for line in (manage.BUNDLE / name).read_text().splitlines():
                 if not line.startswith('FROM '):
@@ -831,10 +828,10 @@ class UpdateTests(unittest.TestCase):
                     bases.append(parts[1])
                 if len(parts) == 4 and parts[2] == 'AS':
                     stages.add(parts[3])
-        self.assertEqual(len(bases), 6)
-        for image in bases:
+        self.assertEqual(len(bases), 4)
+        self.assertEqual(bases[0], 'node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90')
+        for image in bases[1:]:
             self.assertRegex(image, r'^[^ ]+@sha256:[a-f0-9]{64}\Z')
-        self.assertEqual(bases[0], bases[4])
 
     def test_run_admitted_during_app_shutdown_keeps_worker_running(self):
         self.idle.side_effect = [None, ValueError('run admitted while API was closing')]
@@ -933,7 +930,7 @@ class PrebuiltImageTests(unittest.TestCase):
     def test_public_manifest_requires_every_matching_repository_digest(self):
         manifest = metadata()
         self.assertEqual(manage.validate_manifest(manifest, published=True), manifest)
-        for field in ('image', 'runtime_image', 'codex_image'):
+        for field in ('image', 'runtime_image'):
             for value in (None, '', 'latest', 'sha256:' + 'a' * 64,
                           'ghcr.io/another/package@sha256:' + 'a' * 64):
                 with self.subTest(field=field, value=value), self.assertRaises(ValueError):
@@ -942,10 +939,7 @@ class PrebuiltImageTests(unittest.TestCase):
             del missing[field]
             with self.assertRaises(ValueError):
                 manage.validate_manifest(missing, published=True)
-        for version in ('latest', 'v0.157.0', '^0.157.0', '0.157.0+build', None):
-            with self.subTest(version=version), self.assertRaises(ValueError):
-                manage.validate_manifest({**manifest, 'codex_version': version}, published=True)
-        for schema in (1, True, '2', None):
+        for schema in (1, 2, True, '3', None):
             with self.subTest(schema=schema), self.assertRaises(ValueError):
                 manage.validate_manifest({**manifest, 'schema_version': schema}, published=True)
 
@@ -955,8 +949,8 @@ class PrebuiltImageTests(unittest.TestCase):
         self.assertIn('runtime.sh', manage.BUNDLE_FILES)
         self.assertNotIn('manage.py', manage.BUNDLE_FILES)
         self.assertNotIn('codex.py', manage.BUNDLE_FILES)
-        self.assertTrue({'manage.sh', 'codex.sh', 'json.awk'}.issubset(manage.BUNDLE_FILES))
-        for name in ('manage.sh', 'codex.sh'):
+        self.assertTrue({'manage.sh', 'json.awk'}.issubset(manage.BUNDLE_FILES))
+        for name in ('manage.sh',):
             source = (manage.BUNDLE / name).read_text()
             subprocess.run(['bash', '-n'], input=source, text=True, check=True)
             self.assertNotRegex(source, r'\bdocker\s+(?:build|buildx|builder)\b')
@@ -998,7 +992,6 @@ class PrebuiltImageTests(unittest.TestCase):
             with self.subTest(labels=labels), patch.object(release.sys, 'argv', [
                 'release.py', 'push-images', '--version', 'v1.2.3', '--revision', 'a' * 40,
                 '--image', 'test-app', '--runtime-image', 'test-runtime',
-                '--codex-image', 'test-codex', '--codex-version', '0.157.0',
             ]), patch.object(release, 'verify'), patch.object(
                 release, 'run', return_value=json.dumps(labels)
             ), patch.object(release, 'push_image') as publish, self.assertRaisesRegex(ValueError, 'version and source'):

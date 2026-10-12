@@ -23,13 +23,11 @@ pub(super) async fn check(
             project: f.data.project,
             cycle: id("cycle_id"),
             run: id("id"),
-            session: Id::new(),
-            profile: f.researcher_profile.profile_id,
             input_set: id("input_set_id"),
             artifact: f.data.artifact,
             report: id("report_artifact_id"),
             budget: f.brief.content.budget.clone(),
-            fence: store::turns::WorkerFence {
+            fence: store::lifecycle::WorkerFence {
                 attempt_id: id("active_attempt_id"),
                 worker_owner_id: "unused historical relation".into(),
                 owner_epoch: contracts::Revision::INITIAL,

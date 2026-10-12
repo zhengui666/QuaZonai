@@ -474,7 +474,7 @@ async fn pending_research_version_can_publish_one_verdict_with_its_new_evaluatio
     sqlx::query("INSERT INTO app.alphas(id,project_id,name,lifecycle) VALUES($1,$2,'pending fixture','RESEARCH')").bind(alpha.as_uuid()).bind(f.project.as_uuid()).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO app.alpha_versions(id,project_id,alpha_id,version,experiment_id,root_lineage_id,code_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,runtime_image_ref) SELECT $1,project_id,$2,1,$3,root_lineage_id,code_artifact_id,signal_contract_version,signal_kind,horizon_kind,horizon_value,forecast_unit,runtime_image_ref FROM app.alpha_versions WHERE id=$4")
         .bind(version.as_uuid()).bind(alpha.as_uuid()).bind(experiment.as_uuid()).bind(original.version.as_uuid()).execute(&pool).await.unwrap();
-    let publish="UPDATE app.experiments SET outcome=$2,outcome_reason='CONTROLLED_EVALUATION',conclusion_artifact_id=$3 WHERE id=$1";
+    let publish = "UPDATE app.experiments SET outcome=$2,outcome_reason='CONTROLLED_EVALUATION',conclusion_artifact_id=$3 WHERE id=$1";
     sqlstate(
         sqlx::query(publish)
             .bind(experiment.as_uuid())
@@ -493,7 +493,7 @@ async fn pending_research_version_can_publish_one_verdict_with_its_new_evaluatio
             .unwrap_err(),
         "23000",
     );
-    let insert="INSERT INTO app.evaluations(id,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'WALK_FORWARD','SUCCEEDED','VALID','PASS',$6,$6,statement_timestamp(),statement_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2";
+    let insert = "INSERT INTO app.evaluations(id,project_id,subject_alpha_version_id,input_set_id,policy_id,run_id,evaluation_kind,execution_status,evidence_status,decision,report_artifact_id,method_versions_artifact_id,concluded_at,valid_until) SELECT $1,$2,$3,$4,b.evaluation_policy_id,$5,'WALK_FORWARD','SUCCEEDED','VALID','PASS',$6,$6,statement_timestamp(),statement_timestamp()+interval '1 hour' FROM app.research_briefs b WHERE b.project_id=$2";
     // A sealed historical evaluation cannot be attached as a late first verdict.
     let old_evaluation = Id::new();
     sqlx::query(insert)
@@ -759,15 +759,15 @@ async fn session(
     run: Id,
     revision: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO app.codex_sessions(project_id,cycle_id,run_id,role,profile_id,profile_revision,thread_id,codex_version,protocol_schema_version,requested_settings,native_history_ref) SELECT project_id,cycle_id,$2,role,profile_id,$3,$4,codex_version,protocol_schema_version,requested_settings,native_history_ref FROM app.codex_sessions WHERE id=$1")
-        .bind(f.session.as_uuid()).bind(run.as_uuid()).bind(revision).bind(run.to_string())
+    sqlx::query("INSERT INTO app.codex_sessions(project_id,cycle_id,run_id,role,profile_id,profile_revision,thread_id,codex_version,protocol_schema_version,requested_settings,native_history_ref) SELECT project_id,cycle_id,$2,role,profile_id,$3,$4,codex_version,protocol_schema_version,requested_settings,native_history_ref FROM app.codex_sessions WHERE run_id=$1")
+        .bind(f.run.as_uuid()).bind(run.as_uuid()).bind(revision).bind(run.to_string())
         .execute(connection).await?;
     Ok(())
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn session_creation_freezes_only_the_current_locked_profile_revision(pool: PgPool) {
-    let f = fixture(&pool, budget()).await;
+    let f = historical_fixture(&pool, budget()).await;
     let run = new_mission(&pool, &f).await;
     let mut connection = pool.acquire().await.unwrap();
     sqlstate(
@@ -782,7 +782,15 @@ async fn session_creation_freezes_only_the_current_locked_profile_revision(pool:
             .await
             .unwrap();
     sqlx::query("UPDATE app.codex_profiles SET saved_model='fixture-change' WHERE id=$1")
-        .bind(f.profile.as_uuid())
+        .bind(
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT profile_id FROM app.codex_sessions WHERE run_id=$1",
+            )
+            .bind(f.run.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        )
         .execute(&pool)
         .await
         .unwrap();

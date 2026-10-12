@@ -1,17 +1,17 @@
 //! Durable intent/reservation and immutable owner evidence. No order or cash ledger.
 use crate::{
-    Store, StoreError,
     authority::{self, Actor},
     commands, db,
     lifecycle::native::NativeObjectPublication,
+    Store, StoreError,
 };
 use chrono::{DateTime, Utc};
 use contracts::{
-    DbCounter, DecimalValue, Id, Revision, SchemaV1,
     account_observation::*,
     capital_exit::*,
     control::{CommandResult, ListQuery, MachineScope, Page, PrincipalKind},
     forward::ForwardEnvironmentV1,
+    DbCounter, DecimalValue, Id, Revision, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Row, Transaction};
@@ -1540,16 +1540,14 @@ async fn refresh_view(tx: &mut Tx<'_>, view: &mut CapitalExitViewV1) -> Result<(
     if (!owner_current || !observation_fresh) && view.state != CapitalExitStateV1::Completed {
         view.last_phase = view.state;
         view.state = CapitalExitStateV1::Blocked;
-        view.reason_codes = vec![
-            if !paper_source_bound {
-                "paper_capital_exit_legacy_binding_unresolved"
-            } else if owner_current {
-                "capital_exit_native_observation_stale"
-            } else {
-                "account_owner_binding_unavailable"
-            }
-            .into(),
-        ];
+        view.reason_codes = vec![if !paper_source_bound {
+            "paper_capital_exit_legacy_binding_unresolved"
+        } else if owner_current {
+            "capital_exit_native_observation_stale"
+        } else {
+            "account_owner_binding_unavailable"
+        }
+        .into()];
     }
     if matches!(&view.policy,CapitalExitPolicyV1::BoundedLimit {deadline,..} if *deadline<=checked)
         && matches!(

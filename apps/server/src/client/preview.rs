@@ -25,7 +25,9 @@ pub(super) fn inspect(
         let _: Id = grant.to_owned().try_into().map_err(|_| Failure::Input)?;
     }
     let output = match &request.output {
-        commands::Output::Json(_) | commands::Output::NativeReport(_) => "json",
+        commands::Output::Json(_)
+        | commands::Output::NativeReport(_)
+        | commands::Output::DurableJson => "json",
         commands::Output::Binary { .. } => "bytes",
         commands::Output::Events { run, after, .. } => {
             watch::cursor(*run, after.as_deref())?;
@@ -43,7 +45,7 @@ pub(super) fn inspect(
         "method": request.method.as_str(),
         "route": request.route,
         "query": request.query,
-        "expected_http_status": request.status,
+        "expected_http_status": if matches!(request.output, commands::Output::DurableJson) { None } else { Some(request.status) },
         "output": output,
         "body_bytes": request.body.as_ref().map_or(0, Vec::len),
         "body_redacted": true,

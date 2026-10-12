@@ -95,7 +95,6 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           node --test deploy/docker/manage_shell.test.mjs
-          bash deploy/docker/codex-shell.test.sh
       - name: Verify native Windows installation and update without builds
         if: runner.os == 'Windows'
         shell: pwsh

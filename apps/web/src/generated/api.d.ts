@@ -629,134 +629,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/account": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexAccountObservation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getLatestCodexAccountOperation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/login/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["cancelCodexLogin"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/login/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["startCodexLogin"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/login/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexAccountOperation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["logoutCodexAccount"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexModelObservation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/probe": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["probeCodexProfile"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/cycles/{id}": {
         parameters: {
             query?: never;
@@ -2002,7 +1874,7 @@ export interface paths {
         };
         get: operations["listProjectResearchCycles"];
         put?: never;
-        post: operations["startResearchCycle"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2361,6 +2233,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableResearch"];
+        put?: never;
+        post: operations["startDurableResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDurableUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDurableResearch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stopDurableResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/runs": {
         parameters: {
             query?: never;
@@ -2385,6 +2353,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/runs/{id}/agent-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One read-only owner projection of retained original Agent facts. */
+        get: operations["get_historical_agent_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2439,38 +2424,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/v2/settings/codex": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listCodexProfiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/settings/codex/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexProfile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch: operations["updateCodexProfile"];
         trace?: never;
     };
     "/api/v2/settings/credentials": {
@@ -3560,150 +3513,10 @@ export interface components {
             device: components["schemas"]["CliDevice"];
             token: string;
         };
-        /** @enum {string} */
-        CodexAccountActionV1: "LOGIN" | "LOGOUT";
-        /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
-        CodexAccountOperationRefV1: {
-            action: components["schemas"]["CodexAccountActionV1"];
-            /** Format: date-time */
-            created_at: string;
-            /**
-             * Format: date-time
-             * @description Local bounded wait deadline, not an assertion about the native device code.
-             */
-            deadline_at: string;
-            id: components["schemas"]["Id"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-        };
-        /** @enum {string} */
-        CodexAccountOperationStateV1: "REQUESTED" | "WAITING" | "CANCEL_REQUESTED" | "SUCCEEDED" | "CANCELLED" | "FAILED" | "UNKNOWN";
-        CodexAccountOperationV1: {
-            account?: null | components["schemas"]["CodexAccountV1"];
-            /** Format: date-time */
-            finished_at?: string | null;
-            operation: components["schemas"]["CodexAccountOperationRefV1"];
-            reason?: null | components["schemas"]["CodexAccountReasonV1"];
-            revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            state: components["schemas"]["CodexAccountOperationStateV1"];
-            /** Format: date-time */
-            updated_at: string;
-        };
-        /** @enum {string} */
-        CodexAccountReasonV1: "NATIVE_LOGIN_COMPLETED" | "NATIVE_LOGIN_REJECTED" | "NATIVE_LOGOUT_COMPLETED" | "NATIVE_CANCEL_CONFIRMED" | "CONFIRMED_NOT_SENT" | "NATIVE_RESPONSE_UNKNOWN" | "NATIVE_CONTRACT_UNSUPPORTED" | "NATIVE_VERSION_UNSUPPORTED" | "DEPLOYMENT_UNAVAILABLE" | "PROFILE_CHANGED" | "WAIT_WINDOW_ENDED" | "OWNER_UNAVAILABLE";
-        CodexAccountRequestV1: {
-            expected_revision: components["schemas"]["Revision"];
-            profile_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexAccountStartV1: {
-            acceptance: components["schemas"]["CommandResult_CodexAccountOperationRefV1"];
-            current: components["schemas"]["CodexAccountOperationV1"];
-            device_code?: null | components["schemas"]["CodexDeviceCodeV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexAccountV1: {
-            authentication_kind?: null | components["schemas"]["CodexAuthenticationKind"];
-            plan_type?: string | null;
-            requires_openai_auth: boolean;
-        };
-        CodexAdvertisedModelV1: {
-            capability: components["schemas"]["ModelCapabilityV1"];
-            default_service_tier?: string | null;
-            service_tiers: components["schemas"]["CodexServiceTierV1"][];
-        };
-        /** @enum {string} */
-        CodexAuthenticationKind: "API_KEY" | "CHATGPT" | "AMAZON_BEDROCK";
-        CodexDeviceCodeV1: {
-            user_code: string;
-            verification_url: string;
-        };
-        CodexEffectiveSettingsV1: {
-            model: string;
-            provider: string;
-            reasoning_effort?: string | null;
-            service_tier?: string | null;
-        };
-        CodexLoginCancelV1: {
-            expected_revision: components["schemas"]["Revision"];
-            operation_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        /** @enum {string} */
-        CodexObservationStateV1: "NEVER_PROBED" | "STALE" | "AVAILABLE" | "UNAVAILABLE";
-        CodexObservationV1: {
-            observation?: null | components["schemas"]["CodexProbeViewV1"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            state: components["schemas"]["CodexObservationStateV1"];
-        };
-        /** @enum {string} */
-        CodexProbeFailureV1: "DEPLOYMENT_UNAVAILABLE" | "NATIVE_UNAVAILABLE" | "VERSION_UNSUPPORTED" | "CONTRACT_UNSUPPORTED" | "AUTHENTICATION_REQUIRED" | "MODEL_SETTINGS_UNSUPPORTED";
-        CodexProbeOutcomeV1: {
-            account: components["schemas"]["CodexAccountV1"];
-            effective: components["schemas"]["CodexEffectiveSettingsV1"];
-            models: components["schemas"]["CodexAdvertisedModelV1"][];
-            /**
-             * @description Model from the override-free native Thread. Absent only in historical
-             *     observations; never infer it from the post-override effective model.
-             */
-            native_default_model?: string | null;
-            native_version: string;
-            /** @enum {string} */
-            status: "AVAILABLE";
-        } | {
-            reason: components["schemas"]["CodexProbeFailureV1"];
-            /** @enum {string} */
-            status: "UNAVAILABLE";
-        };
-        CodexProbeRequestV1: {
-            expected_revision: components["schemas"]["Revision"];
-            profile_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexProbeViewV1: {
-            id: components["schemas"]["Id"];
-            /** Format: date-time */
-            observed_at: string;
-            outcome: components["schemas"]["CodexProbeOutcomeV1"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            /** Format: date-time */
-            valid_until: string;
-        };
+        /** @description Original Codex profile reference retained only in historical cycle views. */
         CodexProfileChoiceV1: {
             expected_revision: components["schemas"]["Revision"];
             profile_id: components["schemas"]["Id"];
-        };
-        CodexProfileUpdateV1: {
-            expected_revision: components["schemas"]["Revision"];
-            model_settings: components["schemas"]["SavedModelSettingsV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexProfileViewV1: {
-            connection_mode: components["schemas"]["ConnectionMode"];
-            /** Format: date-time */
-            created_at: string;
-            /**
-             * @description An opaque deployment label, never a path. None identifies a historical
-             *     unregistered reference, which must not be exposed or guessed into a mount.
-             */
-            home_binding?: string | null;
-            id: components["schemas"]["Id"];
-            model_settings: components["schemas"]["SavedModelSettingsV1"];
-            name: string;
-            profile_origin: components["schemas"]["ProfileOrigin"];
-            revision: components["schemas"]["Revision"];
-            /** Format: date-time */
-            updated_at: string;
-        };
-        CodexServiceTierV1: {
-            description: string;
-            id: string;
-            name: string;
         };
         CommandResult_ApprovalRevocationViewV1: {
             replayed: boolean;
@@ -3873,76 +3686,6 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_CodexAccountOperationRefV1: {
-            replayed: boolean;
-            /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
-            resource: {
-                action: components["schemas"]["CodexAccountActionV1"];
-                /** Format: date-time */
-                created_at: string;
-                /**
-                 * Format: date-time
-                 * @description Local bounded wait deadline, not an assertion about the native device code.
-                 */
-                deadline_at: string;
-                id: components["schemas"]["Id"];
-                profile_id: components["schemas"]["Id"];
-                profile_revision: components["schemas"]["Revision"];
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CommandResult_CodexAccountOperationV1: {
-            replayed: boolean;
-            resource: {
-                account?: null | components["schemas"]["CodexAccountV1"];
-                /** Format: date-time */
-                finished_at?: string | null;
-                operation: components["schemas"]["CodexAccountOperationRefV1"];
-                reason?: null | components["schemas"]["CodexAccountReasonV1"];
-                revision: components["schemas"]["Revision"];
-                schema_version: components["schemas"]["SchemaV1"];
-                state: components["schemas"]["CodexAccountOperationStateV1"];
-                /** Format: date-time */
-                updated_at: string;
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CommandResult_CodexProbeViewV1: {
-            replayed: boolean;
-            resource: {
-                id: components["schemas"]["Id"];
-                /** Format: date-time */
-                observed_at: string;
-                outcome: components["schemas"]["CodexProbeOutcomeV1"];
-                profile_id: components["schemas"]["Id"];
-                profile_revision: components["schemas"]["Revision"];
-                schema_version: components["schemas"]["SchemaV1"];
-                /** Format: date-time */
-                valid_until: string;
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CommandResult_CodexProfileViewV1: {
-            replayed: boolean;
-            resource: {
-                connection_mode: components["schemas"]["ConnectionMode"];
-                /** Format: date-time */
-                created_at: string;
-                /**
-                 * @description An opaque deployment label, never a path. None identifies a historical
-                 *     unregistered reference, which must not be exposed or guessed into a mount.
-                 */
-                home_binding?: string | null;
-                id: components["schemas"]["Id"];
-                model_settings: components["schemas"]["SavedModelSettingsV1"];
-                name: string;
-                profile_origin: components["schemas"]["ProfileOrigin"];
-                revision: components["schemas"]["Revision"];
-                /** Format: date-time */
-                updated_at: string;
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
         CommandResult_CredentialView: {
             replayed: boolean;
             resource: {
@@ -3957,15 +3700,6 @@ export interface components {
                 /** Format: date-time */
                 revoked_at?: string | null;
                 scope_codes: components["schemas"]["MachineScope"][];
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CommandResult_CycleStartedV1: {
-            replayed: boolean;
-            resource: {
-                cycle: components["schemas"]["CycleViewV1"];
-                run: components["schemas"]["RunSnapshotV1"];
-                schema_version: components["schemas"]["SchemaV1"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -4568,8 +4302,6 @@ export interface components {
         /** @enum {string} */
         Comparator: "GT" | "GE" | "LT" | "LE" | "BETWEEN";
         /** @enum {string} */
-        ConnectionMode: "SYSTEM" | "CUSTOM_PROVIDER";
-        /** @enum {string} */
         ConservativeAssumption: "CONSERVATIVE_ASSUMPTION";
         /** @enum {string} */
         CostEnforcement: "UNAVAILABLE" | "ESTIMATED" | "EXACT";
@@ -4659,24 +4391,6 @@ export interface components {
             status: components["schemas"]["SelectionStatus"];
             trial_count: components["schemas"]["DbCounter"];
             unfinished_count: components["schemas"]["DbCounter"];
-        };
-        CycleStartIntent: {
-            project_id: components["schemas"]["Id"];
-            request: components["schemas"]["CycleStartV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CycleStartV1: {
-            brief_id: components["schemas"]["Id"];
-            /** @description The Project revision; the Brief and execution context are immutable. */
-            expected_revision: components["schemas"]["Revision"];
-            researcher_profile: components["schemas"]["CodexProfileChoiceV1"];
-            reviewer_profile: components["schemas"]["CodexProfileChoiceV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CycleStartedV1: {
-            cycle: components["schemas"]["CycleViewV1"];
-            run: components["schemas"]["RunSnapshotV1"];
-            schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
         CycleState: "QUEUED" | "RUNNING" | "WAITING_INPUT" | "PAUSING" | "PAUSED" | "COMPLETED" | "CANCELLED" | "FAILED";
@@ -5050,6 +4764,55 @@ export interface components {
             /** Format: date-time */
             received_at: string;
             report_artifact_id: components["schemas"]["Id"];
+        };
+        DurableModelViewV1: {
+            modelId: string;
+            name: string;
+            provider: string;
+            reasoning: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Native admission closure or an unavailable/unknown transport outcome. */
+        DurableResearchAdmissionUnavailableV1: components["schemas"]["DurableResearchErrorV1"] | components["schemas"]["Problem"];
+        DurableResearchErrorV1: {
+            error: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchInputV1: {
+            /** @description Extension-owned data: no core asset, source or factor enum. */
+            data: {
+                [key: string]: unknown;
+            };
+            goal: string;
+            model: components["schemas"]["DurableResearchModelV1"];
+            /** @description Original evaluation/selection/stop criteria and optional user limits. */
+            policy: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchModelV1: {
+            modelId: string;
+            provider: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchStartV1: {
+            input: components["schemas"]["DurableResearchInputV1"];
+            requestId: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableSubmissionReceiptV1: {
+            /** Format: int64 */
+            conversationId: number;
+            /** Format: int64 */
+            submissionId: number;
+        } & {
+            [key: string]: unknown;
         };
         EquityCurveDataV1: {
             series: components["schemas"]["EquitySeriesV1"];
@@ -5697,6 +5460,14 @@ export interface components {
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
         };
+        /** @description Original retired Agent facts, never durable identities or reconstructed outcomes. */
+        HistoricalAgentHistoryV1: {
+            execution: unknown;
+            profile?: unknown;
+            schema_version: components["schemas"]["SchemaV1"];
+            turns: components["schemas"]["Page_Value"];
+            wakes: components["schemas"]["Page_Value"];
+        };
         /** @enum {string} */
         HistoricalArtifactOutcomeV1: "COPIED" | "MISSING" | "UNSUPPORTED" | "UNREADABLE" | "SEALED_RETAINED" | "MANUAL_REVIEW_REQUIRED";
         HistoricalArtifactResultV1: {
@@ -6052,19 +5823,6 @@ export interface components {
         };
         /** @enum {string} */
         MissingSelectionMetric: "INCONCLUSIVE";
-        ModelCapabilityV1: {
-            default_reasoning_effort: string;
-            display_name: string;
-            /** Format: date-time */
-            fetched_at: string;
-            hidden: boolean;
-            id: string;
-            is_default: boolean;
-            model: string;
-            profile_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            supported_reasoning_efforts: components["schemas"]["ReasoningEffortCapability"][];
-        };
         NativeAccountBalanceV1: {
             free: components["schemas"]["AccountMoneyV1"];
             locked: components["schemas"]["AccountMoneyV1"];
@@ -6650,26 +6408,6 @@ export interface components {
             request: components["schemas"]["HistoricalImportRequestV1"];
         } | {
             /** @enum {string} */
-            operation: "CODEX_PROFILE_UPDATE";
-            request: components["schemas"]["CodexProfileUpdateV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_PROBE";
-            request: components["schemas"]["CodexProbeRequestV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGIN_START";
-            request: components["schemas"]["CodexAccountRequestV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGIN_CANCEL";
-            request: components["schemas"]["CodexLoginCancelV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGOUT";
-            request: components["schemas"]["CodexAccountRequestV1"];
-        } | {
-            /** @enum {string} */
             operation: "BRIEF_FREEZE";
             request: components["schemas"]["BriefFreezeV1"];
         } | {
@@ -6756,10 +6494,6 @@ export interface components {
             /** @enum {string} */
             operation: "RELEASE_REOPEN";
             request: components["schemas"]["ReleaseReopenV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CYCLE_START";
-            request: components["schemas"]["CycleStartIntent"];
         } | {
             /** @enum {string} */
             operation: "CYCLE_START_EXTERNAL";
@@ -6861,8 +6595,12 @@ export interface components {
             operation: components["schemas"]["OperatorOperation"];
             target_id: components["schemas"]["Id"];
         };
-        /** @enum {string} */
-        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "RECORDED_FEATURE_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "EXPERIMENT_EVALUATE" | "EXPERIMENT_ADOPT_ALPHA" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "CYCLE_START_EXTERNAL" | "CYCLE_FINISH_EXTERNAL" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
+        /**
+         * @description Includes retired operation names solely to decode original command receipts.
+         *     Retired names have no executable `OperatorCommand` variant.
+         * @enum {string}
+         */
+        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "RECORDED_FEATURE_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "EXPERIMENT_EVALUATE" | "EXPERIMENT_ADOPT_ALPHA" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "SCIENTIFIC_CYCLE_PREPARE" | "CYCLE_START_EXTERNAL" | "CYCLE_FINISH_EXTERNAL" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
         PackageOriginV1: "DEMO" | "REAL" | "SYNTHETIC";
         /**
@@ -7080,27 +6818,6 @@ export interface components {
                 schema_version: components["schemas"]["SchemaV1"];
                 scope: components["schemas"]["CapitalExitScopeV1"];
                 state: components["schemas"]["CapitalExitStateV1"];
-                /** Format: date-time */
-                updated_at: string;
-            }[];
-            next_cursor?: null | components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        Page_CodexProfileViewV1: {
-            items: {
-                connection_mode: components["schemas"]["ConnectionMode"];
-                /** Format: date-time */
-                created_at: string;
-                /**
-                 * @description An opaque deployment label, never a path. None identifies a historical
-                 *     unregistered reference, which must not be exposed or guessed into a mount.
-                 */
-                home_binding?: string | null;
-                id: components["schemas"]["Id"];
-                model_settings: components["schemas"]["SavedModelSettingsV1"];
-                name: string;
-                profile_origin: components["schemas"]["ProfileOrigin"];
-                revision: components["schemas"]["Revision"];
                 /** Format: date-time */
                 updated_at: string;
             }[];
@@ -7756,6 +7473,11 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_Value: {
+            items: unknown[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_WakeViewV1: {
             items: {
                 consumed_cycle_id?: null | components["schemas"]["Id"];
@@ -8040,8 +7762,6 @@ export interface components {
             title: string;
             type: string;
         };
-        /** @enum {string} */
-        ProfileOrigin: "MANAGED_VOLUME" | "OPERATOR_MOUNT";
         ProjectCreate: {
             description: string;
             fork_from_project_id?: null | components["schemas"]["Id"];
@@ -8100,10 +7820,6 @@ export interface components {
             revocation?: null | components["schemas"]["QualificationRevocationView"];
             /** Format: date-time */
             valid_until: string;
-        };
-        ReasoningEffortCapability: {
-            description: string;
-            reasoning_effort: string;
         };
         /** @enum {string} */
         RebalanceKind: "MANUAL" | "FIXED_INTERVAL" | "CALENDAR_SESSION";
@@ -8576,13 +8292,6 @@ export interface components {
             revision: components["schemas"]["Revision"];
             /** Format: date-time */
             updated_at: string;
-        };
-        SavedModelSettingsV1: {
-            saved_fast_mode: boolean;
-            saved_model?: string | null;
-            saved_reasoning_effort?: string | null;
-            schema_version: components["schemas"]["SchemaV1"];
-            use_default_model_settings: boolean;
         };
         /** @enum {integer} */
         SchemaV1: 1;
@@ -11734,594 +11443,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexAccountObservation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexObservationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getLatestCodexAccountOperation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": null | components["schemas"]["CodexAccountOperationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    cancelCodexLogin: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexLoginCancelV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexAccountOperationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    startCodexLogin: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexAccountRequestV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexAccountStartV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexAccountOperation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexAccountOperationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    logoutCodexAccount: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexAccountRequestV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexAccountStartV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexModelObservation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexObservationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    probeCodexProfile: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexProbeRequestV1"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProbeViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -19353,92 +18474,6 @@ export interface operations {
             };
         };
     };
-    startResearchCycle: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CycleStartV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CycleStartedV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
     startExternalResearchCycle: {
         parameters: {
             query?: never;
@@ -21147,6 +20182,514 @@ export interface operations {
             };
         };
     };
+    listDurableResearch: {
+        parameters: {
+            query?: {
+                /** @description JSON-encoded native pi-durable Cursor */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native pi-durable JSON snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    startDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DurableResearchStartV1"];
+            };
+        };
+        responses: {
+            /** @description Native submission admitted or replayed; not completion */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableSubmissionReceiptV1"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            /** @description Native research_maintenance admission error or transport Problem */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
+                    "application/problem+json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
+                };
+            };
+        };
+    };
+    listDurableModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableModelViewV1"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listDurableTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDurableUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native pi-durable JSON snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    stopDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native stop request accepted, not cancellation proof */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_runs: {
         parameters: {
             query?: {
@@ -21249,6 +20792,73 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_agent_history: {
+        parameters: {
+            query?: {
+                turn_cursor?: components["schemas"]["Id"];
+                wake_cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalAgentHistoryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21476,211 +21086,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    listCodexProfiles: {
-        parameters: {
-            query?: {
-                cursor?: components["schemas"]["Id"];
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    updateCodexProfile: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexProfileUpdateV1"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {

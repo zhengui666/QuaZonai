@@ -1,11 +1,11 @@
 //! Native splitter/estimator regression with independent, explicit small references.
 use contracts::{
-    DbCounter, Id, SchemaV1,
     portfolio::*,
     research::{SplitKind, SplitPolicyV1},
+    DbCounter, Id, SchemaV1,
 };
 use domain::portfolio::sample_covariance;
-use job::validation::{ScoreCalibration, validation_folds};
+use job::validation::{validation_folds, ScoreCalibration};
 
 fn count(value: u64) -> DbCounter {
     DbCounter::new(value).unwrap()
@@ -209,12 +209,10 @@ fn large_training_sample_keeps_the_frozen_gap_and_complete_test_window() {
     assert_eq!(folds[0].train.first(), Some(&0));
     assert_eq!(folds[0].train.last(), Some(&1_000_000));
     assert_eq!(folds[0].test, vec![1_000_003, 1_000_004]);
-    assert!(
-        folds[0]
-            .train
-            .iter()
-            .all(|&index| index + 2 < folds[0].test[0])
-    );
+    assert!(folds[0]
+        .train
+        .iter()
+        .all(|&index| index + 2 < folds[0].test[0]));
 }
 
 #[test]
@@ -222,11 +220,9 @@ fn covariance_accepts_more_than_256_assets_without_changing_sample_semantics() {
     let source = vec![vec![-1.0, 0.0, 1.0]; 257];
     let actual = sample_covariance(&covariance_model(), &source).unwrap();
     assert_eq!(actual.len(), 257);
-    assert!(
-        actual
-            .iter()
-            .all(|row| row.len() == 257 && row.iter().all(|&value| value == 1.0))
-    );
+    assert!(actual
+        .iter()
+        .all(|row| row.len() == 257 && row.iter().all(|&value| value == 1.0)));
     assert!(sample_covariance(&covariance_model(), &vec![vec![1.0]; 257]).is_err());
 }
 

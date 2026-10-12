@@ -15,7 +15,6 @@ type Downstream = Schema['DownstreamView'];
 const required = { required: true, message: '请填写此项。' };
 const jobs: { value: Schema['RunKind']; label: string }[] = [
   { value: 'DATA_VALIDATE', label: '数据验证及模型编译' },
-  { value: 'AGENT_RESEARCH', label: '研究 Mission' },
   { value: 'ALPHA_EVALUATE', label: 'Alpha 科学计算' },
   { value: 'PORTFOLIO_BUILD', label: '组合优化' },
   { value: 'PORTFOLIO_SIMULATE', label: '共享资金模拟' },

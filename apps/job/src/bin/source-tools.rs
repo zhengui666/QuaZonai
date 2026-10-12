@@ -17,8 +17,12 @@ fn main() {
 
 fn operation(command: &OsStr) -> Option<fn(Vec<OsString>)> {
     match command {
-        value if value == OsStr::new("catalog-prepare") => Some(job::operator::catalog_prepare::run),
-        value if value == OsStr::new("polymarket-history") => Some(job::operator::polymarket_history::run),
+        value if value == OsStr::new("catalog-prepare") => {
+            Some(job::operator::catalog_prepare::run)
+        }
+        value if value == OsStr::new("polymarket-history") => {
+            Some(job::operator::polymarket_history::run)
+        }
         _ => None,
     }
 }

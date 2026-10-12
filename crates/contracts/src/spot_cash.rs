@@ -2,7 +2,7 @@
 //!
 //! The mode is optional on existing simulation settings. Native results and
 //! native snapshots remain unchanged; report valuation is a separate artifact.
-use crate::{DbCounter, DecimalValue, Id, SchemaV1, science::NativeAccountKind};
+use crate::{science::NativeAccountKind, DbCounter, DecimalValue, Id, SchemaV1};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use utoipa::ToSchema;
@@ -397,13 +397,11 @@ mod tests {
             NativeSpotCashSnapshotV1::schema(),
         ] {
             let value = serde_json::to_value(schema).unwrap();
-            assert!(
-                value["required"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|name| name == "native_base_currency")
-            );
+            assert!(value["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name == "native_base_currency"));
         }
     }
 
@@ -412,12 +410,10 @@ mod tests {
         assert!(serde_json::from_str::<NativeSpotCashPolicyV1>(
             r#"{"schema_version":1,"mode":"MARGIN","report_currency":"USDC","maximum_price_age_ns":"1"}"#
         ).is_err());
-        assert!(
-            serde_json::from_str::<ReportCurrencyValuationOutcomeV1>(
-                r#"{"status":"UNAVAILABLE","reason":"MISSING_PRICE","total":"100"}"#
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<ReportCurrencyValuationOutcomeV1>(
+            r#"{"status":"UNAVAILABLE","reason":"MISSING_PRICE","total":"100"}"#
+        )
+        .is_err());
     }
 
     #[test]
@@ -449,13 +445,11 @@ mod tests {
     fn sampling_policy_and_runtime_identity_schemas_are_explicit() {
         use utoipa::PartialSchema;
         let schema = serde_json::to_value(NativeSpotCashPolicyV1::schema()).unwrap();
-        assert!(
-            schema["required"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|field| field == "daily_sampling")
-        );
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "daily_sampling"));
         let schema = serde_json::to_value(NativeSpotRuntimeIdV1::schema()).unwrap();
         assert_eq!(schema["type"], "string");
         assert_eq!(schema["format"], "uuid");

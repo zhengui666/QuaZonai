@@ -1,8 +1,8 @@
 //! Runtime-owned immutable native catalog metadata, never client assertions of evidence.
 use crate::{
-    DbCounter, SchemaV1,
     research::{DataOrigin, DataPartition, PitStatus},
     runtime::RuntimeDataKind,
+    DbCounter, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

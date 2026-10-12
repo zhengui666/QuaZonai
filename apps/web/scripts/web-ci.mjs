@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 export const partitions = {
   'synthetic-a': ['settings-autosave.spec.ts'],
-  'synthetic-b': ['chatgpt-auth.spec.ts', 'console-loading.spec.ts', 'data-dialog-recovery.spec.ts', 'data-inputs.spec.ts'],
+  'synthetic-b': ['console-loading.spec.ts', 'data-dialog-recovery.spec.ts', 'data-inputs.spec.ts', 'durable-research.spec.ts'],
 };
 const authConfig = 'playwright.auth.config.ts';
 const validatorConfig = 'playwright.validators.config.ts';

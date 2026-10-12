@@ -1,5 +1,5 @@
 //! Validate bounded native observations; never infer a missing capability.
-use crate::{DomainError, control::text, research::invalid};
+use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Duration, Utc};
 use contracts::runtime::*;
 use std::collections::BTreeSet;
@@ -11,7 +11,9 @@ pub fn job_limits(
     limits: &contracts::lifecycle::JobLimitsV1,
 ) -> Result<(), DomainError> {
     let failure = if limits.wall_seconds == Some(0)
-        || limits.wall_seconds.zip(capabilities.max_wall_seconds)
+        || limits
+            .wall_seconds
+            .zip(capabilities.max_wall_seconds)
             .is_some_and(|(requested, maximum)| requested > maximum)
         || (limits.wall_seconds.is_none()
             && capabilities

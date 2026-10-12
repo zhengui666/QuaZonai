@@ -1,18 +1,15 @@
 //! Test-only relational fixture, not a seed path or evidence of a user workflow.
 #![allow(dead_code)]
 use chrono::{DateTime, Duration, Utc};
-use contracts::{budget::BudgetV1, DbCounter, Id, Revision};
-use domain::admission::{CostEstimate, TurnKind};
+use contracts::{budget::BudgetV1, Id, Revision};
 use serde_json::json;
 use sqlx::PgPool;
-use store::turns::{TurnRequest, WorkerFence};
+use store::lifecycle::WorkerFence;
 
 pub struct Fixture {
     pub project: Id,
     pub cycle: Id,
     pub run: Id,
-    pub session: Id,
-    pub profile: Id,
     pub input_set: Id,
     pub artifact: Id,
     pub report: Id,
@@ -43,7 +40,6 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
     let brief = Id::new();
     let cycle = Id::new();
     let input_set = Id::new();
-    let profile = Id::new();
     let mut tx = pool.begin().await.unwrap();
     sqlx::query("INSERT INTO app.research_lineages(id,origin,reason) VALUES($1,'NEW','isolated SQL regression fixture')")
         .bind(lineage.as_uuid()).execute(&mut *tx).await.unwrap();
@@ -74,17 +70,13 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
         .unwrap();
     sqlx::query("INSERT INTO app.research_cycles(id,project_id,brief_id,ordinal,trigger,state,budget_snapshot) VALUES($1,$2,$3,1,'OPERATOR','RUNNING',$4)")
         .bind(cycle.as_uuid()).bind(project.as_uuid()).bind(brief.as_uuid()).bind(serde_json::to_value(&budget).unwrap()).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_fast_mode) VALUES($1,'fixture','SYSTEM','MANAGED_VOLUME',$2,true,false)")
-        .bind(profile.as_uuid()).bind(format!("fixture/{profile}")).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
-    let (run, session, fence, deadline) = mission(pool, project, cycle, input_set, profile).await;
+    let (run, fence, deadline) = scientific_run(pool, project, cycle, input_set).await;
     let report = report_artifact(pool, project, run, fence.attempt_id).await;
     Fixture {
         project,
         cycle,
         run,
-        session,
-        profile,
         input_set,
         artifact,
         report,
@@ -94,15 +86,13 @@ pub async fn fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
     }
 }
 
-pub async fn mission(
+pub async fn scientific_run(
     pool: &PgPool,
     project: Id,
     cycle: Id,
     input_set: Id,
-    profile: Id,
-) -> (Id, Id, WorkerFence, DateTime<Utc>) {
+) -> (Id, WorkerFence, DateTime<Utc>) {
     let run = Id::new();
-    let session = Id::new();
     let attempt = Id::new();
     let now: DateTime<Utc> =
         sqlx::query_scalar("SELECT date_trunc('microseconds',clock_timestamp())")
@@ -111,17 +101,13 @@ pub async fn mission(
             .unwrap();
     let deadline = now + Duration::minutes(30);
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at,current_attempt_no,active_attempt_id) VALUES($1,$2,$3,'AGENT_RESEARCH',$4,'RUNNING',$5,$6,1,$7)")
+    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at,current_attempt_no,active_attempt_id) VALUES($1,$2,$3,'ALPHA_EVALUATE',$4,'RUNNING',$5,$6,1,$7)")
         .bind(run.as_uuid()).bind(project.as_uuid()).bind(cycle.as_uuid()).bind(input_set.as_uuid()).bind(deadline).bind(now).bind(attempt.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,1,'worker-A',1,$3,'ACKNOWLEDGED','RUNNING')")
         .bind(attempt.as_uuid()).bind(run.as_uuid()).bind(deadline).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO app.codex_sessions(id,project_id,cycle_id,run_id,role,profile_id,profile_revision,thread_id,codex_version,protocol_schema_version,requested_settings,native_history_ref) VALUES($1,$2,$3,$4,'RESEARCHER',$5,1,$6,'fixture','fixture',$7,'fixture')")
-        .bind(session.as_uuid()).bind(project.as_uuid()).bind(cycle.as_uuid()).bind(run.as_uuid()).bind(profile.as_uuid()).bind(format!("native/{run}"))
-        .bind(json!({"schema_version":1})).execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
     (
         run,
-        session,
         WorkerFence {
             attempt_id: attempt,
             worker_owner_id: "worker-A".into(),
@@ -131,20 +117,32 @@ pub async fn mission(
     )
 }
 
-impl Fixture {
-    pub fn request(&self, key: &str) -> TurnRequest {
-        TurnRequest {
-            command_key: key.into(),
-            turn_kind: TurnKind::Research,
-            tokens: Some(DbCounter::new(40).unwrap()),
-            estimated_cost: Some(CostEstimate {
-                currency: "USD".into(),
-                amount: "1.25".parse().unwrap(),
-            }),
-            request_artifact_id: self.artifact,
-            deadline_at: Some(self.deadline),
-        }
-    }
+/// Explicit legacy-history fixture only. Ordinary scientific fixtures above never
+/// create profiles or sessions. No retired Store execution method is invoked.
+pub async fn historical_fixture(pool: &PgPool, budget: BudgetV1) -> Fixture {
+    let mut f = fixture(pool, budget).await;
+    let run = Id::new();
+    let attempt = Id::new();
+    let profile = Id::new();
+    let session = Id::new();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.codex_profiles(id,name,connection_mode,profile_origin,codex_home_ref,use_default_model_settings,saved_fast_mode) VALUES($1,'historical-only fixture','SYSTEM','MANAGED_VOLUME',$2,true,false)")
+        .bind(profile.as_uuid()).bind(format!("history/{profile}")).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at,current_attempt_no,active_attempt_id) VALUES($1,$2,$3,'AGENT_RESEARCH',$4,'RUNNING',$5,clock_timestamp(),1,$6)")
+        .bind(run.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(f.input_set.as_uuid()).bind(f.deadline).bind(attempt.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,1,'historical-fixture',1,$3,'ACKNOWLEDGED','RUNNING')")
+        .bind(attempt.as_uuid()).bind(run.as_uuid()).bind(f.deadline).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.codex_sessions(id,project_id,cycle_id,run_id,role,profile_id,profile_revision,thread_id,codex_version,protocol_schema_version,requested_settings,native_history_ref) VALUES($1,$2,$3,$4,'RESEARCHER',$5,1,$6,'historical-fixture','v2','{\"schema_version\":1}','historical-fixture')")
+        .bind(session.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(run.as_uuid()).bind(profile.as_uuid()).bind(format!("historical/{run}")).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    f.run = run;
+    f.fence = WorkerFence {
+        attempt_id: attempt,
+        worker_owner_id: "historical-fixture".into(),
+        owner_epoch: Revision::INITIAL,
+    };
+    f.report = report_artifact(pool, f.project, run, attempt).await;
+    f
 }
 
 pub async fn candidate(pool: &PgPool, f: &Fixture, mandate: Id) -> Id {

@@ -158,10 +158,7 @@ fn prepare(input: &Path, budget: &mut io::Budget) -> Result<Frozen> {
     let suite: Suite = io::parse(&suite_bytes)?;
     let _ = suite.schema_version;
     let count = suite.tuning.cases.len() + suite.held_out.cases.len();
-    if count < 2
-        || suite.tuning.cases.is_empty()
-        || suite.held_out.cases.is_empty()
-    {
+    if count < 2 || suite.tuning.cases.is_empty() || suite.held_out.cases.is_empty() {
         return Err("case count limit");
     }
     let source = budget.relative(input, &suite.source_file)?;

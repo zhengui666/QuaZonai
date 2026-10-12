@@ -9,8 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("expected exactly one report path".into());
     }
     let mut bytes = Vec::new();
-    File::open(path)?
-        .read_to_end(&mut bytes)?;
+    File::open(path)?.read_to_end(&mut bytes)?;
     let report = domain::agent_evaluation::parse(&bytes)?;
     println!("Valid report contract: {:?}; mode {:?}; {} cases. Uploaded runner evidence is not scientific qualification.", report.status, report.mode, report.cases.len());
     Ok(())

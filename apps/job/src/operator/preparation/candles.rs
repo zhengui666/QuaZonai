@@ -3,7 +3,7 @@
 use super::bars::{
     bar_type, candle, definitions, exact, no_symlinks, publish, read, write_catalog,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Parser;
 use nautilus_model::{
@@ -12,7 +12,7 @@ use nautilus_model::{
 };
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use serde_json::{Value, json, value::RawValue};
+use serde_json::{json, value::RawValue, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -650,12 +650,10 @@ mod limit_contract_tests {
         for (key, number) in [("max_records", 1), ("max_response_total_bytes", 0)] {
             let mut value = uncapped();
             value[key] = json!(number);
-            assert!(
-                serde_json::from_value::<Limits>(value)
-                    .unwrap()
-                    .validate()
-                    .is_err()
-            );
+            assert!(serde_json::from_value::<Limits>(value)
+                .unwrap()
+                .validate()
+                .is_err());
         }
     }
 }

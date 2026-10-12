@@ -110,9 +110,9 @@ fn order_core(order: &Value) -> &Value {
 
 fn is_expiration_order(core: &Value) -> bool {
     core["is_reduce_only"].as_bool().unwrap()
-        && core["tags"].as_array().is_some_and(|tags| {
-            tags.iter().any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE")
-        })
+        && core["tags"]
+            .as_array()
+            .is_some_and(|tags| tags.iter().any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE"))
 }
 
 fn fill_context(value: &Value, core: &Value) -> String {
@@ -163,7 +163,10 @@ fn audit_fills(result: &Value, instruments: &[InstrumentAny]) {
             .unwrap_or_else(|| panic!("unmatched fill={value}; orders={}", result["orders"]));
         let context = fill_context(value, core);
         eprintln!("canonical fill: {context}");
-        assert_eq!(fill["client_order_id"], core["client_order_id"], "{context}");
+        assert_eq!(
+            fill["client_order_id"], core["client_order_id"],
+            "{context}"
+        );
         assert_eq!(fill["instrument_id"], core["instrument_id"], "{context}");
         let instrument = instruments
             .iter()
@@ -171,7 +174,11 @@ fn audit_fills(result: &Value, instruments: &[InstrumentAny]) {
             .unwrap();
         let actual = Money::from_str(fill["commission"].as_str().unwrap()).unwrap();
         if is_expiration_order(core) {
-            assert_eq!(actual, Money::zero(instrument.quote_currency()), "{context}");
+            assert_eq!(
+                actual,
+                Money::zero(instrument.quote_currency()),
+                "{context}"
+            );
             assert_eq!(fill["ts_event"], (19 * STEP).to_string(), "{context}");
             let index = IDS
                 .iter()
@@ -218,11 +225,13 @@ fn native_replay_accepts_sub_one_partial_fills_and_preserves_each_official_money
         );
         let order_qty = Quantity::from_str(core["quantity"].as_str().unwrap()).unwrap();
         assert!(qty < order_qty, "{context}; order_qty={order_qty}");
-        let total = fills.iter().fold(rust_decimal::Decimal::ZERO, |sum, value| {
-            sum + Quantity::from_str(value["event"]["Filled"]["last_qty"].as_str().unwrap())
-                .unwrap()
-                .as_decimal()
-        });
+        let total = fills
+            .iter()
+            .fold(rust_decimal::Decimal::ZERO, |sum, value| {
+                sum + Quantity::from_str(value["event"]["Filled"]["last_qty"].as_str().unwrap())
+                    .unwrap()
+                    .as_decimal()
+            });
         assert_eq!(total, order_qty.as_decimal(), "{context}; fills={fills:?}");
         let settlements = orders
             .iter()
@@ -262,7 +271,9 @@ fn audit_fee_failure(error: &anyhow::Error) {
     assert_eq!(failure.reason, "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
     assert_eq!(failure.quantity, Quantity::from("0.000480"));
     assert_eq!(failure.price, Price::from("0.4000"));
-    assert!(IDS.iter().any(|id| *id == failure.instrument_id.to_string()));
+    assert!(IDS
+        .iter()
+        .any(|id| *id == failure.instrument_id.to_string()));
     assert!(!failure.client_order_id.as_str().is_empty());
     let instrument = polymarket::instruments("0.05", 18 * STEP)
         .into_iter()
@@ -284,15 +295,19 @@ fn audit_fee_failure(error: &anyhow::Error) {
         rust_decimal::Decimal::from_str("0.00001").unwrap()
     );
     let payload = serde_json::to_value(instrument).unwrap();
-    let bound = bigdecimal::BigDecimal::from_str(&failure.quantity.as_decimal().to_string()).unwrap()
+    let bound = bigdecimal::BigDecimal::from_str(&failure.quantity.as_decimal().to_string())
+        .unwrap()
         * bigdecimal::BigDecimal::from_str(&failure.price.as_decimal().to_string()).unwrap()
         * domain::prediction::planning_fee(&payload["BinaryOption"])
-            .unwrap().as_decimal();
+            .unwrap()
+            .as_decimal();
     assert_eq!(
         bound,
         bigdecimal::BigDecimal::from_str("0.00000960096").unwrap()
     );
-    eprintln!("native fee failure={error:#}; inputs={failure:?}; official_money={native}; bound={bound}");
+    eprintln!(
+        "native fee failure={error:#}; inputs={failure:?}; official_money={native}; bound={bound}"
+    );
 }
 
 #[test]
@@ -301,7 +316,10 @@ fn frozen_planning_rate_and_collateral_changes_still_reject_native_replay() {
     let mut wrong_rate = request.clone();
     wrong_rate.settings.fee_rates[0].taker = "0.04".parse().unwrap();
     let error = job::simulation::simulate(root.path(), &wrong_rate).unwrap_err();
-    assert_eq!(format!("{error:#}"), "POLYMARKET_PLANNING_FEE_SOURCE_MISMATCH");
+    assert_eq!(
+        format!("{error:#}"),
+        "POLYMARKET_PLANNING_FEE_SOURCE_MISMATCH"
+    );
     eprintln!("frozen replay rate error={error:#}");
     let mut wrong_currency = request;
     wrong_currency.settings.base_currency = "USD".into();
@@ -436,8 +454,7 @@ mod streaming {
     fn assert_fee_unavailable(report: &Value) {
         assert_eq!(report["performance_status"], "UNAVAILABLE", "{report}");
         assert_eq!(
-            report["reason_code"],
-            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND",
+            report["reason_code"], "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND",
             "{report}"
         );
         let failure = &report["native_fill_fee_failure"];

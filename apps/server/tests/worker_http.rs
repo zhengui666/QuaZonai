@@ -102,6 +102,14 @@ async fn actual_worker_loop_reconciles_lost_submit_ack_without_reposting_and_arc
     .await
     .unwrap();
     assert_eq!(origin, "FIXTURE");
+    let missions: i64 = sqlx::query_scalar("SELECT count(*) FROM app.run_missions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        missions, 0,
+        "scientific completion must not admit legacy Agent Missions"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -556,7 +564,9 @@ async fn complete_large_manifest_is_published_once_without_retry_or_cancellation
     let harness = native::setup(&pool, Behavior::OversizedManifest).await;
     let f = &harness.fixture;
     let run = tasks::start(f, "complete-large-manifest", &f.request)
-        .await.unwrap().resource;
+        .await
+        .unwrap()
+        .resource;
     let driver = Driver::start(harness.worker.clone());
     assert_eq!(terminal(&pool, run.id).await, "SUCCEEDED");
     driver.finish().await;

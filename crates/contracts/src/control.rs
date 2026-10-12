@@ -208,6 +208,8 @@ pub struct CredentialCreated {
     pub token: Option<String>,
 }
 
+/// Includes retired operation names solely to decode original command receipts.
+/// Retired names have no executable `OperatorCommand` variant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperatorOperation {
@@ -240,6 +242,7 @@ pub enum OperatorOperation {
     ReleaseReopen,
     BriefFreeze,
     CycleStart,
+    ScientificCyclePrepare,
     CycleStartExternal,
     CycleFinishExternal,
     IntegrationSecretRegister,
@@ -294,6 +297,7 @@ impl OperatorOperation {
             Self::ReleaseReject => "RELEASE_REJECT",
             Self::ReleaseReopen => "RELEASE_REOPEN",
             Self::CycleStart => "CYCLE_START",
+            Self::ScientificCyclePrepare => "SCIENTIFIC_CYCLE_PREPARE",
             Self::CycleStartExternal => "CYCLE_START_EXTERNAL",
             Self::CycleFinishExternal => "CYCLE_FINISH_EXTERNAL",
             Self::IntegrationSecretRegister => "INTEGRATION_SECRET_REGISTER",
@@ -322,12 +326,9 @@ impl OperatorOperation {
             self,
             Self::MigrationImport
                 | Self::IntegrationSecretRegister
-                | Self::CodexProfileCreate
-                | Self::CodexLoginStart
-                | Self::CodexLogout
                 | Self::DataSourceCreate
                 | Self::DataGrantCreate
-                | Self::CycleStart
+                | Self::ScientificCyclePrepare
                 | Self::CycleStartExternal
                 | Self::RuntimeCreate
                 | Self::DownstreamCreate
@@ -351,11 +352,6 @@ impl OperatorOperation {
 )]
 pub enum OperatorCommand {
     MigrationImport(crate::imports::HistoricalImportRequestV1),
-    CodexProfileUpdate(crate::codex::CodexProfileUpdateV1),
-    CodexProbe(crate::codex::CodexProbeRequestV1),
-    CodexLoginStart(crate::codex::CodexAccountRequestV1),
-    CodexLoginCancel(crate::codex::CodexLoginCancelV1),
-    CodexLogout(crate::codex::CodexAccountRequestV1),
     BriefFreeze(crate::cycles::BriefFreezeV1),
     DataSourceCreate(crate::data::DataSourceCreate),
     DataSourceUpdate(crate::data::DataSourceUpdate),
@@ -378,7 +374,6 @@ pub enum OperatorCommand {
     PolicyRevoke(crate::delivery::PolicyRevokeV1),
     ReleaseReject(crate::delivery::ReleaseRejectV1),
     ReleaseReopen(crate::delivery::ReleaseReopenV1),
-    CycleStart(crate::cycles::CycleStartIntent),
     CycleStartExternal(crate::cycles::ExternalCycleStartIntent),
     CycleFinishExternal(crate::cycles::CycleFinishExternalIntent),
     IntegrationSecretRegister(crate::settings::IntegrationSecretIntent),
@@ -405,11 +400,6 @@ impl OperatorCommand {
     pub fn operation(&self) -> OperatorOperation {
         match self {
             Self::MigrationImport(_) => OperatorOperation::MigrationImport,
-            Self::CodexProfileUpdate(_) => OperatorOperation::CodexProfileUpdate,
-            Self::CodexProbe(_) => OperatorOperation::CodexProbe,
-            Self::CodexLoginStart(_) => OperatorOperation::CodexLoginStart,
-            Self::CodexLoginCancel(_) => OperatorOperation::CodexLoginCancel,
-            Self::CodexLogout(_) => OperatorOperation::CodexLogout,
             Self::BriefFreeze(_) => OperatorOperation::BriefFreeze,
             Self::DataSourceCreate(_) => OperatorOperation::DataSourceCreate,
             Self::DataSourceUpdate(_) => OperatorOperation::DataSourceUpdate,
@@ -432,7 +422,6 @@ impl OperatorCommand {
             Self::PolicyRevoke(_) => OperatorOperation::PolicyRevoke,
             Self::ReleaseReject(_) => OperatorOperation::ReleaseReject,
             Self::ReleaseReopen(_) => OperatorOperation::ReleaseReopen,
-            Self::CycleStart(_) => OperatorOperation::CycleStart,
             Self::CycleStartExternal(_) => OperatorOperation::CycleStartExternal,
             Self::CycleFinishExternal(_) => OperatorOperation::CycleFinishExternal,
             Self::IntegrationSecretRegister(_) => OperatorOperation::IntegrationSecretRegister,
@@ -459,11 +448,6 @@ impl OperatorCommand {
     pub fn normalized_request(&self) -> Result<serde_json::Value, serde_json::Error> {
         match self {
             Self::MigrationImport(v) => serde_json::to_value(v),
-            Self::CodexProfileUpdate(v) => serde_json::to_value(v),
-            Self::CodexProbe(v) => serde_json::to_value(v),
-            Self::CodexLoginStart(v) => serde_json::to_value(v),
-            Self::CodexLoginCancel(v) => serde_json::to_value(v),
-            Self::CodexLogout(v) => serde_json::to_value(v),
             Self::BriefFreeze(v) => serde_json::to_value(v),
             Self::DataSourceCreate(v) => serde_json::to_value(v),
             Self::DataSourceUpdate(v) => serde_json::to_value(v),
@@ -486,7 +470,6 @@ impl OperatorCommand {
             Self::PolicyRevoke(v) => serde_json::to_value(v),
             Self::ReleaseReject(v) => serde_json::to_value(v),
             Self::ReleaseReopen(v) => serde_json::to_value(v),
-            Self::CycleStart(v) => serde_json::to_value(v),
             Self::CycleStartExternal(v) => serde_json::to_value(v),
             Self::CycleFinishExternal(v) => serde_json::to_value(v),
             Self::IntegrationSecretRegister(v) => serde_json::to_value(v),

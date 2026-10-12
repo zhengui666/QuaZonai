@@ -1,10 +1,10 @@
 //! Control-plane-to-runtime wire contracts. Only trusted services can submit these.
 //! Neither a terminal process nor a declared artifact grants scientific qualification.
 use crate::{
-    DbCounter, Id, Revision, SchemaV1,
     research::{ArtifactInputRole, DataPartition},
     runs::RunKind,
     runtime::RuntimeArtifactSchemaV1,
+    DbCounter, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

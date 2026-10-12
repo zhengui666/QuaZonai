@@ -227,19 +227,30 @@ async fn complete_pinned_ca_bundle_crosses_former_certificate_limit() {
     let tls = native_tls().await;
     let endpoint = tls.endpoint();
     let targets = RuntimeTargets::new(
-        vec![RuntimeTarget { origin: endpoint.clone(), addresses: vec![tls.server.address] }],
+        vec![RuntimeTarget {
+            origin: endpoint.clone(),
+            addresses: vec![tls.server.address],
+        }],
         false,
-    ).unwrap();
+    )
+    .unwrap();
     let mut config = snapshot(endpoint, false);
     config.tls_policy = "PINNED_CA".into();
     config.ca_certificate_ref = Some(contracts::Id::new().to_string());
     let bundle = tls.ca.repeat(17);
-    assert_eq!(reqwest::Certificate::from_pem_bundle(&bundle).unwrap().len(), 17);
-    let client = RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&bundle)).unwrap();
+    assert_eq!(
+        reqwest::Certificate::from_pem_bundle(&bundle)
+            .unwrap()
+            .len(),
+        17
+    );
+    let client =
+        RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&bundle)).unwrap();
     client.capabilities().await.unwrap();
     assert_eq!(tls.server.requests.load(Ordering::SeqCst), 1);
     let unrelated = include_bytes!("fixtures/capacity-ca.pem").repeat(17);
-    let untrusted = RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&unrelated)).unwrap();
+    let untrusted =
+        RuntimeTransport::new(&targets, &config, SECRET.as_bytes(), Some(&unrelated)).unwrap();
     assert!(untrusted.capabilities().await.is_err());
     assert_eq!(tls.server.requests.load(Ordering::SeqCst), 1);
 }

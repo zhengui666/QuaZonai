@@ -78,7 +78,7 @@ fn workspace_dependencies_follow_design_boundaries() {
         assert!(
             matches!(
                 file,
-                "Cargo.toml" | "apps/web/package.json" | "runtimes/codex/package.json"
+                "Cargo.toml" | "apps/web/package.json" | "apps/research/package.json"
             ) || packages
                 .iter()
                 .any(|package| members.contains(&package["id"])

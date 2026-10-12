@@ -204,7 +204,7 @@ impl Store {
         }) {
             return Err(DomainError::CapabilityUnavailable("candidate_simulation_outputs").into());
         }
-        let cpu = experiment::native_cpu(&request.limits, &cap)?;
+        let cpu = resources::native_cpu(&request.limits, &cap)?;
         let capability: uuid::Uuid = sqlx::query_scalar(
             "SELECT last_capability_snapshot_artifact_id FROM app.runtime_integrations WHERE id=$1",
         )

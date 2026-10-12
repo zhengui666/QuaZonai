@@ -41,10 +41,7 @@ impl PartialSchema for RuntimeOutputV1 {
                     .required("storage_ref")
                     .property("storage_version", literal("1"))
                     .required("storage_version")
-                    .property(
-                        "byte_count",
-                        crate::scalars::positive_db_counter_schema(),
-                    )
+                    .property("byte_count", crate::scalars::positive_db_counter_schema())
                     .required("byte_count")
                     .property("media_type", literal(contract.media_type))
                     .required("media_type"),

@@ -1,4 +1,4 @@
-use contracts::{DbCounter, SchemaV1, research::DataPartition, science::*};
+use contracts::{research::DataPartition, science::*, DbCounter, SchemaV1};
 use domain::execution::features::*;
 
 fn count(value: u64) -> DbCounter {
@@ -102,22 +102,18 @@ fn fragments_require_identical_schema_partition_and_global_unique_rows() {
     let first = part(vec![row(10, 12, 1, Some(0.0))]);
     let second = part(vec![row(12, 14, 2, Some(1.0))]);
     let schema = first.feature_schema.clone();
-    assert!(
-        bind_observations(
-            &[first.clone(), second.clone()],
-            &schema,
-            DataPartition::Validation
-        )
-        .is_ok()
-    );
-    assert!(
-        bind_observations(
-            &[first.clone(), first.clone()],
-            &schema,
-            DataPartition::Validation
-        )
-        .is_err()
-    );
+    assert!(bind_observations(
+        &[first.clone(), second.clone()],
+        &schema,
+        DataPartition::Validation
+    )
+    .is_ok());
+    assert!(bind_observations(
+        &[first.clone(), first.clone()],
+        &schema,
+        DataPartition::Validation
+    )
+    .is_err());
     let mut wrong = second.clone();
     wrong.partition = DataPartition::Discovery;
     assert!(

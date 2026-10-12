@@ -3,19 +3,17 @@
 #![forbid(unsafe_code)]
 mod access;
 pub mod account_observation;
-pub mod capital_exit;
-pub mod paper_capital_exit;
 pub mod artifacts;
 pub mod auth;
 mod automation;
 pub mod brief;
+pub mod capital_exit;
 pub mod client;
-pub mod codex_native;
-pub mod codex_profiles;
 pub mod control;
 pub mod cycles;
 pub mod data;
 pub mod downstream;
+pub mod durable;
 pub mod equity_curve;
 pub mod error;
 pub mod evidence;
@@ -24,8 +22,8 @@ pub mod experiments;
 pub mod forward;
 #[cfg(test)]
 mod header_tests;
-pub mod mcp;
 pub mod migrations;
+pub mod paper_capital_exit;
 pub mod portfolio;
 pub mod release;
 pub mod research;
@@ -158,7 +156,7 @@ pub struct AppState {
     pub downstream_targets: Arc<runtime_transport::RuntimeTargets>,
     pub paper_capital_exit_owners: Arc<paper_capital_exit::PaperCapitalExitOwners>,
     pub runtime_targets: Arc<runtime_transport::RuntimeTargets>,
-    pub codex_deployment: Arc<codex_profiles::CodexDeployment>,
+    pub research_service: Arc<durable::ResearchService>,
 }
 impl AppState {
     pub fn new(store: Store, vault: SecretVault, policy: WebPolicy) -> Self {
@@ -173,9 +171,11 @@ impl AppState {
             historical_artifact_store: None,
             historical_exports: Arc::new(migrations::HistoricalExports::default()),
             downstream_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
-            paper_capital_exit_owners: Arc::new(paper_capital_exit::PaperCapitalExitOwners::default()),
+            paper_capital_exit_owners: Arc::new(
+                paper_capital_exit::PaperCapitalExitOwners::default(),
+            ),
             runtime_targets: Arc::new(runtime_transport::RuntimeTargets::default()),
-            codex_deployment: Arc::new(codex_profiles::CodexDeployment::default()),
+            research_service: Arc::new(durable::ResearchService::default()),
         }
     }
     pub fn with_historical_artifact_store(
@@ -189,15 +189,18 @@ impl AppState {
         self.historical_exports = Arc::new(exports);
         self
     }
-    pub fn with_codex_deployment(mut self, deployment: codex_profiles::CodexDeployment) -> Self {
-        self.codex_deployment = Arc::new(deployment);
+    pub fn with_research_service(mut self, service: durable::ResearchService) -> Self {
+        self.research_service = Arc::new(service);
         self
     }
     pub fn with_artifact_store(mut self, store: integrations::artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
         self
     }
-    pub fn with_paper_capital_exit_owners(mut self, owners: paper_capital_exit::PaperCapitalExitOwners) -> Self {
+    pub fn with_paper_capital_exit_owners(
+        mut self,
+        owners: paper_capital_exit::PaperCapitalExitOwners,
+    ) -> Self {
         self.paper_capital_exit_owners = Arc::new(owners);
         self
     }
@@ -358,34 +361,12 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/evaluations/{id}/equity-curve",
             get(equity_curve::get),
         )
-        .route("/api/v2/settings/codex", get(codex_profiles::profiles))
-        .route(
-            "/api/v2/settings/codex/{id}",
-            get(codex_profiles::profile).patch(codex_profiles::update),
-        )
-        .route("/api/v2/codex/probe", post(codex_profiles::probe))
-        .route("/api/v2/codex/models", get(codex_profiles::models))
-        .route("/api/v2/codex/account", get(codex_profiles::account))
-        .route(
-            "/api/v2/codex/login/start",
-            post(codex_profiles::account::login_start),
-        )
-        .route(
-            "/api/v2/codex/logout",
-            post(codex_profiles::account::logout),
-        )
-        .route(
-            "/api/v2/codex/login/cancel",
-            post(codex_profiles::account::login_cancel),
-        )
-        .route(
-            "/api/v2/codex/login/{id}",
-            get(codex_profiles::account::login_operation),
-        )
-        .route(
-            "/api/v2/codex/login",
-            get(codex_profiles::account::latest_operation),
-        )
+        .route("/api/v2/research", get(durable::list).post(durable::start))
+        .route("/api/v2/research/{id}", get(durable::get))
+        .route("/api/v2/research/{id}/stop", post(durable::stop))
+        .route("/api/v2/research/models", get(durable::models))
+        .route("/api/v2/research/tasks", get(durable::tasks))
+        .route("/api/v2/research/usage", get(durable::usage))
         .route(
             "/api/v2/settings/credentials",
             post(settings::register_secret),
@@ -425,6 +406,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/data/validate", post(data::validate))
         .route("/api/v2/runs", get(runs::list))
         .route("/api/v2/runs/{id}", get(runs::get))
+        .route("/api/v2/runs/{id}/agent-history", get(runs::history))
         .route("/api/v2/runs/{id}/rebalance", get(runs::rebalance))
         .route("/api/v2/runs/{id}/cancel", post(runs::cancel))
         .route("/api/v2/runs/{id}/events", get(runs::events))
@@ -470,10 +452,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         .route("/api/v2/data/universes", get(data::universes))
         .route("/api/v2/data/universes/{id}", get(data::universe))
         .route("/api/v2/input-sets/{id}", get(research::input_set))
-        .route(
-            "/api/v2/portfolio-mandates",
-            post(portfolio::create),
-        )
+        .route("/api/v2/portfolio-mandates", post(portfolio::create))
         .route("/api/v2/portfolio-mandates/{id}", get(portfolio::get))
         .route(
             "/api/v2/portfolio-candidates/{id}",
@@ -491,18 +470,9 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/projects/{id}/portfolio-candidates",
             get(portfolio::candidates),
         )
-        .route(
-            "/api/v2/portfolio-builds",
-            post(portfolio::build),
-        )
-        .route(
-            "/api/v2/candidate-simulations",
-            post(portfolio::simulate),
-        )
-        .route(
-            "/api/v2/releases",
-            post(release::create),
-        )
+        .route("/api/v2/portfolio-builds", post(portfolio::build))
+        .route("/api/v2/candidate-simulations", post(portfolio::simulate))
+        .route("/api/v2/releases", post(release::create))
         .route("/api/v2/releases/{id}", get(release::get))
         .route("/api/v2/projects/{id}/releases", get(release::list))
         .route(
@@ -534,60 +504,72 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/approvals/{id}/revocations",
             get(release::revocations),
         )
-        .route(
-            "/api/v2/handoffs",
-            post(release::offer),
-        )
+        .route("/api/v2/handoffs", post(release::offer))
         .route("/api/v2/projects/{id}/handoffs", get(release::handoffs))
         .route(
             "/api/v2/projects/{id}/forward-weight-snapshots",
             get(forward::weight_snapshots),
         )
         .route("/api/v2/handoffs/{id}", get(release::handoff))
-        .route(
-            "/api/v2/handoffs/{id}/ack",
-            post(release::ack),
-        )
+        .route("/api/v2/handoffs/{id}/ack", post(release::ack))
         .route(
             "/api/v2/handoffs/{id}/paper-initial-execution/consume",
             post(release::consume_paper_initial_execution),
         )
-        .route(
-            "/api/v2/handoffs/{id}/claim",
-            post(release::claim),
-        )
-        .route(
-            "/api/v2/releases/{id}/rejections",
-            post(release::reject),
-        )
+        .route("/api/v2/handoffs/{id}/claim", post(release::claim))
+        .route("/api/v2/releases/{id}/rejections", post(release::reject))
         .route("/api/v2/releases/{id}/decisions", get(release::decisions))
         .route(
             "/api/v2/release-decisions/{id}/reopen",
             post(release::reopen),
         )
-        .route(
-            "/api/v2/portfolio-studies",
-            post(portfolio::study),
-        )
+        .route("/api/v2/portfolio-studies", post(portfolio::study))
         .route(
             "/api/v2/execution-assumptions",
             post(execution_assumptions::create),
         )
+        .route("/api/v2/forward/messages", post(forward::message))
         .route(
-            "/api/v2/forward/messages",
-            post(forward::message),
+            "/api/v2/projects/{project_id}/capital-exit-previews",
+            post(capital_exit::preview),
         )
-        .route("/api/v2/projects/{project_id}/capital-exit-previews", post(capital_exit::preview))
-        .route("/api/v2/projects/{project_id}/capital-exits", get(capital_exit::list).post(capital_exit::start))
+        .route(
+            "/api/v2/projects/{project_id}/capital-exits",
+            get(capital_exit::list).post(capital_exit::start),
+        )
         .route("/api/v2/capital-exits/{id}", get(capital_exit::get))
-        .route("/api/v2/capital-exits/{id}/pause", post(capital_exit::pause))
-        .route("/api/v2/capital-exits/{id}/cancel", post(capital_exit::cancel))
-        .route("/api/v2/capital-exits/{id}/resume", post(capital_exit::resume))
-        .route("/api/v2/capital-exits/{id}/reconcile-withdrawal", post(capital_exit::reconcile))
-        .route("/api/v2/downstream/capital-exits", get(capital_exit::downstream))
-        .route("/api/v2/downstream/capital-exit-assessments", get(capital_exit::assessment_requests).post(capital_exit::assessment))
-        .route("/api/v2/capital-exits/{id}/claim", post(capital_exit::claim))
-        .route("/api/v2/capital-exits/{id}/evidence", post(capital_exit::evidence))
+        .route(
+            "/api/v2/capital-exits/{id}/pause",
+            post(capital_exit::pause),
+        )
+        .route(
+            "/api/v2/capital-exits/{id}/cancel",
+            post(capital_exit::cancel),
+        )
+        .route(
+            "/api/v2/capital-exits/{id}/resume",
+            post(capital_exit::resume),
+        )
+        .route(
+            "/api/v2/capital-exits/{id}/reconcile-withdrawal",
+            post(capital_exit::reconcile),
+        )
+        .route(
+            "/api/v2/downstream/capital-exits",
+            get(capital_exit::downstream),
+        )
+        .route(
+            "/api/v2/downstream/capital-exit-assessments",
+            get(capital_exit::assessment_requests).post(capital_exit::assessment),
+        )
+        .route(
+            "/api/v2/capital-exits/{id}/claim",
+            post(capital_exit::claim),
+        )
+        .route(
+            "/api/v2/capital-exits/{id}/evidence",
+            post(capital_exit::evidence),
+        )
         .route(
             "/api/v2/forward/account-observations",
             post(account_observation::submit),
@@ -619,10 +601,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/projects/{id}/wakes", get(forward::wakes))
         .route("/api/v2/handoffs/{id}/forward-window", get(forward::window))
-        .route(
-            "/api/v2/forward/weights",
-            post(forward::weights),
-        )
+        .route("/api/v2/forward/weights", post(forward::weights))
         .route(
             "/api/v2/execution-assumptions/{id}",
             get(execution_assumptions::get),
@@ -637,10 +616,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
         )
         .route("/api/v2/briefs/{id}/freeze", post(cycles::freeze))
         .route("/api/v2/briefs/{id}/execution-context", get(cycles::frozen))
-        .route(
-            "/api/v2/projects/{id}/cycles",
-            get(cycles::list).post(cycles::start),
-        )
+        .route("/api/v2/projects/{id}/cycles", get(cycles::list))
         .route("/api/v2/cycles/{id}", get(cycles::get))
         .route(
             "/api/v2/cycles/{id}/finish-external",
@@ -652,10 +628,7 @@ pub fn router(state: AppState, cookie_key: Key) -> Router {
             "/api/v2/projects/{id}/briefs",
             get(brief::list).post(brief::create),
         )
-        .route(
-            "/api/v2/briefs/{id}",
-            get(brief::get).patch(brief::update),
-        )
+        .route("/api/v2/briefs/{id}", get(brief::get).patch(brief::update))
         .route(
             "/api/v2/evaluation-policies",
             get(research::evaluation_policies).post(research::create_evaluation_policy),
@@ -792,7 +765,7 @@ async fn browser_boundary(State(state): State<AppState>, request: Request, next:
 control::projects,control::project,control::create_project,control::update_project,
 control::principals,control::create_principal,control::update_principal,
 control::credentials,control::issue_credential,control::revoke_credential,
-control::machine_session,control::issue_grant,runs::list,runs::get,runs::rebalance,runs::cancel,runs::events,
+control::machine_session,control::issue_grant,runs::list,runs::get,runs::history,runs::rebalance,runs::cancel,runs::events,
 research::input_sets,research::input_set,research::create_input_set,
 research::evaluation_policies,research::evaluation_policy,research::create_evaluation_policy,
 brief::list,brief::get,brief::create,brief::update,
@@ -801,16 +774,13 @@ execution_assumptions::list,execution_assumptions::get,execution_assumptions::cr
 capital_exit::preview,capital_exit::start,capital_exit::list,capital_exit::get,capital_exit::pause,capital_exit::cancel,capital_exit::resume,capital_exit::reconcile,capital_exit::downstream,capital_exit::claim,capital_exit::evidence,capital_exit::assessment,capital_exit::assessment_requests,
 account_observation::submit,account_observation::submit_client_bound,account_observation::client_binding,account_observation::sources,account_observation::current,account_observation::observations,
 forward::weight_snapshots,forward::weights,forward::message,forward::list,forward::window,forward::observations,forward::wakes,
-cycles::freeze,cycles::frozen,cycles::start,cycles::list,cycles::get,cycles::selection,cycles::trials,
+cycles::freeze,cycles::frozen,cycles::list,cycles::get,cycles::selection,cycles::trials,
 experiments::propose,experiments::list,experiments::get,experiments::evaluate,experiments::adopt_alpha,experiments::evaluation,experiments::summary,cycles::start_external,cycles::finish_external,
 evidence::alphas,evidence::versions,evidence::version,evidence::calibration,evidence::qualifications,evidence::evaluations,evidence::candidate_evaluations,evidence::evaluate,evidence::evaluation,evidence::metrics,equity_curve::get,
 settings::register_secret,settings::runtimes,settings::runtime,settings::create_runtime,settings::update_runtime,
 settings::downstreams,settings::downstream,settings::create_downstream,settings::update_downstream,
 runtime::probe,runtime::readiness,downstream::probe,downstream::readiness,
-codex_profiles::profiles,codex_profiles::profile,
-codex_profiles::update,codex_profiles::probe,codex_profiles::models,codex_profiles::account,
-codex_profiles::account::login_start,codex_profiles::account::logout,codex_profiles::account::login_cancel,
-codex_profiles::account::login_operation,codex_profiles::account::latest_operation,
+durable::list,durable::start,durable::get,durable::stop,durable::models,durable::tasks,durable::usage,
 data::sources,data::source,data::create_source,data::update_source,
 data::grants,data::create_grant,data::revoke_grant,data::revocations,
 data::revisions,data::revision,data::evidence::get,data::register,data::universes,data::universe,data::validate,
@@ -931,6 +901,25 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     if !status.parse::<u16>().is_ok_and(|code| code >= 400) {
                         continue;
                     }
+                    // Admission closure is native JSON, while an unavailable
+                    // transport is a Problem; both retain the typed union.
+                    if path == "/api/v2/research" && write && status == "503" {
+                        if let utoipa::openapi::RefOr::T(response) = response {
+                            if let Some(content) = response.content.get("application/json").cloned()
+                            {
+                                response
+                                    .content
+                                    .insert("application/problem+json".into(), content);
+                            }
+                        }
+                        continue;
+                    }
+                    // Durable host errors are native JSON, not QZ Problems.
+                    if path.starts_with("/api/v2/research")
+                        && !matches!(status.as_str(), "401" | "403" | "422" | "429" | "503")
+                    {
+                        continue;
+                    }
                     if let utoipa::openapi::RefOr::T(response) = response {
                         if let Some(content) = response.content.shift_remove("application/json") {
                             response
@@ -943,12 +932,17 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     vec![]
                 } else if path == "/api/v2/auth/cli/session" {
                     vec![device]
+                } else if path.starts_with("/api/v2/research") {
+                    vec![local, device]
                 } else if path == "/api/v2/downstream/capital-exits"
                     || path == "/api/v2/downstream/capital-exit-assessments"
-                    || (path.starts_with("/api/v2/capital-exits/") && (path.ends_with("/claim") || path.ends_with("/evidence")))
+                    || (path.starts_with("/api/v2/capital-exits/")
+                        && (path.ends_with("/claim") || path.ends_with("/evidence")))
                 {
                     vec![bearer]
-                } else if path.contains("/capital-exits") || path.ends_with("/capital-exit-previews") {
+                } else if path.contains("/capital-exits")
+                    || path.ends_with("/capital-exit-previews")
+                {
                     vec![local, device]
                 } else if only_machine {
                     vec![bearer]

@@ -3,10 +3,10 @@
 //! synthetic quotes/target; this does not run Serve's data host or qualify research.
 //! There are no handwritten native commands, receipts, fills, accounts or fees.
 use super::*;
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::control::CommandResult;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -14,8 +14,8 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
     },
 };
 

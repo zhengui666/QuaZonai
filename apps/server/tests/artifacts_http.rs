@@ -102,6 +102,24 @@ async fn bearer(
     scopes: &[&str],
     key: &str,
 ) -> (String, Id) {
+    bearer_until(
+        f,
+        cookie,
+        project,
+        scopes,
+        key,
+        Utc::now() + Duration::hours(1),
+    )
+    .await
+}
+async fn bearer_until(
+    f: &Fixture,
+    cookie: &str,
+    project: Id,
+    scopes: &[&str],
+    key: &str,
+    expires_at: chrono::DateTime<Utc>,
+) -> (String, Id) {
     let p = send(f,"POST","/api/v2/machine-principals",key,json!({"schema_version":1,"name":"research CLI","kind":"CLI","project_id":project,"downstream_id":null,"enabled":true}),Some(cookie),None).await;
     assert_eq!(p.status, StatusCode::CREATED, "{}", p.body);
     let path = format!(
@@ -113,7 +131,7 @@ async fn bearer(
         "POST",
         &path,
         &format!("{key}-credential"),
-        json!({"schema_version":1,"scope_codes":scopes,"expires_at":Utc::now()+Duration::hours(1)}),
+        json!({"schema_version":1,"scope_codes":scopes,"expires_at":expires_at}),
         Some(cookie),
         None,
     )
@@ -189,9 +207,7 @@ async fn upload_download_and_same_length_replay_use_real_original_bytes(pool: Pg
         .unwrap()
         .starts_with("attachment;"));
     assert_eq!(
-        &to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap()[..],
+        &to_bytes(response.into_body(), usize::MAX).await.unwrap()[..],
         text.as_bytes()
     );
     let replay = send(
@@ -417,15 +433,30 @@ async fn rejects_forged_provenance_bad_documents_and_byte_overflow_before_public
     }
     let large = "界".repeat(2 * 1024 * 1024 / 3 + 1);
     let created = send(
-        &f, "POST", "/api/v2/artifacts", "large-original",
-        upload(project, &large), Some(&cookie), None,
-    ).await;
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "large-original",
+        upload(project, &large),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(created.status, StatusCode::CREATED);
-    assert_eq!(created.body["resource"]["byte_count"], large.len().to_string());
+    assert_eq!(
+        created.body["resource"]["byte_count"],
+        large.len().to_string()
+    );
     let id = created.body["resource"]["id"].as_str().unwrap();
     let response = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(to_bytes(response.into_body(), usize::MAX).await.unwrap().as_ref(), large.as_bytes());
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .as_ref(),
+        large.as_bytes()
+    );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM app.artifacts")
         .fetch_one(&pool)
         .await
@@ -558,23 +589,50 @@ async fn database_failure_preserves_orphan_without_publishing_a_false_receipt(po
 #[sqlx::test(migrations = "../../migrations")]
 async fn artifact_downloads_cross_four_concurrent_streams_without_rejecting_uploads(pool: PgPool) {
     let (f, cookie, project) = setup(&pool).await;
-    let created = send(&f, "POST", "/api/v2/artifacts", "source", upload(project, "original"), Some(&cookie), None).await;
+    let created = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "source",
+        upload(project, "original"),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(created.status, StatusCode::CREATED);
-    let path = format!("/api/v2/artifacts/{}/content", created.body["resource"]["id"].as_str().unwrap());
+    let path = format!(
+        "/api/v2/artifacts/{}/content",
+        created.body["resource"]["id"].as_str().unwrap()
+    );
     let mut responses = Vec::new();
     for _ in 0..5 {
         let response = raw(&f, &path, &cookie).await;
         assert_eq!(response.status(), StatusCode::OK);
         responses.push(response);
     }
-    let next = send(&f, "POST", "/api/v2/artifacts", "parallel-upload", upload(project, "next"), Some(&cookie), None).await;
+    let next = send(
+        &f,
+        "POST",
+        "/api/v2/artifacts",
+        "parallel-upload",
+        upload(project, "next"),
+        Some(&cookie),
+        None,
+    )
+    .await;
     assert_eq!(next.status, StatusCode::CREATED);
     responses.pop();
     for response in responses {
-        assert_eq!(to_bytes(response.into_body(), 64).await.unwrap().as_ref(), b"original");
+        assert_eq!(
+            to_bytes(response.into_body(), 64).await.unwrap().as_ref(),
+            b"original"
+        );
     }
     let replay = raw(&f, &path, &cookie).await;
-    assert_eq!(to_bytes(replay.into_body(), 64).await.unwrap().as_ref(), b"original");
+    assert_eq!(
+        to_bytes(replay.into_body(), 64).await.unwrap().as_ref(),
+        b"original"
+    );
 }
 
 async fn mission_token(
@@ -617,71 +675,126 @@ async fn mission_token_scoped(
         reference,
     )
 }
-#[path = "../../../tests/support/runtime_observation.rs"]
-mod runtime_observation;
 
-async fn mission(f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
-    use contracts::{lifecycle::JobLimitsV1, runs::RunKind, DbCounter, Revision, SchemaV1};
-    use store::lifecycle::{ClaimResult, RunSubmission};
+async fn mission(_f: &Fixture, pool: &PgPool) -> (Id, Id, Id, Id) {
+    // Original Run/Attempt/admission facts for historical credential and file
+    // regressions. Never call today's retired Agent admission or claim methods.
     let data = run_support::fixture(pool, run_support::budget()).await;
-    // The shared ledger fixture owns an unrelated Mission. End that test-only
-    // setup before admitting the one Mission under test; never relax its slot.
-    sqlx::query("UPDATE app.runs SET state='FAILED',finished_at=clock_timestamp() WHERE id=$1")
-        .bind(data.run.as_uuid())
-        .execute(pool)
+    let (runtime, run, attempt, principal) = (Id::new(), Id::new(), Id::new(), Id::new());
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'historical artifact fixture','https://runtime.example','SYSTEM_CA','fixture',ARRAY['AGENT_RESEARCH'],'1',true)")
+        .bind(runtime.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,deadline_at,queued_at,started_at,current_attempt_no,active_attempt_id) VALUES($1,$2,$3,'AGENT_RESEARCH',$4,'RUNNING',clock_timestamp()+interval '1 hour',clock_timestamp(),clock_timestamp(),1,$5)")
+        .bind(run.as_uuid()).bind(data.project.as_uuid()).bind(data.cycle.as_uuid()).bind(data.input_set.as_uuid()).bind(attempt.as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,1,'historical-artifact-owner',1,clock_timestamp()+interval '1 hour','ACKNOWLEDGED','RUNNING')")
+        .bind(attempt.as_uuid()).bind(run.as_uuid()).execute(&mut *tx).await.unwrap();
+    let message: i64 = sqlx::query_scalar("SELECT pgmq.send('runs',$1)")
+        .bind(json!({"schema_version":1,"run_id":run}))
+        .fetch_one(&mut *tx)
         .await
         .unwrap();
-    let runtime = Id::new();
-    sqlx::query("INSERT INTO app.runtime_integrations(id,name,endpoint,tls_policy,credential_ref,allowed_capabilities,protocol_version,enabled) VALUES($1,'artifact fixture','https://runtime.example','SYSTEM_CA','fixture',ARRAY['AGENT_RESEARCH'],'1',true)")
-        .bind(runtime.as_uuid()).execute(pool).await.unwrap();
-    runtime_observation::ready(pool, runtime).await;
-    let request = RunSubmission {
-        cycle_id: data.cycle,
-        input_set_id: data.input_set,
-        runtime_id: runtime,
-        runtime_revision: Revision::INITIAL,
-        kind: RunKind::AgentResearch,
-        limits: JobLimitsV1 {
-            schema_version: SchemaV1,
-            experiments: 0,
-            cpu_seconds: Some(DbCounter::new(100).unwrap()),
-            wall_seconds: Some(3600),
-            memory_mib: Some(1024),
-            output_bytes: Some(DbCounter::new(8).unwrap()),
-        },
-    };
-    let run = f
-        .store
-        .enqueue_run("mission", &request)
-        .await
+    sqlx::query("INSERT INTO app.run_admissions(run_id,project_id,cycle_id,command_key,normalized_request,initial_snapshot,limits,runtime_id,runtime_revision,runtime_snapshot,initial_queue_message_id) VALUES($1,$2,$3,'historical-artifact-admission',$4,$4,$5,$6,1,$4,$7)")
+        .bind(run.as_uuid()).bind(data.project.as_uuid()).bind(data.cycle.as_uuid())
+        .bind(json!({"schema_version":1,"historical_fixture":true}))
+        .bind(json!({"schema_version":1,"experiments":0,"cpu_seconds":"100","wall_seconds":3600,"memory_mib":1024,"output_bytes":"8"}))
+        .bind(runtime.as_uuid()).bind(message).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO app.machine_principals(id,name,kind,project_id,run_id,enabled,credential_epoch) VALUES($1,'historical researcher fixture','MISSION',$2,$3,true,1)")
+        .bind(principal.as_uuid()).bind(data.project.as_uuid()).bind(run.as_uuid()).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    (data.project, run, attempt, principal)
+}
+
+async fn historical_artifact(
+    f: &Fixture,
+    pool: &PgPool,
+    project: Id,
+    run: Id,
+    attempt: Id,
+    content: &str,
+) -> Id {
+    // Original Agent provenance is a test-only historical fact, not a new upload.
+    let id = Id::new();
+    ArtifactStore::open(&f._state.path().join("artifacts"))
         .unwrap()
-        .resource;
-    let message = f
-        .store
-        .read_run_messages(30, 100)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|m| m.run_id == run.id)
+        .put(id, content.as_bytes())
         .unwrap();
-    let ClaimResult::Leased(lease) = f
-        .store
-        .claim_run(&message, "artifact-test", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("native lease expected")
-    };
-    let principal = Id::new();
-    sqlx::query("INSERT INTO app.machine_principals(id,name,kind,project_id,run_id,enabled,credential_epoch) VALUES($1,'isolated researcher','MISSION',$2,$3,true,1)")
-        .bind(principal.as_uuid()).bind(data.project.as_uuid()).bind(run.id.as_uuid()).execute(pool).await.unwrap();
-    (data.project, run.id, lease.fence.attempt_id, principal)
+    sqlx::query("INSERT INTO app.artifacts(id,project_id,producer_run_id,producer_attempt_id,kind,media_type,schema_name,schema_version,storage_backend,storage_object_ref,storage_version,byte_count,access_class,origin,created_by,retention_class) VALUES($1,$2,$3,$4,'CODE','text/x-rust','qz.rust_source','1','LOCAL',$5,'1',$6,'RESEARCH','SYNTHETIC','AGENT','REFERENCED')")
+        .bind(id.as_uuid()).bind(project.as_uuid()).bind(run.as_uuid()).bind(attempt.as_uuid())
+        .bind(id.to_string()).bind(content.len() as i64).execute(pool).await.unwrap();
+    id
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_attempt(pool: PgPool) {
+async fn concurrent_cli_uploads_publish_one_original_receipt_without_legacy_provenance(
+    pool: PgPool,
+) {
+    let (f, cookie, project) = setup(&pool).await;
+    let (token, _) = bearer(
+        &f,
+        &cookie,
+        project,
+        &["ARTIFACT_SUBMIT", "RESEARCH_READ"],
+        "concurrent-cli",
+    )
+    .await;
+    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            send(
+                &f,
+                "POST",
+                "/api/v2/artifacts",
+                "one-original",
+                upload(project, "12345"),
+                None,
+                Some(&token)
+            ),
+            send(
+                &f,
+                "POST",
+                "/api/v2/artifacts",
+                "one-original",
+                upload(project, "12345"),
+                None,
+                Some(&token)
+            ),
+        )
+    })
+    .await
+    .expect("concurrent uploads must serialize without a lock upgrade deadlock");
+    for reply in [&left, &right] {
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        assert_eq!(reply.body["resource"]["created_by"], "OPERATOR");
+        assert!(reply.body["resource"]["producer_run_id"].is_null());
+        assert!(reply.body["resource"]["producer_attempt_id"].is_null());
+    }
+    assert_eq!(left.body["resource"], right.body["resource"]);
+    assert_ne!(left.body["replayed"], right.body["replayed"]);
+    let total: (i64, i64) = sqlx::query_as(
+        "SELECT count(*),SUM(byte_count)::bigint FROM app.artifacts WHERE project_id=$1",
+    )
+    .bind(project.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(total, (1, 5));
+    let path = format!(
+        "/api/v2/artifacts/{}/content",
+        left.body["resource"]["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        to_bytes(raw(&f, &path, &cookie).await.into_body(), 64)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"12345"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn retired_mission_uploads_cannot_change_history_or_borrow_a_new_attempt(pool: PgPool) {
     let (f, _cookie, _) = setup(&pool).await;
     let (project, run, attempt, principal) = mission(&f, &pool).await;
+    let artifact = historical_artifact(&f, &pool, project, run, attempt, "12345").await;
     let (bearer, credential, _) = mission_token(&f, &pool, principal, 600).await;
     let stored: String = sqlx::query_scalar(
         "SELECT issuer_attempt_id::text FROM app.machine_credentials WHERE id=$1",
@@ -691,7 +804,21 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
     .await
     .unwrap();
     assert_eq!(stored, attempt.to_string());
-    let results = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    let original = send(
+        &f,
+        "GET",
+        &format!("/api/v2/artifacts/{artifact}"),
+        "unused",
+        Value::Null,
+        None,
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(original.status, StatusCode::OK);
+    assert_eq!(original.body["producer_run_id"], run.to_string());
+    assert_eq!(original.body["producer_attempt_id"], attempt.to_string());
+    assert_eq!(original.body["created_by"], "AGENT");
+    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         tokio::join!(
             send(
                 &f,
@@ -710,61 +837,20 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
                 upload(project, "12345"),
                 None,
                 Some(&bearer)
-            )
+            ),
         )
     })
     .await
-    .expect("two uploads must serialize, not deadlock upgrading shared locks");
-    let (created, key, failed) = if results.0.status == StatusCode::CREATED {
-        (results.0, "left", results.1)
-    } else {
-        (results.1, "right", results.0)
-    };
-    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
-    assert_eq!(
-        failed.status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        failed.body
-    );
-    assert_eq!(failed.body["code"], "BUDGET_EXHAUSTED");
-    assert_eq!(failed.body["retryable"], false);
-    assert_eq!(
-        failed.body["field_errors"][0]["field"],
-        "artifact_output_bytes"
-    );
-    assert_eq!(created.body["resource"]["producer_run_id"], run.to_string());
-    assert_eq!(
-        created.body["resource"]["producer_attempt_id"],
-        attempt.to_string()
-    );
-    assert_eq!(created.body["resource"]["created_by"], "AGENT");
-    let replay = send(
-        &f,
-        "POST",
-        "/api/v2/artifacts",
-        key,
-        upload(project, "12345"),
-        None,
-        Some(&bearer),
-    )
-    .await;
-    assert_eq!(replay.status, StatusCode::CREATED);
-    assert_eq!(replay.body["replayed"], true);
-    let total: i64 = sqlx::query_scalar(
-        "SELECT SUM(byte_count)::bigint FROM app.artifacts WHERE producer_run_id=$1",
-    )
-    .bind(run.as_uuid())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(total, 5);
-
-    // Relational fault injection only: represent a later Attempt. This does not
-    // claim the unrelated runtime retry/orchestration service is implemented.
+    .expect("retired uploads must not deadlock");
+    for reply in [&left, &right] {
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.body);
+        assert_eq!(reply.body["code"], "FORBIDDEN");
+        assert_eq!(reply.body["retryable"], false);
+    }
+    // Original later-Attempt facts do not revive the retired writer.
     let later = Id::new();
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,2,'next-worker',1,clock_timestamp()+interval '1 hour','NOT_SENT','UNKNOWN')")
+    sqlx::query("INSERT INTO app.run_attempts(id,run_id,attempt_no,worker_owner_id,owner_epoch,lease_expires_at,dispatch_state,runtime_state) VALUES($1,$2,2,'historical-next-worker',1,clock_timestamp()+interval '1 hour','NOT_SENT','UNKNOWN')")
         .bind(later.as_uuid()).bind(run.as_uuid()).execute(&mut *tx).await.unwrap();
     sqlx::query("UPDATE app.runs SET active_attempt_id=$2,current_attempt_no=2 WHERE id=$1")
         .bind(run.as_uuid())
@@ -783,47 +869,82 @@ async fn concurrent_mission_outputs_obey_one_budget_and_cannot_borrow_a_new_atte
         Some(&bearer),
     )
     .await;
-    assert_eq!(denied.status, StatusCode::UNAUTHORIZED, "{}", denied.body);
+    assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.body);
+    let identity = send(
+        &f,
+        "GET",
+        "/api/v2/auth/machine",
+        "unused",
+        Value::Null,
+        None,
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(identity.status, StatusCode::UNAUTHORIZED);
     let (new_token, _, _) = mission_token(&f, &pool, principal, 600).await;
-    let over = send(
+    for text in ["1234", "123"] {
+        let denied = send(
+            &f,
+            "POST",
+            "/api/v2/artifacts",
+            text,
+            upload(project, text),
+            None,
+            Some(&new_token),
+        )
+        .await;
+        assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.body);
+    }
+    let current = send(
         &f,
-        "POST",
-        "/api/v2/artifacts",
-        "over",
-        upload(project, "1234"),
+        "GET",
+        &format!("/api/v2/artifacts/{artifact}"),
+        "unused",
+        Value::Null,
         None,
         Some(&new_token),
     )
     .await;
-    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.body);
-    assert_eq!(over.body["code"], "BUDGET_EXHAUSTED");
-    assert_eq!(over.body["retryable"], false);
-    assert_eq!(
-        over.body["field_errors"][0]["field"],
-        "artifact_output_bytes"
-    );
-    let exact = send(
-        &f,
-        "POST",
-        "/api/v2/artifacts",
-        "exact",
-        upload(project, "123"),
-        None,
-        Some(&new_token),
+    assert_eq!(current.status, StatusCode::OK);
+    assert_eq!(current.body, original.body);
+    let total: (i64, i64) = sqlx::query_as(
+        "SELECT count(*),SUM(byte_count)::bigint FROM app.artifacts WHERE producer_run_id=$1",
     )
-    .await;
-    assert_eq!(exact.status, StatusCode::CREATED, "{}", exact.body);
-    assert_eq!(
-        exact.body["resource"]["producer_attempt_id"],
-        later.to_string()
-    );
+    .bind(run.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(total, (1, 5));
+    let limit: Value = sqlx::query_scalar("SELECT limits FROM app.run_admissions WHERE run_id=$1")
+        .bind(run.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(limit["output_bytes"], "8");
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM app.command_receipts WHERE operation='ARTIFACT_SUBMIT' AND normalized_nonsecret_request->>'project_id'=$1")
+        .bind(project.to_string()).fetch_one(&pool).await.unwrap();
+    assert_eq!(receipts, 0);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn expiry_during_native_io_cannot_publish_after_authority_expires(pool: PgPool) {
-    let (f, _, _) = setup(&pool).await;
-    let (project, _run, _, principal) = mission(&f, &pool).await;
-    let (_, credential, reference) = mission_token(&f, &pool, principal, 2).await;
+    let (f, cookie, project) = setup(&pool).await;
+    let (_, credential) = bearer_until(
+        &f,
+        &cookie,
+        project,
+        &["ARTIFACT_SUBMIT"],
+        "expiry-cli",
+        Utc::now() + Duration::seconds(2),
+    )
+    .await;
+    let reference: String =
+        sqlx::query_scalar("SELECT verifier_ref FROM app.machine_credentials WHERE id=$1")
+            .bind(credential.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let reference = Id::try_from(reference).unwrap();
     let actor = store::authority::Actor::Machine {
         credential_id: credential,
         verifier_ref: reference,
@@ -911,18 +1032,14 @@ async fn agent_report_retains_immutable_bytes_and_replay(pool: PgPool) {
     assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
-    let bytes = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let typed: Value = serde_json::from_slice(&bytes).unwrap();
     let mut expected = report.clone();
     expected["recorded_at"] = json!("2026-09-30T00:00:00Z");
     assert_eq!(typed, expected);
     let original = raw(&f, &format!("/api/v2/artifacts/{id}/content"), &cookie).await;
     assert_eq!(original.status(), StatusCode::OK);
-    let original = to_bytes(original.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let original = to_bytes(original.into_body(), usize::MAX).await.unwrap();
     assert_eq!(original.as_ref(), report.to_string().as_bytes());
     let qualifications: i64 = sqlx::query_scalar("SELECT count(*) FROM app.qualifications")
         .fetch_one(&pool)

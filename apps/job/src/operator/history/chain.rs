@@ -1,7 +1,7 @@
 //! Original EVM evidence stays outside scientific jobs and never supplies PIT clocks.
 use super::*;
 use alloy_core::{
-    primitives::{Address, B256, Bytes, U256},
+    primitives::{Address, Bytes, B256, U256},
     sol,
     sol_types::SolEvent,
 };
@@ -751,21 +751,17 @@ mod tests {
         let mut disagree = snapshot.clone();
         disagree["observations"][1]["blocks"][0]["logs"]["result"][0]["logIndex"] = "0x306".into();
         fs::write(&args.snapshot, serde_json::to_vec(&disagree).unwrap()).unwrap();
-        assert!(
-            Evidence::load(&args.snapshot)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("RPC_EVIDENCE_DISAGREEMENT")
-        );
+        assert!(Evidence::load(&args.snapshot)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("RPC_EVIDENCE_DISAGREEMENT"));
         fs::write(&args.snapshot, serde_json::to_vec(&snapshot).unwrap()).unwrap();
         let evidence = Evidence::load(&args.snapshot).unwrap();
         let (_, instruments) = load_instruments(&args.instruments).unwrap();
-        assert!(
-            evidence
-                .check_archive_selection(&instruments, 0, 120, &BTreeMap::new())
-                .is_err()
-        );
+        assert!(evidence
+            .check_archive_selection(&instruments, 0, 120, &BTreeMap::new())
+            .is_err());
         assert!(evidence.matching("137_100_774").is_err());
         assert!(evidence.matching("137_101_774").unwrap().is_none());
         for name in [

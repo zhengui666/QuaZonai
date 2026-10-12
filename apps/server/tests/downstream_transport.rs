@@ -174,9 +174,17 @@ async fn complete_downstream_observation_crosses_the_former_response_limit() {
         let mut raw = serde_json::to_vec(&expected).unwrap();
         raw.resize(64 * 1024 + 1, b' ');
         let server = native_http_at(
-            "/downstream/v1/capabilities", StatusCode::OK, raw, None, chunked,
-        ).await;
-        assert_eq!(serde_json::to_value(client(&server).capabilities().await.unwrap()).unwrap(), expected);
+            "/downstream/v1/capabilities",
+            StatusCode::OK,
+            raw,
+            None,
+            chunked,
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(client(&server).capabilities().await.unwrap()).unwrap(),
+            expected
+        );
         assert_eq!(server.requests.load(Ordering::SeqCst), 1);
     }
 }

@@ -1,5 +1,5 @@
 //! Native job inputs and observable outputs. No path, credential or PASS authority.
-use crate::{DbCounter, DecimalValue, SchemaV1, portfolio::AllocationTargetV1};
+use crate::{portfolio::AllocationTargetV1, DbCounter, DecimalValue, SchemaV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;

@@ -50,9 +50,9 @@ where
     F: Future<Output = Result<T, StoreError>> + Send + 'static,
 {
     tokio::spawn(operation)
-    .await
-    .map_err(|_| ApiError::internal())?
-    .map_err(Into::into)
+        .await
+        .map_err(|_| ApiError::internal())?
+        .map_err(Into::into)
 }
 
 fn material(purpose: IntegrationSecretPurpose, value: &[u8]) -> Result<(), StoreError> {
@@ -89,9 +89,18 @@ mod certificate_capacity_tests {
         let certificate = include_str!("../tests/fixtures/capacity-ca.pem");
         let bundle = certificate.repeat(17);
         assert!(bundle.len() < 65536);
-        assert_eq!(reqwest::Certificate::from_pem_bundle(bundle.as_bytes()).unwrap().len(), 17);
+        assert_eq!(
+            reqwest::Certificate::from_pem_bundle(bundle.as_bytes())
+                .unwrap()
+                .len(),
+            17
+        );
         material(IntegrationSecretPurpose::TlsCa, bundle.as_bytes()).unwrap();
-        for invalid in [b"".as_slice(), b"not a PEM certificate", b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"] {
+        for invalid in [
+            b"".as_slice(),
+            b"not a PEM certificate",
+            b"-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----",
+        ] {
             assert!(material(IntegrationSecretPurpose::TlsCa, invalid).is_err());
         }
     }
@@ -325,9 +334,19 @@ mod command_tests {
         let key = root.path().join("key");
         SecretVault::initialize_key(&key).unwrap();
         // No database operation occurs in this deterministic ownership test.
-        let pool = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://fixture:fixture@localhost/unused").unwrap();
-        let state = AppState::new(store::Store::from_pool(pool), SecretVault::open(&secrets, &key).unwrap(),
-            crate::WebPolicy::new("https://localhost", "127.0.0.1:8080".parse().unwrap(), false).unwrap());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://fixture:fixture@localhost/unused")
+            .unwrap();
+        let state = AppState::new(
+            store::Store::from_pool(pool),
+            SecretVault::open(&secrets, &key).unwrap(),
+            crate::WebPolicy::new(
+                "https://localhost",
+                "127.0.0.1:8080".parse().unwrap(),
+                false,
+            )
+            .unwrap(),
+        );
         let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut waiters = Vec::new();
         let mut releases = Vec::new();
@@ -342,18 +361,30 @@ mod command_tests {
                     released.await.unwrap();
                     completed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     Ok::<_, StoreError>(())
-                }).await
+                })
+                .await
             }));
-            tokio::time::timeout(std::time::Duration::from_secs(3), observed).await.unwrap().unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), observed)
+                .await
+                .unwrap()
+                .unwrap();
             releases.push(release);
         }
         let disconnected = waiters.pop().unwrap();
         disconnected.abort();
         assert!(disconnected.await.unwrap_err().is_cancelled());
-        for release in releases { release.send(()).unwrap(); }
-        for waiter in waiters { waiter.await.unwrap().unwrap(); }
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        for waiter in waiters {
+            waiter.await.unwrap().unwrap();
+        }
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            while completed.load(std::sync::atomic::Ordering::SeqCst) != 5 { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while completed.load(std::sync::atomic::Ordering::SeqCst) != 5 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

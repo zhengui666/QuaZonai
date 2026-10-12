@@ -22,11 +22,10 @@ CLI_ARCHIVES = {
     "windows-x86_64": "quazonai-cli-windows-x86_64.zip",
 }
 IMAGE_ARCHIVES = {name: f"quazonai-image-{name}.tar.gz"
-                  for name in ("application", "runtime", "codex", "database")}
+                  for name in ("application", "runtime", "database")}
 NOTICES = {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
-DEPLOY_FILES = frozenset({"manage.sh", "json.awk", "codex.sh", "deploy.sh", "update.sh",
-                         "compose.yaml", "release.json", "README.md", "codex-update.sh",
-                         "codex-login.sh", "runtime.sh", "codex.apparmor", ".env.example"})
+DEPLOY_FILES = frozenset({"manage.sh", "json.awk", "deploy.sh", "update.sh",
+                         "compose.yaml", "release.json", "README.md", "runtime.sh", ".env.example"})
 REQUIRED_ASSETS = frozenset({"release.json", "quazonai-deploy.tar.gz", "README.md",
                             "install.sh", "install.ps1", "SHA256SUMS"}
                            | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))

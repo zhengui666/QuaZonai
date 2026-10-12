@@ -54,9 +54,7 @@ async fn setup_with_budget(
     (store, f, request, actor)
 }
 #[sqlx::test(migrations = "../../migrations")]
-async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_limits(
-    pool: PgPool,
-) {
+async fn retired_agent_admission_does_not_consume_the_only_science_slot(pool: PgPool) {
     let mut budget = support::budget();
     budget.max_parallel_runs = Some(1);
     let (store, fixture, science, _) = setup_with_budget(&pool, budget).await;
@@ -67,38 +65,45 @@ async fn mission_admission_preserves_the_only_science_slot_and_charges_both_cpu_
         store.enqueue_run("control-session", &mission),
         store.enqueue_run("scientific-trial", &science)
     );
-    assert!(a.is_ok(), "Mission admission failed");
+    assert!(matches!(
+        a,
+        Err(StoreError::Invalid("legacy_agent_execution_retired"))
+    ));
     assert!(b.is_ok(), "science admission failed");
-    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 200));
-    for (key, request) in [("second-mission", &mission), ("second-science", &science)] {
-        assert!(matches!(
-            store.enqueue_run(key, request).await,
-            Err(StoreError::Domain(DomainError::BudgetExhausted(
-                "parallel_runs"
-            )))
-        ));
-    }
+    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 100));
+    assert!(matches!(
+        store.enqueue_run("second-mission", &mission).await,
+        Err(StoreError::Invalid("legacy_agent_execution_retired"))
+    ));
+    assert!(matches!(
+        store.enqueue_run("second-science", &science).await,
+        Err(StoreError::Domain(DomainError::BudgetExhausted(
+            "parallel_runs"
+        )))
+    ));
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app.run_admissions WHERE cycle_id=$1")
             .bind(fixture.cycle.as_uuid())
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(count, 2);
-    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 200));
+    assert_eq!(count, 1);
+    assert_eq!(usage(&pool, fixture.cycle).await, (1, 0, 100));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgPool) {
-    let (store, _, science, actor) = setup(&pool).await;
-    let mut mission = science.clone();
-    mission.kind = RunKind::AgentResearch;
-    mission.limits.experiments = 0;
-    let mission = store
-        .enqueue_run("mission-only-driver", &mission)
-        .await
-        .unwrap()
-        .resource;
+async fn native_queue_selection_preserves_retired_entries_and_undefined_science(pool: PgPool) {
+    let (store, fixture, science, actor) = setup(&pool).await;
+    let legacy = Id::new();
+    sqlx::query("INSERT INTO app.runs(id,project_id,cycle_id,kind,input_set_id,state,queued_at) VALUES($1,$2,$3,'AGENT_RESEARCH',$4,'QUEUED',clock_timestamp())")
+        .bind(legacy.as_uuid()).bind(fixture.project.as_uuid()).bind(fixture.cycle.as_uuid()).bind(fixture.input_set.as_uuid()).execute(&pool).await.unwrap();
+    let legacy_message_id: i64 = sqlx::query_scalar(
+        "SELECT pgmq.send('runs',jsonb_build_object('schema_version',1,'run_id',$1::uuid))",
+    )
+    .bind(legacy.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let undefined = store
         .enqueue_run("undefined-native-task", &science)
         .await
@@ -115,14 +120,6 @@ async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgP
         .await
         .unwrap()
         .is_empty());
-    assert!(
-        store
-            .read_mission_messages(60, 100)
-            .await
-            .unwrap()
-            .is_empty(),
-        "no driver claims a Run without its immutable definition"
-    );
     let after: Vec<(i64, i32, chrono::DateTime<Utc>)> =
         sqlx::query_as("SELECT msg_id,read_ct,vt FROM pgmq.q_runs ORDER BY msg_id")
             .fetch_all(&pool)
@@ -135,37 +132,28 @@ async fn native_queue_selection_does_not_hide_or_claim_a_codex_mission(pool: PgP
     let visible = store.read_run_messages(30, 100).await.unwrap();
     assert_eq!(
         visible.len(),
-        2,
-        "the native PGMQ consumer can still receive both messages"
+        1,
+        "generic science reader leaves legacy Agent visibility untouched"
     );
     for message in &visible {
-        assert!(store
-            .claim_mission(message, "undefined-mission", 30)
-            .await
-            .unwrap()
-            .is_none());
         assert!(store
             .claim_native_run(message, "wrong-science-driver", 30)
             .await
             .unwrap()
             .is_none());
     }
-    for id in [mission.id, undefined.id] {
+    for id in [legacy, undefined.id] {
         let current = store.get_run(&actor, id).await.unwrap();
         assert_eq!(current.state, RunState::Queued);
         assert!(current.active_attempt_id.is_none());
     }
-    let own = visible
-        .iter()
-        .find(|message| message.run_id == mission.id)
+    assert_eq!(visible[0].run_id, undefined.id);
+    let legacy_count: i32 = sqlx::query_scalar("SELECT read_ct FROM pgmq.q_runs WHERE msg_id=$1")
+        .bind(legacy_message_id)
+        .fetch_one(&pool)
+        .await
         .unwrap();
-    assert!(matches!(
-        store
-            .claim_run(own, "proper-codex-driver", 30)
-            .await
-            .unwrap(),
-        ClaimResult::Leased(_)
-    ));
+    assert_eq!(legacy_count, 0);
 }
 
 async fn message(store: &Store, id: Id) -> RunMessage {

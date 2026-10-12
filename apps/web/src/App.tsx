@@ -15,6 +15,7 @@ import type { ColorTheme } from './theme';
 
 // Load a section only when it is selected. Shared dialogs remain ordinary
 // module imports, and every emitted chunk stays in the existing PWA precache.
+const Research = lazy(() => import('./research').then(module => ({ default: module.Research })));
 const Projects = lazy(() => import('./projects').then(module => ({ default: module.Projects })));
 const Alphas = lazy(() => import('./alphas').then(module => ({ default: module.Alphas })));
 const Portfolios = lazy(() => import('./portfolio').then(module => ({ default: module.Portfolios })));
@@ -28,6 +29,7 @@ const queries = new QueryClient({ defaultOptions: {
 } });
 const navigation = [
   { key: 'research', label: '研究', icon: <ExperimentOutlined aria-hidden /> },
+  { key: 'projects', label: '历史项目（可选）', icon: <ExperimentOutlined aria-hidden /> },
   { key: 'alpha', label: 'Alpha', icon: <FundOutlined aria-hidden /> },
   { key: 'portfolio', label: '组合', icon: <ApartmentOutlined aria-hidden /> },
   { key: 'delivery', label: '交付', icon: <ExportOutlined aria-hidden /> },
@@ -47,12 +49,13 @@ function Console({ colorTheme, toggleTheme }: { colorTheme: ColorTheme; toggleTh
   const menu = <Menu aria-label="主导航" theme={colorTheme} mode="inline" selectedKeys={[active]} items={navigation} onClick={({ key }) => navigate(key)} />;
   let content: ReactNode;
   switch (active) {
+    case 'projects': content = <Projects onNavigate={navigate} />; break;
     case 'alpha': content = <Alphas />; break;
     case 'portfolio': content = <Portfolios />; break;
     case 'delivery': content = <Delivery />; break;
     case 'runs': content = <Runs />; break;
     case 'settings': content = <Settings />; break;
-    default: content = <Projects onNavigate={navigate} />;
+    default: content = <Research />;
   }
   const themeLabel = colorTheme === 'light' ? '切换为深色主题' : '切换为浅色主题';
   return <>

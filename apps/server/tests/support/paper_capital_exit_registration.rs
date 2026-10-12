@@ -39,11 +39,9 @@ async fn paper_capital_exit_disabled_intake_preserves_original_receipt_without_r
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
-    assert!(
-        !response
-            .headers()
-            .contains_key(server::paper_capital_exit::REGISTERED_SOURCE_HEADER)
-    );
+    assert!(!response
+        .headers()
+        .contains_key(server::paper_capital_exit::REGISTERED_SOURCE_HEADER));
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["schema_version"], 2);
     assert!(body.get("capital_exit_owner").is_none());

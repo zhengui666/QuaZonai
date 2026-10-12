@@ -183,12 +183,16 @@ async fn worker_schedules_original_feedback_once_and_publishes_cancelled_termina
         .unwrap();
     let messages = f.store.read_native_run_messages(60, 100).await.unwrap();
     let message = messages.into_iter().find(|m| m.run_id == id).unwrap();
-    assert!(f
-        .store
-        .claim_mission(&message, "wrong-driver", 60)
-        .await
-        .unwrap()
-        .is_none());
+    let agent_binding: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1)")
+            .bind(id.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !agent_binding,
+        "forward evaluation belongs only to the scientific Worker"
+    );
     let (_stop, shutdown) = tokio::sync::watch::channel(false);
     sqlx::query("CREATE FUNCTION app.fail_forward_ack() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled lost ACK'; END $$").execute(&pool).await.unwrap();
     sqlx::query("CREATE TRIGGER fail_forward_ack BEFORE INSERT ON pgmq.a_runs FOR EACH ROW EXECUTE FUNCTION app.fail_forward_ack()").execute(&pool).await.unwrap();

@@ -1,6 +1,6 @@
-//! Read-only native directory capabilities for one launcher-selected Mission.
-//! No ambient file API is exposed to tools. Publication uses the existing HTTP
-//! Artifact service; mutable worktree bytes are not immutable evidence by themselves.
+//! Held-file snapshots for native historical import/export.
+//! The old type name does not expose an Agent file tool or launcher. Mutable
+//! source bytes alone are not immutable research evidence.
 use std::{fs, io::Read, path::Path};
 use thiserror::Error;
 
@@ -301,10 +301,7 @@ mod tests {
     fn empty_oversize_and_non_utf8_are_not_uploaded() {
         let parent = tempfile::tempdir().unwrap();
         let files = MissionFiles::open(parent.path()).unwrap();
-        for (name, bytes) in [
-            ("empty.rs", Vec::new()),
-            ("binary.rs", vec![0xff, 0xfe]),
-        ] {
+        for (name, bytes) in [("empty.rs", Vec::new()), ("binary.rs", vec![0xff, 0xfe])] {
             fs::write(parent.path().join(name), bytes).unwrap();
             assert!(files.read_text(name).is_err());
         }
@@ -334,11 +331,9 @@ mod tests {
 
             // Long/deep valid prefixes do not weaken traversal or link checks.
             let prefix = relative.rsplit_once('/').unwrap().0;
-            assert!(
-                files
-                    .read_text(&format!("{prefix}/../report.json"))
-                    .is_err()
-            );
+            assert!(files
+                .read_text(&format!("{prefix}/../report.json"))
+                .is_err());
             assert!(files.read_text(&format!("{prefix}/.hidden")).is_err());
             let link = format!("{prefix}/alias.json");
             symlink(&path, parent.path().join(&link)).unwrap();

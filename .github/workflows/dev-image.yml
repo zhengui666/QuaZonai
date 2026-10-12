@@ -11,8 +11,9 @@ permissions:
 jobs:
   build:
     if: github.repository == 'zhengui666/QuaZonai'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 85
+    # Keep the original published schema-2 sandbox intact during upgrade acceptance.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
     steps:
       - name: Check out the workflow's container action
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

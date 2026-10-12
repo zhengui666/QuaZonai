@@ -4,9 +4,9 @@ mod capital_exit_support;
 mod support;
 use axum::{
     body::Body,
-    http::{Request, StatusCode, header},
+    http::{header, Request, StatusCode},
 };
-use contracts::{DbCounter, Id, SchemaV1, account_observation::*, capital_exit::*};
+use contracts::{account_observation::*, capital_exit::*, DbCounter, Id, SchemaV1};
 use serde_json::json;
 use sqlx::PgPool;
 

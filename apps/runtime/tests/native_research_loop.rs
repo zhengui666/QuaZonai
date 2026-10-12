@@ -1,6 +1,6 @@
-//! Native compilation and connected scientific feedback through the production Worker.
-//! The standalone compilation case retains controlled preparation; the connected case
-//! uses real catalog-backed computation and only a controlled account-waived provider.
+//! Native compilation and optional scientific consumers through the production Worker.
+//! Controlled preparation/history supports the isolated compilation case; direct
+//! research cases compute from real OCI catalogs. Durable feedback is tested in apps/research.
 #[path = "../../../tests/support/cycles.rs"]
 mod cycle_support;
 #[path = "../../../tests/support/experiment_tasks.rs"]
@@ -16,15 +16,8 @@ mod support;
 
 #[path = "support/direct_research.rs"]
 mod direct_research;
-#[path = "../../job/tests/support/market_catalog.rs"]
-mod market;
-#[path = "../../server/tests/support/codex_responses.rs"]
-#[allow(dead_code)] // Shared official Responses fixture also serves other protocol regressions.
-mod responses;
 #[path = "support/scientific_catalog.rs"]
 mod scientific_catalog;
-#[path = "support/scientific_feedback.rs"]
-mod scientific_feedback;
 
 use contracts::{
     execution::NativeModelCompilationV1,
@@ -41,7 +34,7 @@ use server::{
 };
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::DirBuilderExt, sync::Arc};
-use store::{lifecycle::ClaimResult, runtime::ProbePreparation};
+use store::runtime::ProbePreparation;
 use support::{count, Fixture as RuntimeFixture, SECRET};
 
 async fn configured_transport(
@@ -214,15 +207,9 @@ async fn experiment_compilation_runs_in_real_runtime_through_production_worker(p
         mission_support::start(store, actor, data, false).await;
     // Relational/data-quality preparation only. It is not counted as native science.
     mission_support::complete(&pool, &store, &data, preparation, false).await;
-    assert!(store.advance_initial_cycle(preparation).await.unwrap());
-    let mission_message = store.read_mission_messages(60, 1).await.unwrap().remove(0);
-    let Some(ClaimResult::Leased(parent)) = store
-        .claim_mission(&mission_message, "native-science-parent", 120)
-        .await
-        .unwrap()
-    else {
-        panic!("Mission lease required");
-    };
+    // Seed an original historical scientific parent, not a retired Agent executor.
+    let parent =
+        experiment_support::historical_alpha::parent(&pool, &store, &actor, &data, cycle).await;
 
     let experiment = experiment_support::propose(&pool, &store, &actor, &data, cycle).await;
     // The shared proposal helper includes a controlled probe. Replace it with

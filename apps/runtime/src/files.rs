@@ -93,8 +93,11 @@ fn bounded(file: File, maximum: usize, private: bool) -> Result<Vec<u8>> {
     }
     let capacity = usize::try_from(metadata.len()).map_err(|_| Failure::Capacity)?;
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(capacity).map_err(|_| Failure::Capacity)?;
-    file.take(metadata.len().saturating_add(1)).read_to_end(&mut bytes)?;
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|_| Failure::Capacity)?;
+    file.take(metadata.len().saturating_add(1))
+        .read_to_end(&mut bytes)?;
     if bytes.len() != metadata.len() as usize {
         return Err(Failure::Integrity);
     }

@@ -1,5 +1,5 @@
-use contracts::{DecimalValue, budget::BudgetV1};
-use serde_json::{Value, json};
+use contracts::{budget::BudgetV1, DecimalValue};
+use serde_json::{json, Value};
 use std::cmp::Ordering;
 
 #[test]
@@ -17,7 +17,10 @@ fn generated_integer_bounds_match_native_wire_representations() {
         assert_eq!(optional[0]["type"], json!("null"));
         assert_eq!(optional[1]["minimum"], json!(minimum));
         assert_eq!(optional[1]["maximum"], json!(u32::MAX));
-        assert!(!schemas["BudgetV1"]["allOf"][0]["required"].as_array().unwrap().contains(&json!(field)));
+        assert!(!schemas["BudgetV1"]["allOf"][0]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(field)));
     }
     for field in ["stop_on_qualified_count", "stop_on_no_improvement_trials"] {
         assert_eq!(

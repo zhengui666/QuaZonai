@@ -1,14 +1,14 @@
 //! Exact native fold membership, not a second splitter, estimator or PIT attestation.
 use super::{bad, instruments};
 use crate::{
+    execution::validation::{validation_folds, MAX_VALIDATION_FOLDS},
     DomainError,
-    execution::validation::{MAX_VALIDATION_FOLDS, validation_folds},
 };
 use contracts::{
-    DbCounter, Id, SchemaV1,
     brief::TargetKind,
     evidence::{MetricStatus, MetricValueV1},
     science::*,
+    DbCounter, Id, SchemaV1,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -116,7 +116,7 @@ pub(super) fn shape(value: &NativeAlphaValidationResultV1) -> Result<(), DomainE
         crate::control::text(&fold.bar_type, 1, 300, false)?;
         if fold.source_row_count.get() < 1
             || fold.training_ordinals.len() < 3
-            || fold.test_points.len() < 1
+            || fold.test_points.is_empty()
         {
             return Err(bad("native_output.validation_counts"));
         }
@@ -374,7 +374,14 @@ pub(super) fn binding(
         .chunk_by(|a, b| a.instrument_id == b.instrument_id)
         .collect::<Vec<_>>();
     if groups.len() != selected.len()
-        || !crate::execution::fuel_within_budget(value.consumed_fuel, request.forecast.parameters.total_fuel.map(|fuel| u128::from(fuel.get())))
+        || !crate::execution::fuel_within_budget(
+            value.consumed_fuel,
+            request
+                .forecast
+                .parameters
+                .total_fuel
+                .map(|fuel| u128::from(fuel.get())),
+        )
     {
         return Err(bad("native_output.validation_input"));
     }
@@ -498,7 +505,7 @@ pub fn frozen_calibration(model: &NativeFrozenCalibrationV1) -> Result<(), Domai
         || model.estimator_version != "0.5.4"
         || model.selection_rule != "LAST_NATIVE_FOLD"
         || model.horizon_observations.get() == 0
-        || model.assets.len() < 1
+        || model.assets.is_empty()
         || model
             .assets
             .iter()

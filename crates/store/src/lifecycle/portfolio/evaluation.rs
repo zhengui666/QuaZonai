@@ -335,7 +335,11 @@ where
         // These records come from the binding-checked Domain projection above,
         // not a report's caller-supplied count. Legacy native counts are unchanged;
         // opted-in report counts use the same complete daily series as the metrics.
-        let observations = metrics.iter().map(|metric| metric.observation_count.get()).min().unwrap_or(0);
+        let observations = metrics
+            .iter()
+            .map(|metric| metric.observation_count.get())
+            .min()
+            .unwrap_or(0);
         let actual = quality.datasets[0].row_count.get();
         let registered = counter(binding.try_get("row_count")?)?.get();
         source_rows = Some(quality.datasets[0].row_count);

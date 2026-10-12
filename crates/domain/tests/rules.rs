@@ -1,12 +1,11 @@
 use chrono::{Duration, TimeZone, Utc};
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1,
     budget::{BudgetV1, CostEnforcement, StopRuleV1},
-    codex::{ModelCapabilityV1, ReasoningEffortCapability, SavedModelSettingsV1},
     evidence::*,
     runs::{ProjectState, RunState},
+    DbCounter, Id, Revision, SchemaV1,
 };
-use domain::{DomainError, admission::*, codex::*, evidence::*, runs::*};
+use domain::{admission::*, evidence::*, runs::*, DomainError};
 use proptest::prelude::*;
 
 fn count(value: u64) -> DbCounter {
@@ -484,95 +483,6 @@ fn event_revision_guards_refuse_stale_writes_and_bigint_overflow() {
     assert!(next_event(max, max, count(0)).is_err());
 }
 
-fn settings() -> SavedModelSettingsV1 {
-    SavedModelSettingsV1 {
-        schema_version: SchemaV1,
-        use_default_model_settings: false,
-        saved_model: None,
-        saved_reasoning_effort: Some("strong-native-effort".into()),
-        saved_fast_mode: false,
-    }
-}
-fn model() -> ModelCapabilityV1 {
-    ModelCapabilityV1 {
-        schema_version: SchemaV1,
-        id: "catalog-entry".into(),
-        model: "operator-native-model".into(),
-        display_name: "Native model".into(),
-        hidden: false,
-        default_reasoning_effort: "ordinary-native-effort".into(),
-        supported_reasoning_efforts: vec![ReasoningEffortCapability {
-            reasoning_effort: "strong-native-effort".into(),
-            description: "native description".into(),
-        }],
-        is_default: true,
-        fetched_at: time(),
-        profile_revision: Revision::INITIAL,
-    }
-}
-fn catalog(models: &[ModelCapabilityV1]) -> CatalogContext<'_> {
-    CatalogContext {
-        models,
-        complete: true,
-        profile_revision: Revision::INITIAL,
-        valid_after: time() - Duration::minutes(5),
-        observed_effective_model: Some("operator-native-model"),
-    }
-}
-
-#[test]
-fn system_effort_only_keeps_model_omitted_and_uses_actual_profile_capability() {
-    let models = [model()];
-    let saved = settings();
-    let resolved = resolve_overrides(&saved, &catalog(&models)).unwrap();
-    assert_eq!(resolved.model, None);
-    assert_eq!(resolved.reasoning_effort, saved.saved_reasoning_effort);
-    assert_eq!(saved, settings());
-    let mut unknown = catalog(&models);
-    unknown.observed_effective_model = None;
-    assert!(resolve_overrides(&saved, &unknown).is_err()); // is_default is not an observed profile override.
-}
-
-#[test]
-fn default_mode_preserves_saved_values_without_sending_any_overrides() {
-    let mut saved = settings();
-    saved.use_default_model_settings = true;
-    saved.saved_model = Some("model-no-longer-listed".into());
-    saved.saved_fast_mode = true;
-    let original = saved.clone();
-    let models = [];
-    let mut ctx = catalog(&models);
-    ctx.complete = false;
-    assert_eq!(
-        resolve_overrides(&saved, &ctx).unwrap(),
-        ModelOverrides::default()
-    );
-    assert_eq!(saved, original);
-}
-
-#[test]
-fn unsupported_stale_partial_and_duplicate_model_catalogs_never_silently_fallback() {
-    let saved = settings();
-    let models = [model()];
-    let mut context = catalog(&models);
-    context.complete = false;
-    assert!(resolve_overrides(&saved, &context).is_err());
-    let mut context = catalog(&models);
-    context.profile_revision = Revision::INITIAL.next().unwrap();
-    assert!(resolve_overrides(&saved, &context).is_err());
-    let mut context = catalog(&models);
-    context.valid_after = time() + Duration::seconds(1);
-    assert!(resolve_overrides(&saved, &context).is_err());
-    let mut changed = saved.clone();
-    changed.saved_reasoning_effort = Some("invented-value".into());
-    assert!(resolve_overrides(&changed, &catalog(&models)).is_err());
-    let duplicated = [model(), model()];
-    assert!(resolve_overrides(&saved, &catalog(&duplicated)).is_err());
-    let mut changed = saved;
-    changed.saved_model = Some("".into());
-    assert!(resolve_overrides(&changed, &catalog(&models)).is_err());
-}
-
 fn requirement() -> MetricRequirementV1 {
     MetricRequirementV1 {
         schema_version: SchemaV1,
@@ -785,40 +695,6 @@ fn invalid_metric_is_not_missing_evidence() {
     assert_eq!(gate.decision, Decision::Inconclusive);
     assert!(gate.reasons.iter().any(|r| r.ends_with("INVALID_INPUT")));
 }
-#[test]
-fn custom_speed_is_explicit_and_native_defaults_omit_the_override() {
-    let models = [model()];
-    let mut saved = settings();
-    assert_eq!(
-        resolve_overrides(&saved, &catalog(&models))
-            .unwrap()
-            .fast_mode,
-        Some(false)
-    );
-    saved.saved_fast_mode = true;
-    assert_eq!(
-        resolve_overrides(&saved, &catalog(&models))
-            .unwrap()
-            .fast_mode,
-        Some(true)
-    );
-    saved.saved_reasoning_effort = None;
-    saved.saved_fast_mode = false;
-    assert_eq!(
-        resolve_overrides(&saved, &catalog(&models))
-            .unwrap()
-            .fast_mode,
-        Some(false)
-    );
-    saved.use_default_model_settings = true;
-    assert_eq!(
-        resolve_overrides(&saved, &catalog(&models))
-            .unwrap()
-            .fast_mode,
-        None
-    );
-}
-
 #[test]
 fn cost_currency_uses_iso_library_membership_not_ascii_shape() {
     let mut b = budget();
@@ -1618,17 +1494,37 @@ fn absent_mission_caps_keep_full_accounting_beyond_the_old_16_bit_ceiling() {
     assert_eq!(mission.reserved_turns, 1);
     assert_eq!(mission.reserved_repair_turns, 1);
     assert_eq!(next.reserved_tokens, DbCounter::ZERO);
-    let disabled = BudgetV1 { max_repair_turns: Some(0), ..policy.clone() };
-    assert_eq!(reserve_model_turn(ProjectState::Active, &disabled, &stop(), &empty_usage(), &model),
-        Err(DomainError::BudgetExhausted("repair_turns")));
-    let bounded = BudgetV1 { max_turns_per_mission: Some(100_000), ..policy };
-    assert_eq!(reserve_model_turn(ProjectState::Active, &bounded, &stop(), &usage, &model),
-        Err(DomainError::BudgetExhausted("mission_turns")));
+    let disabled = BudgetV1 {
+        max_repair_turns: Some(0),
+        ..policy.clone()
+    };
+    assert_eq!(
+        reserve_model_turn(
+            ProjectState::Active,
+            &disabled,
+            &stop(),
+            &empty_usage(),
+            &model
+        ),
+        Err(DomainError::BudgetExhausted("repair_turns"))
+    );
+    let bounded = BudgetV1 {
+        max_turns_per_mission: Some(100_000),
+        ..policy
+    };
+    assert_eq!(
+        reserve_model_turn(ProjectState::Active, &bounded, &stop(), &usage, &model),
+        Err(DomainError::BudgetExhausted("mission_turns"))
+    );
 }
 
 #[test]
 fn absent_repair_cap_does_not_bypass_a_finite_total_or_scientific_trial_cap() {
-    let policy = BudgetV1 { max_turns_per_mission: Some(1), max_repair_turns: None, ..budget() };
+    let policy = BudgetV1 {
+        max_turns_per_mission: Some(1),
+        max_repair_turns: None,
+        ..budget()
+    };
     let mut model = model_request(1, None).model.unwrap();
     model.tokens = None;
     model.turn_kind = TurnKind::Repair;
@@ -1646,45 +1542,46 @@ fn absent_repair_cap_does_not_bypass_a_finite_total_or_scientific_trial_cap() {
     );
     let mut usage = empty_usage();
     usage.used_experiments = policy.max_experiments;
-    assert_eq!(reserve(ProjectState::Active, &policy, &stop(), &usage, &request()),
-        Err(DomainError::BudgetExhausted("experiments")));
+    assert_eq!(
+        reserve(ProjectState::Active, &policy, &stop(), &usage, &request()),
+        Err(DomainError::BudgetExhausted("experiments"))
+    );
 }
 
 #[test]
 fn absent_parallel_budget_has_no_legacy_slot_ceiling_but_keeps_trial_and_memory_guards() {
     let mut policy = budget();
     policy.max_parallel_runs = None;
-    let usage = BudgetUsage { active_runs: 65536, ..empty_usage() };
+    let usage = BudgetUsage {
+        active_runs: 65536,
+        ..empty_usage()
+    };
     let next = reserve(ProjectState::Active, &policy, &stop(), &usage, &request()).unwrap();
     assert_eq!(next.active_runs, 65537);
     let too_much_memory = Reservation {
         memory_mib: policy.max_memory_mib.map(|memory| memory + 1),
         ..request()
     };
-    assert!(
-        reserve(
-            ProjectState::Active,
-            &policy,
-            &stop(),
-            &usage,
-            &too_much_memory
-        )
-        .is_err()
-    );
+    assert!(reserve(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &usage,
+        &too_much_memory
+    )
+    .is_err());
     let too_many_trials = Reservation {
         experiments: policy.max_experiments + 1,
         ..request()
     };
-    assert!(
-        reserve(
-            ProjectState::Active,
-            &policy,
-            &stop(),
-            &usage,
-            &too_many_trials
-        )
-        .is_err()
-    );
+    assert!(reserve(
+        ProjectState::Active,
+        &policy,
+        &stop(),
+        &usage,
+        &too_many_trials
+    )
+    .is_err());
     policy.max_parallel_runs = Some(65536);
     assert!(reserve(ProjectState::Active, &policy, &stop(), &usage, &request()).is_err());
 }

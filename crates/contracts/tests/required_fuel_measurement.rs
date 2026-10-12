@@ -1,7 +1,7 @@
 //! Wire-only fixtures: explicit unmetered evidence differs from an absent field.
-use contracts::{Id, science::*, strategy_portfolio::NativeStrategyCompositionResultV1};
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, from_value, json, to_value};
+use contracts::{science::*, strategy_portfolio::NativeStrategyCompositionResultV1, Id};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::{from_value, json, to_value, Value};
 
 #[path = "../../../tests/support/execution_models.rs"]
 mod execution_models;

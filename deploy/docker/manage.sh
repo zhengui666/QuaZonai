@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 QZ_BUNDLE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 QZ_DATABASE_IMAGE='ghcr.io/pgmq/pg18-pgmq@sha256:bfb3537068ce453609744518ece92b178ac89dff53747d47ca6fab91c2fc66a6'
-QZ_BUNDLE_FILES=(manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md codex.sh codex-update.sh codex-login.sh runtime.sh codex.apparmor .env.example)
+QZ_BUNDLE_FILES=(manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md runtime.sh .env.example)
 qz_fail() { printf 'Deployment failed: %s\n' "$*" >&2; exit 1; }
 # Help also works in macOS's stock Bash; real Linux management checks below.
 shopt -s inherit_errexit 2>/dev/null || :
@@ -50,7 +50,7 @@ qz_merge() {
 qz_lock() {
     qz_directory "$1"
     exec 9>>"$1/.deployment.lock"
-    flock -n 9 || qz_fail 'Another deployment or Codex operation holds the installation lock.'
+    flock -n 9 || qz_fail 'Another deployment operation holds the installation lock.'
 }
 qz_version() {
     local identifier
@@ -77,15 +77,14 @@ qz_precedence() {
 }
 qz_manifest() {
     local file=$1 field repository reference
-    [[ $(qz_type "$file" '') == object && $(qz_type "$file" schema_version) == number && $(qz_get "$file" schema_version) == 2 ]] || qz_fail 'A version-2 prebuilt-image deployment manifest is required.'
+    [[ $(qz_type "$file" '') == object && $(qz_type "$file" schema_version) == number && $(qz_get "$file" schema_version) == 3 ]] || qz_fail 'A version-3 prebuilt-image deployment manifest is required.'
     qz_version "$(qz_get "$file" version)"
     [[ $(qz_get "$file" revision) =~ ^[0-9a-f]{40}$ ]] || qz_fail 'Release revision is invalid.'
-    for field in image runtime_image codex_image; do
-        case "$field" in image) repository=quazonai;; runtime_image) repository=quazonai-runtime;; codex_image) repository=quazonai-codex;; esac
+    for field in image runtime_image; do
+        case "$field" in image) repository=quazonai;; runtime_image) repository=quazonai-runtime;; esac
         reference=$(qz_get "$file" "$field")
         [[ "$reference" =~ ^ghcr\.io/zhengui666/$repository@sha256:[0-9a-f]{64}$ || "$reference" =~ ^sha256:[0-9a-f]{64}$ ]] || qz_fail "$field must reference a prebuilt image by digest."
     done
-    qz_version "v$(qz_get "$file" codex_version)"
     [[ $(qz_get "$file" database_image) == "$QZ_DATABASE_IMAGE" ]] || qz_fail 'Unsupported PostgreSQL/PGMQ image.'
 }
 qz_configuration() {
@@ -96,7 +95,7 @@ qz_configuration() {
 }
 qz_validate_configuration() {
     local field
-    for field in root home codex_home unit_directory path password project bundle version revision image database_image; do
+    for field in root home unit_directory path password project bundle version revision image database_image; do
         [[ $(qz_type "$1" "$field") == string ]] || qz_fail "Invalid string field: $field"
         qz_get "$1" "$field" >/dev/null || return $?
     done
@@ -110,7 +109,6 @@ qz_validate_configuration() {
 qz_preflight() {
     local binary endpoint architecture options version major minor
     [[ $(uname -s)/$(uname -m) == Linux/x86_64 && $(id -u) != 0 ]] || qz_fail 'Run as the non-root Linux x86_64 installation owner, not with sudo.'
-    [[ -f /sys/fs/cgroup/cgroup.controllers ]] || qz_fail 'Native Missions require cgroup v2.'
     for binary in docker systemctl systemd-analyze systemd-socket-activate loginctl git curl tar awk flock realpath stat sync sha256sum od timeout; do command -v "$binary" >/dev/null || qz_fail "Required executable is missing: $binary"; done
     endpoint=${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}
     [[ "$endpoint" == unix://* ]] || qz_fail 'Use a local Unix-socket Docker daemon.'
@@ -140,12 +138,10 @@ qz_docker_mapping() {
     done
 }
 qz_validate_paths() {
-    local file=$1 name value root codex_home
-    for name in root home codex_home unit_directory; do value=$(qz_get "$file" "$name"); [[ "$value" == /* ]] || qz_fail "$name must be absolute."; done
+    local file=$1 name value root
+    for name in root home unit_directory; do value=$(qz_get "$file" "$name"); [[ "$value" == /* ]] || qz_fail "$name must be absolute."; done
     root=$(qz_get "$file" root)
     [[ "$root" != *[:\"\\]* ]] || qz_fail 'Installation path cannot contain colon, double quote or backslash.'
-    root=$(realpath -m -- "$root"); codex_home=$(realpath -m -- "$(qz_get "$file" codex_home)")
-    [[ "$codex_home" != "$root" && "$codex_home" != "$root/"* && "$root" != "$codex_home/"* ]] || qz_fail 'CODEX_HOME must be separate from the installation, including through symlinks.'
     qz_get "$file" path >/dev/null
 }
 qz_ports() {
@@ -165,18 +161,13 @@ qz_compose() (
     for name in ${!COMPOSE_@}; do unset "$name"; done
     root=$(qz_get "$file" root); bundle=$(qz_get "$file" bundle); project=$(qz_get "$file" project)
     APP_IMAGE=$(qz_get "$file" image); DATABASE_IMAGE=$(qz_get "$file" database_image)
+    if [[ $(qz_get "$file" schema_version) != 3 ]]; then bundle=$QZ_BUNDLE; fi
     DATABASE_PASSWORD=$(qz_get "$file" password); INSTALL_DIR="$root"
     WEB_PORT=$(qz_get "$file" port); DATABASE_PORT=$(qz_get "$file" database_port)
     HOST_UID=$(qz_get "$file" uid); HOST_GID=$(qz_get "$file" gid)
-    NATIVE_CODEX_HOME=$(qz_get "$file" codex_home); CODEX_IMAGE="quazonai-codex:$project"
-    export APP_IMAGE DATABASE_IMAGE DATABASE_PASSWORD INSTALL_DIR WEB_PORT DATABASE_PORT HOST_UID HOST_GID NATIVE_CODEX_HOME CODEX_IMAGE
-    export CODEX_DOCKER_SOCKET=/var/run/docker.sock DOCKER_SOCKET_GID="$HOST_GID"
-    if qz_has "$file" codex_runtime_image; then CODEX_IMAGE=$(qz_get "$file" codex_runtime_image); fi
-    if qz_has "$file" docker_socket; then CODEX_DOCKER_SOCKET=$(qz_get "$file" docker_socket); fi
-    if qz_has "$file" docker_socket_gid; then DOCKER_SOCKET_GID=$(qz_get "$file" docker_socket_gid); fi
-    # Maintenance stays bound to the original daemon, even if the operator has
-    # selected another ambient context after installation.
-    if qz_has "$file" docker_socket; then export DOCKER_HOST="unix://$CODEX_DOCKER_SOCKET"; unset DOCKER_CONTEXT; fi
+    export APP_IMAGE DATABASE_IMAGE DATABASE_PASSWORD INSTALL_DIR WEB_PORT DATABASE_PORT HOST_UID HOST_GID
+    # The host Worker/Runtime still use the original daemon; the app has no Docker socket.
+    if qz_has "$file" docker_socket; then export DOCKER_HOST="unix://$(qz_get "$file" docker_socket)"; unset DOCKER_CONTEXT; fi
     export APP_RESTART_POLICY=no RUNTIME_TARGETS='[]' DOWNSTREAM_TARGETS='[]'
     if [[ -L "$root/current" && ! -e "$root/pending.json" ]]; then APP_RESTART_POLICY=unless-stopped; fi
     if qz_has "$file" runtime_targets; then RUNTIME_TARGETS=$(qz_raw "$file" runtime_targets); fi
@@ -187,7 +178,56 @@ qz_compose() (
 )
 qz_unit() { printf '%s.service' "$(qz_get "$1" project)"; }
 qz_sql() { qz_compose "$1" exec -T database psql -X -U quazonai -d quazonai -v ON_ERROR_STOP=1 -Atc "$2"; }
-qz_require_idle() { [[ $(qz_sql "$1" 'SELECT count(*) FROM app.runs WHERE finished_at IS NULL') == 0 ]] || qz_fail 'Unfinished Runs exist. Finish or cancel/reconcile them; no task records were changed.'; }
+qz_require_idle() {
+    if [[ $(qz_get "$1" schema_version) != 3 ]]; then
+        local project image socket containers
+        project=$(qz_get "$1" project); image="quazonai-codex:$project"
+        if qz_has "$1" codex_runtime_image; then image=$(qz_get "$1" codex_runtime_image); fi
+        socket=/var/run/docker.sock; if qz_has "$1" docker_socket; then socket=$(qz_get "$1" docker_socket); fi
+        containers=$(docker --host="unix://$socket" container ls --all --quiet --filter "label=io.quazonai.codex.image=$image")
+        [[ -z "$containers" ]] || qz_fail 'Original legacy Agent containers remain. Reconcile their remote outcomes with the original release before cutover; no process exit was interpreted as cancellation.'
+    fi
+    [[ $(qz_sql "$1" "SELECT count(*) FROM app.runs r WHERE finished_at IS NULL AND EXISTS (SELECT 1 FROM app.run_missions m WHERE m.run_id=r.id)") == 0 ]] || qz_fail 'Unfinished legacy Missions exist. Reconcile their original remote outcomes before cutover; task records and old homes were not changed.'
+    [[ $(qz_sql "$1" 'SELECT count(*) FROM app.runs WHERE finished_at IS NULL') == 0 ]] || qz_fail 'Unfinished Runs exist. Finish or cancel/reconcile them; no task records were changed.'
+}
+qz_require_research_idle() {
+    local file=$1 container observation snapshot
+    # Schema-2 installations did not contain the durable service.
+    [[ $(qz_get "$file" schema_version) == 3 ]] || return 0
+    container=$(qz_compose "$file" ps --all --quiet app)
+    [[ -n "$container" ]] || qz_fail 'Research service is absent; restore the original app and inspect persisted native tasks before maintenance.'
+    observation=$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$container")
+    if [[ "$observation" == 'false false' ]]; then
+        local pending="$(qz_get "$file" root)/pending.json"
+        if [[ -f "$pending" && $(qz_get "$pending" phase) == migrating ]]; then return 0; fi
+        qz_fail 'Stopped research service is not proof of task-idle. Start the original app and inspect persisted native tasks before maintenance.'
+    fi
+    [[ "$observation" == 'true false' ]] || qz_fail 'Research service outcome is unknown while the app restarts; restore it and inspect tasks before maintenance.'
+    snapshot="$QZ_WORK/research-tasks.json"
+    # Close new HTTP admissions and drain starts already admitted before observing
+    # the native graph. Existing tasks remain live and no cancellation is inferred.
+    if ! qz_compose "$file" exec -T app curl --fail --silent --show-error --max-time 10 --request POST http://127.0.0.1:8092/maintenance/quiesce > "$snapshot"; then
+        qz_research_resume "$file"
+        qz_fail 'Durable task observation unavailable; inspect the persisted service before maintenance.'
+    fi
+    if [[ $(qz_type "$snapshot" tasks) != array || $(qz_json length tasks "$snapshot") != 0 ]]; then
+        qz_research_resume "$file"
+        qz_fail 'Active durable tasks exist. Stop/reconcile them through research and inspect their native outcomes before maintenance; no cancellation was inferred.'
+    fi
+}
+qz_research_resume() {
+    [[ $(qz_get "$1" schema_version) == 3 ]] || return 0
+    qz_compose "$1" exec -T app curl --fail --silent --show-error --max-time 10 --request POST http://127.0.0.1:8092/maintenance/resume > /dev/null
+}
+qz_research_configuration() {
+    local root=$1 directory="$1/data/research"
+    qz_directory "$directory"; qz_directory "$directory/plugins"
+    if [[ ! -e "$directory/config.json" ]]; then
+        printf '{"database":%s,"modules":["/opt/quazonai/research/plugins/research.ts","/opt/quazonai/research/plugins/factor-wasm.ts","/opt/quazonai/research/plugins/heldout-wasm.ts"],"port":8092}\n' "$(qz_quote "$directory/research.sqlite")" | qz_atomic_text "$directory/config.json"
+    fi
+    # Native pi-ai provider environment is read by Node only, not sourced into the manager.
+    if [[ ! -e "$directory/provider.env" ]]; then printf '# Native pi-ai provider environment; keep this file private.\n' | qz_atomic_text "$directory/provider.env"; fi
+}
 qz_restarts() {
     local file=$1 enabled=$2 ids id policy=no; local containers=()
     ids=$(qz_compose "$file" ps --all --quiet app) || return $?
@@ -206,6 +246,7 @@ qz_native_binaries() {
     "$1/server" --version
     "$1/runtime" --version
     "$1/quazonai" client --help >/dev/null
+    "$1/job" evaluate-factor --help >/dev/null
 }
 qz_systemd_quote() {
     local value=$1
@@ -232,10 +273,8 @@ qz_worker_environment() {
     while IFS= read -r name; do
         case "$name" in
           DATABASE_URL) value="postgresql://quazonai:$password@127.0.0.1:$database_port/quazonai";;
-          STATE_DIR) value="$root/data/state";; HOME) value=$(qz_get "$file" home);; CODEX_HOME) value=$(qz_get "$file" codex_home);;
-          PUBLIC_URL) value="http://localhost:$(qz_get "$file" port)";; CODEX_IMAGE) value="quazonai-codex:$project"; if qz_has "$file" codex_runtime_image; then value=$(qz_get "$file" codex_runtime_image); fi;;
-          CODEX_DOCKER_SOCKET) value=/var/run/docker.sock; if qz_has "$file" docker_socket; then value=$(qz_get "$file" docker_socket); fi;;
-          CODEX_LOCK_FILE) value="$root/.deployment.lock";; DEVELOPMENT_HTTP) value=true;; PATH) value="$root/releases/$version/bin:$(qz_get "$file" path)";;
+          STATE_DIR) value="$root/data/state";; HOME) value=$(qz_get "$file" home);;
+          DEVELOPMENT_HTTP) value=true;; PATH) value="$root/releases/$version/bin:$(qz_get "$file" path)";;
           RUNTIME_TARGETS) value='[]'; if qz_has "$file" runtime_targets; then value=$(qz_raw "$file" runtime_targets); fi;;
           DOWNSTREAM_TARGETS) value='[]'; if qz_has "$file" downstream_targets; then value=$(qz_raw "$file" downstream_targets); fi;;
         esac
@@ -244,11 +283,6 @@ qz_worker_environment() {
 DATABASE_URL
 STATE_DIR
 HOME
-CODEX_HOME
-PUBLIC_URL
-CODEX_IMAGE
-CODEX_DOCKER_SOCKET
-CODEX_LOCK_FILE
 DEVELOPMENT_HTTP
 PATH
 RUNTIME_TARGETS
@@ -279,6 +313,7 @@ qz_verify_console() {
     origin="http://localhost:$(qz_get "$1" port)"
     status=$(curl --silent --show-error --noproxy '*' --max-time 10 --output /dev/null --write-out '%{http_code}' "$origin/health/live")
     [[ "$status" == 204 ]] || qz_fail 'API liveness check failed.'
+    if [[ $(qz_get "$1" schema_version) == 3 ]]; then qz_compose "$1" exec -T app curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8092/health/live > /dev/null; fi
     curl --fail --silent --show-error --noproxy '*' --max-time 10 --header 'Accept: text/html' --output "$QZ_WORK/frontend.html" "$origin/"
     head -c 4096 "$QZ_WORK/frontend.html" | LC_ALL=C grep -qi '<!doctype html>' || qz_fail 'Production frontend was not served.'
 }
@@ -286,6 +321,7 @@ qz_resume() {
     local file=$1 enable=${2:-true} status=0
     # Starting-phase recovery does not recreate or restart running processors.
     qz_compose "$file" up -d --no-recreate --wait --wait-timeout 120 app || status=$?
+    if [[ "$status" == 0 ]]; then qz_research_resume "$file" || status=$?; fi
     if [[ "$enable" == true ]]; then systemctl --user enable --now "$(qz_unit "$file")" || return $?; else systemctl --user start "$(qz_unit "$file")" || return $?; fi
     return "$status"
 }
@@ -314,15 +350,14 @@ qz_prepare() {
     qz_validate_paths "$file"; qz_manifest "$release"
     root=$(qz_get "$file" root); project=$(qz_get "$file" project)
     endpoint=${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}')}
-    [[ "$endpoint" == unix://* ]] || qz_fail 'Codex containers require a local Docker Unix socket.'
+    [[ "$endpoint" == unix://* ]] || qz_fail 'Use the original local Docker Unix socket.'
     socket=$(realpath -e -- "${endpoint#unix://}")
     [[ -S "$socket" ]] || qz_fail 'The configured Docker endpoint is not a Unix socket.'
     if qz_has "$file" docker_socket; then [[ $(qz_get "$file" docker_socket) == "$socket" ]] || qz_fail 'Use this installation’s original Docker socket.'; fi
     candidate=$(mktemp "$QZ_WORK/candidate.XXXXXX")
     qz_merge "$file" "$release" "$candidate"
-    printf '{"codex_runtime_image":%s,"docker_socket":%s,"docker_socket_gid":%s}\n' "$(qz_quote "quazonai-codex:$project")" "$(qz_quote "$socket")" "$(stat -c %g -- "$socket")" > "$QZ_WORK/docker-config.json"
+    printf '{"docker_socket":%s}\n' "$(qz_quote "$socket")" > "$QZ_WORK/docker-config.json"
     qz_merge "$candidate" "$QZ_WORK/docker-config.json" "$candidate"
-    qz_codex_prepare "$candidate" "$bundle"
     for field in image runtime_image; do
         image=$(qz_get "$release" "$field")
         if [[ "$image" != sha256:* ]]; then docker pull "$image"; fi
@@ -401,20 +436,20 @@ qz_shutdown_and_backup() (
       if qz_resume "$file" && qz_restarts "$file" true; then rm -f -- "$root/pending.json"; sync -f -- "$root"; fi
     fi; exit "$status"' EXIT
     qz_restarts "$file" false
+    qz_require_research_idle "$file"
     qz_compose "$file" stop app
     qz_require_idle "$file"
     systemctl --user disable --now "$(qz_unit "$file")"
     qz_require_idle "$file"
-    if qz_has "$file" codex_image; then qz_codex_require_stopped "$file" true; fi
     if [[ "$phase" == preparing ]]; then qz_backup "$file"; fi
     trap - EXIT
 )
 qz_deploy() {
-    local root=$1 release="$QZ_BUNDLE/release.json" pending="$1/pending.json" file intent phase name password project codex_home
+    local root=$1 release="$QZ_BUNDLE/release.json" pending="$1/pending.json" file intent phase name password project
     qz_manifest "$release"; qz_preflight; qz_lock "$root"
     if [[ -e "$root/installation.json" ]]; then
         qz_configuration "$root"; file=$QZ_CONFIG
-        for name in schema_version version revision image runtime_image codex_image codex_version database_image; do
+        for name in schema_version version revision image runtime_image database_image; do
             [[ $(qz_raw "$file" "$name") == "$(qz_raw "$release" "$name")" ]] || qz_fail 'Existing installation: use update.sh or the target release installer to change versions.'
         done
         if [[ ! -e "$pending" ]]; then
@@ -439,17 +474,17 @@ qz_deploy() {
         done
         password=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
         [[ "$password" =~ ^[0-9a-f]{64}$ ]] || qz_fail 'Could not generate an installation secret.'
-        codex_home=$(realpath -m -- "$(qz_expand_path "${QZ_CODEX_HOME:-$root-codex}")")
-        printf '{"root":%s,"uid":%s,"gid":%s,"home":%s,"codex_home":%s,"path":%s,"unit_directory":%s,"port":%s,"database_port":%s,"password":%s,"project":%s,"bundle":%s}\n' \
-            "$(qz_quote "$root")" "$(id -u)" "$(id -g)" "$(qz_quote "$HOME")" "$(qz_quote "$codex_home")" "$(qz_quote "$PATH")" \
+        printf '{"root":%s,"uid":%s,"gid":%s,"home":%s,"path":%s,"unit_directory":%s,"port":%s,"database_port":%s,"password":%s,"project":%s,"bundle":%s}\n' \
+            "$(qz_quote "$root")" "$(id -u)" "$(id -g)" "$(qz_quote "$HOME")" "$(qz_quote "$PATH")" \
             "$(qz_quote "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user")" "$((10#$QZ_PORT))" "$((10#$QZ_DATABASE_PORT))" "$(qz_quote "$password")" "$(qz_quote "$project")" "$(qz_quote "$QZ_BUNDLE")" > "$QZ_WORK/new-config.json"
         file="$QZ_WORK/install-config.json"; qz_merge "$release" "$QZ_WORK/new-config.json" "$file"
-        qz_validate_paths "$file"; qz_directory "$codex_home"
+        qz_validate_paths "$file"
         qz_save "$root/installation.json" "$file"
         printf '{"operation":"install","phase":"migrating","version":%s}\n' "$(qz_raw "$release" version)" | qz_atomic_text "$pending"
     fi
     qz_prepare "$QZ_BUNDLE" "$file"; file=$QZ_PREPARED
     qz_save "$root/installation.json" "$file"; qz_directory "$root/data"
+    qz_research_configuration "$root"
     qz_compose "$file" up -d --wait --wait-timeout 120 database
     qz_install_stopped "$file"; qz_initialize_state "$file"
     qz_compose "$file" run --rm --no-deps app migrate
@@ -479,7 +514,6 @@ qz_apply_update() {
     if [[ "$phase" == starting ]]; then qz_start_prepared "$root" "$candidate"; return; fi
     if [[ -e "$pending" && "$phase" == preparing ]]; then qz_resume "$old"; qz_restarts "$old" true; fi
     qz_require_idle "$old"
-    if qz_has "$old" codex_image; then qz_codex_require_stopped "$old" true; fi
     if [[ ! -e "$pending" ]]; then
         printf '{"operation":"update","phase":"preparing","previous":%s,"target":%s,"backup":null}\n' "$(qz_raw "$old" '')" "$(qz_raw "$candidate" '')" | qz_atomic_text "$pending"
     fi
@@ -488,6 +522,7 @@ qz_apply_update() {
         printf '{"phase":"migrating","backup":%s}\n' "$(qz_quote "$(cat "$QZ_WORK/recovery-path")")" > "$QZ_WORK/pending-patch.json"
         qz_merge "$pending" "$QZ_WORK/pending-patch.json" "$pending"
     fi
+    qz_research_configuration "$root"
     qz_compose "$candidate" run --rm --no-deps app migrate
     qz_configure_worker "$candidate"
     qz_compose "$candidate" up --no-start --no-deps app
@@ -553,14 +588,15 @@ qz_apply_config() {
             qz_merge "$candidate" "$QZ_WORK/config-patch.json" "$candidate"
         fi
     done
-    qz_require_idle "$file"; qz_codex_require_stopped "$file" true
+    qz_require_idle "$file"
     qz_directory "$root/backups"; checkpoint=$(mktemp -d "$root/backups/runtime-config-XXXXXX")
     qz_save "$checkpoint/installation.json" "$file"; sync -f -- "$root/backups"
     printf 'Configuration checkpoint: %s\n' "$checkpoint"
     (
         trap 'status=$?; trap - EXIT; if [[ "$status" != 0 ]]; then qz_resume "$file" && qz_restarts "$file" true; fi; exit "$status"' EXIT
-        qz_restarts "$file" false; qz_compose "$file" stop app
-        qz_require_idle "$file"; qz_codex_require_stopped "$file" true
+        qz_restarts "$file" false; qz_require_research_idle "$file"
+        qz_compose "$file" stop app
+        qz_require_idle "$file"
         systemctl --user disable --now "$(qz_unit "$file")"; qz_require_idle "$file"
         trap - EXIT
     )
@@ -724,7 +760,7 @@ qz_help() {
 Usage: bash manage.sh COMMAND [VERSION] [--directory PATH] [OPTIONS]
 Commands: deploy, update VERSION, apply-update, status, runtime doctor|serve,
           runtime-guides, source, apply-config, resume-config, recover-access RECORD
-Options: --port PORT --database-port PORT --codex-home PATH --config FILE
+Options: --port PORT --database-port PORT --config FILE
          --runtime-targets FILE --downstream-targets FILE
 Requires Bash 4.4+, curl, Docker Compose 2.20+, standard Linux utilities,
 Git and a persistent systemd user manager; install/update never build images.
@@ -737,13 +773,13 @@ qz_main() {
     shift
     # Help does not create directories, configuration or credentials.
     if [[ "$command" != source ]]; then for argument in "$@"; do if [[ "$argument" == --help || "$argument" == -h ]]; then qz_help; return; fi; done; fi
-    QZ_PORT=8081; QZ_DATABASE_PORT=55432; QZ_CODEX_HOME=
+    QZ_PORT=8081; QZ_DATABASE_PORT=55432
     if [[ "$command" != source ]]; then
         while (($#)); do
             case "$1" in
-              --directory|--port|--database-port|--codex-home|--config|--runtime-targets|--downstream-targets)
+              --directory|--port|--database-port|--config|--runtime-targets|--downstream-targets)
                 (($#>=2)) && [[ -n "$2" ]] || qz_fail "Missing value for $1"
-                case "$1" in --directory) root=$2;; --port) QZ_PORT=$2;; --database-port) QZ_DATABASE_PORT=$2;; --codex-home) QZ_CODEX_HOME=$2;; --config) config=$2;; --runtime-targets) runtime_targets=$2;; --downstream-targets) downstream_targets=$2;; esac; shift 2;;
+                case "$1" in --directory) root=$2;; --port) QZ_PORT=$2;; --database-port) QZ_DATABASE_PORT=$2;; --config) config=$2;; --runtime-targets) runtime_targets=$2;; --downstream-targets) downstream_targets=$2;; esac; shift 2;;
               -*) qz_fail "Unknown option: $1";;
               *) [[ -z "$version" ]] || qz_fail 'Unexpected positional argument.'; version=$1; shift;;
             esac
@@ -756,7 +792,6 @@ qz_main() {
     qz_ports "$QZ_PORT" "$QZ_DATABASE_PORT"
     QZ_WORK=$(mktemp -d "${TMPDIR:-/tmp}/quazonai-manage.XXXXXX")
     trap 'rm -rf -- "$QZ_WORK"' EXIT
-    source "$QZ_BUNDLE/codex.sh"
     case "$command" in
       deploy) qz_deploy "$root";; apply-update) qz_apply_update "$root";;
       update) [[ -n "$version" ]] || qz_fail 'update requires an explicit release tag.'; qz_download_update "$root" "$version";;

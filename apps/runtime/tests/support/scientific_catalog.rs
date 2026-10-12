@@ -1,43 +1,28 @@
 //! Actual Parquet observation and public Store registration for one native research test.
 //! The market itself is synthetic and stays FIXTURE/PIT-UNVERIFIED throughout.
-use super::{actual_probe, configured_transport, cycle_support, market, research_support, support};
+use super::{actual_probe, configured_transport, cycle_support, research_support, support};
 use contracts::{
     artifacts::{ArtifactCreate, ResearchArtifactKind},
     brief::*,
-    catalogs::{
-        DataRevisionPolicy, NativeUniverseMemberV1, NativeUniverseV1, RuntimeCatalogMetadataV1,
-    },
-    codex::{CodexConnectionCreateV1, CodexProfileCreateV1, ProfileOrigin, SavedModelSettingsV1},
+    catalogs::RuntimeCatalogMetadataV1,
     control::ProjectCreate,
-    cycles::{BriefExecutionContextV1, BriefFreezeV1, CodexProfileChoiceV1},
+    cycles::{BriefExecutionContextV1, BriefFreezeV1},
     data::*,
     evidence::{Comparator, MetricRequirementV1},
-    execution::{NativeDataQualityReportV1, NativeDatasetQualityV1},
     execution_assumptions::ExecutionAssumptionsCreateV1,
     research::*,
     runs::RunKind,
-    runtime::RuntimeDataKind,
-    science::{NativeBarSelectionV1, NativeSimulationSettingsV1},
+    science::NativeSimulationSettingsV1,
     settings::*,
     DbCounter, Id, SchemaV1,
 };
 use integrations::{artifacts::ArtifactStore, secrets::SecretVault};
-use nautilus_model::instruments::Instrument;
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use server::runtime_transport::RuntimeTargets;
 use sqlx::PgPool;
-use std::{
-    fs,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
-    sync::Arc,
-};
+use std::{fs, os::unix::fs::DirBuilderExt, sync::Arc};
 use store::{authority::Actor, data_registration::RegistrationPreparation, Store, StoreError};
 
 pub const REGISTRY: &str = "native-research-fixture";
-pub const SOURCE: &str = r#"#![no_std]
-#[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
-#[no_mangle] pub extern "C" fn predict(c:f64,p:f64,_f:f64,_s:f64,_v:f64,_o:f64,_h:f64,_l:f64)->f64 { c-p }
-"#;
 
 pub struct Prepared {
     pub store: Store,
@@ -45,173 +30,8 @@ pub struct Prepared {
     pub data: cycle_support::Fixture,
     pub vault: Arc<SecretVault>,
     pub targets: RuntimeTargets,
-    pub catalog: tempfile::TempDir,
-}
-
-fn instant(ns: u64) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp_nanos(ns.try_into().unwrap())
-}
-
-/// Bounded synchronous native work; SQLx keeps ownership of its current-thread runtime.
-fn catalog() -> (
-    tempfile::TempDir,
-    Vec<RuntimeCatalogMetadataV1>,
-    NativeSimulationSettingsV1,
-) {
-    let (seed, original) = market::market_direction(
-        "0",
-        800,
-        1.0,
-        "10000000",
-        false,
-        [
-            cycle_support::execution_models::fill(),
-            cycle_support::execution_models::fee(),
-            cycle_support::execution_models::latency(1_000_000),
-        ],
-    );
-    let directory = tempfile::tempdir().unwrap();
-    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
-    let all = job::catalog::load_catalog(seed.path(), &original.selection).unwrap();
-    let end = 801 * market::INTERVAL_NS;
-    let universe = NativeUniverseV1 {
-        name: "Observed native fixture instruments".into(),
-        calendar_ref: "synthetic-minute-calendar".into(),
-        calendar_version: "1".into(),
-        calendar_sessions: None,
-        selection_asof: instant(0),
-        has_historical_membership: false,
-        coverage_start: instant(0),
-        coverage_end: instant(end),
-        membership: all
-            .series
-            .iter()
-            .map(|series| NativeUniverseMemberV1 {
-                instrument_id: series.instrument.id().to_string(),
-                valid_from: instant(0),
-                valid_until: None,
-                available_at: instant(0),
-                groups: None,
-            })
-            .collect(),
-        instrument_definitions: all
-            .series
-            .iter()
-            .map(|series| serde_json::to_value(&series.instrument).unwrap())
-            .collect(),
-    };
-    let mut versions = Vec::new();
-    for (index, partition) in [
-        DataPartition::Discovery,
-        DataPartition::Validation,
-        DataPartition::Sealed,
-        DataPartition::Forward,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let first = index as u64 * 200 * market::INTERVAL_NS;
-        let last = (index as u64 + 1) * 200 * market::INTERVAL_NS;
-        let selection = NativeBarSelectionV1 {
-            schema_version: SchemaV1,
-            bar_types: original.selection.bar_types.clone(),
-            event_start_ns: support::count(first),
-            event_end_ns: support::count(last),
-            decision_cutoff_ns: support::count(last),
-            maximum_rows: 400,
-        };
-        let selected = job::catalog::load_catalog(seed.path(), &selection).unwrap();
-        let root = directory.path().join(format!("window-{index}"));
-        fs::create_dir(&root).unwrap();
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
-        let native =
-            ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, Some(16), None, None)
-                .unwrap();
-        native
-            .write_instruments(
-                selected
-                    .series
-                    .iter()
-                    .map(|series| series.instrument.clone())
-                    .collect(),
-            )
-            .unwrap();
-        for series in &selected.series {
-            native
-                .write_to_parquet(&series.bars, None, None, None)
-                .unwrap();
-        }
-        // Each authorized mount contains only its own partition, not other windows.
-        let observed = job::catalog::load_catalog(&root, &selection).unwrap();
-        assert_eq!(observed.rows, selected.rows);
-        assert!(!observed.series.is_empty() && observed.rows > 0);
-        let first_event = observed
-            .series
-            .iter()
-            .flat_map(|series| &series.bars)
-            .map(|bar| bar.ts_event.as_u64())
-            .min()
-            .unwrap();
-        let last_event = observed
-            .series
-            .iter()
-            .flat_map(|series| &series.bars)
-            .map(|bar| bar.ts_event.as_u64())
-            .max()
-            .unwrap();
-        let last_available = observed
-            .series
-            .iter()
-            .flat_map(|series| &series.bars)
-            .map(|bar| bar.ts_init.as_u64())
-            .max()
-            .unwrap();
-        let metadata = RuntimeCatalogMetadataV1 {
-            recorded_feature_inputs: None,
-            schema_version: SchemaV1,
-            registered_ref: REGISTRY.into(),
-            native_snapshot_ref: format!("native-window-{index}"),
-            storage_version: format!("window-{index}-v1"),
-            provider_kind: "NAUTILUS_CATALOG".into(),
-            data_kind: RuntimeDataKind::Bar,
-            partition,
-            event_start: instant(first),
-            event_end: instant(last),
-            available_through: instant(last),
-            row_count: support::count(observed.rows as u64),
-            origin: DataOrigin::Fixture,
-            pit_status: PitStatus::Unverified,
-            revision_policy: DataRevisionPolicy::AsKnownThen,
-            provenance_reference: "Actual native Parquet fixture; no market provenance claim"
-                .into(),
-            availability_provenance: "Observed synthetic ts_init; not historical PIT attestation"
-                .into(),
-            universe: universe.clone(),
-            quality: NativeDataQualityReportV1 {
-                schema_version: SchemaV1,
-                native_version: "nautilus-persistence/0.63.0".into(),
-                checked_at: runtime::now(),
-                datasets: vec![NativeDatasetQualityV1 {
-                    settlements: Vec::new(),
-                    dataset_revision_id: Id::new(),
-                    selection,
-                    row_count: support::count(observed.rows as u64),
-                    instrument_ids: observed
-                        .series
-                        .iter()
-                        .map(|series| series.instrument.id().to_string())
-                        .collect(),
-                    first_event_ns: support::count(first_event),
-                    last_event_ns: support::count(last_event),
-                    available_through_ns: support::count(last_available),
-                    last_bar_notionals: None,
-                }],
-            },
-        };
-        domain::catalogs::metadata(&metadata, runtime::now()).unwrap();
-        versions.push(metadata);
-    }
-    (directory, versions, original.settings)
+    // Own the registered source directory for the entire native test.
+    pub _catalog: tempfile::TempDir,
 }
 
 pub async fn read(
@@ -246,32 +66,6 @@ pub async fn upload(
         .put(prepared.id(), request.content.as_bytes())
         .unwrap();
     prepared.publish().await.unwrap().resource.id
-}
-
-pub async fn prepare(pool: &PgPool, remote: &mut support::Fixture) -> Prepared {
-    let catalog = tokio::task::spawn_blocking(catalog).await.unwrap();
-    prepare_catalog(pool, remote, catalog, None).await
-}
-
-/// The same native registration path, optionally for an external cycle without an Agent.
-pub async fn prepare_catalog(
-    pool: &PgPool,
-    remote: &mut support::Fixture,
-    (catalog, versions, settings): (
-        tempfile::TempDir,
-        Vec<RuntimeCatalogMetadataV1>,
-        NativeSimulationSettingsV1,
-    ),
-    external_split: Option<SplitPolicyV1>,
-) -> Prepared {
-    prepare_catalog_with_paper(
-        pool,
-        remote,
-        (catalog, versions, settings),
-        external_split,
-        false,
-    )
-    .await
 }
 
 /// Paper permission is an explicit test input, frozen before dataset registration.
@@ -659,44 +453,6 @@ pub async fn prepare_catalog_with_paper(
         .await
         .unwrap()
         .resource;
-    let choice = if external {
-        // The legacy Fixture shape carries these fields; external admission never reads them.
-        CodexProfileChoiceV1 {
-            profile_id: Id::new(),
-            expected_revision: contracts::Revision::INITIAL,
-        }
-    } else {
-        let profile = store
-            .create_codex_profile(
-                &actor,
-                "native-science-profile",
-                &CodexProfileCreateV1 {
-                    schema_version: SchemaV1,
-                    name: "Native account-waived Responses fixture".into(),
-                    home_binding: format!("native-{}", Id::new()),
-                    profile_origin: ProfileOrigin::ManagedVolume,
-                    connection: CodexConnectionCreateV1::System {},
-                    model_settings: SavedModelSettingsV1 {
-                        schema_version: SchemaV1,
-                        use_default_model_settings: true,
-                        saved_model: None,
-                        saved_reasoning_effort: None,
-                        saved_fast_mode: false,
-                    },
-                },
-                |binding| async move {
-                    domain::codex::settings::home_binding(&binding.home_binding)?;
-                    Ok(())
-                },
-            )
-            .await
-            .unwrap()
-            .resource;
-        CodexProfileChoiceV1 {
-            profile_id: profile.id,
-            expected_revision: profile.revision,
-        }
-    };
     let data = cycle_support::Fixture {
         data: research_support::ResearchFixture {
             project,
@@ -725,8 +481,6 @@ pub async fn prepare_catalog_with_paper(
         },
         brief,
         objects,
-        researcher_profile: choice,
-        reviewer_profile: choice,
         directory: Some(root),
     };
     Prepared {
@@ -735,6 +489,6 @@ pub async fn prepare_catalog_with_paper(
         data,
         vault,
         targets,
-        catalog,
+        _catalog: catalog,
     }
 }

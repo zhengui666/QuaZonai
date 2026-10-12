@@ -12,12 +12,22 @@ fn sqlstate(error: sqlx::Error, expected: &str) {
     );
 }
 async fn policy(pool: &PgPool, project: Id, mandate: Id) -> Id {
+    policy_state(pool, project, mandate, "AUTO_HANDOFF", true, false).await
+}
+async fn policy_state(
+    pool: &PgPool,
+    project: Id,
+    mandate: Id,
+    mode: &str,
+    enabled: bool,
+    expired: bool,
+) -> Id {
     let downstream = Id::new();
     sqlx::query("INSERT INTO app.downstream_integrations(id,name,endpoint,credential_ref,accepted_package_versions,environments,enabled) VALUES($1,'fixture','https://example.invalid','fixture','{fixture}','BOTH',true)")
         .bind(downstream.as_uuid()).execute(pool).await.unwrap();
     let policy = Id::new();
-    sqlx::query("INSERT INTO app.automation_policies(id,project_id,mode,mandate_id,downstream_id,required_paper_observations,minimum_paper_elapsed_seconds,max_feedback_age_seconds,promotion_metric_requirements,degradation_metric_requirements,authorized_at,valid_until,enabled_for_new_rebalances,max_rebalances_per_day) VALUES($1,$2,'AUTO_HANDOFF',$3,$4,1,1,60,'[]','[]',statement_timestamp(),statement_timestamp()+interval '1 hour',true,1)")
-        .bind(policy.as_uuid()).bind(project.as_uuid()).bind(mandate.as_uuid()).bind(downstream.as_uuid()).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.automation_policies(id,project_id,mode,mandate_id,downstream_id,required_paper_observations,minimum_paper_elapsed_seconds,max_feedback_age_seconds,promotion_metric_requirements,degradation_metric_requirements,authorized_at,valid_until,enabled_for_new_rebalances,max_rebalances_per_day) VALUES($1,$2,$5,$3,$4,1,1,60,'[]','[]',statement_timestamp()-interval '2 hours',CASE WHEN $7 THEN statement_timestamp()-interval '1 hour' ELSE statement_timestamp()+interval '1 hour' END,$6,1)")
+        .bind(policy.as_uuid()).bind(project.as_uuid()).bind(mandate.as_uuid()).bind(downstream.as_uuid()).bind(mode).bind(enabled).bind(expired).execute(pool).await.unwrap();
     policy
 }
 async fn forward(pool: &PgPool, f: &Fixture, base: Id) -> (Id, Id) {
@@ -198,4 +208,67 @@ async fn upgrade_fails_without_relabeling_invalid_historical_degradation(pool: P
         rolled_back,
         "SQLx must roll back the entire failed migration"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn retained_due_wakes_never_schedule_inactive_automation_or_change_history(pool: PgPool) {
+    let store = store::Store::from_pool(pool.clone());
+    let f = fixture(&pool, budget()).await;
+    let (mandate, candidate, base) = portfolio(&pool, &f).await;
+    let r = release(&pool, &f, mandate, candidate, base).await.unwrap();
+    let p = policy(&pool, f.project, mandate).await;
+    let (inputs, evaluation) = forward(&pool, &f, base).await;
+    window(&pool, r, inputs, evaluation).await;
+    let o = observation(&pool, f.project, r, evaluation, p, "DEGRADED")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO app.wake_events(project_id,observation_id,trigger,state,not_before,reason) VALUES($1,$2,'DEGRADATION','PENDING',clock_timestamp(),'original due wake')")
+        .bind(f.project.as_uuid()).bind(o.as_uuid()).execute(&pool).await.unwrap();
+    let before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(w) FROM app.wake_events w WHERE observation_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(store.automation_project_after(None).await.unwrap(), None);
+    sqlx::query("UPDATE app.projects SET current_automation_policy_id=$1 WHERE id=$2")
+        .bind(p.as_uuid())
+        .bind(f.project.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.automation_project_after(None).await.unwrap(),
+        Some(f.project)
+    );
+    assert_eq!(
+        store
+            .automation_project_after(Some(f.project))
+            .await
+            .unwrap(),
+        None
+    );
+    for (mode, enabled, expired) in [
+        ("MANUAL", true, false),
+        ("AUTO_HANDOFF", true, true),
+        ("AUTO_HANDOFF", false, false),
+    ] {
+        let inactive = policy_state(&pool, f.project, mandate, mode, enabled, expired).await;
+        sqlx::query("UPDATE app.projects SET current_automation_policy_id=$1 WHERE id=$2")
+            .bind(inactive.as_uuid())
+            .bind(f.project.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            assert_eq!(store.automation_project_after(None).await.unwrap(), None);
+        }
+    }
+    let after: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(w) FROM app.wake_events w WHERE observation_id=$1")
+            .bind(o.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
 }

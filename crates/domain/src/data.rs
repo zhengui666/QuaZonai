@@ -1,5 +1,5 @@
 //! Data configuration and immutable license/registration semantics, not a market-data loader.
-use crate::{DomainError, control::text, research::invalid};
+use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{catalogs::RuntimeCatalogMetadataV1, data::*};
 
@@ -127,10 +127,7 @@ pub fn bounded_native_limits(
     if limits.cpu_seconds.is_some_and(|cpu| cpu.get() == 0) {
         return Err(bad("limits.cpu_seconds"));
     }
-    if limits
-        .wall_seconds
-        .is_some_and(|seconds| seconds == 0)
-    {
+    if limits.wall_seconds.is_some_and(|seconds| seconds == 0) {
         return Err(bad("limits.wall_seconds"));
     }
     if limits.memory_mib == Some(0) {

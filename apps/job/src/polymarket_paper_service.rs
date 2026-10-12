@@ -3,28 +3,28 @@
 //! synchronous engine owns its thread; cancellation never pretends it has joined.
 use crate::{
     paper_service::{
-        PaperProfile, PaperState, PaperStatus,
         initial_execution::{
             InitialCapitalPermit, InitialExecutionAuthority, InitialExecutionAuthorityConfig,
         },
+        PaperProfile, PaperState, PaperStatus,
     },
     polymarket_paper_host::{self as host, HostConfig},
 };
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use contracts::{
-    SchemaV1, catalogs::RuntimeCatalogMetadataV1, data::DatasetView,
-    strategy_portfolio::HandoffClaimViewV2,
+    catalogs::RuntimeCatalogMetadataV1, data::DatasetView, strategy_portfolio::HandoffClaimViewV2,
+    SchemaV1,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     },
     time::Duration,
 };

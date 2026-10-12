@@ -4,7 +4,7 @@
 //! Each adapter/project/downstream/handoff owns one OS lock and immutable claim.
 //! A missing terminal observation after admission always requires reconciliation;
 //! releasing the OS lock after a crash never grants permission to execute again.
-use contracts::{Id, strategy_portfolio::HandoffClaimViewV2};
+use contracts::{strategy_portfolio::HandoffClaimViewV2, Id};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -330,8 +330,8 @@ impl ClaimLease {
 mod tests {
     use super::*;
     use crate::paper_service::{
-        PaperProfile, PaperState, PaperStatus,
         tests::{claim, private_state_directory},
+        PaperProfile, PaperState, PaperStatus,
     };
     use std::{
         process::Command,
@@ -635,11 +635,9 @@ mod tests {
         let original = claim();
         let lease = reserve(&store, &original);
         fs::create_dir(lease.path.join("terminal-status.json")).unwrap();
-        assert!(
-            lease
-                .complete(&receipt(&original, PaperState::Stopped))
-                .is_err()
-        );
+        assert!(lease
+            .complete(&receipt(&original, PaperState::Stopped))
+            .is_err());
         drop(lease);
         assert!(matches!(
             store.admit(&original, true),
@@ -702,13 +700,11 @@ mod tests {
         let store = ClaimStore::open(root.path(), "binance").unwrap();
         let original = claim();
         assert!(store.admit(&original, false).unwrap().is_none());
-        assert!(
-            !store
-                .claim_path(&original)
-                .unwrap()
-                .join("claim.json")
-                .exists()
-        );
+        assert!(!store
+            .claim_path(&original)
+            .unwrap()
+            .join("claim.json")
+            .exists());
         drop(reserve(&store, &original));
     }
 
@@ -792,19 +788,17 @@ mod tests {
     }
 
     fn child(root: &Path, mode: &str) {
-        assert!(
-            Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "paper_claim_store::tests::subprocess_lock_probe",
-                    "--nocapture"
-                ])
-                .env("QZ_CLAIM_TEST_ROOT", root)
-                .env("QZ_CLAIM_TEST_MODE", mode)
-                .status()
-                .unwrap()
-                .success()
-        );
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "paper_claim_store::tests::subprocess_lock_probe",
+                "--nocapture"
+            ])
+            .env("QZ_CLAIM_TEST_ROOT", root)
+            .env("QZ_CLAIM_TEST_MODE", mode)
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]

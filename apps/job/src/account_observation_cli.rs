@@ -1,9 +1,9 @@
 //! Convert official native PortfolioSnapshot JSON into Q intake envelopes.
 //! No credentials, network, account connection or execution engine is started.
 use crate::account_observer::NativeAccountObserver;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use clap::Parser;
-use contracts::{DbCounter, account_observation::*};
+use contracts::{account_observation::*, DbCounter};
 use nautilus_model::events::PortfolioSnapshot;
 use std::{
     fs::{File, OpenOptions},
@@ -90,6 +90,7 @@ pub(crate) fn retain_envelope(
 
 /// Only the checked native-node producer calls this opt-in wrapper. The existing
 /// V1 stdin conversion and replay format remain unchanged.
+#[cfg(any(feature = "native-paper", feature = "native-sandbox-test"))]
 pub(crate) fn retain_client_bound_envelope(
     output: &mut File,
     envelope: &contracts::account_observation::AccountObservationSubmitV2,
@@ -145,7 +146,7 @@ pub fn run(args: Args) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nautilus_core::{UUID4, UnixNanos};
+    use nautilus_core::{UnixNanos, UUID4};
     use nautilus_model::{enums::AccountType, identifiers::AccountId, types::Money};
 
     fn observer() -> NativeAccountObserver {
@@ -230,12 +231,10 @@ mod tests {
             let observer = observer();
             let path = directory.path().join(index.to_string());
             let mut output = new_segment(&path).unwrap();
-            assert!(
-                stream(&mut raw.as_slice(), &mut output, &observer, || {
-                    Ok(DbCounter::new(3).unwrap())
-                })
-                .is_err()
-            );
+            assert!(stream(&mut raw.as_slice(), &mut output, &observer, || {
+                Ok(DbCounter::new(3).unwrap())
+            })
+            .is_err());
             assert_eq!(observer.cursor().0, DbCounter::ZERO);
             assert!(std::fs::read(path).unwrap().is_empty());
         }
@@ -243,12 +242,10 @@ mod tests {
         let path = directory.path().join("complete-prefix.ndjson");
         let mut output = new_segment(&path).unwrap();
         let raw = format!("{}\n{{", serde_json::to_string(&snapshot()).unwrap());
-        assert!(
-            stream(&mut raw.as_bytes(), &mut output, &observer, || {
-                Ok(DbCounter::new(3).unwrap())
-            })
-            .is_err()
-        );
+        assert!(stream(&mut raw.as_bytes(), &mut output, &observer, || {
+            Ok(DbCounter::new(3).unwrap())
+        })
+        .is_err());
         assert_eq!(observer.cursor().0.get(), 1);
         let retained = std::fs::read_to_string(path).unwrap();
         assert!(retained.ends_with('\n'));

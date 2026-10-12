@@ -332,13 +332,8 @@ impl FeeModel for CountingFee {
         underlying_px: Option<Price>,
     ) -> Result<Money> {
         self.contexts.borrow_mut().push(underlying_px);
-        self.delegate.get_commission_with_context(
-            order,
-            quantity,
-            price,
-            instrument,
-            underlying_px,
-        )
+        self.delegate
+            .get_commission_with_context(order, quantity, price, instrument, underlying_px)
     }
 }
 
@@ -358,13 +353,19 @@ fn fill_observer_preserves_money_and_forwards_each_call_and_context_once() {
     let underlying = Some(Price::from("0.7500"));
     for liquidity in [LiquiditySide::Taker, LiquiditySide::Maker] {
         let order = order(
-            instrument, OrderSide::Sell, liquidity, false, "observed-money",
+            instrument,
+            OrderSide::Sell,
+            liquidity,
+            false,
+            "observed-money",
         );
         let original = PolymarketFeeModel
             .get_commission(&order, qty, px, instrument)
             .unwrap();
         assert_eq!(
-            observed.get_commission(&order, qty, px, instrument).unwrap(),
+            observed
+                .get_commission(&order, qty, px, instrument)
+                .unwrap(),
             original
         );
         assert_eq!(
@@ -387,21 +388,39 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
     let observed = observer.wrap(FeeModelHandle::new(SettlementAwarePolymarketFee));
     let handle_clone = observed.clone();
     let first = order(
-        &instruments[0], OrderSide::Buy, LiquiditySide::Taker, false, "first-fill",
+        &instruments[0],
+        OrderSide::Buy,
+        LiquiditySide::Taker,
+        false,
+        "first-fill",
     );
     let error = observed
         .get_commission_with_context(
-            &first, Quantity::from("0.000480"), Price::from("0.4000"), &instruments[0], None,
+            &first,
+            Quantity::from("0.000480"),
+            Price::from("0.4000"),
+            &instruments[0],
+            None,
         )
         .unwrap_err();
-    assert_eq!(error.to_string(), "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
+    assert_eq!(
+        error.to_string(),
+        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+    );
     let later = order(
-        &instruments[1], OrderSide::Buy, LiquiditySide::Taker, false, "later-fill",
+        &instruments[1],
+        OrderSide::Buy,
+        LiquiditySide::Taker,
+        false,
+        "later-fill",
     );
     // Return the delegate's later error unchanged, but retain the first observed cause.
     let error = handle_clone
         .get_commission(
-            &later, Quantity::from("0.000000"), Price::from("0.4000"), &instruments[1],
+            &later,
+            Quantity::from("0.000000"),
+            Price::from("0.4000"),
+            &instruments[1],
         )
         .unwrap_err();
     assert_eq!(error.to_string(), "POLYMARKET_FILL_QUANTITY_PRICE_RANGE");
@@ -426,7 +445,10 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
     let other = other_run.wrap(FeeModelHandle::new(SettlementAwarePolymarketFee));
     other
         .get_commission(
-            &first, Quantity::from("2.000000"), Price::from("0.4000"), &instruments[0],
+            &first,
+            Quantity::from("2.000000"),
+            Price::from("0.4000"),
+            &instruments[0],
         )
         .unwrap();
     assert!(other_run.check().is_ok());
@@ -440,7 +462,11 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
 fn unobserved_capital_estimates_cannot_pollute_the_venue_fill_observer() {
     let instrument = &fixture::instruments("0.05", 18 * fixture::STEP)[0];
     let order = order(
-        instrument, OrderSide::Buy, LiquiditySide::Taker, false, "estimate-only",
+        instrument,
+        OrderSide::Buy,
+        LiquiditySide::Taker,
+        false,
+        "estimate-only",
     );
     let adapter = FeeModelHandle::new(SettlementAwarePolymarketFee);
     let observer = FillFeeObserver::default();
@@ -450,11 +476,16 @@ fn unobserved_capital_estimates_cannot_pollute_the_venue_fill_observer() {
     let estimate = adapter
         .get_commission(&order, Quantity::from("0.000480"), px, instrument)
         .unwrap_err();
-    assert_eq!(estimate.to_string(), "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
+    assert_eq!(
+        estimate.to_string(),
+        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+    );
     assert!(observer.check().is_ok());
     assert_eq!(
         venue.get_commission(&order, qty, px, instrument).unwrap(),
-        PolymarketFeeModel.get_commission(&order, qty, px, instrument).unwrap()
+        PolymarketFeeModel
+            .get_commission(&order, qty, px, instrument)
+            .unwrap()
     );
     assert!(observer.failure().is_none());
 }

@@ -1,0 +1,11 @@
+{
+  "database": "../../var/research/durable.sqlite",
+  "port": 8092,
+  "modules": [
+    "./plugins/research.ts",
+    "./plugins/factor-wasm.ts",
+    "./plugins/heldout-wasm.ts",
+    "./plugins/catalog-input.ts"
+  ],
+  "providerModules": []
+}

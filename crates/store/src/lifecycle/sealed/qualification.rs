@@ -62,6 +62,23 @@ pub(in crate::lifecycle) async fn grant(
     Ok(())
 }
 
+impl Store {
+    /// Explicit optional legacy Alpha consumer. Requires original independent
+    /// review and sealed scientific evidence; native task success alone is not approval.
+    pub async fn qualify_reviewed_alpha(
+        &self,
+        actor: &Actor,
+        sealed_run: Id,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        authority::browser(&mut tx, actor, true).await?;
+        let locked = lock_run(&mut tx, sealed_run).await?;
+        grant(&mut tx, &locked).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

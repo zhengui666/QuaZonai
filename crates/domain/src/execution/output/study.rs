@@ -1,10 +1,10 @@
 //! Original rolling inputs and generated targets; never a qualification decision.
 use super::{bad, simulation};
 use crate::DomainError;
-use contracts::{DbCounter, science::*};
+use contracts::{science::*, DbCounter};
 
 pub fn shape(value: &NativePortfolioStudyResultV1) -> Result<(), DomainError> {
-    if value.frames.len() < 1 || value.consumed_fuel == Some(DbCounter::ZERO) {
+    if value.frames.is_empty() || value.consumed_fuel == Some(DbCounter::ZERO) {
         return Err(bad("study.frames"));
     }
     for (index, frame) in value.frames.iter().enumerate() {

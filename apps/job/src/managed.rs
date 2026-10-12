@@ -49,7 +49,8 @@ fn read(path: &Path) -> Result<Vec<u8>> {
     let capacity = usize::try_from(metadata.len())?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(capacity)?;
-    file.take(metadata.len().saturating_add(1)).read_to_end(&mut bytes)?;
+    file.take(metadata.len().saturating_add(1))
+        .read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() == metadata.len() as usize,
         "NATIVE_FILE_CHANGED"
@@ -154,8 +155,7 @@ impl Outputs {
             history::MEDIA_TYPE,
             |stream| Ok(history::write(stream, &expected)?),
         )?;
-        let bytes = read(
-            &self.root.join(id.to_string()))?;
+        let bytes = read(&self.root.join(id.to_string()))?;
         ensure!(
             history::read(&bytes)? == expected,
             "PORTFOLIO_HISTORY_ROUNDTRIP"
@@ -345,7 +345,8 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
     let parameters: NativeTaskParametersV1 = document(
         &input
             .join("objects")
-            .join(spec.parameters_artifact_id.to_string()))?;
+            .join(spec.parameters_artifact_id.to_string()),
+    )?;
     domain::execution::task(&spec, &parameters)?;
     ensure!(
         !domain::execution_limits::expired(spec.deadline_at, chrono::Utc::now()),
@@ -424,8 +425,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()))?;
+            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
             let parts = feature_artifact_ids
                 .iter()
                 .map(|id| document(&input.join("objects").join(id.to_string())))
@@ -468,8 +468,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()))?;
+            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
             let result = crate::forecast::forecast(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
@@ -483,8 +482,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()))?;
+            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
             let result = crate::validation::validate_alpha(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
@@ -499,14 +497,10 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let bytes = read(
-                &input.join("objects").join(model_artifact_id.to_string()))?;
+            let bytes = read(&input.join("objects").join(model_artifact_id.to_string()))?;
             let calibration: Option<contracts::science::NativeFrozenCalibrationV1> =
                 calibration_artifact_id
-                    .map(|id| {
-                        document(
-                            &input.join("objects").join(id.to_string()))
-                    })
+                    .map(|id| document(&input.join("objects").join(id.to_string())))
                     .transpose()?;
             let result = crate::validation::evaluate_sealed_alpha(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
@@ -524,10 +518,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             let result = crate::study::evaluate(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
-                |id| {
-                    read(
-                        &input.join("objects").join(id.to_string()))
-                },
+                |id| read(&input.join("objects").join(id.to_string())),
             )?;
             outputs.json("qz.portfolio_study", RuntimeOutputKind::Report, &result)?;
             outputs.history(&request, &result)?;
@@ -544,7 +535,8 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                         .constraints
                         .transaction_costs_ref
                         .to_string(),
-                ))?;
+                ),
+            )?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "STRATEGY_SETTINGS_SOURCE_MISMATCH"
@@ -552,9 +544,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             let result = crate::strategy::compose(
                 &input.join("catalogs").join(dataset_revision_id.to_string()),
                 &request,
-                |id| {
-                    read(&input.join("objects").join(id.to_string()))
-                },
+                |id| read(&input.join("objects").join(id.to_string())),
             )?;
             outputs.json("qz.strategy_portfolio", RuntimeOutputKind::Report, &result)?;
         }
@@ -570,10 +560,7 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                 &crate::portfolio::build(
                     &input.join("catalogs").join(dataset_revision_id.to_string()),
                     &request,
-                    |id| {
-                        read(
-                            &input.join("objects").join(id.to_string()))
-                    },
+                    |id| read(&input.join("objects").join(id.to_string())),
                 )?,
             )?;
         }
@@ -599,10 +586,11 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             ..
         } => {
             let target: contracts::science::PortfolioTargetsV1 = serde_json::from_slice(&read(
-                &input.join("objects").join(target_artifact_id.to_string()))?)?;
-            let settings: contracts::science::NativeSimulationSettingsV1 =
-                serde_json::from_slice(&read(
-                    &input.join("objects").join(settings_artifact_id.to_string()))?)?;
+                &input.join("objects").join(target_artifact_id.to_string()),
+            )?)?;
+            let settings: contracts::science::NativeSimulationSettingsV1 = serde_json::from_slice(
+                &read(&input.join("objects").join(settings_artifact_id.to_string()))?,
+            )?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "CANDIDATE_SIMULATION_SETTINGS_SOURCE_MISMATCH"
@@ -626,8 +614,8 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
             request,
             ..
         } => {
-            let settings: contracts::science::NativeSimulationSettingsV1 = document(
-                &input.join("objects").join(settings_artifact_id.to_string()))?;
+            let settings: contracts::science::NativeSimulationSettingsV1 =
+                document(&input.join("objects").join(settings_artifact_id.to_string()))?;
             ensure!(
                 serde_json::to_value(&settings)? == serde_json::to_value(&request.settings)?,
                 "PORTFOLIO_SEQUENCE_SETTINGS_SOURCE_MISMATCH"
@@ -638,7 +626,8 @@ pub fn execute(input: &Path, output: &Path) -> Result<()> {
                     document(
                         &input
                             .join("objects")
-                            .join(source.target_artifact_id.to_string()))
+                            .join(source.target_artifact_id.to_string()),
+                    )
                 })
                 .collect::<Result<Vec<contracts::science::PortfolioTargetsV1>>>()?;
             domain::execution::portfolio_sequence(&sources, &targets, &request)?;
@@ -831,8 +820,7 @@ mod tests {
             16 * 1024 - outputs.remaining.unwrap()
         );
         outputs.seal().unwrap();
-        let index: NativeJobOutputIndexV1 =
-            document(&root.path().join("index.json")).unwrap();
+        let index: NativeJobOutputIndexV1 = document(&root.path().join("index.json")).unwrap();
         assert_eq!(
             serde_json::to_value(index.artifacts).unwrap(),
             serde_json::to_value(artifacts).unwrap()
@@ -852,7 +840,8 @@ mod tests {
         let expected = serde_json::to_vec(&NativeJobOutputIndexV1 {
             schema_version: SchemaV1,
             artifacts: outputs.items.clone(),
-        }).unwrap();
+        })
+        .unwrap();
         outputs.seal().unwrap();
         assert_eq!(fs::read(root.path().join("index.json")).unwrap(), expected);
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
@@ -868,10 +857,7 @@ mod tests {
             error.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::AlreadyExists
         );
-        assert_eq!(
-            fs::read(root.path().join("index.json")).unwrap(),
-            expected
-        );
+        assert_eq!(fs::read(root.path().join("index.json")).unwrap(), expected);
         let preserved = fs::symlink_metadata(root.path().join("index.json")).unwrap();
         assert!(preserved.is_file());
         assert_eq!(
@@ -1016,8 +1002,7 @@ exit "$(cat "$fixture/exit-code")"
         outputs.seal().unwrap();
         let output = fixture.path().join("output");
         assert_eq!(fs::read_dir(&output).unwrap().count(), 3);
-        let index: NativeJobOutputIndexV1 =
-            document(&output.join("index.json")).unwrap();
+        let index: NativeJobOutputIndexV1 = document(&output.join("index.json")).unwrap();
         assert_eq!(index.artifacts.len(), 2);
     }
 
@@ -1041,9 +1026,16 @@ exit "$(cat "$fixture/exit-code")"
         let capacity = wasm.len() as u64 + 8192;
         let (_fixture, outputs, result) = controlled_compile(&wasm, capacity, false, 0);
         result.unwrap();
-        let model = outputs.items.iter().find(|item| item.kind == RuntimeOutputKind::Model).unwrap();
+        let model = outputs
+            .items
+            .iter()
+            .find(|item| item.kind == RuntimeOutputKind::Model)
+            .unwrap();
         assert_eq!(model.byte_count.get(), wasm.len() as u64);
-        assert_eq!(fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(), wasm);
+        assert_eq!(
+            fs::read(outputs.root.join(model.storage_ref.to_string())).unwrap(),
+            wasm
+        );
         outputs.seal().unwrap();
     }
 

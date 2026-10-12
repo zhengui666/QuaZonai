@@ -637,8 +637,22 @@ async fn complete_job_status_crosses_the_former_json_limit() {
         let expected = status(&spec);
         let mut raw = serde_json::to_vec(&expected).unwrap();
         raw.resize(1024 * 1024 + 1, b' ');
-        let server = exchange(StatusCode::OK, raw, "application/json", HeaderMap::new(), chunked).await;
-        assert_eq!(server.client.job_status(&spec.external_job_id).await.unwrap(), expected);
+        let server = exchange(
+            StatusCode::OK,
+            raw,
+            "application/json",
+            HeaderMap::new(),
+            chunked,
+        )
+        .await;
+        assert_eq!(
+            server
+                .client
+                .job_status(&spec.external_job_id)
+                .await
+                .unwrap(),
+            expected
+        );
         server.assert_count(1);
     }
 }
@@ -654,16 +668,40 @@ async fn native_objects_above_the_former_byte_cap_keep_exact_receipts_and_conten
         storage_version: "original-version".into(),
         byte_count: count(bytes.len() as u64),
     };
-    let upload = exchange(StatusCode::CREATED, serde_json::to_vec(&receipt).unwrap(),
-        "application/json", HeaderMap::new(), false).await;
-    assert_eq!(upload.client.upload_object(id, &receipt.storage_version, bytes.clone()).await.unwrap(), receipt);
+    let upload = exchange(
+        StatusCode::CREATED,
+        serde_json::to_vec(&receipt).unwrap(),
+        "application/json",
+        HeaderMap::new(),
+        false,
+    )
+    .await;
+    assert_eq!(
+        upload
+            .client
+            .upload_object(id, &receipt.storage_version, bytes.clone())
+            .await
+            .unwrap(),
+        receipt
+    );
     upload.assert_count(1);
     assert!(upload.seen.lock().unwrap()[0].body == bytes);
     drop(upload);
     let spec = spec();
     let metadata = output(&bytes);
-    let download = exchange(StatusCode::OK, bytes.clone(), "application/json", HeaderMap::new(), true).await;
-    let received = download.client.job_artifact(&spec.external_job_id, &metadata).await.unwrap();
+    let download = exchange(
+        StatusCode::OK,
+        bytes.clone(),
+        "application/json",
+        HeaderMap::new(),
+        true,
+    )
+    .await;
+    let received = download
+        .client
+        .job_artifact(&spec.external_job_id, &metadata)
+        .await
+        .unwrap();
     assert!(received == bytes);
     download.assert_count(1);
 }

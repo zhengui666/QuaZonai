@@ -6,12 +6,12 @@ mod data;
 mod support;
 
 use contracts::{
-    DbCounter, Id, SchemaV1,
     catalogs::{RecordedFeatureFragmentV1, RecordedFeatureInputsV1},
     data::{DatasetView, RecordedFeatureRegisterV1, RecordedFeatureViewV1},
     research::{ArtifactInputRole, DataPartition, InputItemV1, InputPurpose, InputSetCreate},
+    DbCounter, Id, SchemaV1,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::{PgConnection, PgPool};
 use store::Store;
 
@@ -446,38 +446,22 @@ async fn upgrade_080002_preserves_frozen_sources_and_large_original_feature_byte
 }
 
 async fn settled_turn(pool: &PgPool, f: &support::Fixture, key: &str) -> Id {
-    use store::turns::{DispatchDecision, TurnOutcome, UsageReceipt};
-    let store = Store::from_pool(pool.clone());
-    let reservation = store
-        .reserve_turn(f.run, &f.fence, &f.request(key))
-        .await
-        .unwrap();
-    assert!(matches!(
-        store
-            .claim_turn_dispatch(reservation.id, &f.fence)
+    // Controlled pre-cutover records exercise the applied database guards without
+    // retaining the retired model dispatch/receipt writer as an executable API.
+    let session: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM app.codex_sessions WHERE run_id=$1")
+            .bind(f.run.as_uuid())
+            .fetch_one(pool)
             .await
-            .unwrap(),
-        DispatchDecision::Send { .. }
-    ));
-    store
-        .bind_native_turn(reservation.id, &f.fence, &format!("native/{key}"))
-        .await
-        .unwrap();
-    store
-        .settle_turn(
-            reservation.id,
-            &f.fence,
-            &UsageReceipt {
-                outcome: TurnOutcome::Succeeded,
-                actual_tokens: count(12),
-                actual_cost: Some("0.25".parse().unwrap()),
-                currency: Some("USD".into()),
-                reason_code: "NATIVE_OBSERVED".into(),
-            },
-        )
-        .await
-        .unwrap();
-    reservation.id
+            .unwrap();
+    let reservation = Id::new();
+    sqlx::query("INSERT INTO app.model_turn_reservations(id,project_id,cycle_id,run_id,session_id,attempt_id,command_key,turn_kind,reserved_tokens,reserved_cost,cost_currency,request_artifact_id,deadline_at,owner_epoch,profile_revision,ordinal) SELECT $1,$2,$3,$4,$5,$6,$7,'RESEARCH',40,1.25,'USD',$8,$9,1,1,coalesce(max(ordinal),0)+1 FROM app.model_turn_reservations WHERE session_id=$5")
+        .bind(reservation.as_uuid()).bind(f.project.as_uuid()).bind(f.cycle.as_uuid()).bind(f.run.as_uuid()).bind(session).bind(f.fence.attempt_id.as_uuid()).bind(key).bind(f.artifact.as_uuid()).bind(f.deadline).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.model_turn_dispatches(reservation_id,owner_epoch,rpc_request_id) VALUES($1,1,$2)").bind(reservation.as_uuid()).bind(reservation.to_string()).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.model_turn_bindings(reservation_id,session_id,native_turn_id) VALUES($1,$2,$3)").bind(reservation.as_uuid()).bind(session).bind(format!("native/{key}")).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.model_turn_terminals(reservation_id,native_turn_id,outcome,reason_code,observed_at) VALUES($1,$2,'SUCCEEDED','NATIVE_OBSERVED',clock_timestamp())").bind(reservation.as_uuid()).bind(format!("native/{key}")).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO app.model_turn_receipts(reservation_id,outcome,actual_tokens,actual_cost,cost_currency,usage_source,reason_code) VALUES($1,'SUCCEEDED',12,0.25,'USD','NATIVE_REPORT','NATIVE_OBSERVED')").bind(reservation.as_uuid()).execute(pool).await.unwrap();
+    reservation
 }
 
 async fn insert_summary(
@@ -519,7 +503,7 @@ async fn historical_copy(c: &mut PgConnection, bytes: i64) -> Result<(Id, Id), s
 #[sqlx::test(migrations = false)]
 async fn upgrade_080002_keeps_turn_roles_and_historical_readability_guards(pool: PgPool) {
     support::migrate_before(&pool, CUTOVER).await;
-    let f = support::fixture(&pool, support::budget()).await;
+    let f = support::historical_fixture(&pool, support::budget()).await;
     let original_turn = settled_turn(&pool, &f, "original").await;
     let future_turn = settled_turn(&pool, &f, "large").await;
     let directory = tempfile::tempdir().unwrap();
@@ -701,7 +685,16 @@ async fn upgrade_080002_keeps_turn_roles_and_historical_readability_guards(pool:
         ),
         (
             "UPDATE app.codex_sessions SET role='INDEPENDENT_REVIEWER' WHERE id=$1",
-            f.session,
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT id FROM app.codex_sessions WHERE run_id=$1",
+            )
+            .bind(f.run.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .to_string()
+            .try_into()
+            .unwrap(),
         ),
     ] {
         sqlstate(
@@ -771,12 +764,10 @@ async fn constraint_probe(
         );
         if value.is_null() {
             let is_null = format!("SELECT {field} IS NULL FROM qz_evidence_constraint_probe");
-            assert!(
-                sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(is_null))
-                    .fetch_one(&mut *tx)
-                    .await
-                    .unwrap()
-            );
+            assert!(sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(is_null))
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap());
             // SQL NULL remains permitted, but a JSONB null must still fail the
             // shape CHECK both before and after removing the collection cap.
             sqlstate(
@@ -874,14 +865,12 @@ async fn upgrade_080002_and_later_collection_checks_remove_only_upper_bounds(poo
     let pool = upgrade_after_shutdown(pool).await;
     // The policy collections are removed by the separate additive 080004;
     // testing latest migration here does not attribute them to 080002.
-    assert!(
-        sqlx::query_scalar::<_, bool>(
-            "SELECT success FROM _sqlx_migrations WHERE version=202610080004"
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-    );
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT success FROM _sqlx_migrations WHERE version=202610080004"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap());
     assert_eq!(
         rows(
             &pool,

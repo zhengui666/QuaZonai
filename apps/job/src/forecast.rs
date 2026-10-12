@@ -168,7 +168,14 @@ fn forecast_points(
         remaining = model.remaining_fuel();
     }
     ensure!(prediction_count > 0, "FORECAST_NO_PREDICTIONS");
-    Ok((parameters.total_fuel.zip(remaining).map(|(total, left)| counter(total.get() - left)).transpose()?, points))
+    Ok((
+        parameters
+            .total_fuel
+            .zip(remaining)
+            .map(|(total, left)| counter(total.get() - left))
+            .transpose()?,
+        points,
+    ))
 }
 
 #[cfg(test)]

@@ -67,6 +67,7 @@ async ({ page, context }) => {
     expect(saved.receipt.resource.id).toMatch(/^[0-9a-f-]{36}$/);
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
+    await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
     await expect(page.getByRole('heading', { name: '绑定你的验证器' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '登录', exact: true })).toHaveCount(0);
     expect((await page.request.get('/api/v2/auth/session')).status()).toBe(200);
@@ -121,6 +122,8 @@ async ({ page, context }) => {
     const cookies = await context.cookies();
     expect(cookies.length).toBeGreaterThan(0);
     for (const cookie of cookies) expect(cookie.httpOnly).toBe(true);
+    await expect(page.getByLabel('研究目标', { exact: true })).toBeVisible();
+    await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
   });
 
   await test.step('prepare a real project through the native API and recover its lost ACK', async () => {
@@ -143,6 +146,7 @@ async ({ page, context }) => {
     projectId = receipt.resource.id;
     expect(projectId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     await page.reload();
+    await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
     await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '新建研究', exact: true })).toHaveCount(0);
   });
@@ -197,7 +201,7 @@ async ({ page, context }) => {
       await page.getByRole('tab', { name: 'Wake 记录', exact: true }).click();
       await observe(`${projectPath}/wakes`);
       // Return navigation must not submit a producer command or recreate the project.
-      await page.getByRole('menuitem', { name: '研究', exact: true }).click();
+      await page.getByRole('menuitem', { name: '历史项目（可选）', exact: true }).click();
       await expect(page.getByRole('article').filter({ hasText: name })).toHaveCount(1);
       expect(writes).toEqual([]);
     } finally {
@@ -226,7 +230,7 @@ async ({ page, context }) => {
       }
       for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(viewport);
-        await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { level: 1, name: '历史项目（可选）', exact: true })).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1);
         await expect(page.getByRole('button', { name: /^(新建研究|创建第一个研究|编辑)$/ })).toHaveCount(0);
         const search = page.getByRole('textbox', { name: '搜索本页研究项目', exact: true });
@@ -234,7 +238,7 @@ async ({ page, context }) => {
         await search.fill('No matching observed project');
         await expect(page.getByRole('heading', { name: '本页没有匹配的项目', exact: true })).toBeVisible();
         await page.getByRole('button', { name: '清除搜索', exact: true }).click();
-        await expect(page.getByRole('heading', { name: '研究项目', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: '历史研究项目', exact: true })).toBeVisible();
         await expect(page.getByRole('article')).toHaveCount(1);
         if (viewport.width < 768) {
           const row = page.getByRole('article').filter({ has: page.getByRole('button', { name, exact: true }) });
@@ -249,7 +253,7 @@ async ({ page, context }) => {
             row.getByText('草稿', { exact: true }),
             row.getByText('下一步：建立研究 Brief', { exact: true }),
             row.locator('time'),
-            row.getByRole('button', { name: '进入研究', exact: true }),
+            row.getByRole('button', { name: '查看历史项目', exact: true }),
           ]) await expect(control).toBeInViewport({ ratio: 1 });
           await expect(row.locator('time')).toHaveAttribute('datetime', originalProject.updated_at);
           await expect(row.locator('time')).toHaveText(/\d/);
@@ -277,9 +281,9 @@ async ({ page, context }) => {
           const unchanged = await page.request.get(`/api/v2/projects/${projectId}`);
           expect(unchanged.status()).toBe(200);
           expect(await unchanged.json()).toEqual(originalProject);
-          await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+          await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
           await row.scrollIntoViewIfNeeded();
-          await expect(row.getByRole('button', { name: '进入研究', exact: true })).toBeInViewport({ ratio: 1 });
+          await expect(row.getByRole('button', { name: '查看历史项目', exact: true })).toBeInViewport({ ratio: 1 });
         }
         await page.evaluate(() => window.scrollTo(0, 0));
         // Capture only the project surface, never browser session material.
@@ -321,7 +325,7 @@ async ({ page, context }) => {
           await page.evaluate(() => window.scrollTo(0, 0));
           await page.locator('.console-layout').screenshot({ path: resolve(dirname(config.redactionsFile), `${surface}-${mode}-${viewport.width}.png`), animations: 'disabled' });
         }
-        await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+        await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
       }
     }
   });
@@ -366,7 +370,7 @@ async ({ page, context }) => {
       await page.getByRole('button', { name: artifactId, exact: true }).click();
       await expect(detail.getByText('UNRUN: 2', { exact: true })).toBeVisible();
       await detail.locator('.ant-drawer-close').click();
-      await page.getByRole('button', { name: '返回研究列表', exact: true }).click();
+      await page.getByRole('button', { name: '返回历史项目列表', exact: true }).click();
       expect(writes).toEqual([]);
     } finally { page.off('request', observe); }
   });
@@ -385,63 +389,6 @@ async ({ page, context }) => {
 // Both cases run before the controlled restart. The restart phase reuses only
 // the original persistent checkpoint; it does not recreate any project.
 if (config.phase === 'before-restart') {
-  test('ChatGPT login uses the real account receipt across a lost acknowledgement and reload', async ({ page, context }) => {
-    await page.goto('/');
-    await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-    const login = page.getByRole('button', { name: '登录 ChatGPT', exact: true });
-    await expect(login).toBeEnabled();
-    for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
-    const profiles: Schema['Page_CodexProfileViewV1'] = await (await page.request.get('/api/v2/settings/codex?limit=100')).json();
-    expect(profiles.items).toHaveLength(2);
-    const profile = profiles.items[0]!;
-    const latestPath = `/api/v2/codex/login?profile_id=${profile.id}`;
-    expect(await (await page.request.get(latestPath)).json()).toBeNull();
-    await context.setOffline(true);
-    await expect(login).toBeDisabled();
-    await context.setOffline(false);
-    await expect(login).toBeEnabled();
-    let requestKey: string | undefined;
-    let requestBody: unknown;
-    let accepted: Schema['CodexAccountStartV1'] | undefined;
-    await page.route('**/api/v2/codex/login/start', async route => {
-      requestKey = route.request().headers()['idempotency-key'];
-      requestBody = route.request().postDataJSON();
-      const response = await route.fetch({ maxRetries: 0 });
-      expect(response.status()).toBe(202);
-      accepted = await response.json();
-      // Real unavailable deployment, never fabricated OAuth/native success.
-      expect(accepted?.device_code == null).toBe(true);
-      expect(accepted?.current.state).toBe('FAILED');
-      expect(accepted?.current.reason).toBe('DEPLOYMENT_UNAVAILABLE');
-      await response.dispose();
-      await route.abort('failed');
-    });
-    await login.click();
-    await expect(page.getByRole('button', { name: '重试当前操作' })).toBeVisible();
-    await expect(login).toBeDisabled();
-    await page.unroute('**/api/v2/codex/login/start');
-    const replayed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/login/start');
-    await page.getByRole('button', { name: '重试当前操作' }).click();
-    const response = await replayed;
-    expect(response.status()).toBe(202);
-    expect(response.request().headers()['idempotency-key']).toBe(requestKey);
-    expect(response.request().postDataJSON()).toEqual(requestBody);
-    const replay: Schema['CodexAccountStartV1'] = await response.json();
-    expect(replay.acceptance).toEqual({ ...accepted!.acceptance, replayed: true });
-    await expect(login).toBeEnabled();
-    await expect(page.getByLabel('ChatGPT 授权码')).toHaveCount(0);
-    await expect(page.getByText('ChatGPT 登录成功', { exact: true })).toHaveCount(0);
-    for (const role of profiles.items) {
-      const latest = await (await page.request.get(`/api/v2/codex/login?profile_id=${role.id}`)).json();
-      expect(latest).toEqual(replay.current);
-    }
-    await page.reload();
-    await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-    await expect(login).toBeEnabled();
-    expect(await (await page.request.get(latestPath)).json()).toEqual(replay.current);
-    await expect(page.getByText('Codex 运行环境不可用，请检查部署配置').first()).toBeVisible();
-  });
-
   test('all native pages remain accessible in both themes and three viewports', async ({ page, context }) => {
     test.setTimeout(180_000);
     await page.goto('/');
@@ -454,7 +401,7 @@ if (config.phase === 'before-restart') {
       await expect(page.locator('html')).toHaveAttribute('data-theme', mode);
       for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 1024 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(viewport);
-        for (const label of ['研究', 'Alpha', '组合', '交付', '运行', '设置']) {
+        for (const label of ['研究', '历史项目（可选）', 'Alpha', '组合', '交付', '运行', '设置']) {
           if (viewport.width < 992) {
             await page.getByRole('button', { name: '打开主导航' }).click();
           }
@@ -476,173 +423,92 @@ if (config.phase === 'before-restart') {
           const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
           expect.soft(result.violations, `${label} / ${mode} at ${viewport.width}px`).toEqual([]);
           if (label === '设置') await page.locator('.console-layout').screenshot({
-            path: resolve(dirname(config.redactionsFile), `codex-${mode}-${viewport.width}.png`), animations: 'disabled',
+            path: resolve(dirname(config.redactionsFile), `auth-settings-${mode}-${viewport.width}.png`), animations: 'disabled',
           });
         }
       }
     }
   });
 
-  test('the deployed service worker excludes API data and protects a pending Settings command during updates', async ({ page, context }) => {
+  test('the deployed service worker excludes API data and protects a pending generic Settings command', async ({ page, context }) => {
     const workerFile = resolve(dirname(config.redactionsFile), 'release/web/sw.js');
     const originalWorker = readFileSync(workerFile, 'utf8');
-    const writes: string[] = [];
-    page.on('request', request => {
-      if (new URL(request.url()).pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
-        writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
-      }
-    });
-    let releaseAck!: () => void;
-    const heldAck = new Promise<void>(resolve => { releaseAck = resolve; });
-    const committed: { body: Schema['CodexAccountRequestV1']; key: string | undefined; result: Schema['CodexAccountStartV1'] }[] = [];
-    const modelsPath = (url: URL) => url.pathname === '/api/v2/codex/models';
-    let releaseInitialModels!: () => void;
-    const initialModels = new Promise<void>(resolve => { releaseInitialModels = resolve; });
-    const holdInitialModels = async (route: Route) => {
-      if (route.request().method() === 'GET') await initialModels;
-      await route.continue();
-    };
-    const isProbe = (response: Response) => new URL(response.url()).pathname === '/api/v2/codex/probe'
-      && response.request().method() === 'POST';
-    async function verifyProbe(response: Response, body: Schema['CodexProbeRequestV1']) {
-      expect(response.status()).toBe(200);
-      expect(response.request().postDataJSON()).toEqual(body);
-      const key = response.request().headers()['idempotency-key'];
-      expect(key).toBeTruthy();
-      const probe: Schema['CommandResult_CodexProbeViewV1'] = await response.json();
-      expect(probe.schema_version).toBe(1); expect(probe.replayed).toBe(false);
-      expect(probe.resource.schema_version).toBe(1);
-      expect(probe.resource.profile_id).toBe(body.profile_id);
-      expect(probe.resource.profile_revision).toBe(body.expected_revision);
-      expect(probe.resource.outcome).toEqual({ status: 'UNAVAILABLE', reason: 'DEPLOYMENT_UNAVAILABLE' });
-      const modelsResponse = await page.request.get('/api/v2/codex/models', { params: { profile_id: body.profile_id } });
-      expect(modelsResponse.status()).toBe(200);
-      const models: Schema['CodexObservationV1'] = await modelsResponse.json();
-      expect(models.state).toBe('UNAVAILABLE'); expect(models.observation).toEqual(probe.resource);
-      return { key, models };
-    }
+    let releaseAck!: () => void; const heldAck = new Promise<void>(resolve => { releaseAck = resolve; });
+    const committed: { body: Schema['IntegrationSecretCreate']; key?: string; receipt: { resource: { id: string }; replayed: boolean } }[] = [];
+    const credentialPath = '**/api/v2/settings/credentials';
     try {
       await page.goto('/');
       await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       for (const cookie of await context.cookies()) rememberPrivateValue(config, cookie.value);
-      await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+      await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state)).toBe('activated');
+      console.info('native PWA: original service worker activated');
       await page.reload();
       await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true);
-      const caches = await page.evaluate(async () => {
-        const names = await window.caches.keys(); const urls: string[] = [];
-        for (const name of names) {
-          const cache = await window.caches.open(name);
-          urls.push(...(await cache.keys()).map(request => new URL(request.url).pathname));
-        }
-        return { names, urls };
+      const cached = await page.evaluate(async () => {
+        const urls: string[] = [];
+        for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) urls.push(new URL(request.url).pathname);
+        return urls;
       });
-      expect(caches.names.length).toBeGreaterThan(0);
-      expect(caches.urls.some(path => path.startsWith('/assets/'))).toBe(true);
-      expect(caches.urls.some(path => path.startsWith('/api/') || path.startsWith('/health/'))).toBe(false);
-      expect(writes).toEqual([]);
-      const profilesResponse = await page.request.get('/api/v2/settings/codex?limit=100');
-      expect(profilesResponse.status()).toBe(200);
-      const profiles: Schema['Page_CodexProfileViewV1'] = await profilesResponse.json();
-      expect(profiles.items).toHaveLength(2);
-      const profile = profiles.items[0]!;
-      // A prior test may leave a fresh or expired 60-second observation. Hold
-      // only its browser read while the real Refresh button makes one native
-      // probe, so Settings cannot race that click with a stale-state auto-probe.
-      // No response is fabricated; the released GET reads the committed result.
-      await context.route(modelsPath, holdInitialModels);
+      expect(cached.some(path => path.startsWith('/assets/'))).toBe(true);
+      expect(cached.some(path => path.startsWith('/api/') || path.startsWith('/health/'))).toBe(false);
+      console.info('native PWA: static cache excludes authenticated API data');
       await page.getByRole('menuitem', { name: '设置', exact: true }).click();
-      const login = page.getByRole('button', { name: '登录 ChatGPT', exact: true });
-      await expect(login).toBeEnabled();
-      const initialProbed = page.waitForResponse(isProbe);
-      await page.getByRole('button', { name: '刷新', exact: true }).click();
-      const initialProbe = await verifyProbe(await initialProbed, {
-        schema_version: 1, profile_id: profile.id, expected_revision: profile.revision,
-      });
-      const initialReadback = page.waitForResponse(response => modelsPath(new URL(response.url()))
-        && response.request().method() === 'GET');
-      releaseInitialModels();
-      const readback = await initialReadback;
-      expect(readback.status()).toBe(200); expect(await readback.json()).toEqual(initialProbe.models);
-      await context.unroute(modelsPath, holdInitialModels);
-      await expect(page.locator('.ant-tag').filter({ hasText: /^不可用$/ })).toBeVisible();
-      await expect(login).toBeEnabled();
-      const setupWrites = ['POST /api/v2/codex/probe'];
-      expect(writes).toEqual(setupWrites);
-      await context.setOffline(true);
-      await expect(page.getByText('离线，无法提交操作', { exact: true })).toBeVisible();
-      await expect(login).toBeDisabled(); expect(writes).toEqual(setupWrites);
-      await context.setOffline(false);
-      await expect(login).toBeEnabled(); expect(writes).toEqual(setupWrites);
-      await context.route('**/api/v2/codex/login/start', async route => {
-        const response = await route.fetch({ maxRetries: 0 });
-        expect(response.status()).toBe(202);
-        const result: Schema['CodexAccountStartV1'] = await response.json();
-        // The fixture's real unavailable deployment must never look like a successful login.
-        expect(result.current.state).toBe('FAILED'); expect(result.current.reason).toBe('DEPLOYMENT_UNAVAILABLE');
-        expect(result.device_code == null).toBe(true);
-        committed.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'], result });
-        expect(committed[0]!.key).toBeTruthy();
-        expect(committed[0]!.body).toEqual({ schema_version: 1, profile_id: result.current.operation.profile_id,
-          expected_revision: result.current.operation.profile_revision });
+      await expect(page.getByRole('heading', { name: '鉴权管理', exact: true })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'Codex', exact: true })).toHaveCount(0);
+      await page.getByRole('tab', { name: '集成', exact: true }).click();
+      await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+      const editor = page.getByRole('dialog', { name: '登记 Runtime', exact: true });
+      // A disposable integration secret is not a model credential and makes no provider call.
+      const secret = randomUUID().replaceAll('-', ''); rememberPrivateValue(config, secret);
+      await editor.getByLabel('新的 RUNTIME 凭据', { exact: true }).fill(secret);
+      console.info('native PWA: generic Runtime credential editor ready');
+      await context.route(credentialPath, async route => {
+        const response = await route.fetch({ maxRetries: 0 }); expect(response.status()).toBe(201);
+        committed.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'], receipt: await response.json() });
         await response.dispose(); await heldAck; await route.abort('failed');
       });
-      await login.click();
-      await expect.poll(() => committed.length).toBe(1);
-      // Hold the real committed Settings acknowledgement while Workbox discovers
-      // the actual changed installed worker. There is no fabricated Worker or API success.
+      const register = editor.getByRole('button', { name: '登记凭据', exact: true });
+      await context.setOffline(true); await expect(register).toBeDisabled(); await context.setOffline(false);
+      await register.click(); await expect.poll(() => committed.length).toBe(1);
+      console.info('native PWA: original credential committed with acknowledgement held');
       appendFileSync(workerFile, `\n// Native update ${randomUUID()}\n`);
       await page.evaluate(async () => { await (await navigator.serviceWorker.ready).update(); });
       await expect(page.getByRole('dialog', { name: '检测到新的前端版本' })).toBeVisible();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
-      await expect(page.getByText('请先保存或取消当前编辑', { exact: true })).toBeVisible();
-      await page.getByRole('button', { name: '稍后', exact: true }).click();
-      await expect(login).toBeDisabled();
-      expect(writes).toEqual([...setupWrites, 'POST /api/v2/codex/login/start']);
-      releaseAck();
-      await expect(page.getByRole('button', { name: '重试当前操作', exact: true })).toBeVisible();
+      console.info('native PWA: update disabled during the pending request');
+      await page.getByRole('dialog', { name: '检测到新的前端版本' }).getByRole('button', { name: '稍后', exact: true }).click({ timeout: 20_000 });
+      releaseAck(); await expect(editor.getByRole('button', { name: '重试登记', exact: true })).toBeVisible();
+      // The Runtime modal masks the header. Closing it must retain the original unresolved request.
+      await editor.getByRole('button', { name: '返回', exact: true }).click();
+      await expect(editor).toBeHidden();
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeDisabled();
       await page.getByRole('button', { name: '稍后', exact: true }).click();
-      expect(writes).toEqual([...setupWrites, 'POST /api/v2/codex/login/start']);
-      await context.unroute('**/api/v2/codex/login/start');
-      const retried = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/codex/login/start');
-      const refreshed = page.waitForResponse(isProbe);
-      await page.getByRole('button', { name: '重试当前操作', exact: true }).click();
-      const response = await retried;
-      expect(response.status()).toBe(202);
+      console.info('native PWA: update disabled after lost acknowledgement');
+      await page.getByRole('button', { name: '登记 Runtime', exact: true }).click();
+      await expect(editor.getByRole('button', { name: '重试登记', exact: true })).toBeVisible();
+      await context.unroute(credentialPath);
+      const replayed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v2/settings/credentials' && response.request().method() === 'POST');
+      await editor.getByRole('button', { name: '重试登记', exact: true }).click();
+      const response = await replayed; expect(response.status()).toBe(201);
       expect(response.request().headers()['idempotency-key']).toBe(committed[0]!.key);
       expect(response.request().postDataJSON()).toEqual(committed[0]!.body);
-      const replay: Schema['CodexAccountStartV1'] = await response.json();
-      expect(replay.acceptance).toEqual({ ...committed[0]!.result.acceptance, replayed: true });
-      expect(replay.current).toEqual(committed[0]!.result.current);
-      expect(replay.device_code == null).toBe(true);
-      // The terminal account receipt invalidates this profile's old catalog.
-      // Its one Settings refresh is a real unavailable-deployment probe, never
-      // a model run or a business write initiated by the Research page.
-      const probeResponse = await refreshed;
-      await expect(page.getByRole('heading', { level: 1, name: '设置', exact: true })).toBeVisible();
-      const probe = await verifyProbe(probeResponse, committed[0]!.body);
-      expect(probe.key).not.toBe(committed[0]!.key); expect(probe.key).not.toBe(initialProbe.key);
-      await expect(login).toBeEnabled();
-      const settingsWrites = [...setupWrites, 'POST /api/v2/codex/login/start', 'POST /api/v2/codex/login/start', 'POST /api/v2/codex/probe'];
-      expect(writes).toEqual(settingsWrites);
+      expect(await response.json()).toEqual({ ...committed[0]!.receipt, replayed: true });
+      await expect(editor.getByText('凭据已登记', { exact: true })).toBeVisible();
+      console.info('native PWA: exact original credential replay verified');
+      await editor.getByRole('button', { name: '放弃本次绑定', exact: true }).click();
+      await editor.getByRole('button', { name: '返回', exact: true }).click();
       await page.getByRole('button', { name: '有新版本', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认更新', exact: true })).toBeEnabled();
-      const reloaded = page.waitForEvent('load');
-      await page.getByRole('button', { name: '确认更新', exact: true }).click(); await reloaded;
+      console.info('native PWA: resolved work permits the actual update');
+      const reloaded = page.waitForEvent('load'); await page.getByRole('button', { name: '确认更新', exact: true }).click(); await reloaded;
+      console.info('native PWA: updated controller reloaded the page');
       await expect(page.getByRole('heading', { level: 1, name: '研究', exact: true })).toBeVisible();
       const saved: Checkpoint = JSON.parse(readFileSync(projectFile, 'utf8'));
-      const listing = await page.request.get('/api/v2/projects?limit=100');
-      expect(listing.status()).toBe(200);
-      const body: { items: Schema['ProjectView'][] } = await listing.json();
-      expect(body.items).toEqual([saved.receipt.resource]);
-      expect(writes).toEqual(settingsWrites);
+      const listing = await page.request.get('/api/v2/projects?limit=100'); expect(listing.status()).toBe(200);
+      expect((await listing.json()).items).toEqual([saved.receipt.resource]);
     } finally {
-      releaseInitialModels(); releaseAck();
-      await context.unroute(modelsPath, holdInitialModels);
-      await context.setOffline(false);
-      await context.unroute('**/api/v2/codex/login/start');
-      writeFileSync(workerFile, originalWorker);
+      releaseAck(); await context.setOffline(false); await context.unroute(credentialPath); writeFileSync(workerFile, originalWorker);
     }
   });
 }

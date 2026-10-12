@@ -12,9 +12,6 @@ use validation::read_document;
 
 mod admission;
 mod qualification;
-mod review;
-pub(super) use qualification::grant;
-pub(super) use review::pending;
 
 pub(super) async fn publish<R, Read, P, Published>(
     mut tx: Tx<'_>,
@@ -110,20 +107,14 @@ where
         {
             return Err(StoreError::Integrity);
         }
-        let calibration: Option<NativeFrozenCalibrationV1> =
-            if let Some(id) = calibration_artifact_id {
-                let bytes = read_document(
-                    &mut tx,
-                    id,
-                    None,
-                    "qz.alpha_calibration",
-                    &mut read,
-                )
-                .await?;
-                Some(serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?)
-            } else {
-                None
-            };
+        let calibration: Option<NativeFrozenCalibrationV1> = if let Some(id) =
+            calibration_artifact_id
+        {
+            let bytes = read_document(&mut tx, id, None, "qz.alpha_calibration", &mut read).await?;
+            Some(serde_json::from_slice(&bytes).map_err(|_| StoreError::Integrity)?)
+        } else {
+            None
+        };
         domain::execution::alpha_sealed_policy(
             requirements,
             &request.forecast.selection,

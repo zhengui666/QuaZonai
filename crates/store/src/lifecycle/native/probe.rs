@@ -1,4 +1,4 @@
-//! Owner-fenced readiness refresh for an unsent job or active Mission.
+//! Owner-fenced readiness refresh for an unsent scientific job.
 //! Reuses the Operator probe's immutable native publication contract, not an
 //! Operator grant, fake configuration success, or a second observations table.
 use super::*;
@@ -21,12 +21,7 @@ async fn may_probe(
         return Ok(false);
     }
     if locked.run.kind == RunKind::AgentResearch {
-        let mission: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.run_missions WHERE run_id=$1)")
-                .bind(locked.run.id.as_uuid())
-                .fetch_one(&mut **tx)
-                .await?;
-        return Ok(mission && locked.admission_open());
+        return Err(StoreError::Invalid("legacy_agent_execution_retired"));
     }
     if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT" {
         return Ok(false);

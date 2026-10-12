@@ -51,7 +51,14 @@ fn every_native_help_works_without_credentials_or_database() {
     }
     assert!(visited.contains(&vec!["migrate".into()]));
     assert!(visited.contains(&vec!["recover-access".into()]));
-    assert!(visited.contains(&vec!["mcp".into()]));
+    assert!(!visited.contains(&vec!["mcp".into()]));
+    assert!(!visited
+        .iter()
+        .any(|path| path.iter().any(|name| name == "codex")));
+    assert!(!visited.contains(&vec!["client".into(), "cycle".into(), "start".into()]));
+    for command in ["start", "list", "get", "stop", "models", "tasks", "usage"] {
+        assert!(visited.contains(&vec!["client".into(), "research".into(), command.into()]));
+    }
 }
 
 #[test]

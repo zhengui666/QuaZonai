@@ -87,7 +87,7 @@ pub enum ExecutionPreflightFailureStageV1 {
 pub enum PolymarketExecutionPreflightOutcomeV1 {
     /// The exact declared format was accepted; no execution readiness is claimed.
     FormatValidated {
-        request: PolymarketExecutionPreflightV1,
+        request: Box<PolymarketExecutionPreflightV1>,
     },
     Rejected {
         stage: ExecutionPreflightFailureStageV1,

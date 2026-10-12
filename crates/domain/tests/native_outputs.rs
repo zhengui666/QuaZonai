@@ -463,22 +463,37 @@ fn forecast_cannot_expand_visibility_change_horizon_or_hide_missing_values() {
 fn forecast_fuel_binding_preserves_explicit_budget_and_unmetered_absence() {
     let (mut parameters, mut report) = forecast();
     report.consumed_fuel = None;
-    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    assert!(!accepts(
+        &parameters,
+        &[output("qz.native_forecast", &report)]
+    ));
     if let NativeTaskParametersV1::EvaluateAlpha { request, .. } = &mut parameters {
         request.parameters.total_fuel = None;
         domain::execution::forecast_request(request).unwrap();
     }
-    assert!(accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    assert!(accepts(
+        &parameters,
+        &[output("qz.native_forecast", &report)]
+    ));
     report.consumed_fuel = Some(count(10));
-    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    assert!(!accepts(
+        &parameters,
+        &[output("qz.native_forecast", &report)]
+    ));
     if let NativeTaskParametersV1::EvaluateAlpha { request, .. } = &mut parameters {
         request.parameters.total_fuel = Some(count(1_000_000_001));
         domain::execution::forecast_request(request).unwrap();
     }
     report.consumed_fuel = Some(count(1_000_000_001));
-    assert!(accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    assert!(accepts(
+        &parameters,
+        &[output("qz.native_forecast", &report)]
+    ));
     report.consumed_fuel = Some(count(1_000_000_002));
-    assert!(!accepts(&parameters, &[output("qz.native_forecast", &report)]));
+    assert!(!accepts(
+        &parameters,
+        &[output("qz.native_forecast", &report)]
+    ));
 }
 
 #[test]

@@ -13,6 +13,10 @@ stop() {
 }
 trap 'stop; exit 143' TERM
 trap 'stop; exit 130' INT
+: "${QZ_RESEARCH_CONFIG:?Persistent research config is required}"
+: "${QZ_RESEARCH_PROVIDER_ENV:?Private native provider environment file is required}"
+/usr/local/bin/node --env-file="$QZ_RESEARCH_PROVIDER_ENV" --experimental-strip-types /opt/quazonai/research/src/main.ts &
+children+=("$!")
 /opt/quazonai/bin/server serve &
 children+=("$!")
 XDG_CONFIG_HOME=/tmp/caddy-config XDG_DATA_HOME=/tmp/caddy-data \

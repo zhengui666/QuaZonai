@@ -1,7 +1,6 @@
 //! Weight strategies share the existing Alpha, Run, candidate and delivery
 //! aggregates. Their outputs are target weights, never return forecasts.
 use crate::{
-    DbCounter, DecimalValue, Id, Revision, SchemaV1,
     evidence::AlphaVersionView,
     portfolio::{AllocationTargetV1, PortfolioConstraintsV1},
     research::{DataOrigin, PitStatus},
@@ -9,6 +8,7 @@ use crate::{
         FeatureDefinitionV1, NativeBarSelectionV1, NativeSimulationRequestV1,
         NativeSimulationResultV1, NativeSimulationSettingsV1, NativeTargetPointV1,
     },
+    DbCounter, DecimalValue, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

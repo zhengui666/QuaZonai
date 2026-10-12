@@ -3,14 +3,14 @@
 mod support;
 use chrono::{Duration, Utc};
 use contracts::{
-    Id, SchemaV1,
     catalogs::RuntimeCatalogMetadataV1,
     control::{AssignablePrincipalKind, CredentialIssue, MachineScope, PrincipalCreate},
     data::{DataGrantRevoke, DataLicenseState, DatasetEvidenceViewV1, DatasetView},
     research::{DataPartition, PitStatus},
+    Id, SchemaV1,
 };
 use sqlx::PgPool;
-use store::{StoreError, authority::Actor, control::CredentialPreparation};
+use store::{authority::Actor, control::CredentialPreparation, StoreError};
 use support::*;
 
 async fn registered(f: &Fixture, metadata: &RuntimeCatalogMetadataV1) -> DatasetView {

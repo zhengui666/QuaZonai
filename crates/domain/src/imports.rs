@@ -15,8 +15,7 @@ mod source_schema;
 pub fn inspect_manifest(
     value: &HistoricalManifestV1,
 ) -> Result<Vec<HistoricalIssueV1>, DomainError> {
-    if value.source_schema_version != "0029_portfolio_candidate_exposure"
-    {
+    if value.source_schema_version != "0029_portfolio_candidate_exposure" {
         return Err(DomainError::Invalid("historical_manifest"));
     }
     if !value
@@ -47,9 +46,7 @@ pub fn inspect_manifest(
         {
             issue("source_table", HistoricalIssueCodeV1::UnsupportedTable);
         }
-        if !text(&record.label, 240)
-            || !text(&record.source_state, 100)
-        {
+        if !text(&record.label, 240) || !text(&record.source_state, 100) {
             issue("record", HistoricalIssueCodeV1::InvalidField);
         }
         if record.created_at > value.exported_at

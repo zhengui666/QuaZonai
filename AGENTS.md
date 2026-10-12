@@ -2,7 +2,7 @@
 
 ## 定位
 
-单人本机量化研究与 target-only 交付。后端 Rust，前端 React / TypeScript；按研究工作流选择成熟的官方 UI 组件，不强制采用单一组件库。复用 Codex、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ 的原生能力。
+单人本机、可扩展、无人值守的 AI 因子研究与 target-only 交付。Rust 科学/事务，Node/TypeScript 官方 Pi Durable 宿主，React/TypeScript 前端；复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ。组合与模拟是可选消费者，不是因子研究前置步骤。
 
 ## 按任务定位
 
@@ -31,3 +31,5 @@ Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`�
 ## Code Review Rules
 
 按 [.opensdlc/review.md](.opensdlc/review.md) 检查改变的行为、接口与恢复边界。自 2026-09-30 的 dev 自动迭代起，设计、开发和独立代码审查均不委派给 Codex；Codex 仅作为 Agent 评测对象。最终 Head 的适用 CI 全部通过、独立审查问题解决后才能合并到 dev；未执行、旧 Head 或仅写入交接配置不算验证通过。既有 PR 的范围与证据保留，不据此声称已重新审查。
+
+`durable-factor-platform` 的已批准目标另要求最终 Head 的既有 GitHub Codex 只读 review 证据；它是本任务的额外开发验证，不是生产执行器或设计/开发委派，也不替代独立审查。保留上述自动迭代及既有 PR 的原范围，不声称旧 Head 已重新验证。

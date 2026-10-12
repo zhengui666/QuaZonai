@@ -53,10 +53,10 @@ describe('native immutable Runtime output contract', () => {
   });
 
   it('uses exact canonical string byte bounds for every native output', () => {
-    for (const byte_count of ['1', '9', '10', '67108863', '67108864']) {
+    for (const byte_count of ['1', '9', '10', '67108864', '67108865', '9223372036854775807']) {
       expect(accepts('RuntimeOutputV1', { ...output(), byte_count })).toBe(true);
     }
-    for (const byte_count of ['0', '01', '67108865', '99999999', '9223372036854775807', '-1', '1.0', '1\n', 128, null]) {
+    for (const byte_count of ['0', '01', '9223372036854775808', '-1', '1.0', '1\n', 128, null]) {
       expect(accepts('RuntimeOutputV1', { ...output(), byte_count })).toBe(false);
     }
   });
@@ -64,17 +64,17 @@ describe('native immutable Runtime output contract', () => {
 
 describe('native requested job output limit', () => {
   const limits = { cpu: 1, cpu_seconds: '1', memory_mib: 64, wall_seconds: 60, output_bytes: '1' };
-  it('matches the native one-byte through 64-MiB boundary without floating point', () => {
-    for (const output_bytes of ['1', '67108863', '67108864']) {
+  it('matches positive signed-bigint output bounds without inventing a 64-MiB ceiling', () => {
+    for (const output_bytes of ['1', '67108864', '67108865', '9223372036854775807', null]) {
       expect(accepts('RuntimeJobLimitsV1', { ...limits, output_bytes })).toBe(true);
     }
-    for (const output_bytes of ['0', '67108865', '9223372036854775807', '01', '+1', '1\n', '1.0', 1, null]) {
+    for (const output_bytes of ['0', '9223372036854775808', '01', '+1', '1\n', '1.0', 1]) {
       expect(accepts('RuntimeJobLimitsV1', { ...limits, output_bytes })).toBe(false);
     }
   });
   it('checks decimal prefix transitions and deterministic wide samples against native integer bounds', () => {
     const samples = new Set<bigint>();
-    for (let power = 1n; power <= 1_000_000_000n; power *= 10n) {
+    for (let power = 1n; power <= 10_000_000_000_000_000_000n; power *= 10n) {
       for (const delta of [-1n, 0n, 1n]) samples.add(power + delta);
     }
     let state = 17n;
@@ -84,7 +84,7 @@ describe('native requested job output limit', () => {
     }
     for (const value of samples) {
       expect(accepts('RuntimeJobLimitsV1', { ...limits, output_bytes: value.toString() }))
-        .toBe(value >= 1n && value <= 67108864n);
+        .toBe(value >= 1n && value <= 9223372036854775807n);
     }
   });
 });

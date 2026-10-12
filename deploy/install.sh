@@ -14,7 +14,7 @@ while [ "$#" -gt 0 ]; do
     --help|-h)
       cat <<'HELP'
 Usage: bash install.sh [--cli-only] [--version TAG|latest] [--bin-dir PATH] [--directory PATH]
-                       [--port PORT] [--database-port PORT] [--codex-home PATH]
+                       [--port PORT] [--database-port PORT]
 Installs the prebuilt CLI into ~/.local/bin. Linux x86_64 also installs or
 updates the Docker stack; macOS installs only the CLI. The source bootstrap
 selects the newest complete published dev release; release installers are pinned.
@@ -26,7 +26,7 @@ No local build, automatic package installation, sudo or file checksum is used.
 HELP
       exit 0 ;;
     --cli-only) cli_only=true; shift ;;
-    --version|--directory|--bin-dir|--port|--database-port|--codex-home)
+    --version|--directory|--bin-dir|--port|--database-port)
       [ "$#" -ge 2 ] && [ -n "$2" ] || fail "Missing value for $1"
       case "$1" in
         --version) version=$2 ;;
@@ -181,7 +181,7 @@ json_read() {
     }
     if(mode!="latest" || kind[root]!="array") bad()
     latest=field
-    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz quazonai-image-codex.tar.gz quazonai-image-database.tar.gz",required," ")
+    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz quazonai-image-database.tar.gz",required," ")
     for(i=1;i<=count[root];i++) {
       release=prop(root,i); tag=value[prop(release,"tag_name")]; assets=prop(release,"assets")
       if(kind[release]!="object" || kind[prop(release,"tag_name")]!="string" || !dev(tag) || kind[prop(release,"draft")]!="false" || kind[assets]!="array") continue
@@ -255,8 +255,7 @@ chmod 755 "$staged"
 if ! "$cli_only"; then
   fetch "$base/quazonai-deploy.tar.gz" "$work/quazonai-deploy.tar.gz" || fail 'Could not download the deployment bundle.'
   extract_files "$work/quazonai-deploy.tar.gz" "$work/deployment" \
-    manage.sh json.awk codex.sh deploy.sh update.sh compose.yaml release.json README.md \
-    codex-update.sh codex-login.sh runtime.sh codex.apparmor .env.example
+    manage.sh json.awk deploy.sh update.sh compose.yaml release.json README.md runtime.sh .env.example
   release_version=$(json_read field "$work/deployment/release.json" version) || fail 'Invalid deployment manifest.'
   [ "$release_version" = "$version" ] || fail 'Downloaded deployment bundle does not match the requested tag.'
   pending=''

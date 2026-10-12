@@ -5,12 +5,12 @@
 //! with Store, authenticates transport, and installs the gate in every strategy.
 //! LIVE, unsupported fee models, algorithms, emulation, multiple strategies, native
 //! recovery and competing protection quantities are explicitly unsupported here.
-use crate::capital_exit_gate::{CapitalExitGate, same_control_binding};
-use anyhow::{Result, anyhow, ensure};
+use crate::capital_exit_gate::{same_control_binding, CapitalExitGate};
+use anyhow::{anyhow, ensure, Result};
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
-    DbCounter, DecimalValue, Id, Revision, SchemaV1, account_observation::AccountMoneyV1,
-    capital_exit::*, forward::ForwardEnvironmentV1,
+    account_observation::AccountMoneyV1, capital_exit::*, forward::ForwardEnvironmentV1, DbCounter,
+    DecimalValue, Id, Revision, SchemaV1,
 };
 use nautilus_common::{actor::DataActorNative, enums::Environment};
 use nautilus_execution::models::fee::{FeeModel, FeeModelAny, FeeModelHandle, MakerTakerFeeModel};
@@ -28,7 +28,7 @@ use nautilus_model::{
 use nautilus_sandbox::SandboxExecutionClientConfig;
 use nautilus_trading::strategy::{Strategy, StrategyNative};
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{cell::RefCell, path::Path, str::FromStr};
 
 /// Trusted in-process registration. None of these fields establishes authority

@@ -22,9 +22,6 @@
 !skills/
 !skills/**
 !runtimes/
-!runtimes/codex/
-!runtimes/codex/package.json
-!runtimes/codex/package-lock.json
 !runtimes/data/
 !runtimes/data/source_plugins.py
 !runtimes/data/acquire.py

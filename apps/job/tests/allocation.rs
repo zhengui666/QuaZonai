@@ -1,7 +1,7 @@
 //! Native Clarabel solves, checked against independent small analytical answers.
 //! Example instruments and assumptions are SYNTHETIC, not qualification evidence.
 use bigdecimal::ToPrimitive;
-use contracts::{DecimalValue, Id, portfolio::*};
+use contracts::{portfolio::*, DecimalValue, Id};
 
 fn input() -> AllocationInputV1 {
     serde_json::from_str(include_str!(
@@ -14,7 +14,7 @@ fn decimal(value: &str) -> DecimalValue {
 }
 
 fn forecast_input() -> PortfolioForecastInputV1 {
-    use contracts::{DbCounter, SchemaV1, brief::HorizonKind, evidence::ForecastUnit};
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter, SchemaV1};
     let instruments: Vec<_> = input()
         .assets
         .into_iter()
@@ -167,7 +167,7 @@ fn actual_fixed_mixture_predictions_feed_one_native_utility_problem() {
 
 #[test]
 fn incompatible_original_forecasts_never_reach_native_aggregation() {
-    use contracts::{DbCounter, brief::HorizonKind, evidence::ForecastUnit};
+    use contracts::{brief::HorizonKind, evidence::ForecastUnit, DbCounter};
     let mutations: &[fn(&mut PortfolioForecastInputV1)] = &[
         |r| r.members[1].alpha_id = r.members[0].alpha_id,
         |r| r.members[1].alpha_version_id = r.members[0].alpha_version_id,
@@ -244,13 +244,11 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         vec!["-1", "2"],
         vec!["0.5", "0.500000000000000001"],
     ] {
-        assert!(
-            mix(
-                &forecasts,
-                &weights.into_iter().map(decimal).collect::<Vec<_>>()
-            )
-            .is_err()
-        );
+        assert!(mix(
+            &forecasts,
+            &weights.into_iter().map(decimal).collect::<Vec<_>>()
+        )
+        .is_err());
     }
     let weights = [decimal("0.5"), decimal("0.5")];
     for forecasts in [

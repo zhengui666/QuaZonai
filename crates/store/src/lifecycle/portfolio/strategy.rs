@@ -287,10 +287,17 @@ where
             return Err(StoreError::Invalid("strategy_current_warmup_catalog"));
         }
         let execution_context = domain::prediction::binary_option_context(
-            &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
-            &selected, &policy.instrument_id, &settings)?;
-        domain::prediction::binary_option_source(resolved.report.request.binary_option.as_ref(),
-            execution_context.as_ref(), &fold.simulation_request.selection)?;
+            &dataset.metadata.universe.instrument_definitions,
+            &dataset.selection.settlements,
+            &selected,
+            &policy.instrument_id,
+            &settings,
+        )?;
+        domain::prediction::binary_option_source(
+            resolved.report.request.binary_option.as_ref(),
+            execution_context.as_ref(),
+            &fold.simulation_request.selection,
+        )?;
         let mut feature_ids = policy.feature_artifact_ids.clone();
         if let StrategyPortfolioPurposeV1::CurrentDecision { member_inputs, .. } = &build.purpose {
             feature_ids.extend(
@@ -385,8 +392,12 @@ where
     }
     let request = NativeStrategyCompositionRequestV1 {
         binary_option: domain::prediction::binary_option_context(
-            &dataset.metadata.universe.instrument_definitions, &dataset.selection.settlements,
-            &selected, &members[0].policy.instrument_id, &settings)?,
+            &dataset.metadata.universe.instrument_definitions,
+            &dataset.selection.settlements,
+            &selected,
+            &members[0].policy.instrument_id,
+            &settings,
+        )?,
         schema_version: SchemaV1,
         selection: selected,
         mandate: mandate.clone(),
@@ -492,7 +503,10 @@ impl Store {
             &mut read,
         )
         .await?;
-        domain::prediction::binary_option_capability(resolved.request.binary_option.as_ref(), &cap)?;
+        domain::prediction::binary_option_capability(
+            resolved.request.binary_option.as_ref(),
+            &cap,
+        )?;
         let task = NativeTaskParametersV1::ComposeStrategyTargets {
             schema_version: SchemaV1,
             dataset_revision_id: resolved.request.input_provenance.dataset_revision_id,
@@ -506,7 +520,7 @@ impl Store {
         }) {
             return Err(DomainError::CapabilityUnavailable("strategy_outputs").into());
         }
-        let cpu = experiment::native_cpu(&request.limits, &cap)?;
+        let cpu = resources::native_cpu(&request.limits, &cap)?;
         let capability: uuid::Uuid = sqlx::query_scalar(
             "SELECT last_capability_snapshot_artifact_id FROM app.runtime_integrations WHERE id=$1",
         )

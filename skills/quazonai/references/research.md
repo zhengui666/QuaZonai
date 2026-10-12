@@ -2,6 +2,27 @@
 
 Table entries follow `quazonai client` with the saved login or original scoped connection from [connection](connection.md).
 
+## Durable factor research
+
+The default loop is goal/data → proposals/native computation → validation feedback → recorded iteration or stop. Submit one original owner-authorized objective, not one approval per experiment. The installed host owns model credentials and official extensions; this Skill does not launch or configure another Agent.
+
+| Need | Native arguments |
+| --- | --- |
+| See actual configured model availability | `research models` |
+| Inspect the submission envelope | `quazonai openapi --schema DurableResearchStartV1` |
+| Inspect default factor-only science input | `quazonai openapi --domain --schema NativeFactorEvaluationRequestV1` |
+| Submit the original objective/data/policy file | `research start --file research-request.json` |
+| List persistent native studies | `research list` |
+| Read original input, complete trials, selection and native view | `research get CONVERSATION_ID` |
+| Observe native task graph/records and measured usage | `research tasks`; `research usage` |
+| Request stop of original work and owned children | `research stop CONVERSATION_ID` |
+
+`CONVERSATION_ID` is the native numeric receipt ID, not a scientific UUID. The file contains `requestId` and `input:{goal,model:{provider,modelId},data,policy}`. Extension data/criteria are open JSON objects; do not invent catalog paths, datasets, clocks or credentials. The default Wasm adapter uses an original prepared catalog, typed request and optional independent final data; choose only supported tools and actual available models.
+
+Retain the exact file and `requestId` through uncertainty. Same-input replay returns original identities; changed content under the same ID conflicts. HTTP 202 is admission, not completed science. View all failed/rejected trials and the complete comparison/selection; actual IC availability is not qualification or profit. Final evidence is owner-visible only, not another tuning signal. Respect original criteria and explicit limits; exposed samples cannot become unseen by a new study name or fork.
+
+The sections below are **optional scientific/portfolio consumers and historical inspection**, not mandatory stages of the durable factor loop.
+
 ## Inspect before changing
 
 | Need | Native arguments |
@@ -13,7 +34,7 @@ Table entries follow `quazonai client` with the saved login or original scoped c
 | Inspect frozen inputs and policy | `input-set list --project-id PROJECT_ID --limit 20`; `input-set show ID`; `policy show ID` |
 | Inspect registered source metadata | `data source show ID`; `data revision list --source-id ID --limit 20`; `data revision show ID` |
 | Inspect registered evidence summary (owner, non-Sealed) | `data revision evidence ID` |
-| Check execution readiness | `runtime readiness ID`; `codex models ID`; `codex account ID` |
+| Check optional science readiness | `runtime readiness ID` |
 | Find existing work | `cycle list PROJECT_ID --limit 20`; `cycle show ID`; `experiment list --project-id PROJECT_ID --limit 20` |
 
 Follow IDs from the Brief/InputSet rather than scanning all sources. Registration and prior readiness observations do not prove data quality, PIT, account usability or current eligibility. Report missing/stale prerequisites. Inspection does not authorize probes, login, permission changes or access to raw Sealed data/native storage paths.
@@ -43,7 +64,6 @@ reads without re-registering or changing PIT labels.
 | Create an evaluation policy version | `policy create` | `EvaluationPolicyCreate` |
 | Save/replace a Brief | `brief create PROJECT_ID` / `brief update BRIEF_ID` | `BriefCreate` / `BriefUpdate` |
 | Freeze the selected Brief | `brief freeze BRIEF_ID` | `BriefFreezeV1` |
-| Start its internally managed research Cycle | `cycle start PROJECT_ID` | `CycleStartV1` |
 | Start an external-Agent Cycle | `cycle start-external PROJECT_ID` | `ExternalCycleStartV1` |
 | Close a settled external Cycle | `cycle finish-external CYCLE_ID` | `CycleFinishExternalV1` |
 | Validate a frozen InputSet | `data validate` | `DataValidateRequest` |
@@ -62,7 +82,7 @@ login or the original scoped identity's exact Operator grant. InputSet creation
 freezes the selected registered references; policy creation records a new version.
 Neither operation acquires data, validates quality or establishes evaluation PASS.
 
-Discover unfamiliar fields from the named schema. Populate user intent and current snapshot values; missing scientific decisions need the user, not invented IDs, budgets, data roles, policy versions, assumptions or runtime. Follow the entry Skill's authority rules; Missions use their bound tools.
+Discover unfamiliar fields from the named schema. Use user intent and original current references; never invent scientific decisions, IDs, budgets, data roles or assumptions to make a request pass.
 
 Preserve `expected_revision` from the snapshot. A conflict requires rereading and reconsidering intent, not silently substituting the latest revision.
 
@@ -74,13 +94,10 @@ With `ARTIFACT_SUBMIT`, populate native `ArtifactCreate` from the selected proje
 
 With `EXPERIMENT_SUBMIT`, use `ExperimentProposalV1` with the original Cycle, inputs and registered artifact references. Preserve its ID and outcome; PENDING is not executed, evaluated or qualified. Budget failures return to the task owner; another Attempt/key must not evade them.
 
-Inside a [bound Mission](mission.md), artifact submission takes a workspace-relative filename; the adapter supplies fixed identities.
 
 ## External native research sequence
 
-Use this sequence only for requested external-Agent research; a bound Mission
-retains its own tools. Each write takes the table's DTO as JSON on stdin and its
-own retained `--idempotency-key`, as in [connection](connection.md).
+Use this sequence only for explicitly requested optional external scientific/target-policy work. Each write takes the table's DTO on stdin and its own retained `--idempotency-key`, as in [connection](connection.md); it is not the factor-only durable engine.
 
 1. `cycle start-external PROJECT_ID` uses the original frozen `brief_id` and
    Project `expected_revision`. It creates a Cycle without internal researcher or
@@ -112,7 +129,7 @@ own retained `--idempotency-key`, as in [connection](connection.md).
 
 ## Research content
 
-CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8 and contains no NUL. Original content bytes are retained without an application byte cap. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
+CODE, PARAMETERS and REPORT are the permitted optional research artifact kinds. Content is nonblank UTF-8 without NUL; original bytes remain retained. CODE is source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`. This storage envelope does not establish scientific eligibility or source provenance.
 
 For scientific experiments, the generic JSON-object rule above is only the
 artifact storage envelope. Before writing a parameter artifact, discover its
@@ -128,9 +145,12 @@ quazonai openapi --domain --schema FeatureObservationsV1
 JSON encoded once in the outer `ArtifactCreate.content` string, not as extra
 outer request fields. Follow the selected contract's transitive schemas for
 settings, feature definitions, nullable values and decimal-string counters.
-An omitted or null `total_fuel` disables Wasmi fuel metering; an explicit budget
-remains a decimal-string counter. Results report `consumed_fuel: null` for
-unmetered execution, which is distinct from a measured `"0"`.
+For trusted direct native scientific callers, omitted/null `total_fuel` disables
+Wasmi metering and `consumed_fuel: null` is unmeasured, not a measured `"0"`.
+The Durable model-code adapter instead supplies finite `"10000000"` fuel when
+omitted/null, plus a native process timeout and address-space bound; it retains
+the original input and echoes the effective request and actual fuel. Explicit
+budgets remain decimal-string counters; failures remain disclosed.
 The installed contract describes wire structure, not approved scientific
 choices or server eligibility. Do not infer model ABI or code requirements
 from a JSON schema; report an unavailable contract or unsupported workflow.

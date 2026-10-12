@@ -2,9 +2,9 @@
 mod capital_exit_support;
 use capital_exit_support::*;
 use chrono::{DateTime, Utc};
-use contracts::{DbCounter, SchemaV1, capital_exit::*};
+use contracts::{capital_exit::*, DbCounter, SchemaV1};
 use serde_json::Value;
-use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Transaction};
 use std::time::Duration;
 use store::{Store, StoreError};
 

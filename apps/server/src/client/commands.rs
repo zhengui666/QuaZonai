@@ -4,18 +4,13 @@ use clap::{Args, Subcommand};
 use contracts::{
     artifacts::{ArtifactCreate, ArtifactView},
     brief::{BriefCreate, BriefUpdate, BriefView},
-    codex::{
-        CodexAccountOperationV1, CodexAccountRequestV1, CodexAccountStartV1, CodexLoginCancelV1,
-        CodexObservationV1, CodexProbeRequestV1, CodexProbeViewV1, CodexProfileUpdateV1,
-        CodexProfileViewV1,
-    },
     control::{
         CommandResult, OperatorGrantRequest, OperatorGrantView, Page, ProjectCreate, ProjectUpdate,
         ProjectView,
     },
     cycles::{
-        BriefFreezeV1, CycleFinishExternalV1, CycleSelectionTrialV1, CycleSelectionV1,
-        CycleStartV1, CycleStartedV1, CycleViewV1, ExternalCycleStartV1, FrozenBriefV1,
+        BriefFreezeV1, CycleFinishExternalV1, CycleSelectionTrialV1, CycleSelectionV1, CycleViewV1,
+        ExternalCycleStartV1, FrozenBriefV1,
     },
     data::*,
     evidence::{
@@ -41,7 +36,7 @@ use contracts::{
 };
 use reqwest::Method;
 use serde::{de::DeserializeOwned, Serialize};
-use std::io::Read;
+use std::{io::Read, path::PathBuf};
 
 #[derive(Args)]
 #[group(id = "Pagination")]
@@ -99,7 +94,7 @@ pub enum Command {
     #[command(subcommand)]
     Runtime(Runtime),
     #[command(subcommand)]
-    Codex(Codex),
+    Research(Research),
     #[command(subcommand)]
     Downstream(Downstream),
     #[command(subcommand)]
@@ -242,56 +237,123 @@ pub enum CapitalExits {
     /// Request an evidence-bound AMOUNT server preview from stdin (no execution).
     /// New PORTFOLIO_SCOPE previews are unsupported; historical portfolio exits remain readable.
     /// The generic --preview only validates local transport syntax and sends nothing.
-    Preview { #[arg(long)] project_id: String },
+    Preview {
+        #[arg(long)]
+        project_id: String,
+    },
     /// Start the exact approved preview from stdin; may activate native reductions.
     /// A 202 receipt means requested, not cash released or withdrawal completed.
-    Start { #[arg(long)] project_id: String },
+    Start {
+        #[arg(long)]
+        project_id: String,
+    },
     List(ProjectList),
-    Show { id: String },
+    Show {
+        id: String,
+    },
     /// Request a pause of new reductions and resolution of exit-owned orders; reserve remains.
     /// 202 means accepted. PAUSED, even without reasons, does not prove all orders stopped.
-    Pause { id: String },
+    Pause {
+        id: String,
+    },
     /// Request cancellation of future exit work; filled trades remain and reserve is not reinvested.
     /// 202 means accepted; wait for original native cancellation evidence.
-    Cancel { id: String },
+    Cancel {
+        id: String,
+    },
     /// Request remaining reductions using a fresh approved preview; never buy back.
     /// 202 means accepted, not reductions completed; the server admits the original preview.
-    Resume { id: String },
+    Resume {
+        id: String,
+    },
     /// Report your own withdrawal for native verification; never performs a transfer.
-    Reconcile { id: String },
+    Reconcile {
+        id: String,
+    },
 }
 
 impl CapitalExits {
     fn request(self) -> Result<Request> {
         use contracts::capital_exit::*;
         match self {
-            Self::Preview { project_id } => Self::preview_input(project_id, std::io::stdin().lock()),
-            Self::Start { project_id } => Request::write::<CapitalExitStartV1, CommandResult<CapitalExitViewV1>>(
-                Method::POST, action("/api/v2/projects", project_id, "capital-exits")?, 202, true),
-            Self::List(list) => Request::get::<Page<CapitalExitViewV1>>(action("/api/v2/projects", list.project_id, "capital-exits")?).page(list.page),
-            Self::Show { id } => Ok(Request::get::<CapitalExitViewV1>(item("/api/v2/capital-exits", id)?)),
+            Self::Preview { project_id } => {
+                Self::preview_input(project_id, std::io::stdin().lock())
+            }
+            Self::Start { project_id } => {
+                Request::write::<CapitalExitStartV1, CommandResult<CapitalExitViewV1>>(
+                    Method::POST,
+                    action("/api/v2/projects", project_id, "capital-exits")?,
+                    202,
+                    true,
+                )
+            }
+            Self::List(list) => Request::get::<Page<CapitalExitViewV1>>(action(
+                "/api/v2/projects",
+                list.project_id,
+                "capital-exits",
+            )?)
+            .page(list.page),
+            Self::Show { id } => Ok(Request::get::<CapitalExitViewV1>(item(
+                "/api/v2/capital-exits",
+                id,
+            )?)),
             Self::Pause { id } => Self::action_input(id, "pause", "PAUSE", std::io::stdin().lock()),
-            Self::Cancel { id } => Self::action_input(id, "cancel", "CANCEL", std::io::stdin().lock()),
-            Self::Resume { id } => Self::action_input(id, "resume", "RESUME", std::io::stdin().lock()),
-            Self::Reconcile { id } => Self::action_input(id, "reconcile-withdrawal", "RECONCILE_WITHDRAWAL", std::io::stdin().lock()),
+            Self::Cancel { id } => {
+                Self::action_input(id, "cancel", "CANCEL", std::io::stdin().lock())
+            }
+            Self::Resume { id } => {
+                Self::action_input(id, "resume", "RESUME", std::io::stdin().lock())
+            }
+            Self::Reconcile { id } => Self::action_input(
+                id,
+                "reconcile-withdrawal",
+                "RECONCILE_WITHDRAWAL",
+                std::io::stdin().lock(),
+            ),
         }
     }
     fn preview_input(project_id: String, input: impl Read) -> Result<Request> {
-        use contracts::capital_exit::{CapitalExitPreviewRequestV1, CapitalExitPreviewV1, CapitalExitScopeV1};
-        let request = Request::write_input::<CapitalExitPreviewRequestV1, CommandResult<CapitalExitPreviewV1>>(
-            Method::POST, action("/api/v2/projects", project_id, "capital-exit-previews")?, 201, true, input)?;
-        let body: CapitalExitPreviewRequestV1 = serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
-            .map_err(|_| Failure::Input)?;
-        if !matches!(body.scope, CapitalExitScopeV1::Amount { .. }) { return Err(Failure::Input); }
+        use contracts::capital_exit::{
+            CapitalExitPreviewRequestV1, CapitalExitPreviewV1, CapitalExitScopeV1,
+        };
+        let request = Request::write_input::<
+            CapitalExitPreviewRequestV1,
+            CommandResult<CapitalExitPreviewV1>,
+        >(
+            Method::POST,
+            action("/api/v2/projects", project_id, "capital-exit-previews")?,
+            201,
+            true,
+            input,
+        )?;
+        let body: CapitalExitPreviewRequestV1 =
+            serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
+                .map_err(|_| Failure::Input)?;
+        if !matches!(body.scope, CapitalExitScopeV1::Amount { .. }) {
+            return Err(Failure::Input);
+        }
         Ok(request)
     }
-    fn action_input(id: String, suffix: &str, expected_action: &str, input: impl Read) -> Result<Request> {
+    fn action_input(
+        id: String,
+        suffix: &str,
+        expected_action: &str,
+        input: impl Read,
+    ) -> Result<Request> {
         use contracts::capital_exit::{CapitalExitActionV1, CapitalExitViewV1};
         let request = Request::write_input::<CapitalExitActionV1, CommandResult<CapitalExitViewV1>>(
-            Method::POST, action("/api/v2/capital-exits", id, suffix)?, 202, true, input)?;
-        let body: CapitalExitActionV1 = serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
-            .map_err(|_| Failure::Input)?;
-        if body.action() != expected_action { return Err(Failure::Input); }
+            Method::POST,
+            action("/api/v2/capital-exits", id, suffix)?,
+            202,
+            true,
+            input,
+        )?;
+        let body: CapitalExitActionV1 =
+            serde_json::from_slice(request.body.as_deref().ok_or(Failure::Input)?)
+                .map_err(|_| Failure::Input)?;
+        if body.action() != expected_action {
+            return Err(Failure::Input);
+        }
         Ok(request)
     }
 }
@@ -522,9 +584,6 @@ pub enum Cycle {
     Show {
         id: String,
     },
-    Start {
-        project_id: String,
-    },
     /// Start a frozen research cycle for an external Agent, without internal profiles.
     StartExternal {
         project_id: String,
@@ -620,38 +679,22 @@ pub enum Runtime {
     Readiness { id: String },
 }
 #[derive(Subcommand)]
-pub enum Codex {
-    /// List nonsecret native profile configuration.
-    List(List),
-    Show {
-        id: String,
+pub enum Research {
+    /// Submit the original JSON file, including its durable requestId. Retry the same file.
+    Start {
+        #[arg(long, value_name = "PATH")]
+        file: PathBuf,
     },
-    /// Read CodexProfileUpdateV1 on stdin; requires CAS and, for scoped credentials, an Operator grant.
-    Update {
-        id: String,
+    List,
+    Get {
+        id: u64,
     },
-    /// Explicit native inspection, no paid inference. Read CodexProbeRequestV1 on stdin.
-    Probe {
-        id: String,
+    Stop {
+        id: u64,
     },
-    /// Read the last observation without invoking model/list or refreshing authentication.
-    Models {
-        id: String,
-    },
-    /// Read the last nonsecret account observation, never native auth.json.
-    Account {
-        id: String,
-    },
-    /// Start native device login; read CodexAccountRequestV1 on stdin.
-    Login,
-    /// Sign out through native Codex; read CodexAccountRequestV1 on stdin.
-    Logout,
-    /// Cancel the exact native login; read CodexLoginCancelV1 on stdin.
-    LoginCancel,
-    /// Read an account operation without returning a device code.
-    LoginStatus {
-        id: String,
-    },
+    Models,
+    Tasks,
+    Usage,
 }
 
 #[derive(Subcommand)]
@@ -708,6 +751,16 @@ pub enum Artifact {
 }
 #[derive(Subcommand)]
 pub enum Run {
+    /// Inspect original retired CODEX session/profile/turn/usage/wake facts; read-only.
+    History {
+        id: String,
+        #[arg(long)]
+        turn_cursor: Option<String>,
+        #[arg(long)]
+        wake_cursor: Option<String>,
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u16).range(1..=100))]
+        limit: u16,
+    },
     /// Read original automatic rebalance provenance.
     Rebalance {
         id: String,
@@ -740,6 +793,8 @@ pub enum Run {
 pub(super) enum Output {
     Json(fn(&[u8]) -> Result<serde_json::Value>),
     NativeReport(fn(&[u8]) -> Result<serde_json::Value>),
+    /// Native durable JSON: unknown snapshot/error fields are retained, not a QZ DTO.
+    DurableJson,
     Binary {
         id: Id,
         report: Option<Id>,
@@ -816,9 +871,7 @@ fn decode<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<serde_json::V
 }
 fn read_input<T: DeserializeOwned + Serialize>(mut input: impl Read) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    input
-        .read_to_end(&mut bytes)
-        .map_err(|_| Failure::Input)?;
+    input.read_to_end(&mut bytes).map_err(|_| Failure::Input)?;
     if bytes.is_empty() {
         return Err(Failure::Input);
     }
@@ -837,6 +890,7 @@ fn action(base: &str, value: String, suffix: &str) -> Result<String> {
 impl Request {
     pub(super) fn requires_idempotency_key(&self) -> bool {
         self.method != Method::GET
+            && !matches!(self.output, Output::DurableJson)
             && !(self.method == Method::POST
                 && self.route == "/api/v2/forward/account-observations")
     }
@@ -963,6 +1017,44 @@ impl ForwardAccounts {
                 )?)
                 .page(page)?
             }
+        })
+    }
+}
+
+impl Research {
+    fn request(self) -> Result<Request> {
+        let (method, route, body) = match self {
+            Self::Start { file } => {
+                let bytes = std::fs::read(file).map_err(|_| Failure::Input)?;
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|_| Failure::Input)?;
+                if payload
+                    .get("requestId")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none()
+                    || !payload
+                        .get("input")
+                        .is_some_and(serde_json::Value::is_object)
+                {
+                    return Err(Failure::Input);
+                }
+                (Method::POST, "/api/v2/research".into(), Some(bytes))
+            }
+            Self::List => (Method::GET, "/api/v2/research".into(), None),
+            Self::Get { id } => (Method::GET, format!("/api/v2/research/{id}"), None),
+            Self::Stop { id } => (Method::POST, format!("/api/v2/research/{id}/stop"), None),
+            Self::Models => (Method::GET, "/api/v2/research/models".into(), None),
+            Self::Tasks => (Method::GET, "/api/v2/research/tasks".into(), None),
+            Self::Usage => (Method::GET, "/api/v2/research/usage".into(), None),
+        };
+        Ok(Request {
+            method,
+            route,
+            query: vec![],
+            body,
+            status: 200,
+            operator: false,
+            output: Output::DurableJson,
         })
     }
 }
@@ -1479,14 +1571,6 @@ impl Command {
                             true,
                         )?
                     }
-                    Cycle::Start { project_id } => {
-                        Request::write::<CycleStartV1, CommandResult<CycleStartedV1>>(
-                            POST,
-                            action("/api/v2/projects", project_id, "cycles")?,
-                            202,
-                            true,
-                        )?
-                    }
                 }
             }
             Self::Data(Data::Validate) => Request::write::<
@@ -1671,69 +1755,7 @@ impl Command {
                     "readiness",
                 )?),
             },
-            Self::Codex(command) => match command {
-                Codex::List(page) => {
-                    Request::get::<Page<CodexProfileViewV1>>("/api/v2/settings/codex").page(page)?
-                }
-                Codex::Show { id } => {
-                    Request::get::<CodexProfileViewV1>(item("/api/v2/settings/codex", id)?)
-                }
-                Codex::Update { id } => Request::write::<
-                    CodexProfileUpdateV1,
-                    CommandResult<CodexProfileViewV1>,
-                >(
-                    PATCH, item("/api/v2/settings/codex", id)?, 200, true
-                )?,
-                Codex::Probe { id: selected } => {
-                    let selected = id(selected)?;
-                    let request = Request::write::<
-                        CodexProbeRequestV1,
-                        CommandResult<CodexProbeViewV1>,
-                    >(POST, "/api/v2/codex/probe", 200, true)?;
-                    let body: CodexProbeRequestV1 =
-                        serde_json::from_slice(request.body.as_ref().ok_or(Failure::Input)?)
-                            .map_err(|_| Failure::Input)?;
-                    if body.profile_id != selected {
-                        return Err(Failure::Input);
-                    }
-                    request
-                }
-                Codex::Models { id: selected } => {
-                    let mut request = Request::get::<CodexObservationV1>("/api/v2/codex/models");
-                    request
-                        .query
-                        .push(("profile_id".into(), id(selected)?.to_string()));
-                    request
-                }
-                Codex::Account { id: selected } => {
-                    let mut request = Request::get::<CodexObservationV1>("/api/v2/codex/account");
-                    request
-                        .query
-                        .push(("profile_id".into(), id(selected)?.to_string()));
-                    request
-                }
-                Codex::Login => Request::write::<CodexAccountRequestV1, CodexAccountStartV1>(
-                    POST,
-                    "/api/v2/codex/login/start",
-                    202,
-                    true,
-                )?,
-                Codex::Logout => Request::write::<CodexAccountRequestV1, CodexAccountStartV1>(
-                    POST,
-                    "/api/v2/codex/logout",
-                    202,
-                    true,
-                )?,
-                Codex::LoginCancel => Request::write::<
-                    CodexLoginCancelV1,
-                    CommandResult<CodexAccountOperationV1>,
-                >(
-                    POST, "/api/v2/codex/login/cancel", 202, true
-                )?,
-                Codex::LoginStatus { id } => {
-                    Request::get::<CodexAccountOperationV1>(item("/api/v2/codex/login", id)?)
-                }
-            },
+            Self::Research(command) => command.request()?,
             Self::Downstream(command) => match command {
                 Downstream::List(page) => {
                     Request::get::<Page<DownstreamView>>("/api/v2/integrations/downstreams")
@@ -1920,6 +1942,28 @@ impl Command {
             },
             Self::Run(command) => match command {
                 Run::Show { id } => Request::get::<RunSnapshotV1>(item("/api/v2/runs", id)?),
+                Run::History {
+                    id: run,
+                    turn_cursor,
+                    wake_cursor,
+                    limit,
+                } => {
+                    let mut request = Request::get::<contracts::runs::HistoricalAgentHistoryV1>(
+                        action("/api/v2/runs", run, "agent-history")?,
+                    );
+                    request.query.push(("limit".into(), limit.to_string()));
+                    if let Some(cursor) = turn_cursor {
+                        request
+                            .query
+                            .push(("turn_cursor".into(), id(cursor)?.to_string()));
+                    }
+                    if let Some(cursor) = wake_cursor {
+                        request
+                            .query
+                            .push(("wake_cursor".into(), id(cursor)?.to_string()));
+                    }
+                    request
+                }
                 Run::Rebalance { id } => Request::get::<contracts::runs::RunRebalanceViewV1>(
                     action("/api/v2/runs", id, "rebalance")?,
                 ),
@@ -2488,21 +2532,33 @@ mod capital_exit_cli_tests {
                 "max_execution_cost":{"amount":"0.000000000000000001","currency":"USD","reference_evidence_id":ID}}});
         let bytes = serde_json::to_vec(&body).unwrap();
         let request = CapitalExits::preview_input(ID.into(), bytes.as_slice()).unwrap();
-        assert_eq!(request.route, format!("/api/v2/projects/{ID}/capital-exit-previews"));
+        assert_eq!(
+            request.route,
+            format!("/api/v2/projects/{ID}/capital-exit-previews")
+        );
         assert_eq!(request.method, Method::POST);
         assert_eq!(request.status, 201);
         assert!(request.operator && request.requires_idempotency_key());
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap()).unwrap(), body);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap()).unwrap(),
+            body
+        );
         let mut portfolio = body.clone();
         portfolio["scope"]["kind"] = "PORTFOLIO_SCOPE".into();
         portfolio["scope"]["stream_ids"] = serde_json::json!([ID]);
         portfolio["scope"]["release_ids"] = serde_json::json!([ID]);
         let bytes = serde_json::to_vec(&portfolio).unwrap();
-        assert!(matches!(CapitalExits::preview_input(ID.into(), bytes.as_slice()), Err(Failure::Input)));
+        assert!(matches!(
+            CapitalExits::preview_input(ID.into(), bytes.as_slice()),
+            Err(Failure::Input)
+        ));
         let mut unknown = body;
         unknown["scope"]["unknown_field"] = true.into();
         let bytes = serde_json::to_vec(&unknown).unwrap();
-        assert!(matches!(CapitalExits::preview_input(ID.into(), bytes.as_slice()), Err(Failure::Input)));
+        assert!(matches!(
+            CapitalExits::preview_input(ID.into(), bytes.as_slice()),
+            Err(Failure::Input)
+        ));
     }
     #[test]
     fn capital_exit_reads_preserve_full_historical_portfolio_and_multiple_legs() {
@@ -2523,38 +2579,103 @@ mod capital_exit_cli_tests {
                 "released_cash_amount":null,"verified_withdrawable_amount":null,"reconciled_withdrawal_amount":{"amount":"0","currency":"USD"},
                 "unreleased_amount":null,"evidence_asof":null,"evidence_valid_until":null,"withdrawability":"UNVERIFIED"},
             "evidence_refs":[ID],"created_at":"2026-10-07T11:00:00Z","updated_at":"2026-10-07T12:00:00Z"});
-        let Output::Json(decode) = CapitalExits::Show { id: ID.into() }.request().unwrap().output else { panic!("typed show required"); };
+        let Output::Json(decode) = CapitalExits::Show { id: ID.into() }
+            .request()
+            .unwrap()
+            .output
+        else {
+            panic!("typed show required");
+        };
         assert_eq!(decode(&serde_json::to_vec(&view).unwrap()).unwrap(), view);
         let page = serde_json::json!({"schema_version":1,"items":[view],"next_cursor":ID});
-        let Output::Json(decode) = CapitalExits::List(ProjectList { project_id: ID.into(), page: List { cursor: None, limit: 25 } }).request().unwrap().output else { panic!("typed list required"); };
+        let Output::Json(decode) = CapitalExits::List(ProjectList {
+            project_id: ID.into(),
+            page: List {
+                cursor: None,
+                limit: 25,
+            },
+        })
+        .request()
+        .unwrap()
+        .output
+        else {
+            panic!("typed list required");
+        };
         assert_eq!(decode(&serde_json::to_vec(&page).unwrap()).unwrap(), page);
     }
     #[test]
     fn capital_exit_reads_use_original_paginated_routes() {
-        let request = CapitalExits::List(ProjectList { project_id: ID.into(), page: List { cursor: None, limit: 25 } }).request().unwrap();
-        assert_eq!(request.route, format!("/api/v2/projects/{ID}/capital-exits"));
+        let request = CapitalExits::List(ProjectList {
+            project_id: ID.into(),
+            page: List {
+                cursor: None,
+                limit: 25,
+            },
+        })
+        .request()
+        .unwrap();
+        assert_eq!(
+            request.route,
+            format!("/api/v2/projects/{ID}/capital-exits")
+        );
         assert_eq!(request.query, [("limit".into(), "25".into())]);
         assert_eq!(request.method, Method::GET);
         assert!(!request.requires_idempotency_key());
-        assert_eq!(CapitalExits::Show { id: ID.into() }.request().unwrap().route, format!("/api/v2/capital-exits/{ID}"));
+        assert_eq!(
+            CapitalExits::Show { id: ID.into() }
+                .request()
+                .unwrap()
+                .route,
+            format!("/api/v2/capital-exits/{ID}")
+        );
     }
     #[test]
     fn capital_exit_actions_require_typed_matching_tag_and_preserve_exact_scalars() {
-        for (suffix, action) in [("pause", "PAUSE"), ("cancel", "CANCEL"), ("resume", "RESUME"), ("reconcile-withdrawal", "RECONCILE_WITHDRAWAL")] {
+        for (suffix, action) in [
+            ("pause", "PAUSE"),
+            ("cancel", "CANCEL"),
+            ("resume", "RESUME"),
+            ("reconcile-withdrawal", "RECONCILE_WITHDRAWAL"),
+        ] {
             let mut body = serde_json::json!({"schema_version":1,"expected_revision":"9007199254740993","action":action});
-            if action == "RESUME" { body["preview_id"] = ID.into(); }
+            if action == "RESUME" {
+                body["preview_id"] = ID.into();
+            }
             if action == "RECONCILE_WITHDRAWAL" {
-                body["user_reported_amount"] = "1234567890.123456789012345678".into(); body["currency"] = "USD".into();
+                body["user_reported_amount"] = "1234567890.123456789012345678".into();
+                body["currency"] = "USD".into();
                 body["external_transfer_ref"] = "original-transfer".into();
             }
             let bytes = serde_json::to_vec(&body).unwrap();
-            let request = CapitalExits::action_input(ID.into(), suffix, action, bytes.as_slice()).unwrap();
-            assert_eq!(request.route, format!("/api/v2/capital-exits/{ID}/{suffix}"));
-            assert_eq!(request.status, 202); assert!(request.operator); assert!(request.requires_idempotency_key());
-            assert_eq!(serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap()).unwrap(), body);
-            assert!(CapitalExits::action_input(ID.into(), suffix, "WRONG_ACTION", bytes.as_slice()).is_err());
+            let request =
+                CapitalExits::action_input(ID.into(), suffix, action, bytes.as_slice()).unwrap();
+            assert_eq!(
+                request.route,
+                format!("/api/v2/capital-exits/{ID}/{suffix}")
+            );
+            assert_eq!(request.status, 202);
+            assert!(request.operator);
+            assert!(request.requires_idempotency_key());
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(request.body.as_ref().unwrap())
+                    .unwrap(),
+                body
+            );
+            assert!(CapitalExits::action_input(
+                ID.into(),
+                suffix,
+                "WRONG_ACTION",
+                bytes.as_slice()
+            )
+            .is_err());
             body["unknown_field"] = true.into();
-            assert!(CapitalExits::action_input(ID.into(), suffix, action, serde_json::to_vec(&body).unwrap().as_slice()).is_err());
+            assert!(CapitalExits::action_input(
+                ID.into(),
+                suffix,
+                action,
+                serde_json::to_vec(&body).unwrap().as_slice()
+            )
+            .is_err());
         }
     }
 }
@@ -2568,7 +2689,10 @@ mod complete_input_tests {
         let expected = serde_json::json!({"original": "a".repeat(16 * 1024 * 1024 + 1)});
         let raw = serde_json::to_vec(&expected).unwrap();
         let parsed = read_input::<serde_json::Value>(raw.as_slice()).unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&parsed).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&parsed).unwrap(),
+            expected
+        );
         let mut incomplete = raw;
         incomplete.pop();
         assert!(read_input::<serde_json::Value>(incomplete.as_slice()).is_err());
@@ -2580,17 +2704,91 @@ mod uncapped_watch_tests {
     use super::*;
     use clap::Parser;
     #[derive(Parser)]
-    struct Arguments { #[command(subcommand)] command: Command }
+    struct Arguments {
+        #[command(subcommand)]
+        command: Command,
+    }
     const RUN: &str = "018fc823-8e40-7000-8000-000000000001";
 
     #[test]
+    fn agent_history_is_a_read_with_independent_original_cursors() {
+        let request = Arguments::try_parse_from([
+            "client",
+            "run",
+            "history",
+            RUN,
+            "--turn-cursor",
+            RUN,
+            "--wake-cursor",
+            RUN,
+            "--limit",
+            "1",
+        ])
+        .unwrap()
+        .command
+        .request()
+        .unwrap();
+        assert_eq!(request.method, reqwest::Method::GET);
+        assert_eq!(request.route, format!("/api/v2/runs/{RUN}/agent-history"));
+        assert!(request.body.is_none());
+        assert!(!request.operator);
+        assert_eq!(
+            request.query,
+            vec![
+                ("limit".into(), "1".into()),
+                ("turn_cursor".into(), RUN.into()),
+                ("wake_cursor".into(), RUN.into()),
+            ]
+        );
+        for limit in ["0", "101"] {
+            assert!(
+                Arguments::try_parse_from(["client", "run", "history", RUN, "--limit", limit])
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn watch_has_no_default_time_or_event_ceiling_and_preserves_explicit_values() {
-        let request = Arguments::try_parse_from(["client", "run", "watch", RUN]).unwrap().command.request().unwrap();
-        assert!(matches!(request.output, Output::Events { seconds: None, events: None, .. }));
-        let request = Arguments::try_parse_from(["client", "run", "watch", RUN, "--max-seconds", "3601", "--max-events", "10001"]).unwrap().command.request().unwrap();
-        assert!(matches!(request.output, Output::Events { seconds: Some(3601), events: Some(10001), .. }));
+        let request = Arguments::try_parse_from(["client", "run", "watch", RUN])
+            .unwrap()
+            .command
+            .request()
+            .unwrap();
+        assert!(matches!(
+            request.output,
+            Output::Events {
+                seconds: None,
+                events: None,
+                ..
+            }
+        ));
+        let request = Arguments::try_parse_from([
+            "client",
+            "run",
+            "watch",
+            RUN,
+            "--max-seconds",
+            "3601",
+            "--max-events",
+            "10001",
+        ])
+        .unwrap()
+        .command
+        .request()
+        .unwrap();
+        assert!(matches!(
+            request.output,
+            Output::Events {
+                seconds: Some(3601),
+                events: Some(10001),
+                ..
+            }
+        ));
         for field in ["--max-seconds", "--max-events"] {
-            assert!(Arguments::try_parse_from(["client", "run", "watch", RUN, field, "0"]).is_err());
+            assert!(
+                Arguments::try_parse_from(["client", "run", "watch", RUN, field, "0"]).is_err()
+            );
         }
     }
 }

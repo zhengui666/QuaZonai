@@ -2,10 +2,10 @@
 use super::support;
 use axum::{
     body::Body,
-    http::{Request, header},
+    http::{header, Request},
 };
 use integrations::secrets::SecretVault;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,

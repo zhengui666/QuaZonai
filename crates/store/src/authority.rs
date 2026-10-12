@@ -138,6 +138,11 @@ pub(crate) async fn machine(
     let project = db::optional_id(&bindings, "project_id")?;
     let run = db::optional_id(&bindings, "run_id")?;
     let kind: PrincipalKind = db::enum_value(&bindings, "kind")?;
+    // Original Mission bearers remain historical identities, never a writer for
+    // the retired execution engine or authority for the new durable host.
+    if write && kind == PrincipalKind::Mission {
+        return Err(StoreError::Forbidden);
+    }
     let project_active = if let Some(project) = project {
         sqlx::query_scalar::<_, String>(if write {
             "SELECT state FROM app.projects WHERE id=$1 FOR UPDATE"

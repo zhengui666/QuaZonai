@@ -92,9 +92,7 @@ async fn ready(pool: &PgPool, f: &Fixture) -> contracts::settings::DownstreamVie
                 capabilities: DownstreamCapabilitiesV1 {
                     schema_version: SchemaV1,
                     delivery_mode: DownstreamDeliveryModeV1::TargetOnly,
-                    accepted_package_versions: vec![
-                        PackageSchemaVersion::V2,
-                    ],
+                    accepted_package_versions: vec![PackageSchemaVersion::V2],
                     environments: vec![ForwardEnvironmentV1::Paper],
                     market_capability_versions: vec![market],
                     accepting_targets: true,

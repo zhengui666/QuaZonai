@@ -28,7 +28,10 @@ async fn upgrade_after_shutdown(pool: PgPool) -> PgPool {
         .connect_with(connection_options.clone())
         .await
         .unwrap();
-    Store::from_pool(migrations.clone()).migrate().await.unwrap();
+    Store::from_pool(migrations.clone())
+        .migrate()
+        .await
+        .unwrap();
     migrations.close().await;
     options.connect_with(connection_options).await.unwrap()
 }

@@ -134,7 +134,10 @@ impl RuntimeService {
             .iter()
             .filter(|(_, phase, _)| phase != "QUEUED")
             .count();
-        let mut slots = self.config.max_parallel_jobs.map(|maximum| (maximum as usize).saturating_sub(active));
+        let mut slots = self
+            .config
+            .max_parallel_jobs
+            .map(|maximum| (maximum as usize).saturating_sub(active));
         let chosen: Vec<_> = pending
             .into_iter()
             .filter_map(|(id, phase, stopping)| {
@@ -142,7 +145,9 @@ impl RuntimeService {
                     return Some(id);
                 }
                 if slots.is_none_or(|remaining| remaining > 0) {
-                    if let Some(remaining) = &mut slots { *remaining -= 1; }
+                    if let Some(remaining) = &mut slots {
+                        *remaining -= 1;
+                    }
                     Some(id)
                 } else {
                     None
@@ -343,19 +348,13 @@ impl RuntimeService {
             // native writer and final exact manifest adoption. Index metadata
             // has no guessed allowance or per-file OS ceiling.
             let usage = tokio::task::spawn_blocking(move || {
-                files::output_usage(
-                    &root.job(spec.run_id, spec.attempt_no).join("output"),
-                    None,
-                )
+                files::output_usage(&root.job(spec.run_id, spec.attempt_no).join("output"), None)
             })
             .await
             .map_err(|_| Failure::Integrity)?;
             if matches!(usage, Err(Failure::Capacity | Failure::Invalid(_))) {
                 self.journal
-                    .request_stop(
-                        id,
-                        RuntimeFailureCode::InvalidOutput,
-                    )
+                    .request_stop(id, RuntimeFailureCode::InvalidOutput)
                     .await?;
             } else {
                 usage?;

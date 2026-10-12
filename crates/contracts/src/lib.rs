@@ -5,18 +5,18 @@
 #![forbid(unsafe_code)]
 
 pub mod account_observation;
-pub mod capital_exit;
 pub mod agent_evaluation;
 pub mod artifacts;
 pub mod auth;
 pub mod brief;
 pub mod budget;
+pub mod capital_exit;
 pub mod catalogs;
-pub mod codex;
 pub mod control;
 pub mod cycles;
 pub mod data;
 pub mod delivery;
+pub mod durable_research;
 pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
@@ -24,6 +24,7 @@ pub mod execution_assumptions;
 pub mod execution_preflight;
 pub mod experiment_summary;
 pub mod experiments;
+pub mod factors;
 pub mod forward;
 pub mod http;
 pub mod imports;
@@ -51,6 +52,10 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    durable_research::DurableResearchStartV1,
+    durable_research::DurableSubmissionReceiptV1,
+    durable_research::DurableModelViewV1,
+    durable_research::DurableResearchErrorV1,
     execution_preflight::ExecutionPreflightScopeV1,
     execution_preflight::PolymarketPreflightSideV1,
     execution_preflight::PolymarketPreflightQuantityV1,
@@ -168,7 +173,6 @@ use utoipa::OpenApi;
     portfolio::PortfolioStudyRequestV1,
     cycles::BriefFreezeV1,
     cycles::FrozenBriefV1,
-    cycles::CycleStartIntent,
     cycles::ExternalCycleStartIntent,
     cycles::CycleFinishExternalIntent,
     experiments::ExperimentEvaluateIntent,
@@ -272,16 +276,6 @@ use utoipa::OpenApi;
     budget::BudgetV1,
     budget::CostEnforcement,
     budget::StopRuleV1,
-    codex::ConnectionMode,
-    codex::ProfileOrigin,
-    codex::SavedModelSettingsV1,
-    codex::ModelCapabilityV1,
-    codex::ReasoningEffortCapability,
-    codex::CodexProfileViewV1,
-    codex::CodexObservationV1,
-    codex::CodexHomeBindingV1,
-    codex::CodexAccountOperationV1,
-    codex::CodexAccountStartV1,
     evidence::MetricStatus,
     evidence::EvidenceStatus,
     evidence::Decision,
@@ -295,6 +289,7 @@ use utoipa::OpenApi;
     runs::RunKind,
     runs::RunSnapshotV1,
     runs::RunRebalanceViewV1,
+    runs::HistoricalAgentHistoryV1,
     runs::RunRebalanceV1,
     lifecycle::JobLimitsV1,
     lifecycle::RunCancelV1,
@@ -307,6 +302,9 @@ use utoipa::OpenApi;
     portfolio::AllocationResultV1,
     science::NativeForecastRequestV1,
     science::NativeForecastResultV1,
+    factors::NativeFactorEvaluationRequestV1,
+    factors::NativeFactorEvaluationResultV1,
+    factors::NativeFactorEvaluationSummaryV1,
     science::NativeAlphaValidationRequestV1,
     science::NativeAlphaValidationResultV1,
     science::NativeAlphaSealedRequestV1,

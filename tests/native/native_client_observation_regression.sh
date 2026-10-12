@@ -76,10 +76,10 @@ run_exact native-client-store-legacy store '' account_observations \
   legacy_source_cannot_be_backfilled_with_client_evidence
 run_exact native-client-store-race store '' account_observations \
   concurrent_protocols_cannot_mix_the_same_original_source
-run_exact native-client-http server native-codex account_observations_http \
+run_exact native-client-http server '' account_observations_http \
   client_bound_http_retains_original_values_rejects_protocol_changes_and_keeps_read_scope
-run_exact native-client-http-legacy server native-codex account_observations_http \
+run_exact native-client-http-legacy server '' account_observations_http \
   legacy_http_source_cannot_gain_client_evidence_from_a_new_wrapper
-run_exact native-client-pipeline server native-codex account_observations_http \
+run_exact native-client-pipeline server '' account_observations_http \
   actual_native_client_observations_reach_http_sql_and_original_readback ignored
 phase=verified

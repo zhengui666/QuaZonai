@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -78,7 +79,7 @@ class PublishedBundleCurlTests(unittest.TestCase):
 
     def console(self):
         config = self.root / "config.json"
-        config.write_text(json.dumps({"port": self.port}))
+        config.write_text(json.dumps({"port": self.port, "schema_version": 2}))
         return subprocess.run(["bash", "-c", 'source "$1"; QZ_WORK=$2; qz_verify_console "$3"',
                                "readiness-test", str(Path(smoke.__file__).with_name("manage.sh")),
                                str(self.root), str(config)], env=self.env, capture_output=True, timeout=20)
@@ -237,7 +238,8 @@ class RuntimeFailureTests(unittest.TestCase):
                         value = self.status
                     return io.BytesIO(json.dumps(value).encode())
 
-                def docker(config, *args, **kwargs):
+                def docker(args, **kwargs):
+                    args = tuple(args[1:])
                     events.append(args[0])
                     if args[0] == "ps":
                         self.assertEqual(args, ("ps", "--all", "--quiet", "--filter", "label=io.quazonai.run=owned-run"))
@@ -250,11 +252,11 @@ class RuntimeFailureTests(unittest.TestCase):
                 output = io.StringIO()
                 config = {"root": str(root / "installation"), "bundle": str(root / "bundle"),
                           "runtime_image": "owned-image", "docker_socket": str(root / "docker.sock")}
-                with patch.object(smoke.manage, "run"), patch.object(smoke, "ports", return_value=(12345, 12346)), \
+                with patch.object(smoke.manage, "run", side_effect=lambda args, **kwargs: docker(args, **kwargs) if args[0] == 'docker' else ''), patch.object(smoke, "ports", return_value=(12345, 12346)), \
                      patch.object(smoke, "fixture_id", side_effect=("owned-run", "source", "parameters", "inputs")), \
                      patch.object(smoke.urllib.request, "build_opener", return_value=opener), \
                      patch.object(smoke.subprocess, "Popen", return_value=process), \
-                     patch.object(smoke.codex, "docker", side_effect=docker), contextlib.redirect_stderr(output):
+                     contextlib.redirect_stderr(output):
                     with self.assertRaises(AssertionError) as raised:
                         smoke.verify_runtime(config)
                 self.assertEqual(raised.exception.args, (self.status,))
@@ -413,6 +415,57 @@ class NativeExitFactsTests(unittest.TestCase):
                            (self.spec["external_job_id"], "a" * 64))
         connection.commit()
         self.assertEqual(self.facts(), {"native_exit": "read", "exit_code": 1, "oom_killed": False})
+
+
+class NativeResearchRestoreCommandTests(unittest.TestCase):
+    def test_reopen_uses_installation_owner_private_modes_and_original_config_directory(self):
+        # Command/cleanup boundary only. Actual packaged Harness replay is checked
+        # by hosted smoke, not a successful mocked native process.
+        with tempfile.TemporaryDirectory(dir=os.environ.get('PI_SCRATCH_DIR')) as temporary:
+            root = Path(temporary)
+            source = root / 'source/data/research'
+            source.mkdir(parents=True, mode=0o700)
+            settings = source / 'config.json'
+            settings.write_text('{"database":"research.sqlite"}')
+            settings.chmod(0o600)
+            with sqlite3.connect(source / 'research.sqlite') as connection:
+                connection.execute('PRAGMA user_version=1')
+            backup = root / 'backup'
+            backup.mkdir()
+            with tarfile.open(backup / 'data.tar.gz', 'w:gz') as archive:
+                archive.add(source, arcname='data/research')
+            config = {'root': str(root / 'installation with spaces [native] %n $HOME'),
+                      'uid': 12345, 'gid': 23456, 'image': 'owned-test-image'}
+            directory = str(Path(config['root']) / 'data/research')
+            events = []
+            def run(args, **kwargs):
+                events.append('stop-worker' if 'stop' in args else 'start-worker')
+            def compose(_config, action, *args, **kwargs):
+                events.append('stop-app' if action == 'stop' else 'start-app')
+            def native(command, **kwargs):
+                self.assertEqual(events, ['stop-worker', 'stop-app'])
+                events.append('native-reopen')
+                self.assertEqual(command[command.index('--user') + 1], '12345:23456')
+                self.assertEqual(command[command.index('--workdir') + 1], directory)
+                self.assertEqual(command[command.index('--env') + 1], 'QZ_RESEARCH_CONFIG=' + directory + '/config.json')
+                self.assertIn('--read-only', command)
+                self.assertEqual(command[command.index('--network') + 1], 'none')
+                restored = root / 'restored-native-research/data/research'
+                self.assertEqual((restored / 'config.json').stat().st_mode & 0o777, 0o600)
+                self.assertEqual(restored.stat().st_mode & 0o777, 0o700)
+                self.assertTrue(kwargs['check'])
+                raise RuntimeError('controlled native process boundary')
+            with patch.object(smoke.manage, 'unit', return_value='owned-test.service'), \
+                 patch.object(smoke.manage, 'run', side_effect=run), \
+                 patch.object(smoke.manage, 'compose', side_effect=compose), \
+                 patch.object(smoke.subprocess, 'run', side_effect=native), \
+                 patch.object(smoke, 'verify_durable') as verify:
+                with self.assertRaisesRegex(RuntimeError, 'controlled native process boundary'):
+                    smoke.verify_durable_restore(config, backup, {})
+                verify.assert_not_called()
+            self.assertEqual(events, ['stop-worker', 'stop-app', 'native-reopen', 'start-app', 'start-worker'])
+            self.assertFalse((root / 'restored-native-research').exists())
+
 
 
 if __name__ == "__main__":

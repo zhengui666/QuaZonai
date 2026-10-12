@@ -15,27 +15,29 @@ function compile(schema: object) {
 }
 
 describe('native-generated request constraints execute in the JavaScript validator', () => {
-  it('requires explicit exact native profile choices for a Cycle, preserving bigint versions', () => {
-    const schema = document.components.schemas.CycleStartV1;
-    if (!schema) throw new Error('Native CycleStartV1 component missing');
+  it('requires an explicit native research input, model and JSON objects', () => {
+    const schema = document.components.schemas.DurableResearchStartV1;
+    if (!schema) throw new Error('Generated DurableResearchStartV1 component missing');
     const valid = compile(schema);
-    const choice = { profile_id: '01990000-0000-7000-8000-000000000002', expected_revision: '9007199254740993' };
-    const request = { schema_version: 1, brief_id: '01990000-0000-7000-8000-000000000001', expected_revision: '1',
-      researcher_profile: choice, reviewer_profile: choice };
+    const request = { requestId: 'form-intent', input: { goal: 'Test-only arbitrary research goal',
+      model: { provider: 'test-provider', modelId: 'test-model' }, data: { plugin: { reference: 'owner supplied' } }, policy: {} } };
     expect(valid(request)).toBe(true);
-    for (const role of ['researcher_profile', 'reviewer_profile'] as const) {
-      const missing: Partial<typeof request> = { ...request }; delete missing[role];
-      expect(valid(missing)).toBe(false);
-      for (const value of [null, { ...choice, expected_revision: 1 }, { ...choice, expected_revision: '0' },
-        { ...choice, token: 'fixture-forbidden-field' }]) expect(valid({ ...request, [role]: value })).toBe(false);
+    expect(valid({ ...request, requestId: 1 })).toBe(false);
+    for (const field of ['goal', 'model', 'data', 'policy'] as const) {
+      const input: Partial<typeof request.input> = { ...request.input }; delete input[field];
+      expect(valid({ ...request, input })).toBe(false);
     }
+    expect(valid({ ...request, input: { ...request.input, data: [] } })).toBe(false);
+    expect(valid({ ...request, input: { ...request.input, policy: null } })).toBe(false);
   });
   it('validates every idempotency header including terminal newline and exact byte boundaries', () => {
     const headers = Object.values(document.paths).flatMap(item => Object.values(item)
       .flatMap(operation => operation.parameters ?? [])).filter(parameter => parameter.in === 'header' && parameter.name === 'Idempotency-Key');
     expect(headers.length).toBeGreaterThanOrEqual(10);
+    const validators = new Map<string, ReturnType<typeof compile>>();
     for (const header of headers) {
-      const valid = compile(header.schema);
+      const key = JSON.stringify(header.schema);
+      const valid = validators.get(key) ?? compile(header.schema); validators.set(key, valid);
       for (const value of ['x', 'a b', '!~', 'x'.repeat(200)]) expect(valid(value)).toBe(true);
       for (const value of ['', ' ', ' x', 'x ', 'x\tB', 'x\n', 'x\r\n', 'x'.repeat(201), '中文', '\u00a0', null, 1, ['x']]) {
         expect(valid(value), JSON.stringify(value)).toBe(false);

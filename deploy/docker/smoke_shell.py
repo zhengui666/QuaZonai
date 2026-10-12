@@ -1,7 +1,7 @@
 """CI-only bridge to the shipped shell helpers; never included in an installation.
 
 The acceptance suite keeps its Python assertions, but configuration validation,
-Compose options, source isolation and Codex updates execute the installed Bash
+Compose options and source isolation execute the installed Bash
 implementation. JSON inputs use private temporary files, never command arguments.
 """
 from __future__ import annotations
@@ -28,7 +28,6 @@ def shell_command(bundle: Path, program: str, *args: str, initialize=True) -> li
     prefix = '''set -euo pipefail
 source "$1/manage.sh"
 shift
-source "$QZ_BUNDLE/codex.sh"
 '''
     if initialize:
         prefix += '''QZ_WORK=$(mktemp -d "${TMPDIR:-/tmp}/quazonai-smoke-shell.XXXXXX")
@@ -86,8 +85,7 @@ def validate_manifest(value: dict, *, published: bool = False) -> dict:
     with json_file(value) as path:
         shell(BUNDLE, 'qz_manifest "$1"', str(path))
     if published:
-        for field, repository in (('image', 'quazonai'), ('runtime_image', 'quazonai-runtime'),
-                                  ('codex_image', 'quazonai-codex')):
+        for field, repository in (('image', 'quazonai'), ('runtime_image', 'quazonai-runtime')):
             if not re.fullmatch(rf'ghcr\.io/zhengui666/{repository}@sha256:[0-9a-f]{{64}}', value[field]):
                 raise ValueError(f'{field} must identify the published image by repository digest.')
     return value
@@ -134,41 +132,6 @@ def source_container(config: dict, release: dict, network: str, invocation: str)
     if not output.endswith('\0'):
         raise ValueError('The installed source helper returned an invalid command vector.')
     return output[:-1].split('\0')
-
-
-class Codex:
-    def docker(self, config: dict, *args: str, capture=False) -> str:
-        return configured(config, 'qz_codex_docker "$@"', *args, capture=capture)
-
-    def image_tag(self, config: dict) -> str:
-        return configured(config, 'qz_codex_image_tag "$1"', capture=True)
-
-    def image_id(self, config: dict) -> str | None:
-        return configured(config, 'qz_codex_image_id "$1"', capture=True) or None
-
-    def require_stopped(self, config: dict) -> None:
-        configured(config, 'qz_codex_require_stopped "$1" false')
-
-    def read_env(self, path: Path) -> tuple[str, str]:
-        # The .env parser is a pure helper; the installed bundle is selected from
-        # its installation identity when present, including after an upgrade.
-        identity = path.parent / 'installation.json'
-        bundle = Path(json.loads(identity.read_text())['bundle']) if identity.exists() else BUNDLE
-        return shell(bundle, 'qz_codex_read_env "$1"', str(path), capture=True), path.read_text()
-
-    def update(self, root: Path, target: str, *, reference: str | None = None) -> None:
-        config = configuration(root)
-        # CI uses already-built digest IDs; call the actual helper's immutable
-        # reference argument instead of adding a user-facing test-only CLI flag.
-        result = subprocess.run(shell_command(Path(config['bundle']), 'qz_codex_update "$1" "$2" "$3"',
-                                              str(root), target, reference or ''),
-                                capture_output=True, text=True, check=False)
-        if result.returncode:
-            raise ValueError(result.stderr.strip() or 'Installed Codex update failed.')
-        print(result.stdout, end='')
-
-
-codex = Codex()
 
 
 FAULTS = {

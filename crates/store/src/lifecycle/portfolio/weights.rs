@@ -62,8 +62,7 @@ where
     .await?;
     let mut sorted = document.targets.clone();
     sorted.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
-    if targets.is_empty() || targets.len() != sorted.len()
-    {
+    if targets.is_empty() || targets.len() != sorted.len() {
         return Err(StoreError::Integrity);
     }
     for (target, original) in targets.iter().zip(&sorted) {

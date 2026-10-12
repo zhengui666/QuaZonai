@@ -147,7 +147,9 @@ async fn submit(
         }
         .await;
         match result {
-            Err(error) if max_attempts.is_none_or(|maximum| attempt < maximum) && retryable(&error) => {
+            Err(error)
+                if max_attempts.is_none_or(|maximum| attempt < maximum) && retryable(&error) =>
+            {
                 // No envelope or credential values in diagnostic output.
                 eprintln!("CLI_ACCOUNT_RELAY_RETRY attempt={attempt}");
                 tokio::time::sleep(retry_delay).await;

@@ -117,8 +117,13 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
             .remove(field);
         if matches!(
             field,
-            "max_parallel_runs" | "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
-                | "max_turns_per_mission" | "max_cycles_per_day" | "max_memory_mib"
+            "max_parallel_runs"
+                | "max_wall_seconds"
+                | "max_cpu_seconds"
+                | "max_output_bytes"
+                | "max_turns_per_mission"
+                | "max_cycles_per_day"
+                | "max_memory_mib"
         ) {
             valid(request);
         } else {
@@ -131,8 +136,13 @@ fn every_positive_budget_rejects_zero_and_only_optional_execution_caps_accept_ab
         request["content"]["budget"][field] = Value::Null;
         if matches!(
             field,
-            "max_parallel_runs" | "max_wall_seconds" | "max_cpu_seconds" | "max_output_bytes"
-                | "max_turns_per_mission" | "max_cycles_per_day" | "max_memory_mib"
+            "max_parallel_runs"
+                | "max_wall_seconds"
+                | "max_cpu_seconds"
+                | "max_output_bytes"
+                | "max_turns_per_mission"
+                | "max_cycles_per_day"
+                | "max_memory_mib"
         ) {
             valid(request);
         } else {

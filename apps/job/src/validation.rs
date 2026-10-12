@@ -1,5 +1,5 @@
 //! Thin adapters over native splitters and estimators; no qualification authority.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use linregress::{FormulaRegressionBuilder, RegressionDataBuilder, RegressionModel};
 use ndarray::Array2;
 
@@ -24,7 +24,7 @@ pub fn predict_frozen_calibration(
         "CALIBRATION_INPUT_TIME_OR_HORIZON"
     );
     ensure!(
-        scores.len() >= 1 && scores.iter().all(|v| v.is_finite()),
+        !scores.is_empty() && scores.iter().all(|v| v.is_finite()),
         "CALIBRATION_INPUT_INVALID"
     );
     let fit = &model
@@ -41,7 +41,7 @@ pub fn predict_frozen_calibration(
     Ok(values.into_raw_vec_and_offset().0)
 }
 
-pub use domain::execution::validation::{MAX_VALIDATION_FOLDS, validation_folds};
+pub use domain::execution::validation::{validation_folds, MAX_VALIDATION_FOLDS};
 
 /// Pure numerical adapter: callers must bind distinct qualified Alpha versions,
 /// common units/horizon/cutoff and this exact asset order before invoking it.

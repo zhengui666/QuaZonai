@@ -66,11 +66,17 @@ impl RuntimeConfig {
             || self.max_cpu == Some(0)
             || self.max_memory_mib == Some(0)
             || self.max_wall_seconds == Some(0)
-            || self.max_output_bytes.is_some_and(|bytes| bytes == 0 || bytes > i64::MAX as u64)
+            || self
+                .max_output_bytes
+                .is_some_and(|bytes| bytes == 0 || bytes > i64::MAX as u64)
             || self.max_parallel_jobs == Some(0)
-            || self.max_pending_jobs.zip(self.max_parallel_jobs).is_some_and(|(pending, parallel)| pending < parallel)
+            || self
+                .max_pending_jobs
+                .zip(self.max_parallel_jobs)
+                .is_some_and(|(pending, parallel)| pending < parallel)
             || self.max_pending_jobs == Some(0)
-            || self.storage_quota_bytes == 0 || self.storage_quota_bytes > i64::MAX as u64
+            || self.storage_quota_bytes == 0
+            || self.storage_quota_bytes > i64::MAX as u64
             || !(1..=8).contains(&self.images.len())
         {
             return Err(Failure::Invalid("runtime_configuration"));
@@ -177,7 +183,12 @@ mod resource_ceiling_tests {
         for null in [false, true] {
             let mut value = config();
             if null {
-                for field in ["max_cpu", "max_memory_mib", "max_parallel_jobs", "max_pending_jobs"] {
+                for field in [
+                    "max_cpu",
+                    "max_memory_mib",
+                    "max_parallel_jobs",
+                    "max_pending_jobs",
+                ] {
                     value[field] = Value::Null;
                 }
             }
@@ -191,20 +202,39 @@ mod resource_ceiling_tests {
     #[test]
     fn explicit_resource_choices_keep_numeric_bounds_without_product_clamps() {
         let mut value = config();
-        for field in ["max_cpu", "max_memory_mib", "max_parallel_jobs", "max_pending_jobs"] {
+        for field in [
+            "max_cpu",
+            "max_memory_mib",
+            "max_parallel_jobs",
+            "max_pending_jobs",
+        ] {
             value[field] = json!(u32::MAX);
         }
-        serde_json::from_value::<RuntimeConfig>(value.clone()).unwrap().validate().unwrap();
-        for field in ["max_cpu", "max_memory_mib", "max_parallel_jobs", "max_pending_jobs"] {
+        serde_json::from_value::<RuntimeConfig>(value.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        for field in [
+            "max_cpu",
+            "max_memory_mib",
+            "max_parallel_jobs",
+            "max_pending_jobs",
+        ] {
             let mut zero = value.clone();
             zero[field] = json!(0);
-            assert!(serde_json::from_value::<RuntimeConfig>(zero).unwrap().validate().is_err());
+            assert!(serde_json::from_value::<RuntimeConfig>(zero)
+                .unwrap()
+                .validate()
+                .is_err());
             let mut overflow = value.clone();
             overflow[field] = json!(u64::from(u32::MAX) + 1);
             assert!(serde_json::from_value::<RuntimeConfig>(overflow).is_err());
         }
         value["max_parallel_jobs"] = json!(33);
         value["max_pending_jobs"] = json!(32);
-        assert!(serde_json::from_value::<RuntimeConfig>(value).unwrap().validate().is_err());
+        assert!(serde_json::from_value::<RuntimeConfig>(value)
+            .unwrap()
+            .validate()
+            .is_err());
     }
 }

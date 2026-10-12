@@ -6,18 +6,18 @@ mod cycle_support;
 #[path = "../../../tests/support/forward.rs"]
 mod forward_support;
 use contracts::{
-    DbCounter, Id, SchemaV1, control::CommandResult, execution::NativeTaskParametersV1, forward::*,
-    lifecycle::JobLimitsV1, research::ArtifactInputRole, runs::RunSnapshotV1,
-    runtime_jobs::RuntimeInputV1,
+    control::CommandResult, execution::NativeTaskParametersV1, forward::*, lifecycle::JobLimitsV1,
+    research::ArtifactInputRole, runs::RunSnapshotV1, runtime_jobs::RuntimeInputV1, DbCounter, Id,
+    SchemaV1,
 };
 use forward_support::{
     research as research_support, runtime_observation::protocol_fixture as runtime_support,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 use store::{
-    Store, StoreError,
     lifecycle::{ClaimResult, RunLease},
+    Store, StoreError,
 };
 
 const CUTOVER: i64 = 202610080005;
@@ -410,20 +410,16 @@ async fn upgrade_080005_preserves_historical_numeric_cpu_receipt_and_exact_launc
     assert_eq!(pending_spec["limits"]["cpu"], json!(1));
     assert_eq!(pending_spec["limits"]["cpu_seconds"], Value::Null);
     assert_eq!(pending_spec["limits"]["memory_mib"], json!(512));
-    assert!(
-        pending
-            .store
-            .begin_run_dispatch(not_launched.resource.id, &pending_lease.fence)
-            .await
-            .unwrap()
-    );
-    assert!(
-        !pending
-            .store
-            .begin_run_dispatch(not_launched.resource.id, &pending_lease.fence)
-            .await
-            .unwrap()
-    );
+    assert!(pending
+        .store
+        .begin_run_dispatch(not_launched.resource.id, &pending_lease.fence)
+        .await
+        .unwrap());
+    assert!(!pending
+        .store
+        .begin_run_dispatch(not_launched.resource.id, &pending_lease.fence)
+        .await
+        .unwrap());
     let reconciling = pending
         .store
         .native_job(not_launched.resource.id, &pending_lease.fence)

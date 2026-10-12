@@ -69,21 +69,14 @@ async fn operator_http_admits_original_calibrated_sealed_run_without_another_tri
         .unwrap()
         .resource;
     mission_support::complete(&pool, &f.store, &data, started.run.id, false).await;
-    assert!(f.store.advance_initial_cycle(started.run.id).await.unwrap());
-    let message = f
-        .store
-        .read_mission_messages(60, 1)
-        .await
-        .unwrap()
-        .remove(0);
-    let Some(ClaimResult::Leased(parent)) = f
-        .store
-        .claim_mission(&message, "http-sealed-source", 120)
-        .await
-        .unwrap()
-    else {
-        panic!("research lease required")
-    };
+    let parent = native_experiment_support::historical_alpha::parent(
+        &pool,
+        &f.store,
+        &actor,
+        &data,
+        started.cycle.id,
+    )
+    .await;
     let experiment =
         native_experiment_support::propose(&pool, &f.store, &actor, &data, started.cycle.id).await;
     let mut limits = JobLimitsV1 {

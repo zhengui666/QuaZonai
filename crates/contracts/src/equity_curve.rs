@@ -1,5 +1,5 @@
 //! Display-only projections of adopted simulated equity, never account accounting.
-use crate::{DbCounter, DecimalValue, Id, SchemaV1, research::DataOrigin};
+use crate::{research::DataOrigin, DbCounter, DecimalValue, Id, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 

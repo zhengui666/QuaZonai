@@ -127,9 +127,9 @@ pub async fn machine(
     let verifier = Id::new();
     sqlx::query("INSERT INTO app.machine_principals(id,name,kind,project_id,run_id,enabled,credential_epoch) VALUES($1,'proposal-fixture',$2,$3,$4,true,1)")
         .bind(principal.as_uuid()).bind(kind).bind(project.as_uuid()).bind(run.map(Id::as_uuid)).execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,$3,$4,1,$5,clock_timestamp(),clock_timestamp()+interval '1 hour',$6)")
+    sqlx::query("INSERT INTO app.machine_credentials(id,principal_id,public_token_id,verifier_ref,principal_epoch,scope_codes,issued_at,expires_at,issued_by) VALUES($1,$2,$3,$4,1,$5,clock_timestamp(),least(clock_timestamp()+interval '1 hour',(SELECT deadline_at FROM app.runs WHERE id=$7)),$6)")
         .bind(credential.as_uuid()).bind(principal.as_uuid()).bind(Id::new().to_string()).bind(verifier.to_string())
-        .bind(scopes).bind(if kind == "MISSION" { "MISSION_SERVICE" } else { "OPERATOR" }).execute(pool).await.unwrap();
+        .bind(scopes).bind(if kind == "MISSION" { "MISSION_SERVICE" } else { "OPERATOR" }).bind(run.map(Id::as_uuid)).execute(pool).await.unwrap();
     Actor::Machine {
         credential_id: credential,
         verifier_ref: verifier,

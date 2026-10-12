@@ -2,13 +2,13 @@
 //! generated targets use the existing Nautilus account, fills, fees and equity.
 //! No supervised fitting, future labels, source-specific adapters or live orders.
 use crate::{catalog::load_catalog, feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::BigDecimal;
-use contracts::{DbCounter, DecimalValue, Id, SchemaV1, research::DataPartition, science::*};
-use domain::execution::features::{FeatureState, effective_available_ns};
+use contracts::{research::DataPartition, science::*, DbCounter, DecimalValue, Id, SchemaV1};
+use domain::execution::features::{effective_available_ns, FeatureState};
 use nautilus_backtest::{config::BacktestEngineConfig, engine::BacktestEngine};
 use nautilus_common::{
-    actor::{DataActor, DataActorCore, data_actor::DataActorConfig},
+    actor::{data_actor::DataActorConfig, DataActor, DataActorCore},
     logging::logger::LoggerConfig,
     nautilus_actor,
 };
@@ -441,7 +441,11 @@ pub fn evaluate(
         ]),
         feature_artifact_ids: feature_artifact_ids.to_vec(),
         instrument_id: request.instrument_id.clone(),
-        consumed_fuel: request.total_fuel.zip(fuel).map(|(total, left)| count(total.get() - left)).transpose()?,
+        consumed_fuel: request
+            .total_fuel
+            .zip(fuel)
+            .map(|(total, left)| count(total.get() - left))
+            .transpose()?,
         source_row_count: count(series.bars.len() as u64)?,
         feature_count: u16::try_from(request.feature_schema.len())?,
         folds,

@@ -207,7 +207,9 @@ impl SecretVault {
         // exact opened ciphertext; native AEAD limits and authentication remain.
         let length = usize::try_from(metadata.len()).map_err(|_| SecretError::Invalid)?;
         let mut bytes = Vec::new();
-        bytes.try_reserve_exact(length).map_err(|_| SecretError::Invalid)?;
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| SecretError::Invalid)?;
         Read::by_ref(&mut file)
             .take(metadata.len().saturating_add(1))
             .read_to_end(&mut bytes)?;

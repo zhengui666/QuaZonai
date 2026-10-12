@@ -1,8 +1,8 @@
 //! Read-only official-event capture for the opt-in spot CASH replay path.
 //! No real orders, account edits, fees, synthesized snapshots or flow assertions.
 use crate::catalog::NativeMarketData;
-use anyhow::{Result, anyhow, ensure};
-use contracts::{DbCounter, Id, science::NativeSimulationSettingsV1, spot_cash::*};
+use anyhow::{anyhow, ensure, Result};
+use contracts::{science::NativeSimulationSettingsV1, spot_cash::*, DbCounter, Id};
 use domain::spot_cash::SpotCashContext;
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_common::{
@@ -71,9 +71,9 @@ pub enum ObservedSpotCashRecord {
         sequence: DbCounter,
         native_clock_ns: DbCounter,
         /// Exact public native document, including its original UUID4 and clocks.
-        native: PortfolioSnapshot,
+        native: Box<PortfolioSnapshot>,
         frame: NativeSpotValuationFrameV1,
-        valuation: ReportCurrencyValuationV1,
+        valuation: Box<ReportCurrencyValuationV1>,
     },
 }
 
@@ -277,7 +277,7 @@ impl State {
             instrument_id.clone(),
             NativeSpotPriceV1 {
                 session_id: self.observer_session_id,
-                native_instance_id: self.native_instance_id.clone(),
+                native_instance_id: self.native_instance_id,
                 dataset_revision_id: self.dataset_revision_id,
                 source_row_key: source.source_row_key.clone(),
                 instrument_id,
@@ -349,7 +349,7 @@ impl State {
                 &self.settings,
                 NativeSpotCashSessionV1 {
                     session_id: self.observer_session_id,
-                    native_instance_id: self.native_instance_id.clone(),
+                    native_instance_id: self.native_instance_id,
                     dataset_revision_id: self.dataset_revision_id,
                     account_id: account_id.clone(),
                     venue: self.venue.clone(),
@@ -382,7 +382,7 @@ impl State {
                 binding: NativeSpotSnapshotBindingV1 {
                     origin,
                     session_id: self.observer_session_id,
-                    native_instance_id: self.native_instance_id.clone(),
+                    native_instance_id: self.native_instance_id,
                     dataset_revision_id: self.dataset_revision_id,
                     event_id: snapshot
                         .event_id
@@ -409,9 +409,9 @@ impl State {
         self.records.push(ObservedSpotCashRecord::Snapshot {
             sequence,
             native_clock_ns: count(clock)?,
-            native: snapshot.clone(),
+            native: Box::new(snapshot.clone()),
             frame,
-            valuation,
+            valuation: Box::new(valuation),
         });
         Ok(())
     }
@@ -721,7 +721,7 @@ impl Capture {
                 frame, valuation, ..
             } = record
             {
-                *valuation = context.value(frame);
+                **valuation = context.value(frame);
             }
         }
         Ok(SpotCashObservationTape {
@@ -781,7 +781,7 @@ fn validate_engine_instruments(engine: &BacktestEngine, market: &NativeMarketDat
         // Complete original enum/definition, including currency, multipliers,
         // precision and original clocks. Numeric Instrument equality is not enough.
         ensure!(
-            serde_json::to_value(&actual)? == serde_json::to_value(&series.instrument)?,
+            serde_json::to_value(actual)? == serde_json::to_value(&series.instrument)?,
             "SPOT_CAPTURE_ENGINE_INSTRUMENT_CHANGED"
         );
     }

@@ -11,3 +11,5 @@ __pycache__/
 !.env.example
 *.log
 .DS_Store
+# Local research host configuration may refer to private provider modules/state.
+/apps/research/research.json

@@ -106,7 +106,9 @@ async fn body(
     expected_bytes: Option<usize>,
 ) -> Result<Vec<u8>, RuntimeRequestError> {
     if expected_bytes.is_some_and(|expected| {
-        response.content_length().is_some_and(|size| size > expected as u64)
+        response
+            .content_length()
+            .is_some_and(|size| size > expected as u64)
     }) {
         return Err(RuntimeRequestError::ResponseLimit);
     }
@@ -116,7 +118,8 @@ async fn body(
         .await
         .map_err(|_| RuntimeRequestError::Unavailable)?
     {
-        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len())) {
+        if expected_bytes.is_some_and(|expected| chunk.len() > expected.saturating_sub(bytes.len()))
+        {
             return Err(RuntimeRequestError::ResponseLimit);
         }
         bytes.extend_from_slice(&chunk);
@@ -156,9 +159,7 @@ impl RuntimeTransport {
     ) -> Result<RuntimeJobStatusV1, RuntimeRequestError> {
         let (run, attempt) =
             boundary::parse_external_id(external_id).map_err(|_| RuntimeRequestError::Contract)?;
-        let (status, _) = self
-            .json_response(response, accepted)
-            .await?;
+        let (status, _) = self.json_response(response, accepted).await?;
         boundary::status(&status, run, attempt, Utc::now())
             .map_err(|_| RuntimeRequestError::Contract)?;
         Ok(status)
@@ -242,9 +243,7 @@ impl RuntimeTransport {
             .send()
             .await
             .map_err(|_| RuntimeRequestError::Unavailable)?;
-        let (manifest, raw_document) = self
-            .json_response(response, &[StatusCode::OK])
-            .await?;
+        let (manifest, raw_document) = self.json_response(response, &[StatusCode::OK]).await?;
         boundary::manifest(&manifest, spec, submitted_not_before, Utc::now())
             .map_err(|_| RuntimeRequestError::Contract)?;
         Ok(ReceivedRuntimeResult {
@@ -295,9 +294,7 @@ impl RuntimeTransport {
         output: &RuntimeOutputV1,
     ) -> Result<Vec<u8>, RuntimeRequestError> {
         boundary::parse_external_id(external_id).map_err(|_| RuntimeRequestError::Contract)?;
-        if output.storage_version.get() != 1
-            || output.byte_count.get() == 0
-        {
+        if output.storage_version.get() != 1 || output.byte_count.get() == 0 {
             return Err(RuntimeRequestError::Contract);
         }
         let response = self

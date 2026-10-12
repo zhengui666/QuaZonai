@@ -1,5 +1,5 @@
 //! Run transport contracts. These DTOs confer no execution or approval authority.
-use crate::{DbCounter, Id, Revision, SchemaV1, runs::RunState};
+use crate::{runs::RunState, DbCounter, Id, Revision, SchemaV1};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -173,8 +173,8 @@ pub struct RunEventBatchV1 {
 
 fn event_payload_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        PartialSchema,
         openapi::schema::{AdditionalProperties, ObjectBuilder, Type},
+        PartialSchema,
     };
     ObjectBuilder::new().schema_type(Type::Object)
         .property("schema_version",SchemaV1::schema()).required("schema_version")

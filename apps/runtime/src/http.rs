@@ -211,10 +211,7 @@ pub fn router(service: Arc<RuntimeService>, credential: String) -> Result<Router
             "/runtime/v1/jobs/{external_job_id}/artifacts/{storage_ref}",
             get(artifact),
         )
-        .route(
-            "/runtime/v1/objects/{artifact_id}",
-            put(object),
-        )
+        .route("/runtime/v1/objects/{artifact_id}", put(object))
         .fallback(|| async { Failure::Missing.into_response() })
         .method_not_allowed_fallback(|| async {
             (

@@ -30,9 +30,7 @@ pub(super) async fn stream(
         return Err(Failure::Input);
     }
     let mut sequence = cursor(run, after.as_deref())?;
-    let source = response
-        .bytes_stream()
-        .map_err(|_| Failure::Unavailable);
+    let source = response.bytes_stream().map_err(|_| Failure::Unavailable);
     let mut source = source.eventsource();
     let mut received = 0u64;
     let deadline = async move {

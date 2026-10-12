@@ -40,7 +40,7 @@ function render(node: ReactNode, entries: Entry[] = []) {
 
 const close = () => {};
 const time = '2026-09-01T00:00:00Z';
-const empty = { schema_version: 1, items: [], next_cursor: null };
+const empty = { schema_version: 1 as const, items: [], next_cursor: null };
 const original: Schema['BriefCreate'] = JSON.parse(readFileSync(new URL('../../../tests/contracts/research-brief.json', import.meta.url), 'utf8'));
 const brief: Schema['BriefView'] = { id: 'original-brief', project_id: 'project', content: original.content, bindings: original.bindings,
   supersedes_id: 'previous-brief', version: 2, revision: '3', state: 'FROZEN', created_at: time, updated_at: time, frozen_at: time };
@@ -114,6 +114,22 @@ describe('read-only research process', () => {
       expect(detail).toContain('运行已终止');
     }
   });
+
+  it('shows retained original CODEX session, profile, failed turns/usage and wake facts without writes or inferred outcomes', () => {
+    const history: Schema['HistoricalAgentHistoryV1'] = { schema_version: 1,
+      execution: { source: 'CODEX', run, session: { thread_id: 'original-thread', observed_model: 'original-model' } },
+      profile: { name: 'Original historical profile', revision: '9007199254740993' },
+      turns: { ...empty, items: [{ ordinal: '65536', terminal: null, usage: null, error: 'original-failure' }], next_cursor: 'next-turn' },
+      wakes: { ...empty, items: [{ reason: 'original-degradation-wake' }], next_cursor: 'next-wake' },
+    };
+    const html = render(<RunDetail id={run.id} close={close} />, [
+      [['run', run.id], run], [['historical-agent', run.id, undefined, undefined], history],
+    ]);
+    for (const value of ['历史 CODEX 记录（只读）', 'original-thread', 'original-model', 'Original historical profile',
+      '9007199254740993', '65536', 'original-failure', 'original-degradation-wake', 'null', '下一页']) expect(html).toContain(value);
+    expect(html).toContain('这些不是 Durable 任务');
+  });
+
 
   it('keeps the overview anchored to the actual current Brief and read-only navigation', () => {
     const html = render(<ResearchOverview project={project} current navigate={close} />, [[['briefs', 'project', 'current', brief.id], brief],

@@ -1,15 +1,15 @@
 //! Offline projection of retained native events. No network, model fitting,
 //! qualification, backdating, imputation or registration occurs here.
 use crate::polymarket_source_record::{ForwardSourcePlan, SourceRecord};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{bail, ensure, Context, Result};
 use contracts::{
-    DbCounter, Id, SchemaV1,
     catalogs::{RecordedFeatureFragmentV1, RecordedFeatureInputsV1, RuntimeCatalogMetadataV1},
     execution::NativeDatasetSelectionV1,
     research::{DataPartition, PitStatus},
     science::{
         FeatureAvailabilityV1, FeatureDefinitionV1, FeatureObservationV1, FeatureObservationsV1,
     },
+    DbCounter, Id, SchemaV1,
 };
 use nautilus_common::{clock::TestClock, timer::TimeEvent};
 use nautilus_core::UUID4;
@@ -20,7 +20,7 @@ use nautilus_model::{
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},

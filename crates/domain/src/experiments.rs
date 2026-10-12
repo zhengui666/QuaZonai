@@ -1,5 +1,5 @@
 //! Proposal validation, not scientific evaluation or qualification.
-use crate::{DomainError, control, research::invalid};
+use crate::{control, research::invalid, DomainError};
 use contracts::experiments::ExperimentProposalV1;
 
 pub fn proposal(request: &ExperimentProposalV1) -> Result<(), DomainError> {
@@ -65,9 +65,9 @@ pub fn adopt_alpha(
 mod target_adoption_tests {
     use super::*;
     use contracts::{
-        Id, Revision, SchemaV1,
         control::{OperatorCommand, OperatorOperation},
         strategy_portfolio::*,
+        Id, Revision, SchemaV1,
     };
 
     #[test]

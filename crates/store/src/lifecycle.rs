@@ -2,42 +2,46 @@
 //! services receive this Store; external workers, shell code and Agent tools do
 //! not receive database credentials or a generic dispatch/terminal endpoint.
 use crate::{
-    Store, StoreError,
     authority::{self, Actor},
-    commands, db,
-    turns::WorkerFence,
+    commands, db, Store, StoreError,
 };
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
-    DbCounter, Id, Revision, SchemaV1,
     budget::{BudgetV1, StopRuleV1},
     control::{CommandResult, MachineScope, Page, PrincipalKind},
     lifecycle::*,
     runs::{ProjectState, RunKind, RunSnapshotV1, RunState},
+    DbCounter, Id, Revision, SchemaV1,
 };
 use domain::{
-    DomainError,
     admission::{self, BudgetUsage, CostUsage, Reservation},
     runs::{self, AttemptLease, RemoteTerminal},
+    DomainError,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
+use serde_json::{json, Value};
+use sqlx::{postgres::PgRow, Postgres, Row, Transaction};
 
-mod experiment;
+mod alpha;
 mod external_experiment;
 mod forward;
-pub use experiment::ExperimentWork;
-pub mod mission;
 pub mod native;
 mod portfolio;
 mod queue;
+pub(crate) mod resources;
 mod sealed;
 mod validation;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 const FIELDS: &str = "r.id::uuid,r.project_id::uuid,r.cycle_id::uuid,r.kind,r.input_set_id::uuid,r.state,r.current_attempt_no::bigint,r.active_attempt_id::uuid,r.last_event_seq::bigint,r.deadline_at::timestamptz,r.cancellation_requested_at::timestamptz,r.terminal_reason_code,r.queued_at::timestamptz,r.started_at::timestamptz,r.finished_at::timestamptz,r.revision::bigint";
 
+/// Attempt ownership for native scientific jobs, independent of any Agent engine.
+#[derive(Clone, Debug)]
+pub struct WorkerFence {
+    pub attempt_id: Id,
+    pub worker_owner_id: String,
+    pub owner_epoch: Revision,
+}
 /// A caller must already have authorized the specific research operation. This
 /// is intentionally not Deserialize and is not exposed as a generic HTTP tool.
 #[derive(Clone)]
@@ -219,13 +223,7 @@ async fn expire_sent_run(
     locked: &mut LockedRun,
     attempt: &PgRow,
 ) -> Result<(), StoreError> {
-    let deadline = if locked.run.kind == contracts::runs::RunKind::AgentResearch {
-        let turn: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT min(r.deadline_at)::timestamptz FROM app.model_turn_reservations r WHERE r.run_id=$1 AND NOT EXISTS(SELECT 1 FROM app.model_turn_receipts t WHERE t.reservation_id=r.id)")
-            .bind(locked.run.id.as_uuid()).fetch_one(&mut **tx).await?;
-        domain::execution_limits::earlier(turn, locked.run.deadline_at)
-    } else {
-        locked.run.deadline_at
-    };
+    let deadline = locked.run.deadline_at;
     if attempt.try_get::<String, _>("dispatch_state")? != "NOT_SENT"
         && locked.run.state != RunState::CancelRequested
         && domain::execution_limits::expired(deadline, now(tx).await?)
@@ -450,9 +448,7 @@ async fn finish(
 }
 
 impl Store {
-    /// Native database transaction is the sole admission/queue commit boundary.
-    /// No model request is sent here: each later native turn separately reserves
-    /// the existing durable token/cost/turn ledger before the first wire write.
+    /// Native database transaction is the sole scientific admission/queue boundary.
     pub async fn enqueue_run(
         &self,
         key: &str,
@@ -508,6 +504,9 @@ impl Store {
         ),
         StoreError,
     > {
+        if request.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         commands::key(key)?;
         let normalized = json!({"schema_version":1,"cycle_id":request.cycle_id,"input_set_id":request.input_set_id,"runtime_id":request.runtime_id,"runtime_revision":request.runtime_revision,"kind":request.kind,"limits":request.limits});
         let project: uuid::Uuid =
@@ -574,24 +573,13 @@ impl Store {
             .await?
             .ok_or(StoreError::NotFound)?;
         let caps: Vec<String> = r.try_get("allowed_capabilities")?;
-        let capabilities = if request.kind == RunKind::AgentResearch {
-            if !r.try_get::<bool, _>("enabled")?
-                || db::revision(r.try_get("revision")?)? != request.runtime_revision
-            {
-                return Err(DomainError::CapabilityUnavailable("mission_runtime_binding").into());
-            }
-            None
-        } else {
-            Some(
-                crate::runtime::require_capabilities(
-                    &mut tx,
-                    request.runtime_id,
-                    request.runtime_revision,
-                    request.kind,
-                )
-                .await?,
-            )
-        };
+        let capabilities = crate::runtime::require_capabilities(
+            &mut tx,
+            request.runtime_id,
+            request.runtime_revision,
+            request.kind,
+        )
+        .await?;
         let runtime = RuntimeSnapshot {
             schema_version: SchemaV1,
             endpoint: r.try_get("endpoint")?,
@@ -602,9 +590,8 @@ impl Store {
             protocol_version: r.try_get("protocol_version")?,
             allowed_capabilities: caps,
         };
-        let mission = request.kind == RunKind::AgentResearch;
-        let active:i64=sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE cycle_id=$1 AND (kind='AGENT_RESEARCH')=$2 AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
-            .bind(request.cycle_id.as_uuid()).bind(mission).fetch_one(&mut *tx).await?;
+        let active:i64=sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE cycle_id=$1 AND kind<>'AGENT_RESEARCH' AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
+            .bind(request.cycle_id.as_uuid()).fetch_one(&mut *tx).await?;
         let ledger=sqlx::query("SELECT coalesce(sum(reserved_tokens),0)::bigint reserved_tokens,coalesce(sum(used_tokens),0)::bigint used_tokens,coalesce(sum(reserved_cost),0)::numeric reserved_cost,coalesce(sum(used_cost),0)::numeric used_cost FROM app.model_turn_accounting WHERE cycle_id=$1")
             .bind(request.cycle_id.as_uuid()).fetch_one(&mut *tx).await?;
         let mismatch:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM app.model_turn_reservations WHERE cycle_id=$1 AND (cost_currency IS DISTINCT FROM $2::text OR (reserved_cost IS NULL) <> ($2::text IS NULL)))")
@@ -660,14 +647,11 @@ impl Store {
             }
         }
         let l = &limits;
-        if let Some(capabilities) = capabilities {
-            domain::runtime::job_limits(&capabilities, l)?;
-        }
-        let reserve = match (request.kind, charge_trial) {
-            (RunKind::AgentResearch, false) => admission::reserve_mission,
-            (RunKind::AgentResearch, true) => return Err(StoreError::Integrity),
-            (_, true) => admission::reserve,
-            _ => admission::reserve_non_trial,
+        domain::runtime::job_limits(&capabilities, l)?;
+        let reserve = if charge_trial {
+            admission::reserve
+        } else {
+            admission::reserve_non_trial
         };
         let reserved = reserve(
             db::enum_value(&p, "state")?,
@@ -794,7 +778,10 @@ impl Store {
         .await?;
         let active: i64 = sqlx::query_scalar("SELECT count(*) FROM app.runs WHERE project_id=$1 AND cycle_id IS NULL AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')")
             .bind(request.project_id.as_uuid()).fetch_one(&mut *tx).await?;
-        if request.max_parallel_runs.is_some_and(|maximum| active >= i64::from(maximum)) {
+        if request
+            .max_parallel_runs
+            .is_some_and(|maximum| active >= i64::from(maximum))
+        {
             return Err(DomainError::BudgetExhausted("standalone_parallel_runs").into());
         }
         let runtime = RuntimeSnapshot {
@@ -837,26 +824,8 @@ impl Store {
         visibility_seconds: i32,
         limit: i32,
     ) -> Result<Vec<RunMessage>, StoreError> {
-        if !(1..=300).contains(&visibility_seconds) || !(1..=100).contains(&limit) {
-            return Err(StoreError::Invalid("queue_read_limit"));
-        }
-        let rows = sqlx::query("SELECT msg_id,read_ct,message FROM pgmq.read('runs',$1,$2)")
-            .bind(visibility_seconds)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
-        rows.into_iter()
-            .map(|row| {
-                let payload: QueuePayload = serde_json::from_value(row.try_get("message")?)
-                    .map_err(|_| StoreError::Integrity)?;
-                let _version = payload.schema_version;
-                Ok(RunMessage {
-                    message_id: row.try_get("msg_id")?,
-                    run_id: payload.run_id,
-                    read_count: row.try_get("read_ct")?,
-                })
-            })
-            .collect()
+        self.read_scientific_messages(visibility_seconds, limit, false)
+            .await
     }
 
     /// Visibility timeout never authorizes a second active owner. Expired leases
@@ -885,6 +854,9 @@ impl Store {
             let result = locked.run;
             tx.commit().await?;
             return Ok(ClaimResult::Terminal(result));
+        }
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
         }
         let time = now(&mut tx).await?;
         let expiry = time + Duration::seconds(i64::from(lease_seconds));
@@ -925,19 +897,8 @@ impl Store {
                 tx.commit().await?;
                 return Ok(ClaimResult::Leased(Box::new(lease)));
             }
-            // Native Mission bootstrap can own a process tree before the first
-            // thread-send permit. Give its replacement a fenced cleanup lease;
-            // NOT_SENT alone is not evidence that no native resource exists.
-            let mission_resources_open = if locked.run.kind == RunKind::AgentResearch {
-                sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM app.mission_resources WHERE run_id=$1 AND NOT closed)"
-                ).bind(locked.run.id.as_uuid()).fetch_one(&mut *tx).await?
-            } else {
-                false
-            };
             if domain::execution_limits::expired(locked.run.deadline_at, time)
                 && old.try_get::<String, _>("dispatch_state")? == "NOT_SENT"
-                && !mission_resources_open
             {
                 // This identity was never authorized for a wire write. Close the
                 // local attempt without inventing an observed remote failure.
@@ -982,6 +943,9 @@ impl Store {
     ) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, id).await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         let a = fence(&mut tx, &locked.run, owner).await?;
         if locked.run.state.is_terminal() {
             return Err(DomainError::TerminalRun.into());
@@ -1006,18 +970,14 @@ impl Store {
         .await?;
         let limits: JobLimitsV1 = serde_json::from_value(locked.admission.try_get("limits")?)
             .map_err(|_| StoreError::Integrity)?;
-        if locked.run.kind == RunKind::AgentResearch {
-            mission::current_profile(&mut tx, id).await?;
-        } else {
-            crate::runtime::require_job(
-                &mut tx,
-                db::id(locked.admission.try_get("runtime_id")?)?,
-                db::revision(locked.admission.try_get("runtime_revision")?)?,
-                locked.run.kind,
-                &limits,
-            )
-            .await?;
-        }
+        crate::runtime::require_job(
+            &mut tx,
+            db::id(locked.admission.try_get("runtime_id")?)?,
+            db::revision(locked.admission.try_get("runtime_revision")?)?,
+            locked.run.kind,
+            &limits,
+        )
+        .await?;
         // Runtime configuration can be locked by an Operator update. A lease
         // valid before that wait is not authority after it; query DB time only
         // after the last potentially conflicting authority lock.
@@ -1051,6 +1011,9 @@ impl Store {
         }
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, id).await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         fence(&mut tx, &locked.run, owner).await?;
         if locked.run.state.is_terminal() {
             return Err(DomainError::TerminalRun.into());
@@ -1069,6 +1032,9 @@ impl Store {
     ) -> Result<RunSnapshotV1, StoreError> {
         let mut tx = self.pool.begin().await?;
         let locked = lock_run(&mut tx, id).await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         let a = fence(&mut tx, &locked.run, owner).await?;
         if a.try_get::<Option<String>, _>("external_job_id")?
             .as_deref()
@@ -1151,6 +1117,9 @@ impl Store {
         }
         let expected = db::json(observation)?;
         let mut locked = lock_run(&mut tx, id).await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         if let Some(receipt)=sqlx::query("SELECT attempt_id::uuid,observation,result_snapshot FROM app.run_terminal_receipts WHERE run_id=$1").bind(id.as_uuid()).fetch_optional(&mut *tx).await?{
             if receipt.try_get::<Option<uuid::Uuid>,_>("attempt_id")?!=Some(owner.attempt_id.as_uuid()) || receipt.try_get::<Value,_>("observation")?!=expected{return Err(StoreError::Conflict);}
             let result=serde_json::from_value(receipt.try_get("result_snapshot")?).map_err(|_|StoreError::Integrity)?;
@@ -1270,34 +1239,6 @@ impl Store {
         {
             return Err(StoreError::Conflict);
         }
-        if locked.run.state == RunState::Succeeded
-            && locked.cycle_state.as_deref() == Some("RUNNING")
-            && sealed::pending(&mut tx, locked.run.id).await?
-        {
-            return Err(StoreError::Conflict);
-        }
-        sealed::grant(&mut tx, &locked).await?;
-        crate::selection::freeze(&mut tx, &locked.run).await?;
-        if locked.run.state == RunState::Succeeded
-            && locked.cycle_state.as_deref() == Some("RUNNING")
-        {
-            let startup = sqlx::query("SELECT startup.* FROM app.cycle_startups startup JOIN app.cycle_selections selection ON selection.cycle_id=startup.cycle_id WHERE selection.research_run_id=$1 AND selection.status='COMPLETE' AND EXISTS(SELECT 1 FROM app.cycle_selection_trials t WHERE t.cycle_id=selection.cycle_id AND t.review_alpha_version_id IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM app.run_missions m WHERE m.cycle_id=selection.cycle_id AND m.role='INDEPENDENT_REVIEWER')")
-                .bind(locked.run.id.as_uuid()).fetch_optional(&mut *tx).await?;
-            if let Some(startup) = startup {
-                if !locked.admission_open() {
-                    return Err(DomainError::AdmissionClosed.into());
-                }
-                let (next, advanced) =
-                    mission::admit_role(tx, &locked, &startup, "INDEPENDENT_REVIEWER").await?;
-                tx = next;
-                if !advanced {
-                    // Persist the honest waiting reason, but retain this original
-                    // queue message as the continuation until account work ends.
-                    tx.commit().await?;
-                    return Err(StoreError::Conflict);
-                }
-            }
-        }
         match queue_matches(&mut tx, message).await {
             Ok(()) => {
                 let archived: bool = sqlx::query_scalar("SELECT pgmq.archive('runs',$1)")
@@ -1313,6 +1254,24 @@ impl Store {
             }
             Err(error) => return Err(error),
         }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Explicit optional snapshot of the original historical Alpha trial family.
+    /// Never admits a reviewer, Turn, qualification or held-out job.
+    pub async fn freeze_cycle_selection(
+        &self,
+        actor: &Actor,
+        research_run: Id,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        authority::browser(&mut tx, actor, true).await?;
+        let locked = lock_run(&mut tx, research_run).await?;
+        if !locked.run.state.is_terminal() {
+            return Err(StoreError::Conflict);
+        }
+        crate::selection::freeze(&mut tx, &locked.run).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1501,6 +1460,9 @@ impl Store {
             authority::browser(&mut tx, actor, false).await?;
         }
         let mut locked = lock_run(&mut tx, id).await?;
+        if locked.run.kind == RunKind::AgentResearch {
+            return Err(StoreError::Invalid("legacy_agent_execution_retired"));
+        }
         let scope = match actor {
             Actor::Browser { .. } | Actor::OwnerDevice { .. } => String::from("OPERATOR"),
             Actor::Machine { .. } => {

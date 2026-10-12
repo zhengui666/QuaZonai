@@ -36,7 +36,7 @@ pub struct Arguments {
     /// Validate the local request and print a redacted plan; never contacts the server.
     #[arg(long, global = true)]
     pub preview: bool,
-    /// Required for writes except native account observations, which replay by envelope identity.
+    /// Required for QZ writes except native account envelopes and durable research requestIds.
     #[arg(long, global = true)]
     pub idempotency_key: Option<String>,
     /// Single-use human grant for scoped machine credentials; saved owner devices need none.
@@ -68,6 +68,10 @@ pub enum Failure {
     AccountStreamIncomplete,
     AccountRelay(Box<Failure>),
     Rejected(Box<Problem>),
+    DurableRejected {
+        status: u16,
+        payload: serde_json::Value,
+    },
 }
 impl fmt::Display for Failure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -94,6 +98,7 @@ impl fmt::Display for Failure {
             Self::AccountStreamIncomplete => "CLI_ACCOUNT_STREAM_INCOMPLETE_RETAIN_INPUT",
             Self::AccountRelay(_) => unreachable!(),
             Self::Rejected(_) => "CLI_SERVER_REJECTED_REQUEST",
+            Self::DurableRejected { .. } => "CLI_RESEARCH_REQUEST_REJECTED",
         })
     }
 }
@@ -139,7 +144,9 @@ fn read_file(path: &PathBuf, maximum: Option<usize>, private: bool) -> Result<Ve
     }
     let length = usize::try_from(metadata.len()).map_err(|_| Failure::Configuration)?;
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(length).map_err(|_| Failure::Configuration)?;
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| Failure::Configuration)?;
     file.take(metadata.len().saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|_| Failure::Configuration)?;
@@ -319,9 +326,7 @@ impl Connection {
             || !metadata.verified_readable
             || metadata.source_outcome
                 != Some(contracts::imports::HistoricalArtifactOutcomeV1::Copied)
-            || metadata
-                .byte_count
-                .is_none_or(|n| n.get() == 0)
+            || metadata.byte_count.is_none_or(|n| n.get() == 0)
         {
             return Err(Failure::Contract);
         }
@@ -349,6 +354,27 @@ fn write_json(value: &impl serde::Serialize) -> Result<()> {
     writeln!(output)
         .and_then(|_| output.flush())
         .map_err(|_| Failure::Output)
+}
+
+async fn durable_response(response: Response, credential: &str) -> Result<serde_json::Value> {
+    let status = response.status();
+    if !status.is_success() && !status.is_client_error() && !status.is_server_error() {
+        return Err(Failure::Contract);
+    }
+    if media(&response, "application/json").is_err() {
+        media(&response, "application/problem+json")?;
+    }
+    let bytes = body(response, None).await?;
+    verify(&bytes, credential)?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| Failure::Contract)?;
+    if !status.is_success() {
+        return Err(Failure::DurableRejected {
+            status: status.as_u16(),
+            payload,
+        });
+    }
+    Ok(payload)
 }
 
 pub async fn run(arguments: Arguments) -> Result<()> {
@@ -410,18 +436,18 @@ pub async fn run(arguments: Arguments) -> Result<()> {
         _ => None,
     };
     let response = connection
-        .checked(
-            connection
-                .send(
-                    &request,
-                    arguments.idempotency_key.as_deref(),
-                    arguments.operator_grant.as_deref(),
-                )
-                .await?,
-            request.status,
+        .send(
+            &request,
+            arguments.idempotency_key.as_deref(),
+            arguments.operator_grant.as_deref(),
         )
         .await?;
+    if matches!(request.output, commands::Output::DurableJson) {
+        return write_json(&durable_response(response, &connection.credential).await?);
+    }
+    let response = connection.checked(response, request.status).await?;
     match request.output {
+        commands::Output::DurableJson => unreachable!("durable JSON handled before QZ DTOs"),
         commands::Output::Json(decode) | commands::Output::NativeReport(decode) => {
             media(&response, "application/json")?;
             let bytes = body(response, None).await?;
@@ -481,6 +507,9 @@ pub fn report(error: &Failure) {
             "recovery": "Retain the input. Replay the same file; never recreate clocks or reset source sequence."
         })),
         Failure::Rejected(problem) => serde_json::to_value(problem).ok(),
+        Failure::DurableRejected { status, payload } => Some(
+            serde_json::json!({"status": status, "payload": payload, "request_sent_again": false}),
+        ),
         _ => Some(
             serde_json::json!({"schema_version":1,"code":error.to_string(),"request_sent_again":false}),
         ),

@@ -57,6 +57,6 @@ run_required() {
 }
 run_required paper-initial-source qualified_portfolio::paper_initial_checks::explicit_paper_initial_capital_reaches_claim_without_weakening_research -p store --test experiment_compilations
 run_required paper-rooted-forward rooted_paper_daily_returns_keep_synthetic_origin_through_measurement -p store --test paper_forward
-run_required paper-consume-http paper_initial_execution_http_authenticates_original_claim_and_replays_only_state -p server --features native-codex --test portfolio_study_http
+run_required paper-consume-http paper_initial_execution_http_authenticates_original_claim_and_replays_only_state -p server --test portfolio_study_http
 printf 'cases=%s\nfailed=%s\n' "$cases" "$failed" >> "$evidence/paper-initial-execution-combined-status.txt"
 ((cases == 3 && failed == 0))

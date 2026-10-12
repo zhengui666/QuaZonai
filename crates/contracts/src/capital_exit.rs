@@ -1,7 +1,7 @@
 //! Version-one account-capital control. This is not a target or a trading ledger.
 use crate::{
-    DbCounter, DecimalValue, Id, Revision, SchemaV1, account_observation::AccountMoneyV1,
-    forward::ForwardEnvironmentV1,
+    account_observation::AccountMoneyV1, forward::ForwardEnvironmentV1, DbCounter, DecimalValue,
+    Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -550,11 +550,9 @@ mod owner_command_tests {
         let mut bad = wire;
         bad["ready"] = serde_json::json!(true);
         assert!(serde_json::from_value::<CapitalExitOwnerCommandV1>(bad).is_err());
-        assert!(
-            serde_json::from_value::<CapitalExitOwnerInstructionV1>(
-                serde_json::json!({"action":"PAUSE","user_reported_amount":"1"})
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_value::<CapitalExitOwnerInstructionV1>(
+            serde_json::json!({"action":"PAUSE","user_reported_amount":"1"})
+        )
+        .is_err());
     }
 }

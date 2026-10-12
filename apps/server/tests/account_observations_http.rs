@@ -14,8 +14,8 @@ mod portable_client;
 mod support;
 
 use axum::http::StatusCode;
-use contracts::{Id, SchemaV1, settings::*};
-use serde_json::{Value, json};
+use contracts::{settings::*, Id, SchemaV1};
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::{fs, os::unix::fs::PermissionsExt};
 use store::authority::Actor;
@@ -702,10 +702,9 @@ async fn actual_native_client_observations_reach_http_sql_and_original_readback(
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert!(!rows.is_empty());
-    assert!(
-        rows.iter()
-            .any(|row| !row["observation"]["snapshot"].is_null())
-    );
+    assert!(rows
+        .iter()
+        .any(|row| !row["observation"]["snapshot"].is_null()));
     let mut receipts = Vec::new();
     let mut last_snapshot = None;
     for original in &rows {
@@ -856,12 +855,10 @@ async fn native_portfolio_submit_preserves_values_and_original_receipts(pool: Pg
         assert_eq!(receipt["resource"]["observation"], *envelope);
         assert_eq!(receipt["resource"]["downstream_id"], json!(a.downstream));
         assert_eq!(receipt["resource"]["gap_before"], false);
-        assert!(
-            chrono::DateTime::parse_from_rfc3339(
-                receipt["resource"]["received_at"].as_str().unwrap()
-            )
-            .is_ok()
-        );
+        assert!(chrono::DateTime::parse_from_rfc3339(
+            receipt["resource"]["received_at"].as_str().unwrap()
+        )
+        .is_ok());
     }
     let first = &receipts[0]["resource"];
     let latest = &receipts[1]["resource"];

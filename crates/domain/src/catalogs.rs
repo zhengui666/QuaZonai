@@ -1,10 +1,10 @@
 //! Structural provenance checks; an ordered timestamp is not proof of historical availability.
-use crate::{DomainError, control::text, research::invalid};
+use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The existing wire limit bounds definition records, not just distinct identities.
+// The existing wire limit bounds definition records, not just distinct identities.
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
@@ -36,7 +36,7 @@ pub fn instrument_definition(
 pub fn instrument_versions(
     definitions: &[serde_json::Value],
 ) -> Result<BTreeMap<&str, Vec<&serde_json::Value>>, DomainError> {
-    if definitions.len() < 1 {
+    if definitions.is_empty() {
         return Err(bad("instrument_definitions"));
     }
     let mut chains: BTreeMap<&str, Vec<&serde_json::Value>> = BTreeMap::new();
@@ -397,7 +397,7 @@ pub fn metadata(
         || universe.coverage_start >= universe.coverage_end
         || universe.selection_asof > value.available_through
         || universe.membership.is_empty()
-        || universe.instrument_definitions.len() < 1
+        || universe.instrument_definitions.is_empty()
     {
         return Err(bad("universe"));
     }
@@ -600,7 +600,7 @@ pub fn recorded_feature_inputs(
     if value.partition != partition
         || partition == contracts::research::DataPartition::Sealed
         || value.source_selection_start_ns >= value.source_selection_end_ns
-        || value.fragments.len() < 1
+        || value.fragments.is_empty()
     {
         return Err(bad("recorded_feature_inputs"));
     }

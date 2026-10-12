@@ -112,7 +112,7 @@ class InstalledSourceTests(unittest.TestCase):
                            password='synthetic-not-a-credential', port=18081, database_port=15432)
         bundle = Path(self.config['bundle'])
         bundle.mkdir()
-        for name in ('manage.sh', 'codex.sh', 'json.awk'):
+        for name in ('manage.sh', 'json.awk'):
             shutil.copyfile(Path(smoke.__file__).parent / name, bundle / name)
         (bundle / 'release.json').write_text(json.dumps(self.release))
         (self.installation / 'installation.json').write_text(json.dumps(self.config))
@@ -309,7 +309,7 @@ class LegacySourceBundleTests(unittest.TestCase):
         # Frozen from the installed schema-2 updater, not inferred from new code.
         old_members = {'manage.py', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md',
                        'codex.py', 'codex-update.sh', 'codex-login.sh', 'runtime.sh', 'codex.apparmor', '.env.example'}
-        new_members = (old_members - {'manage.py', 'codex.py'}) | {'manage.sh', 'codex.sh', 'json.awk'}
+        new_members = manage.BUNDLE_FILES
         selected = metadata()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -321,8 +321,7 @@ class LegacySourceBundleTests(unittest.TestCase):
             for name, data in retained.items():
                 (installation / name).write_bytes(data)
             release.bundle(selected['version'], selected['revision'], selected['image'], root,
-                           runtime_image=selected['runtime_image'], codex_version=selected['codex_version'],
-                           codex_image=selected['codex_image'])
+                           runtime_image=selected['runtime_image'])
             data = (root / 'quazonai-deploy.tar.gz').read_bytes()
             with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
                 members = archive.getmembers()

@@ -1563,10 +1563,7 @@ async fn real_native_compile_publishes_exact_model_and_concurrent_retry_has_one_
             loop {
                 let container = f.native_container(&spec).await;
                 if container.state.as_ref().and_then(|state| state.running) == Some(true) {
-                    match runtime::files::output_usage(
-                        &output,
-                        None,
-                    ) {
+                    match runtime::files::output_usage(&output, None) {
                         Ok(_) => {
                             // Both native observations must bound the scan while
                             // the original job is running, never just final files.

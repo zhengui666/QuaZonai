@@ -1,5 +1,5 @@
 //! Package shape and original target binding only; no release/approval authority.
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use contracts::{
     delivery::{ForecastTargetPackageV2, FrozenForwardDatasetV2},
     portfolio::{CandidateDetailV1, MandateViewV1},
@@ -54,7 +54,7 @@ pub fn target_package(
         || package.valid_until <= package.valid_from
         || package.valid_until > original.valid_until
         || package.cash_weight != original.cash_weight
-        || package.targets.len() < 1
+        || package.targets.is_empty()
         || package.targets.len() != original.targets.len()
         || package.engine_versions.is_empty()
         || package.engine_versions.len() > 64
@@ -464,7 +464,7 @@ pub fn strategy_target_package(
             .and_then(|v| u64::try_from(v).ok())
             .is_none_or(|v| v > target.valid_until_ns.get())
         || package.targets.len() != target.targets.len()
-        || package.targets.len() < 1
+        || package.targets.is_empty()
         || package.cash_weight != target.cash_weight
         || package.cash_weight != candidate.cash_weight
         || package.engine_versions.is_empty()

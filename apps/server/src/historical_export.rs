@@ -1,9 +1,6 @@
 //! Deployment-only historical file copying. No HTTP/MCP path or source credential input.
 use contracts::{imports::*, DbCounter, SchemaV1};
-use integrations::{
-    artifacts::ArtifactStore,
-    mission_files::MissionFiles,
-};
+use integrations::{artifacts::ArtifactStore, mission_files::MissionFiles};
 use serde::Deserialize;
 use std::{collections::BTreeSet, fs, io::Write, path::Path};
 
@@ -94,10 +91,9 @@ pub fn export(source_root: &Path, selection: &Path, output: &Path) -> std::io::R
                 result.outcome = HistoricalArtifactOutcomeV1::SealedRetained
             }
             Disposition::ManualReviewRequired => {}
-            Disposition::CopyPublic => match source.read_bytes(
-                item.relative_path.as_deref().ok_or_else(invalid)?,
-                u64::MAX,
-            ) {
+            Disposition::CopyPublic => match source
+                .read_bytes(item.relative_path.as_deref().ok_or_else(invalid)?, u64::MAX)
+            {
                 Ok(bytes) => {
                     let id = contracts::Id::new();
                     let count = DbCounter::new(bytes.len() as u64).map_err(|_| invalid())?;

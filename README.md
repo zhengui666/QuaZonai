@@ -4,7 +4,7 @@
 
 # QuaZonai
 
-个人量化研究工作台。从研究假设出发，组织 Alpha 实验、组合回测和目标组合交付，保存输入、过程与结果。支持浏览器和 PWA，不发送真实交易订单。
+个人、可扩展、无人值守的 AI 因子研究基座：研究目标与数据 → 因子提案及原生计算 → 样本外验证反馈 → 记录、迭代或停止。使用官方 Pi Durable 与 NautilusTrader，组合、模拟和目标交付为可选后续能力。支持浏览器/PWA 和 CLI，不发送真实交易订单。
 
 [安装](#quickstart) · [使用](#usage) · [更新与恢复](deploy/docker/README.md#update) · [Agent Skill](#agent-skill)
 
@@ -27,7 +27,7 @@ sh -c 'f=$(mktemp) || exit; cleanup() { rm -f -- "$f"; }; trap cleanup 0; trap "
 
 打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
 
-部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。安装和更新在宿主机仅使用 shell 与标准工具，无需 Python、jq、Rust、Node.js 或 Codex，不运行任何编译或镜像构建。Release 同时提供全部四类 Docker 镜像归档，以及 Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64 的原生 CLI 包。安装器不做文件哈希校验，不自动安装软件或执行 sudo；它检查版本清单、平台与归档结构，并只拉取 GHCR 已构建镜像。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+部署包按版本清单拉取应用、科学计算和数据库镜像，应用内携带官方 Node durable 宿主及同源科学入口，并安装匹配 Worker 与 Runtime 网关。宿主仅需 shell 与标准工具，无需 Python、Rust、Node.js 或 Codex，不运行编译或镜像构建。Release 同时提供三类镜像归档及 Windows、macOS、Linux 的原生 CLI 包。安装器保留原数据、备份与安装身份；[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)仍可独立配置。
 
 CLI 安装至 Linux/macOS 的 `$HOME/.local/bin` 或 Windows 的 `%LOCALAPPDATA%\QuaZonai\bin`。macOS/Windows 在 Release 中复制对应的一行命令；Linux 仅安装远程客户端时在该版本命令后加 `--cli-only`。Docker 集群运行于上述 Linux 主机。CLI 可直接连接明确指定的 HTTP 或 HTTPS 地址：
 
@@ -40,9 +40,18 @@ HTTP 明文传输密码和令牌，请在可信网络中使用；公网连接使
 <a id="usage"></a>
 ## 开始研究
 
-在「设置 → Codex → ChatGPT Auth」登录 ChatGPT，按页面提示完成授权，再为研究员和审阅员选择模型与推理强度。登录信息保存在独立目录，应用更新后继续使用。
+在安装的私有 research 配置中登记官方 Extension，并为 pi-ai 配置实际可用 Provider；凭据留在宿主环境，不进入研究正文或浏览器表单。没有模型时明确显示未配置，不使用旧 ChatGPT/Codex 登录或伪造目录。配置和原生计算边界见[研究宿主指南](apps/research/README.md)。
 
-登记真实数据与可用 Runtime，创建项目并冻结研究问题、输入和预算，启动研究周期。在运行详情查看进度与失败原因，在 Alpha 与组合详情检查评估、历史价值曲线和交付记录。
+在「研究」选择实际模型，提供研究目标、原数据引用和评价/选择/停止政策，提交后无需逐实验审批。页面/CLI 观察同一 durable 会话、原生任务与用量，查看所有提案、失败、原生验证指标和停止原因。最终未接触样本只由独立评估扩展读取，结果不反馈模型调参；计算成功不等于有效证据或盈利。旧项目、Alpha、组合、运行和交付事实保留为历史或可选消费者。
+
+```sh
+quazonai client research models
+quazonai openapi --schema DurableResearchStartV1
+quazonai client research start --file research-request.json
+quazonai client research list
+```
+
+保留原提交文件和 `requestId`，超时用相同内容重放原回执，不换编号重新研究。HTTP 202 只表示接收，不表示完成；显式停止使用 `quazonai client research stop <原生数字ID>`。
 
 公开来源的获取、支持格式的原生转换和分区准备见[来源插件指南](runtimes/data/source-plugins.md)；Polymarket 历史来源与证据边界见[历史数据准备](runtimes/data/README.md)。准备成功不等于服务登记或研究准入，仍需对应的授权、历史可得性和质量证据；Coinbase 的当前用途限制见[来源使用边界](runtimes/data/source-plugins.md#source-rights-and-acceptance)。
 

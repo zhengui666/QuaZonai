@@ -28,7 +28,6 @@ use std::collections::BTreeSet;
 type Tx<'a> = Transaction<'a, Postgres>;
 
 mod external;
-mod wake;
 
 pub(crate) async fn execution_context(
     tx: &mut Tx<'_>,
@@ -413,7 +412,7 @@ fn cycle_view(row: &PgRow) -> Result<CycleViewV1, StoreError> {
         .collect(),
     })
 }
-const CYCLE: &str = "SELECT c.*,s.initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision,EXISTS(SELECT 1 FROM app.cycle_selections selected WHERE selected.cycle_id=c.id) AS has_selection FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
+const CYCLE: &str = "SELECT c.*,coalesce(s.initial_run_id,(SELECT r.id FROM app.runs r JOIN app.run_native_tasks t ON t.run_id=r.id WHERE r.cycle_id=c.id AND r.kind='DATA_VALIDATE' AND t.output_schemas @> '[{\"name\":\"qz.data_quality\",\"version\":\"1\"}]'::jsonb ORDER BY r.queued_at,r.id LIMIT 1)) AS initial_run_id,s.researcher_profile_id,s.researcher_profile_revision,s.reviewer_profile_id,s.reviewer_profile_revision,EXISTS(SELECT 1 FROM app.cycle_selections selected WHERE selected.cycle_id=c.id) AS has_selection FROM app.research_cycles c LEFT JOIN app.cycle_startups s ON s.cycle_id=c.id";
 
 impl Store {
     pub async fn freeze_brief<R, Read>(
@@ -514,11 +513,12 @@ impl Store {
         })
     }
 
-    pub async fn start_cycle<R, Read, P, Published>(
+    /// Explicit native data preparation only; completion never launches an Agent.
+    pub async fn start_scientific_cycle<R, Read, P, Published>(
         &self,
         actor: &Actor,
         key: &str,
-        request: &CycleStartIntent,
+        request: &ExternalCycleStartIntent,
         read: R,
         publish: P,
     ) -> Result<CommandResult<CycleStartedV1>, StoreError>
@@ -532,7 +532,7 @@ impl Store {
         let prepared = commands::operator(
             &mut tx,
             actor,
-            OperatorOperation::CycleStart,
+            OperatorOperation::ScientificCyclePrepare,
             key,
             None,
             db::json(request)?,
@@ -543,7 +543,7 @@ impl Store {
             return Ok(result);
         }
         let (mut tx, resource) =
-            Self::admit_cycle(tx, key, request, prepared.target, None, read, publish).await?;
+            Self::admit_scientific_cycle(tx, key, request, prepared.target, read, publish).await?;
         // Admission only writes in this transaction after the object callback.
         // The original human authority must still hold before any fact commits.
         commands::recheck_authority(&mut tx, actor, &prepared).await?;
@@ -554,12 +554,11 @@ impl Store {
 
     /// Shared native admission. Callers hold their own authority through commit;
     /// this helper neither creates an Operator receipt nor commits a transaction.
-    async fn admit_cycle<'a, R, Read, P, Published>(
+    async fn admit_scientific_cycle<'a, R, Read, P, Published>(
         mut tx: Tx<'a>,
         key: &str,
-        request: &CycleStartIntent,
+        request: &ExternalCycleStartIntent,
         cycle: Id,
-        wake: Option<Id>,
         mut read: R,
         publish: P,
     ) -> Result<(Tx<'a>, CycleStartedV1), StoreError>
@@ -581,34 +580,10 @@ impl Store {
         if p.try_get::<String, _>("state")? != "ACTIVE" {
             return Err(DomainError::AdmissionClosed.into());
         }
-        let mut choices = [
-            request.request.researcher_profile,
-            request.request.reviewer_profile,
-        ];
-        choices.sort_by_key(|choice| choice.profile_id.as_uuid());
-        for choice in choices {
-            let selected = crate::codex_profiles::snapshot(
-                &mut tx,
-                choice.profile_id,
-                choice.expected_revision,
-            )
-            .await?;
-            if selected.profile.home_binding.is_none() {
-                return Err(DomainError::CapabilityUnavailable("unregistered_codex_home").into());
-            }
-        }
         let row = crate::brief::row(&mut tx, request.request.brief_id, false).await?;
         let brief = crate::brief::view(&mut tx, &row).await?;
         if brief.project_id != request.project_id || brief.state != BriefState::Frozen {
             return Err(invalid("brief_id", "OWNED_FROZEN_BRIEF_REQUIRED").into());
-        }
-        // A finite cumulative CPU grant without a wall deadline needs an
-        // independently surviving CPU enforcer, which this backend cannot attest.
-        // Explicitly absent CPU + wall budgets use fenced resource recovery.
-        if brief.content.budget.max_wall_seconds.is_none()
-            && brief.content.budget.max_cpu_seconds.is_some()
-        {
-            return Err(DomainError::CapabilityUnavailable("independent_cpu_enforcement").into());
         }
         let context = execution_context(&mut tx, brief.id).await?;
         let caps = validate_execution_context(&mut tx, &brief, &context, &mut read).await?;
@@ -625,7 +600,10 @@ impl Store {
         let today: i64 = sqlx::query_scalar("SELECT count(*) FROM app.research_cycles WHERE project_id=$1 AND created_at>=date_trunc('day',$2::timestamptz,'UTC') AND created_at<date_trunc('day',$2::timestamptz,'UTC')+interval '1 day'")
             .bind(request.project_id.as_uuid()).bind(now).fetch_one(&mut *tx).await?;
         let budget = &brief.content.budget;
-        if budget.max_cycles_per_day.is_some_and(|limit| today >= i64::from(limit)) {
+        if budget
+            .max_cycles_per_day
+            .is_some_and(|limit| today >= i64::from(limit))
+        {
             return Err(DomainError::BudgetExhausted("cycles_per_day").into());
         }
         let previous: i32 = sqlx::query_scalar(
@@ -635,11 +613,9 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         let ordinal = previous.checked_add(1).ok_or(StoreError::Integrity)?;
-        sqlx::query("INSERT INTO app.research_cycles(id,project_id,brief_id,ordinal,trigger,state,budget_snapshot,started_at,next_action,wake_id) VALUES($1,$2,$3,$4,$7,'RUNNING',$5,$6,'DATA_VALIDATE',$8)")
+        sqlx::query("INSERT INTO app.research_cycles(id,project_id,brief_id,ordinal,trigger,state,budget_snapshot,started_at,next_action) VALUES($1,$2,$3,$4,'OPERATOR','RUNNING',$5,$6,'DATA_VALIDATE')")
             .bind(cycle.as_uuid()).bind(request.project_id.as_uuid()).bind(brief.id.as_uuid())
-            .bind(ordinal).bind(db::json(budget)?).bind(now)
-            .bind(if wake.is_some() { "DEGRADATION" } else { "OPERATOR" })
-            .bind(wake.map(Id::as_uuid)).execute(&mut *tx).await?;
+            .bind(ordinal).bind(db::json(budget)?).bind(now).execute(&mut *tx).await?;
         // Reserve a bounded preparation slice, not all remaining research CPU.
         let cpu = budget
             .max_cpu_seconds
@@ -651,12 +627,14 @@ impl Store {
                 .map(DbCounter::new)
                 .transpose()
                 .map_err(|_| StoreError::Integrity)?,
-            wall_seconds: budget
-                .max_wall_seconds
-                .map(|seconds| caps.max_wall_seconds.map_or(seconds, |capacity| seconds.min(capacity))),
+            wall_seconds: budget.max_wall_seconds.map(|seconds| {
+                caps.max_wall_seconds
+                    .map_or(seconds, |capacity| seconds.min(capacity))
+            }),
             memory_mib: budget.max_memory_mib,
             output_bytes: budget.max_output_bytes.map(|maximum| {
-                caps.max_output_bytes.map_or(maximum, |capacity| maximum.min(capacity))
+                caps.max_output_bytes
+                    .map_or(maximum, |capacity| maximum.min(capacity))
             }),
         };
         let definition = crate::data_validation::prepare_validation(
@@ -687,18 +665,10 @@ impl Store {
         )
         .await?;
         crate::lifecycle::native::bind_task(&mut tx, &admitted.resource, definition).await?;
-        sqlx::query(
-            "INSERT INTO app.cycle_startups(cycle_id,project_id,initial_run_id, researcher_profile_id,researcher_profile_revision,reviewer_profile_id,reviewer_profile_revision) VALUES($1,$2,$3,$4,$5,$6,$7)",
-        )
-        .bind(cycle.as_uuid())
-        .bind(request.project_id.as_uuid())
-        .bind(admitted.resource.id.as_uuid())
-        .bind(request.request.researcher_profile.profile_id.as_uuid())
-        .bind(request.request.researcher_profile.expected_revision.get() as i64)
-        .bind(request.request.reviewer_profile.profile_id.as_uuid())
-        .bind(request.request.reviewer_profile.expected_revision.get() as i64)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT INTO app.external_research_cycles(cycle_id) VALUES($1)")
+            .bind(cycle.as_uuid())
+            .execute(&mut *tx)
+            .await?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!("{CYCLE} WHERE c.id=$1")))
             .bind(cycle.as_uuid())
             .fetch_one(&mut *tx)

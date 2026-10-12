@@ -1,13 +1,13 @@
 //! Actual native fold/model/estimator execution. No database or policy authority.
-use super::{ScoreCalibration, validation_folds};
+use super::{validation_folds, ScoreCalibration};
 use crate::{
-    catalog::{NativeBarSeries, load_catalog},
+    catalog::{load_catalog, NativeBarSeries},
     forecast::features,
     signals::SignalModule,
 };
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use contracts::{
-    DbCounter, SchemaV1, brief::TargetKind, evidence::MetricStatus, research::SplitKind, science::*,
+    brief::TargetKind, evidence::MetricStatus, research::SplitKind, science::*, DbCounter, SchemaV1,
 };
 use nautilus_model::instruments::Instrument;
 use ndarray::{Array2, ArrayView1};
@@ -265,7 +265,11 @@ pub fn validate_alpha(
             ("linregress".into(), "0.5.4".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
         ]),
-        consumed_fuel: parameters.total_fuel.zip(remaining).map(|(total, left)| DbCounter::new(total.get() - left).map_err(anyhow::Error::msg)).transpose()?,
+        consumed_fuel: parameters
+            .total_fuel
+            .zip(remaining)
+            .map(|(total, left)| DbCounter::new(total.get() - left).map_err(anyhow::Error::msg))
+            .transpose()?,
         unique_test_observations: count(unique_test_observations)?,
         folds,
     })

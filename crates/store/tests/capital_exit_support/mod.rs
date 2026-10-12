@@ -3,11 +3,11 @@
 #[path = "../../../../tests/support/research.rs"]
 mod research;
 use contracts::{
-    DbCounter, Id, SchemaV1, account_observation::*, control::*, forward::ForwardEnvironmentV1,
-    settings::*,
+    account_observation::*, control::*, forward::ForwardEnvironmentV1, settings::*, DbCounter, Id,
+    SchemaV1,
 };
 use sqlx::PgPool;
-use store::{Store, authority::Actor};
+use store::{authority::Actor, Store};
 
 pub async fn account_setup(pool: &PgPool) -> (Store, Actor, Actor, AccountObservationSubmitV1) {
     account_setup_named(pool, "capital-fixture").await
@@ -123,7 +123,7 @@ pub async fn account_setup_named(
     (store, operator, actor, request)
 }
 
-use contracts::{Revision, account_observation::AccountMoneyV1, capital_exit::*};
+use contracts::{account_observation::AccountMoneyV1, capital_exit::*, Revision};
 pub struct Fixture {
     pub store: Store,
     pub operator: Actor,

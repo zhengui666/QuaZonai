@@ -1,5 +1,5 @@
 //! Immutable research preparation. Registration is not native capability or PASS evidence.
-use crate::{DbCounter, DecimalValue, Id, Revision, SchemaV1, evidence::MetricRequirementV1};
+use crate::{evidence::MetricRequirementV1, DbCounter, DecimalValue, Id, Revision, SchemaV1};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

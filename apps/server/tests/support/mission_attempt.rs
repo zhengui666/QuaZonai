@@ -55,19 +55,7 @@ async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_tak
 ) {
     let (f, _, _) = setup(&pool).await;
     let (project, run, first_attempt, principal) = mission(&f, &pool).await;
-    let (writer, _, _) = mission_token(&f, &pool, principal, 600).await;
-    let created = send(
-        &f,
-        "POST",
-        "/api/v2/artifacts",
-        "read-fence-artifact",
-        upload(project, "source"),
-        None,
-        Some(&writer),
-    )
-    .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let artifact = created.body["resource"]["id"].as_str().unwrap();
+    let artifact = historical_artifact(&f, &pool, project, run, first_attempt, "source").await;
     let paths = [
         "/api/v2/auth/machine".to_owned(),
         format!("/api/v2/runs/{run}"),
@@ -122,24 +110,22 @@ async fn read_only_mission_cannot_keep_identity_run_or_artifact_access_after_tak
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: PgPool) {
-    use store::lifecycle::{ClaimResult, RunMessage};
-
+async fn historical_same_attempt_owner_change_revokes_old_read_credentials(pool: PgPool) {
     let (f, _, _) = setup(&pool).await;
     let (project, run, attempt, principal) = mission(&f, &pool).await;
     let (writer, _, _) = mission_token(&f, &pool, principal, 600).await;
-    let created = send(
+    let artifact = historical_artifact(&f, &pool, project, run, attempt, "source").await;
+    let retired = send(
         &f,
         "POST",
         "/api/v2/artifacts",
-        "same-attempt-output",
+        "retired-owner-output",
         upload(project, "source"),
         None,
         Some(&writer),
     )
     .await;
-    assert_eq!(created.status, StatusCode::CREATED);
-    let artifact = created.body["resource"]["id"].as_str().unwrap();
+    assert_eq!(retired.status, StatusCode::FORBIDDEN);
     let (old, credential, _) = mission_token_scoped(&f, &pool, principal, 600, READ_SCOPES).await;
     let paths = [
         "/api/v2/auth/machine".to_owned(),
@@ -150,32 +136,10 @@ async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: P
     for path in &paths {
         assert_eq!(status(&f, path, &old).await, StatusCode::OK);
     }
-    let (message_id, read_count): (i64, i32) =
-        sqlx::query_as("SELECT msg_id,read_ct FROM pgmq.q_runs WHERE message->>'run_id'=$1")
-            .bind(run.to_string())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    // Only the clock boundary is injected. The actual native claim method must
-    // adopt the existing Attempt and raise its fencing epoch, not create a Run.
-    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1")
+    // Represent original historical owner facts, not a current Agent takeover.
+    // Actual scientific Worker claim/recovery is covered by lifecycle regressions.
+    sqlx::query("UPDATE app.run_attempts SET owner_epoch=2,worker_owner_id='historical-replacement-owner',lease_expires_at=clock_timestamp()+interval '1 hour' WHERE id=$1")
         .bind(attempt.as_uuid()).execute(&pool).await.unwrap();
-    let message = RunMessage {
-        message_id,
-        run_id: run,
-        read_count,
-    };
-    let ClaimResult::Leased(lease) = f
-        .store
-        .claim_run(&message, "replacement-mission-owner", 60)
-        .await
-        .unwrap()
-    else {
-        panic!("native lease takeover expected");
-    };
-    assert_eq!(lease.fence.attempt_id, attempt);
-    assert_eq!(lease.attempt_no, 1);
-    assert_eq!(lease.fence.owner_epoch.get(), 2);
     for path in &paths {
         assert_eq!(
             status(&f, path, &old).await,
@@ -187,14 +151,12 @@ async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: P
     for path in &paths {
         assert_eq!(status(&f, path, &current).await, StatusCode::OK);
     }
-    f.store
-        .renew_run_lease(run, &lease.fence, 120)
-        .await
-        .unwrap();
+    sqlx::query("UPDATE app.run_attempts SET lease_expires_at=clock_timestamp()+interval '2 hours' WHERE id=$1")
+        .bind(attempt.as_uuid()).execute(&pool).await.unwrap();
     assert_eq!(
         status(&f, "/api/v2/auth/machine", &current).await,
         StatusCode::OK,
-        "renewing the same owner's lease does not revoke its current credential"
+        "a later historical deadline for the same owner does not revoke its credential"
     );
     let unchanged: (uuid::Uuid, i64) = sqlx::query_as(
         "SELECT issuer_attempt_id,issuer_owner_epoch FROM app.machine_credentials WHERE id=$1",
@@ -214,7 +176,11 @@ async fn same_attempt_native_owner_takeover_revokes_old_read_credentials(pool: P
         Some(&writer),
     )
     .await;
-    assert_eq!(stale_write.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(stale_write.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        status(&f, "/api/v2/auth/machine", &writer).await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

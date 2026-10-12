@@ -7,12 +7,12 @@ mod native;
 mod support;
 use axum::{
     body::Body,
-    http::{Request, StatusCode, header},
+    http::{header, Request, StatusCode},
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use server::runtime_transport::{RuntimeTarget, RuntimeTargets};
 use sqlx::PgPool;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{atomic::Ordering, Arc};
 use support::{Fixture, Reply};
 
 async fn command(

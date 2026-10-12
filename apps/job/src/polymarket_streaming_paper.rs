@@ -4,7 +4,7 @@
 //! LiveNode event thread. The caller retains original source frames and validates
 //! the original Q claim; this module has no delivery or financial authority.
 //! It preserves one official engine/account and delegates all matching and fees.
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use bigdecimal::ToPrimitive;
 use contracts::{
     portfolio::PortfolioConstraintsV1,
@@ -30,12 +30,12 @@ use nautilus_model::{
     types::{Currency, Money},
 };
 use nautilus_portfolio::config::PortfolioConfig;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, str::FromStr};
 
 use crate::{
     catalog::{NativeBarSeries, NativeMarketData},
-    simulation::{ReplayStatus, streaming_paper_target_strategy},
+    simulation::{streaming_paper_target_strategy, ReplayStatus},
 };
 
 /// Retain the final timestamp until a later native timestamp or source EOF proves
@@ -269,14 +269,12 @@ impl PolymarketStreamingPaper {
                     .account_type(AccountType::Cash)
                     .book_type(BookType::L1_MBP)
                     .base_currency(Currency::from_str(&settings.base_currency)?)
-                    .starting_balances(vec![
-                        Money::from_str(&format!(
-                            "{} {}",
-                            settings.starting_capital.as_decimal().to_plain_string(),
-                            settings.base_currency
-                        ))
-                        .map_err(anyhow::Error::msg)?,
-                    ])
+                    .starting_balances(vec![Money::from_str(&format!(
+                        "{} {}",
+                        settings.starting_capital.as_decimal().to_plain_string(),
+                        settings.base_currency
+                    ))
+                    .map_err(anyhow::Error::msg)?])
                     .default_leverage(rust_decimal::Decimal::ONE)
                     .fee_model(fill_fees.wrap(fee_model.clone()))
                     .fill_model(FillModelHandle::new(DefaultFillModel::new(

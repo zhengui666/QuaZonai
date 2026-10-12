@@ -9,7 +9,6 @@ use crate::{
 use contracts::{
     artifacts::*,
     control::{CommandResult, MachineScope, Page, PrincipalKind},
-    lifecycle::JobLimitsV1,
     research::ResearchListQuery,
     DbCounter, Id,
 };
@@ -40,64 +39,23 @@ fn view(row: &PgRow) -> Result<ArtifactView, StoreError> {
     })
 }
 
-struct UploadAuthority {
-    scope: String,
-    run: Option<Id>,
-    attempt: Option<Id>,
-    producer: &'static str,
-}
-async fn upload_authority(
-    tx: &mut Tx,
-    actor: &Actor,
-    project: Id,
-) -> Result<UploadAuthority, StoreError> {
+async fn upload_authority(tx: &mut Tx, actor: &Actor, project: Id) -> Result<String, StoreError> {
     match actor {
         Actor::Browser { .. } | Actor::OwnerDevice { .. } => {
             authority::browser(tx, actor, true).await?;
             crate::research::project_for_write(tx, project).await?;
-            Ok(UploadAuthority {
-                scope: "OPERATOR".into(),
-                run: None,
-                attempt: None,
-                producer: "OPERATOR",
-            })
+            Ok("OPERATOR".into())
         }
         Actor::Machine { .. } => {
             // Obtain write locks in their original order, not SHARE then UPDATE.
             let machine = authority::machine(tx, actor, true).await?;
-            if !matches!(
-                machine.kind,
-                PrincipalKind::Cli | PrincipalKind::Automation | PrincipalKind::Mission
-            ) {
+            if !matches!(machine.kind, PrincipalKind::Cli | PrincipalKind::Automation) {
                 return Err(StoreError::Forbidden);
             }
             machine.requires(MachineScope::ArtifactSubmit)?;
             machine.project(project)?;
             crate::research::project_for_write(tx, project).await?;
-            let attempt = if let Some(run) = machine.run_id {
-                let id = sqlx::query_scalar::<_, uuid::Uuid>(
-                    "SELECT r.active_attempt_id::uuid FROM app.runs r JOIN app.machine_credentials c ON c.id=$3 AND c.issuer_attempt_id=r.active_attempt_id WHERE r.id=$1 AND r.project_id=$2 AND r.active_attempt_id IS NOT NULL",
-                )
-                .bind(run.as_uuid())
-                .bind(project.as_uuid())
-                .bind(machine.credential_id.as_uuid())
-                .fetch_optional(&mut **tx)
-                .await?
-                .ok_or(StoreError::InvalidCredentials)?;
-                Some(db::id(id)?)
-            } else {
-                None
-            };
-            Ok(UploadAuthority {
-                scope: format!("CREDENTIAL:{}", machine.credential_id),
-                run: machine.run_id,
-                attempt,
-                producer: if machine.kind == PrincipalKind::Mission {
-                    "AGENT"
-                } else {
-                    "OPERATOR"
-                },
-            })
+            Ok(format!("CREDENTIAL:{}", machine.credential_id))
         }
     }
 }
@@ -111,7 +69,7 @@ pub struct ArtifactUpload {
     project: Id,
     kind: ResearchArtifactKind,
     byte_count: DbCounter,
-    authority: UploadAuthority,
+    authority: String,
 }
 impl ArtifactUpload {
     pub fn id(&self) -> Id {
@@ -125,10 +83,7 @@ impl ArtifactUpload {
     pub async fn publish(mut self) -> Result<CommandResult<ArtifactView>, StoreError> {
         // Locks prevent revocation from committing, but wall-clock expiry can still pass.
         let current = upload_authority(&mut self.tx, &self.actor, self.project).await?;
-        if current.run != self.authority.run
-            || current.attempt != self.authority.attempt
-            || current.scope != self.authority.scope
-        {
+        if current != self.authority {
             return Err(StoreError::InvalidCredentials);
         }
         if let Some(result) = self.prepared.replay()? {
@@ -143,14 +98,14 @@ impl ArtifactUpload {
         let row = sqlx::query(AssertSqlSafe(query))
             .bind(id.as_uuid())
             .bind(self.project.as_uuid())
-            .bind(self.authority.run.map(Id::as_uuid))
-            .bind(self.authority.attempt.map(Id::as_uuid))
+            .bind(None::<uuid::Uuid>)
+            .bind(None::<uuid::Uuid>)
             .bind(self.kind.code())
             .bind(self.kind.media_type())
             .bind(self.kind.schema_name())
             .bind(id.to_string())
             .bind(self.byte_count.get() as i64)
-            .bind(self.authority.producer)
+            .bind("OPERATOR")
             .fetch_one(&mut *self.tx)
             .await?;
         let result = commands::finish(&mut self.tx, self.prepared, view(&row)?, 201).await?;
@@ -184,7 +139,7 @@ impl Store {
         let byte_count = domain::artifacts::upload(request)?;
         let mut tx = self.pool.begin().await?;
         let authority = upload_authority(&mut tx, actor, request.project_id).await?;
-        let prepared = commands::artifact_submit(&mut tx, authority.scope.clone(), key, json!({
+        let prepared = commands::artifact_submit(&mut tx, authority.clone(), key, json!({
             "schema_version":1,"project_id":request.project_id,"kind":request.kind,"byte_count":byte_count,
         })).await?;
         if let Some(replay) = prepared.replay::<ArtifactView>()? {
@@ -198,31 +153,6 @@ impl Store {
                 || replay.resource.origin != contracts::research::DataOrigin::Synthetic
             {
                 return Err(StoreError::Integrity);
-            }
-        } else if let Some(run) = authority.run {
-            let limits: serde_json::Value = sqlx::query_scalar(
-                "SELECT limits FROM app.run_admissions WHERE run_id=$1 AND project_id=$2",
-            )
-            .bind(run.as_uuid())
-            .bind(request.project_id.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(StoreError::Invalid("run_has_no_admission"))?;
-            let limits: JobLimitsV1 =
-                serde_json::from_value(limits).map_err(|_| StoreError::Integrity)?;
-            let used: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(byte_count),0)::bigint FROM app.artifacts WHERE producer_run_id=$1",
-            ).bind(run.as_uuid()).fetch_one(&mut *tx).await?;
-            if used < 0
-                || (used as u64)
-                    .checked_add(byte_count.get())
-                    .is_none_or(|total| {
-                        limits
-                            .output_bytes
-                            .is_some_and(|maximum| total > maximum.get())
-                    })
-            {
-                return Err(domain::DomainError::BudgetExhausted("artifact_output_bytes").into());
             }
         }
         Ok(ArtifactUpload {

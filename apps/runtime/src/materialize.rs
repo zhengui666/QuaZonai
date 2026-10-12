@@ -306,7 +306,7 @@ pub async fn inputs(
         objects.entry(spec.parameters_artifact_id)
     {
         let (_, bytes) = journal.input_object(spec.parameters_artifact_id).await?;
-        total = total
+        total
             .checked_add(bytes.len() as u64)
             .ok_or(Failure::Capacity)?;
         entry.insert(bytes);

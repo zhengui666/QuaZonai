@@ -1,10 +1,10 @@
 //! Operator-managed data sources, explicit licenses and immutable native registrations.
 //! Client requests never assign origin, PIT status, row counts or scientific qualification.
 use crate::{
-    DbCounter, Id, Revision, SchemaV1,
     catalogs::DataRevisionPolicy,
     research::{DataOrigin, DataPartition, DataUse, PitStatus},
     runtime::RuntimeDataKind,
+    DbCounter, Id, Revision, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -253,11 +253,11 @@ pub struct DataValidateRequest {
     pub limits: crate::lifecycle::JobLimitsV1,
 }
 
-pub(crate) fn bounded_native_limits_schema()
--> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+pub(crate) fn bounded_native_limits_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::{
-        PartialSchema,
         openapi::schema::{AllOfBuilder, ObjectBuilder, OneOfBuilder, Type},
+        PartialSchema,
     };
     AllOfBuilder::new()
         .item(crate::lifecycle::JobLimitsV1::schema())

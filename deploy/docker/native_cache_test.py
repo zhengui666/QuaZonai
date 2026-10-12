@@ -230,7 +230,7 @@ class NativeCacheWorkflowTests(unittest.TestCase):
                    'id: native-cache\n', 'uses: actions/cache/restore@',
                    'Remove all restored workspace outputs', 'cargo build --locked --release -p job',
                    'node runtimes/native/build-native-image.mjs', 'id: native-cache-save-check',
-                   'uses: actions/cache/save@', 'rm -rf target/release', 'id: codex',
+                   'uses: actions/cache/save@', 'rm -rf target/release',
                    'uses: docker/build-push-action@', 'python3 -B deploy/docker/smoke.py']
         indexes = [action.index(marker) for marker in markers]
         self.assertEqual(indexes, sorted(indexes))

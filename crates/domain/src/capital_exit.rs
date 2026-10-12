@@ -1,9 +1,9 @@
 //! Pure admission and evidence projection. Nautilus owns quantities, fills and valuation.
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{
-    DecimalValue, account_observation::AccountMoneyV1, capital_exit::*,
-    forward::ForwardEnvironmentV1,
+    account_observation::AccountMoneyV1, capital_exit::*, forward::ForwardEnvironmentV1,
+    DecimalValue,
 };
 use std::collections::BTreeSet;
 
@@ -579,16 +579,14 @@ mod tests {
     #[test]
     fn capital_exit_simulation_cannot_be_verified_and_expiry_clears_ready_amount() {
         let mut v = view();
-        assert!(
-            apply_availability(
-                &mut v,
-                &money("1000"),
-                CapitalExitAvailabilityBasisV1::NativeVenueAvailable,
-                time(),
-                time() + chrono::Duration::seconds(30)
-            )
-            .is_err()
-        );
+        assert!(apply_availability(
+            &mut v,
+            &money("1000"),
+            CapitalExitAvailabilityBasisV1::NativeVenueAvailable,
+            time(),
+            time() + chrono::Duration::seconds(30)
+        )
+        .is_err());
         apply_availability(
             &mut v,
             &money("1000"),

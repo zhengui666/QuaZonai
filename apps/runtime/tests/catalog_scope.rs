@@ -236,9 +236,13 @@ async fn accepts_with_settlements(
     settlements: Vec<contracts::settlement::NativeSettlementGroupV1>,
 ) -> bool {
     let root = tempfile::tempdir().unwrap();
-    let journal = Journal::open(&root.path().join("journal.sqlite"), 64 * 1024 * 1024, Some(4))
-        .await
-        .unwrap();
+    let journal = Journal::open(
+        &root.path().join("journal.sqlite"),
+        64 * 1024 * 1024,
+        Some(4),
+    )
+    .await
+    .unwrap();
     let dataset = Id::new();
     let model = Id::new();
     let mut parameters = if matches!(kind, 6 | 7) {

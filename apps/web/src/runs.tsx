@@ -8,6 +8,7 @@ import { responseKind } from '@quazonai/web/response-contract/metadata';
 import type { Schema } from './api';
 import { decodeRunEvent, runEventRetryDelay } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useOnline } from './ui';
+import { HistoricalAgent } from './historical-agent';
 
 type Run = Schema['RunSnapshotV1'];
 // Keep the native table keyboard-reachable even when no row contains an action.
@@ -66,6 +67,7 @@ export function RunDetail({ id, close }: { id: string; close: () => void }) {
           { content: `结束：${displayTime(query.data.finished_at)}` },
         ]} />
         
+        {query.data.kind === 'AGENT_RESEARCH' && <HistoricalAgent id={id} />}
         {(query.data.kind === 'PORTFOLIO_BUILD' || query.data.kind === 'PORTFOLIO_SIMULATE') && <RunRebalance id={id} />}
         <RunEvents key={id} snapshot={query.data} />
       </>}

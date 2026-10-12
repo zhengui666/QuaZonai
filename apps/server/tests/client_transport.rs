@@ -233,75 +233,6 @@ async fn native_cli_reads_calibration_metadata_without_rewriting_source_or_exact
 }
 
 #[tokio::test]
-async fn native_cli_account_commands_use_typed_intent_and_read_only_status() {
-    let profile = Id::new();
-    let operation = Id::new();
-    let reference = json!({"id":operation,"profile_id":profile,"profile_revision":"9007199254740993",
-        "action":"LOGIN","created_at":"2026-09-11T00:00:00Z","deadline_at":"2026-09-11T00:15:00Z"});
-    let current = json!({"schema_version":1,"operation":reference,"state":"REQUESTED","revision":"1",
-        "updated_at":"2026-09-11T00:00:00Z","finished_at":null,"reason":null,"account":null});
-    for (name, route) in [
-        ("login", "/api/v2/codex/login/start"),
-        ("logout", "/api/v2/codex/logout"),
-        ("login-cancel", "/api/v2/codex/login/cancel"),
-    ] {
-        let body = if name == "login-cancel" {
-            json!({"schema_version":1,"operation_id":operation,"expected_revision":"1"})
-        } else {
-            json!({"schema_version":1,"profile_id":profile,"expected_revision":"9007199254740993"})
-        };
-        let response = if name == "login-cancel" {
-            json!({"schema_version":1,"resource":current,"replayed":false})
-        } else {
-            json!({"schema_version":1,"acceptance":{"schema_version":1,"resource":reference,"replayed":false},"current":current,"device_code":null})
-        };
-        let f = Fixture::new(|_| {
-            let mut reply = Reply::json(response);
-            reply.status = StatusCode::ACCEPTED;
-            vec![reply]
-        })
-        .await;
-        let grant = Id::new().to_string();
-        let command = args(&[
-            "--idempotency-key",
-            "account-intent",
-            "--operator-grant",
-            &grant,
-            "codex",
-            name,
-        ]);
-        let result = f
-            .execute(&command, &serde_json::to_vec(&body).unwrap())
-            .await;
-        assert!(result.status.success());
-        assert!(result.stderr.is_empty());
-        let seen = f.seen.lock().unwrap();
-        assert_eq!(seen.len(), 1);
-        assert_eq!(seen[0].uri, route);
-        assert_eq!(seen[0].method, "POST");
-        assert_eq!(seen[0].key.as_deref(), Some("account-intent"));
-        assert_eq!(seen[0].operator.as_deref(), Some(grant.as_str()));
-        assert_eq!(
-            serde_json::from_slice::<Value>(&seen[0].body).unwrap(),
-            body
-        );
-    }
-    let f = Fixture::new(|_| vec![Reply::json(current)]).await;
-    let result = f
-        .execute(
-            &args(&["codex", "login-status", &operation.to_string()]),
-            b"",
-        )
-        .await;
-    assert!(result.status.success());
-    let seen = f.seen.lock().unwrap();
-    assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].uri, format!("/api/v2/codex/login/{operation}"));
-    assert_eq!(seen[0].method, "GET");
-    assert!(seen[0].key.is_none() && seen[0].operator.is_none() && seen[0].body.is_empty());
-}
-
-#[tokio::test]
 async fn native_cli_reads_typed_data_pages_with_exact_uuid_cursor_and_bigint_strings() {
     let id = Id::new();
     let row = source(id);
@@ -794,6 +725,59 @@ async fn native_cli_reads_observation_and_wake_history_without_mutation() {
 }
 
 #[tokio::test]
+async fn native_cli_reads_original_agent_facts_and_independent_cursors_without_writes() {
+    let run = Id::new();
+    let turn = Id::new();
+    let wake = Id::new();
+    let response = json!({"schema_version":1,
+        "execution":{"source":"CODEX","run":{"id":run},"session":{"thread_id":"original-thread"}},
+        "profile":{"revision":"9007199254740993","name":"original-profile"},
+        "turns":{"schema_version":1,"items":[{"ordinal":"65536","usage":null,"terminal":null}],"next_cursor":turn},
+        "wakes":{"schema_version":1,"items":[{"reason":"original-wake"}],"next_cursor":wake}});
+    let f = Fixture::new(|_| vec![Reply::json(response.clone())]).await;
+    let result = f
+        .execute(
+            &args(&[
+                "run",
+                "history",
+                &run.to_string(),
+                "--turn-cursor",
+                &turn.to_string(),
+                "--wake-cursor",
+                &wake.to_string(),
+                "--limit",
+                "1",
+            ]),
+            b"",
+        )
+        .await;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        response
+    );
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    let url = reqwest::Url::parse(&format!("{}{}", f.origin, seen[0].uri)).unwrap();
+    assert_eq!(url.path(), format!("/api/v2/runs/{run}/agent-history"));
+    for (key, value) in [
+        ("limit", "1".to_owned()),
+        ("turn_cursor", turn.to_string()),
+        ("wake_cursor", wake.to_string()),
+    ] {
+        assert!(url.query_pairs().any(|(k, v)| k == key && v == value));
+    }
+    assert_eq!(seen[0].method, "GET");
+    assert!(seen[0].body.is_empty());
+    assert!(seen[0].key.is_none());
+}
+
+#[tokio::test]
 async fn native_cli_keeps_complete_json_above_the_former_response_limit() {
     for chunked in [false, true] {
         let expected = json!({"schema_version":1,"items":[source(Id::new())],"next_cursor":null});
@@ -802,10 +786,18 @@ async fn native_cli_keeps_complete_json_above_the_former_response_limit() {
             reply.bytes.resize(1024 * 1024 + 1, b' ');
             reply.chunk_bytes = chunked.then_some(32 * 1024);
             vec![reply]
-        }).await;
+        })
+        .await;
         let output = f.execute(&args(&["data", "source", "list"]), b"").await;
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), expected);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+            expected
+        );
         assert_eq!(f.seen.lock().unwrap().len(), 1);
     }
 }
@@ -818,18 +810,44 @@ async fn native_sse_preserves_events_past_single_and_cumulative_byte_limits() {
     for seq in 1..=17 {
         let mut document = event(run, seq);
         document["payload"]["original"] = json!(original);
-        frames.push_str(&format!("id: {run}:{seq}\nevent: future.public_observation\ndata: {document}\n\n"));
+        frames.push_str(&format!(
+            "id: {run}:{seq}\nevent: future.public_observation\ndata: {document}\n\n"
+        ));
     }
-    let f = Fixture::new(|_| vec![Reply {
-        status: StatusCode::OK, media: "text/event-stream", bytes: frames.into_bytes(),
-        headers: vec![], chunk_bytes: Some(32 * 1024),
-    }]).await;
-    let output = f.execute(&args(&[
-        "run", "watch", &run.to_string(), "--max-events", "17", "--max-seconds", "10",
-    ]), b"").await;
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let values: Vec<Value> = std::str::from_utf8(&output.stdout).unwrap().lines()
-        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    let f = Fixture::new(|_| {
+        vec![Reply {
+            status: StatusCode::OK,
+            media: "text/event-stream",
+            bytes: frames.into_bytes(),
+            headers: vec![],
+            chunk_bytes: Some(32 * 1024),
+        }]
+    })
+    .await;
+    let output = f
+        .execute(
+            &args(&[
+                "run",
+                "watch",
+                &run.to_string(),
+                "--max-events",
+                "17",
+                "--max-seconds",
+                "10",
+            ]),
+            b"",
+        )
+        .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let values: Vec<Value> = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert_eq!(values.len(), 18);
     for seq in 1..=17 {
         let mut expected = event(run, seq as u64);
@@ -853,10 +871,14 @@ async fn complete_large_problem_retains_the_original_status_and_receipt() {
         reply.bytes.resize(1024 * 1024 + 1, b' ');
         reply.chunk_bytes = Some(32 * 1024);
         vec![reply]
-    }).await;
+    })
+    .await;
     let output = f.execute(&args(&["data", "source", "list"]), b"").await;
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap(), expected);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stderr).unwrap(),
+        expected
+    );
     assert_eq!(f.seen.lock().unwrap().len(), 1);
 }

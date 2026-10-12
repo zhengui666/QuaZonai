@@ -1,5 +1,5 @@
 use super::*;
-use contracts::{Id, science::NativeFeeRateV1};
+use contracts::{science::NativeFeeRateV1, Id};
 #[path = "../../../../tests/support/execution_models.rs"]
 mod models;
 
@@ -611,11 +611,9 @@ fn reports_keep_the_actual_policy_frozen_with_the_simulation_settings() {
     );
     let wire = serde_json::to_value(ctx.value(&frames[0])).unwrap();
     assert!(wire["snapshot"].get("policy_artifact_id").is_none());
-    assert!(
-        wire["snapshot"]
-            .get("native_evidence_artifact_id")
-            .is_none()
-    );
+    assert!(wire["snapshot"]
+        .get("native_evidence_artifact_id")
+        .is_none());
     assert!(wire["snapshot"].get("native_run_id").is_none());
 }
 
@@ -719,12 +717,10 @@ fn cash_only_midnight_snapshots_need_no_nonexistent_intraday_observations() {
     }
     let result = returns(&ctx, &frames).unwrap();
     assert_eq!(result.days.len(), 3);
-    assert!(
-        result
-            .days
-            .iter()
-            .all(|day| day.value == Some(0.0) && day.reason.is_none())
-    );
+    assert!(result
+        .days
+        .iter()
+        .all(|day| day.value == Some(0.0) && day.reason.is_none()));
 }
 
 #[test]
