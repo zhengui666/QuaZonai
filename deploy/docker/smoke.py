@@ -126,7 +126,7 @@ def verify_durable(config: dict, *, restart: bool = False, expected: dict | None
         assert response.status == 200
     for route in ('research', 'research/tasks', 'research/usage', 'research/models'):
         durable_json(opener, origin, route)
-    manage.compose(config, 'exec', '-T', 'app', 'job', 'evaluate-factor', '--help', capture=True)
+    assert '--summary-only' in manage.compose(config, 'exec', '-T', 'app', 'job', 'evaluate-factor', '--help', capture=True)
     version = manage.compose(config, 'exec', '-T', 'app', '/usr/local/bin/node', '--version', capture=True)
     assert version == 'v22.19.0', version
     body = expected['request'] if expected else {
@@ -152,6 +152,26 @@ def verify_durable(config: dict, *, restart: bool = False, expected: dict | None
     snapshot = {'request': body, 'receipt': receipt, 'research': view['research'], 'entries': view['entries']}
     if expected is not None:
         assert snapshot == expected
+    # Exercise the shipped private admission control and the actual public owner
+    # relay, not a helper-only snapshot. Existing native facts stay observable.
+    observed = json.loads(manage.compose(config, 'exec', '-T', 'app', 'curl', '--fail', '--silent', '--show-error',
+                                         '--request', 'POST', 'http://127.0.0.1:8092/maintenance/quiesce', capture=True))
+    try:
+        assert observed['tasks'] == []
+        try:
+            durable_json(opener, origin, 'research', body)
+        except urllib.error.HTTPError as error:
+            assert error.code == 503
+            assert json.load(error) == {'error': 'research_maintenance'}
+        else:
+            raise AssertionError('Maintenance accepted a public research submission')
+        observed_view = durable_json(opener, origin, f'research/{receipt["conversationId"]}')
+        assert observed_view['research'] == snapshot['research']
+        assert observed_view['entries'] == snapshot['entries']
+    finally:
+        manage.compose(config, 'exec', '-T', 'app', 'curl', '--fail', '--silent', '--show-error',
+                       '--request', 'POST', 'http://127.0.0.1:8092/maintenance/resume')
+    assert durable_json(opener, origin, 'research', body) == receipt
     if restart:
         before = (directory / 'config.json').read_bytes()
         manage.compose(config, 'restart', 'app')

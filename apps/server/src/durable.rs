@@ -8,8 +8,8 @@ use axum::{
 };
 use contracts::{
     durable_research::{
-        DurableModelViewV1, DurableResearchErrorV1, DurableResearchStartV1,
-        DurableSubmissionReceiptV1,
+        DurableModelViewV1, DurableResearchAdmissionUnavailableV1, DurableResearchErrorV1,
+        DurableResearchStartV1, DurableSubmissionReceiptV1,
     },
     http::Problem,
 };
@@ -117,7 +117,7 @@ pub async fn list(
         .await
 }
 
-#[utoipa::path(post, path="/api/v2/research", operation_id="startDurableResearch", tag="Durable research", request_body=DurableResearchStartV1, responses((status=202,body=DurableSubmissionReceiptV1,description="Native submission admitted or replayed; not completion"),(status=400,body=DurableResearchErrorV1),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=DurableResearchErrorV1),(status=422,body=Problem),(status=500,body=DurableResearchErrorV1),(status=503,body=Problem)))]
+#[utoipa::path(post, path="/api/v2/research", operation_id="startDurableResearch", tag="Durable research", request_body=DurableResearchStartV1, responses((status=202,body=DurableSubmissionReceiptV1,description="Native submission admitted or replayed; not completion"),(status=400,body=DurableResearchErrorV1),(status=401,body=Problem),(status=403,body=Problem),(status=409,body=DurableResearchErrorV1),(status=422,body=Problem),(status=500,body=DurableResearchErrorV1),(status=503,body=DurableResearchAdmissionUnavailableV1,description="Native research_maintenance admission error or transport Problem")))]
 pub async fn start(
     State(state): State<AppState>,
     Authority(actor): Authority,

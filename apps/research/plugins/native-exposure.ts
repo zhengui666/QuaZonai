@@ -10,9 +10,20 @@ export const Exposures = defineDoc<{ windows: JsonObject[] }>({
   kind: 'qz.native-exposure', version: 1, scope: 'session', initial: () => ({ windows: [] }),
 });
 
+export function partitionBoundaries(request: JsonObject): void {
+  const selection = object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
+  const boundaries = [selection.event_start_ns, request.train_end_ns, request.validation_end_ns, selection.event_end_ns].map((value) => {
+    if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > 9223372036854775807n) throw new Error('native_partition_boundaries');
+    return BigInt(value);
+  });
+  const [start, train, validation, end] = boundaries as [bigint, bigint, bigint, bigint];
+  if (!(start < train && train < validation && validation <= end)) throw new Error('native_partition_boundaries');
+}
+
 export async function footprint(data: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const request = object(data.request, 'native_request');
+  partitionBoundaries(request);
   const selection = object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   if (!Array.isArray(selection.bar_types) || !selection.bar_types.every((id) => typeof id === 'string')) throw new Error('bar_types_required');
   // Paths and owner labels are provenance, not freshness. The same native BAR

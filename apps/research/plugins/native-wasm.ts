@@ -9,11 +9,13 @@ import { join } from 'node:path';
 import wabtFactory from 'wabt';
 import { object } from '../src/trials.ts';
 import { canonical } from '../src/documents.ts';
+import { partitionBoundaries } from './native-exposure.ts';
 
 const wabt = await wabtFactory();
 
 function normalizedRequest(data: JsonObject): JsonObject {
   const request = structuredClone(object(data.request, 'native_request'));
+  partitionBoundaries(request);
   const parameters = object(object(request.forecast, 'forecast').parameters, 'parameters');
   // Model-generated code always uses finite native fuel; the original study input
   // remains unchanged, and the effective execution budget is echoed in results.
@@ -25,7 +27,6 @@ export function iterationRequest(data: JsonObject): JsonObject {
   const request = normalizedRequest(data);
   const forecast = object(request.forecast, 'forecast_request');
   const selection = object(forecast.selection, 'catalog_selection');
-  if (BigInt(selection.event_end_ns as string) < BigInt(request.validation_end_ns as string)) throw new Error('native_partition_boundaries');
   selection.event_end_ns = request.validation_end_ns!;
   return request;
 }
@@ -52,7 +53,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
     let stdout = ''; let stderr = '';
     const result = getOrThrow(await env.exec([
-      'bash', '-c', 'ulimit -v "$5" || exit; exec "$1" evaluate-factor --catalog "$2" --model "$3" < "$4"',
+      'bash', '-c', 'ulimit -v "$5" || exit; exec "$1" evaluate-factor --summary-only --catalog "$2" --model "$3" < "$4"',
       'qz-factor', process.env.QZ_JOB_BINARY ?? 'job', data.catalog,
       join(directory, 'model.wasm'), join(directory, 'request.json'), String(memoryKiB),
     ], {
@@ -63,8 +64,8 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${result.exitCode}`);
     const output = object(JSON.parse(stdout), 'native_result');
     if (canonical(output.request!) !== canonical(request)) throw new Error('native_result_request_mismatch');
-    const { points: _points, ...summary } = output;
-    return summary;
+    if ('points' in output) throw new Error('native_summary_required');
+    return output;
   } finally {
     await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });

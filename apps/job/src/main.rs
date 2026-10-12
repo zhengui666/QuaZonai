@@ -57,6 +57,9 @@ enum Operation {
         catalog: PathBuf,
         #[arg(long)]
         model: PathBuf,
+        /// Omit per-observation rows; emit the same native metrics and provenance.
+        #[arg(long)]
+        summary_only: bool,
     },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
@@ -183,11 +186,20 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
-        Operation::EvaluateFactor { catalog, model } => output(&job::factors::evaluate_factor(
-            &catalog,
-            &input()?,
-            &model_bytes(&model)?,
-        )?),
+        Operation::EvaluateFactor {
+            catalog,
+            model,
+            summary_only,
+        } => {
+            let result = job::factors::evaluate_factor(&catalog, &input()?, &model_bytes(&model)?)?;
+            if summary_only {
+                output(&contracts::factors::NativeFactorEvaluationSummaryV1::from(
+                    result,
+                ))
+            } else {
+                output(&result)
+            }
+        }
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,

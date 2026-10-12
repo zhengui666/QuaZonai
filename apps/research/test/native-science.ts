@@ -236,3 +236,51 @@ for (const [name, model] of [
     } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
   });
 }
+
+test('invalid boundaries never poison exposure facts and a valid final still succeeds after SQLite reopen', { timeout: 120_000 }, async () => {
+  const setup_ = await setup();
+  const host = await openResearch(setup_.options);
+  try {
+    const cases = [
+      ['start-text', 'selection', 'event_start_ns', 'not-decimal'],
+      ['start-negative', 'selection', 'event_start_ns', '-1'],
+      ['start-number', 'selection', 'event_start_ns', 1],
+      ['end-overflow', 'selection', 'event_end_ns', '9223372036854775808'],
+      ['end-missing', 'selection', 'event_end_ns', null],
+      ['train-text', 'request', 'train_end_ns', 'bad'],
+      ['validation-text', 'request', 'validation_end_ns', 'bad'],
+      ['train-order', 'request', 'train_end_ns', objectRequest(fixture).validation_end_ns!],
+      ['validation-order', 'request', 'validation_end_ns', '0'],
+    ] as const;
+    for (const [name, section, key, value] of cases) {
+      const invalid = structuredClone(input(setup_.model));
+      delete invalid.data.sealed;
+      const request = objectRequest(invalid.data);
+      const target = section === 'request' ? request : (request.forecast as JsonObject).selection as JsonObject;
+      target[key] = value;
+      setup_.faux.setResponses([
+        tool('factor_evaluate', { hypothesis: 'Invalid original boundary must be disclosed without a persisted exposure.', model: ema }),
+        tool('research_finish', { reason: 'Invalid input; no science result claimed.' }),
+      ]);
+      const receipt = await host.start(`invalid-${name}`, invalid);
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      const study = (await host.view(receipt.conversationId)).research!;
+      assert.equal(study.trials[0]!.status, 'FAILED');
+      assert.equal(study.trials[0]!.error, 'native_partition_boundaries');
+      assert.equal(study.trials[0]!.result, null);
+      assert.equal((await host.harness.snapshot(Exposures, context))?.windows.length ?? 0, 0);
+    }
+    await host.close();
+    const restored = await openResearch(setup_.options);
+    try {
+      setup_.faux.setResponses([
+        tool('factor_evaluate', { hypothesis: 'Valid causal factor after original invalid studies.', model: ema }),
+        (transcript) => tool('factor_finalize', { reason: 'Unseen suffix remains usable; no malformed exposure was written.', trialId: textResult(transcript, 'factor_evaluate').trialId }),
+      ]);
+      const receipt = await restored.start('valid-after-invalid-boundaries', input(setup_.model));
+      await (await restored.harness.submission(receipt.submissionId, context))!.wait(context);
+      assert.equal((await restored.view(receipt.conversationId)).research!.final!.status, 'COMPUTED');
+      assert.deepEqual((await restored.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
+    } finally { await restored.close(); }
+  } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
+});

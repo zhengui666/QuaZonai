@@ -458,6 +458,7 @@ fn strict_wire_contract_rejects_paths_accounts_targets_and_numeric_nanoseconds()
     for name in [
         "NativeFactorEvaluationRequestV1",
         "NativeFactorEvaluationResultV1",
+        "NativeFactorEvaluationSummaryV1",
     ] {
         assert_eq!(
             schemas["components"]["schemas"][name]["additionalProperties"],
@@ -541,6 +542,32 @@ fn real_cli_accepts_strict_stdin_and_emits_only_factor_json() {
         serde_json::to_value(actual).unwrap(),
         serde_json::to_value(expected).unwrap()
     );
+    let mut summary_args = args.to_vec();
+    summary_args.push("--summary-only".as_ref());
+    let summary = native::command(&summary_args, &request);
+    assert!(
+        summary.status.success(),
+        "{}",
+        String::from_utf8_lossy(&summary.stderr)
+    );
+    let summary_json: serde_json::Value = serde_json::from_slice(&summary.stdout).unwrap();
+    let typed: NativeFactorEvaluationSummaryV1 = serde_json::from_slice(&summary.stdout).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), summary_json);
+    let original_json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(serde_json::from_value::<NativeFactorEvaluationSummaryV1>(original_json).is_err());
+    let mut full: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        full.as_object_mut()
+            .unwrap()
+            .remove("points")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        54
+    );
+    assert_eq!(summary_json, full);
+    assert!(summary.stdout.len() < output.stdout.len() / 2);
     let mut bad = serde_json::to_value(&request).unwrap();
     bad["model"] = serde_json::json!("not accepted in stdin");
     let output = native::command(&args, &bad);

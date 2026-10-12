@@ -130,3 +130,30 @@ pub struct NativeFactorEvaluationResultV1 {
     /// Always TRAIN, VALIDATION, HELDOUT, including empty/unavailable metrics.
     pub partitions: Vec<NativeFactorPartitionReportV1>,
 }
+
+/// CLI summary projection of the same native calculation; no point rows on stdout.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFactorEvaluationSummaryV1 {
+    pub schema_version: SchemaV1,
+    pub request: NativeFactorEvaluationRequestV1,
+    pub native_versions: BTreeMap<String, String>,
+    pub methods: BTreeMap<String, String>,
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
+    pub partitions: Vec<NativeFactorPartitionReportV1>,
+}
+
+impl From<NativeFactorEvaluationResultV1> for NativeFactorEvaluationSummaryV1 {
+    fn from(value: NativeFactorEvaluationResultV1) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            request: value.request,
+            native_versions: value.native_versions,
+            methods: value.methods,
+            consumed_fuel: value.consumed_fuel,
+            partitions: value.partitions,
+        }
+    }
+}

@@ -4,6 +4,8 @@ import type { Cursor } from '@earendil-works/pi-durable';
 import { researchInput, record } from './input.ts';
 
 export function researchServer(host: ResearchHost) {
+  let accepting = true;
+  const admissions = new Set<Promise<unknown>>();
   return createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     try {
@@ -19,12 +21,21 @@ export function researchServer(host: ResearchHost) {
       else if (method === 'GET' && path === '/models') result = await host.availableModels();
       else if (method === 'GET' && path === '/tasks') result = await host.tasks();
       else if (method === 'GET' && path === '/usage') result = await host.usage();
+      else if (method === 'POST' && path === '/maintenance/quiesce') {
+        accepting = false;
+        await Promise.allSettled([...admissions]);
+        result = await host.tasks();
+      }
+      else if (method === 'POST' && path === '/maintenance/resume') { accepting = true; result = {}; }
       else if (method === 'POST' && path === '/research') {
         const chunks: Buffer[] = [];
         for await (const part of request) chunks.push(part);
         const body = record(JSON.parse(Buffer.concat(chunks).toString('utf8')), 'submission');
         if (typeof body.requestId !== 'string') throw new Error('request_id_required');
-        result = await host.start(body.requestId, researchInput(body.input));
+        if (!accepting) throw new Error('research_maintenance');
+        const admission = host.start(body.requestId, researchInput(body.input));
+        admissions.add(admission);
+        try { result = await admission; } finally { admissions.delete(admission); }
         response.statusCode = 202;
       } else {
         const match = /^\/research\/(\d+)(\/stop)?$/.exec(path);
@@ -38,6 +49,7 @@ export function researchServer(host: ResearchHost) {
       const message = error instanceof Error ? error.message : 'research_failed';
       if (message === 'request_id_conflict') response.statusCode = 409;
       else if (message === 'research_not_found') response.statusCode = 404;
+      else if (message === 'research_maintenance') response.statusCode = 503;
       else if (error instanceof SyntaxError || /(_required|^invalid_|^model_unavailable$)/.test(message)) response.statusCode = 400;
       else response.statusCode = 500;
       response.end(JSON.stringify({ error: response.statusCode === 500 ? 'research_failed' : message }));

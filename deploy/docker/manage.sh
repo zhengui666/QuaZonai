@@ -204,8 +204,20 @@ qz_require_research_idle() {
     fi
     [[ "$observation" == 'true false' ]] || qz_fail 'Research service outcome is unknown while the app restarts; restore it and inspect tasks before maintenance.'
     snapshot="$QZ_WORK/research-tasks.json"
-    qz_compose "$file" exec -T app curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8092/tasks > "$snapshot" || qz_fail 'Durable task observation unavailable; inspect the persisted service before maintenance.'
-    [[ $(qz_type "$snapshot" tasks) == array && $(qz_json length tasks "$snapshot") == 0 ]] || qz_fail 'Active durable tasks exist. Stop/reconcile them through research and inspect their native outcomes before maintenance; no cancellation was inferred.'
+    # Close new HTTP admissions and drain starts already admitted before observing
+    # the native graph. Existing tasks remain live and no cancellation is inferred.
+    if ! qz_compose "$file" exec -T app curl --fail --silent --show-error --max-time 10 --request POST http://127.0.0.1:8092/maintenance/quiesce > "$snapshot"; then
+        qz_research_resume "$file"
+        qz_fail 'Durable task observation unavailable; inspect the persisted service before maintenance.'
+    fi
+    if [[ $(qz_type "$snapshot" tasks) != array || $(qz_json length tasks "$snapshot") != 0 ]]; then
+        qz_research_resume "$file"
+        qz_fail 'Active durable tasks exist. Stop/reconcile them through research and inspect their native outcomes before maintenance; no cancellation was inferred.'
+    fi
+}
+qz_research_resume() {
+    [[ $(qz_get "$1" schema_version) == 3 ]] || return 0
+    qz_compose "$1" exec -T app curl --fail --silent --show-error --max-time 10 --request POST http://127.0.0.1:8092/maintenance/resume > /dev/null
 }
 qz_research_configuration() {
     local root=$1 directory="$1/data/research"
@@ -309,6 +321,7 @@ qz_resume() {
     local file=$1 enable=${2:-true} status=0
     # Starting-phase recovery does not recreate or restart running processors.
     qz_compose "$file" up -d --no-recreate --wait --wait-timeout 120 app || status=$?
+    if [[ "$status" == 0 ]]; then qz_research_resume "$file" || status=$?; fi
     if [[ "$enable" == true ]]; then systemctl --user enable --now "$(qz_unit "$file")" || return $?; else systemctl --user start "$(qz_unit "$file")" || return $?; fi
     return "$status"
 }
@@ -501,7 +514,6 @@ qz_apply_update() {
     if [[ "$phase" == starting ]]; then qz_start_prepared "$root" "$candidate"; return; fi
     if [[ -e "$pending" && "$phase" == preparing ]]; then qz_resume "$old"; qz_restarts "$old" true; fi
     qz_require_idle "$old"
-    qz_require_research_idle "$old"
     if [[ ! -e "$pending" ]]; then
         printf '{"operation":"update","phase":"preparing","previous":%s,"target":%s,"backup":null}\n' "$(qz_raw "$old" '')" "$(qz_raw "$candidate" '')" | qz_atomic_text "$pending"
     fi
@@ -576,14 +588,14 @@ qz_apply_config() {
             qz_merge "$candidate" "$QZ_WORK/config-patch.json" "$candidate"
         fi
     done
-    qz_require_idle "$file"; qz_require_research_idle "$file"
+    qz_require_idle "$file"
     qz_directory "$root/backups"; checkpoint=$(mktemp -d "$root/backups/runtime-config-XXXXXX")
     qz_save "$checkpoint/installation.json" "$file"; sync -f -- "$root/backups"
     printf 'Configuration checkpoint: %s\n' "$checkpoint"
     (
         trap 'status=$?; trap - EXIT; if [[ "$status" != 0 ]]; then qz_resume "$file" && qz_restarts "$file" true; fi; exit "$status"' EXIT
-        qz_require_research_idle "$file"
-        qz_restarts "$file" false; qz_compose "$file" stop app
+        qz_restarts "$file" false; qz_require_research_idle "$file"
+        qz_compose "$file" stop app
         qz_require_idle "$file"
         systemctl --user disable --now "$(qz_unit "$file")"; qz_require_idle "$file"
         trap - EXIT

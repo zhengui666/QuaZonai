@@ -901,6 +901,19 @@ fn describe_authority(document: &mut utoipa::openapi::OpenApi) {
                     if !status.parse::<u16>().is_ok_and(|code| code >= 400) {
                         continue;
                     }
+                    // Admission closure is native JSON, while an unavailable
+                    // transport is a Problem; both retain the typed union.
+                    if path == "/api/v2/research" && write && status == "503" {
+                        if let utoipa::openapi::RefOr::T(response) = response {
+                            if let Some(content) = response.content.get("application/json").cloned()
+                            {
+                                response
+                                    .content
+                                    .insert("application/problem+json".into(), content);
+                            }
+                        }
+                        continue;
+                    }
                     // Durable host errors are native JSON, not QZ Problems.
                     if path.starts_with("/api/v2/research")
                         && !matches!(status.as_str(), "401" | "403" | "422" | "429" | "503")

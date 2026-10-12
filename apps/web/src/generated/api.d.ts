@@ -4773,6 +4773,8 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description Native admission closure or an unavailable/unknown transport outcome. */
+        DurableResearchAdmissionUnavailableV1: components["schemas"]["DurableResearchErrorV1"] | components["schemas"]["Problem"];
         DurableResearchErrorV1: {
             error: string;
         } & {
@@ -20333,12 +20335,14 @@ export interface operations {
                     "application/json": components["schemas"]["DurableResearchErrorV1"];
                 };
             };
+            /** @description Native research_maintenance admission error or transport Problem */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["Problem"];
+                    "application/json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
+                    "application/problem+json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
                 };
             };
         };

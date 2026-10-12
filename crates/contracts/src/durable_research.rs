@@ -61,3 +61,11 @@ pub struct DurableResearchErrorV1 {
     #[serde(flatten)]
     pub payload: Map<String, Value>,
 }
+
+/// Native admission closure or an unavailable/unknown transport outcome.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum DurableResearchAdmissionUnavailableV1 {
+    Native(DurableResearchErrorV1),
+    Transport(Box<crate::http::Problem>),
+}

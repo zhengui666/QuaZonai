@@ -304,6 +304,7 @@ use utoipa::OpenApi;
     science::NativeForecastResultV1,
     factors::NativeFactorEvaluationRequestV1,
     factors::NativeFactorEvaluationResultV1,
+    factors::NativeFactorEvaluationSummaryV1,
     science::NativeAlphaValidationRequestV1,
     science::NativeAlphaValidationResultV1,
     science::NativeAlphaSealedRequestV1,

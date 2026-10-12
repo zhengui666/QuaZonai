@@ -75,6 +75,15 @@ async fn upstream(
         duplicate
     };
     let (status, body) = match (method.as_str(), uri.path()) {
+        ("POST", "/research")
+            if serde_json::from_slice::<Value>(&bytes)
+                .is_ok_and(|body| body["requestId"] == "maintenance") =>
+        {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{\"error\":\"research_maintenance\"}",
+            )
+        }
         ("POST", "/research") => (
             if duplicate {
                 StatusCode::OK
@@ -376,9 +385,37 @@ async fn native_failure_cancel_and_redirect_status_remain_honest(pool: PgPool) {
         assert_eq!(reply.0, status);
         assert_eq!(serde_json::from_slice::<Value>(&reply.2).unwrap(), expected);
     }
+    let mut body: Value = serde_json::from_str(START).unwrap();
+    body["requestId"] = json!("maintenance");
+    let reply = raw_reply(
+        &f.app,
+        raw_request(
+            "POST",
+            "/api/v2/research",
+            Some(token),
+            &serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(reply.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(reply.1[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("application/json"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&reply.2).unwrap(),
+        json!({"error":"research_maintenance"})
+    );
+    assert!(matches!(
+            serde_json::from_slice::<
+                contracts::durable_research::DurableResearchAdmissionUnavailableV1,
+            >(&reply.2)
+            .unwrap(),
+            contracts::durable_research::DurableResearchAdmissionUnavailableV1::Native(_)
+        ));
     assert_eq!(
         upstream.seen.lock().unwrap().len(),
-        5,
+        6,
         "no retries or redirect-following"
     );
     let invalid = raw_reply(
@@ -403,8 +440,16 @@ async fn unavailable_transport_is_opaque_and_does_not_claim_remote_cancel(pool: 
     )
     .await;
     assert_eq!(reply.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(reply.1[header::CONTENT_TYPE], "application/problem+json");
     let problem: Value = serde_json::from_slice(&reply.2).unwrap();
     assert_eq!(problem["code"], "RESEARCH_UNAVAILABLE");
+    assert!(matches!(
+            serde_json::from_slice::<
+                contracts::durable_research::DurableResearchAdmissionUnavailableV1,
+            >(&reply.2)
+            .unwrap(),
+            contracts::durable_research::DurableResearchAdmissionUnavailableV1::Transport(_)
+        ));
     let text = String::from_utf8(reply.2).unwrap();
     assert!(!text.contains(&origin) && !text.contains(token));
     assert!(problem.get("cancelled").is_none());
@@ -517,6 +562,23 @@ fn durable_openapi_is_native_json_owner_only_and_old_execution_routes_are_absent
         "#/components/schemas/DurableResearchErrorV1"
     );
     assert!(stop["409"].is_null());
+    assert_eq!(
+        document["paths"]["/api/v2/research"]["post"]["responses"]["503"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/DurableResearchAdmissionUnavailableV1"
+    );
+    assert_eq!(
+        document["paths"]["/api/v2/research"]["post"]["responses"]["503"]["content"]
+            ["application/problem+json"]["schema"]["$ref"],
+        "#/components/schemas/DurableResearchAdmissionUnavailableV1"
+    );
+    assert_eq!(
+        document["components"]["schemas"]["DurableResearchAdmissionUnavailableV1"]["oneOf"],
+        json!([
+            {"$ref":"#/components/schemas/DurableResearchErrorV1"},
+            {"$ref":"#/components/schemas/Problem"},
+        ])
+    );
     assert!(document["paths"]["/api/v2/projects/{id}/cycles"]["post"].is_null());
     assert!(document["paths"]
         .as_object()

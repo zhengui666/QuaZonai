@@ -112,7 +112,7 @@ test('Bash installation creates persistent research config once and never source
 });
 test('real task-idle helper accepts only observed empty native graph and rejects unknown outcomes',async t=>{
  const root=await fixture(t),config=await installation(root),file=join(root,'config.json'),snapshot=join(root,'snapshot.json'); await writeFile(file,JSON.stringify(config));
- const boundary=`qz_compose() { if [[ " $* " == *' ps '* ]]; then printf app-container; else cat ${quote(snapshot)}; fi; }\ndocker() { printf 'true false'; }\n`;
+ const boundary=`qz_compose() { if [[ " $* " == *' ps '* ]]; then printf app-container; elif [[ "$*" == *'/maintenance/quiesce' ]]; then cat ${quote(snapshot)}; elif [[ "$*" == *'/maintenance/resume' ]]; then printf '{}'; else return 99; fi; }\ndocker() { printf 'true false'; }\n`;
  for(const [value,allowed] of [[{tasks:[]},true],[{tasks:[{id:9,status:'running'}]},false],[{tasks:[{id:9,status:'stopping'}]},false],[{},false]]){
   await writeFile(snapshot,JSON.stringify(value)); const result=run(root,boundary+`qz_require_research_idle ${quote(file)}`); assert.equal(result.status===0,allowed,result.stderr);
  }
@@ -147,4 +147,30 @@ source ${quote(script)} console`;
  }
  const cli=spawnSync('bash',['-c',`function exec { [[ "$1" == /opt/quazonai/bin/server ]]; printf 'standalone:%s' "$2"; exit 0; }; source ${quote(script)} --version`],{encoding:'utf8',timeout:5000});
  assert.equal(cli.status,0,cli.stderr); assert.equal(cli.stdout,'standalone:--version');
+});
+
+test('maintenance quiesces before stopping and reopens admissions on active-task or stop failure',async t=>{
+ const root=await fixture(t),config=await installation(root),file=join(root,'config.json'),log=join(root,'calls'); await writeFile(file,JSON.stringify(config));
+ const boundary=`LOG=${quote(log)}
+docker() { printf 'true false'; }
+qz_compose() {
+ shift
+ if [[ " $* " == *' ps '* ]]; then printf app-container;
+ elif [[ "$*" == *'/maintenance/quiesce' ]]; then echo quiesce >> "$LOG"; printf '%s' "$TASKS";
+ elif [[ "$*" == *'/maintenance/resume' ]]; then echo resume >> "$LOG";
+ elif [[ " $* " == *' stop app '* ]]; then echo stop >> "$LOG"; return 17;
+ else echo "compose $*" >> "$LOG"; fi
+}
+qz_restarts() { :; }
+systemctl() { :; }
+qz_require_idle() { :; }
+`;
+ assert.notEqual(run(root,boundary+`TASKS='{"tasks":[{"id":9}]}'; qz_require_research_idle ${quote(file)}`).status,0);
+ assert.equal(await readFile(log,'utf8'),'quiesce\nresume\n');
+ await writeFile(log,'');
+ assert.notEqual(run(root,boundary+`TASKS='{"tasks":[]}'; qz_shutdown_and_backup ${quote(file)} preparing`).status,0);
+ const calls=await readFile(log,'utf8');
+ assert.ok(calls.indexOf('quiesce')<calls.indexOf('stop'));
+ assert.ok(calls.indexOf('stop')<calls.indexOf('resume'));
+ assert.doesNotMatch(calls,/cancel|backup|migrate/);
 });
