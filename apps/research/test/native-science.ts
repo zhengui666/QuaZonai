@@ -178,7 +178,7 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
 function objectRequest(data: JsonObject): JsonObject { return data.request as JsonObject; }
 
 for (const fuel of ['omitted', 'null'] as const) {
-  test(`${fuel} fuel receives a disclosed finite native budget through iteration and finalization`, { timeout: 120_000 }, async () => {
+  test(`${fuel} fuel stays unmetered through iteration and finalization`, { timeout: 120_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
@@ -188,12 +188,12 @@ for (const fuel of ['omitted', 'null'] as const) {
       else delete parameters.total_fuel;
     }
     setup_.faux.setResponses([
-      tool('factor_evaluate', { hypothesis: 'Evaluate with the model-code adapter default finite fuel.', model: ema }),
+      tool('factor_evaluate', { hypothesis: 'Evaluate without injecting a scientific fuel budget.', model: ema }),
       (transcript) => {
         const result = textResult(transcript, 'factor_evaluate');
-        assert.equal(typeof result.consumed_fuel, 'string');
-        assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, '10000000');
-        return tool('factor_finalize', { reason: 'The effective finite request and recorded result match.', trialId: result.trialId });
+        assert.equal(result.consumed_fuel, null);
+        assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, null);
+        return tool('factor_finalize', { reason: 'The original unmetered request and recorded result match.', trialId: result.trialId });
       },
     ]);
     const host = await openResearch(setup_.options);
@@ -204,22 +204,23 @@ for (const fuel of ['omitted', 'null'] as const) {
       assert.deepEqual(study.input, original);
       assert.equal(study.trials[0]!.status, 'COMPUTED');
       assert.equal(study.final!.status, 'COMPUTED');
-      assert.equal(typeof (study.final!.result as JsonObject).consumed_fuel, 'string');
+      assert.equal((study.final!.result as JsonObject).consumed_fuel, null);
       const echoed = (((study.final!.result as JsonObject).request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      assert.equal(echoed.total_fuel, '10000000');
+      assert.equal(echoed.total_fuel, null);
     } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
   });
 }
 
 for (const [name, model] of [
   ['infinite-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) (loop $again br $again) f64.const 0))'],
-  ['oversized-memory', '(module (memory 65536) (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0))'],
+  ['invalid-memory', '(module (memory 1 0) (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0))'],
 ] as const) {
   test(`model-generated ${name} fails finitely and keeps the original failed trial`, { timeout: 30_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
-    delete (((original.data.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel;
+    // This test explicitly requests a scientific budget; omitted fuel is unmetered.
+    (((original.data.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel = '10000000';
     delete original.data.sealed;
     setup_.faux.setResponses([
       tool('factor_evaluate', { hypothesis: 'Protocol-only invalid model: preserve the actual native failure.', model }),

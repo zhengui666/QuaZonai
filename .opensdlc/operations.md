@@ -34,14 +34,14 @@ The TypeScript [service](../apps/service) opens the original database through [o
 
 `QZ_CONFIG` selects the private service configuration. Keep original `research.database`, registered extension/provider modules, dataset inputs and downstream bindings. Resolve relative paths from that file, not from a later working directory. Provider credentials stay in explicitly configured host-side storage/environment; native science does not inherit them. Missing model/data/connection is an honest unavailable state, never demo success.
 
-Restart reopens the same database, repairs original admitted-but-unsubmitted requests and resumes original native work. Official retry, stream timeout, compaction and progress settings are public Harness configuration; native task inspection remains the execution authority. Retryable model failures and exhausted authentication/quota are different outcomes. Unsupported models never silently fall back.
+Restart reopens the same database, repairs original admitted-but-unsubmitted requests and resumes original native work. Official retry, compaction and progress settings are public Harness configuration; QZ no longer adds stream/task/native deadlines and ignores retired timer fields. Native task inspection remains the execution authority. Retryable model failures and exhausted authentication/quota are different outcomes. Unsupported models never silently fall back.
 
 Graceful shutdown closes admissions and observers, then closes the Harness so interrupted work retains its native recovery semantics. Container restart supervision may reopen the process; it cannot prove an external job or account action was cancelled. Short deterministic recovery tests do not establish a literal 24-hour observation or real-model research quality.
 
 <a id="scientific-runtime"></a>
 ## Scientific execution and data
 
-Scientific processes use the matching [native job](../apps/job) and original typed inputs. Reuse official Task/NodeExecutionEnv lifecycle, explicit bounded model execution and native Nautilus/Clarabel/Arrow behavior. Preserve request/model/provenance association and the original deadline across recovery. Computation is not qualification, equity comes from the native shared account and missing values remain null.
+Scientific processes use the matching [native job](../apps/job) and original typed inputs. Reuse official Task/NodeExecutionEnv lifecycle, explicit scientific budgets and native Nautilus/Clarabel/Arrow behavior. QZ imposes no process deadline/memory ceiling and does not inject fuel for omitted/null budgets. Preserve request/model/provenance association, owner cancellation and original target expiry across recovery. Computation is not qualification, equity comes from the native shared account and missing values remain null.
 
 Source acquisition and catalog preparation remain at [data tools](../runtimes/data/README.md) and [source plugins](../runtimes/data/source-plugins.md). Catalog paths, partitions, fees, availability and rights are actual owner configuration; preparation does not establish PIT, source permission or profitability.
 

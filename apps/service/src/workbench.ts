@@ -58,11 +58,16 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     } else {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
-      input = { goal: text(submission.goal, 'goal'), model: submission.model, data: structuredClone(configured.data),
+      const preferences = await getSettings();
+      const thinkingLevel = submission.thinkingLevel ?? (preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId ? preferences.thinkingLevel : null);
+      input = { goal: text(submission.goal, 'goal'), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), data: structuredClone(configured.data),
         policy: { ...configured.policy, max_trials: submission.maxTrials, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
-    if (!host.models.getModel(String(model.provider), String(model.modelId))) throw new Problem('model_unavailable', 409);
+    const available = await host.availableModels(String(model.provider));
+    const selectedModel = available.find(item => item.modelId === model.modelId);
+    if (!selectedModel) throw new Problem('model_unavailable', 409);
+    if (input.thinkingLevel !== undefined && !selectedModel.thinkingLevels.includes(input.thinkingLevel)) throw new Problem('thinking_level_unsupported');
     const policy = object(input.policy, 'policy');
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
@@ -126,7 +131,6 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const id = randomUUID(); const capture = join(config.dataDir, 'catalogs', id);
     await mkdir(join(config.dataDir, 'catalogs'), { recursive: true });
     await cp(text(object(object(evidence[0]!.input).data).catalog, 'catalog'), capture, { recursive: true });
-    const preferences = await getSettings();
     try {
       const admitted = await host.harness.commit(async (tx) => {
         const facts = await tx.doc(Application);
@@ -136,7 +140,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           view: { id, name: input.name, researchIds: input.researchIds, datasetId: input.datasetId, status: 'QUEUED', capital, currency: configured.currency,
             createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null } };
         const taskId = await tx.createTask(BuildPortfolio, { id, evidence, weights, policy: configured.strategy!, capital, currency: configured.currency,
-          dataDir: config.dataDir, catalog: capture, binary: config.jobBinary, timeout: preferences.nativeTimeoutSeconds, taskTimeout: preferences.taskTimeoutSeconds },
+          dataDir: config.dataDir, catalog: capture, binary: config.jobBinary },
           { conversationId: input.researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
         fact.view.taskId = taskId; facts.portfolios[id] = json(fact); return fact.view;
       }, context);
@@ -157,7 +161,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (BigInt(counter(selected.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired', 422);
     const connection = config.connections.find((connection) => connection.id === input.connectionId && connection.mode === input.mode);
     if (!connection) throw new Problem('connection_not_configured', 422);
-    const id = randomUUID(); const receiptId = randomUUID(); const preferences = await getSettings();
+    const id = randomUUID(); const receiptId = randomUUID();
     return host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application);
       const existing = Object.values(facts.observations).map(observation).find((item) => item.input.requestId === input.requestId);
@@ -166,7 +170,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         && fact.connection.accountId === connection.accountId && connectionBase(fact.connection).href === connectionBase(connection).href
         && ['PENDING', 'UNCERTAIN'].includes(fact.view.receipt?.status ?? ''));
       if (unsettled) throw new Problem('target_delivery_requires_reconciliation', 409);
-      const taskId = await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: selected.target!, receiptId, refresh: false, timeout: preferences.taskTimeoutSeconds },
+      const taskId = await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: selected.target!, receiptId, refresh: false },
         { conversationId: selected.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
       const fact: ObservationFact = { input: structuredClone(input), connection: structuredClone(connection), target: selected.target!, taskId, snapshot: null,
         view: { id, name: selected.view.name, portfolioId: selected.view.id, mode: input.mode, status: 'QUEUED', currency: selected.view.currency,
@@ -176,13 +180,12 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }, context);
   }
   async function refreshObservation(id: string) {
-    const preferences = await getSettings();
     const taskId = await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) throw new Problem('observation_not_found', 404);
       const fact = observation(value);
       const previous = await tx.task(fact.taskId as TaskId);
       if (previous && previous.state.status !== 'terminal') return fact.taskId;
-      fact.taskId = await tx.createTask(ObserveAccount, { id, connection: fact.connection, target: fact.target, receiptId: fact.view.receipt!.id, refresh: true, timeout: preferences.taskTimeoutSeconds },
+      fact.taskId = await tx.createTask(ObserveAccount, { id, connection: fact.connection, target: fact.target, receiptId: fact.view.receipt!.id, refresh: true },
         { conversationId: portfolio(facts.portfolios[fact.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
       facts.observations[id] = json(fact); return fact.taskId;
     }, context);

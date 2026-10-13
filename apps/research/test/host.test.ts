@@ -156,31 +156,32 @@ test('default factor input preparation failure remains a disclosed scientific tr
   } finally { await host.close(); await setup_.cleanup(); }
 });
 
-test('unfinished yield continues within original policy; repeated no-progress yields stop durably', async () => {
-  for (const finish of [true, false]) {
-    const setup_ = await setup(true);
-    setup_.faux.setResponses([fauxAssistantMessage('This study is still unfinished.'), finish ? fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Original criteria cannot be evaluated with missing data' }), { stopReason: 'toolUse' }) : fauxAssistantMessage('Still unfinished.')]);
-    let host = await openResearch({ ...setup_, extensions: [research] });
-    try {
-      const original = input(setup_.model);
-      const receipt = await host.start(`yield-${finish}`, original);
-      assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
-      assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
-      const facts = (await host.view(receipt.conversationId)).research!;
-      assert.deepEqual(facts.input, original);
-      assert.equal(facts.trials.length, 0);
-      assert.equal(facts.final!.reason, finish ? 'Original criteria cannot be evaluated with missing data' : 'no_progress_continuation_limit');
-      const continuation = await host.harness.snapshot(Continuation, receipt.conversationId, context);
-      assert.equal(continuation!.yields, finish ? 1 : 2);
-      assert.equal(setup_.faux.state.callCount, 2);
-      await host.close();
-      host = await openResearch({ ...setup_, extensions: [research], thinkingLevel: 'high' });
-      assert.deepEqual(await host.start(`yield-${finish}`, original), receipt);
-      assert.equal(setup_.faux.state.callCount, 2);
-      assert.deepEqual(await host.harness.snapshot(Continuation, receipt.conversationId, context), continuation);
-      assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
-    } finally { await host.close(); await setup_.cleanup(); }
-  }
+test('unfinished yields have no technical count cap; original policy and reasoning survive restart', async () => {
+  const setup_ = await setup(true);
+  setup_.faux.setResponses([
+    ...Array.from({ length: 6 }, () => fauxAssistantMessage('This study is still unfinished.')),
+    fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Original criteria cannot be evaluated with missing data' }), { stopReason: 'toolUse' }),
+  ]);
+  let host = await openResearch({ ...setup_, extensions: [research] });
+  try {
+    const original = input(setup_.model);
+    const receipt = await host.start('uncapped-yields', original);
+    assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(facts.input, original);
+    assert.equal(facts.trials.length, 0);
+    assert.equal(facts.final!.reason, 'Original criteria cannot be evaluated with missing data');
+    const continuation = await host.harness.snapshot(Continuation, receipt.conversationId, context);
+    assert.equal(continuation!.yields, 6);
+    assert.equal(setup_.faux.state.callCount, 7);
+    await host.close();
+    host = await openResearch({ ...setup_, extensions: [research], thinkingLevel: 'high' });
+    assert.deepEqual(await host.start('uncapped-yields', original), receipt);
+    assert.equal(setup_.faux.state.callCount, 7);
+    assert.deepEqual(await host.harness.snapshot(Continuation, receipt.conversationId, context), continuation);
+    assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
+  } finally { await host.close(); await setup_.cleanup(); }
 });
 
 for (const finalFirst of [true, false]) {
@@ -213,13 +214,13 @@ test('native backoff checkpoint survives close/reopen; quota and auth fail witho
     const settings = researchSettings();
     assert.deepEqual(settings.retry, { enabled: true, maxRetries: 6, baseDelayMs: 2000, maxAgentDelayMs: 60000 });
     assert.equal(settings.progress!.partialIntervalMs, 250);
-    assert.throws(() => researchSettings({ stream: { timeoutMs: -1 } }), /invalid_settings/);
+    assert.equal(researchSettings({ stream: { timeoutMs: -1 } }).stream?.timeoutMs, undefined);
     const graph = await host.harness.watchTaskGraph(context);
     let ready!: (id: TaskId) => void;
     const backoff = new Promise<TaskId>((resolve) => { ready = resolve; });
     graph.start(async (value) => { const task = Object.values(value.tasks).find((task) => 'phase' in task.state && task.state.phase === 'retry'); if (task) ready(task.id); });
     setup_.faux.setResponses([(_transcript, options) => {
-      assert.equal(options!.timeoutMs, 120000); assert.equal(options!.maxRetries, 0);
+      assert.equal(options!.timeoutMs, undefined); assert.equal(options!.maxRetries, 0);
       return fauxAssistantMessage('', { stopReason: 'error', errorMessage: '503 service unavailable' });
     }]);
     const receipt = await host.start('transient-retry', input(setup_.model));

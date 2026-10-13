@@ -3,7 +3,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { AppstoreOutlined, ExperimentOutlined, FundOutlined, LoadingOutlined, MenuOutlined, RadarChartOutlined, SettingOutlined } from '@ant-design/icons';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import type { SettingsView } from '../../../packages/contracts/src/index.ts';
+import type { WorkspaceView } from '../../../packages/contracts/src/index.ts';
 import { AuthGate, LogoutButton } from './auth';
 import AppErrorBoundary from './AppErrorBoundary';
 import { useMedia, useResource } from './ui';
@@ -28,7 +28,7 @@ function currentPage() { const key = location.hash.slice(1); return navigation.s
 function Brand() { return <div className="brand"><span className="brand-mark" aria-hidden>Q</span><span>QuaZonai</span></div>; }
 function Console() {
   const [active, setActive] = useState(currentPage); const [menuOpen, setMenuOpen] = useState(false); const mobile = useMedia('(max-width: 959px)');
-  const settings = useResource<SettingsView>('/settings');
+  const settings = useResource<WorkspaceView>('/workspace');
   useEffect(() => {
     const navigate = () => { setActive(currentPage()); setMenuOpen(false); requestAnimationFrame(() => document.getElementById('main-content')?.focus()); };
     window.addEventListener('hashchange', navigate); return () => window.removeEventListener('hashchange', navigate);

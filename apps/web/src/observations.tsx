@@ -2,7 +2,7 @@ import { App, Button, Form, Modal, Select, Table, Tabs } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useState } from 'react';
-import type { ObservationMode, ObservationStart, ObservationView, PortfolioView, PositionView, SettingsView } from '../../../packages/contracts/src/index.ts';
+import type { ObservationMode, ObservationStart, ObservationView, PortfolioView, PositionView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 import { api } from './api';
 import { display, ErrorNotice, isActive, isReady, NoData, number, PageHeading, QueryPanel, RefreshButton, Status, Surface, time, useResource } from './ui';
 const EquityPlot = lazy(() => import('./equity-plot'));
@@ -45,7 +45,7 @@ function ObservationRecord({ value, stale }: { value: ObservationView; stale: bo
   </div>;
 }
 function ObservationForm({ mode, close, started }: { mode: ObservationMode; close: () => void; started: (value: ObservationView) => void }) {
-  const portfolios = useResource<PortfolioView[]>('/portfolios'); const settings = useResource<SettingsView>('/settings'); const client = useQueryClient(); const { message } = App.useApp();
+  const portfolios = useResource<PortfolioView[]>('/portfolios'); const settings = useResource<WorkspaceView>('/workspace'); const client = useQueryClient(); const { message } = App.useApp();
   const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(); const [pending, setPending] = useState<{ fields: string; body: ObservationStart }>();
   const ready = portfolios.data?.filter(item => isReady(item.status)) ?? []; const connections = settings.data?.connections.filter(item => item.mode === mode) ?? [];
   async function submit(values: { portfolioId: string; connectionId: string }) {

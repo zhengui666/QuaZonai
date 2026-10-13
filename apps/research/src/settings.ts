@@ -4,9 +4,10 @@ import type { HarnessSettings } from '@earendil-works/pi-durable';
 // Starting values, not a provider performance guarantee. These are live host
 // settings; native pi.agent retains each conversation's model/thinking choice.
 export function researchSettings(value: HarnessSettings = {}): HarnessSettings {
+  const { timeoutMs: _retiredTimeout, ...stream } = value.stream ?? {};
   const settings = {
     ...value,
-    stream: { timeoutMs: 120_000, maxRetries: 0, maxRetryDelayMs: 60_000, ...value.stream },
+    stream: { maxRetries: 0, maxRetryDelayMs: 0, ...stream },
     retry: { enabled: true, maxRetries: 6, baseDelayMs: 2_000, maxAgentDelayMs: 60_000, ...value.retry },
     compaction: { ...DEFAULT_COMPACTION_POLICY, ...value.compaction },
     progress: { partialIntervalMs: 250, outputIntervalMs: 250, ...value.progress },

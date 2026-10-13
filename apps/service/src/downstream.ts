@@ -1,3 +1,4 @@
+import { Agent, fetch } from 'undici';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { ConnectionConfig } from './config.ts';
 import { canonical } from '../../research/src/documents.ts';
@@ -5,7 +6,7 @@ import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.
 import type { ObservationFact } from './facts.ts';
 
 export interface ObservationTaskInput {
-  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; timeout: number;
+  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject;
 }
 export function connectionBase(connection: ConnectionConfig): URL {
   const url = new URL(connection.url); url.hash = '';
@@ -22,13 +23,16 @@ export async function downstream(input: ObservationTaskInput, operation: 'delive
     headers.authorization = `Bearer ${token}`;
   }
   if (operation === 'deliver' && BigInt(counter(input.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired');
-  const response = await fetch(url, { method: operation === 'deliver' ? 'POST' : 'GET', headers,
-    body: operation === 'deliver' ? JSON.stringify({ id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId,
-      expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target }) : undefined,
-    signal: AbortSignal.any([signal, AbortSignal.timeout(input.timeout * 1000)]), redirect: 'error',
-  });
-  if (!response.ok) throw new Problem(`downstream_${operation}_${response.status}`);
-  return object(await response.json(), `downstream_${operation}`);
+  const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 0 } });
+  try {
+    const response = await fetch(url, { method: operation === 'deliver' ? 'POST' : 'GET', headers,
+      body: operation === 'deliver' ? JSON.stringify({ id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId,
+        expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target }) : undefined,
+      signal, dispatcher, redirect: 'error',
+    });
+    if (!response.ok) { await response.body?.cancel(); throw new Problem(`downstream_${operation}_${response.status}`); }
+    return object(await response.json(), `downstream_${operation}`);
+  } finally { await dispatcher.close(); }
 }
 
 export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void {

@@ -1,5 +1,4 @@
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
-import { withAbortSignal } from '@earendil-works/chord/context';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import { computePortfolio } from './native.ts';
 import type { PortfolioTaskInput } from './native.ts';
@@ -7,11 +6,11 @@ import { acceptReceipt, acceptSnapshot, downstream } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
-export const BuildPortfolio = defineTask<PortfolioTaskInput & { taskTimeout: number }, { phase: 'compute' }, null>({
+export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
   name: 'qz.portfolio', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     try {
-      const result = await computePortfolio(task.input, withAbortSignal(AbortSignal.timeout(task.input.taskTimeout * 1000), context));
+      const result = await computePortfolio(task.input, context);
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;

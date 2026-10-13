@@ -21,7 +21,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   settings get | set --file SETTINGS.json
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
-Watch/wait default to 30 seconds; detaching does not stop admitted work.
+Watch/wait have no default deadline; detaching does not stop admitted work.
 Paper/live bind an observed account, never launch trading. 'client' is a thin alias.
 `;
 const options = {
@@ -144,8 +144,8 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   const client = await connect({ ...profile, ca_certificate: values['ca-certificate'] ?? profile.ca_certificate });
   try {
     if (group === 'research' && (action === 'watch' || action === 'wait')) {
-      const seconds = Number(values.timeout ?? 30);
-      if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isSafeInteger(seconds * 1000)) throw new CliError('positive_timeout_seconds_required');
+      const seconds = values.timeout === undefined ? undefined : Number(values.timeout);
+      if (seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || !Number.isSafeInteger(seconds * 1000))) throw new CliError('positive_timeout_seconds_required');
       const result = await observe(client, researchId(id), seconds, action === 'watch' ? emit : undefined, signal);
       emit(result);
       if (signal?.aborted) return 130;

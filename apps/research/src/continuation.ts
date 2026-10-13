@@ -27,9 +27,7 @@ export function researchContinuation(owner: () => Harness) {
         state.noProgress = trials > state.trials ? 0 : state.noProgress + 1;
         state.trials = trials; state.yields++; state.taskId = api.taskId;
         const reason = typeof maximum !== 'number' ? 'continuation_requires_trial_budget'
-          : trials >= maximum ? 'trial_budget_exhausted'
-          : state.noProgress >= 2 ? 'no_progress_continuation_limit'
-          : state.yields > maximum + 2 ? 'continuation_limit' : null;
+          : trials >= maximum ? 'trial_budget_exhausted' : null;
         state.continue = reason === null; state.stopReason = reason;
         if (reason) study.final = { taskId: api.taskId, trialId: null, comparedTrials: study.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason, result: null };
         return state.continue;

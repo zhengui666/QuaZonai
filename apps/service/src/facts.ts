@@ -6,6 +6,7 @@ import type { ConnectionConfig } from './config.ts';
 
 export const Application = defineDoc<{
   passwordHash: string | null;
+  modelDeviceId: string | null;
   sessions: Record<string, { digest: string; expires: number; kind: string; name: string }>;
   settings: JsonObject | null;
   extensionEnabled: Record<string, boolean>;
@@ -14,7 +15,7 @@ export const Application = defineDoc<{
   observations: Record<string, JsonObject>;
 }>({
   kind: 'qz.application', version: 1, scope: 'session',
-  initial: () => ({ passwordHash: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
+  initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
 });
 export interface PortfolioFact {
   input: PortfolioStart; view: PortfolioView;
@@ -27,7 +28,10 @@ export interface ObservationFact {
 export function json(value: unknown): JsonObject { return JSON.parse(JSON.stringify(value)) as JsonObject; }
 export function portfolio(value: unknown) { return value as PortfolioFact; }
 export function observation(value: unknown) { return value as ObservationFact; }
-export function settings(value: unknown) { return value as SettingsView; }
+export function settings(value: unknown): SettingsView {
+  const stored = value as Partial<SettingsView> | null;
+  return { defaultModel: stored?.defaultModel ?? null, thinkingLevel: stored?.thinkingLevel ?? null };
+}
 export class Problem extends Error {
   statusCode: number;
   constructor(error: string, statusCode = 400) { super(error); this.statusCode = statusCode; }

@@ -9,11 +9,12 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Cursor, Extension, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../../research/src/host.ts';
 import { API } from '../../../packages/contracts/src/index.ts';
-import type { ExtensionView, ResearchSummary, SettingsView, UsageView } from '../../../packages/contracts/src/index.ts';
-import { Application, json, object, observation, portfolio, Problem, settings, text } from './facts.ts';
+import type { ExtensionView, ResearchSummary, WorkspaceView, UsageView } from '../../../packages/contracts/src/index.ts';
+import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { registerAuth } from './auth.ts';
+import { registerModels } from './models.ts';
 import { researchDetail } from './projections.ts';
 import { workbench } from './workbench.ts';
 
@@ -60,7 +61,7 @@ export async function createService(options: ServiceOptions) {
     extensions.set(extension.name, { name: extension.name, version: null, enabled: true, kind: 'host', state: 'loaded', error: null });
   }
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
-  const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2, connectionTimeoutMillis: 5000, statement_timeout: 5000 }) : null;
+  const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2 }) : null;
   app.addHook('onClose', async () => { await research.close(); await archive?.end(); });
   try {
   app.setErrorHandler((error, _request, reply) => {
@@ -73,8 +74,7 @@ export async function createService(options: ServiceOptions) {
   registerAuth(app, research, config);
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
-    facts.settings ??= json({ name: config.name, defaultModel: config.defaultModel, maxTrials: config.maxTrials,
-      taskTimeoutSeconds: config.taskTimeoutSeconds, nativeTimeoutSeconds: config.nativeTimeoutSeconds, connections: [] });
+    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel });
   }, context);
   const work = workbench(research, config);
   await work.recoverResearch();
@@ -117,20 +117,11 @@ export async function createService(options: ServiceOptions) {
     await research.harness.waitForTask(taskId as TaskId, context);
     return (await work.getObservation(id)).view;
   });
-  async function settingsView(): Promise<SettingsView> {
+  registerModels(app, research, work.getSettings);
+  app.get(`${API}/workspace`, async (): Promise<WorkspaceView> => {
     const facts = (await work.snapshot())!; const views = Object.values(facts.observations).map(observation);
-    return { ...await work.getSettings(), connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
+    return { name: config.name, connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
       connected: views.some((fact) => fact.connection.id === connection.id && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
-  }
-  app.get(`${API}/settings`, settingsView);
-  app.patch(`${API}/settings`, async (request) => {
-    const patch = object(request.body); const allowed = new Set(['name', 'defaultModel', 'maxTrials', 'taskTimeoutSeconds', 'nativeTimeoutSeconds']);
-    if (Object.keys(patch).some((key) => !allowed.has(key))) throw new Problem('settings_field_not_mutable');
-    for (const key of ['maxTrials', 'taskTimeoutSeconds', 'nativeTimeoutSeconds']) if (key in patch && (!Number.isSafeInteger(patch[key]) || Number(patch[key]) < (key === 'maxTrials' ? 0 : 1))) throw new Problem(`${key}_invalid`);
-    if ('name' in patch) text(patch.name, 'name');
-    if (patch.defaultModel !== undefined && patch.defaultModel !== null) { const model = object(patch.defaultModel, 'model'); if (!research.models.getModel(text(model.provider, 'provider'), text(model.modelId, 'model_id'))) throw new Problem('model_unavailable'); }
-    await research.harness.commit(async (tx) => { const facts = await tx.doc(Application); facts.settings = { ...facts.settings!, ...patch }; }, context);
-    return settingsView();
   });
   app.get(`${API}/extensions`, async () => [...extensions.values()]);
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {

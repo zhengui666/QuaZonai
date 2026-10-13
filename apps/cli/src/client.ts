@@ -6,13 +6,14 @@ import type { Profile } from './profile.ts';
 
 export async function connect(profile: Profile) {
   const base = origin(profile.origin);
-  const dispatcher = new Agent(profile.ca_certificate ? { connect: { ca: await readFile(profile.ca_certificate, 'utf8') } } : {});
+  const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0,
+    connect: { timeout: 0, ...(profile.ca_certificate ? { ca: await readFile(profile.ca_certificate, 'utf8') } : {}) } });
   return {
     async request<T = unknown>(method: string, path: string, body?: string, signal?: AbortSignal): Promise<T> {
       let response;
       try {
         response = await fetch(`${base}${API}${path}`, {
-          method, body, dispatcher, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+          method, body, dispatcher, redirect: 'error', signal,
           headers: { accept: 'application/json', 'x-quazonai-cli': '1', ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(profile.token ? { authorization: `Bearer ${profile.token}` } : {}) },
         });
       } catch { throw new CliError(method === 'GET' ? 'service_unavailable' : 'write_outcome_unknown_retain_original_request'); }

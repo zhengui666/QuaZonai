@@ -118,8 +118,25 @@ h3 { font-size: 16px; font-weight: 600; margin: 0; line-height: 1.6; }
 .extension-card h2 { font-size: 18px; overflow-wrap: anywhere; }
 .extension-card .card-top { align-items: flex-start; }
 .extension-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 12px; }
-.settings-surface { max-width: 880px; }
-.settings-surface .form-actions { border-top: 1px solid var(--line); padding-top: 24px; }
+.model-settings { max-width: 1080px; }
+.model-preferences .form-actions { border-top: 1px solid var(--line); padding-top: 20px; }
+.current-model { display: grid; gap: 8px; padding: 0 0 24px; }
+.current-model-name { font-size: 24px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.model-picker-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(140px, .7fr); gap: 16px; }
+.model-picker-grid > * { min-width: 0; }
+.provider-toolbar { margin-bottom: 20px; }
+.provider-toolbar .ant-select { width: 160px; }
+.provider-directory { display: grid; }
+.provider-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(160px, auto); gap: 16px; align-items: center; padding: 20px 0; border-top: 1px solid var(--line); }
+.provider-identity { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.provider-identity h3, .provider-identity .muted { overflow-wrap: anywhere; }
+.provider-icon { display: grid; place-items: center; flex: 0 0 auto; width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: #87462f; }
+.provider-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.model-auth-body { display: grid; gap: 20px; padding-top: 12px; }
+.model-auth-heading { display: flex; justify-content: space-between; align-items: center; }
+.model-auth-event { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; overflow-wrap: anywhere; }
+.model-auth-event p { margin: 0; width: 100%; }
+@media (max-width: 799px) { .model-picker-grid { grid-template-columns: minmax(0, 1fr); gap: 0; } .provider-row { grid-template-columns: minmax(0, 1fr) auto; } .provider-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 .saved-status { color: #486754; font-size: 12px; align-self: center; margin-right: auto; }
 .auth-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
 .auth-card { width: 100%; max-width: 420px; padding: 40px; box-shadow: 0 16px 64px #65442908; }
