@@ -90,6 +90,7 @@ jobs:
           if-no-files-found: error
   assets:
     needs: [build, cli]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.cli.result == 'success' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     permissions:
@@ -133,6 +134,7 @@ jobs:
           if-no-files-found: error
   publish:
     needs: assets
+    if: ${{ !cancelled() && needs.assets.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
