@@ -1,6 +1,6 @@
 # QuaZonai CLI
 
-A compact `/api/v3` HTTP client. Node **22.19+** strips TypeScript natively; parsing uses Node `parseArgs`, transport uses official pinned Undici. This package never opens SQLite or owns a Harness/task loop.
+A compact `/api/v3` HTTP client, released and tested only on **Linux x86_64**. The release archive includes official Node **22.19**, so no host Node/npm is required; source development needs Node **22.19+** to strip TypeScript natively. Parsing uses Node `parseArgs`, transport uses official pinned Undici. This package never opens SQLite or owns a Harness/task loop.
 
 ```sh
 quazonai login --origin https://YOUR_INSTANCE
@@ -16,7 +16,7 @@ quazonai observation start --file original-observation.json
 
 Run `quazonai --help` for all compact commands. `client` is an optional spelling alias; `backtest build/list/get` aliases the portfolio consumer. Source DTOs are `packages/contracts/src/index.ts`; native scientific input schemas remain Rust-owned. Offline `schema list/show NAME [--domain]` reads live source/native schemas in source-tree distributions. `npm pack` includes original license and contract assets generated directly from those sources, so installed packages can inspect them offline too. Unavailable assets report `installed_schema_unavailable` without inventing schemas. The npm launcher uses public Node `registerHooks/stripTypeScriptTypes` for its own source because Node does not auto-strip TypeScript under `node_modules`.
 
-Login accepts a password only through hidden input in the user's own terminal, never argv/environment/stdin pipes. Setup remains in the auth UI. A saved login is reused until `login --replace` deliberately creates a replacement; that does not revoke the old device. The profile retains `{schema_version:1,origin,token,development_http,ca_certificate}` under XDG/HOME or APPDATA. Unix writes are atomic/private (0700 directory, 0600 file); Windows uses a private current-owner DACL. Token bytes, including `qzc`, are preserved; legacy acceptance depends on the service. No provider-credential discovery runs.
+Login accepts a password only through hidden input in the user's own terminal, never argv/environment/stdin pipes. Setup remains in the auth UI. A saved login is reused until `login --replace` deliberately creates a replacement; that does not revoke the old device. The profile retains `{schema_version:1,origin,token,development_http,ca_certificate}` under XDG/HOME. Linux writes are atomic/private (0700 directory, 0600 file). Token bytes, including `qzc`, are preserved; legacy acceptance depends on the service. No provider-credential discovery runs.
 
 HTTPS verifies certificates, with an optional explicit private CA. Explicit HTTP sends credentials unencrypted; there are no redirects or implicit scheme changes. `logout` revokes the current device before forgetting it; failed/unknown revocation retains the profile. `forget` is local only. Login/identity output is nonsecret ID/status, never token/password.
 

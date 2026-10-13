@@ -2,8 +2,6 @@ import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
 export interface Profile {
   schema_version: 1; origin: string; token: string; development_http: boolean; ca_certificate: string | null;
@@ -13,7 +11,7 @@ export class CliError extends Error {
   constructor(code: string, status?: number) { super(code); this.code = code; this.status = status; }
 }
 export function profilePath(env = process.env): string {
-  const root = process.platform === 'win32' ? env.APPDATA : env.XDG_CONFIG_HOME ?? join(env.HOME ?? homedir(), '.config');
+  const root = env.XDG_CONFIG_HOME ?? join(env.HOME ?? homedir(), '.config');
   if (!root) throw new CliError('client_config_location_missing');
   return join(root, 'quazonai', 'client.json');
 }
@@ -33,21 +31,15 @@ export async function loadProfile(path = profilePath()): Promise<Profile> {
   origin(value.origin);
   return value; // qzc and new service tokens remain opaque, never rewritten.
 }
-async function privatePath(path: string, directory: boolean) {
-  if (process.platform === 'win32') {
-    const script = `$ErrorActionPreference = 'Stop'; $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User; $directory = $env:QZ_PRIVATE_DIRECTORY -eq '1'; $acl = if ($directory) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false); $inherit = if ($directory) { [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit' } else { [Security.AccessControl.InheritanceFlags]::None }; $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inherit, 'None', 'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $env:QZ_PRIVATE_PATH -AclObject $acl`;
-    await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, env: { ...process.env, QZ_PRIVATE_PATH: path, QZ_PRIVATE_DIRECTORY: directory ? '1' : '0' } });
-  } else await chmod(path, directory ? 0o700 : 0o600);
-}
 export async function saveProfile(value: Profile, path = profilePath()): Promise<void> {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await privatePath(directory, true);
+  await chmod(directory, 0o700);
   const temporary = join(directory, `.client-${randomUUID()}.json`);
   try {
     const file = await open(temporary, 'wx', 0o600);
     try { await file.writeFile(`${JSON.stringify(value)}\n`); await file.sync(); } finally { await file.close(); }
-    await privatePath(temporary, false);
+    await chmod(temporary, 0o600);
     await rename(temporary, path);
   } finally { await rm(temporary, { force: true }); }
 }

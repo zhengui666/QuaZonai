@@ -33,6 +33,11 @@ async function configuration(origin: string) {
   return { directory, async close() { if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous; await rm(directory, { recursive: true, force: true }); } };
 }
 
+test('Linux profile location prefers XDG and otherwise uses HOME', () => {
+  assert.equal(profilePath({ XDG_CONFIG_HOME: '/original/config', HOME: '/original/home' }), '/original/config/quazonai/client.json');
+  assert.equal(profilePath({ HOME: '/original/home' }), '/original/home/.config/quazonai/client.json');
+});
+
 test('private device login retains legacy profile shape and prints only nonsecret identity; logout/forget are distinct', async () => {
   let revoked = 0; let loggedIn = 0;
   const api = await server((request, response, bytes) => {

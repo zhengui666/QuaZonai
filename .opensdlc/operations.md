@@ -13,7 +13,7 @@ The task and [review policy](review.md) define acceptance. Check the exact PR He
 <a id="container-release"></a>
 ## Images and publication
 
-The application packages official Node, the TypeScript service/CLI, Web assets, production npm packages and the matching native scientific entrypoints. Pi Durable runs under one application process; the retired Rust server/Worker/runtime/CLI are not deployment dependencies. Keep upstream package/toolchain/license files and the published version's exact source revision.
+Publication and installation support **Linux x86_64 only**, including the standalone CLI. The application packages official Node, the TypeScript service/CLI, Web assets, production npm packages and the matching native scientific entrypoints. Pi Durable runs under one application process; the retired Rust server/Worker/runtime/CLI are not deployment dependencies. Keep upstream package/toolchain/license files and the published version's exact source revision.
 
 Build native scientific binaries once with a consistent feature selection and reuse them for application and scientific images. TypeScript/Web changes should reuse that scientific build rather than recompile it. Use official npm/Cargo/Buildx caches; do not add handwritten checksum or cache-validation machinery. Publish the same artifacts that passed installed acceptance, not a different rebuild.
 

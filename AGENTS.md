@@ -4,6 +4,8 @@
 
 单人本机、可扩展、无人值守的 AI 研究与 target-only 交付。HTTP、配置、业务编排、CLI、Harness 与 React 前端使用 TypeScript；Rust 只承担必要科学计算、原生引擎与科学合同／校验。复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel 和 Arrow，保留 PostgreSQL 历史与迁移。组合与模拟是可选消费者，不是因子研究前置步骤。
 
+发布、安装与测试仅支持 Linux x86_64（含独立 CLI），无需兼容 Windows 或 macOS；不限制浏览器访问端的平台。
+
 ## 按任务定位
 
 | 改动 | 入口 |

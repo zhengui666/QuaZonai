@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package JS/TypeScript + official prebuilt Node; no SEA, compilation or checksums."""
+"""Package Linux x86_64 JS/TypeScript + official Node; no SEA, compilation or checksums."""
 from __future__ import annotations
 import argparse
 import json
@@ -10,18 +10,15 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = 'zhengui666/QuaZonai'
 NODE_VERSION = '22.19.0'
-CLI_ARCHIVES = {platform: f'quazonai-cli-{platform}.{suffix}' for platform, suffix in (
-    ('linux-x86_64', 'tar.gz'), ('macos-x86_64', 'tar.gz'),
-    ('macos-aarch64', 'tar.gz'), ('windows-x86_64', 'zip'))}
+CLI_ARCHIVES = {'linux-x86_64': 'quazonai-cli-linux-x86_64.tar.gz'}
 IMAGE_ARCHIVES = {name: f'quazonai-image-{name}.tar.gz' for name in ('application', 'runtime', 'database')}
 NOTICES = {'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'}
 DEPLOY_FILES = frozenset({'manage.sh', 'json.awk', 'deploy.sh', 'update.sh', 'compose.yaml', 'release.json', 'README.md', '.env.example'})
-REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh', 'install.ps1'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
+REQUIRED_ASSETS = frozenset({'release.json', 'quazonai-deploy.tar.gz', 'README.md', 'install.sh'} | set(CLI_ARCHIVES.values()) | set(IMAGE_ARCHIVES.values()))
 MARKER = '@QUAZONAI_VERSION@'
 
 def identity(version: str, revision: str) -> None:
@@ -36,32 +33,25 @@ def safe_name(name: str) -> bool:
     value = PurePosixPath(name)
     return bool(name) and not value.is_absolute() and '..' not in value.parts and '\\' not in name
 
-def cli_members(platform: str) -> set[str]:
-    return NOTICES | {'distribution.json', 'runtime/LICENSE',
-        'runtime/node.exe' if platform.startswith('windows-') else 'runtime/node',
-        'quazonai.cmd' if platform.startswith('windows-') else 'quazonai',
+def cli_members() -> set[str]:
+    return NOTICES | {'distribution.json', 'runtime/LICENSE', 'runtime/node', 'quazonai',
         'app/launch.mjs', 'app/contracts/generated/domain-v1.openapi.json',
         'app/package.json', 'app/apps/cli/package.json', 'app/apps/cli/src/main.ts', 'app/packages/contracts/src/index.ts'}
 
-def check_cli_archive(path: Path, platform: str) -> None:
+def check_cli_archive(path: Path) -> None:
     regular(path)
-    if path.suffix == '.zip':
-        with zipfile.ZipFile(path) as archive:
-            names = [item.filename for item in archive.infolist()]
-    else:
-        with tarfile.open(path, 'r:gz') as archive:
-            members = archive.getmembers()
-            if any(not item.isfile() for item in members):
-                raise ValueError('CLI archives contain only regular files.')
-            names = [item.name for item in members]
-    allowed = lambda name: name in cli_members(platform) or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'licenses/'))
-    if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members(platform).issubset(names):
+    with tarfile.open(path, 'r:gz') as archive:
+        members = archive.getmembers()
+        if any(not item.isfile() for item in members):
+            raise ValueError('CLI archives contain only regular files.')
+        names = [item.name for item in members]
+    allowed = lambda name: name in cli_members() or name.startswith(('app/apps/cli/', 'app/packages/contracts/', 'app/contracts/generated/', 'licenses/'))
+    if len(names) != len(set(names)) or any(not safe_name(name) or not allowed(name) for name in names) or not cli_members().issubset(names):
         raise ValueError('Incomplete JS/Node CLI distribution or invalid archive path.')
 
 def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revision: str) -> Path:
     identity(version, revision)
-    windows = platform.startswith('windows-')
-    node = runtime / ('node.exe' if windows else 'bin/node')
+    node = runtime / 'bin/node'
     regular(node); regular(runtime / 'LICENSE')
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / CLI_ARCHIVES[platform]
@@ -75,48 +65,36 @@ def pack_cli(runtime: Path, platform: str, destination: Path, version: str, revi
         package = json.loads((cli / 'package.json').read_text())
         package['version'] = version.removeprefix('v')
         (cli / 'package.json').write_text(json.dumps(package, indent=2) + '\n')
-        subprocess.run(['npm.cmd' if os.name == 'nt' else 'npm', 'ci', '--prefix', str(cli), '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], check=True)
+        subprocess.run(['npm', 'ci', '--prefix', str(cli), '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], check=True)
         shutil.copytree(ROOT / 'packages/contracts/src', directory / 'app/packages/contracts/src')
         (directory / 'app/package.json').write_text('{"type":"module"}\n')
         shutil.copytree(ROOT / 'contracts/generated', directory / 'app/contracts/generated')
         shutil.copy2(ROOT / 'deploy/cli-launch.mjs', directory / 'app/launch.mjs')
         (directory / 'runtime').mkdir()
-        shutil.copy2(node, directory / ('runtime/node.exe' if windows else 'runtime/node'))
+        shutil.copy2(node, directory / 'runtime/node')
         shutil.copy2(runtime / 'LICENSE', directory / 'runtime/LICENSE')
         for name in NOTICES:
             shutil.copy2(ROOT / name, directory / name)
         shutil.copytree(ROOT / 'licenses', directory / 'licenses')
         (directory / 'distribution.json').write_text(json.dumps({'version': version, 'revision': revision, 'platform': platform, 'node': NODE_VERSION}) + '\n')
-        if windows:
-            (directory / 'quazonai.cmd').write_text('@echo off\n"%~dp0runtime\\node.exe" --experimental-strip-types "%~dp0app\\launch.mjs" %*\nexit /b %errorlevel%\n')
-        else:
-            launcher = directory / 'quazonai'
-            launcher.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
-            launcher.chmod(0o755)
+        launcher = directory / 'quazonai'
+        launcher.write_text('#!/bin/sh\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$root/runtime/node" --experimental-strip-types "$root/app/launch.mjs" "$@"\n')
+        launcher.chmod(0o755)
         # npm executable links are irrelevant to CLI runtime; do not ship them.
         files = [file for file in directory.rglob('*') if file.is_file() and not file.is_symlink()]
-        if windows:
-            with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-                for file in files:
-                    archive.write(file, file.relative_to(directory).as_posix())
-        else:
-            with tarfile.open(output, 'w:gz') as archive:
-                for file in files:
-                    archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
-    check_cli_archive(output, platform)
+        with tarfile.open(output, 'w:gz') as archive:
+            for file in files:
+                archive.add(file, arcname=file.relative_to(directory).as_posix(), recursive=False)
+    check_cli_archive(output)
     return output
 
-def smoke_cli(path: Path, platform: str, version: str) -> None:
-    check_cli_archive(path, platform)
+def smoke_cli(path: Path, version: str) -> None:
+    check_cli_archive(path)
     with tempfile.TemporaryDirectory(prefix='quazonai-cli-check-', dir=os.environ.get('TMPDIR')) as temporary:
         directory = Path(temporary)
-        if path.suffix == '.zip':
-            with zipfile.ZipFile(path) as archive:
-                archive.extractall(directory)
-        else:
-            with tarfile.open(path, 'r:gz') as archive:
-                archive.extractall(directory, filter='data')
-        node = directory / ('runtime/node.exe' if platform.startswith('windows-') else 'runtime/node')
+        with tarfile.open(path, 'r:gz') as archive:
+            archive.extractall(directory, filter='data')
+        node = directory / 'runtime/node'
         command = [str(node), '--experimental-strip-types', str(directory / 'app/launch.mjs')]
         env = {**os.environ, 'QUAZONAI_VERSION': version, 'QZ_CLI_VERSION': version}
         def run(*args):
@@ -142,12 +120,11 @@ def readme(manifest: dict) -> str:
     return f'''# QuaZonai {version}
 
 Source revision: `{manifest['revision']}`. Prebuilt Node application, scientific
-image and four JS CLI archives with official Node {NODE_VERSION}; no host Node/npm.
+image and Linux x86_64 JS CLI archive with official Node {NODE_VERSION}; no host Node/npm.
 
-Linux x86_64 (Docker Compose) or macOS (CLI): download `{base}/install.sh`,
-then run `bash install.sh`. Add `--cli-only` for a remote Linux client and
-`--directory PATH` for an existing non-default installation.
-Windows x86_64: download `{base}/install.ps1`, then run it with PowerShell.
+Linux x86_64 only: download `{base}/install.sh`, then run `bash install.sh`.
+Add `--cli-only` for a remote Linux client and `--directory PATH` for an existing
+non-default installation.
 
 `quazonai --version` prints `quazonai {version}`. Use `quazonai login --help`.
 The application listens at http://localhost:8081 by default; perform initial
@@ -163,8 +140,7 @@ See the deployment bundle README for stopped backup/restore and update commands.
 
 def prepare(destination: Path) -> None:
     manifest = read_manifest(destination)
-    for name in ('install.sh', 'install.ps1'):
-        (destination / name).write_text((ROOT / 'deploy' / name).read_text().replace(MARKER, manifest['version']), newline='\n')
+    (destination / 'install.sh').write_text((ROOT / 'deploy/install.sh').read_text().replace(MARKER, manifest['version']), newline='\n')
     (destination / 'README.md').write_text(readme(manifest))
     verify(destination)
 
@@ -172,12 +148,12 @@ def verify(destination: Path) -> dict:
     for name in REQUIRED_ASSETS:
         regular(destination / name)
     manifest = read_manifest(destination)
-    for platform, name in CLI_ARCHIVES.items():
-        check_cli_archive(destination / name, platform)
+    for name in CLI_ARCHIVES.values():
+        check_cli_archive(destination / name)
     with tarfile.open(destination / 'quazonai-deploy.tar.gz', 'r:gz') as archive:
         if set(archive.getnames()) != DEPLOY_FILES or json.load(archive.extractfile('release.json')) != manifest:
             raise ValueError('Deployment bundle does not match release.json.')
-    for name in ('install.sh', 'install.ps1', 'README.md'):
+    for name in ('install.sh', 'README.md'):
         content = (destination / name).read_text()
         if MARKER in content or manifest['version'] not in content:
             raise ValueError(f'Unpinned release instructions: {name}')
@@ -200,7 +176,7 @@ def main() -> None:
         commands.add_parser(name).add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'pack-cli': print(pack_cli(args.runtime, args.platform, args.output, args.version, args.revision))
-    elif args.command == 'smoke-cli': smoke_cli(args.archive, args.platform, args.version)
+    elif args.command == 'smoke-cli': smoke_cli(args.archive, args.version)
     elif args.command == 'prepare': prepare(args.output)
     else: verify(args.output)
 
