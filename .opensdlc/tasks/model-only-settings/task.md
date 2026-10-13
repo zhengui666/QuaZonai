@@ -63,11 +63,20 @@ Independent read-only non-Codex review of initial Head `2d0a3da2` found four act
 
 Independent recheck at `a1701466` verified the four original remedies and found one introduced regression: blank secret submission could overwrite an existing API key because official generic/Anthropic login returns that value without validation. Backend/UI now reject blank secrets while preserving optional blank text. The new preservation regression failed before correction (200 instead of 400); it now confirms the original synthetic credential remains unchanged and the login is not falsely completed. Full `make check` and 5/5 e2e pass after this correction.
 
-Independent recheck of the corrected final committed Head is pending; author testing is not independent acceptance.
+Independent recheck of `dc9bfe681b43610b3f51df39c6b82f22e4968e93` found no actionable findings, with 20 focused tests plus official-provider synthetic secret-preservation and offline browser cancellation/retry scenarios verified. Tree: `ab3b224a8157d75965c3fd683d11eecc43e98d2f`. All four applicable [hosted CI checks](https://github.com/zhengui666/QuaZonai/actions/runs/38390157793) passed on that exact Head, including retained science/core. Local native compilation remains unrun due its earlier disk error, not relabelled as a local pass.
 
 <a id="delivery"></a>
 ## Delivery
 
-[PR 194](https://github.com/zhengui666/QuaZonai/pull/194) targets `dev`; GitHub owns exact revision/CI/merge evidence. Applicable final-Head hosted CI and independent recheck remain pending.
+[PR 194](https://github.com/zhengui666/QuaZonai/pull/194) merged into **dev**, not main, as `c015862cdfe80be901db47ef45d0a398a97cc813`, after exact-Head CI and independent review passed. GitHub owns exact revision/CI/merge evidence.
 
 The owner-authorized local update targets the existing **schema-4** installation at `$HOME/.local/share/quazonai-ts`, port 18080, retaining its original `data/research/research.sqlite`, configuration/auth, PostgreSQL, releases and backups. The separate legacy `$HOME/.local/share/quazonai` root is not the running Node deployment and must remain untouched. Preflight confirmed original revision `bcbef01a`, both application/database healthy. Use the installed schema-4 manager for a stopped-writer backup and immutable published-version update, refuse unresolved work, verify image/source/health/Web and original state after activation. Disk availability is approximately 1 GiB; do not prune unrelated Docker images, volumes, backups or caches without separate authority. No local update has occurred yet; publication and final acceptance must precede it.
+
+### Publication blockers and scoped remediation
+
+The [dev release for merge c015862c](https://github.com/zhengui666/QuaZonai/actions/runs/38393550974) failed; it was not a successful release and was not installed locally. Two concrete existing acceptance paths failed:
+
+- Image smoke still PATCHed retired `settings.name`, receiving HTTP 400. It now uses the model-only contract. The original configured controlled model is saved before backup, cleared after backup, then required after restore; original receipt replay and all other native/update/restore assertions remain. A focused helper regression checks model-only payloads and distinct before/after values rather than weakening backup coverage.
+- Windows repeated installation failed in `IO.File.Replace(...,$null)` because PowerShell coerced the backup filename to an empty string. The replacement now passes `[NullString]::Value`, preserving the existing atomic replacement and original config. The official fixed PowerShell 7.5.3 API documentation describes NullString as the way to pass null into a .NET string parameter. The existing real Windows repeat-install test is retained; it must pass in the next published release.
+
+These fixes are isolated on `claude/model-settings-release-fixes`, based on the merged dev revision, and require a separate reviewed PR into dev. `make check-deploy` passed (11 helper tests, 1 existing prebuilt-distribution skip; 5 Python tests). A local official PowerShell/.NET probe was **unrun** because this worktree's execution guard refused PowerShell; no wrapper/peer bypass was used. Actual Windows installation and full image acceptance remain pending in the release pipeline, not represented as local passes. The failed release/tag and legacy local deployment remain intact.
