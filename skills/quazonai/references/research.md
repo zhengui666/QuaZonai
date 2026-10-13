@@ -25,6 +25,6 @@ Use model IDs from actual configured availability. Discovery does not run infere
 
 Retain the original policy, budget, source identity and selection/evaluation criteria. Zero trials allows no computation. Committed failures consume attempts and remain disclosed. Missing inputs or unsupported criteria are not permission to change budgets or create another study until something passes.
 
-Use `research get` to inspect all trials, failures, comparison and final/stop reason. Native computation is not a qualification. Final held-out assessment is separate from iterative feedback; never tune against it or rename/copy/fork exposed data to call it unseen. The model-code adapter retains finite fuel, process timeout, owned child recovery and a provider-credential-free execution environment.
+Use `research get` to inspect all trials, failures, comparison and final/stop reason. Native computation is not a qualification. Final held-out assessment is separate from iterative feedback; never tune against it or rename/copy/fork exposed data to call it unseen. The model-code adapter preserves explicit scientific fuel budgets; omitted/null fuel stays unmetered. QZ imposes no process deadline or memory ceiling. Owned child recovery/cancellation and the provider-credential-free execution environment remain.
 
 After an unknown start response, replay only the same original file or identical explicit flags with the same ID. HTTP 202 means admitted/replayed, not finished. Follow [observation](runs.md) and [recovery](recovery.md), without a replacement key.

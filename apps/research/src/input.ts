@@ -16,6 +16,7 @@ export function researchInput(value: unknown): ResearchInput {
   const model = record(input.model, 'model');
   if (typeof input.goal !== 'string' || !input.goal.trim()) throw new Error('research_goal_required');
   if (typeof model.provider !== 'string' || !model.provider || typeof model.modelId !== 'string' || !model.modelId) throw new Error('model_required');
+  if (input.thinkingLevel !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(String(input.thinkingLevel))) throw new Error('invalid_thinking_level');
   record(input.data, 'data');
   const policy = record(input.policy, 'policy');
   if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || (policy.max_trials as number) < 0)) throw new Error('invalid_trial_budget');

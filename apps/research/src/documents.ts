@@ -2,9 +2,10 @@ import { defineDoc } from '@earendil-works/pi-durable';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ConversationId } from '@earendil-works/pi-durable';
 
-export interface ResearchInput extends JsonObject {
+export type ResearchInput = JsonObject & {
   goal: string;
   model: { provider: string; modelId: string };
+  thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
   data: JsonObject;
   policy: JsonObject;
 }

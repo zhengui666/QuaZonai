@@ -1,16 +1,22 @@
 import { expect, test, type Page as BrowserPage, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import type { DatasetView, ExtensionView, ModelView, ObservationView, PortfolioView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView } from '../../../packages/contracts/src/index.ts';
+import type { DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 
 // Tiny test-only responses. No production samples or scientific/backend acceptance claims.
 async function contract(page: BrowserPage, setup = false) {
   const at = '2026-10-01T08:00:00Z';
-  const model: ModelView = { provider: 'test', modelId: 'test-model', name: '测试模型', reasoning: true };
+  const model: ModelView = { provider: 'test', modelId: 'test-model', name: '测试模型', reasoning: true, thinkingLevels: ['off', 'low', 'medium', 'high'], effectiveThinkingLevel: 'medium' };
   const dataset: DatasetView = { id: 'test-data', name: '测试数据', assetClass: 'equity', currency: 'CNY', source: 'test', start: null, end: null, ready: true };
   let session: SessionView = { setupRequired: setup, authenticated: !setup };
-  let settings: SettingsView = { name: 'QuaZonai', defaultModel: model, maxTrials: 4, taskTimeoutSeconds: 60, nativeTimeoutSeconds: 120, connections: [
+  let settings: SettingsView = { defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'medium' };
+  const workspace: WorkspaceView = { name: 'QuaZonai', connections: [
     { id: 'paper-test', name: '测试模拟连接', mode: 'paper', connected: false }, { id: 'live-test', name: '测试实盘连接', mode: 'live', connected: false },
   ] };
+  const providers: ProviderView[] = [
+    { id: 'test', name: '测试模型服务', configured: true, authTypes: ['api_key'], login: null, error: null },
+    { id: 'new', name: '待连接服务', configured: false, authTypes: ['api_key', 'oauth'], login: null, error: null },
+  ];
+  let login: ModelLoginView | null = null; let authAttempts = 0;
   let studies: ResearchSummary[] = [
     { id: 7, title: '测试 · 低波动与动量', status: 'RUNNING', trials: 2, model: '测试模型', createdAt: at, updatedAt: at },
     { id: 8, title: '测试 · 横截面价值', status: 'COMPUTED', trials: 4, model: '测试模型', createdAt: at, updatedAt: at },
@@ -27,7 +33,7 @@ async function contract(page: BrowserPage, setup = false) {
   const usage: UsageView = { activeTasks: 1, inputTokens: null, outputTokens: 2400, cost: null };
   const writes: { path: string; method: string; raw: string | null }[] = [];
   let researchAttempts = 0; let portfolioAttempts = 0; let missingExtensions = false;
-  let heldResearch: Promise<void> | undefined;
+  let heldResearch: Promise<void> | undefined; let heldAuth: Promise<void> | undefined;
   await page.route('**/api/v3/**', async (route: Route) => {
     const request = route.request(); const path = new URL(request.url()).pathname.slice('/api/v3'.length); const method = request.method();
     const reply = (json: unknown, status = 200) => route.fulfill({ status, json });
@@ -37,7 +43,23 @@ async function contract(page: BrowserPage, setup = false) {
       return reply(session);
     }
     if (path === '/session/setup' || path === '/session/login') { session = { setupRequired: false, authenticated: true }; return reply(session); }
+    if (path === '/workspace') return reply(workspace);
     if (path === '/settings') { if (method === 'PATCH') settings = { ...settings, ...request.postDataJSON() }; return reply(settings); }
+    if (path === '/models') return reply({ providers, models: [model] });
+    if (path === '/models/login' && method === 'POST') {
+      const input = request.postDataJSON(); login = { id: input.requestId, providerId: input.providerId, type: input.type, status: 'running', prompt: { id: 1, type: input.type === 'oauth' ? 'text' : 'secret', message: input.type === 'oauth' ? '可选域名（留空使用默认）' : '测试 API Key' }, events: [], error: null };
+      providers[1]!.login = { id: login.id, type: login.type }; return reply(login, 202);
+    }
+    if (path.startsWith('/models/login/')) {
+      if (method === 'DELETE') { if (login) { login.status = 'cancelled'; login.prompt = null; } providers[1]!.login = null; return reply(login); }
+      if (path.endsWith('/respond')) {
+        if (heldAuth) await heldAuth;
+        if (++authAttempts === 1) return route.abort('failed');
+        login!.status = 'done'; login!.prompt = null; providers[1]!.configured = true; providers[1]!.login = null;
+      }
+      return reply(login);
+    }
+    if (path.startsWith('/models/providers/') && method === 'DELETE') { providers.find(provider => provider.id === path.split('/').at(-1))!.configured = false; return reply({ configured: false }); }
     if (path === '/research/models') return reply([model]);
     if (path === '/datasets') return reply([dataset]);
     if (path === '/usage') return reply(usage);
@@ -65,7 +87,7 @@ async function contract(page: BrowserPage, setup = false) {
     if (path.startsWith('/extensions/')) { extensions = [{ ...extensions[0]!, enabled: request.postDataJSON().enabled, state: 'pending_restart' }]; return reply(extensions[0]); }
     return reply({ error: 'not_found' }, 404);
   });
-  return { writes, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
+  return { writes, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
 async function audit(page: BrowserPage) {
@@ -89,7 +111,7 @@ test('auth setup/login and persisted research retry keep the exact v3 body', asy
   await page.getByLabel('研究目标', { exact: true }).fill('测试目标'); await choose(page, '数据集', '测试数据 · CNY'); await choose(page, '模型', '测试模型 · test');
   await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
   const first = state.writes.find(value => value.path === '/research')!.raw!; const original = JSON.parse(first);
-  expect(original).toEqual({ requestId: expect.any(String), goal: '测试目标', model: { provider: 'test', modelId: 'test-model' }, datasetId: 'test-data', maxTrials: 4 });
+  expect(original).toEqual({ requestId: expect.any(String), goal: '测试目标', model: { provider: 'test', modelId: 'test-model' }, datasetId: 'test-data', maxTrials: 3 });
   await page.reload(); await page.getByRole('button', { name: '新建研究', exact: true }).click();
   await expect(page.getByLabel('研究目标', { exact: true })).toHaveValue('测试目标'); await expect(page.getByLabel('研究目标', { exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '重试提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '测试 · 低波动与动量', exact: true })).toBeVisible();
@@ -116,11 +138,54 @@ test('portfolio, account observation, settings and extension actions use real DT
   await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('observations-1440.png'), fullPage: true });
   await page.getByRole('tab', { name: '实盘', exact: true }).click(); await expect(page.getByText('暂无实盘观测', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /下单|买入|卖出/ })).toHaveCount(0);
-  await page.getByRole('link', { name: '设置', exact: true }).click(); await page.getByLabel('应用名称', { exact: true }).fill('测试研究室'); await page.getByRole('button', { name: '保存设置' }).click();
-  await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled(); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('settings-1440.png'), fullPage: true });
-  expect(Object.keys(JSON.parse(state.writes.find(value => value.method === 'PATCH' && value.path === '/settings')!.raw!)).sort()).toEqual(['defaultModel', 'maxTrials', 'name', 'nativeTimeoutSeconds', 'taskTimeoutSeconds']);
+  await page.getByRole('link', { name: '设置', exact: true }).click();
+  await expect(page.getByLabel('应用名称', { exact: true })).toHaveCount(0); await expect(page.getByLabel(/超时|最大试验|内存/)).toHaveCount(0);
+  await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '刷新模型配置' }).click(); await expect(page.locator('.ant-form-item:has(#thinkingLevel)').getByText('高', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '保存模型', exact: true }).click();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '保存模型' })).toBeDisabled(); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('settings-1440.png'), fullPage: true });
+  expect(JSON.parse(state.writes.find(value => value.method === 'PATCH' && value.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'high' });
   await page.getByRole('link', { name: '扩展', exact: true }).click(); await page.getByRole('switch', { name: '启用 测试原生扩展' }).click(); await expect(page.getByText('待重启', { exact: true })).toBeVisible(); await expect(page.getByRole('switch')).toBeChecked();
   await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('extensions-1440.png'), fullPage: true });
+});
+
+test('model provider secrets stay transient; uncertain prompt response retries original body and cancel is explicit', async ({ page }) => {
+  const state = await contract(page); await page.goto('/#settings');
+  await page.getByLabel('搜索模型服务').fill('待连接'); await expect(page.locator('.provider-row')).toHaveCount(1);
+  await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click();
+  const dialog = page.getByRole('dialog'); await expect(dialog.getByLabel('测试 API Key', { exact: true })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: '确认连接', exact: true })).toBeDisabled();
+  await dialog.getByLabel('测试 API Key', { exact: true }).fill('synthetic-browser-secret-only'); await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '重试当前响应', exact: true })).toBeVisible(); await audit(page);
+  expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain('synthetic-browser-secret-only');
+  await dialog.getByRole('button', { name: '重试当前响应', exact: true }).click(); await expect(dialog.getByText('模型服务已连接', { exact: true })).toBeVisible();
+  expect(state.writes.filter(write => write.path.endsWith('/respond')).map(write => write.raw)).toEqual([JSON.stringify({ promptId: 1, value: 'synthetic-browser-secret-only' }), JSON.stringify({ promptId: 1, value: 'synthetic-browser-secret-only' })]);
+  await expect(dialog.locator('input')).toHaveCount(0); await dialog.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click(); await expect(dialog.getByLabel('测试 API Key', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '取消连接', exact: true }).click(); await expect(dialog).toHaveCount(0);
+  expect(state.writes.filter(write => write.method === 'DELETE' && write.path.startsWith('/models/login/'))).toHaveLength(1);
+});
+
+test('official text prompts accept blank defaults and an unacknowledged response remains cancellable', async ({ page }) => {
+  const state = await contract(page); await page.goto('/#settings');
+  await page.getByRole('button', { name: '登录 待连接服务', exact: true }).click();
+  const dialog = page.getByRole('dialog'); await expect(dialog.getByLabel('可选域名（留空使用默认）', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '确认连接', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
+  await dialog.getByRole('button', { name: '重试当前响应', exact: true }).click();
+  await expect(dialog.getByText('模型服务已连接', { exact: true })).toBeVisible();
+  expect(JSON.parse(state.writes.find(write => write.path.endsWith('/respond'))!.raw!).value).toBe('');
+  await dialog.getByRole('button', { name: '关闭', exact: true }).last().click();
+  const release = state.holdAuth();
+  try {
+    await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click();
+    await dialog.getByLabel('测试 API Key', { exact: true }).fill('synthetic-unacknowledged-only');
+    await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
+    await expect.poll(() => state.writes.filter(write => write.path.endsWith('/respond')).length).toBe(3);
+    await dialog.getByRole('button', { name: '取消连接', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const start = state.writes.filter(write => write.path === '/models/login').at(-1)!;
+    expect(state.writes.filter(write => write.method === 'DELETE').at(-1)!.path).toBe(`/models/login/${JSON.parse(start.raw!).requestId}`);
+  } finally { release(); }
 });
 
 test('390px keyboard navigation, reduced motion and honest loading/empty/missing states', async ({ page }, info) => {

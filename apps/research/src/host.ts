@@ -12,6 +12,7 @@ import { canonical, Requests, Study } from './documents.ts';
 import { researchInput } from './input.ts';
 import type { ResearchInput } from './documents.ts';
 import { configuredModels } from './models.ts';
+import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { researchContinuation } from './continuation.ts';
 
@@ -29,19 +30,23 @@ export async function openResearch(options: {
 }) {
   const settings = researchSettings(options.settings);
   const requestedThinking = options.thinkingLevel ?? 'medium';
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
-  const models = options.models ?? await configuredModels(options.providerModules);
-  const registry = createRegistry();
-  for (const extension of options.extensions ?? []) registry.install(extension);
-  for (const path of options.modules ?? []) {
-    const module = await import(pathToFileURL(resolve(path)).href);
-    registry.install(module.default as Extension);
-  }
+  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
+  const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
+  let models: Models;
   let harness!: Harness;
-  registry.install(researchContinuation(() => harness));
-  await mkdir(dirname(resolve(options.database)), { recursive: true });
-  const storage = options.storage ?? await openNodeSqliteStorage(options.database);
-  harness = await Harness.open(storage, { models, registry, settings }, context);
+  const registry = createRegistry();
+  try {
+    models = options.models ?? await configuredModels(options.providerModules, credentials);
+    for (const extension of options.extensions ?? []) registry.install(extension);
+    for (const path of options.modules ?? []) {
+      const module = await import(pathToFileURL(resolve(path)).href);
+      registry.install(module.default as Extension);
+    }
+    registry.install(researchContinuation(() => harness));
+    await mkdir(dirname(resolve(options.database)), { recursive: true });
+    const storage = options.storage ?? await openNodeSqliteStorage(options.database);
+    harness = await Harness.open(storage, { models, registry, settings }, context);
+  } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
   const watchers = new Set<ConversationWatch>();
@@ -66,7 +71,7 @@ export async function openResearch(options: {
       if (missing) await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInput(request.input).goal, requestId }, context);
     }
     harness.resume();
-  } catch (error) { await harness.close(context); throw error; }
+  } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
 
   async function start(requestId: string, value: ResearchInput) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
@@ -81,7 +86,8 @@ export async function openResearch(options: {
       }
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
-      const thinkingLevel = clampThinkingLevel(model, requestedThinking);
+      if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
+      const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: input.goal });
       (await tx.doc(Study, created.id)).input = input;
@@ -147,8 +153,9 @@ export async function openResearch(options: {
     },
     submissionFor,
     async usage() { return harness.usage(context); },
-    async availableModels() {
-      return (await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) })).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: getSupportedThinkingLevels(model), effectiveThinkingLevel: clampThinkingLevel(model, requestedThinking) }));
+    async availableModels(providerId?: string) {
+      try { return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], effectiveThinkingLevel: clampThinkingLevel(model, requestedThinking) })); }
+      catch { throw new Error('provider_status_unavailable'); }
     },
     close() {
       if (!closed) {
@@ -156,7 +163,8 @@ export async function openResearch(options: {
         closed = (async () => {
           await Promise.allSettled([...admissions]);
           await Promise.all([...watchers].map((watch) => watch.stop()));
-          await harness.close(context); // Suspend native work, never imply cancellation.
+          try { await harness.close(context); } // Suspend native work, never imply cancellation.
+          finally { await credentials?.close(); }
         })();
       }
       return closed;

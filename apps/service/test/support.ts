@@ -37,7 +37,6 @@ export async function setup() {
   const model = { provider: faux.provider.id, modelId: faux.getModel().id };
   const request = { schema_version: 1, train_end_ns: '1', validation_end_ns: '2', forecast: { schema_version: 1, selection: {}, parameters: {} } };
   const config = configDefaults({ dataDir: directory, research: { database: join(directory, 'original-research.sqlite') }, jobBinary: binary,
-    taskTimeoutSeconds: 5, nativeTimeoutSeconds: 3,
     datasets: [{ id: 'controlled', name: 'Protocol dataset', assetClass: 'TEST', currency: 'USD', source: 'test only', start: null, end: null, ready: true,
       data: { catalog, request }, strategy: { name: 'fixed-before-trials', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0, investedWeight: '0.250000000000000001', targetTtlNs: '60000000000', simulationSettings: { base_currency: 'USD' } } }] });
   const options = { config, models, extensions: [controlledResearch] };

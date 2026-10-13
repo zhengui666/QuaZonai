@@ -2,13 +2,28 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
 export interface ModelRef { provider: string; modelId: string }
-export interface ModelView extends ModelRef { name: string; reasoning: boolean }
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; effectiveThinkingLevel: ThinkingLevel }
+export type ModelAuthType = 'api_key' | 'oauth';
+export interface ProviderView { id: string; name: string; configured: boolean; authTypes: ModelAuthType[]; login: { id: string; type: ModelAuthType } | null; error: string | null }
+export interface ModelCatalog { providers: ProviderView[]; models: ModelView[] }
+export type ModelAuthPrompt = { id: number; message: string } & (
+  { type: 'text' | 'secret' | 'manual_code'; placeholder?: string } |
+  { type: 'select'; options: readonly { id: string; label: string; description?: string }[] }
+);
+export type ModelAuthEvent = { type: 'auth_url'; url: string; instructions?: string } |
+  { type: 'device_code'; userCode: string; verificationUri: string } |
+  { type: 'info' | 'progress'; message: string };
+export interface ModelLoginView {
+  id: string; providerId: string; type: ModelAuthType; status: 'running' | 'done' | 'failed' | 'cancelled';
+  prompt: ModelAuthPrompt | null; events: ModelAuthEvent[]; error: string | null;
+}
 export interface Page<T> { items: T[]; cursor?: JsonObject }
 export interface Problem { error: string; message?: string }
 export interface SessionView { setupRequired: boolean; authenticated: boolean }
-export interface ResearchInput { goal: string; model: ModelRef; data: JsonObject; policy: JsonObject }
+export interface ResearchInput { goal: string; model: ModelRef; thinkingLevel?: ThinkingLevel; data: JsonObject; policy: JsonObject }
 export type ResearchStart = { requestId: string; input: ResearchInput } | {
-  requestId: string; goal: string; model: ModelRef; datasetId: string; maxTrials: number;
+  requestId: string; goal: string; model: ModelRef; thinkingLevel?: ThinkingLevel; datasetId: string; maxTrials: number;
 };
 export interface ResearchReceipt { conversationId: number; submissionId: number }
 export interface Metric { key: string; label: string; value: number | string | null; unit?: string }
@@ -48,10 +63,8 @@ export interface ObservationView {
   positions: PositionView[]; curve: EquityPoint[]; receipt: TargetReceipt | null; error: string | null;
 }
 export interface ConnectionView { id: string; name: string; mode: ObservationMode; connected: boolean }
-export interface SettingsView {
-  name: string; defaultModel: ModelRef | null; maxTrials: number;
-  taskTimeoutSeconds: number; nativeTimeoutSeconds: number; connections: ConnectionView[];
-}
+export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null }
+export interface WorkspaceView { name: string; connections: ConnectionView[] }
 export interface ExtensionView {
   name: string; version: string | null; enabled: boolean; kind: string;
   state: 'loaded' | 'disabled' | 'pending_restart' | 'error'; error: string | null;

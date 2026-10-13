@@ -45,7 +45,6 @@ function ResearchForm({ close, onStarted }: { close: () => void; onStarted: (id:
   useEffect(() => {
     if (intent || !settings.data) return;
     if (!form.isFieldTouched('model')) form.setFieldValue('model', modelKey(settings.data.defaultModel));
-    if (!form.isFieldTouched('maxTrials')) form.setFieldValue('maxTrials', settings.data.maxTrials);
   }, [settings.data, intent, form]);
   const readyDatasets = datasets.data?.filter(item => item.ready) ?? [];
   const unavailable = models.isError || datasets.isError || !models.data?.length || !readyDatasets.length;
@@ -69,7 +68,7 @@ function ResearchForm({ close, onStarted }: { close: () => void; onStarted: (id:
   return <Modal title="新建研究" open onCancel={close} footer={null} width={600} maskClosable={!busy} closable={!busy} keyboard={!busy} afterOpenChange={open => { if (open) form.getFieldInstance('goal')?.focus(); }}>
     <ErrorNotice error={models.error} retry={() => { void models.refetch(); }} /><ErrorNotice error={datasets.error} retry={() => { void datasets.refetch(); }} />
     {intent && <div className="intent-status"><span>待重试</span><Button size="small" disabled={busy} onClick={() => { clearResearchIntent(); setIntent(undefined); setError(undefined); form.resetFields(); }}>新请求</Button></div>}
-    <Form form={form} layout="vertical" requiredMark={false} disabled={busy || !!intent} initialValues={saved ? { ...saved, model: modelKey(saved.model) } : { maxTrials: settings.data?.maxTrials, model: modelKey(settings.data?.defaultModel) }} onFinish={submit}>
+    <Form form={form} layout="vertical" requiredMark={false} disabled={busy || !!intent} initialValues={saved ? { ...saved, model: modelKey(saved.model) } : { maxTrials: 3, model: modelKey(settings.data?.defaultModel) }} onFinish={submit}>
       <Form.Item name="goal" label="研究目标" rules={[{ required: true, whitespace: true, message: '请输入研究目标' }]}><Input.TextArea rows={4} autoFocus /></Form.Item>
       <div className="form-grid"><Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}>
         <Select showSearch optionFilterProp="label" loading={datasets.isPending} placeholder="选择数据集" notFoundContent={datasets.isPending ? '加载中' : '暂无就绪数据集'} options={readyDatasets.map(item => ({ value: item.id, label: `${item.name} · ${item.currency}` }))} />

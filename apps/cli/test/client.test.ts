@@ -93,7 +93,7 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     assert.equal(sent.length, 3);
     const portfolio = join(config.directory, 'portfolio.json'); await writeFile(portfolio, '{"requestId":"p-original","capital":"100.123456789123456789"}');
     const observation = join(config.directory, 'observation.json'); await writeFile(observation, '{"requestId":"o-original","portfolioId":"p-1","connectionId":"binding","mode":"paper"}');
-    const settings = join(config.directory, 'settings.json'); await writeFile(settings, '{"maxTrials":3}');
+    const settings = join(config.directory, 'settings.json'); await writeFile(settings, '{"defaultModel":{"provider":"faux","modelId":"x"},"thinkingLevel":null}');
     for (const args of [['research', 'models'], ['research', 'list', '--cursor', '{"id":4}'], ['research', 'stop', '42'], ['portfolio', 'build', '--file', portfolio], ['observation', 'start', '--file', observation], ['observation', 'get', 'o-1'], ['settings', 'set', '--file', settings], ['extensions', 'disable', 'qz.factor-wasm']]) await run(args, (value) => { output.push(value); });
     assert.deepEqual(sent.slice(3).map(({ method, url }) => [method, url]), [
       ['GET', '/api/v3/research/models'], ['GET', '/api/v3/research?cursor=%7B%22id%22%3A4%7D'], ['POST', '/api/v3/research/42/stop'], ['POST', '/api/v3/portfolios'], ['POST', '/api/v3/observations'], ['GET', '/api/v3/observations'], ['PATCH', '/api/v3/settings'], ['PATCH', '/api/v3/extensions/qz.factor-wasm'],
@@ -122,6 +122,9 @@ test('bounded wait uses native settled submissions, not final/IDLE/empty tasks; 
     status = null; assert.equal(await run(['research', 'wait', '42', '--timeout', '0.04'], (value) => { result = value; }), 124); assert.equal(result.nativeSubmissionAvailable, false);
     status = 'placed'; const controller = new AbortController();
     assert.equal(await run(['research', 'watch', '42', '--timeout', '1'], (value) => { result = value; controller.abort(); }, controller.signal), 130);
-    assert.equal(result.watchEnded, 'detached'); assert.ok(calls.every((call) => call === 'GET /api/v3/research/42'));
+    assert.equal(result.watchEnded, 'detached');
+    const unlimited = new AbortController();
+    assert.equal(await run(['research', 'watch', '42'], () => { unlimited.abort(); }, unlimited.signal), 130);
+    assert.ok(calls.every((call) => call === 'GET /api/v3/research/42'));
   } finally { await config.close(); await api.close(); }
 });

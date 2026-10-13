@@ -13,29 +13,27 @@ import { nativeCurve } from './projections.ts';
 import type { Metric } from '../../../packages/contracts/src/index.ts';
 
 export interface PortfolioTaskInput {
-  id: string; dataDir: string; catalog: string; binary: string; timeout: number;
+  id: string; dataDir: string; catalog: string; binary: string;
   // The original v1 single-evidence input remains replayable with its original kernel and default weight 1.
   capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: ThresholdPolicy; weights?: string[];
 }
 const commands = new Set(['evaluate-factor', 'forecast', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets']);
 const wabt = await wabtFactory();
 
-/** Official process supervision, original JSON stdin, finite deadline, no provider credentials. */
-export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, timeout: number, context: Context): Promise<JsonObject> {
+/** Official process ownership and cancellation, original JSON stdin, no provider credentials. */
+export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
   if (!commands.has(command)) throw new Problem('native_command_unsupported');
-  if (!Number.isSafeInteger(timeout) || timeout < 1) throw new Problem('native_timeout_invalid');
   const inputPath = join(directory, 'request.json');
   await writeFile(inputPath, JSON.stringify(input));
   const env = new NodeExecutionEnv({ cwd: directory });
-  let stdout = ''; let tooLarge = false;
+  let stdout = '';
   try {
     const result = getOrThrow(await env.exec([
       'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
-    ], { timeout, inheritEnv: false, env: { PATH: '/usr/bin:/bin' },
-      onOutput: (chunk, _ctx, info) => { if (info.stream === 'stdout') { if (stdout.length + chunk.length > 32 * 1024 * 1024) tooLarge = true; else stdout += chunk; } },
+    ], { inheritEnv: false, env: { PATH: '/usr/bin:/bin' },
+      onOutput: (chunk, _ctx, info) => { if (info.stream === 'stdout') stdout += chunk; },
     }, context));
     if (result.exitCode !== 0) throw new Problem(`native_${command}_failed`);
-    if (tooLarge) throw new Problem('native_output_too_large');
     return object(JSON.parse(stdout), 'native_result');
   } finally { await env.cleanup(withoutAbortSignal(context)); }
 }
@@ -96,7 +94,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const module = wabt.parseWat('selected-factor.wat', model);
       try { module.validate(); await writeFile(modelPath, module.toBinary({}).buffer); } finally { module.destroy(); }
       // Every replay uses this admission's immutable catalog, model, native request, policy and kernel path.
-      const forecasts = await nativeJob(input.binary, 'forecast', forecastRequest, ['--catalog', input.catalog, '--model', modelPath], directory, input.timeout, context);
+      const forecasts = await nativeJob(input.binary, 'forecast', forecastRequest, ['--catalog', input.catalog, '--model', modelPath], directory, context);
       const points = thresholdTargets(forecasts, input.policy, input.currency);
       memberRows.push(points);
       sources.push({ researchId: source.researchId ?? null, trialId: trial.taskId ?? null, model: studyInput.model ?? null,
@@ -105,12 +103,12 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
     if (memberRows.some((row) => row.length !== memberRows[0]!.length)) throw new Problem('strategy_target_alignment_mismatch');
     const rows = memberRows[0]!.map((_, index) => memberRows.map((row) => row[index]!));
     // Each native row is one original decision across members; no filling/resampling or TS numerical blending.
-    const blend = memberRows.length > 1 ? await nativeJob(input.binary, 'blend-targets', { schema_version: 1, weights, rows }, [], directory, input.timeout, context) : null;
+    const blend = memberRows.length > 1 ? await nativeJob(input.binary, 'blend-targets', { schema_version: 1, weights, rows }, [], directory, context) : null;
     const points = blend ? blend.target_points : memberRows[0]!;
     if (!Array.isArray(points) || !points.length) throw new Problem('native_blended_targets_missing');
     const simulationRequest: JsonObject = { schema_version: 1, selection: selection!,
       settings: { ...input.policy.simulationSettings, starting_capital: input.capital }, target_points: points };
-    const simulation = await nativeJob(input.binary, 'simulate', simulationRequest, ['--catalog', input.catalog], directory, input.timeout, context);
+    const simulation = await nativeJob(input.binary, 'simulate', simulationRequest, ['--catalog', input.catalog], directory, context);
     const curve = nativeCurve(simulation, input.currency);
     const statistics: Metric[] = Array.isArray(simulation.statistics) ? simulation.statistics.map((item) => {
       const statistic = object(item, 'native_statistic'); const key = String(statistic.native_key);
