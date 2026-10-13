@@ -34,7 +34,7 @@ Use `quazonai --help` and offline `schema list` / `schema show NAME` for unfamil
 - HTTP 202 is admission, not settled science or proof of cancellation. `wait` uses the native submission projection; empty tasks, IDLE or a final record alone do not establish settlement. Detaching a watcher leaves admitted work running.
 - Keep all failed/rejected trials, the compared set, selection and original criteria. Computation is not independently evaluated evidence, qualification or profitability. Never tune against final held-out values or relabel exposed samples as unseen.
 - Missing/stale values stay unavailable, not zero. Real portfolio equity must come from a shared native account, never summed factor curves. A configured source alone proves no licensing, PIT, data quality or usable account.
-- Model credentials stay in the configured service host environment/provider modules. Model availability is metadata/auth configuration, not a billed test. Never disclose secrets, hidden reasoning or raw Sealed values.
+- Model credentials stay in the service's private native credential store or configured host environment. Use Settings for official provider login; never ask for credentials in chat. Model availability is metadata/auth configuration, not a billed test. Never disclose secrets, hidden reasoning or raw Sealed values.
 - Paper/Live describe observed source bindings. QuaZonai is target-only: no broker orders, trading launch, capital-exit control or withdrawals. A target ACK is not a fill; local exit or a stop receipt does not prove remote cancellation.
 
 Return the original IDs, observed state, actual evidence/limitations and next required action. Do not expand authority or start optional portfolio/observation work merely because factor research completed.

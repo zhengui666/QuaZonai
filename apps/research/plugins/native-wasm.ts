@@ -15,7 +15,9 @@ const wabt = await wabtFactory();
 function normalizedRequest(data: JsonObject): JsonObject {
   const request = structuredClone(object(data.request, 'native_request'));
   partitionBoundaries(request);
-  object(object(request.forecast, 'forecast').parameters, 'parameters');
+  const parameters = object(object(request.forecast, 'forecast').parameters, 'parameters');
+  // The native optional-fuel contract serializes both null and absence as omitted.
+  if (parameters.total_fuel === null) delete parameters.total_fuel;
   return request;
 }
 

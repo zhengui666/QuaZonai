@@ -99,7 +99,8 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
     if (!Number.isSafeInteger(body.promptId) || Number(body.promptId) <= 0) throw new Problem('model_prompt_required');
     if (body.promptId === login.answered) return view(login);
     if (!login.respond || login.view.prompt?.id !== body.promptId) throw new Problem('model_prompt_changed', 409);
-    const value = text(body.value, 'model_auth_response');
+    if (typeof body.value !== 'string') throw new Problem('model_auth_response_required');
+    const value = body.value;
     if (login.view.prompt.type === 'select' && !login.view.prompt.options.some(option => option.id === value)) throw new Problem('model_auth_option_invalid');
     login.respond(value);
     return view(login);

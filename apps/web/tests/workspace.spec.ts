@@ -33,7 +33,7 @@ async function contract(page: BrowserPage, setup = false) {
   const usage: UsageView = { activeTasks: 1, inputTokens: null, outputTokens: 2400, cost: null };
   const writes: { path: string; method: string; raw: string | null }[] = [];
   let researchAttempts = 0; let portfolioAttempts = 0; let missingExtensions = false;
-  let heldResearch: Promise<void> | undefined;
+  let heldResearch: Promise<void> | undefined; let heldAuth: Promise<void> | undefined;
   await page.route('**/api/v3/**', async (route: Route) => {
     const request = route.request(); const path = new URL(request.url()).pathname.slice('/api/v3'.length); const method = request.method();
     const reply = (json: unknown, status = 200) => route.fulfill({ status, json });
@@ -47,12 +47,13 @@ async function contract(page: BrowserPage, setup = false) {
     if (path === '/settings') { if (method === 'PATCH') settings = { ...settings, ...request.postDataJSON() }; return reply(settings); }
     if (path === '/models') return reply({ providers, models: [model] });
     if (path === '/models/login' && method === 'POST') {
-      const input = request.postDataJSON(); login = { id: input.requestId, providerId: input.providerId, type: input.type, status: 'running', prompt: { id: 1, type: 'secret', message: '测试 API Key' }, events: [], error: null };
+      const input = request.postDataJSON(); login = { id: input.requestId, providerId: input.providerId, type: input.type, status: 'running', prompt: { id: 1, type: input.type === 'oauth' ? 'text' : 'secret', message: input.type === 'oauth' ? '可选域名（留空使用默认）' : '测试 API Key' }, events: [], error: null };
       providers[1]!.login = { id: login.id, type: login.type }; return reply(login, 202);
     }
     if (path.startsWith('/models/login/')) {
       if (method === 'DELETE') { if (login) { login.status = 'cancelled'; login.prompt = null; } providers[1]!.login = null; return reply(login); }
       if (path.endsWith('/respond')) {
+        if (heldAuth) await heldAuth;
         if (++authAttempts === 1) return route.abort('failed');
         login!.status = 'done'; login!.prompt = null; providers[1]!.configured = true; providers[1]!.login = null;
       }
@@ -86,7 +87,7 @@ async function contract(page: BrowserPage, setup = false) {
     if (path.startsWith('/extensions/')) { extensions = [{ ...extensions[0]!, enabled: request.postDataJSON().enabled, state: 'pending_restart' }]; return reply(extensions[0]); }
     return reply({ error: 'not_found' }, 404);
   });
-  return { writes, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
+  return { writes, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
 async function audit(page: BrowserPage) {
@@ -161,6 +162,29 @@ test('model provider secrets stay transient; uncertain prompt response retries o
   await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click(); await expect(dialog.getByLabel('测试 API Key', { exact: true })).toBeVisible();
   await dialog.getByRole('button', { name: '取消连接', exact: true }).click(); await expect(dialog).toHaveCount(0);
   expect(state.writes.filter(write => write.method === 'DELETE' && write.path.startsWith('/models/login/'))).toHaveLength(1);
+});
+
+test('official text prompts accept blank defaults and an unacknowledged response remains cancellable', async ({ page }) => {
+  const state = await contract(page); await page.goto('/#settings');
+  await page.getByRole('button', { name: '登录 待连接服务', exact: true }).click();
+  const dialog = page.getByRole('dialog'); await expect(dialog.getByLabel('可选域名（留空使用默认）', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '确认连接', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
+  await dialog.getByRole('button', { name: '重试当前响应', exact: true }).click();
+  await expect(dialog.getByText('模型服务已连接', { exact: true })).toBeVisible();
+  expect(JSON.parse(state.writes.find(write => write.path.endsWith('/respond'))!.raw!).value).toBe('');
+  await dialog.getByRole('button', { name: '关闭', exact: true }).last().click();
+  const release = state.holdAuth();
+  try {
+    await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click();
+    await dialog.getByLabel('测试 API Key', { exact: true }).fill('synthetic-unacknowledged-only');
+    await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
+    await expect.poll(() => state.writes.filter(write => write.path.endsWith('/respond')).length).toBe(3);
+    await dialog.getByRole('button', { name: '取消连接', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const start = state.writes.filter(write => write.path === '/models/login').at(-1)!;
+    expect(state.writes.filter(write => write.method === 'DELETE').at(-1)!.path).toBe(`/models/login/${JSON.parse(start.raw!).requestId}`);
+  } finally { release(); }
 });
 
 test('390px keyboard navigation, reduced motion and honest loading/empty/missing states', async ({ page }, info) => {

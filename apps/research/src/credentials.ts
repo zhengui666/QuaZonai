@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Credential, CredentialStore } from '@earendil-works/pi-ai';
+import type { AuthOperationOptions, Credential, CredentialStore } from '@earendil-works/pi-ai';
 
 /** App-owned private storage for the official provider's login/refresh protocol. */
 export class ModelCredentials implements CredentialStore {
@@ -19,8 +19,9 @@ export class ModelCredentials implements CredentialStore {
       return new ModelCredentials(database);
     } catch (error) { database.close(); throw error; }
   }
-  private serial<T>(operation: () => T | Promise<T>): Promise<T> {
-    const result = this.queue.then(operation, operation);
+  private serial<T>(operation: () => T | Promise<T>, options?: AuthOperationOptions): Promise<T> {
+    const begin = () => { options?.signal?.throwIfAborted(); return operation(); };
+    const result = this.queue.then(begin, begin);
     this.queue = result.then(() => {}, () => {});
     return result;
   }
@@ -28,13 +29,13 @@ export class ModelCredentials implements CredentialStore {
     const row = this.database.prepare('SELECT value FROM credentials WHERE provider=?').get(provider);
     return row ? JSON.parse(String(row.value)) as Credential : undefined;
   }
-  read(provider: string) { return this.serial(() => this.credential(provider)); }
-  list() {
+  read(provider: string, options?: AuthOperationOptions) { return this.serial(() => this.credential(provider), options); }
+  list(options?: AuthOperationOptions) {
     return this.serial(() => this.database.prepare('SELECT provider,value FROM credentials').all().map(row => ({
       providerId: String(row.provider), type: (JSON.parse(String(row.value)) as Credential).type,
-    })));
+    })), options);
   }
-  modify(provider: string, change: (current: Credential | undefined) => Promise<Credential | undefined>) {
+  modify(provider: string, change: (current: Credential | undefined) => Promise<Credential | undefined>, options?: AuthOperationOptions) {
     return this.serial(async () => {
       this.database.exec('BEGIN IMMEDIATE');
       try {
@@ -44,10 +45,10 @@ export class ModelCredentials implements CredentialStore {
         this.database.exec('COMMIT');
         return next ?? previous;
       } catch (error) { this.database.exec('ROLLBACK'); throw error; }
-    });
+    }, options);
   }
-  delete(provider: string) {
-    return this.serial(() => { this.database.prepare('DELETE FROM credentials WHERE provider=?').run(provider); });
+  delete(provider: string, options?: AuthOperationOptions) {
+    return this.serial(() => { this.database.prepare('DELETE FROM credentials WHERE provider=?').run(provider); }, options);
   }
   close() { return this.serial(() => { this.database.close(); }); }
 }

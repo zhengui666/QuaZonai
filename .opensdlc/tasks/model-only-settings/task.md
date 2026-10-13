@@ -7,7 +7,7 @@
 
 The owner's 2026-10-13 request is to rebuild Settings around model configuration, using sibling inkos as a reference, and remove timeouts and other execution restrictions. The owner explicitly chose full-chain technical-limit removal while retaining research budgets and scientific/identity invariants, then approved the implementation and delivery plan.
 
-Endpoint: implemented and locally verified changes, independent final-Head review and applicable hosted CI, followed by merge into remote `dev`. No production deployment or real account/model authorization is included.
+Endpoint: implemented and locally verified changes, independent final-Head review and applicable hosted CI, followed by merge into remote `dev`. The owner subsequently authorized updating the existing local QuaZonai deployment **only after successful CI and publication of that revision**. This does not authorize real account/model inference or another deployment.
 
 <a id="intent"></a>
 ## Intent
@@ -41,8 +41,8 @@ Reuse: official Models public APIs, Harness/configure/native Task persistence, N
 ## Verification
 
 - Before implementation, `node --experimental-strip-types --test apps/research/test/execution.test.ts` failed both regressions: the injected stream deadline was 120000 ms and omitted fuel became `10000000`. After removal both pass.
-- Latest `make check` passed: service 8/8, research 21/21, CLI 3/3, Web typecheck/unit/build; deployment helper tests 11 passed/1 existing release-distribution skip, plus 4 Python packaging/release tests. The distribution skip requires a prebuilt release bundle; it is not reported as executed installation acceptance.
-- `npm --prefix apps/web run test:e2e` passed 4/4, including model-only save/capabilities, preserved dirty edits on refresh, transient secret/unknown-response retry and cancellation, adjacent research/portfolio/observation/extension flows, 390px keyboard/reduced-motion/layout and axe. Two earlier runs failed on test selectors for Ant Design's selected display (not its empty search input); corrected selectors, retaining the assertions.
+- Latest `make check` passed: service 8/8, research 23/23, CLI 3/3, Web typecheck/unit/build; deployment helper tests 11 passed/1 existing release-distribution skip, plus 4 Python packaging/release tests. The distribution skip requires a prebuilt release bundle; it is not reported as executed installation acceptance.
+- `npm --prefix apps/web run test:e2e` passed 5/5, including optional blank auth prompts and cancellation while response acknowledgement is pending, model-only save/capabilities, preserved dirty edits on refresh, transient secret/unknown-response retry and cancellation, adjacent research/portfolio/observation/extension flows, 390px keyboard/reduced-motion/layout and axe. Two earlier runs failed on test selectors for Ant Design's selected display (not its empty search input); corrected selectors, retaining the assertions.
 - A disposable **real** service with official built-in providers and no inherited credentials served 42 unconfigured providers. At 1440px/390px the page exposed only provider/model/reasoning fields, passed axe and horizontal-overflow checks, raised no page exceptions, and opened/cancelled the official Anthropic API-key prompt without submitting any credential. Screenshots: [desktop](assets/settings-1440.png), [mobile](assets/settings-390.png). Existing Ant Design Drawer-width deprecation is not a page exception or a new regression.
 - Controlled official provider tests cover API Key/OAuth/select/manual-code prompts, correlated replay/conflict, cancel-before-start, active-login resume metadata, logout/environment truthfulness, stable installation identity, safe failures, shutdown and secret non-reflection. SQLite tests cover private permissions, serialization, rollback, deletion and restart. These synthetic credentials are test fixtures, not real-account authorization.
 - Real child execution/cancellation test passed, including provider-env isolation and joined child exit. Historical tiny task/native settings remain stored but do not prevent a portfolio completing; saved reasoning freezes into admitted research and survives changed preferences/restart/replay. Existing one-original-unsafe-POST restart reconciliation tests pass.
@@ -54,9 +54,18 @@ Reuse: official Models public APIs, Harness/configure/native Task persistence, N
 <a id="review"></a>
 ## Review
 
-Independent read-only native review is running on the implementation. Findings, remediation and the exact final committed Head must be recorded before merge; author testing is not independent acceptance.
+Independent read-only non-Codex review of initial Head `2d0a3da2` found four actionable defects. Author remediation and regression evidence:
+
+1. Queued credential mutations ignored the official cancellation signal: the official Models.login reproduction rejected cancellation but subsequently saved its key. Store operations now check cancellation immediately before starting; already-started refresh still commits. New regression failed before the fix and passes after it.
+2. Retained Rust serialization omits null/absent fuel; preserving null in the execution request falsely rejected the native echo. Execution-only normalization now removes null, retains original admitted input, checks the actual omitted echo, and keeps consumed fuel null. Protocol-child regression reproduced `native_result_request_mismatch` before the fix and passes after it; matching native CI remains required.
+3. Official optional/confirmation prompts require blank responses. API now accepts any string and leaves free-text validation to the provider, retaining prompt/selection/type validation. UI permits blank non-select responses. Controlled OAuth test reproduced 400 before the fix and passes after it.
+4. Pending response POST disabled Cancel/close/Escape. A separate cancellation state and response AbortController now detach that local request and explicitly DELETE the original login ID. The held-response browser regression left the modal open before the fix; it now confirms correlated cancellation and closure without a timer or automatic resubmission.
+
+Latest full local checks pass as recorded above. Independent recheck of the corrected final committed Head is pending; author testing is not independent acceptance.
 
 <a id="delivery"></a>
 ## Delivery
 
-Delivery proceeds through the scoped task branch and a PR targeting `dev`; GitHub owns exact revision/CI/merge evidence. Applicable final-Head hosted CI and independent review remain pending. No production deployment occurred.
+[PR 194](https://github.com/zhengui666/QuaZonai/pull/194) targets `dev`; GitHub owns exact revision/CI/merge evidence. Applicable final-Head hosted CI and independent recheck remain pending.
+
+The owner-authorized local update targets the existing **schema-4** installation at `$HOME/.local/share/quazonai-ts`, port 18080, retaining its original `data/research/research.sqlite`, configuration/auth, PostgreSQL, releases and backups. The separate legacy `$HOME/.local/share/quazonai` root is not the running Node deployment and must remain untouched. Preflight confirmed original revision `bcbef01a`, both application/database healthy. Use the installed schema-4 manager for a stopped-writer backup and immutable published-version update, refuse unresolved work, verify image/source/health/Web and original state after activation. Disk availability is approximately 1 GiB; do not prune unrelated Docker images, volumes, backups or caches without separate authority. No local update has occurred yet; publication and final acceptance must precede it.

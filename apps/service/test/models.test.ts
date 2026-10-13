@@ -27,6 +27,7 @@ test('official provider login prompts, original retries, cancellation, persisten
       name: 'Controlled OAuth',
       async login(interaction, options) {
         logins++; deviceIds.push(options!.getDeviceId!());
+        assert.equal(await interaction.prompt({ type: 'text', message: 'Optional domain (blank for default)' }), '');
         interaction.notify({ type: 'auth_url', url: 'javascript:invalid' });
         interaction.notify({ type: 'auth_url', url: 'https://example.com/authorize', instructions: 'Controlled authorization' });
         const option = await interaction.prompt({ type: 'select', message: 'Controlled method', options: [{ id: 'manual', label: 'Manual' }] }); assert.equal(option, 'manual');
@@ -62,7 +63,9 @@ test('official provider login prompts, original retries, cancellation, persisten
     await start('failed'); const failed = await waitFor(read('failed'), view => !!view.prompt); await respond('failed', failed.prompt!.id, 'fail');
     const failure = await waitFor(read('failed'), view => view.status === 'failed'); assert.equal(failure.error, 'model_login_failed'); assert.equal(JSON.stringify(failure).includes('synthetic_secret'), false);
     for (const id of ['oauth-one', 'oauth-two']) {
-      await start(id, 'oauth'); const select = await waitFor(read(id), view => !!view.prompt);
+      await start(id, 'oauth'); const optional = await waitFor(read(id), view => view.prompt?.type === 'text');
+      assert.equal((await respond(id, optional.prompt!.id, '')).statusCode, 200);
+      const select = await waitFor(read(id), view => view.prompt?.type === 'select');
       assert.equal(select.events.length, 1); assert.equal(select.prompt!.type, 'select');
       assert.equal((await respond(id, select.prompt!.id, 'invalid')).statusCode, 400);
       await respond(id, select.prompt!.id, 'manual');

@@ -192,7 +192,7 @@ for (const fuel of ['omitted', 'null'] as const) {
       (transcript) => {
         const result = textResult(transcript, 'factor_evaluate');
         assert.equal(result.consumed_fuel, null);
-        assert.equal((((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel, null);
+        assert.equal(Object.hasOwn(((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject, 'total_fuel'), false);
         return tool('factor_finalize', { reason: 'The original unmetered request and recorded result match.', trialId: result.trialId });
       },
     ]);
@@ -206,7 +206,7 @@ for (const fuel of ['omitted', 'null'] as const) {
       assert.equal(study.final!.status, 'COMPUTED');
       assert.equal((study.final!.result as JsonObject).consumed_fuel, null);
       const echoed = (((study.final!.result as JsonObject).request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      assert.equal(echoed.total_fuel, null);
+      assert.equal(Object.hasOwn(echoed, 'total_fuel'), false);
     } finally { await host.close(); await rm(setup_.directory, { recursive: true, force: true }); }
   });
 }
