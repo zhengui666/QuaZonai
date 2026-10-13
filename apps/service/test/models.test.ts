@@ -57,6 +57,11 @@ test('official provider login prompts, original retries, cancellation, persisten
     assert.equal(JSON.stringify(completed).includes('synthetic-key-only'), false);
     assert.equal((await request('GET', '/models')).json().providers[0].configured, true);
     await state.restart(); assert.equal((await request('GET', '/models')).json().providers[0].configured, true);
+    await start('empty-secret'); const empty = await waitFor(read('empty-secret'), view => !!view.prompt);
+    assert.equal((await respond('empty-secret', empty.prompt!.id, '')).statusCode, 400);
+    assert.deepEqual(await credentials.read(faux.provider.id), { type: 'api_key', key: 'synthetic-key-only' });
+    assert.equal((await read('empty-secret')()).status, 'running');
+    await request('DELETE', '/models/login/empty-secret');
     assert.equal((await request('DELETE', `/models/providers/${faux.provider.id}`)).json().configured, false);
     ambient = true; assert.equal((await request('DELETE', `/models/providers/${faux.provider.id}`)).json().configured, true); ambient = false;
     broken = true; const unavailable = await request('GET', '/models'); assert.equal(unavailable.json().providers[0].error, 'provider_status_unavailable'); assert.equal(unavailable.body.includes('synthetic_secret'), false); broken = false;

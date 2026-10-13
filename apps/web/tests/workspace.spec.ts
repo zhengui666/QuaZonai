@@ -153,6 +153,7 @@ test('model provider secrets stay transient; uncertain prompt response retries o
   await page.getByLabel('搜索模型服务').fill('待连接'); await expect(page.locator('.provider-row')).toHaveCount(1);
   await page.getByRole('button', { name: '配置 API Key 待连接服务', exact: true }).click();
   const dialog = page.getByRole('dialog'); await expect(dialog.getByLabel('测试 API Key', { exact: true })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: '确认连接', exact: true })).toBeDisabled();
   await dialog.getByLabel('测试 API Key', { exact: true }).fill('synthetic-browser-secret-only'); await dialog.getByRole('button', { name: '确认连接', exact: true }).click();
   await expect(dialog.getByRole('button', { name: '重试当前响应', exact: true })).toBeVisible(); await audit(page);
   expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain('synthetic-browser-secret-only');

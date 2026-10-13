@@ -72,7 +72,7 @@ export function ModelLogin({ request, changed, close }: {
         <Form.Item label={prompt.message} htmlFor="model-auth-value">{prompt.type === 'select' ? <Select id="model-auth-value" autoFocus value={value || undefined} disabled={busy || cancelling || unknownResponse} onChange={setValue} options={prompt.options.map(option => ({ value: option.id, label: option.label }))} />
           : prompt.type === 'secret' ? <Input.Password id="model-auth-value" autoFocus autoComplete="new-password" value={value} disabled={busy || cancelling || unknownResponse} onChange={event => setValue(event.target.value)} placeholder={prompt.placeholder} />
             : <Input id="model-auth-value" autoFocus autoComplete="off" value={value} disabled={busy || cancelling || unknownResponse} onChange={event => setValue(event.target.value)} placeholder={prompt.placeholder} />}</Form.Item>
-        <div className="form-actions"><Button type="primary" htmlType="submit" loading={busy} disabled={cancelling || (prompt.type === 'select' && !value && !unknownResponse)}>{unknownResponse ? '重试当前响应' : '确认连接'}</Button></div>
+        <div className="form-actions"><Button type="primary" htmlType="submit" loading={busy} disabled={cancelling || (((prompt.type === 'select' && !value) || (prompt.type === 'secret' && !value.trim())) && !unknownResponse)}>{unknownResponse ? '重试当前响应' : '确认连接'}</Button></div>
       </Form>}
       {!prompt && !terminal && !error && <span className="muted" role="status">等待模型服务授权…</span>}
       <div className="form-actions"><Button loading={cancelling} onClick={() => { if (terminal) close(); else void cancel(); }}>{terminal ? '关闭' : '取消连接'}</Button></div>

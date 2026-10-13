@@ -58,10 +58,12 @@ Independent read-only non-Codex review of initial Head `2d0a3da2` found four act
 
 1. Queued credential mutations ignored the official cancellation signal: the official Models.login reproduction rejected cancellation but subsequently saved its key. Store operations now check cancellation immediately before starting; already-started refresh still commits. New regression failed before the fix and passes after it.
 2. Retained Rust serialization omits null/absent fuel; preserving null in the execution request falsely rejected the native echo. Execution-only normalization now removes null, retains original admitted input, checks the actual omitted echo, and keeps consumed fuel null. Protocol-child regression reproduced `native_result_request_mismatch` before the fix and passes after it; matching native CI remains required.
-3. Official optional/confirmation prompts require blank responses. API now accepts any string and leaves free-text validation to the provider, retaining prompt/selection/type validation. UI permits blank non-select responses. Controlled OAuth test reproduced 400 before the fix and passes after it.
+3. Official optional/confirmation prompts require blank text responses. API accepts string responses, retaining nonblank secret, prompt/selection/type validation. UI permits blank text confirmation. Controlled OAuth test reproduced 400 before the fix and passes after it.
 4. Pending response POST disabled Cancel/close/Escape. A separate cancellation state and response AbortController now detach that local request and explicitly DELETE the original login ID. The held-response browser regression left the modal open before the fix; it now confirms correlated cancellation and closure without a timer or automatic resubmission.
 
-Latest full local checks pass as recorded above. Independent recheck of the corrected final committed Head is pending; author testing is not independent acceptance.
+Independent recheck at `a1701466` verified the four original remedies and found one introduced regression: blank secret submission could overwrite an existing API key because official generic/Anthropic login returns that value without validation. Backend/UI now reject blank secrets while preserving optional blank text. The new preservation regression failed before correction (200 instead of 400); it now confirms the original synthetic credential remains unchanged and the login is not falsely completed. Full `make check` and 5/5 e2e pass after this correction.
+
+Independent recheck of the corrected final committed Head is pending; author testing is not independent acceptance.
 
 <a id="delivery"></a>
 ## Delivery
