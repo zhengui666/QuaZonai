@@ -53,6 +53,12 @@ def api(opener, origin, path, body=None, method=None):
     with opener.open(request, timeout=15) as response:
         content = response.read(); return json.loads(content) if content else None
 
+def model_settings(opener, origin, model=None):
+    expected = {'defaultModel': model, 'thinkingLevel': None}
+    assert api(opener, origin, 'settings', expected, method='PATCH') == expected
+    assert api(opener, origin, 'settings') == expected
+    return expected
+
 def expanded_catalog(native, directory, fixture):
     # Extend the existing explicitly unqualified candle test, just as the Node
     # core scenario does. The actual native importer creates all catalog bytes.
@@ -126,11 +132,11 @@ def smoke(args):
             password = secrets.token_urlsafe(24)
             api(opener, origin, 'session/setup', {'password': password})
             api(opener, origin, 'session/login', {'password': password})
-            api(opener, origin, 'settings', {'name': 'original image smoke'}, method='PATCH')
+            model_settings(opener, origin)
             assert api(opener, origin, 'session')['authenticated']
             if args.published_only:
                 # Registry + shipped archive installation, not another whole core suite.
-                assert api(opener, origin, 'settings')['name'] == 'original image smoke'
+                assert api(opener, origin, 'settings') == {'defaultModel': None, 'thinkingLevel': None}
                 print('Published Node image setup/login/static installation passed.')
                 return
             manage(bundle, root, 'stop')
@@ -167,6 +173,7 @@ def smoke(args):
             manage(bundle, root, 'start')
             models = api(opener, origin, 'research/models')
             model = next({key: item[key] for key in ('provider', 'modelId')} for item in models if item['provider'] == 'faux')
+            original_settings = model_settings(opener, origin, model)
             command = {'requestId': 'original-image-idea', 'goal': 'Controlled image protocol; no market qualification',
                 'model': model, 'datasetId': 'image-control', 'maxTrials': 0 if args.service_only else 1}
             receipt = api(opener, origin, 'research', command)
@@ -188,9 +195,9 @@ def smoke(args):
             backup = max((root / 'backups').iterdir(), key=lambda item: item.stat().st_mtime_ns)
             assert (backup / 'data.tar.gz').is_file() and (backup / 'database.dump').is_file()
             manage(target, root, 'start')
-            api(opener, origin, 'settings', {'name': 'changed after backup'}, method='PATCH')
+            model_settings(opener, origin)
             manage(target, root, 'restore', str(backup))
-            assert api(opener, origin, 'settings')['name'] == 'original image smoke'
+            assert api(opener, origin, 'settings') == original_settings
             assert api(opener, origin, 'research', command) == receipt
             scientific_smoke(science, directory)
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', app,

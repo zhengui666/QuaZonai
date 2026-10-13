@@ -57,7 +57,7 @@ try {
     $Staged = Join-Path $Bin ([IO.Path]::GetRandomFileName())
     [IO.File]::WriteAllText($Staged, "@echo off`r`ncall `"$ReleaseDirectory\quazonai.cmd`" %*`r`nexit /b %errorlevel%`r`n")
     $Destination = Join-Path $Bin 'quazonai.cmd'
-    if ([IO.File]::Exists($Destination)) { [IO.File]::Replace($Staged, $Destination, $null) } else { [IO.File]::Move($Staged, $Destination) }
+    if ([IO.File]::Exists($Destination)) { [IO.File]::Replace($Staged, $Destination, [NullString]::Value) } else { [IO.File]::Move($Staged, $Destination) }
     $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     if ($Bin -notin ($UserPath -split ';')) { [Environment]::SetEnvironmentVariable('Path', "$Bin;$UserPath", 'User') }
     if ($Bin -notin ($env:Path -split ';')) { $env:Path = "$Bin;$env:Path" }

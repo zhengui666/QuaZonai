@@ -7,10 +7,30 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import release
+import smoke
 from release_support import DATABASE_IMAGE, validate_manifest, version
 
 REVISION = 'a' * 40
 class ReleaseTests(unittest.TestCase):
+    def test_image_smoke_uses_model_only_settings_and_distinct_restore_values(self):
+        stored = None
+        writes = []
+        def api(_opener, _origin, path, body=None, method=None):
+            nonlocal stored
+            self.assertEqual(path, 'settings')
+            if method == 'PATCH':
+                writes.append(body); stored = body.copy()
+            return stored.copy()
+        model = {'provider': 'faux', 'modelId': 'controlled'}
+        with patch.object(smoke, 'api', side_effect=api):
+            empty = smoke.model_settings(None, 'http://test-only')
+            original = smoke.model_settings(None, 'http://test-only', model)
+            changed = smoke.model_settings(None, 'http://test-only')
+        self.assertEqual(writes, [empty, original, changed])
+        self.assertEqual(original, {'defaultModel': model, 'thinkingLevel': None})
+        self.assertNotEqual(original, changed)
+        self.assertEqual(empty, changed)
+
     def test_source_ci_must_be_successful_exact_push_not_pr(self):
         def item(id, event, conclusion='success', revision=REVISION):
             return {'id': id, 'event': event, 'head_sha': revision, 'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': conclusion}
