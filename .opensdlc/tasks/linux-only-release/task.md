@@ -50,9 +50,9 @@ Checked on Linux x86_64 with official Node 22.19.0 and lychee 0.24.2. The offici
 <a id="review"></a>
 ## Review
 
-Independent read-only review and final-Head hosted CI pending; use the current [review policy](../../review.md). A clean review or green hosted jobs will not replace the failed mandatory `make check-links` result.
+Independent read-only review and final-Head hosted CI are tracked in [PR #193](https://github.com/zhengui666/QuaZonai/pull/193), under the current [review policy](../../review.md). A clean review or green hosted jobs will not replace the failed mandatory `make check-links` result.
 
 <a id="delivery"></a>
 ## Delivery
 
-PR pending. Keep the change unmerged while full-repository link acceptance is blocked. The root checkout and other ongoing worktrees remain untouched; no formal release or existing-service operation is performed.
+Draft [PR #193](https://github.com/zhengui666/QuaZonai/pull/193) targets remote `dev`; hosted check/review outcomes and the actual merge state belong to that PR. Keep it unmerged while full-repository link acceptance is blocked. The root checkout and other ongoing worktrees remain untouched; no formal release or existing-service operation is performed.
