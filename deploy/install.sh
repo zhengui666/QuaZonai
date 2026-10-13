@@ -15,9 +15,9 @@ while [ "$#" -gt 0 ]; do
       cat <<'HELP'
 Usage: bash install.sh [--cli-only] [--version TAG|latest] [--bin-dir PATH] [--directory PATH]
                        [--port PORT] [--database-port PORT]
-Installs the prebuilt CLI into ~/.local/bin. Linux x86_64 also installs or
-updates the Docker stack; macOS installs only the CLI. The source bootstrap
-selects the newest complete published dev release; release installers are pinned.
+Installs the prebuilt CLI into ~/.local/bin and installs or updates the Docker
+stack on Linux x86_64. The source bootstrap selects the newest complete published
+dev release; release installers are pinned.
 --version latest selects the newest complete dev release explicitly.
 --cli-only skips the Linux stack. Existing installations retain their settings.
 Requires Bash 4.4+ for the Linux stack, Bash 3.2+ for CLI-only, curl, tar
@@ -56,9 +56,7 @@ valid_version() {
 }
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64) platform=linux-x86_64 ;;
-  Darwin/x86_64) platform=macos-x86_64; cli_only=true ;;
-  Darwin/arm64) platform=macos-aarch64; cli_only=true ;;
-  *) fail 'Supported hosts: Linux x86_64, macOS x86_64 or Apple Silicon. Use install.ps1 on Windows x86_64.' ;;
+  *) fail 'Supported host: Linux x86_64.' ;;
 esac
 if ! "$cli_only"; then
   [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; } || fail 'The Linux Docker stack requires Bash 4.4 or newer. Upgrade Bash explicitly or use --cli-only.'
@@ -73,8 +71,7 @@ trap 'rm -rf -- "$work"; if [ -n "$staged" ]; then rm -f -- "$staged"; fi' EXIT
 # This standalone parser must be available before the versioned bundle exists.
 # It parses the whole JSON document, rejects duplicate keys and never evaluates data.
 json_read() {
-  # BSD awk strings cannot retain NUL: sprintf("%c",0) is empty there.
-  # Check file bytes in Bash before awk can silently discard them.
+  # Check file bytes before awk can silently discard NUL characters.
   local prefix
   if IFS= read -r -d '' prefix < "$2"; then return 1; fi
   LC_ALL=C awk -v mode="$1" -v field="${3:-}" '
@@ -181,7 +178,7 @@ json_read() {
     }
     if(mode!="latest" || kind[root]!="array") bad()
     latest=field
-    split("install.sh install.ps1 release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-cli-macos-x86_64.tar.gz quazonai-cli-macos-aarch64.tar.gz quazonai-cli-windows-x86_64.zip quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz quazonai-image-database.tar.gz",required," ")
+    split("install.sh release.json quazonai-deploy.tar.gz README.md quazonai-cli-linux-x86_64.tar.gz quazonai-image-application.tar.gz quazonai-image-runtime.tar.gz quazonai-image-database.tar.gz",required," ")
     for(i=1;i<=count[root];i++) {
       release=prop(root,i); tag=value[prop(release,"tag_name")]; assets=prop(release,"assets")
       if(kind[release]!="object" || kind[prop(release,"tag_name")]!="string" || !dev(tag) || kind[prop(release,"draft")]!="false" || kind[assets]!="array") continue

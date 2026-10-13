@@ -11,7 +11,7 @@
 <a id="quickstart"></a>
 ## 安装
 
-服务需要 Linux x86_64、Docker Engine、Docker Compose 2.20+、Bash 4.4+、curl、tar、awk、GNU coreutils 和 util-linux。无需宿主 Node.js、Python、Rust 或独立 Worker；完整前提见[部署手册](deploy/docker/README.md#install)。
+发布、安装与测试仅支持 **Linux x86_64**，包括独立 CLI；不提供 Windows 或 macOS 版本。浏览器访问端不受此发布平台限制。服务需要 Docker Engine、Docker Compose 2.20+、Bash 4.4+、curl、tar、awk、GNU coreutils 和 util-linux。无需宿主 Node.js、Python、Rust 或独立 Worker；完整前提见[部署手册](deploy/docker/README.md#install)。
 
 安装最新**已完整发布的 dev 版本**：
 
@@ -25,7 +25,7 @@ sh -c 'f=$(mktemp) || exit; cleanup() { rm -f -- "$f"; }; trap cleanup 0; trap "
 
 **旧 Rust／Worker 安装不支持自动跨架构升级。** 新管理器会在修改旧状态前拒绝；继续使用原部署包完成对账和备份。原数据库、迁移、密钥、journal 和历史记录不能删除后假装迁移成功。详见[旧安装兼容边界](deploy/docker/README.md#legacy-rust-installations)。
 
-CLI 包包含官方 Node 运行时，支持 Linux、macOS Intel／Apple Silicon 和 Windows x86_64。Linux／macOS 安装到 `$HOME/.local/bin`，Windows 安装到 `%LOCALAPPDATA%\QuaZonai\bin`：
+Linux x86_64 CLI 包包含官方 Node 运行时，默认安装到 `$HOME/.local/bin`：
 
 ```sh
 quazonai --origin http://localhost:8081 login

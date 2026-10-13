@@ -4,15 +4,16 @@ The pinned Node 22.19 application serves the Web console and `/api/v3` at
 container port 8080. The service owns the sole official Pi Durable writer and
 scheduler; there is no host Worker, separate research server, Rust API or gateway.
 A separate offline scientific image retains the real Rust/Wasm compiler and
-Nautilus/Clarabel kernel. CLI archives include JS/dependencies and the official
-platform Node runtime, not SEA or a custom bundled executable.
+Nautilus/Clarabel kernel. The Linux x86_64 CLI archive includes JS/dependencies
+and the official Node runtime, not SEA or a custom bundled executable.
 
 ## Install
 
-Use the original non-root Linux x86_64 owner, Docker Engine/Compose 2.20+, Bash
-4.4+, curl, tar, awk, GNU coreutils and util-linux. Host Node/npm, Python, Rust and
-systemd user units are not required. The CLI also supports macOS Intel/Apple
-Silicon and Windows x86_64. Downloads/builds never run on the installed host.
+Releases, installation and tests support **Linux x86_64 only**, including the
+standalone CLI. Use the original non-root owner, Docker Engine/Compose 2.20+,
+Bash 4.4+, curl, tar, awk, GNU coreutils and util-linux. Host Node/npm, Python,
+Rust and systemd user units are not required. Downloads/builds never run on the
+installed host. Browser clients are not restricted to the server's platform.
 
 Download `install.sh` from this release, then:
 

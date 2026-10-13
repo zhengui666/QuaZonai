@@ -8,7 +8,7 @@ Single-user unattended quantitative research: idea → recorded scientific trial
 <a id="commands"></a>
 ## Development and checks
 
-Develop from current remote `dev` in an isolated branch/worktree. Preserve unrelated changes. Node 22.19+ supplies native type stripping and SQLite; use the pinned [Rust toolchain](../rust-toolchain.toml) and lockfiles.
+Develop from current remote `dev` in an isolated branch/worktree. Releases, installation and tests support **Linux x86_64 only**, including the standalone CLI; browser client platforms remain unrestricted. Preserve unrelated changes. Node 22.19+ supplies native type stripping and SQLite; use the pinned [Rust toolchain](../rust-toolchain.toml) and lockfiles.
 
 ```sh
 npm ci --prefix apps/service --no-audit --no-fund
@@ -23,6 +23,7 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 | Web | `make check-web` | Types, small unit check, production build |
 | Five-page interactions | `npm --prefix apps/web run test:e2e` | Three Chromium checks; install Chromium through the package's Playwright CLI first |
 | Installation/package helpers | `make check-deploy` | Shell syntax and small disposable package/manager checks; not an installed service |
+| Extracted Linux CLI distribution | `python3 -B deploy/package.py smoke-cli --archive /absolute/quazonai-cli-linux-x86_64.tar.gz --platform linux-x86_64 --version TAG` and `QZ_TEST_CLI_ARCHIVE=/absolute/quazonai-cli-linux-x86_64.tar.gz QZ_TEST_CLI_VERSION=TAG node --test deploy/install.test.mjs` | Real official bundled Node, offline version/help/schema and repeat installation without host Node; CLI publishing runs both |
 | Routine TypeScript work | `make check` | TS, Web and deployment helpers |
 | Scientific contracts/kernel | `make check-science` | Retained native rules, factors, simulation, allocation, isolation and account adapters |
 | Connected native core flow | `make check-core QZ_JOB_BINARY=/absolute/path/to/job` | Matching `catalog-prepare` and `browser_catalog_fixture` beside job; actual native factor/heldout, selected strategy, shared-account curve and controlled downstream protocol |
@@ -56,7 +57,7 @@ Deterministic tests use official Faux Provider and controlled downstream protoco
 
 [Container action](../.github/actions/container/action.yml) reuses exact tested native outputs for the Node application and scientific image; normal npm/buildx/Rust dependency caches avoid duplicate compilation. [Version publishing](../.github/workflows/release-version.yml) and [dev publishing](../.github/workflows/dev-image.yml) preserve the release strategy and run disposable installation/restart/backup acceptance. Source tools remain at [runtimes/data](../runtimes/data); native image assembly at [runtimes/native](../runtimes/native).
 
-CLI archives carry ordinary JS, official dependencies and the official platform Node runtime, not a rewritten runtime or SEA implementation. Installation does not compile and requires no host Node/Rust/Python/Worker. Legacy Rust installation cutover is explicitly unsupported until original authentication, queues and state can be reconciled; new bundles never initialize over that state. See [deployment](../deploy/docker/README.md).
+The Linux x86_64 CLI archive carries ordinary JS, official dependencies and the official Linux Node runtime, not a rewritten runtime or SEA implementation. Installation does not compile and requires no host Node/Rust/Python/Worker. Legacy Rust installation cutover is explicitly unsupported until original authentication, queues and state can be reconciled; new bundles never initialize over that state. See [deployment](../deploy/docker/README.md).
 
 <a id="conventions"></a>
 ## Conventions and owners

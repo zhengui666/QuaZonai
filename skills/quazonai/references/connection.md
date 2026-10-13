@@ -8,7 +8,7 @@ quazonai identity
 
 The user enters the password in their own terminal with hidden input. Never put it in chat, arguments, environment variables or an Agent tool call. If instance setup is required, use the authentication UI first. No private terminal means return the manual login command and stop writes.
 
-The CLI internally reuses `client.json` with the original shape `{schema_version:1,origin,token,development_http,ca_certificate}`. Unix uses `$XDG_CONFIG_HOME/quazonai/client.json` or `$HOME/.config/quazonai/client.json`; Windows uses `%APPDATA%/quazonai/client.json`. Do not read that file yourself. Legacy token bytes are preserved, but acceptance still depends on the service's retained authentication support.
+The CLI is released and tested only on Linux x86_64. It internally reuses `client.json` with the original shape `{schema_version:1,origin,token,development_http,ca_certificate}` at `$XDG_CONFIG_HOME/quazonai/client.json` or `$HOME/.config/quazonai/client.json`, with a private 0700 directory and 0600 file. Do not read that file yourself. Legacy token bytes are preserved, but acceptance still depends on the service's retained authentication support.
 
 `login --replace` deliberately creates a replacement device; it does not revoke the previous one. `--name NAME` labels it. `--ca-certificate FILE` uses the user's supplied CA without disabling TLS verification. An explicitly chosen HTTP origin sends credentials without TLS; the CLI never downgrades HTTPS or follows redirects.
 
