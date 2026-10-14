@@ -14,6 +14,7 @@ const token = '10293622413427107018910484709082983992469739451456682738718130596
 const instrument = `condition-${token}.POLYMARKET`;
 const bar = `${instrument}-1-MINUTE-LAST-EXTERNAL`;
 const start = 1788220800000000000n;
+const maxDbCounter = 9223372036854775807n;
 const at = (seconds: number) => (start + BigInt(seconds) * 1_000_000_000n).toString();
 const source = 'https://huggingface.co/datasets/TimeSeventeen/Polymarket-v2/tree/' + 'a'.repeat(40);
 const execute = promisify(execFile);
@@ -218,7 +219,8 @@ test('incompatible optional strategy contracts fail before publication', async (
     const strategy = { name: 'original-owner-policy', kind: 'factor-threshold', instrumentId: instrument,
       threshold: 0.1, investedWeight: '0.25', targetTtlNs: '1000000000', simulationSettings: { base_currency: 'pUSD' } };
     for (const change of [{ simulationSettings: { base_currency: 'USD' } }, { threshold: null }, { investedWeight: '1.01' },
-      { investedWeight: '0' }, { targetTtlNs: '0' }, { name: '' }, { simulationSettings: null }]) {
+      { investedWeight: '0' }, { targetTtlNs: '0' }, { targetTtlNs: (maxDbCounter + 1n).toString() },
+      { targetTtlNs: (maxDbCounter - BigInt(at(900)) + 1n).toString() }, { name: '' }, { simulationSettings: null }]) {
       await writeFile(file, JSON.stringify({ ...strategy, ...change }));
       await assert.rejects(exportDataset({ ...f.options, strategy: file }));
       await assert.rejects(readFile(f.options.output), { code: 'ENOENT' });

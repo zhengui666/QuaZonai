@@ -17,6 +17,7 @@ export interface DatasetExportOptions {
 }
 
 const preset = 'polymarket-v2-hf';
+const maxDbCounter = 9223372036854775807n;
 const sourcePattern = /^https:\/\/huggingface\.co\/datasets\/TimeSeventeen\/Polymarket-v2\/tree\/[a-f0-9]{40}$/;
 
 function ns(value: unknown): bigint {
@@ -243,11 +244,13 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
       || !(object(object(primary.request.forecast).selection).bar_types as string[]).some((bar) => bar.startsWith(strategy.instrumentId + '-'))) throw new Error('original_strategy_mismatch');
     text(strategy.name, 'strategy_name');
     const weight = decimalUnits(decimal(strategy.investedWeight, 'strategy_weight'));
+    const targetTtl = BigInt(counter(strategy.targetTtlNs, 'strategy_ttl'));
+    const finalSelection = selection(object((sealed ?? primary).request.forecast).selection);
     if (typeof strategy.threshold !== 'number' || !Number.isFinite(strategy.threshold) || weight <= 0n || weight > 10n ** 18n
-      || BigInt(counter(strategy.targetTtlNs, 'strategy_ttl')) <= 0n
+      || targetTtl <= 0n || targetTtl > maxDbCounter
+      || ns(finalSelection.decision_cutoff_ns) + targetTtl > maxDbCounter
       || object(strategy.simulationSettings, 'simulation_settings').base_currency !== result.currency) throw new Error('original_strategy_mismatch');
     // Current portfolio replay copies the primary catalog and uses the full final request.
-    const finalSelection = selection(object((sealed ?? primary).request.forecast).selection);
     contained(finalSelection, primary.selection);
     const interval = BigInt(primary.window.bar_seconds as number) * 1_000_000_000n;
     const lastLabel = (ns(finalSelection.event_end_ns) - 1n) / interval * interval;
