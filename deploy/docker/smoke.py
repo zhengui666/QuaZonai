@@ -200,8 +200,15 @@ def smoke(args):
             assert api(opener, origin, 'settings') == original_settings
             assert api(opener, origin, 'research', command) == receipt
             scientific_smoke(science, directory)
+            inventory = json.loads(run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', app,
+                 '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'plugins'], capture=True))
+            v2_source = next(item for item in inventory if item['id'] == 'polymarket-v2-hf')
+            assert v2_source['public_network_operations'] == ['download', 'plan']
+            assert v2_source['capabilities'] == ['convert', 'download', 'export-dataset', 'freeze', 'plan', 'prepare', 'verify']
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', app,
-                 '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'plugins'], capture=True)
+                 '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'export-dataset', 'polymarket-v2-hf', '--help'], capture=True)
+            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app,
+                 '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
             scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real controlled native factor/heldout'
             print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite/PG backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
         finally:

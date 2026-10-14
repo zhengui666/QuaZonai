@@ -10,6 +10,16 @@ function condition(job) {
   assert.match(value, /!cancelled\(\)/, `${job} must override implicit success() without running after cancellation`);
   return Function('needs', 'cancelled', 'inputs', `return (${value});`);
 }
+test('native source integration workflows install and cache both exporter dependency trees', async () => {
+  for (const name of ['polymarket-history.yml', 'rust-regression.yml']) {
+    const source = await readFile(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
+    for (const app of ['service', 'research']) {
+      assert.match(source, new RegExp(`apps/${app}/package-lock\\.json`), `${name}: cache ${app} lock`);
+      assert.match(source, new RegExp(`npm ci --prefix apps/${app}\\b`), `${name}: install ${app} dependencies`);
+    }
+  }
+});
+
 const results = ['success', 'failure', 'cancelled', 'skipped'];
 
 test('formal releases still require full regression and cancelled builds never proceed', () => {

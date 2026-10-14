@@ -22,7 +22,8 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 | Service, Harness, CLI and Skill | `make check-ts` | Types and concise HTTP/core, durable recovery and client checks; official upstream packages |
 | Web | `make check-web` | Types, small unit check, production build |
 | Five-page interactions | `npm --prefix apps/web run test:e2e` | Three Chromium checks; install Chromium through the package's Playwright CLI first |
-| Installation/package helpers | `make check-deploy` | Shell syntax and small disposable package/manager checks; not an installed service |
+| Public source helpers | `make check-source` | Shared HF transport/cache, explicit source selection, offline handoff and failure/recovery fixtures |
+| Installation/package helpers | `make check-deploy` | Source helper tests, shell syntax and disposable package/manager checks; not an installed service |
 | Routine TypeScript work | `make check` | TS, Web and deployment helpers |
 | Scientific contracts/kernel | `make check-science` | Retained native rules, factors, simulation, allocation, isolation and account adapters |
 | Connected native core flow | `make check-core QZ_JOB_BINARY=/absolute/path/to/job` | Matching `catalog-prepare` and `browser_catalog_fixture` beside job; actual native factor/heldout, selected strategy, shared-account curve and controlled downstream protocol |

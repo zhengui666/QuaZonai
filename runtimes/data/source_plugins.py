@@ -20,6 +20,7 @@ import urllib.parse
 import acquire
 import binance_vision
 import hf_dataset
+import polymarket_v2
 import providers
 import snapshot
 
@@ -519,6 +520,8 @@ def hf_history_convert(args):
     if (not total or not isinstance(evidence.get("instruments"), list)
             or len(evidence["instruments"]) != report["instrument_versions"]):
         raise ValueError("native HF history is empty or has inconsistent definitions")
+    if polymarket_v2.REQUEST_KEY in original["plan"]:
+        polymarket_v2.publication(metadata)
     return converted("hf-dataset", output, report)
 
 
@@ -653,6 +656,8 @@ def history_publication(plugin_id, report, evidence, *, declaration=None):
         if evidence["source_reference"] != reference:
             raise ValueError("native publication HF source reference differs from its selected revision")
         hf_publication_clock(metadata, report, evidence)
+        if polymarket_v2.REQUEST_KEY in manifest["plan"]:
+            polymarket_v2.publication(metadata, declaration)
 
 
 def validate_native(plugin_id, report, evidence, *, declaration=None):
@@ -662,7 +667,7 @@ def validate_native(plugin_id, report, evidence, *, declaration=None):
     plugin.validate_native(report, evidence, declaration=declaration)
 
 
-def prepare_source(plugin_id, args):
+def prepare_source(plugin_id, args, *, source_preset=None):
     source = local_path(args.native_output)
     output = local_path(args.output)
     declaration = local_path(args.declaration)
@@ -687,6 +692,11 @@ def prepare_source(plugin_id, args):
     identity = catalog_identity(declared)
     load_json(selection)  # Bounded original JSON only; the native parser owns selection semantics.
     report, evidence = published_native(source)
+    preset_request = None
+    if source_preset is not None:
+        if source_preset != polymarket_v2.PLUGIN or plugin_id != "hf-dataset":
+            raise ValueError("unsupported preparation preset")
+        preset_request = polymarket_v2.publication(evidence.get("source_metadata"), declared)
     providers.integer(report.get("bars"), "native preparation bars", minimum=1, maximum=None)
     validate_native(plugin_id, report, evidence, declaration=declared)
     if not unchanged():
@@ -713,11 +723,22 @@ def prepare_source(plugin_id, args):
               "admission": dict(acquire.ADMISSION),
               "unperformed_steps": ["runtime_configuration", "source_registration", "source_grant_registration",
                                     "dataset_registration", "frozen_input_set", "fresh_DATA_VALIDATE"]}
+    if preset_request is not None:
+        metadata = evidence["source_metadata"]
+        definitions = sorted(evidence["instruments"], key=lambda item: item["BinaryOption"]["id"])
+        result |= {"source_preset": source_preset, "source_reference": evidence["source_reference"],
+                   "source_request": preset_request, "source_window": metadata["selection"],
+                   "source_definitions_json": polymarket_v2.definition_json(definitions),
+                   "native_selection": providers.read_json(original_bytes["selection"]),
+                   "unperformed_steps": ["service_dataset_configuration", "source_rights_review",
+                                         "historical_evidence_review", "research_execution", "independent_evaluation"]}
     if not no_checksums:
         result["metadata_sha256"] = hashlib.sha256(body).hexdigest()
     producer = {name: os.environ.get(f"QZ_OPERATOR_{name.upper()}") for name in ("version", "revision", "image")}
     if all(producer.values()):
         result["producer"] = producer  # Informational installed image identity, never source authority.
+    if preset_request is not None:
+        polymarket_v2.publish(output / "preparation.json", result)
     return result
 
 
@@ -780,6 +801,108 @@ def hf_dataset_verify_options(parser):
     parser.add_argument("--selection", type=Path, required=True, help="existing selection.json request manifest")
 
 
+def polymarket_v2_plan_options(parser):
+    parser.add_argument("--start-date", required=True, help="inclusive UTC YYYY-MM-DD source-file date")
+    parser.add_argument("--end-date", required=True, help="exclusive UTC YYYY-MM-DD source-file date")
+    parser.add_argument("--token", action="append", required=True, help="exact outcome token ID; local conversion only")
+    parser.add_argument("--revision", help="Hub ref resolved once into the saved plan")
+    byte_budget_options(parser)
+    parser.add_argument("--output", type=Path, required=True, help="new fixed plan JSON file")
+
+
+def polymarket_v2_plan(args):
+    output = local_path(args.output)
+    if output.exists():
+        raise ValueError("Polymarket v2 plan output must be new")
+    return polymarket_v2.publish(output, polymarket_v2.plan(
+        args.start_date, args.end_date, args.token, args.revision, args.max_bytes))
+
+
+def polymarket_v2_download_options(parser):
+    parser.add_argument("--plan", type=Path, required=True, help="original fixed Polymarket v2 plan")
+    parser.add_argument("--cache-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True, help="request directory; same-request retries resume")
+
+
+def polymarket_v2_download(args):
+    return hf_dataset.download(polymarket_v2.read_plan(local_path(args.plan)), args.cache_dir, args.output)
+
+
+def polymarket_v2_freeze(args):
+    polymarket_v2.read_plan(local_path(args.plan))
+    result = hf_dataset.freeze(args.plan, args.cache_dir, args.output)
+    polymarket_v2.validate_selection(result)
+    return result
+
+
+def polymarket_v2_verify(args):
+    polymarket_v2.read_selection(local_path(args.selection))
+    return hf_dataset.verify(args.selection)
+
+
+def polymarket_v2_convert_options(parser):
+    native_options(parser)
+    parser.add_argument("--selection", type=Path, required=True)
+    parser.add_argument("--instruments", type=Path, required=True, help="original definitions for exactly the selected tokens")
+    parser.add_argument("--bar-seconds", type=int, required=True)
+    parser.add_argument("--start-seconds", type=int, help="optional narrower original UTC event window")
+    parser.add_argument("--end-seconds", type=int)
+    parser.add_argument("--chain-evidence", type=Path)
+
+
+def polymarket_v2_convert(args):
+    paths = [local_path(args.selection), local_path(args.instruments)]
+    originals = [acquire.local_bytes(path, None) for path in paths]
+    selection = providers.read_json(originals[0])
+    request = polymarket_v2.validate_selection(selection)
+    polymarket_v2.definitions(request, providers.read_json(originals[1]))
+    start, end = polymarket_v2.window(request, args.start_seconds, args.end_seconds)
+    native_args = argparse.Namespace(**(vars(args) | {
+        "format": polymarket_v2.FORMAT, "start_seconds": start, "end_seconds": end}))
+    result = hf_history_convert(native_args)
+    if originals != [acquire.local_bytes(path, None) for path in paths]:
+        raise ValueError("Polymarket v2 selection or definitions changed; native artifacts retained")
+    return result | {"source_preset": polymarket_v2.PLUGIN}
+
+
+def polymarket_v2_prepare(args):
+    # Keep the HF no-checksum branch and validate/enrich its already loaded publication.
+    return prepare_source("hf-dataset", args, source_preset=polymarket_v2.PLUGIN)
+
+
+def polymarket_v2_export_options(parser):
+    for option in ("prepared", "request", "output"):
+        parser.add_argument("--" + option, type=Path, required=True)
+    for option in ("id", "name"):
+        parser.add_argument("--" + option, required=True)
+    parser.add_argument("--asset-class", default="BINARY_OPTION")
+    for option in ("sealed-prepared", "sealed-request", "policy", "strategy"):
+        parser.add_argument("--" + option, type=Path)
+    parser.add_argument("--ready", action="store_true", help="owner enables technical selection, not scientific qualification")
+
+
+def polymarket_v2_export(args):
+    module = Path(__file__).absolute()
+    root = module.parents[2] if module.parent.name == "data" else module.parents[1]
+    exporter = root / "apps/service/src/dataset-export.ts"
+    if not exporter.is_file():
+        raise ValueError("matching TypeScript dataset exporter is not packaged")
+    argv = ["node", "--experimental-strip-types", str(exporter)]
+    for option in ("prepared", "request", "output", "id", "name", "asset_class",
+                   "sealed_prepared", "sealed_request", "policy", "strategy"):
+        value = getattr(args, option)
+        if value is not None:
+            argv += ["--" + option.replace("_", "-"), str(local_path(value) if isinstance(value, Path) else value)]
+    if args.ready:
+        argv.append("--ready")
+    completed = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        shell=False, check=False, cwd=exporter.parent,
+        env={"PATH": os.environ.get("PATH", os.defpath)})
+    if completed.returncode != 0:
+        raise ValueError("dataset export failed; original diagnostics and artifacts retained")
+    return providers.read_json(completed.stdout)
+
+
 PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PROVIDERS}
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
 PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
@@ -805,6 +928,19 @@ PLUGINS["hf-dataset"] = source_plugin("hf-dataset", "on-demand Hugging Face file
      "Native conversion uses the explicit existing archive format and original definitions; preparation requires BAR output",
      "Byte/format checks do not establish full market coverage, data-use rights or PIT"],
     validate_native=partial(history_publication, "hf-dataset"))
+PLUGINS[polymarket_v2.PLUGIN] = source_plugin(polymarket_v2.PLUGIN, polymarket_v2.FORMAT,
+    {"plan": Capability(polymarket_v2_plan_options, polymarket_v2_plan, public_network=True),
+     "download": Capability(polymarket_v2_download_options, polymarket_v2_download, public_network=True),
+     "freeze": Capability(hf_dataset_freeze_options, polymarket_v2_freeze),
+     "verify": Capability(hf_dataset_verify_options, polymarket_v2_verify),
+     "convert": Capability(polymarket_v2_convert_options, polymarket_v2_convert),
+     "prepare": Capability(prepare_options, polymarket_v2_prepare),
+     "export-dataset": Capability(polymarket_v2_export_options, polymarket_v2_export)},
+    ["UTC dates select exact OrderFilled daily files at one fixed Hub revision; missing files fail",
+     "Token IDs select local rows through original pUSD definitions, never remote download bytes",
+     "Native conversion retains strict normalized amounts and unverified historical availability",
+     "Offline export produces a v3 DatasetConfig fragment, not service registration or research",
+     "Prepared catalogs remain owner-managed immutable inputs; readiness is not scientific qualification"])
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",
     snapshot_capabilities() | {"convert": Capability(partial(history_options, capture=True),
                                                        partial(history_convert, capture=True)),

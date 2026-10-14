@@ -50,6 +50,11 @@ python3 -B runtimes/data/source_plugins.py prepare --help
   share a resumable cache. Explicit offline conversion uses the existing native
   archive schemas and original definitions; preparation requires native BAR
   output. This operator handoff does not register or trigger research
+- `polymarket-v2-hf`: plan, download, freeze, verify, convert, prepare, export-dataset.
+  [TimeSeventeen v2 preset](polymarket-v2.md): explicit half-open UTC dates and exact
+  token strings, saved fixed-revision plans, shared whole-file cache, original pUSD
+  definitions and the existing native converter. Offline export emits one current
+  v3 `DatasetConfig` fragment; it does not configure a service or start research
 - `polymarket-capture`: the snapshot lifecycle plus conversion and BAR preparation through existing
   `polymarket-history capture`, specifically the supported lokima format with
   original Gamma responses and both recorded CLOB feeds
@@ -96,8 +101,10 @@ permission, or point-in-time attestation.
 
 For an installation whose completed release includes the source tools, the
 installed source command uses the application image's matching operator payload;
-consult the [installed guide](../../deploy/docker/README.md#installed-free-source-tools)
-and check that release's command help and plugin inventory. No source checkout or
+consult the [installed guide](../../deploy/docker/README.md#scientific-images-and-source-tools)
+and invoke the matching application image's Python entrypoint in a disposable
+container, with literal read-only inputs and separate writable outputs. Do not
+use the retired manager `source` command. Check that release's help/inventory. No source checkout or
 host build tools are required for installed execution. With `--native-bin` omitted, this module
 selects its adjacent `bin/catalog-prepare` for candle conversion and all catalog
 preparation, or `bin/polymarket-history` for history conversion. It never searches
@@ -283,27 +290,28 @@ source evidence; later `DATA_VALIDATE` does not reopen that archive evidence.
 Successful stdout contains one `CATALOG_PREPARED` handoff with:
 
 - Canonical output, catalog root and original `catalog-metadata.json` paths
-- Byte length and SHA-256 of the exact final metadata file, including its original
-  formatting; native stdout is not the metadata byte source
-- `catalog_registration` containing exactly `root` and `metadata_file`, for the
-  Runtime's existing `CatalogRegistration` entry
+- Byte length of the exact final metadata file, including its original formatting;
+  older non-HF preparation paths additionally retain SHA-256. The current HF
+  selection path does not calculate source or metadata checksums
+- `catalog_registration` containing exactly `root` and `metadata_file`, retained
+  as local compatibility fields, not a current Runtime API
 - `identity_hints` containing only `native_catalog_ref` from `registered_ref` and
   `native_storage_version` from `storage_version`; both must match the explicit
   declaration
-- Local source report/evidence paths with byte lengths and digests, plus remaining
-  registration and validation steps
-- Optional `producer` version, revision and immutable image identity, supplied by
-  the installed manager only when all `QZ_OPERATOR_VERSION`,
-  `QZ_OPERATOR_REVISION` and `QZ_OPERATOR_IMAGE` values are present. These values
-  identify the operator image and do not certify source quality or provenance
+- Local source report/evidence paths with byte lengths (and existing digests on
+  non-HF paths), plus explicit unperformed steps
+- Optional informational `producer` when all `QZ_OPERATOR_VERSION`,
+  `QZ_OPERATOR_REVISION` and `QZ_OPERATOR_IMAGE` values were explicitly supplied;
+  it identifies the operator payload, not source quality or provenance
 
-Keep the handoff and detached source artifacts local. They can include private
-filesystem paths. SHA-256 binds file bytes; it does not authenticate their upstream
-source. The handoff does not embed or replace the authoritative metadata document.
-Runtime still reads and validates the original metadata bytes from `metadata_file`,
-and service registration still fetches them from the selected Runtime. Hints cannot
-supply quality, origin or PIT status. Keep source evidence outside the research
-catalog mount, and use paths that exist verbatim on that Runtime's host.
+Keep handoffs and detached artifacts local, outside researcher-readable catalog
+mounts. They may contain private paths. Native metadata remains authoritative;
+identity hints cannot supply quality, origin or PIT. Current v3 configures original
+catalog/request entries in private `service.json.datasets`, not a retired Runtime.
+The [v2 preset](polymarket-v2.md) saves its receipt and exports a fragment using
+actual native metadata and an original factor request, without service mutation.
+Generic handoffs retain historical `unperformed_steps` names for compatibility;
+these are not executable current-service registration instructions.
 
 ## Failure and evidence boundaries
 
@@ -341,8 +349,9 @@ python3 -B -m unittest discover -s runtimes/data -v
 `CATALOG_PREPARED` means native publication and the wrapper's handoff checks
 succeeded, not that a catalog is registered or research is admitted. Preparing
 each intended Discovery/Validation/Sealed partition requires its own explicit
-declaration, selection and new output. Source/grant registration, dataset
-registration, Runtime configuration, frozen InputSets and fresh `DATA_VALIDATE`
-remain separate steps. Consult the [history guide](README.md) and
+declaration, selection and new output. Owner service configuration, immutable
+catalog handling, source-rights/evidence review and independent evaluation remain
+separate steps; `ready` and successful computation do not establish qualification.
+Consult the [history guide](README.md) and
 [acquisition provider guide](providers.md) for original evidence requirements and
 unsupported source coverage.
