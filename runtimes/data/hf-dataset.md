@@ -3,8 +3,10 @@
 The `hf-dataset` plugin uses the existing [source runner](source_plugins.py) and
 [snapshot transport](snapshot.py). Installed releases containing this module
 expose it through the same operator source command. It downloads requested
-source-file partitions into one reusable cache. It does not automatically
-register a catalog, trigger a research Worker, or decode arbitrary Parquet as
+source-file partitions into one reusable cache. For TimeSeventeen's public v2
+archive, use the [date/token preset and v3 export guide](polymarket-v2.md).
+It does not automatically configure the current TypeScript service, start research,
+or decode arbitrary Parquet as
 native Nautilus data. Existing `hf-snapshot` and archive adapters retain their
 original interfaces and manifests. The explicit `convert hf-dataset` bridge
 uses the native archive adapter's separate `--selection` input; it never
@@ -71,11 +73,13 @@ source files are opened only for reading. All selected file locks are acquired
 in stable path order and held through final stat checks and atomic selection
 publication, then released even on failure. This coordinates writers using the
 same locks; it does not make source files permanently immutable or exclude
-external writes that ignore those locks. For installed execution, keep the
-cache under the existing owner-managed writable `--output-parent`, mount the
-original plan with `--read-only`, and invoke the same `freeze hf-dataset` command
-through `manage.sh source`. The plugin inventory selects the existing offline
-container boundary (`public_network=false`). No deployment change is required.
+external writes that ignore those locks. For installed execution, use the
+matching application image's explicit Python entrypoint in a disposable offline
+container. Mount the cache writable for locks, the original plan read-only and a
+separate request-output parent writable, at their literal recorded paths. See the
+[installed boundary](../../deploy/docker/README.md#scientific-images-and-source-tools)
+and [v2 examples](polymarket-v2.md#installed-disposable-containers). No deployment
+change or retired `manage.sh source` command is required.
 
 The result retains the original plan and existing `qz.hf_selection/1` contract:
 `downloaded_bytes=0`, actual `cached_files`, `cached=true`, and `resumed_bytes=0`.
@@ -191,29 +195,23 @@ The saved request is revalidated before acquisition, including its original
 but the published plan retains the original spelling, files, mapping, dates and
 license metadata. Different request or license metadata cannot reuse that output.
 
-The source-checkout API can resume the same request directory. The installed
-manager deliberately requires a new output directory for every invocation.
-Keep the stable cache inside its owner-managed `--output-parent` writable mount,
-and use a new request handoff even when resuming earlier partial cache bytes:
+Both source-checkout and direct installed Python invocations can resume the same
+unchanged download request. Use the matching application image as `APP_IMAGE`
+and explicit owner-managed mounts; download needs network, verify does not:
 
-```sh
-bash /path/to/installed-bundle/manage.sh source \
-  --directory /path/to/quazonai-installation --output-parent /data/hf \
-  -- download hf-dataset --dataset OWNER/DATASET \
-  --include 'data/2026-09-01.parquet' --max-bytes 2147483648 \
-  --cache-dir /data/hf/cache --output /data/hf/request-02
-
-bash /path/to/installed-bundle/manage.sh source \
-  --directory /path/to/quazonai-installation --read-only /data/hf \
-  -- verify hf-dataset --selection /data/hf/request-02/selection.json
+```bash
+docker run --rm --init --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/hf,dst=/data/hf --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py download hf-dataset --dataset OWNER/DATASET --revision FIXED_COMMIT --include 'data/2026-09-01.parquet' --max-bytes 2147483648 --cache-dir /data/hf/cache --output /data/hf/request-02
 ```
 
-The installed bundle paths are placeholders. `/data/hf` must already be a
-separate, writable, owner-managed directory. Do not also mount that writable
-parent or its children as read-only inputs. Verification requires the request
-and referenced cache paths to be available together through read-only mounts.
-The manager obtains network policy from the actual plugin inventory: planning
-and downloading are networked; verification remains offline.
+```bash
+docker run --rm --init --network none --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/hf,dst=/data/hf,readonly --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py verify hf-dataset --selection /data/hf/request-02/selection.json
+```
+
+Repository/revision paths are placeholders. `/data/hf` must already be a separate
+owner-managed directory. Do not also mount a writable parent or its children as
+read-only inputs. Verification requires request and referenced cache paths
+available together. These are disposable source-tool containers, not a service
+configuration or restart.
 
 Checks are limited and reported: byte size; Parquet header/footer envelope;
 archive signature; complete JSON documents; or the first JSONL/CSV logical row
@@ -256,24 +254,12 @@ infer historical fees, ticks, precision, instruments or point-in-time status.
 
 For installed execution, use separate owned output parents and literal inputs:
 
-```sh
-bash /path/to/installed-bundle/manage.sh source \
-  --directory /path/to/quazonai-installation \
-  --read-only /data/hf --read-only /data/native-inputs \
-  --output-parent /data/native-output \
-  -- convert hf-dataset --selection /data/hf/request-02/selection.json \
-  --format moose-fills --instruments /data/native-inputs/instruments.json \
-  --start-seconds 1788220800 --end-seconds 1788307200 --bar-seconds 60 \
-  --output /data/native-output/converted-01
+```bash
+docker run --rm --init --network none --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/hf,dst=/data/hf,readonly --mount type=bind,src=/data/native-inputs,dst=/data/native-inputs,readonly --mount type=bind,src=/data/native-output,dst=/data/native-output --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py convert hf-dataset --selection /data/hf/request-02/selection.json --format moose-fills --instruments /data/native-inputs/instruments.json --start-seconds 1788220800 --end-seconds 1788307200 --bar-seconds 60 --output /data/native-output/converted-01
+```
 
-bash /path/to/installed-bundle/manage.sh source \
-  --directory /path/to/quazonai-installation \
-  --read-only /data/native-output --read-only /data/native-inputs \
-  --output-parent /data/prepared-output \
-  -- prepare hf-dataset --native-output /data/native-output/converted-01 \
-  --declaration /data/native-inputs/catalog-declaration.json \
-  --selection /data/native-inputs/native-dataset-selection.json \
-  --output /data/prepared-output/catalog-01
+```bash
+docker run --rm --init --network none --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/native-output,dst=/data/native-output,readonly --mount type=bind,src=/data/native-inputs,dst=/data/native-inputs,readonly --mount type=bind,src=/data/prepared-output,dst=/data/prepared-output --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py prepare hf-dataset --native-output /data/native-output/converted-01 --declaration /data/native-inputs/catalog-declaration.json --selection /data/native-inputs/native-dataset-selection.json --output /data/prepared-output/catalog-01
 ```
 
 All named parents must already be owner-managed directories. Conversion reads
@@ -304,11 +290,14 @@ Preparation consumes the actually published native BAR catalog and original
 declaration/native selection. It can proceed without re-downloading or keeping
 the original raw cache mounted. It re-reads the native final catalog metadata
 and returns `catalog_registration.root` and `catalog_registration.metadata_file`
-for the existing operator registration flow. `joseph-books` is books-only and
-has no BAR preparation support. Preparation returns explicit unperformed
-steps; it does not register the Runtime/catalog, create source grants/datasets,
-freeze inputs, run `DATA_VALIDATE`, or start research. Those existing steps
-must complete before a research cycle. Scientific jobs remain offline.
+as retained local handoff fields, not a current Runtime registration operation.
+`joseph-books` is books-only and has no BAR preparation support. Preparation does
+not configure a service, establish permissions or execute research. Current v3
+consumes original catalog/factor-request entries in private `service.json.datasets`;
+the [v2 preset](polymarket-v2.md#4-export-a-datasetconfig-fragment) supplies an offline
+export for this source. Generic handoffs retain older `unperformed_steps` names
+for compatibility, not instructions to restore retired APIs. Scientific jobs
+remain offline; input JSON capture does not physically freeze catalogs.
 
 Official Hub behavior and file/revision interfaces:
 [download guide](https://huggingface.co/docs/huggingface_hub/guides/download),

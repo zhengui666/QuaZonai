@@ -38,7 +38,7 @@ COPY --from=web /build/apps/web/dist/ ./web/
 COPY --from=native /job ./bin/job
 COPY --from=native /source-tools ./operator/bin/source-tools
 COPY --chmod=755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history ./operator/bin/
-COPY runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py runtimes/data/binance_vision.py ./operator/
+COPY runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py ./operator/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
 COPY licenses/ /usr/share/doc/quazonai/licenses/
 COPY --chmod=755 deploy/docker/entrypoint.sh ./entrypoint.sh

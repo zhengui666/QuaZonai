@@ -5,7 +5,7 @@ export function record(value: unknown, name: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function validateNumbers(value: unknown): void {
+export function validateNumbers(value: unknown): void {
   if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) throw new Error('invalid_json_number');
   if (value !== null && typeof value === 'object') for (const child of Object.values(value)) validateNumbers(child);
 }

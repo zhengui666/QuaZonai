@@ -15,6 +15,16 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: |
+            apps/service/package-lock.json
+            apps/research/package-lock.json
+      - run: |
+          npm ci --prefix apps/service --no-audit --no-fund
+          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
@@ -25,6 +35,6 @@ jobs:
       - run: python3 -B -m unittest discover -s runtimes/data -v
       - run: |
           cargo test --locked -p job --features native-paper-test,native-sandbox-test,catalog-prepare,polymarket-history \
-            --lib --test source_tools --test catalog_prepare --test catalog --test managed \
+            --lib --test source_tools --test polymarket_v2_source --test catalog_prepare --test catalog --test managed \
             --test instrument_versions --test native_instrument_updates --test candle_ingest \
             --test archive_candle_ingest --test batched_observation
