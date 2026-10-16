@@ -359,6 +359,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
     ]);
     let result = NativeSimulationResultV1 {
         spot_cash_report: None,
+        recorded_fee_replay: None,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
         iterations: count(100),

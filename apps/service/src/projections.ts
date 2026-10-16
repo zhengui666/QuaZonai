@@ -6,9 +6,20 @@ import { counter, decimal, nsTime, object, Problem } from './facts.ts';
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
-  if (!Array.isArray(value) && Array.isArray(value.partitions)) return value.partitions.flatMap((item) => {
-    const partition = object(item, 'partition'); return metrics(partition.metric, String(partition.partition));
-  });
+  if (!Array.isArray(value) && Array.isArray(value.partitions)) {
+    const component = value.partitions_component ? object(value.partitions_component, 'partitions_component').index : undefined;
+    const factor = value.partitions.flatMap((item) => {
+      const partition = object(item, 'partition');
+      return metrics(partition.metric, String(partition.partition)).map((metric) => component === undefined ? metric : { ...metric, label: `component ${component}: ${metric.label}` });
+    });
+    if (!value.portfolio) return factor;
+    const portfolio = object(value.portfolio, 'portfolio_summary');
+    const account: Metric[] = Array.isArray(portfolio.statistics) ? portfolio.statistics.map((item) => {
+      const statistic = object(item, 'native_statistic'); const key = `${portfolio.partition}.portfolio.${statistic.native_key}`;
+      return { key, label: key, value: typeof statistic.value === 'number' ? statistic.value : null };
+    }) : [];
+    return [...factor, ...account];
+  }
   return Object.entries(value).flatMap(([key, item]) => {
     if (['schema_version', 'request', 'native_versions', 'methods', 'points'].includes(key)) return [];
     const path = prefix ? `${prefix}.${key}` : key;
@@ -51,7 +62,7 @@ function nativeMoney(value: Json | undefined, currency: string): string | null {
   if (value == null) return null;
   // Official Nautilus canonical Money is "<exact amount> <currency>".
   if (typeof value !== 'string') throw new Problem('native_money_unsupported');
-  const match = /^(-?\d+(?:\.\d+)?) ([A-Z0-9]+)$/.exec(value);
+  const match = /^(-?\d+(?:\.\d+)?) ([A-Za-z0-9]+)$/.exec(value);
   if (!match || match[2] !== currency) throw new Problem('native_equity_currency_mismatch');
   return decimal(match[1], 'equity');
 }

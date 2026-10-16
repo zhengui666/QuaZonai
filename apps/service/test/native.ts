@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile, mkdtemp, rm, cp, writeFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, rm, cp, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import Fastify from 'fastify';
@@ -16,25 +16,26 @@ import { context, settledObservation, wat } from './support.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
 
 
-async function expandedCatalog(directory: string, fixturePath: string, prepare: string) {
+async function expandedCatalog(directory: string, fixturePath: string, prepare: string, causal = false, count = 599) {
   const root = dirname(fixturePath); const source = join(directory, 'synthetic-source');
   await cp(join(root, 'acquired'), source, { recursive: true });
   const manifest = JSON.parse(await readFile(join(source, 'acquisition.json'), 'utf8'));
   const row = JSON.parse((await readFile(join(source, 'records.jsonl'), 'utf8')).split('\n')[0]);
-  // Three real response batches give the native matching/account engine time to fill a selected target.
-  const count = 599; const batchSize = 299;
+  // Synthetic receipt batches give the native matching/account engine time to fill a selected target.
+  // Each partition also needs later receipt waves to settle initial fills and fee-driven rebalancing.
+  const batchSize = causal ? 50 : 299;
   const rows = Array.from({ length: count }, (_, index) => ({ ...row, selection_time_seconds: index * 60, event_time_seconds: (index + 1) * 60,
     source_response: `raw/${String(Math.floor(index / batchSize)).padStart(4, '0')}.json`, source_row_index: index % batchSize,
-    observed_at: `2024-01-02T00:00:0${Math.floor(index / batchSize) + 1}Z` }));
+    observed_at: causal ? new Date((Math.min((Math.floor(index / batchSize) + 1) * batchSize, count) * 60 + 1) * 1000).toISOString() : `2024-01-02T00:00:0${Math.floor(index / batchSize) + 1}Z` }));
   const records = rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
-  manifest.selection.end_seconds = count * 60; manifest.created_at = '2024-01-02T00:00:04Z';
+  manifest.selection.end_seconds = count * 60; manifest.created_at = causal ? new Date((count * 60 + 2) * 1000).toISOString() : '2024-01-02T00:00:04Z';
   const template = manifest.responses[0]; manifest.responses = []; manifest.raw_response_bytes = 0;
   const clock = (seconds: number) => new Date(seconds * 1000).toISOString().replace('.000Z', 'Z').replaceAll(':', '%3A');
   for (let start = 0; start < count; start += batchSize) {
     const batch = rows.slice(start, start + batchSize); const first = batch[0]!;
     const raw = JSON.stringify(batch.map((row) => [row.selection_time_seconds, Number(row.low), Number(row.high), Number(row.open), Number(row.close), Number(row.volume)]));
     const response = structuredClone(template); response.observation.retrieved_at = first.observed_at;
-    response.observation.request_started_at = `2024-01-02T00:00:0${Math.floor(start / batchSize)}Z`;
+    response.observation.request_started_at = causal ? new Date(batch.at(-1)!.event_time_seconds * 1000).toISOString() : `2024-01-02T00:00:0${Math.floor(start / batchSize)}Z`;
     response.request.start_seconds = first.selection_time_seconds; response.request.end_seconds = batch.at(-1)!.event_time_seconds;
     response.request.url = `https://api.exchange.coinbase.com/products/BTC-USD/candles?start=${clock(response.request.start_seconds)}&end=${clock(response.request.end_seconds)}&granularity=60`;
     response.file = { path: first.source_response, size: Buffer.byteLength(raw) }; response.counts = { source_rows: batch.length, selected_rows: batch.length, outside_request_window: 0 };
@@ -42,11 +43,50 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
   }
   manifest.requests = manifest.responses.map((response: { request: unknown }) => response.request);
   manifest.records.size = Buffer.byteLength(records); manifest.record_count = count;
-  await writeFile(join(source, 'records.jsonl'), records); await writeFile(join(source, 'acquisition.json'), JSON.stringify(manifest));
-  const output = join(directory, 'native-import'); const env = new NodeExecutionEnv({ cwd: directory });
-  try { const result = getOrThrow(await env.exec([prepare, 'ingest-candles', '--acquisition', join(source, 'acquisition.json'), '--instruments', join(root, 'instruments.json'), '--output', output], { timeout: 20, inheritEnv: false, env: { PATH: '/usr/bin:/bin' } }, context)); assert.equal(result.exitCode, 0, 'native synthetic import failed'); }
-  finally { await env.cleanup(context); }
-  return join(output, 'catalog');
+  async function ingest(source: string, output: string) {
+    const env = new NodeExecutionEnv({ cwd: directory });
+    let stderr = '';
+    try {
+      const result = getOrThrow(await env.exec([prepare, 'ingest-candles', '--acquisition', join(source, 'acquisition.json'), '--instruments', join(root, 'instruments.json'), '--output', output], {
+        timeout: 20, inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: process.env.PI_SCRATCH_DIR ?? tmpdir() },
+        onOutput: (chunk, _context, info) => { if (info.stream === 'stderr') stderr += chunk; },
+      }, context));
+      assert.equal(result.exitCode, 0, stderr || 'native synthetic import failed');
+    }
+    finally { await env.cleanup(context); }
+    return join(output, 'catalog');
+  }
+  if (!causal) {
+    await writeFile(join(source, 'records.jsonl'), records); await writeFile(join(source, 'acquisition.json'), JSON.stringify(manifest));
+    return ingest(source, join(directory, 'native-import'));
+  }
+  // The importer requires 299-interval pagination and retrieval after the whole acquisition window.
+  // Each causal batch is therefore its own short acquisition, not an invalid mid-window REST receipt.
+  const catalog = join(directory, 'catalog');
+  for (const [index, original] of manifest.responses.entries()) {
+    const batchSource = join(directory, `acquisition-${index}`); await mkdir(join(batchSource, 'raw'), { recursive: true });
+    await cp(join(source, 'source-terms.bin'), join(batchSource, 'source-terms.bin'));
+    const response = structuredClone(original);
+    const raw = await readFile(join(source, response.file.path)); response.file.path = 'raw/0000.json';
+    const batchRecords = rows.slice(index * batchSize, (index + 1) * batchSize).map((row) => JSON.stringify({ ...row, source_response: response.file.path })).join('\n') + '\n';
+    const batchManifest = { ...manifest, selection: { ...manifest.selection, start_seconds: response.request.start_seconds, end_seconds: response.request.end_seconds },
+      created_at: response.observation.retrieved_at, requests: [response.request], responses: [response],
+      records: { ...manifest.records, size: Buffer.byteLength(batchRecords) }, record_count: response.counts.selected_rows, raw_response_bytes: raw.length };
+    await writeFile(join(batchSource, response.file.path), raw); await writeFile(join(batchSource, 'records.jsonl'), batchRecords);
+    await writeFile(join(batchSource, 'acquisition.json'), JSON.stringify(batchManifest));
+    // Union only native-validated, nonoverlapping BAR files and the same original instrument definition.
+    await cp(await ingest(batchSource, join(directory, `native-import-${index}`)), catalog, { recursive: true });
+  }
+  return catalog;
+}
+
+function nativeTestSettings(capital: string) {
+  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+  return json({ schema_version: 1, base_currency: 'USD', starting_capital: capital, account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60_000,
+    fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
+    fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel', {}),
+    latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '0', insert_latency_ns: '1000000', update_latency_ns: '0', cancel_latency_ns: '0' }),
+    fee_rates: [{ instrument_id: 'BTC-USD.COINBASE', maker: '0.004', taker: '0.006' }] });
 }
 
 /** Real job and native BAR catalog; controlled provider/downstream, fixture data, no PIT/quality/account-performance claim. */
@@ -69,12 +109,7 @@ test('two original studies → native target blending → one fee-affected share
   remote.get('/targets/:id', received);
   remote.get('/account', async () => ({ clientId: 'native-test-client', accountId: 'native-test-account', sequence: '9007199254740997', nativeClockNs: nowNs(), currency: 'USD', equity: null, cash: null, positions: [] }));
   const url = await remote.listen({ host: '127.0.0.1', port: 0 });
-  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
-  const simulationSettings = json({ schema_version: 1, base_currency: 'USD', starting_capital: '1000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60_000,
-    fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
-    fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel', {}),
-    latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '0', insert_latency_ns: '1000000', update_latency_ns: '0', cancel_latency_ns: '0' }),
-    fee_rates: [{ instrument_id: 'BTC-USD.COINBASE', maker: '0.004', taker: '0.006' }] });
+  const simulationSettings = nativeTestSettings('1000');
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const config = configDefaults({ dataDir: directory, jobBinary: process.env.QZ_JOB_BINARY, research: { database: join(directory, 'research.sqlite'), modules: [resolve('../research/plugins/factor-wasm.ts'), resolve('../research/plugins/heldout-wasm.ts')] },
     datasets: [{ id: 'late-native-fixture', name: 'Native fixture; unverified', currency: 'USD', source: 'FIXTURE', assetClass: 'SPOT', start: null, end: null, ready: true,
@@ -148,4 +183,82 @@ test('two original studies → native target blending → one fee-affected share
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/observations', headers, payload: observationInput })).json().id, observed.id);
     assert.deepEqual(offered.target, fact.target); assert.equal(posts, 1); assert.equal(faux.state.callCount, 4);
   } finally { await service.close(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('ensemble research trades validation then independent heldout in one native account and replays the sealed selection', { timeout: 120_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY, 'QZ_JOB_BINARY must include forecast-factor');
+  assert.ok(process.env.QZ_BROWSER_FIXTURE, 'QZ_BROWSER_FIXTURE must name the matching prepared.json');
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-native-ensemble-'));
+  let service: Awaited<ReturnType<typeof createService>> | undefined;
+  try {
+    const prefixDir = join(directory, 'prefix'); const sealedDir = join(directory, 'sealed');
+    await mkdir(prefixDir); await mkdir(sealedDir);
+    const prepare = process.env.QZ_CATALOG_PREPARE_BINARY ?? join(dirname(process.env.QZ_JOB_BINARY), 'catalog-prepare');
+    const catalog = await expandedCatalog(prefixDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, 400);
+    const sealed = await expandedCatalog(sealedDir, process.env.QZ_BROWSER_FIXTURE, prepare, true);
+    const fixture = JSON.parse(await readFile(process.env.QZ_BROWSER_FIXTURE, 'utf8'));
+    const request = { schema_version: 1, forecast: { schema_version: 1,
+      selection: { ...fixture.selection.selection, maximum_rows: 599, event_end_ns: '24000000000000', decision_cutoff_ns: '24000000000000' },
+      parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1 } },
+      train_end_ns: '12000000000000', validation_end_ns: '24000000000000' };
+    const finalRequest = structuredClone(request);
+    Object.assign(finalRequest.forecast.selection, { event_end_ns: '40000000000000', decision_cutoff_ns: '40000000000000' });
+    const members = [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
+    const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+    const config = configDefaults({ dataDir: directory, jobBinary: process.env.QZ_JOB_BINARY,
+      research: { database: join(directory, 'research.sqlite'), modules: ['research', 'strategy-portfolio'].map((name) => resolve('../research/plugins', `${name}.ts`)) },
+      datasets: [{ id: 'ensemble-native-fixture', name: 'Synthetic native protocol control', currency: 'USD', source: 'FIXTURE', assetClass: 'SPOT', start: null, end: null, ready: true,
+        data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } },
+        strategy: { name: 'original-conditional-threshold', kind: 'factor-threshold', instrumentId: 'BTC-USD.COINBASE', threshold: 0, investedWeight: '0.25',
+          targetTtlNs: '7200000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings: nativeTestSettings('3000') } }] });
+    service = await createService({ config, models });
+    let selected: number | undefined;
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Native causal ensemble control, not market performance.', members }), { stopReason: 'toolUse' }),
+      (transcript) => {
+        const feedback = transcript.messages.findLast((message) => message.role === 'toolResult');
+        assert.ok(feedback && feedback.role === 'toolResult');
+        const result = JSON.parse(feedback.content.filter((item) => item.type === 'text').map((item) => item.text).join(''));
+        assert.equal(result.portfolio.partition, 'VALIDATION');
+        assert.ok(result.portfolio.statistics.length);
+        assert.equal(JSON.stringify(result).includes('canonical_result'), false);
+        assert.equal(JSON.stringify(result).includes('label_return'), false);
+        selected = result.trialId;
+        return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Select original ensemble before independent exposure.' }), { stopReason: 'toolUse' });
+      },
+    ]);
+    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: 'Native ensemble isolation control; synthetic data only.',
+      model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+    await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await service.research.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
+    assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
+    assert.equal(facts.final!.trialId, selected);
+    assert.deepEqual(object(facts.trials[0]!.proposal).members, members);
+    const final = object(facts.final!.result);
+    const heldout = (final.partitions as JsonObject[]).find((partition) => partition.partition === 'HELDOUT')!;
+    assert.ok(BigInt(String(object(object(heldout.metric).counts).included)) > 0n);
+    assert.equal(object(final.portfolio).partition, 'HELDOUT');
+    const finalTask = await service.research.harness.waitForTask(final.evidenceTaskId as TaskId<JsonObject>, context);
+    assert.equal(finalTask.state.outcome.status, 'completed');
+    const native = object(finalTask.state.outcome.status === 'completed' ? finalTask.state.outcome.result.native : null);
+    assert.deepEqual(object(final.portfolio).statistics, object(native.simulation).statistics);
+    assert.equal(object(object(native.simulationRequest).selection).event_start_ns, request.validation_end_ns);
+    assert.ok(nativeCurve(object(native.simulation), 'USD').length);
+    const built = await service.work.startPortfolio({ requestId: 'native-ensemble-replay', name: 'Original heldout ensemble',
+      researchIds: [receipt.conversationId], datasetId: 'ensemble-native-fixture', capital: '3000' });
+    await service.research.harness.waitForTask(built.taskId as TaskId, context);
+    const fact = await service.work.getPortfolio(built.id);
+    assert.equal(fact.view.status, 'COMPUTED', fact.view.error ?? '');
+    assert.deepEqual(fact.view.curve, nativeCurve(object(native.simulation), 'USD'));
+    const replay = object(fact.native!.simulationRequest);
+    assert.equal(object(replay.selection).event_start_ns, request.validation_end_ns);
+    for (const point of replay.target_points as JsonObject[]) {
+      assert.equal(object((point.targets as JsonObject[])[0]).weight, '0.0625');
+      assert.ok(BigInt(String(point.asof_ns)) >= BigInt(request.validation_end_ns));
+      assert.ok(BigInt(String(point.asof_ns)) < BigInt(finalRequest.forecast.selection.event_end_ns));
+    }
+    assert.deepEqual((await service.research.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
+    assert.equal(faux.state.callCount, 2);
+  } finally { await service?.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -50,6 +50,7 @@ fn simulation(request: &NativeSimulationRequestV1, row_count: u64) -> NativeSimu
     let account = BTreeMap::from([(variant, json!({"base":base}))]);
     NativeSimulationResultV1 {
         spot_cash_report: None,
+        recorded_fee_replay: None,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
         iterations: count(row_count),

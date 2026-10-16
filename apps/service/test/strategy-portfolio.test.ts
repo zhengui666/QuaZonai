@@ -1,0 +1,100 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import research from '../../research/plugins/research.ts';
+import strategy from '../../research/plugins/strategy-portfolio.ts';
+import { context, setup, wat } from './support.ts';
+import { object } from '../src/facts.ts';
+import { metrics, nativeCurve } from '../src/projections.ts';
+import { computePortfolio } from '../src/native.ts';
+import type { ServiceOptions } from '../src/config.ts';
+
+// Actual durable/HTTP orchestration with a labelled wire probe; no numerical/market-performance claim.
+test('selected ensemble consumer captures original sealed catalog, keeps full forecast prefix and replays HELDOUT only', async () => {
+  const state = await setup(); const previous = process.env.QZ_JOB_BINARY;
+  try {
+    await state.service.close();
+    const prefix = join(state.directory, 'prefix'); const sealed = join(state.directory, 'original-sealed');
+    await mkdir(prefix); await mkdir(sealed);
+    await writeFile(join(prefix, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20' }));
+    await writeFile(join(sealed, 'binding.json'), JSON.stringify({ name: 'SEALED', end: '30' }));
+    const log = join(state.directory, 'ensemble-calls.jsonl');
+    const binary = state.options.config.jobBinary;
+    await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('../../research/test/portfolio-protocol.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
+    process.env.QZ_JOB_BINARY = binary;
+    const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
+      selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
+      parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
+    const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
+    const dataset = state.options.config.datasets[0]!;
+    dataset.data = { catalog: prefix, request, sealed: { catalog: sealed, request: finalRequest } };
+    Object.assign(dataset.strategy!, { forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
+      simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY' } });
+    (state.options as ServiceOptions).extensions = [research, strategy];
+    await state.restart();
+    const members = [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
+    state.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'One ensemble wire protocol, not a profitability claim.', members }), { stopReason: 'toolUse' }),
+      async () => {
+        const page = await state.service.research.list(); const view = await state.service.research.view(page.items[0]!.id);
+        return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Selection precedes final exposure.' }), { stopReason: 'toolUse' });
+      },
+    ]);
+    const receipt = await state.service.work.startResearch({ requestId: 'ensemble-original', goal: 'Protocol-only selected ensemble.', model: state.model, datasetId: dataset.id, maxTrials: 1 });
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const original = (await state.service.research.view(receipt.conversationId)).research!;
+    assert.equal(original.final!.status, 'COMPUTED', JSON.stringify(original.final));
+    const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
+    assert.ok(detail.trialRecords[0].metrics.some((metric: { key: string }) => metric.key === 'VALIDATION.portfolio.Sharpe Ratio (252 days)'));
+    assert.ok(detail.final.metrics.some((metric: { key: string }) => metric.key === 'HELDOUT.portfolio.Sharpe Ratio (252 days)'));
+    assert.ok(detail.final.metrics.some((metric: { key: string }) => metric.key === 'HELDOUT.pearson_ic'));
+    const input = { requestId: 'ensemble-replay', name: 'Original selected ensemble', datasetId: dataset.id, researchIds: [receipt.conversationId], capital: '3000' };
+    const view = await state.service.work.startPortfolio(input);
+    await state.service.research.harness.waitForTask(view.taskId as TaskId, context);
+    const fact = await state.service.work.getPortfolio(view.id);
+    assert.equal(fact.view.status, 'COMPUTED', fact.view.error ?? '');
+    assert.deepEqual(object(object(fact.evidence[0]!.selected).proposal).members, members);
+    const native = fact.native!; const captured = String(native.catalog);
+    assert.deepEqual(JSON.parse(await readFile(join(captured, 'binding.json'), 'utf8')), { name: 'SEALED', end: '30' });
+    assert.deepEqual(dataset.data, original.input!.data); // No sealed values were copied into primary.
+    const simulation = object(native.simulationRequest); const selection = object(simulation.selection);
+    assert.equal(selection.event_start_ns, '20'); assert.equal(selection.event_end_ns, '30');
+    assert.deepEqual((simulation.target_points as JsonObject[]).map((point) => point.asof_ns), ['20', '23', '29']);
+    const source = object((native.sources as JsonObject[])[0]);
+    assert.deepEqual(source.members, members); assert.deepEqual(source.weights, ['0.25', '0.75']);
+    assert.equal(object(object(source.forecastRequest).selection).event_start_ns, '0');
+    assert.equal(object(object(source.forecastRequest).selection).event_end_ns, '30');
+    const calls = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject);
+    assert.equal(calls.filter((call) => call.command === 'simulate').length, 3); // iteration + independent final + replay, one account each
+    assert.equal((await state.service.work.startPortfolio(input)).id, view.id);
+    assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, calls.length);
+    assert.equal(state.faux.state.callCount, 2);
+    // Protocol-only duplicate record exercises nested command delegation; it is not independent scientific evidence.
+    const combined = await computePortfolio({ id: 'test-only-nested', dataDir: state.directory, catalog: captured, binary, capital: '3000', currency: 'USD',
+      evidence: [fact.evidence[0]!, { ...fact.evidence[0]!, researchId: 999 }], weights: ['0.125', '0.875'], policy: dataset.strategy! }, context);
+    const sources = combined.native.sources as JsonObject[];
+    assert.deepEqual(sources.map((item) => item.weights), [['0.25', '0.75'], ['0.25', '0.75']]);
+    assert.deepEqual(combined.native.weights, ['0.125', '0.875']);
+    const nested = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject).slice(calls.length);
+    assert.equal(nested.filter((call) => call.command === 'blend-targets').length, 3);
+    assert.equal(nested.filter((call) => call.command === 'simulate').length, 1);
+  } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await state.cleanup(); }
+});
+
+test('research metric projection keeps component IC and actual native account keys, including unavailable values', () => {
+  const result = { partitions: [{ partition: 'VALIDATION', metric: { pearson_ic: { value: null }, counts: { included: '7' } } }],
+    portfolio: { partition: 'VALIDATION', statistics: [{ native_key: 'Sharpe Ratio (252 days)', value: 1.25 }, { native_key: 'unavailable', value: null }] } };
+  assert.deepEqual(metrics(result).map(({ key, value }) => [key, value]), [
+    ['VALIDATION.pearson_ic', null], ['VALIDATION.counts.included', '7'], ['VALIDATION.portfolio.Sharpe Ratio (252 days)', 1.25], ['VALIDATION.portfolio.unavailable', null],
+  ]);
+  assert.equal(metrics({ ...result, portfolio: { partition: 'VALIDATION', statistics: [] } }).length, 2);
+});
+
+test('native account curve preserves the original mixed-case pUSD collateral and exact amounts', () => {
+  const native = { canonical_result: { portfolio_snapshots: [{ ts_event: '20', total_equity: ['3000.000000000000000001 pUSD'] }] } };
+  assert.equal(nativeCurve(native, 'pUSD')[0]!.value, '3000.000000000000000001');
+  assert.throws(() => nativeCurve(native, 'USD'), /native_equity_currency_mismatch/);
+});

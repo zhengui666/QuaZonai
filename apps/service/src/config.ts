@@ -4,16 +4,8 @@ import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-dur
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { DatasetView, JsonObject, ModelRef, ObservationMode, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
 
-/** The only built-in score-to-target mapping is an explicitly configured policy, never an expected-return estimate. */
-export interface ThresholdPolicy {
-  name: string;
-  kind: 'factor-threshold';
-  instrumentId: string;
-  threshold: number;
-  investedWeight: string;
-  targetTtlNs: string;
-  simulationSettings: JsonObject;
-}
+import type { ThresholdPolicy } from '../../research/src/strategy.ts';
+export type { ThresholdPolicy } from '../../research/src/strategy.ts';
 export interface DatasetConfig extends DatasetView {
   data: JsonObject;
   policy?: JsonObject;

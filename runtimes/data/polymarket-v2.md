@@ -139,12 +139,12 @@ constraints and event-end/cutoff contradictions fail without silently repairing
 original inputs. Optional `--policy FILE` and `--strategy FILE` copy explicit
 compatible originals, not automatically fitted strategies. Strategy instrument,
 weight, TTL, threshold and pUSD currency must satisfy the existing consumer.
-**The current portfolio consumer replays the full final request on the primary
-catalog.** Consequently, `--strategy` is refused unless that primary prepared
-selection covers the full final request (including the separate Sealed request
-when supplied). A prefix-only primary plus full Sealed binding remains supported
-for research-only export, without strategy. Do not copy held-out values into the
-researcher-visible primary just to bypass this limitation. `ready` defaults to **false**;
+The default legacy portfolio consumer needs the full final request on the primary
+catalog. With explicit `forecastMode: "price-volume"` and
+`evaluationPartition: "HELDOUT"`, the consumer instead captures and replays the
+original compatible Sealed binding. A genuine prefix-only primary plus full Sealed
+catalog is supported in that mode, including ensembles. Do not copy held-out values
+into the researcher-visible primary. `ready` defaults to **false**;
 `--ready` is owner technical enablement only, never scientific qualification.
 Existing outputs and symlinks are refused without replacement.
 
@@ -177,6 +177,37 @@ The service captures input **JSON**, not immutable catalog bytes. Keep prepared
 catalogs unchanged/read-only for every replay and independent evaluation; an
 exported path is not a global physical freeze. Permission, PIT, coverage,
 independent evaluation and economic evidence remain separate from computation.
+
+### Conditional recorded-cost research
+
+`POLYMARKET_V2_RECORDED_FEES` reads `recorded-fees.json` from each original catalog.
+It is a QZ adapter through the official native `FeeModel`, not a venue fee formula.
+Keep the original source revision, transaction ID, timestamp, `fee_usdc`, cash
+amount, price and provider direction fields. Preserve raw `token_amount` as
+`source_quantity` and join the same-ID original native TradeTick quantity as
+`quantity`; do not renormalize quantities or guess absent fees. Each selected BAR's
+native volume must equal the sum of its linked original native trade quantities.
+
+For this explicitly conditional cost replay, the actual shared native simulation
+clock selects its latest completed one-minute boundary. That BAR's source records
+are consumed once in `(timestamp,id)` order; each portion costs the original fee
+times allocated/native-record quantity. Round the sum once per native fill, half-even
+at pUSD precision. Source zeros remain zeros; missing BARs/records, null fees and
+exhausted source quantities fail. This does not infer historical maker/taker
+eligibility or turn provider directions into exchange aggressor evidence. Native
+results retain actual fill time, source BAR time and each original record/allocation;
+Nautilus books the returned commission once. No global-average or fitted fee rate
+is charged. Keep prefix and Sealed fee records physically separate.
+
+The share-price accounting proxy is not a historical BinaryOption definition.
+Nautilus CurrencyPair requires the single-currency account to be MARGIN, so this
+conditional model uses leverage 1, nonnegative weights/cash and gross exposure at
+most 1; it does not claim physical cash-token inventory. Instrument maker/taker
+fields and matching `fee_rates`, if supplied as an observed-training sizing reserve,
+are not the charged commission; the explicit recorded-fee adapter overrides them.
+Disclose model ticks/quantity units, positive latency, OHLC fills and slippage,
+the USD/pUSD conversion assumption and native 252-day daily-return Sharpe convention.
+No payout, historical execution or executable HFT claim follows from these inputs.
 
 ## Installed disposable containers
 

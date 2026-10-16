@@ -1,0 +1,47 @@
+// TEST ONLY: wire/ownership/isolation probe. No scientific calculations or market-performance evidence.
+import assert from 'node:assert/strict';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+assert.equal(process.env.QZ_TEST_PROVIDER_SECRET, undefined);
+const [log, command, ...args] = process.argv.slice(2);
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const catalog = args.includes('--catalog') ? args[args.indexOf('--catalog') + 1] : null;
+const binding = catalog ? JSON.parse(readFileSync(join(catalog, 'binding.json'), 'utf8')) : null;
+let prediction = null;
+if (args.includes('--model')) {
+  const module = new WebAssembly.Module(readFileSync(args[args.indexOf('--model') + 1]));
+  prediction = new WebAssembly.Instance(module).exports.predict(1, 2, 3, 4, 5, 6, 7, 8);
+}
+appendFileSync(log, JSON.stringify({ command, args, input, binding, prediction }) + '\n');
+const selection = input.forecast?.selection ?? input.selection;
+if (binding) assert.ok(BigInt(selection.event_end_ns) <= BigInt(binding.end), 'requested suffix is absent from this original catalog');
+if (command === 'evaluate-factor') {
+  assert.ok(args.includes('--summary-only'));
+  const full = BigInt(selection.event_end_ns) > BigInt(input.validation_end_ns);
+  console.log(JSON.stringify({ request: input, native_versions: { protocol: 'TEST_ONLY' }, consumed_fuel: null,
+    diagnostic_prediction: prediction,
+    partitions: ['TRAIN', 'VALIDATION', 'HELDOUT'].map((partition) => ({ partition, metric: {
+      counts: { observations: partition === 'HELDOUT' && !full ? '0' : '2', included: partition === 'HELDOUT' && !full ? '0' : '2' },
+      pearson_ic: { value: null, status: 'TEST_ONLY_NO_SCIENCE' },
+    } })) }));
+} else if (command === 'forecast-factor' || command === 'forecast') {
+  assert.equal(selection.event_start_ns, '0', 'forecast must retain its warmup prefix');
+  const clocks = ['1', '9', '10', '12', '15', '19', '20', '23', '29'];
+  console.log(JSON.stringify({ native_versions: { protocol: 'TEST_ONLY' }, points: clocks
+    .filter((at) => BigInt(at) < BigInt(selection.event_end_ns) && BigInt(at) <= BigInt(selection.decision_cutoff_ns))
+    .map((at) => ({ instrument_id: 'TEST.SIM', event_ns: at, available_ns: at,
+      forecast: at === '15' ? null : prediction, label_return: 12345.6789, test_raw_marker: 'RAW_FORECAST_AND_LABELS_PROTOCOL_ONLY' })) }));
+} else if (command === 'blend-targets') {
+  // Deliberately no alternative numerical blend engine: echo one row only to test orchestration/provenance.
+  assert.equal(input.rows[0].length, input.weights.length);
+  console.log(JSON.stringify({ target_points: input.rows.map((row) => row[0]), protocol: 'TEST_ONLY_NOT_A_NUMERICAL_BLEND' }));
+} else if (command === 'simulate') {
+  assert.ok(['10', '20'].includes(selection.event_start_ns), 'never simulate TRAIN');
+  assert.equal(input.settings.starting_capital, '3000');
+  for (const point of input.target_points) assert.ok(BigInt(point.asof_ns) >= BigInt(selection.event_start_ns) && BigInt(point.asof_ns) < BigInt(selection.event_end_ns));
+  if (selection.event_start_ns === '10') assert.equal(selection.decision_cutoff_ns, '20');
+  console.log(JSON.stringify({ native_version: 'TEST_ONLY', iterations: '1', events: '2', orders: '0', positions: '0', consumed_target_points: String(input.target_points.length),
+    statistics: [{ native_key: 'Sharpe Ratio (252 days)', value: null, reason_code: 'TEST_ONLY_NO_SCIENCE' }],
+    summary: { protocol: selection.event_start_ns === '20' ? 'HELDOUT_OWNER_ONLY_PROTOCOL' : 'VALIDATION_PROTOCOL' },
+    returns: [{ value: 12345.6789 }], canonical_result: { portfolio_snapshots: [{ ts_event: selection.event_start_ns, total_equity: ['3000 USD'] }] } }));
+} else throw new Error('unsupported_test_command');

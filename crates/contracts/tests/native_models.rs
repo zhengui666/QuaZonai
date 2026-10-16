@@ -38,9 +38,9 @@ fn model_schema_preserves_exact_native_identity_and_closed_parameters() {
             SAMPLE_COVARIANCE_VERSION,
         ),
     ];
-    // The QZ-owned fee scenario has its own identity contract below; it must
-    // not impersonate an upstream class or weaken the seven native adapters.
-    assert_eq!(variants.len(), expected.len() + 1);
+    // QZ-owned fee adapters do not impersonate upstream classes or weaken the
+    // seven original native adapters.
+    assert_eq!(variants.len(), expected.len() + 2);
     for (kind, class, version) in expected {
         let matches = variants
             .iter()
@@ -238,4 +238,47 @@ fn frozen_spot_fee_scenario_wire_is_closed_and_does_not_claim_an_upstream_class(
             "{field}"
         );
     }
+}
+
+#[test]
+fn recorded_v2_fee_wire_has_no_fitted_rate_or_upstream_identity() {
+    let original = serde_json::json!({
+        "schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_FEES",
+        "native_version":NAUTILUS_EXECUTION_VERSION,"parameters":{}
+    });
+    let parsed = serde_json::from_value::<NativeModelRefV1>(original.clone()).unwrap();
+    assert!(matches!(
+        &parsed,
+        NativeModelRefV1::PolymarketV2RecordedFees { .. }
+    ));
+    assert_eq!(serde_json::to_value(parsed).unwrap(), original);
+    let schema = serde_json::to_value(NativeModelRefV1::schema()).unwrap();
+    let variant = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| {
+            variant["properties"]["adapter_kind"]["enum"]
+                == serde_json::json!(["POLYMARKET_V2_RECORDED_FEES"])
+        })
+        .unwrap();
+    assert_eq!(variant["additionalProperties"], false);
+    assert_eq!(variant["required"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        variant["properties"]["native_version"]["enum"],
+        serde_json::json!([NAUTILUS_EXECUTION_VERSION])
+    );
+    assert_eq!(
+        variant["properties"]["parameters"]["additionalProperties"],
+        false
+    );
+    assert!(variant["properties"].get("upstream_class").is_none());
+    for field in ["upstream_class", "upstream_version", "wallet"] {
+        let mut changed = original.clone();
+        changed[field] = serde_json::json!("unsupported");
+        assert!(serde_json::from_value::<NativeModelRefV1>(changed).is_err());
+    }
+    let mut changed = original;
+    changed["parameters"]["fee_rate"] = serde_json::json!("0.001");
+    assert!(serde_json::from_value::<NativeModelRefV1>(changed).is_err());
 }

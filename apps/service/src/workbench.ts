@@ -7,6 +7,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput as NativeResearchInput } from '../../research/src/documents.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
+import { exactWeights, replayCatalog, strategyMembers } from '../../research/src/strategy.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
@@ -100,10 +101,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       weights = input.researchIds.map((id) => byId.get(id)!);
     }
     // Exact admission validation only; all numerical blending belongs to job blend-targets.
-    const precision = Math.max(...weights.map((weight) => weight.split('.')[1]?.length ?? 0));
-    const one = 10n ** BigInt(precision);
-    const units = weights.map((weight) => { const [whole, fraction = ''] = weight.split('.'); return BigInt(whole + fraction.padEnd(precision, '0')); });
-    if (units.some((weight) => weight <= 0n || weight > one) || units.reduce((sum, weight) => sum + weight, 0n) !== one) throw new Problem('portfolio_weights_invalid', 422);
+    try { exactWeights(weights); } catch { throw new Problem('portfolio_weights_invalid', 422); }
     if (!configured.strategy || configured.strategy.kind !== 'factor-threshold') throw new Problem('strategy_adapter_not_configured', 422);
     const evidence = await host.harness.commit(async (tx) => {
       const records = [];
@@ -120,7 +118,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const heldout = Array.isArray(result.partitions) ? result.partitions.map((partition) => object(partition)).find((partition) => partition.partition === 'HELDOUT') : null;
         const counts = heldout ? object(object(heldout.metric).counts) : null;
         if (!counts || BigInt(counter(counts.included, 'heldout_included')) === 0n) throw new Problem('heldout_observations_missing', 422);
-        text(object(selected.proposal).model, 'selected_factor_model');
+        strategyMembers(object(selected.proposal));
+        if (study.input.data.sealed) replayCatalog(study.input.data, object(result.request, 'independent_request'));
         const current = canonical(object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!);
         if (selection !== undefined && selection !== current) throw new Problem('strategy_selection_mismatch', 422);
         selection = current;
@@ -130,7 +129,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }, context);
     const id = randomUUID(); const capture = join(config.dataDir, 'catalogs', id);
     await mkdir(join(config.dataDir, 'catalogs'), { recursive: true });
-    await cp(text(object(object(evidence[0]!.input).data).catalog, 'catalog'), capture, { recursive: true });
+    const originalData = object(object(evidence[0]!.input).data);
+    const originalRequest = object(object(object(evidence[0]!.final).result).request);
+    const catalog = originalData.sealed ? replayCatalog(originalData, originalRequest) : text(originalData.catalog, 'catalog');
+    await cp(catalog, capture, { recursive: true });
     try {
       const admitted = await host.harness.commit(async (tx) => {
         const facts = await tx.doc(Application);

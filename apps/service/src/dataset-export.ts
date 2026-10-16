@@ -9,6 +9,7 @@ import { object, text, decimal, decimalUnits, counter } from './facts.ts';
 import { validateNumbers as safeNumbers } from '../../research/src/input.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
+import { thresholdPolicy } from '../../research/src/strategy.ts';
 
 export interface DatasetExportOptions {
   prepared: string; request: string; output: string; id: string; name: string;
@@ -211,7 +212,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
       || reportFile.value.coverage !== 'UNPROVEN' || reportFile.value.historical_availability !== 'UNVERIFIED'
       || reportFile.value.registered_in_quazonai !== false) throw new Error('original_source_report_mismatch');
     const request = factorRequest((await jsonFile(requestPath)).value);
-    const effective = heldout ? request : iterationRequest({ request });
+    const effective = heldout ? request : iterationRequest({ request }, clippedStrategy);
     contained(selection(object(effective.forecast).selection), measuredSelection);
     await catalog(catalogPath);
     return { catalog: catalogPath, request, metadata, selection: measuredSelection, instrumentIds: [...instruments.keys()],
@@ -219,6 +220,9 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
   }
 
   if (!!options.sealedPrepared !== !!options.sealedRequest) throw new Error('paired_sealed_inputs_required');
+  const strategy = options.strategy ? (await jsonFile(options.strategy)).value : null;
+  if (strategy) { safeNumbers(strategy); thresholdPolicy(strategy); }
+  const clippedStrategy = strategy?.forecastMode === 'price-volume' || strategy?.evaluationPartition === 'HELDOUT';
   const output = resolve(options.output);
   await noSymlinks(output);
   const primary = await prepared(options.prepared, options.request, false);
@@ -227,7 +231,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     || sealed.definitionJson !== primary.definitionJson || sealed.window.bar_seconds !== primary.window.bar_seconds
     || sealed.window.start_seconds !== primary.window.start_seconds
     || Number(sealed.window.end_seconds) < Number(primary.window.end_seconds) || sealed.firstEvent !== primary.firstEvent
-    || canonical(iterationRequest({ request: primary.request })) !== canonical(iterationRequest({ request: sealed.request }))
+    || canonical(iterationRequest({ request: primary.request }, clippedStrategy)) !== canonical(iterationRequest({ request: sealed.request }, clippedStrategy))
     || ns(object(object(sealed.request.forecast).selection).event_end_ns) <= ns(sealed.request.validation_end_ns))) throw new Error('heldout_criteria_mismatch');
   if (within(output, primary.catalog) || (sealed && within(output, sealed.catalog))) throw new Error('dataset_output_overlaps_catalog');
   const data: JsonObject = { catalog: primary.catalog, request: primary.request };
@@ -238,8 +242,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     start: text(primary.metadata.event_start, 'event_start'), end: text((sealed ?? primary).metadata.event_end, 'event_end'),
     ready: options.ready === true, data };
   if (options.policy) { result.policy = (await jsonFile(options.policy)).value; safeNumbers(result.policy); }
-  if (options.strategy) {
-    const strategy = (await jsonFile(options.strategy)).value; safeNumbers(strategy);
+  if (strategy) {
     if (strategy.kind !== 'factor-threshold' || typeof strategy.instrumentId !== 'string' || !primary.instrumentIds.includes(strategy.instrumentId)
       || !(object(object(primary.request.forecast).selection).bar_types as string[]).some((bar) => bar.startsWith(strategy.instrumentId + '-'))) throw new Error('original_strategy_mismatch');
     text(strategy.name, 'strategy_name');
@@ -250,12 +253,13 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
       || targetTtl <= 0n || targetTtl > maxDbCounter
       || ns(finalSelection.decision_cutoff_ns) + targetTtl > maxDbCounter
       || object(strategy.simulationSettings, 'simulation_settings').base_currency !== result.currency) throw new Error('original_strategy_mismatch');
-    // Current portfolio replay copies the primary catalog and uses the full final request.
-    contained(finalSelection, primary.selection);
-    const interval = BigInt(primary.window.bar_seconds as number) * 1_000_000_000n;
+    // HELDOUT replay captures the original full sealed binding, not the researcher-visible prefix.
+    const replay = strategy.evaluationPartition === 'HELDOUT' && sealed ? sealed : primary;
+    contained(finalSelection, replay.selection);
+    const interval = BigInt(replay.window.bar_seconds as number) * 1_000_000_000n;
     const lastLabel = (ns(finalSelection.event_end_ns) - 1n) / interval * interval;
-    if (BigInt(primary.window.start_seconds as number) * 1_000_000_000n > ns(finalSelection.event_start_ns)
-      || BigInt(primary.window.end_seconds as number) * 1_000_000_000n < lastLabel) throw new Error('strategy_source_window_does_not_cover_final_request');
+    if (BigInt(replay.window.start_seconds as number) * 1_000_000_000n > ns(finalSelection.event_start_ns)
+      || BigInt(replay.window.end_seconds as number) * 1_000_000_000n < lastLabel) throw new Error('strategy_source_window_does_not_cover_final_request');
     result.strategy = strategy as unknown as ThresholdPolicy;
   }
   // An exclusive hard link publishes only the complete document, never replacing an existing output.

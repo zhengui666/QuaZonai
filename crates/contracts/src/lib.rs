@@ -18,6 +18,7 @@ pub mod forward;
 pub mod lifecycle;
 pub mod portfolio;
 pub mod portfolio_history;
+pub mod recorded_fees;
 pub mod research;
 pub mod research_currency;
 pub mod runs;

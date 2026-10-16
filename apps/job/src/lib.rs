@@ -32,6 +32,7 @@ pub mod polymarket_streaming_paper;
 pub mod portfolio;
 mod prediction;
 pub use optimization::allocate;
+mod recorded_fees;
 mod report;
 pub use report::write_probe_report;
 pub mod signals;
