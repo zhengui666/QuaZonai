@@ -1,5 +1,7 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
+pub mod currencies;
+
 use anyhow::{ensure, Result};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeDatasetQualityV1, NativeDatasetSelectionV1},
@@ -237,6 +239,7 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         "CATALOG_ROOT_INVALID"
     );
     let root = root.canonicalize()?;
+    currencies::load(&root)?;
     let text = root
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("CATALOG_ROOT_INVALID"))?;

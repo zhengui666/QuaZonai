@@ -34,8 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest discover -s runtimes/data -v
-          cargo clippy --locked -p job --features polymarket-history,catalog-prepare --all-targets -- -D warnings
-          cargo test --locked -p job --features polymarket-history,catalog-prepare --bin polymarket-history --test catalog_prepare --test catalog --test managed --test instrument_versions --test native_instrument_updates
+          cargo clippy --locked -p job --features polymarket-history,catalog-prepare,market-history --all-targets -- -D warnings
+          cargo test --locked -p job --features polymarket-history,catalog-prepare,market-history --bin polymarket-history --bin market-history --test catalog_prepare --test catalog --test managed --test instrument_versions --test native_instrument_updates
+          cargo test --locked -p job --features market-history --lib catalog::currencies
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
@@ -43,4 +44,8 @@ jobs:
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- chain --help
           cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- capture --help
           cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- --help
+          cargo run --locked -q -p job --features market-history --bin market-history -- --help
+          cargo run --locked -q -p job --features market-history --bin market-history -- import --help
+          cargo run --locked -q -p job --features market-history --bin market-history -- hyperliquid-instruments --help
+          python3 -I runtimes/data/hub.py --help
           git diff --exit-code

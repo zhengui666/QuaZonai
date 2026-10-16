@@ -12,6 +12,13 @@ publish = false
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = []
+high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
+market-history = ["dep:tokio", "dep:parquet", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+
+[[bin]]
+name = "market-history"
+path = "src/bin/market-history.rs"
+required-features = ["market-history"]
 
 [[bin]]
 name = "catalog-prepare"
@@ -37,6 +44,9 @@ nautilus-portfolio = { version = "=0.63.0", default-features = false }
 nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
 nautilus-polymarket = { version = "=0.63.0", default-features = false }
+nautilus-hyperliquid = { version = "=0.63.0", default-features = false, optional = true }
+csv = { version = "=1.4.0", optional = true }
+lz4_flex = { version = "=0.14.0", optional = true }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
 parquet = { version = "=59.3.0", default-features = false, features = ["zstd"], optional = true }
 sha2 = { version = "=0.10.9", optional = true }

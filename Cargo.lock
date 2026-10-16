@@ -4723,9 +4723,11 @@ dependencies = [
  "clap",
  "clarabel",
  "contracts",
+ "csv",
  "domain",
  "iso_currency",
  "linregress",
+ "lz4_flex",
  "nalgebra 0.35.0",
  "nautilus-analysis",
  "nautilus-backtest",
@@ -4733,6 +4735,7 @@ dependencies = [
  "nautilus-core",
  "nautilus-data",
  "nautilus-execution",
+ "nautilus-hyperliquid",
  "nautilus-indicators",
  "nautilus-model",
  "nautilus-persistence",
@@ -5263,6 +5266,46 @@ dependencies = [
  "smallvec",
  "ustr",
  "uuid",
+]
+
+[[package]]
+name = "nautilus-hyperliquid"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e87ba21edbd2276f71209431935b3690bd08f84e117e7a73832ad17e2614d00"
+dependencies = [
+ "ahash 0.8.12",
+ "alloy",
+ "alloy-primitives",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "bon",
+ "dashmap",
+ "derive_builder 0.20.2",
+ "futures-util",
+ "jiff",
+ "log",
+ "nautilus-common",
+ "nautilus-core",
+ "nautilus-live",
+ "nautilus-model",
+ "nautilus-network",
+ "nautilus-persistence-macros",
+ "parking_lot",
+ "rmp-serde",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "strum 0.28.0",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "url",
+ "ustr",
+ "zeroize",
 ]
 
 [[package]]

@@ -303,6 +303,7 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     let root = output.join("catalog");
     fs::create_dir(&root)?;
     let native = native(&root)?;
+    job::catalog::currencies::write(&root, &instruments)?;
     native.write_instruments(instruments.clone())?;
     for series in &observed.series {
         native.write_to_parquet(&series.bars, None, None, None)?;
