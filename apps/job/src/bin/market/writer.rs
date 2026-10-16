@@ -132,6 +132,19 @@ impl Writer {
             if items.is_empty() {
                 continue;
             }
+            if matches!(items[0], Data::Bar(_)) {
+                // Equal-availability BARs share one native file; preserve raw values at a common precision.
+                for group in items.chunk_by_mut(|a, b| a.ts_init() == b.ts_init()) {
+                    let precision = group.iter().fold((0_u8, 0_u8), |(p, q), data| {
+                        let Data::Bar(bar) = data else { unreachable!() };
+                        (p.max(bar.open.precision), q.max(bar.volume.precision))
+                    });
+                    for data in group {
+                        let Data::Bar(bar) = data else { unreachable!() };
+                        *bar = super::records::with_bar_precision(*bar, precision);
+                    }
+                }
+            }
             // Split contiguous native encodings, not all equal precisions across intervening versions.
             for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
                 self.catalog.write_data_enum(items, None, None, None)?;
@@ -188,6 +201,65 @@ mod tests {
         types::{Price, Quantity},
     };
     use std::str::FromStr;
+
+    #[test]
+    fn delayed_bars_keep_values_and_clocks_at_one_availability_time() {
+        let root = tempfile::tempdir().unwrap();
+        let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
+        let mut writer = Writer::new(&root.path().join("output"), &[]).unwrap();
+        let mut aggregation = super::super::records::Aggregation::new(Some(60));
+        let mut bars = Vec::new();
+        for (event, available, price) in [
+            (1_u64, 10_u64, "1.2345"),
+            (20, 180, "1.23"),
+            (61, 180, "1.24"),
+        ] {
+            let trade = TradeTick::new_checked(
+                id,
+                Price::from(price),
+                Quantity::from("1"),
+                AggressorSide::Buy,
+                TradeId::new(event.to_string()),
+                (event * 1_000_000_000).into(),
+                (available * 1_000_000_000).into(),
+            )
+            .unwrap();
+            if let Some(bar) = aggregation.update(&trade).unwrap() {
+                bars.push(bar);
+            }
+        }
+        bars.extend(aggregation.finish().unwrap());
+        let kind = bars[0].bar_type.to_string();
+        for bar in bars {
+            writer.push(Data::Bar(bar)).unwrap();
+        }
+        writer.finish().unwrap();
+        writer.catalog.reset_session();
+        let readback = writer
+            .catalog
+            .query::<Bar>(Some(vec![kind]), None, None, None, None, false)
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        let bars = readback
+            .into_iter()
+            .map(|data| {
+                let Data::Bar(bar) = data else { unreachable!() };
+                bar
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(bars[0].open, Price::from("1.2345"));
+        assert_eq!(bars[1].close, Price::from("1.24"));
+        assert_eq!(bars[0].volume, Quantity::from("2"));
+        assert_eq!(bars[1].volume, Quantity::from("1"));
+        assert_eq!(bars[0].ts_event.as_u64(), 60_000_000_000);
+        assert_eq!(bars[1].ts_event.as_u64(), 120_000_000_000);
+        for bar in bars {
+            assert_eq!(bar.ts_init.as_u64(), 180_000_000_000);
+            assert_eq!(bar.open.precision, 4);
+        }
+    }
 
     #[test]
     fn precision_changes_remain_contiguous_across_native_batches() {

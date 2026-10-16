@@ -279,13 +279,14 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
     );
     // Native decoding is bounded instead of first materializing an arbitrary Vec.
     // The query engine itself still runs under external job memory/CPU limits.
+    // File-scoped decoding preserves each historical encoding's schema metadata.
     let query = catalog.query::<Bar>(
         Some(selection.bar_types.clone()),
         Some(UnixNanos::from(selection.event_start_ns.get())),
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
         Some(&event_interval),
         None,
-        true,
+        false,
     )?;
     let mut bars = Vec::new();
     for item in query {

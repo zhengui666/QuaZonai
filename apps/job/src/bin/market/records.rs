@@ -392,17 +392,22 @@ struct Bucket {
     last_event: u64,
 }
 
+pub(super) fn with_bar_precision(mut bar: Bar, precision: (u8, u8)) -> Bar {
+    for price in [&mut bar.open, &mut bar.high, &mut bar.low, &mut bar.close] {
+        *price = Price::from_raw(price.raw, precision.0);
+    }
+    bar.volume = Quantity::from_raw(bar.volume.raw, precision.1);
+    bar
+}
+
 impl Bucket {
     fn build(&mut self) -> Bar {
-        let bar = self.builder.build(self.end.into(), self.available.into());
-        let price = |p: Price| Price::from_raw(p.raw, self.precision.0);
+        let bar = with_bar_precision(
+            self.builder.build(self.end.into(), self.available.into()),
+            self.precision,
+        );
         Bar {
             bar_type: self.kind,
-            open: price(bar.open),
-            high: price(bar.high),
-            low: price(bar.low),
-            close: price(bar.close),
-            volume: Quantity::from_raw(bar.volume.raw, self.precision.1),
             ..bar
         }
     }

@@ -381,7 +381,7 @@ fn import(
         record_precision: if native_precision {
             format!("NATIVE_ENCODING_{}; not a historical contract tick/lot claim", nautilus_model::types::fixed::FIXED_PRECISION)
         } else {
-            "INSTRUMENT_DEFINITION; derived BARs use maximum observed interval precision".into()
+            "INSTRUMENT_DEFINITION; derived BARs use exact maximum observed precision, including equal-availability groups".into()
         },
         missing_partitions: manifest.missing.clone(),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
