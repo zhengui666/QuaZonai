@@ -4305,6 +4305,7 @@ dependencies = [
  "flate2",
  "iso_currency",
  "linregress",
+ "lz4_flex",
  "nalgebra 0.35.0",
  "nautilus-analysis",
  "nautilus-backtest",

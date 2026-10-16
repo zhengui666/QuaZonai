@@ -1,0 +1,49 @@
+{
+  "repository": "ProbioticFarmer/hyperliquid-augmented-copytrading",
+  "revision": "064bc5ea76a6f0db8dd5c2b66f598e925857784d",
+  "license": "mit",
+  "attribution": "Georgia Tech CSE6242 Team 176 / ProbioticFarmer; Hyperliquid L1 Consensus Replay & Hydromancer Reservoir",
+  "streams": [
+    {
+      "name": "trades",
+      "kind": "trades",
+      "paths": ["perp_fills_all/date={date}/fills.parquet", "spot_fills/date={date}/fills.parquet", "outcome_fills/all/date={date}/fills.parquet"],
+      "date_format": "%Y-%m-%d",
+      "format": "parquet",
+      "time_unit": "ms",
+      "columns": {"symbol": "coin", "time": "timestamp", "price": "price", "size": "size", "trade_id": "trade_id", "side": "side"},
+      "equals": {"crossed": true},
+      "sides": {"buy": "BUYER", "sell": "SELLER"}
+    },
+    {
+      "name": "bars",
+      "kind": "bars",
+      "paths": ["candles_1s/date={date}/candles.parquet"],
+      "date_format": "%Y-%m-%d",
+      "format": "parquet",
+      "time_unit": "ms",
+      "bar_seconds": 1,
+      "bar_timestamp": "start",
+      "columns": {"symbol": "coin", "time": "timestamp", "open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}
+    },
+    {
+      "name": "books",
+      "kind": "books",
+      "paths": ["orderbook_1m/date={date}/*.parquet"],
+      "date_format": "%Y-%m-%d",
+      "format": "parquet",
+      "time_unit": "ms",
+      "symbol_from_file_stem": true,
+      "columns": {"time": "block_time_ms", "bids": "bids", "asks": "asks", "price": "px", "size": "sz"}
+    },
+    {
+      "name": "context",
+      "kind": "context",
+      "paths": ["asset_ctxs/{date}.csv.lz4"],
+      "date_format": "%Y%m%d",
+      "format": "csv-lz4",
+      "time_unit": "rfc3339",
+      "columns": {"symbol": "coin", "time": "time", "funding_rate": "funding", "mark_price": "mark_px"}
+    }
+  ]
+}

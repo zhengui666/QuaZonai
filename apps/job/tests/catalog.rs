@@ -213,7 +213,7 @@ fn original_static_definition_after_empty_selection_start_is_not_backdated_or_re
 #[test]
 fn native_catalog_round_trip_preserves_identity_values_and_times() {
     let directory = tempfile::tempdir().unwrap();
-    let (instrument, bars, selection) = fixture();
+    let (instrument, bars, mut selection) = fixture();
     let catalog = ParquetDataCatalog::from_uri(
         directory.path().to_str().unwrap(),
         None,
@@ -223,7 +223,23 @@ fn native_catalog_round_trip_preserves_identity_values_and_times() {
     )
     .unwrap();
     catalog.write_instruments(vec![instrument.clone()]).unwrap();
+    // An older unselected encoding must not determine this interval's precision.
+    let earlier = Bar::new_checked(
+        bars[0].bar_type,
+        Price::from("0.6500"),
+        Price::from("0.6600"),
+        Price::from("0.6400"),
+        Price::from("0.6550"),
+        bars[0].volume,
+        0.into(),
+        0.into(),
+    )
+    .unwrap();
+    catalog
+        .write_to_parquet(&[earlier], None, None, None)
+        .unwrap();
     catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    selection.event_start_ns = DbCounter::new(1).unwrap();
     let result = load_catalog(directory.path(), &selection).unwrap();
     assert_eq!(result.rows, 4);
     assert_eq!(result.series.len(), 1);

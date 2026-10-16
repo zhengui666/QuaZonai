@@ -1,5 +1,7 @@
 # Public historical data
 
+For the declaratively mapped Hyperliquid archive, including public acquisition, native trades/books/funding/BAR conversion and actual coverage limits, see the [Hyperliquid guide](hyperliquid.md). Its generic acquisition path does not perform content hashing; original files and terms remain available for inspection.
+
 Operator tools acquire immutable source files and bounded API observations, then convert supported records into the existing Nautilus catalog. Acquisition is separate from source-specific interpretation in the native importers; scientific jobs remain offline and existing research-admission checks still apply.
 
 Start with the [source-plugin registry](source-plugins.md) for acquisition, native Coinbase BAR conversion, supported Polymarket conversion and explicit BAR partition preparation. The [Polymarket v2 guide](polymarket-v2.md) provides explicit UTC date/token selection, saved-plan caching and current v3 dataset configuration export for TimeSeventeen. The [HTTP acquisition guide](providers.md) describes the underlying acquisition-only manifests, including Polymarket sampled marks that have no native conversion. This guide covers Polymarket historical sources and the native partition contract. Conversion and preparation do not register a source, grant permission or qualify research data. Coinbase's intended live research acceptance is currently [blocked on source-use permission](source-plugins.md#source-rights-and-acceptance).

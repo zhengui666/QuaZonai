@@ -17,9 +17,15 @@ native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
 polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
-# Offline parsing of already supplied source files through the official adapter.
-# The upstream crate has network dependencies; QZ exposes no Hyper network caller.
+high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
+market-history = ["dep:tokio", "dep:parquet", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+# Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
+
+[[bin]]
+name = "market-history"
+path = "src/bin/market-history.rs"
+required-features = ["market-history"]
 
 [[bin]]
 name = "catalog-prepare"
@@ -64,6 +70,7 @@ winnow = { version = "=0.5.40", optional = true }
 flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"], optional = true }
 crc32fast = { version = "=1.5.2", optional = true }
 csv = { version = "=1.4.0", optional = true }
+lz4_flex = { version = "=0.14.0", optional = true }
 nautilus-data = { version = "=0.63.0", default-features = false, optional = true }
 alloy-core = { version = "=1.7.3", default-features = false, features = ["std", "sol-types", "serde"], optional = true }
 url = { version = "=2.5.8", optional = true }

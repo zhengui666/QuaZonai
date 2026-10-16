@@ -119,6 +119,11 @@ jobs:
         env:
           QZ_JOB_BINARY: ${{ runner.temp }}/native-artifacts/job
         run: make check-science check-core PROFILE="$PROFILE"
+      - name: Mapped public history in the optional native format
+        run: |
+          python3 -I -B -m unittest discover -s runtimes/data -p test_hub.py -v
+          cargo test --locked -p job --features market-history,catalog-prepare --bin market-history --test catalog --test catalog_prepare --test managed --test instrument_versions --test native_instrument_updates
+          cargo test --locked -p job --features market-history --lib catalog::currencies
       - name: Retain the exact tested native binaries, not a second build
         run: |
           git rev-parse HEAD > "$RUNNER_TEMP/native-artifacts/tested-revision"
