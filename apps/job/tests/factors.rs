@@ -73,6 +73,47 @@ fn native_ic(points: impl Iterator<Item = (f64, f64)>) -> f64 {
 }
 
 #[test]
+fn price_volume_factors_need_no_simulation_instrument_definitions() {
+    let (original, request) = mixed_catalog(0.0, false);
+    let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
+    let prices = tempfile::tempdir().unwrap();
+    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+        prices.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    for series in &market.series {
+        catalog
+            .write_to_parquet(&series.bars, None, None, None)
+            .unwrap();
+    }
+    let wasm = module(VOLUME_SCORE);
+    let expected = evaluate_factor(original.path(), &request, &wasm).unwrap();
+    let result = evaluate_factor(prices.path(), &request, &wasm).unwrap();
+    assert_eq!(
+        serde_json::to_value(&result.points).unwrap(),
+        serde_json::to_value(&expected.points).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&result.partitions).unwrap(),
+        serde_json::to_value(&expected.partitions).unwrap()
+    );
+    assert_eq!(result.consumed_fuel, expected.consumed_fuel);
+    // Factor statistics are not executable market data or invented definitions.
+    assert_eq!(
+        load_catalog(prices.path(), &request.forecast.selection)
+            .err()
+            .unwrap()
+            .to_string(),
+        "research contract fields are invalid"
+    );
+    assert!(job::forecast::forecast(prices.path(), &request.forecast, &wasm).is_err());
+}
+
+#[test]
 fn two_asset_classes_share_time_cuts_not_asset_ordinal_splits() {
     let (catalog, request) = mixed_catalog(0.0, false);
     let market = load_catalog(catalog.path(), &request.forecast.selection).unwrap();
@@ -657,4 +698,87 @@ fn durable_host_runs_real_factor_plugins_and_unattended_feedback() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn price_volume_factors_retain_native_row_and_clock_checks() {
+    let (original, request) = mixed_catalog(0.0, false);
+    let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
+    for invalid_clock in [false, true] {
+        let prices = tempfile::tempdir().unwrap();
+        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            prices.path().to_str().unwrap(),
+            None,
+            Some(16),
+            None,
+            None,
+        )
+        .unwrap();
+        for series in &market.series {
+            let mut bars = series.bars.clone();
+            if invalid_clock {
+                bars[0].ts_init = (bars[0].ts_event.as_u64() - 1).into();
+            }
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        let mut limited = request.clone();
+        if !invalid_clock {
+            limited.forecast.selection.maximum_rows -= 1;
+        }
+        let error = evaluate_factor(prices.path(), &limited, &module(VOLUME_SCORE)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            if invalid_clock {
+                "CATALOG_TIME_INVALID"
+            } else {
+                "CATALOG_ROW_LIMIT"
+            }
+        );
+    }
+}
+
+#[test]
+fn price_volume_factors_reject_undefined_native_values() {
+    use nautilus_model::types::{price::PRICE_UNDEF, quantity::QUANTITY_UNDEF, Price, Quantity};
+    let (original, request) = mixed_catalog(0.0, false);
+    let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
+    for undefined_volume in [false, true] {
+        let prices = tempfile::tempdir().unwrap();
+        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            prices.path().to_str().unwrap(),
+            None,
+            Some(16),
+            None,
+            None,
+        )
+        .unwrap();
+        for series in &market.series {
+            let mut bars = series.bars.clone();
+            for bar in &mut bars {
+                if undefined_volume {
+                    bar.volume = Quantity::from_raw(QUANTITY_UNDEF, 0);
+                } else {
+                    let absent = Price::from_raw(PRICE_UNDEF, 0);
+                    bar.open = absent;
+                    bar.high = absent;
+                    bar.low = absent;
+                    bar.close = absent;
+                }
+            }
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        let result = evaluate_factor(prices.path(), &request, &module(VOLUME_SCORE));
+        assert!(
+            result.is_err(),
+            "undefined native values must not produce factor metrics"
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            if undefined_volume {
+                "CATALOG_VOLUME_UNDEFINED"
+            } else {
+                "CATALOG_PRICE_UNDEFINED"
+            }
+        );
+    }
 }

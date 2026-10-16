@@ -10,7 +10,7 @@ use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
     indicator::{Indicator, MovingAverage},
 };
-use nautilus_model::instruments::Instrument;
+use nautilus_model::{data::Bar, instruments::Instrument};
 use std::{collections::BTreeMap, path::Path};
 
 fn counter(value: u64) -> Result<DbCounter> {
@@ -23,15 +23,22 @@ pub(crate) fn features<'a>(
     series: &'a NativeBarSeries,
     parameters: &NativeForecastParametersV1,
 ) -> impl Iterator<Item = Option<[f64; 8]>> + 'a {
+    bar_features(&series.bars, parameters)
+}
+
+fn bar_features<'a>(
+    bars: &'a [Bar],
+    parameters: &NativeForecastParametersV1,
+) -> impl Iterator<Item = Option<[f64; 8]>> + 'a {
     let mut fast = ExponentialMovingAverage::new(parameters.fast_period as usize, None);
     let mut slow = ExponentialMovingAverage::new(parameters.slow_period as usize, None);
-    series.bars.iter().enumerate().map(move |(index, bar)| {
+    bars.iter().enumerate().map(move |(index, bar)| {
         fast.handle_bar(bar);
         slow.handle_bar(bar);
         (index > 0 && fast.initialized() && slow.initialized()).then(|| {
             [
                 bar.close.as_f64(),
-                series.bars[index - 1].close.as_f64(),
+                bars[index - 1].close.as_f64(),
                 fast.value(),
                 slow.value(),
                 bar.volume.as_f64(),
@@ -62,8 +69,37 @@ pub(crate) fn forecast_market(
     request: &NativeForecastRequestV1,
     module: &[u8],
 ) -> Result<NativeForecastResultV1> {
-    let (consumed_fuel, points) = forecast_points(market, request, module, false)?;
-    Ok(NativeForecastResultV1 {
+    Ok(forecast_result(forecast_points(
+        market, request, module, false,
+    )?))
+}
+
+/// Price-only research never creates simulation instrument definitions.
+pub(crate) fn forecast_factor(
+    catalog_root: &Path,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+) -> Result<NativeForecastResultV1> {
+    domain::execution::forecast_request(request)?;
+    let series = crate::catalog::load_price_bars(catalog_root, &request.selection)?;
+    let rows = series.iter().map(|(_, bars)| bars.len()).sum();
+    let points = forecast_bar_points(
+        series
+            .iter()
+            .map(|(kind, bars)| (kind.instrument_id().to_string(), bars.as_slice())),
+        rows,
+        series.len(),
+        request,
+        module,
+        false,
+    )?;
+    Ok(forecast_result(points))
+}
+
+fn forecast_result(
+    (consumed_fuel, points): (Option<DbCounter>, Vec<NativeForecastPointV1>),
+) -> NativeForecastResultV1 {
+    NativeForecastResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
             ("nautilus-indicators".into(), "0.63.0".into()),
@@ -72,7 +108,7 @@ pub(crate) fn forecast_market(
         ]),
         consumed_fuel,
         points,
-    })
+    }
 }
 
 /// Portfolio preparation only consumes the last point for each instrument.
@@ -92,28 +128,40 @@ fn forecast_points(
     module: &[u8],
     latest_only: bool,
 ) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
+    forecast_bar_points(
+        market
+            .series
+            .iter()
+            .map(|series| (series.instrument.id().to_string(), series.bars.as_slice())),
+        market.rows,
+        market.series.len(),
+        request,
+        module,
+        latest_only,
+    )
+}
+
+fn forecast_bar_points<'a>(
+    series: impl Iterator<Item = (String, &'a [Bar])>,
+    rows: usize,
+    assets: usize,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+    latest_only: bool,
+) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     domain::execution::forecast_request(request)?;
     let parameters = &request.parameters;
     let module = SignalModule::new(module, parameters.total_fuel.is_some())?;
     let mut remaining = parameters.total_fuel.map(|fuel| fuel.get());
-    let mut points = Vec::with_capacity(if latest_only {
-        market.series.len()
-    } else {
-        market.rows
-    });
+    let mut points = Vec::with_capacity(if latest_only { assets } else { rows });
     let mut prediction_count = 0_u64;
-    for series in &market.series {
+    for (instrument_id, bars) in series {
         ensure!(
-            series.bars.len() >= parameters.slow_period as usize,
+            bars.len() >= parameters.slow_period as usize,
             "FORECAST_INSUFFICIENT_WARMUP"
         );
-        let mut model = module.instantiate(u64::try_from(series.bars.len())?, remaining)?;
-        let instrument_id = series.instrument.id().to_string();
-        for (index, (bar, features)) in series
-            .bars
-            .iter()
-            .zip(features(series, parameters))
-            .enumerate()
+        let mut model = module.instantiate(u64::try_from(bars.len())?, remaining)?;
+        for (index, (bar, features)) in bars.iter().zip(bar_features(bars, parameters)).enumerate()
         {
             let close = bar.close.as_f64();
             let prediction = if let Some(features) = features {
@@ -126,11 +174,8 @@ fn forecast_points(
             // No label is formed for a warmup row that never called predict.
             // A future price is read only after a successful prediction returns;
             // it never enters the module or the current feature state.
-            let future = prediction.and_then(|_| {
-                series
-                    .bars
-                    .get(index + parameters.label_horizon_observations as usize)
-            });
+            let future = prediction
+                .and_then(|_| bars.get(index + parameters.label_horizon_observations as usize));
             let label = future.map(|future| future.close.as_f64() / close - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "FORECAST_LABEL_NONFINITE");
             // Keep every original conversion and label check, including rows
@@ -141,7 +186,7 @@ fn forecast_points(
             let label_available_ns = future
                 .map(|future| counter(future.ts_init.as_u64()))
                 .transpose()?;
-            if latest_only && index + 1 != series.bars.len() {
+            if latest_only && index + 1 != bars.len() {
                 continue;
             }
             points.push(NativeForecastPointV1 {

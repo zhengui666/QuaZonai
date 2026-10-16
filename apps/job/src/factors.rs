@@ -87,7 +87,7 @@ fn metric<'a>(
     })
 }
 
-/// Reuses forecast -> load_catalog, official Nautilus Bar/Instrument/EMA and SignalModule.
+/// Reuses native BAR decoding, official Nautilus EMA and the same SignalModule.
 /// Paths are trusted local CLI inputs, not fields accepted from an untrusted Agent.
 /// This result contains all partitions' labels; the host owns held-out exposure policy.
 pub fn evaluate_factor(
@@ -96,7 +96,7 @@ pub fn evaluate_factor(
     module: &[u8],
 ) -> Result<NativeFactorEvaluationResultV1> {
     evaluation_request(request)?;
-    let forecast = crate::forecast::forecast(catalog_root, &request.forecast, module)?;
+    let forecast = crate::forecast::forecast_factor(catalog_root, &request.forecast, module)?;
     let horizon = request.forecast.parameters.label_horizon_observations as usize;
     // Forecast retains every original row grouped by instrument. Resolve the actual
     // future event clock from that same asset, not an inferred regular time interval.
@@ -173,6 +173,7 @@ pub fn evaluate_factor(
         request: request.clone(),
         native_versions,
         methods: BTreeMap::from([
+            ("input".into(), "observed native BAR prices/volume; no simulation instrument or execution assumptions".into()),
             ("prediction".into(), "wasmi.TypedFunc::call; predict(f64 x 8) -> f64; fresh instance per instrument".into()),
             ("features".into(), "nautilus_indicators::average::ema::ExponentialMovingAverage; close, previous_close, fast_ema, slow_ema, volume, open, high, low; causal prefix only".into()),
             ("label".into(), "future.close / current.close - 1; same-instrument observation horizon; never supplied to predict".into()),
