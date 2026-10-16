@@ -226,10 +226,7 @@ pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
     Ok(types)
 }
 
-/// The path comes only from the trusted runtime's registered read-only mount.
-/// No HTTP/MCP caller can provide a path, URI, SQL expression or storage options.
-pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
-    let types = selected_types(selection)?;
+fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
     let metadata = std::fs::symlink_metadata(root)?;
     ensure!(
         metadata.is_dir() && !metadata.file_type().is_symlink(),
@@ -259,6 +256,13 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
             "CATALOG_PARQUET_FOOTER_INVALID"
         );
     }
+    Ok(catalog)
+}
+
+/// Load executable market data with original instrument definitions.
+pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
+    let types = selected_types(selection)?;
+    let mut catalog = open_catalog(root)?;
     let ids = types
         .iter()
         .map(|kind| kind.instrument_id().to_string())
@@ -268,6 +272,14 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
+    let bars = read_bars(&mut catalog, selection)?;
+    validate_native(instruments, bars, selection)
+}
+
+fn read_bars(
+    catalog: &mut ParquetDataCatalog,
+    selection: &NativeBarSelectionV1,
+) -> Result<Vec<Bar>> {
     // The upstream query filters ts_init through the actual availability cutoff.
     // Also push the half-open event interval into that same native query before
     // applying the decoded-row cap. This preserves in-range late arrivals while
@@ -299,7 +311,67 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         };
         bars.push(bar);
     }
-    validate_native(instruments, bars, selection)
+    Ok(bars)
+}
+
+/// Factor statistics need observed prices/volume, not invented trading definitions.
+/// Simulation and calibrated forecasts continue to use load_catalog.
+pub(crate) fn load_price_bars(
+    root: &Path,
+    selection: &NativeBarSelectionV1,
+) -> Result<Vec<(BarType, Vec<Bar>)>> {
+    let types = selected_types(selection)?;
+    let mut catalog = open_catalog(root)?;
+    let mut series = types
+        .into_iter()
+        .map(|kind| (kind, Vec::<Bar>::new()))
+        .collect::<Vec<_>>();
+    let indices = series
+        .iter()
+        .enumerate()
+        .map(|(index, (kind, _))| (kind.to_string(), index))
+        .collect::<BTreeMap<_, _>>();
+    for bar in read_bars(&mut catalog, selection)? {
+        let index = indices
+            .get(&bar.bar_type.to_string())
+            .ok_or_else(|| anyhow::anyhow!("CATALOG_UNREQUESTED_BAR_TYPE"))?;
+        let event = bar.ts_event.as_u64();
+        let available = bar.ts_init.as_u64();
+        ensure!(
+            event <= available && available <= selection.decision_cutoff_ns.get(),
+            "CATALOG_TIME_INVALID"
+        );
+        if event < selection.event_start_ns.get() || event >= selection.event_end_ns.get() {
+            continue;
+        }
+        let bars = &mut series[*index].1;
+        if let Some(previous) = bars.last() {
+            ensure!(
+                previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
+                "CATALOG_NONUNIQUE_OR_REVISED_BAR"
+            );
+        }
+        for price in [bar.open, bar.high, bar.low, bar.close] {
+            ensure!(
+                price.as_f64().is_finite() && price.as_f64() > 0.0,
+                "UNSUPPORTED_NONPOSITIVE_PRICE"
+            );
+        }
+        ensure!(
+            bar.high >= bar.open
+                && bar.high >= bar.close
+                && bar.high >= bar.low
+                && bar.low <= bar.open
+                && bar.low <= bar.close,
+            "CATALOG_OHLC_INVALID"
+        );
+        bars.push(bar);
+    }
+    ensure!(
+        series.iter().all(|(_, bars)| !bars.is_empty()),
+        "CATALOG_EMPTY_SELECTION"
+    );
+    Ok(series)
 }
 
 /// Revalidate exact identities after native directory discovery, which can match substrings.
