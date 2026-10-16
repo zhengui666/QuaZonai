@@ -10,7 +10,7 @@ use nautilus_model::{
     enums::{AggregationSource, AggressorSide, BookAction, OrderSide, RecordFlag},
     identifiers::{InstrumentId, TradeId},
     instruments::{Instrument, InstrumentAny},
-    types::{Price, Quantity},
+    types::{fixed::FIXED_PRECISION, Price, Quantity},
 };
 use parquet::{
     file::reader::{FileReader, SerializedFileReader},
@@ -388,7 +388,24 @@ struct Bucket {
     end: u64,
     available: u64,
     volume: Quantity,
+    precision: (u8, u8),
     last_event: u64,
+}
+
+impl Bucket {
+    fn build(&mut self) -> Bar {
+        let bar = self.builder.build(self.end.into(), self.available.into());
+        let price = |p: Price| Price::from_raw(p.raw, self.precision.0);
+        Bar {
+            bar_type: self.kind,
+            open: price(bar.open),
+            high: price(bar.high),
+            low: price(bar.low),
+            close: price(bar.close),
+            volume: Quantity::from_raw(bar.volume.raw, self.precision.1),
+            ..bar
+        }
+    }
 }
 
 pub(super) struct Aggregation {
@@ -413,6 +430,9 @@ impl Aggregation {
         let end = (event / interval + 1)
             .checked_mul(interval)
             .context("BAR_TIMESTAMP_RANGE")?;
+        // Use one exact encoding while building; publish each interval at its maximum observed precision.
+        let price = Price::from_raw(trade.price.raw, FIXED_PRECISION);
+        let size = Quantity::from_raw(trade.size.raw, FIXED_PRECISION);
         let bucket = self.buckets.entry(trade.instrument_id).or_insert(Bucket {
             builder: BarBuilder::new(
                 {
@@ -423,13 +443,14 @@ impl Aggregation {
                         AggregationSource::Internal,
                     )
                 },
-                trade.price.precision,
-                trade.size.precision,
+                FIXED_PRECISION,
+                FIXED_PRECISION,
             ),
             kind: bar_type(trade.instrument_id, seconds)?,
             end,
             available: end,
-            volume: Quantity::zero(trade.size.precision),
+            volume: Quantity::zero(FIXED_PRECISION),
+            precision: (trade.price.precision, trade.size.precision),
             last_event: event,
         });
         ensure!(
@@ -437,40 +458,29 @@ impl Aggregation {
             "TRADE_AGGREGATION_ORDER_INVALID"
         );
         let completed = if bucket.end != end {
-            let bar = bucket
-                .builder
-                .build(bucket.end.into(), bucket.available.into());
+            let bar = bucket.build();
             bucket.end = end;
             bucket.available = end;
-            bucket.volume = Quantity::zero(trade.size.precision);
-            Some(Bar {
-                bar_type: bucket.kind,
-                ..bar
-            })
+            bucket.volume = Quantity::zero(FIXED_PRECISION);
+            bucket.precision = (trade.price.precision, trade.size.precision);
+            Some(bar)
         } else {
             None
         };
+        bucket.precision.0 = bucket.precision.0.max(trade.price.precision);
+        bucket.precision.1 = bucket.precision.1.max(trade.size.precision);
         bucket.volume = bucket
             .volume
-            .checked_add(trade.size)
+            .checked_add(size)
             .context("BAR_VOLUME_RANGE")?;
         bucket.available = bucket.available.max(trade.ts_init.as_u64());
         bucket.last_event = event;
-        bucket
-            .builder
-            .update(trade.price, trade.size, trade.ts_event);
+        bucket.builder.update(price, size, trade.ts_event);
         Ok(completed)
     }
 
     pub(super) fn finish(self) -> Result<Vec<Bar>> {
-        Ok(self
-            .buckets
-            .into_values()
-            .map(|mut b| Bar {
-                bar_type: b.kind,
-                ..b.builder.build(b.end.into(), b.available.into())
-            })
-            .collect())
+        Ok(self.buckets.into_values().map(|mut b| b.build()).collect())
     }
 }
 
@@ -527,6 +537,64 @@ mod tests {
         assert_eq!(last.len(), 1);
         assert_eq!(last[0].ts_event.as_u64(), 240_000_000_000);
         assert_eq!(last[0].ts_init.as_u64(), 250_000_000_000);
+    }
+
+    #[test]
+    fn aggregation_preserves_changes_within_and_between_intervals() {
+        let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
+        let mut aggregation = Aggregation::new(Some(60));
+        let mut bars = Vec::new();
+        for (event, price, size) in [
+            (1_u64, "1.23", "2"),
+            (20, "1.234", "3.125"),
+            (61, "1.2", "4"),
+            (82, "1.19", "0.75"),
+        ] {
+            let at = (event * 1_000_000_000).into();
+            let trade = TradeTick::new_checked(
+                id,
+                Price::from(price),
+                Quantity::from(size),
+                AggressorSide::Buy,
+                TradeId::new(event.to_string()),
+                at,
+                at,
+            )
+            .unwrap();
+            if let Some(bar) = aggregation.update(&trade).unwrap() {
+                bars.push(bar);
+            }
+        }
+        bars.extend(aggregation.finish().unwrap());
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            bars[0].open.as_decimal(),
+            Decimal::from_str_exact("1.23").unwrap()
+        );
+        assert_eq!(
+            bars[0].close.as_decimal(),
+            Decimal::from_str_exact("1.234").unwrap()
+        );
+        assert_eq!(
+            bars[0].volume.as_decimal(),
+            Decimal::from_str_exact("5.125").unwrap()
+        );
+        assert_eq!(bars[0].open.precision, 3);
+        assert_eq!(bars[0].volume.precision, 3);
+        assert_eq!(
+            bars[1].open.as_decimal(),
+            Decimal::from_str_exact("1.2").unwrap()
+        );
+        assert_eq!(
+            bars[1].close.as_decimal(),
+            Decimal::from_str_exact("1.19").unwrap()
+        );
+        assert_eq!(
+            bars[1].volume.as_decimal(),
+            Decimal::from_str_exact("4.75").unwrap()
+        );
+        assert_eq!(bars[1].open.precision, 2);
+        assert_eq!(bars[1].volume.precision, 2);
     }
 
     #[test]

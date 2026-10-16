@@ -7,7 +7,11 @@ use nautilus_model::{
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs,
+    path::Path,
+};
 
 const BATCH_RECORDS: usize = 100_000;
 
@@ -36,6 +40,29 @@ fn identity(data: &Data) -> Result<(String, String)> {
         data.instrument_id().to_string()
     };
     Ok((kind.to_owned(), id))
+}
+
+fn metadata(data: &Data) -> HashMap<String, String> {
+    match data {
+        Data::Trade(d) => {
+            TradeTick::get_metadata(&d.instrument_id, d.price.precision, d.size.precision)
+        }
+        Data::Bar(d) => Bar::get_metadata(&d.bar_type, d.open.precision, d.volume.precision),
+        Data::Delta(d) => OrderBookDelta::get_metadata(
+            &d.instrument_id,
+            d.order.price.precision,
+            d.order.size.precision,
+        ),
+        Data::Quote(d) => QuoteTick::get_metadata(
+            &d.instrument_id,
+            d.bid_price.precision,
+            d.bid_size.precision,
+        ),
+        Data::FundingRate(d) => FundingRateUpdate::get_metadata(&d.instrument_id),
+        Data::MarkPrice(d) => MarkPriceUpdate::get_metadata(&d.instrument_id, d.value.precision),
+        Data::IndexPrice(d) => IndexPriceUpdate::get_metadata(&d.instrument_id, d.value.precision),
+        _ => unreachable!("identity rejects unsupported records"),
+    }
 }
 
 impl Writer {
@@ -105,45 +132,124 @@ impl Writer {
             if items.is_empty() {
                 continue;
             }
-            self.catalog.write_data_enum(&items, None, None, None)?;
-            let start = Some(items[0].ts_init());
-            let end = Some(items.last().unwrap().ts_init());
-            let ids = Some(vec![key.1.clone()]);
-            macro_rules! read {
-                ($type:ty) => {{
-                    self.catalog
-                        .query::<$type>(ids, start, end, None, None, true)?
-                        .take(items.len() + 1)
-                        .collect::<std::result::Result<Vec<Data>, _>>()?
-                }};
+            // Split contiguous native encodings, not all equal precisions across intervening versions.
+            for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
+                self.catalog.write_data_enum(items, None, None, None)?;
+                self.catalog.reset_session();
+                let start = Some(items[0].ts_init());
+                let end = Some(items.last().unwrap().ts_init());
+                let ids = Some(vec![key.1.clone()]);
+                macro_rules! read {
+                    ($type:ty) => {{
+                        self.catalog
+                            .query::<$type>(ids, start, end, None, None, false)?
+                            .take(items.len() + 1)
+                            .collect::<std::result::Result<Vec<Data>, _>>()?
+                    }};
+                }
+                let readback = match &items[0] {
+                    Data::Trade(_) => read!(TradeTick),
+                    Data::Bar(_) => read!(Bar),
+                    Data::Delta(_) => read!(OrderBookDelta),
+                    Data::Quote(_) => read!(QuoteTick),
+                    Data::FundingRate(_) => read!(FundingRateUpdate),
+                    Data::MarkPrice(_) => read!(MarkPriceUpdate),
+                    Data::IndexPrice(_) => read!(IndexPriceUpdate),
+                    _ => anyhow::bail!("NATIVE_RECORD_UNSUPPORTED"),
+                };
+                ensure!(
+                    serde_json::to_value(&readback)? == serde_json::to_value(items)?,
+                    "NATIVE_RECORD_READBACK_MISMATCH"
+                );
+                self.last_written
+                    .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
+                *self
+                    .counts
+                    .entry(key.0.clone())
+                    .or_default()
+                    .entry(items[0].instrument_id().to_string())
+                    .or_default() += items.len() as u64;
             }
-            let readback = match &items[0] {
-                Data::Trade(_) => read!(TradeTick),
-                Data::Bar(_) => read!(Bar),
-                Data::Delta(_) => read!(OrderBookDelta),
-                Data::Quote(_) => read!(QuoteTick),
-                Data::FundingRate(_) => read!(FundingRateUpdate),
-                Data::MarkPrice(_) => read!(MarkPriceUpdate),
-                Data::IndexPrice(_) => read!(IndexPriceUpdate),
-                _ => anyhow::bail!("NATIVE_RECORD_UNSUPPORTED"),
-            };
-            ensure!(
-                serde_json::to_value(&readback)? == serde_json::to_value(&items)?,
-                "NATIVE_RECORD_READBACK_MISMATCH"
-            );
-            self.last_written
-                .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
-            *self
-                .counts
-                .entry(key.0)
-                .or_default()
-                .entry(items[0].instrument_id().to_string())
-                .or_default() += items.len() as u64;
         }
         Ok(())
     }
 
     pub(super) fn finish(&mut self) -> Result<()> {
         self.flush(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nautilus_model::{
+        enums::AggressorSide,
+        identifiers::{InstrumentId, TradeId},
+        types::{Price, Quantity},
+    };
+    use std::str::FromStr;
+
+    #[test]
+    fn precision_changes_remain_contiguous_across_native_batches() {
+        let root = tempfile::tempdir().unwrap();
+        let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
+        let mut writer = Writer::new(&root.path().join("output"), &[]).unwrap();
+        for (i, (price, size)) in [
+            ("1.23", "10"),
+            ("1.234", "1.25"),
+            ("1.23", "10"),
+            ("1.23", "1.25"),
+            ("1.23", "10"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = (i as u64 + 1).into();
+            writer
+                .push(Data::Trade(
+                    TradeTick::new_checked(
+                        id,
+                        Price::from(price),
+                        Quantity::from(size),
+                        AggressorSide::Buy,
+                        TradeId::new(i.to_string()),
+                        at,
+                        at,
+                    )
+                    .unwrap(),
+                ))
+                .unwrap();
+            if i == 2 {
+                writer.flush(false).unwrap();
+            }
+        }
+        writer.finish().unwrap();
+        assert_eq!(writer.counts["trades"][&id.to_string()], 5);
+        let ids = Some(vec![id.to_string()]);
+        assert_eq!(
+            writer
+                .catalog
+                .query_files("trades", ids.clone(), None, None)
+                .unwrap()
+                .len(),
+            5
+        );
+        writer.catalog.reset_session();
+        let readback = writer
+            .catalog
+            .query::<TradeTick>(ids, None, None, None, None, false)
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        let precision = readback
+            .into_iter()
+            .map(|data| {
+                let Data::Trade(trade) = data else {
+                    unreachable!()
+                };
+                (trade.price.precision, trade.size.precision)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(precision, [(2, 0), (3, 2), (2, 0), (2, 2), (2, 0)]);
     }
 }
