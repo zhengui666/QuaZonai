@@ -10,7 +10,7 @@ use nautilus_model::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
@@ -203,10 +203,10 @@ async fn hyperliquid_instruments(output: &Path, manifest: Option<&Path>) -> Resu
         .collect();
     if let Some(manifest) = manifest {
         for symbol in source_symbols(manifest)? {
-            if !symbol_ids.contains_key(&symbol) {
-                let id = hyperliquid_symbol_id(&symbol)
-                    .with_context(|| format!("NATIVE_SYMBOL_UNSUPPORTED: {symbol}"))?;
-                symbol_ids.insert(symbol, id);
+            if let Entry::Vacant(entry) = symbol_ids.entry(symbol) {
+                let id = hyperliquid_symbol_id(entry.key())
+                    .with_context(|| format!("NATIVE_SYMBOL_UNSUPPORTED: {}", entry.key()))?;
+                entry.insert(id);
             }
         }
     }
@@ -342,7 +342,6 @@ fn import(
         );
     }
     let instruments = job::catalog::currencies::read_instruments(instruments_path)?;
-    ensure!(!instruments.is_empty(), "NATIVE_INSTRUMENTS_EMPTY");
     let mut symbol_ids: BTreeMap<String, InstrumentId> =
         json::<serde_json::Value>(instruments_path)?
             .get("symbol_ids")
@@ -365,6 +364,7 @@ fn import(
         );
         versions.push(instrument);
     }
+    ensure!(!symbol_ids.is_empty(), "NATIVE_SYMBOLS_EMPTY");
     for versions in by_symbol.values_mut() {
         versions.sort_by_key(|v| v.ts_init());
     }

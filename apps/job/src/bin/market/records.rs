@@ -495,12 +495,11 @@ mod tests {
 
     #[test]
     fn observed_trade_aggregation_does_not_fill_empty_intervals() {
-        let instrument =
-            InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::audusd_sim());
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
         let mut aggregation = Aggregation::new(Some(60));
         for event in [1_u64, 20] {
             let trade = TradeTick::new_checked(
-                instrument.id(),
+                id,
                 Price::from("0.12345"),
                 Quantity::from("10"),
                 AggressorSide::Buy,
@@ -512,7 +511,7 @@ mod tests {
             assert!(aggregation.update(&trade).unwrap().is_none());
         }
         let late = TradeTick::new_checked(
-            instrument.id(),
+            id,
             Price::from("0.12346"),
             Quantity::from("5"),
             AggressorSide::Sell,
@@ -532,13 +531,19 @@ mod tests {
 
     #[test]
     fn a_one_sided_snapshot_keeps_levels_without_inventing_a_quote() {
-        let instrument =
-            InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::audusd_sim());
-        let encoding = Encoding::new(instrument.id(), Some(&instrument), false).unwrap();
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        let encoding = Encoding::new(id, None, true).unwrap();
         let mut report = Report::default();
         let data = snapshot(
             &encoding,
-            [vec![], vec![(Price::from("0.12345"), Quantity::from("7"))]],
+            [
+                vec![],
+                vec![(
+                    price_with_precision(&Field::Str("0.12345".into()), encoding.price_precision)
+                        .unwrap(),
+                    quantity(&Field::Str("7".into()), encoding.size_precision).unwrap(),
+                )],
+            ],
             1.into(),
             2.into(),
             &mut report,
@@ -551,8 +556,7 @@ mod tests {
             matches!(&data[1], Data::Delta(d) if d.order.side == Some(OrderSide::Sell) && d.flags & RecordFlag::F_LAST as u8 != 0)
         );
         let root = tempfile::tempdir().unwrap();
-        let mut sink =
-            super::super::writer::Writer::new(&root.path().join("output"), &[instrument]).unwrap();
+        let mut sink = super::super::writer::Writer::new(&root.path().join("output"), &[]).unwrap();
         for item in snapshot(&encoding, [vec![], vec![]], 0.into(), 0.into(), &mut report)
             .unwrap()
             .into_iter()
@@ -582,22 +586,18 @@ mod tests {
 
     #[test]
     fn exact_values_do_not_depend_on_venue_or_symbol() {
-        let instrument =
-            InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::audusd_sim());
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
         assert_eq!(
-            price_with_precision(&Field::Str("0.12345".into()), instrument.price_precision())
+            price_with_precision(&Field::Str("0.12345".into()), 5)
                 .unwrap()
                 .as_decimal()
                 .to_string(),
             "0.12345"
         );
-        assert!(
-            price_with_precision(&Field::Str("0.123456".into()), instrument.price_precision())
-                .is_err()
-        );
+        assert!(price_with_precision(&Field::Str("0.123456".into()), 5).is_err());
         assert!(decimal(&Field::Str("0.12345678901234567890123456789".into())).is_err());
         assert_eq!(
-            bar_type(instrument.id(), 60).unwrap().to_string(),
+            bar_type(id, 60).unwrap().to_string(),
             "AUD/USD.SIM-1-MINUTE-LAST-EXTERNAL"
         );
     }

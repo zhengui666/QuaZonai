@@ -37,7 +37,7 @@ Build the optional operator:
 
 ```bash
 rustup run 1.98.1 cargo build --locked -p job \
-  --features market-history,catalog-prepare --bin market-history --bin catalog-prepare
+  --features market-history,catalog-prepare --bin market-history --bin catalog-prepare --bin job
 ```
 
 Obtain current instrument definitions and resolve the acquired archive's identities through the unmodified official Nautilus adapter:
@@ -80,6 +80,8 @@ The 2026-10-13 00:10–00:15 UTC run selected 52,053 original rows with no missi
 | Two-sided quotes | 178 | 890 |
 | Funding-rate observations | 234 | 1,170 |
 | Mark-price observations | 234 | 1,170 |
+
+A separate trade-only run over the same window produced 1,053 observed one-minute BARs across all 265 traded markets, alongside the 38,292 original trades. Every output record read back exactly. A separate inspection matched each persisted BAR's exact OHLC, summed trade volume, interval-end label and availability against its contributing native trades; empty buckets stayed absent.
 
 Original contract parameters remain missing for 173 selected rows across 30 expired outcome symbols; their identities come from official parsing. The other 51,880 selected rows use later-observed definitions. This verification covers all published records in the chosen window, not the entire corpus or independent exchange-wide completeness.
 

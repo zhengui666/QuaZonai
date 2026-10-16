@@ -352,7 +352,7 @@ fn project(
                 );
                 let close = native.ts_event.as_u64();
                 ensure!(
-                    close % interval == 0
+                    close.is_multiple_of(interval)
                         && last_replayed_close.is_none_or(|last| close > last)
                         && native.bar_type.to_string() == native_type,
                     "FORWARD_NATIVE_CLOSE_ORDER"
