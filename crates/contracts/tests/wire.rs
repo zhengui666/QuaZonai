@@ -1,33 +1,5 @@
-use contracts::{
-    budget::BudgetV1, evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1,
-};
+use contracts::{evidence::MetricValueV1, DbCounter, DecimalValue, Id, Revision, SchemaV1};
 use serde_json::{from_value, json, to_value};
-
-#[test]
-fn cycle_start_requires_both_explicit_profile_choices_with_exact_revision_strings() {
-    use contracts::cycles::CycleStartV1;
-    let choice = json!({"profile_id":Id::new(),"expected_revision":"9007199254740993"});
-    let request = json!({"schema_version":1,"brief_id":Id::new(),"expected_revision":"1",
-        "researcher_profile":choice,"reviewer_profile":choice});
-    assert_eq!(
-        to_value(from_value::<CycleStartV1>(request.clone()).unwrap()).unwrap(),
-        request
-    );
-    for field in ["researcher_profile", "reviewer_profile"] {
-        let mut missing = request.clone();
-        missing.as_object_mut().unwrap().remove(field);
-        assert!(from_value::<CycleStartV1>(missing).is_err());
-        for value in [
-            json!(null),
-            json!({"profile_id":Id::new(),"expected_revision":1}),
-            json!({"profile_id":Id::new(),"expected_revision":"1","token":"fixture-forbidden-field"}),
-        ] {
-            let mut invalid = request.clone();
-            invalid[field] = value;
-            assert!(from_value::<CycleStartV1>(invalid).is_err());
-        }
-    }
-}
 
 #[test]
 fn precise_database_values_never_cross_json_as_numbers() {
@@ -121,31 +93,6 @@ fn schema_versions_and_local_identity_are_explicit() {
 }
 
 #[test]
-fn command_objects_reject_unknown_fields_missing_booleans_and_null_integers() {
-    let valid = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":2,
-        "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,
-        "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
-        "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
-        "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
-    assert!(from_value::<BudgetV1>(valid.clone()).is_ok());
-    let mut unknown = valid.clone();
-    unknown["skip_budget_gate"] = json!(true);
-    assert!(from_value::<BudgetV1>(unknown).is_err());
-    let mut missing = valid.clone();
-    missing.as_object_mut().unwrap().remove("schema_version");
-    assert!(from_value::<BudgetV1>(missing).is_err());
-    let mut invalid = valid;
-    invalid["max_parallel_runs"] = json!(null);
-    assert!(from_value::<BudgetV1>(invalid).is_err());
-    for invalid in [
-        json!({"schema_version":1,"saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false}),
-        json!({"schema_version":1,"use_default_model_settings":null,"saved_model":null,"saved_reasoning_effort":null,"saved_fast_mode":false}),
-    ] {
-        assert!(from_value::<contracts::codex::SavedModelSettingsV1>(invalid).is_err());
-    }
-}
-
-#[test]
 fn nonfinite_native_metrics_cannot_be_serialized_into_innocent_nulls() {
     let value = json!({"schema_version":1,"evaluation_id":Id::new(),"metric_code":"risk","scope":"total",
         "value":0.1,"status":"OK","reason_code":null,"unit":"fraction","period_start":"2026-01-01T00:00:00Z",
@@ -184,10 +131,14 @@ fn generated_schema_describes_initial_slice_not_nonexistent_http_routes() {
         "string"
     );
     assert_eq!(schema["components"]["schemas"]["SchemaV1"]["minimum"], 1);
-    assert_eq!(
-        schema["components"]["schemas"]["BudgetV1"]["allOf"][0]["additionalProperties"],
-        false
-    );
+}
+
+#[test]
+fn native_scientific_export_is_compact_and_deterministic() {
+    let generated = contracts::openapi_json().unwrap();
+    let document: serde_json::Value = serde_json::from_str(&generated).unwrap();
+    assert_eq!(generated, serde_json::to_string(&document).unwrap() + "\n");
+    assert_eq!(generated, contracts::openapi_json().unwrap());
 }
 
 #[test]
@@ -254,69 +205,5 @@ fn generated_bigint_schemas_share_the_native_postgres_boundary() {
             other => panic!("unknown scalar in shared corpus: {other}"),
         };
         assert_eq!(accepted, case["valid"].as_bool().unwrap(), "{case}");
-    }
-}
-
-#[test]
-fn all_unsigned_numeric_fields_publish_the_native_upper_bound() {
-    let schema: serde_json::Value =
-        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
-    for (name, fields, maximum) in [
-        (
-            "BudgetV1",
-            vec![
-                "max_parallel_runs",
-                "max_turns_per_mission",
-                "max_repair_turns",
-                "max_cycles_per_day",
-            ],
-            65535u64,
-        ),
-        (
-            "StopRuleV1",
-            vec!["stop_on_qualified_count", "stop_on_no_improvement_trials"],
-            65535u64,
-        ),
-        (
-            "BudgetV1",
-            vec![
-                "max_experiments",
-                "max_wall_seconds",
-                "max_memory_mib",
-                "min_cycle_interval_seconds",
-            ],
-            4294967295u64,
-        ),
-        ("RunSnapshotV1", vec!["current_attempt_no"], 4294967295u64),
-    ] {
-        let object = if name == "BudgetV1" {
-            &schema["components"]["schemas"][name]["allOf"][0]
-        } else {
-            &schema["components"]["schemas"][name]
-        };
-        for field in fields {
-            assert_eq!(
-                object["properties"][field]["maximum"],
-                json!(maximum),
-                "{name}.{field}"
-            );
-        }
-    }
-    let valid = json!({"schema_version":1,"max_experiments":20,"max_parallel_runs":2,
-        "max_turns_per_mission":16,"max_repair_turns":2,"max_wall_seconds":3600,
-        "max_cpu_seconds":"7200","max_memory_mib":4096,"max_output_bytes":"67108864",
-        "max_cycles_per_day":3,"min_cycle_interval_seconds":120,"max_tokens":null,
-        "max_cost_decimal":null,"cost_currency":null,"cost_enforcement":"UNAVAILABLE"});
-    for field in [
-        "max_parallel_runs",
-        "max_turns_per_mission",
-        "max_repair_turns",
-        "max_cycles_per_day",
-    ] {
-        let mut value = valid.clone();
-        value[field] = json!(65535);
-        assert!(from_value::<BudgetV1>(value.clone()).is_ok());
-        value[field] = json!(65536);
-        assert!(from_value::<BudgetV1>(value).is_err());
     }
 }

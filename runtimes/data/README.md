@@ -1,79 +1,10 @@
 # Public historical data
 
-Operator tools acquire public source files, then convert supported records into the existing Nautilus catalog. Acquisition is venue independent. `market-history` uses declarative column mappings; the existing `polymarket-history` handles its source protocols. Scientific jobs remain offline and the generic research/API/database contracts are unchanged.
+For the declaratively mapped Hyperliquid archive, including public acquisition, native trades/books/funding/BAR conversion and actual coverage limits, see the [Hyperliquid guide](hyperliquid.md). Its generic acquisition path does not perform content hashing; original files and terms remain available for inspection.
 
-## Hyperliquid all-market archive
+Operator tools acquire immutable source files and bounded API observations, then convert supported records into the existing Nautilus catalog. Acquisition is separate from source-specific interpretation in the native importers; scientific jobs remain offline and existing research-admission checks still apply.
 
-The [MIT-declared research archive](https://huggingface.co/datasets/ProbioticFarmer/hyperliquid-augmented-copytrading/tree/064bc5ea76a6f0db8dd5c2b66f598e925857784d) was inspected on 2026-10-16. Use its actual published intervals, not the card's unsupported claim of complete genesis-to-present history:
-
-| Stream | Published files | Native preparation |
-| --- | --- | --- |
-| Perpetual and spot fills | 443 dates, 2025-07-28–2026-10-13 | Trades selected by the declared `crossed=true` filter, retaining original trade IDs. Maker/taker wallet records must not double market volume. |
-| Outcome fills | 165 dates, 2026-05-02–2026-10-13, using only the `all/` hierarchy | Same declared trade mapping; per-outcome copies are not imported again. Missing earlier paths are reported, not invented. |
-| One-second OHLCV | 440 dates, 2025-07-31–2026-10-13 | Original candles, including spot; interval-start labels become interval-end BAR events. Empty intervals remain absent. |
-| Book snapshots | 303 dates, 2025-12-15–2026-10-13; individual symbol files | Clear/Add snapshot deltas and actual two-sided quotes. Inspected examples have 20 levels per side; this is not proven full depth or continuous L2 replay. |
-| Asset contexts | 1,242 daily CSV.lz4 files beginning 2023-05-20 | Funding-rate observations and mark prices. Open interest, oracle/mid/impact prices remain in the original files; they are not fabricated fills, index prices or funding payments. |
-
-[Source mapping](sources/hyperliquid.json) contains file layouts, columns, time units and fill filters. The downloader and record converter do not contain exchange or coin-name branches. Every matching symbol file is selected, including newly listed names; missing daily paths are reported. File partitions alone do not establish per-market completeness. Attribution to Georgia Tech CSE6242 Team 176 / ProbioticFarmer and the stated Hyperliquid/Hydromancer provenance is retained with acquisition and import reports. No application, account or paid S3 access is needed.
-
-The full publisher corpus is about 268 GB; the market-data streams alone exceed 200 GB. Select dates/types intentionally. A checked 2026-10-13 selection was about 656 MB, with 178 book files and perpetual, spot and outcome fills:
-
-```sh
-python3 -I runtimes/data/hub.py plan \
-  --profile runtimes/data/sources/hyperliquid.json \
-  --start-date 2026-10-13 --end-date 2026-10-14
-```
-
-```sh
-python3 -I runtimes/data/hub.py download \
-  --profile runtimes/data/sources/hyperliquid.json \
-  --start-date 2026-10-13 --end-date 2026-10-14 \
-  --output /absolute/data/hyperliquid-20261013
-```
-
-The end date is exclusive UTC. Omit `--kind` for all declared streams, or repeat it with `trades`, `bars`, `books` or `context`. `--revision` overrides the profile revision. Original URLs, revision, license, attribution, retrieval time, file sizes and missing paths go into `market-data.json` after all selected files download. Interrupted downloads retain completed files; rerunning the same selection checks sizes and reuses them. A conflicting selection or size fails without replacement. This path intentionally performs **no content hashing**: size checks cannot detect same-size local edits. Keep raw files unchanged and use another directory for a different selection. Do not execute code from downloaded repositories.
-
-Build the optional operator:
-
-```sh
-rustup run 1.98.1 cargo build --locked -p job \
-  --features market-history,catalog-prepare --bin market-history --bin catalog-prepare
-```
-
-Obtain current instrument definitions and resolve the acquired archive's identities through the unmodified official Nautilus adapter:
-
-```bash
-target/debug/market-history hyperliquid-instruments \
-  --manifest /absolute/data/hyperliquid-20261013/market-data.json \
-  --output /absolute/data/hyperliquid-instruments.json
-```
-
-This saves native definitions, currency properties and `symbol_ids`. The optional `--manifest` discovers original symbols from all selected files; only the metadata entry invokes official Hyperliquid parsers. The official outcome parser can establish an expired contract's identity without inventing its absent parameters. Such identity-only records are counted in `missing_definitions`; they are not historical contract definitions. Unsupported identities still fail. No symbol list or symbol-format implementation is copied into the generic importer.
-
-Actual definition timestamps are retained. Current definitions are useful for inspecting raw history, **not historical contract/fee evidence**; missing or changed historical definitions must come from an original source, not be inferred from prices. A legacy native `InstrumentAny` array is also accepted when its currencies are already known to Nautilus.
-
-```bash
-target/debug/market-history import \
-  --manifest /absolute/data/hyperliquid-20261013/market-data.json \
-  --instruments /absolute/data/hyperliquid-instruments.json \
-  --native-precision --start-seconds 1791850200 --end-seconds 1791850500 \
-  --output /absolute/catalogs/hyperliquid-20261013-5m
-```
-
-The operator enables Nautilus's official `high-precision` feature: the source contains genuine ten-decimal spot quantities which the standard nine-decimal representation cannot retain. These new catalogs use the native 16-byte format. Existing standard-format catalogs and default scientific images are unchanged. Consumers of the new format, including `job` and `catalog-prepare`, must be built with `--features high-precision` (also enabled by `market-history`); the two native binary formats are not interchangeable. Do not overwrite or relabel an existing catalog to change formats.
-
-`--native-precision` preserves source prices and quantities at native encoding precision, independently of current tick/lot parameters. It never rounds a source value to fit a current contract. Omit it when importing against original contract precision; then definitions are required and nonrepresentable values are rejected. Neither mode proves historical tradability. Decimal fields never pass through floating point, and both modes retain the exact-value check.
-
-The generic importer reads selected Parquet/CSV/LZ4 streams in batches and writes `catalog/` plus `import-report.json`. Trade IDs are retained across all files in one import to detect duplicates/conflicts; split long histories into dated catalogs to bound that ID memory. It reads every written native batch back and compares converted values, IDs, times and book levels. Native currency properties travel with the catalog in `currencies.json`; the shared reader and `catalog-prepare` preserve them across processes. `source_coverage` records each stream's actual first/last event and selected row count, including zero-count streams. Date partition names do not establish midnight coverage: the checked book files start after 00:09 UTC, so the example uses 00:10–00:15 UTC. A BAR's final label can equal the input window end; account for that interval-end convention in the existing half-open BAR selection.
-
-If importing only `trades`, `--bar-seconds 60` builds observed one-minute bars with Nautilus `BarBuilder`, omitting empty intervals. Both event boundaries must align to complete intervals. Do not combine supplied candles and aggregated candles in one output, or merge overlapping providers. Published candle volume is not verified trade volume: in the checked 00:00–00:05 window, it matched selected taker volume in 206 of 301 shared symbols, not all of them. Use the observed-trade aggregation path when that distinction matters, not source-specific volume corrections. Book block numbers remain raw provenance, not invented book sequence numbers; native sequence `0` means unknown. One-sided/empty snapshots do not produce invented quotes. Mark/index valuation prices are not forced onto executable tick grids; they must still be exactly representable in the native format.
-
-A missing native symbol, rejected record or absent expected partition produces an **INCOMPLETE report and unsuccessful exit**, retaining the original raw files and explicitly counted native subset. A process interrupted before its final report has not finished. Existing output directories are never overwritten. Do not relabel an incomplete import as all-market coverage.
-
-Event time is an explicitly unverified native availability proxy unless the profile maps an original reception column. The report counts records decoded using later-observed definitions; those definitions are never backdated. Native decoding/readback does not certify PIT, historical fees, listing membership, source completeness or research permission. BARs use the existing [catalog preparation and registration workflow](#prepare-isolated-research-partitions) when original provenance supports it. The scientific API still consumes BARs; archived trades/books/funding do not enable an L2 strategy engine or perpetual funding-settlement backtest. Existing unsupported account/instrument capabilities remain unsupported.
-
-The [task record](../../.opensdlc/tasks/hyperliquid-public-history/task.md#verification) distinguishes actual live observations and local checks from unperformed qualification, full-corpus acquisition, review and deployment.
-
+Start with the [source-plugin registry](source-plugins.md) for acquisition, native Coinbase BAR conversion, supported Polymarket conversion and explicit BAR partition preparation. The [Polymarket v2 guide](polymarket-v2.md) provides explicit UTC date/token selection, saved-plan caching and current v3 dataset configuration export for TimeSeventeen. The [HTTP acquisition guide](providers.md) describes the underlying acquisition-only manifests, including Polymarket sampled marks that have no native conversion. This guide covers Polymarket historical sources and the native partition contract. Conversion and preparation do not register a source, grant permission or qualify research data. Coinbase's intended live research acceptance is currently [blocked on source-use permission](source-plugins.md#source-rights-and-acceptance).
 
 A downloaded archive is not automatically a qualified research dataset. Public Polymarket sources collectively cover much of its history, but no verified, free source currently establishes gap-free trades, continuous depth, historical instrument/fee changes and timestamped settlements for every market from launch through today.
 
@@ -104,14 +35,14 @@ Pinned defaults used for verification:
 - Moose: `7eeb860dea5b79d5c74f3182b70bd08c85c8f833`.
 - Joseph: `efe472f1f00a62f2cab1fed2851da439d9c1fe11`.
 - TimeSeventeen: `5aa1b9d52316a8b2e789e81c8ae42c7ed532e8aa`.
-- TimeSeventeen v2: `f14b2977b23852380f828e0a03ec0ad31af710c2`.
+- TimeSeventeen v2: `f14b2977b23852380f828e0a03ec0ad31af710c2` (2026-09-27 observation; the missing 2026-09-10 claim above applies only to that revision). The [preset guide](polymarket-v2.md#inputs-and-boundaries) records the newer 2026-10-14 inventory separately.
 - lokima: `97d05eac7324a410db4dabb4f06b25cc21aae23f`.
 - SII: `6d3c336c39cf1a2dfe53d702ad2c110ab5bdbfde`.
 - PolyData: `804f6e173f6614710e9e91628f0a4897801047d2`.
 
 ## Plan and download
 
-Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. The default maximum is 128 MiB; increase it only for an intentional larger selection.
+Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. No default byte budget is imposed; `--max-bytes` is an optional explicit operator budget. Exact file sizes and content hashes are still verified.
 
 ```sh
 python3 -B runtimes/data/snapshot.py plan \
@@ -165,7 +96,7 @@ target/debug/polymarket-history archive \
 
 For books, select `--format joseph-books`, omit `--bar-seconds`, and provide the matching native instrument definitions. The selection window is half-open on **minute-end event time**: source `minute_ts + 60`. Each complete book becomes native Clear/Add snapshot deltas; two-sided books also produce quotes with actual top sizes. Empty or one-sided books never generate quotes with invented zero prices. Sequence `0` means unknown, not a verified event sequence. These are snapshots, not continuous replay across missing minutes/days. Do not derive transaction volume or settlement from them.
 
-Each conversion is bounded to the existing combined one-million-native-record limit and 256 instrument definition records, including original versions. Split larger work by non-overlapping time/asset selections into new catalog directories. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
+There is no implicit one-million-record or 256-definition cap in the current archive converter. Explicit scientific selections still require their original `maximum_rows` budget and supported native numeric ranges. Split large work deliberately by non-overlapping time/asset selections into new catalog directories when appropriate. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
 
 ## Quality, research admission and recovery
 
@@ -173,13 +104,13 @@ The new output contains `catalog/`, detached `source-evidence.json` and a final 
 
 `coverage=UNPROVEN`, `historical_availability=UNVERIFIED`, and `registered_in_quazonai=false` are deliberate. On-chain block time and book minute-end are **event-time proxies**, not measured exchange reception/finality latency. Snapshot market metadata, final payout state, redemption time, end dates and last prices do not establish when a resolution became available. Original source evidence is never mounted as researcher-readable catalog data.
 
-To conduct admitted research, provide the original universe/membership, calendar, permission/license, historical parameter and availability provenance, partition and quality evidence required by [RuntimeCatalogMetadataV1](../../crates/contracts/src/catalogs.rs), then use the existing [catalog registration and Runtime workflow](../../.opensdlc/operations.md#scientific-runtime). Fresh `DATA_VALIDATE` must reopen the frozen catalog. Keep Discovery/Validation/Sealed/Forward isolated. The current scientific catalog contract accepts BAR data; archived trades/L2 are source material and do not enable a new L2 strategy engine or bypass that contract.
+The native declaration retains original universe/membership, calendar, permission/license, historical parameter and availability provenance, partition and measured quality through [RuntimeCatalogMetadataV1](../../crates/contracts/src/catalogs.rs). That retained scientific type name does not restore the retired Rust Runtime/control plane. Current v3 uses owner-configured `DatasetConfig` entries with original catalog/request bindings; see [service configuration](../../apps/service/README.md#operator-dataset-configuration) and the [v2 export](polymarket-v2.md#4-export-a-datasetconfig-fragment). Keep Discovery/Validation/Sealed/Forward isolated and prepared catalogs unchanged/read-only; JSON capture is not physical byte freezing. Native validation/evaluation and source-evidence review remain necessary; listing or `ready=true` does not establish qualification. The scientific catalog contract accepts BAR data; archived trades/L2 do not enable a new L2 strategy engine.
 
 For v2 choose `--format time-seventeen-v2`, original **pUSD** definitions, and explicit `OrderFilled/YYYY_MM_DD.parquet` files. Canonical chain/block/log IDs, independent row deduplication and bar construction use the same path as v1. Both v2 exchange-summary addresses come from the [original contract deployments and matching implementation](https://github.com/Polymarket/ctf-exchange-v2/tree/ccc0596074f4dfd62c944fbca4de252893b82b4b). The amount check rejects values outside the exact recoverable range. In the actual 2026-08-09 file, 28,494 of 2,529,399 non-summary fills had at least one amount that failed this strict check (about 1.13%); a selected BTC market failed without publishing an output. Do not round or silently drop those rows to make a selection pass. The legacy column name `usdc_amount` does not authorize changing pUSD to USDC. Derived prices, aggressor directions and retrospective labels are not imported; chain corroboration additionally checks the original maker-side label.
 
 ## Original chain evidence
 
-`evm.py` freezes original EVM headers and logs for explicit blocks, addresses and one event signature. It needs no account, Python package or paid API. Choose two to four distinct public HTTPS RPC hosts that retain the requested history; the [Polygon endpoint list](https://docs.polygon.technology/pos/reference/rpc-endpoints/) lists public options. Provider limits and pruned history can cause a request to fail. No credentials or automatic paid fallback are used.
+`evm.py` freezes original EVM headers and logs for explicit blocks, addresses and one event signature. It needs no account, Python package or paid API. Choose at least two distinct public HTTPS RPC hosts that retain the requested history; the [Polygon endpoint list](https://docs.polygon.technology/pos/reference/rpc-endpoints/) lists public options. Provider limits and pruned history can cause a request to fail. No credentials or automatic paid fallback are used.
 
 This bounded example selects the eight blocks containing the rejected BTC amounts. It does **not** establish continuous coverage between them:
 
@@ -196,7 +127,7 @@ python3 -B runtimes/data/evm.py \
   --output /absolute/data/v2-eight-blocks.json
 ```
 
-For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block` (at most 4,096 blocks per capture). The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. The default total response-body and output limits are each 128 MiB, with 32 MiB per response. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
+For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no default byte budget. An explicit `--max-bytes` optionally bounds cumulative response-body and output bytes. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
 
 The collector binds logs to block hashes, transaction hashes/indices and canonical log indices, checks parent links for adjacent blocks, and requires agreement between providers. The snapshot preserves each original response, endpoint and actual retrieval time. The native reader repeats identity/consistency checks and decodes the original ABI using the already pinned Alloy library. This is corroborated RPC evidence, not an independently verified receipt trie, a historical finality clock or a source permission grant. Raw blockchain facts do not imply a dataset redistribution license; preserve applicable provider terms.
 
@@ -277,7 +208,7 @@ Choose an explicitly reviewed window with one original definition per traded ins
 
 The bounded real capture was also split into 173 Discovery, 172 Validation and 138 Sealed bars; each isolated catalog passed the actual `job execute` `VALIDATE_DATA` operation. A separate native cash-account replay checked the source fee formula and redemption at the original resolution receipt time, with independent cash/commission reconciliation. These are data and execution integration checks, not fitted strategy results.
 
-Formal service acceptance still uses the existing owner workflow: upload the original permission evidence as a REPORT artifact, create the source and `RESEARCH` grant, configure the Runtime's catalog root plus metadata file, register revisions, freeze an InputSet and run fresh validation. The [service Skill](../../skills/quazonai/SKILL.md) documents native authenticated commands. An offline report cannot create a DataGrant, authorize a Runtime mount, establish an untouched Sealed study or substitute for login. This task did not register or deploy data into the live service.
+Current service consumption is an owner-reviewed entry in private `service.json.datasets`, not REPORT/source/DataGrant/Runtime registration. The [v2 preset](polymarket-v2.md) provides an offline fragment export; other prepared catalogs require their explicit original catalog/request configuration. Preserve existing installation configuration and data, and use the [service Skill](../../skills/quazonai/SKILL.md) only for supported installed-service operations. No offline report grants upstream rights, establishes an untouched Sealed study or substitutes for authentication. These instructions do not register or deploy data into a live service.
 
 Remaining broad-history gaps include pre-CLOB FPMM normalization, lifecycle joins with historical block/receipt evidence, missing v2 dates, historical fee/tick changes and continuous depth/finality evidence. The pipeline now accepts an evidence-complete captured interval; it does not relabel incomplete older archives as qualified.
 

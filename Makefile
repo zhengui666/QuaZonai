@@ -1,47 +1,57 @@
-.PHONY: check check-unit check-store check-http check-docs check-links check-cli check-architecture check-web require-test-database
+.PHONY: check check-ts check-web check-science check-core check-native-full check-source check-deploy check-links
 
-# Use the repository pin even when a distribution cargo precedes rustup in PATH.
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
+PROFILE ?= debug
+CARGO_PROFILE_FLAG := $(if $(filter release,$(PROFILE)),--release,)
+SCIENCE_FEATURES := job/native-paper-test,job/native-sandbox-test,job/catalog-prepare,job/polymarket-history
+QZ_JOB_BINARY ?= $(abspath $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/$(PROFILE)/job)
 LYCHEE ?= lychee
 
-# Full check requires a disposable test database.
-check: require-test-database check-docs
-	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
-	$(CARGO) test --locked --workspace --features server/native-codex
+check: check-ts check-web check-deploy
 
-# Unit and native computation tests without a PostgreSQL instance.
-check-unit:
-	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --locked --workspace --all-targets --features server/native-codex,runtime/native-oci -- -D warnings
-	$(CARGO) test --locked --workspace --exclude store --exclude server
-
-check-store: require-test-database
-	$(CARGO) test --locked -p store
-
-check-http: require-test-database
-	$(CARGO) test --locked -p server --features native-codex
-
-check-docs: check-links check-cli
-
-# Paths include hidden governance docs, but not ignored worktrees or build output.
-check-links:
-	git ls-files -z --cached --others --exclude-standard -- '*.md' | xargs -0 $(LYCHEE) --config .lychee.toml --
-
-check-cli:
-	$(CARGO) test --locked -p server --test client_help --test client_skill
-	$(CARGO) test --locked -p server --bin server agent_schema
-
-check-architecture:
-	$(CARGO) test --locked -p contracts --test architecture
+check-ts:
+	npm --prefix apps/service run typecheck
+	npm --prefix apps/service test
+	npm --prefix apps/research run typecheck
+	npm --prefix apps/research test
+	npm --prefix apps/cli run typecheck
+	npm --prefix apps/cli test
 
 check-web:
-	npm --prefix apps/web run generate
-	git diff --exit-code -- apps/web/src/generated/
 	npm --prefix apps/web run typecheck
 	npm --prefix apps/web test
-	cd apps/web && node node_modules/vite/bin/vite.js build
+	npm --prefix apps/web run build
 
-require-test-database:
-	@test -n "$$DATABASE_URL" || { printf '%s\n' 'DATABASE_URL is required: use only a disposable PostgreSQL18 + PGMQ1.10.0 test instance.' >&2; exit 1; }
+# A single profile/feature set; no repeated all-target check + build + test.
+check-science:
+	$(CARGO) fmt --all -- --check
+	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p contracts -p domain --lib --tests
+	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test factors --test science_cli --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test native_paper_target --test source_tools --test catalog_prepare --test polymarket_v2_source -- --test-threads=1
+
+# Must use the matching built kernel. The service's integrated native test owns
+# the real idea -> trials -> shared-account backtest -> portfolio -> receipt flow.
+check-core:
+	test -x "$(QZ_JOB_BINARY)"
+	@directory=$$(mktemp -d "$${PI_SCRATCH_DIR:-$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}}/qz-native-core.XXXXXX"); \
+	trap 'rm -rf -- "$$directory"' EXIT; \
+	binaries=$$(dirname "$(QZ_JOB_BINARY)"); \
+	"$$binaries/browser_catalog_fixture" "$$directory/catalog" "$$binaries/catalog-prepare" && \
+	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" QZ_CATALOG_PREPARE_BINARY="$$binaries/catalog-prepare" QZ_BROWSER_FIXTURE="$$directory/catalog/prepared.json" npm --prefix apps/service run test:native
+
+# Manual/formal-release science coverage only, on the retained three crates.
+check-native-full:
+	$(CARGO) clippy --locked --workspace --all-targets --all-features -- -D warnings
+	$(CARGO) test --locked --workspace --all-features --no-fail-fast -- --test-threads=1
+
+check-source:
+	python3 -B -m unittest discover -s runtimes/data -v
+
+check-deploy: check-source
+	for script in deploy/install.sh deploy/docker/manage.sh deploy/docker/entrypoint.sh deploy/docker/native-build.sh deploy/docker/deploy.sh deploy/docker/update.sh; do bash -n "$$script" || exit; done
+	node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs deploy/docker/workflow.test.mjs runtimes/native/native-files.test.mjs runtimes/native/native-image-contract.test.mjs
+	python3 -B -m unittest discover -s deploy -p package_test.py
+	python3 -B -m unittest discover -s deploy/docker -p release_test.py
+
+check-links:
+	git ls-files -z --cached --others --exclude-standard -- '*.md' | xargs -0 $(LYCHEE) --config .lychee.toml --

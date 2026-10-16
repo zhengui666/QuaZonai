@@ -60,9 +60,7 @@ fn window(w: &ForwardWindowViewV1) -> Result<(), DomainError> {
         || start.timestamp_subsec_nanos() != 0
         || end.timestamp_subsec_nanos() != 0
         || w.complete_observations.get() != (end - start).num_days() as u64
-        || w.complete_observations.get() > 1_000_000
         || w.latest_message_ids.is_empty()
-        || w.latest_message_ids.len() > 255
         || w.latest_message_ids.iter().collect::<BTreeSet<_>>().len() != w.latest_message_ids.len()
     {
         return Err(invalid());

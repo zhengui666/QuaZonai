@@ -299,7 +299,7 @@ fn time_identity_duplicates_and_missing_definitions_fail_closed() {
 }
 
 #[test]
-fn unrequested_aggregation_duplicate_assets_and_oversized_queries_are_rejected() {
+fn unrequested_aggregation_and_duplicate_assets_fail_but_large_explicit_queries_work() {
     let (instrument, bars, selection) = fixture();
     for kind in [
         format!("{}-1-MINUTE-MID-EXTERNAL", instrument.id()),
@@ -315,7 +315,7 @@ fn unrequested_aggregation_duplicate_assets_and_oversized_queries_are_rejected()
     assert!(validate_native(vec![instrument.clone()], bars.clone(), &duplicate).is_err());
     let mut large = selection;
     large.maximum_rows = 1_000_001;
-    assert!(validate_native(vec![instrument], bars, &large).is_err());
+    assert!(validate_native(vec![instrument], bars, &large).is_ok());
 }
 
 #[test]
@@ -431,4 +431,32 @@ fn malformed_native_parquet_is_rejected_without_rewriting_the_input() {
     std::fs::write(path, original).unwrap();
     let recovered = load_catalog(directory.path(), &selection).unwrap();
     assert_eq!(recovered.series[0].bars, bars);
+}
+
+#[test]
+fn shared_receipt_time_only_relaxes_bar_availability_equality() {
+    let (instrument, mut bars, mut selection) = fixture();
+    for bar in &mut bars {
+        bar.ts_init = 280_000_000_000_u64.into();
+    }
+    assert_eq!(
+        validate_native(vec![instrument.clone()], bars.clone(), &selection)
+            .unwrap()
+            .rows,
+        4
+    );
+    let mut duplicated_event = bars.clone();
+    duplicated_event[1].ts_event = duplicated_event[0].ts_event;
+    assert!(validate_native(vec![instrument.clone()], duplicated_event, &selection).is_err());
+    let mut decreasing_available = bars.clone();
+    decreasing_available[1].ts_init = 270_000_000_000_u64.into();
+    assert!(validate_native(vec![instrument.clone()], decreasing_available, &selection).is_err());
+    let mut event_after_init = bars.clone();
+    event_after_init[0].ts_init = 59_000_000_000_u64.into();
+    assert!(validate_native(vec![instrument.clone()], event_after_init, &selection).is_err());
+    selection.decision_cutoff_ns = DbCounter::new(279_999_999_999).unwrap();
+    assert!(validate_native(vec![instrument.clone()], bars.clone(), &selection).is_err());
+    selection.decision_cutoff_ns = DbCounter::new(300_000_000_000).unwrap();
+    let update = definition(&instrument, "0.00010", 200_000_000_000, 280_000_000_000);
+    assert!(validate_native(vec![instrument, update], bars, &selection).is_err());
 }

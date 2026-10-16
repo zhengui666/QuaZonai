@@ -1,0 +1,17 @@
+{
+  "name": "@quazonai/cli",
+  "version": "3.0.0-dev.1",
+  "license": "AGPL-3.0-only",
+  "files": ["bin", "src", "schemas", "LICENSE", "README.md"],
+  "type": "module",
+  "bin": { "quazonai": "bin/quazonai.mjs" },
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "start": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "prepack": "node scripts/prepare-package.mjs"
+  },
+  "dependencies": { "undici": "7.16.0" },
+  "devDependencies": { "@types/node": "22.18.0", "typescript": "5.9.3" }
+}

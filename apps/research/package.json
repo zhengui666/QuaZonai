@@ -1,0 +1,19 @@
+{
+  "name": "@quazonai/research",
+  "version": "2.0.0-dev.1",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "start": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-durable": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/chord": "1.1.0",
+    "wabt": "1.0.39"
+  },
+  "devDependencies": { "@types/node": "22.18.0", "typescript": "5.9.3" }
+}

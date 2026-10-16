@@ -2,13 +2,13 @@
 
 ## 定位
 
-单人本机量化研究与 target-only 交付。后端 Rust，前端 React / TypeScript / 官方 Ant Design。复用 Codex、NautilusTrader、Clarabel、Arrow 和 PostgreSQL/PGMQ 的原生能力。
+单人本机、可扩展、无人值守的 AI 研究与 target-only 交付。HTTP、配置、业务编排、CLI、Harness 与 React 前端使用 TypeScript；Rust 只承担必要科学计算、原生引擎与科学合同／校验。复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel 和 Arrow，保留 PostgreSQL 历史与迁移。组合与模拟是可选消费者，不是因子研究前置步骤。
 
 ## 按任务定位
 
 | 改动 | 入口 |
 | --- | --- |
-| 领域、API、数据、组合、Worker、Runtime | [.opensdlc/architecture.md](.opensdlc/architecture.md) 的对应章节与源码链接 |
+| API、研究、科学计算、策略组合、观测 | [.opensdlc/architecture.md](.opensdlc/architecture.md) 的对应章节与源码链接 |
 | 开发环境、合同生成、检查命令 | [.opensdlc/project.md](.opensdlc/project.md#commands) |
 | 镜像发布、运行故障与恢复 | [.opensdlc/operations.md](.opensdlc/operations.md) |
 | 用户安装与更新 | [部署包手册](deploy/docker/README.md) |
@@ -16,7 +16,7 @@
 
 ## 实现边界
 
-Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`，传输与编排属于应用入口。依赖方向见[架构](.opensdlc/architecture.md#modules)。生成文件从原始合同生成，不手改 `contracts/generated/` 或 `apps/web/src/generated/`。
+当前 Wire 类型属于 `packages/contracts`，业务事实和编排属于 TypeScript service，Agent 执行状态属于官方 Pi Durable；必要科学类型／纯校验属于 Rust contracts／domain。依赖方向见[架构](.opensdlc/architecture.md#modules)。派生文件从原合同生成，不手改 `contracts/generated/` 或 `apps/web/src/generated/`。
 
 第三方组件只使用官方包或固定的官方上游修订，不在本仓库保存、复制或修改其实现源码，不通过源码补丁或 fork 替换。适配写在 QuaZonai 中并使用公开 API；官方能力不足时明确拒绝不支持的操作，不伪造成功。保留许可证声明及已应用的数据库兼容迁移。
 
@@ -30,4 +30,6 @@ Wire 类型属于 `contracts`，纯规则属于 `domain`，事务属于 `store`�
 
 ## Code Review Rules
 
-按 [.opensdlc/review.md](.opensdlc/review.md) 检查改变的行为、接口与恢复边界。GitHub Codex 只读 review。最终 Head 的适用 CI 全部通过、review 问题解决且 Codex 明确无问题后才能合并；未执行、旧 Head 或仅写入交接配置不算验证通过。
+按 [.opensdlc/review.md](.opensdlc/review.md) 检查改变的行为、接口与恢复边界。自 2026-09-30 的 dev 自动迭代起，设计、开发和独立代码审查均不委派给 Codex；Codex 仅作为 Agent 评测对象。最终 Head 的适用 CI 全部通过、独立审查问题解决后才能合并到 dev；未执行、旧 Head 或仅写入交接配置不算验证通过。既有 PR 的范围与证据保留，不据此声称已重新审查。
+
+`durable-factor-platform` 的已批准目标另要求最终 Head 的既有 GitHub Codex 只读 review 证据；它是本任务的额外开发验证，不是生产执行器或设计/开发委派，也不替代独立审查。保留上述自动迭代及既有 PR 的原范围，不声称旧 Head 已重新验证。

@@ -11,7 +11,6 @@ mod native_liquidity;
 use chrono::{DateTime, Utc};
 use contracts::{
     brief::*,
-    codex::{CodexConnectionCreateV1, CodexProfileCreateV1, ProfileOrigin, SavedModelSettingsV1},
     control::ProjectUpdate,
     cycles::*,
     research::*,
@@ -29,8 +28,6 @@ pub struct Fixture {
     pub brief: BriefView,
     pub freeze: BriefFreezeV1,
     pub objects: Arc<ArtifactStore>,
-    pub researcher_profile: CodexProfileChoiceV1,
-    pub reviewer_profile: CodexProfileChoiceV1,
     pub directory: Option<tempfile::TempDir>,
 }
 
@@ -59,7 +56,8 @@ pub async fn setup_with_native_image(
         objects,
         (DataOrigin::Fixture, DataUse::Research),
         Liquidity::None,
-        (|_| {}, |_| {}, None, Some(image)),
+        (|_| {}, |_| {}, None, Some(image), true, false),
+        None,
     )
     .await;
     fixture.directory = Some(directory);
@@ -132,11 +130,82 @@ pub async fn setup_with_policy_plan(
         objects,
         (origin, allowed_uses),
         liquidity,
-        (customize, plan, calendar, None),
+        (customize, plan, calendar, None, true, false),
+        None,
     )
     .await
 }
 
+/// External science has no registered Agent profile or home, even in the fixture.
+pub async fn setup_external_with_policy(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    customize: impl FnOnce(&mut EvaluationPolicyCreate),
+) -> Fixture {
+    setup_external_with_grant(
+        pool,
+        store,
+        actor,
+        objects,
+        DataUse::Research,
+        false,
+        customize,
+    )
+    .await
+}
+
+pub async fn setup_external_with_grant(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    allowed_uses: DataUse,
+    permanent_grant: bool,
+    customize: impl FnOnce(&mut EvaluationPolicyCreate),
+) -> Fixture {
+    setup_plan(
+        pool,
+        store,
+        actor,
+        objects,
+        (DataOrigin::Real, allowed_uses),
+        Liquidity::None,
+        (customize, |_| {}, None, None, false, permanent_grant),
+        None,
+    )
+    .await
+}
+
+/// Explicit controlled paired-attachment declaration for Store consumer tests.
+// Keep the grant and paired feature scenario inputs explicit at each call site.
+#[allow(clippy::too_many_arguments)]
+pub async fn setup_external_with_features(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    objects: Arc<ArtifactStore>,
+    allowed_uses: DataUse,
+    permanent_grant: bool,
+    recorded: contracts::catalogs::RecordedFeatureInputsV1,
+    customize: impl FnOnce(&mut EvaluationPolicyCreate),
+) -> Fixture {
+    setup_plan(
+        pool,
+        store,
+        actor,
+        objects,
+        (DataOrigin::Real, allowed_uses),
+        Liquidity::None,
+        (customize, |_| {}, None, None, false, permanent_grant),
+        Some(recorded),
+    )
+    .await
+}
+
+// Keep shared fixture dependencies and scenario customization explicit.
+#[allow(clippy::too_many_arguments)]
 async fn setup_plan(
     pool: &PgPool,
     store: &Store,
@@ -144,12 +213,15 @@ async fn setup_plan(
     objects: Arc<ArtifactStore>,
     (origin, allowed_uses): (DataOrigin, DataUse),
     liquidity: Liquidity,
-    (customize, plan, calendar, image): (
+    (customize, plan, calendar, image, standard_science_budget, permanent_grant): (
         impl FnOnce(&mut EvaluationPolicyCreate),
         impl FnOnce(&mut EvaluationPolicyCreate),
         Option<contracts::science::NativeCalendarSessionsV1>,
         Option<&str>,
+        bool,
+        bool,
     ),
+    recorded: Option<contracts::catalogs::RecordedFeatureInputsV1>,
 ) -> Fixture {
     let mut data = research_support::setup(pool, store, actor).await;
     let capabilities = runtime_support::capabilities(Utc::now());
@@ -166,7 +238,7 @@ async fn setup_plan(
     let revision: i64 = sqlx::query_scalar("UPDATE app.runtime_integrations SET allowed_capabilities=$2 WHERE id=$1 RETURNING revision")
         .bind(data.runtime.as_uuid()).bind(allowed).fetch_one(pool).await.unwrap();
     let revision = revision.to_string().try_into().unwrap();
-    cycle_data::register(
+    cycle_data::register_with_features(
         pool,
         store,
         actor,
@@ -174,6 +246,8 @@ async fn setup_plan(
         revision,
         objects.clone(),
         (origin, allowed_uses, calendar),
+        permanent_grant,
+        recorded,
     )
     .await;
     let ProbePreparation::Pending(ticket) = store
@@ -252,6 +326,7 @@ async fn setup_plan(
             dataset_revision_id: data.discovery,
             settlement_rule_ref: "controlled-spot-settlement".into(),
             settings: NativeSimulationSettingsV1 {
+                multi_currency_spot_cash: None,
                 schema_version: SchemaV1,
                 base_currency: "USD".into(),
                 starting_capital: "1000".parse().unwrap(),
@@ -366,6 +441,11 @@ async fn setup_plan(
         .resource;
     let mut request: BriefCreate =
         serde_json::from_str(include_str!("../contracts/research-brief.json")).unwrap();
+    if !standard_science_budget {
+        // Explicit external protocol-test allocation, including a >1 MiB report.
+        request.content.budget.max_output_bytes = Some(DbCounter::new(4 * 1024 * 1024).unwrap());
+        request.content.budget.max_wall_seconds = Some(1800);
+    }
     request.content.universe_version_id = data.universe;
     request.content.execution_assumptions_id = data.assumptions;
     request.content.evaluation_policy_id = policy.id;
@@ -412,47 +492,11 @@ async fn setup_plan(
         },
     };
     Fixture {
-        researcher_profile: profile_choice(store, actor, "researcher").await,
-        reviewer_profile: profile_choice(store, actor, "reviewer").await,
         data,
         brief,
         freeze,
         objects,
         directory: None,
-    }
-}
-
-async fn profile_choice(store: &Store, actor: &Actor, role: &str) -> CodexProfileChoiceV1 {
-    let profile = store
-        .create_codex_profile(
-            actor,
-            &Id::new().to_string(),
-            &CodexProfileCreateV1 {
-                schema_version: SchemaV1,
-                name: format!("{role} fixture"),
-                home_binding: format!("native-{}", Id::new()),
-                profile_origin: ProfileOrigin::ManagedVolume,
-                connection: CodexConnectionCreateV1::System {},
-                model_settings: SavedModelSettingsV1 {
-                    schema_version: SchemaV1,
-                    use_default_model_settings: true,
-                    saved_model: None,
-                    saved_reasoning_effort: None,
-                    saved_fast_mode: false,
-                },
-            },
-            |binding| async move {
-                // Explicit binding fixture only; native dedicated-home proof is separate.
-                domain::codex::settings::home_binding(&binding.home_binding)?;
-                Ok(())
-            },
-        )
-        .await
-        .unwrap()
-        .resource;
-    CodexProfileChoiceV1 {
-        profile_id: profile.id,
-        expected_revision: profile.revision,
     }
 }
 
@@ -469,12 +513,12 @@ impl Fixture {
         store: &Store,
         actor: &Actor,
         key: &str,
-        request: &CycleStartIntent,
+        request: &ExternalCycleStartIntent,
     ) -> Result<contracts::control::CommandResult<CycleStartedV1>, store::StoreError> {
         let reading = self.objects.clone();
         let publishing = self.objects.clone();
         store
-            .start_cycle(
+            .start_scientific_cycle(
                 actor,
                 key,
                 request,
@@ -498,7 +542,11 @@ impl Fixture {
     }
 }
 
-pub async fn start_request(store: &Store, actor: &Actor, fixture: &Fixture) -> CycleStartIntent {
+pub async fn start_request(
+    store: &Store,
+    actor: &Actor,
+    fixture: &Fixture,
+) -> ExternalCycleStartIntent {
     let current = store.project(actor, fixture.data.project).await.unwrap();
     let active = store
         .update_project(
@@ -516,15 +564,13 @@ pub async fn start_request(store: &Store, actor: &Actor, fixture: &Fixture) -> C
         .await
         .unwrap()
         .resource;
-    CycleStartIntent {
+    ExternalCycleStartIntent {
         schema_version: SchemaV1,
         project_id: active.id,
-        request: CycleStartV1 {
+        request: ExternalCycleStartV1 {
             schema_version: SchemaV1,
             brief_id: fixture.brief.id,
             expected_revision: active.revision,
-            researcher_profile: fixture.researcher_profile,
-            reviewer_profile: fixture.reviewer_profile,
         },
     }
 }

@@ -1,47 +1,30 @@
-# Research preparation and submission
+# Finite research
 
-Table entries follow `quazonai client` with the saved login or original scoped connection from [connection](connection.md).
+The core is objective/data → disclosed hypotheses and native trials → validation feedback → selected independent assessment or a recorded stop. Portfolio/backtest and target/account observation are optional consumers, not prerequisites.
 
-## Inspect before changing
+```sh
+quazonai research models
+quazonai datasets
+quazonai research start --file original-request.json
+quazonai research list
+quazonai research get CONVERSATION_ID
+quazonai usage
+```
 
-| Need | Native arguments |
-| --- | --- |
-| Resolve project | `project list --limit 20`; then `project show ID` |
-| Read the research objective | `brief list PROJECT_ID --limit 20`; then `brief show BRIEF_ID` |
-| Inspect frozen inputs and policy | `input-set list --project-id PROJECT_ID --limit 20`; `input-set show ID`; `policy show ID` |
-| Inspect registered source metadata | `data source show ID`; `data revision list --source-id ID --limit 20`; `data revision show ID` |
-| Check execution readiness | `runtime readiness ID`; `codex models ID`; `codex account ID` |
-| Find existing work | `cycle list PROJECT_ID --limit 20`; `cycle show ID`; `experiment list --project-id PROJECT_ID --limit 20` |
+A file is a complete `ResearchStart` with an explicit original `requestId`. It may contain `input:{goal,model:{provider,modelId},data,policy}` or the configured-dataset form `{requestId,goal,model,datasetId,maxTrials}`. Native input must match a service-registered dataset; never invent server paths or data. Keep exact bytes and IDs for replay. An optional `--request-id` checks the file's ID; it never replaces it.
 
-Follow IDs from the Brief/InputSet rather than scanning all sources. Registration and prior readiness observations do not prove data quality, PIT, account usability or current eligibility. Report missing/stale prerequisites. Inspection does not authorize probes, login, permission changes or access to raw Sealed data/native storage paths.
+For a new objective with an already configured dataset, explicit flags are sufficient:
 
-For dataset suitability, report the selected project/InputSet/revision and observed origin, licensing/PIT, coverage and readiness limitations; a provider name alone proves no compatibility.
+```sh
+quazonai research start --goal 'THE_REQUESTED_OBJECTIVE' \
+  --dataset DATASET_ID --model PROVIDER:MODEL_ID \
+  --max-trials REQUESTED_LIMIT --request-id ORIGINAL_REQUEST_ID
+```
 
-## Prepare a research operation
+Use model IDs from actual configured availability. Discovery does not run inference, discover Desktop credentials or establish model quality. The host explicitly persists its capability-supported thinking level; hidden reasoning is not evidence to report.
 
-| Requested operation | Native arguments | Request schema |
-| --- | --- | --- |
-| Save/replace a Brief | `brief create PROJECT_ID` / `brief update BRIEF_ID` | `BriefCreate` / `BriefUpdate` |
-| Freeze the selected Brief | `brief freeze BRIEF_ID` | `BriefFreezeV1` |
-| Start its research Cycle | `cycle start PROJECT_ID` | `CycleStartV1` |
-| Validate a frozen InputSet | `data validate` | `DataValidateRequest` |
-| Publish research content | `artifact submit` | `ArtifactCreate` |
-| Propose an experiment | `experiment propose` | `ExperimentProposalV1` |
+Retain the original policy, budget, source identity and selection/evaluation criteria. Zero trials allows no computation. Committed failures consume attempts and remain disclosed. Missing inputs or unsupported criteria are not permission to change budgets or create another study until something passes.
 
-Discover unfamiliar fields from the named schema. Populate user intent and current snapshot values; missing scientific decisions need the user, not invented IDs, budgets, data roles, policy versions, assumptions or runtime. Follow the entry Skill's authority rules; Missions use their bound tools.
+Use `research get` to inspect all trials, failures, comparison and final/stop reason. Native computation is not a qualification. Final held-out assessment is separate from iterative feedback; never tune against it or rename/copy/fork exposed data to call it unseen. The model-code adapter preserves explicit scientific fuel budgets; omitted/null fuel stays unmetered. QZ imposes no process deadline or memory ceiling. Owned child recovery/cancellation and the provider-credential-free execution environment remain.
 
-Preserve `expected_revision` from the snapshot. A conflict requires rereading and reconsidering intent, not silently substituting the latest revision.
-
-Retain the original request and one idempotency key. Authorized routine writes can execute directly; preview complex new requests or those needing inspection, destructive-action checks or human review. Send once and follow the returned Run using [runs](runs.md). Frozen objects are immutable; a draft is not frozen and freezing is not evaluation PASS.
-
-## Submit research artifacts and experiments
-
-With `ARTIFACT_SUBMIT`, populate native `ArtifactCreate` from the selected project and encode the research content below as its `content` string. Do not add arbitrary paths, producer/origin claims, other Attempts or self-reported qualification. Local preview does not validate the inner document or scientific eligibility.
-
-With `EXPERIMENT_SUBMIT`, use `ExperimentProposalV1` with the original Cycle, inputs and registered artifact references. Preserve its ID and outcome; PENDING is not executed, evaluated or qualified. Budget failures return to the task owner; another Attempt/key must not evade them.
-
-Inside a [bound Mission](mission.md), artifact submission takes a workspace-relative filename; the adapter supplies fixed identities.
-
-## Research content
-
-CODE, PARAMETERS and REPORT are the permitted research kinds. Content is nonblank UTF-8, contains no NUL and is at most 2 MiB. CODE contains source text. PARAMETERS and REPORT contain a JSON object with numeric `schema_version: 1`, for example `{"schema_version":1,"text":"research notes"}`. Raw Markdown, arrays and string-valued schema versions are invalid. These content rules apply to both CLI content strings and Mission files.
+After an unknown start response, replay only the same original file or identical explicit flags with the same ID. HTTP 202 means admitted/replayed, not finished. Follow [observation](runs.md) and [recovery](recovery.md), without a replacement key.

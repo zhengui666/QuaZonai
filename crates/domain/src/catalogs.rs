@@ -4,8 +4,7 @@ use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The existing wire limit bounds definition records, not just distinct identities.
-pub const MAX_INSTRUMENT_DEFINITIONS: usize = 256;
+// The existing wire limit bounds definition records, not just distinct identities.
 
 fn bad(field: &str) -> DomainError {
     invalid(field, "NATIVE_CATALOG_METADATA_INVALID")
@@ -37,7 +36,7 @@ pub fn instrument_definition(
 pub fn instrument_versions(
     definitions: &[serde_json::Value],
 ) -> Result<BTreeMap<&str, Vec<&serde_json::Value>>, DomainError> {
-    if !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&definitions.len()) {
+    if definitions.is_empty() {
         return Err(bad("instrument_definitions"));
     }
     let mut chains: BTreeMap<&str, Vec<&serde_json::Value>> = BTreeMap::new();
@@ -286,7 +285,6 @@ pub fn metadata(
         || value.available_through < value.event_start
         || value.available_through > observed_at + chrono::Duration::seconds(5)
         || value.row_count.get() == 0
-        || value.row_count.get() > 1_000_000
         || value.data_kind != RuntimeDataKind::Bar
         || value.quality.native_version != "nautilus-persistence/0.63.0"
         || value.quality.datasets.len() != 1
@@ -343,7 +341,6 @@ pub fn metadata(
         || quality.first_event_ns > quality.last_event_ns
         || quality.last_event_ns > quality.available_through_ns
         || quality.instrument_ids.is_empty()
-        || quality.instrument_ids.len() > 256
     {
         return Err(bad("quality"));
     }
@@ -365,6 +362,9 @@ pub fn metadata(
         || quality.available_through_ns.get() > available as u64
     {
         return Err(bad("quality_times"));
+    }
+    if let Some(features) = &value.recorded_feature_inputs {
+        recorded_feature_inputs(features, value.partition, value.available_through)?;
     }
     let universe = &value.universe;
     text(&universe.name, 1, 120, false)?;
@@ -396,8 +396,8 @@ pub fn metadata(
         || universe.coverage_end < value.event_end
         || universe.coverage_start >= universe.coverage_end
         || universe.selection_asof > value.available_through
-        || !(1..=4096).contains(&universe.membership.len())
-        || !(1..=MAX_INSTRUMENT_DEFINITIONS).contains(&universe.instrument_definitions.len())
+        || universe.membership.is_empty()
+        || universe.instrument_definitions.is_empty()
     {
         return Err(bad("universe"));
     }
@@ -407,9 +407,6 @@ pub fn metadata(
         text(&member.instrument_id, 1, 200, false)?;
         if let Some(groups) = &member.groups {
             let mut unique = BTreeSet::new();
-            if groups.len() > contracts::portfolio::MAX_ALLOCATION_GROUPS {
-                return Err(bad("universe.groups"));
-            }
             for group in groups {
                 text(group, 1, 120, false)?;
                 if !unique.insert(group) {
@@ -469,7 +466,7 @@ pub fn calendar_sessions(
     text(&value.source_reference, 1, 2000, false)?;
     if value.timezone.parse::<chrono_tz::Tz>().is_err()
         || value.coverage_start_ns >= value.coverage_end_ns
-        || !(1..=4096).contains(&value.sessions.len())
+        || value.sessions.is_empty()
     {
         return Err(bad("calendar_sessions"));
     }
@@ -494,7 +491,7 @@ pub fn bar_notionals(
     let Some(values) = &quality.last_bar_notionals else {
         return Ok(());
     };
-    if values.is_empty() || values.len() != quality.instrument_ids.len() || values.len() > 256 {
+    if values.is_empty() || values.len() != quality.instrument_ids.len() {
         return Err(bad("quality.last_bar_notionals"));
     }
     for (value, instrument) in values.iter().zip(&quality.instrument_ids) {
@@ -574,4 +571,61 @@ pub fn portfolio_groups(
         return Err(bad_source());
     }
     Ok(groups)
+}
+
+/// A bounded attachment key cannot name a host path or a URL.
+pub fn recorded_feature_part_key(value: &str) -> Result<(), DomainError> {
+    if !(1..=120).contains(&value.len())
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(bad("recorded_feature_inputs.part_key"));
+    }
+    Ok(())
+}
+
+/// Structural checks only: the trusted source preparer checks the original
+/// paired reports and buffers. Descriptors grant no license or PIT authority.
+pub fn recorded_feature_inputs(
+    value: &RecordedFeatureInputsV1,
+    partition: contracts::research::DataPartition,
+    available_through: DateTime<Utc>,
+) -> Result<(), DomainError> {
+    let available = available_through
+        .timestamp_nanos_opt()
+        .and_then(|n| u64::try_from(n).ok())
+        .ok_or_else(|| bad("recorded_feature_inputs.available_through"))?;
+    if value.partition != partition
+        || partition == contracts::research::DataPartition::Sealed
+        || value.source_selection_start_ns >= value.source_selection_end_ns
+        || value.fragments.is_empty()
+    {
+        return Err(bad("recorded_feature_inputs"));
+    }
+    let mut keys = BTreeSet::new();
+    let mut observations = 0u64;
+    for fragment in &value.fragments {
+        recorded_feature_part_key(&fragment.part_key)?;
+        observations = observations
+            .checked_add(fragment.observations.get())
+            .ok_or_else(|| bad("recorded_feature_inputs.observations"))?;
+        if !keys.insert(&fragment.part_key)
+            || fragment.byte_count.get() == 0
+            || fragment.observations.get() == 0
+            || fragment.min_event_ns > fragment.max_event_ns
+            || fragment.min_event_ns < value.source_selection_start_ns
+            || fragment.max_event_ns >= value.source_selection_end_ns
+            || fragment.min_observed_available_ns > fragment.max_observed_available_ns
+            || fragment.min_observed_available_ns < fragment.min_event_ns
+            || fragment.max_observed_available_ns < fragment.max_event_ns
+            || fragment.max_observed_available_ns.get() > available
+        {
+            return Err(bad("recorded_feature_inputs.fragment"));
+        }
+        // Observed availability may exceed the source event selection end.
+        // BAR event_start/end are intentionally not bounds on feature events.
+    }
+    Ok(())
 }

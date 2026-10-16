@@ -258,11 +258,14 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         vec![vec![1.0], vec![1.0, 2.0]],
         vec![vec![f64::NAN], vec![0.0]],
         vec![vec![1.0], vec![f64::INFINITY]],
-        vec![vec![1.0; MAX_ALLOCATION_ASSETS + 1]; 2],
     ] {
         assert!(mix(&forecasts, &weights).is_err());
     }
-    let rows = vec![vec![0.1]; MAX_ALLOCATION_ASSETS + 1];
+    assert_eq!(
+        mix(&vec![vec![1.0; 257]; 2], &weights).unwrap(),
+        vec![1.0; 257]
+    );
+    let rows = vec![vec![0.1]; 257];
     assert!(mix(&rows, &vec![decimal("0.5"); rows.len()]).is_err());
 }
 

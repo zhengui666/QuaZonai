@@ -3,69 +3,75 @@
 <a id="purpose"></a>
 ## Purpose and architecture
 
-A single-user research workbench: Web/CLI/MCP → Rust API → PostgreSQL/PGMQ → Worker → Codex or a scientific Runtime. The output is research evidence and target portfolios, not broker orders. Module ownership and domain invariants are in [architecture](architecture.md).
+Single-user unattended quantitative research: idea → recorded scientific trials and independent evaluation → optional shared-account strategy/portfolio backtest → target-only delivery and account observation. TypeScript owns HTTP, configuration, orchestration, CLI and Web. Official Pi Durable owns execution and recovery; NautilusTrader, Clarabel, Arrow and the retained Rust kernel own necessary computation. PostgreSQL history and applied migrations remain. See [architecture](architecture.md).
 
 <a id="commands"></a>
 ## Development and checks
 
-Work at the repository root on a branch from current main. Preserve unrelated worktrees. Use the compiler in [rust-toolchain.toml](../rust-toolchain.toml); the [Makefile](../Makefile) selects it explicitly. Dependency versions come from Cargo/npm lockfiles. The frontend Node requirement is in [package.json](../apps/web/package.json); CI setup is authoritative for native prerequisites.
+Develop from current remote `dev` in an isolated branch/worktree. Preserve unrelated changes. Node 22.19+ supplies native type stripping and SQLite; use the pinned [Rust toolchain](../rust-toolchain.toml) and lockfiles.
 
 ```sh
+npm ci --prefix apps/service --no-audit --no-fund
+npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
+npm ci --prefix apps/cli --ignore-scripts --no-audit --no-fund
 npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
-npm ci --prefix runtimes/codex --ignore-scripts --no-audit --no-fund
 ```
 
-| Change | Check from the repository root | Required result / prerequisite |
+| Change | Command at repository root | Actual scope |
 | --- | --- | --- |
-| Markdown and CLI/Skill documentation | `make check-docs` | Links, native help and Skill contracts pass; requires the CI-pinned lychee and Rust dependencies |
-| README or Docker deployment guide | `make check-links` and `node --test deploy/install.test.mjs` | Run both: the latter checks Bash examples and native helper help with Node, Bash and Python; it does not install services and is not included in `make check-docs` |
-| Markdown links only | `make check-links` | All tracked Markdown, including `.opensdlc`, resolves; this does not run CLI checks |
-| Package ownership and upstream sources | `make check-architecture` | Allowed dependency directions and official source packages; Cargo fetches missing locked packages when the cache is cold |
-| Rust logic | `make check-unit` | Formatting, Clippy and non-Store/non-Server tests; not the full suite |
-| Transactions | `make check-store` | Disposable PostgreSQL/PGMQ through `DATABASE_URL` |
-| HTTP and Worker | `make check-http` | Disposable database plus native Codex/system prerequisites from CI |
-| Full Rust suite | `make check` | Real disposable dependencies; no production database |
-| Web and generated client | `make check-web` | No generated drift; types, tests and production build pass |
-| Browser/PWA | `CADDY_BIN=/path/to/caddy npm --prefix apps/web run test:e2e` | Real API, Worker, PostgreSQL, Caddy and systemd user manager; use the Web workflow setup |
-| Scientific/OCI boundaries | [Native Runtime workflow](../.github/workflows/native-runtime.yml) | Built native image, Docker/cgroup prerequisites, actual execution/cancellation/restore tests |
-| Container installer | [Container action](../.github/actions/container/action.yml) | Real installation, upgrade and recovery against disposable resources |
+| Service, Harness, CLI and Skill | `make check-ts` | Types and concise HTTP/core, durable recovery and client checks; official upstream packages |
+| Web | `make check-web` | Types, small unit check, production build |
+| Five-page interactions | `npm --prefix apps/web run test:e2e` | Three Chromium checks; install Chromium through the package's Playwright CLI first |
+| Public source helpers | `make check-source` | Shared HF transport/cache, explicit source selection, offline handoff and failure/recovery fixtures |
+| Installation/package helpers | `make check-deploy` | Source helper tests, shell syntax and disposable package/manager checks; not an installed service |
+| Routine TypeScript work | `make check` | TS, Web and deployment helpers |
+| Scientific contracts/kernel | `make check-science` | Retained native rules, factors, simulation, allocation, isolation and account adapters |
+| Connected native core flow | `make check-core QZ_JOB_BINARY=/absolute/path/to/job` | Matching `catalog-prepare` and `browser_catalog_fixture` beside job; actual native factor/heldout, selected strategy, shared-account curve and controlled downstream protocol |
+| Full retained science, manual/formal release | `make check-native-full` | Clippy and all retained native tests; not the routine control-plane suite |
+| Current Markdown | `make check-links` | Offline links using `.lychee.toml`; historical task records retain their original context |
 
-Store/HTTP tests use PostgreSQL 18 with PGMQ 1.10.0. [CI](../.github/workflows/ci.yml) defines the native binaries, environment and schema export commands. [Web console](../.github/workflows/web.yml) defines browser setup, including Chromium. Cold-archive tests may elevate only their disposable ownership/archive operations, never Cargo or the application.
+Build the matching scientific executables once with `bash deploy/docker/native-build.sh debug /absolute/artifact/directory` (or `release`). `CARGO_TARGET_DIR` can reuse the existing cache; `PROFILE=release` selects matching tests. Do not delete unrelated caches or user data. A missing prerequisite, ignored test, old binary or old-Head CI is not a pass.
 
-For a contract change, edit Rust DTOs/handlers, run the relevant native schema export from CI, then `npm --prefix apps/web run generate`. Commit the source and generated diff together. `quazonai openapi --list-schemas` and `quazonai openapi --schema ArtifactCreate` inspect an installed binary offline; they do not query a running server's version.
+[CI](../.github/workflows/ci.yml) runs TypeScript, five-page Web and scoped native/core checks. Scientific binaries are built once and passed to the connected test. Push runs retain the exact tested release output for image production. [Rust regression](../.github/workflows/rust-regression.yml) is the manual/formal-release full retained-science check, not the retired Server/Store suite.
 
-`npm --prefix apps/web run dev` is a development UI proxy for a real local API. Browser behavior is verified by the native harness, not a substitute backend. Scientific samples belong to tests, not product entrypoints.
+### Local service
+
+Copy [service.example.json](../apps/service/service.example.json) to a private configuration, then set explicit original database, native job, datasets, provider modules and extensions as needed:
+
+```sh
+QZ_CONFIG=/absolute/private/service.json npm --prefix apps/service start
+npm --prefix apps/web run dev
+node --experimental-strip-types apps/cli/src/main.ts --help
+```
+
+Vite proxies the real API at port 8080. The application opens the official durable host programmatically; do not also start the standalone research host against the same SQLite database. The [research guide](../apps/research/README.md) describes public Harness tuning, provider registration, bounded continuation and recovery.
+
+### Source contracts
+
+Current API DTOs live in [packages/contracts](../packages/contracts/src/index.ts), imported directly by Service, Web and CLI. Scientific wire rules remain in [Rust contracts](../crates/contracts/src); edit source before running any source-derived export. `contracts/generated/` and `apps/web/src/generated/` are retained historical snapshots and are not the new HTTP API. Never hand-edit them or invoke removed server/runtime generators. `quazonai schema show NAME` exposes the CLI's supported schema views without opening service storage.
+
+Deterministic tests use official Faux Provider and controlled downstream protocols. Native calculations are real, but synthetic catalogs do not establish market/PIT quality, paid-model quality, profitability, real-account results or a literal 24-hour run. Record those separately if authorized.
 
 <a id="runtime-image-build"></a>
-### Image production
+## Image production
 
-[Container CI](../.github/actions/container/action.yml) builds the application, scientific job and Codex images, then installs those already-built artifacts. [Version publishing](../.github/workflows/release-version.yml) pushes the tested images and validates GHCR installation on a fresh runner before publishing the deployment bundle. The job-image assembler lives in [runtimes/native](../runtimes/native); deployment uses the manifest and installed [Runtime entry](operations.md#scientific-runtime).
+[Container action](../.github/actions/container/action.yml) reuses exact tested native outputs for the Node application and scientific image; normal npm/buildx/Rust dependency caches avoid duplicate compilation. [Version publishing](../.github/workflows/release-version.yml) and [dev publishing](../.github/workflows/dev-image.yml) preserve the release strategy and run disposable installation/restart/backup acceptance. Source tools remain at [runtimes/data](../runtimes/data); native image assembly at [runtimes/native](../runtimes/native).
+
+CLI archives carry ordinary JS, official dependencies and the official platform Node runtime, not a rewritten runtime or SEA implementation. Installation does not compile and requires no host Node/Rust/Python/Worker. Legacy Rust installation cutover is explicitly unsupported until original authentication, queues and state can be reconciled; new bundles never initialize over that state. See [deployment](../deploy/docker/README.md).
 
 <a id="conventions"></a>
-## Conventions
+## Conventions and owners
 
-Follow [AGENTS](../AGENTS.md) and the owning module's existing types. Keep regression checks at the failing boundary; do not weaken assertions to pass CI. New dependencies need a concrete capability and compatible licensing. Numerical performance claims need equal outputs and a recorded workload/profile.
+Follow [AGENTS](../AGENTS.md), source ownership and official public APIs. Preserve historical data, applied migrations, backups, original request/trial identities, scientific budgets and license notices. QZ does not own a second scheduler, numerical solver, matching or accounting engine. Tests stay short and concentrate on core behavior and recovery.
 
-Use one `tasks/<task-id>/task.md` linking the Issue and PR. New task IDs/prose use English unless `.opensdlc/config.json` selects `zh-CN`; existing IDs and document languages stay unchanged. Split a specification only when it needs its own maintained body. Do not copy templates, source schemas or full execution logs into project context.
-
-<a id="owners"></a>
-## Responsibilities
-
-[@zhengui666](https://github.com/zhengui666) owns requirements and the service. Authorship/execution boundaries are in [AGENTS](../AGENTS.md); merge criteria are in [review](review.md). Product researchers, evaluators and downstream capabilities are separate execution roles, not additional human users.
+[@zhengui666](https://github.com/zhengui666) owns the goal and service. Final applicable CI and independent review must cover the delivered Head before merging into remote `dev`; review and merge are not production deployment or account authorization.
 
 <a id="sources"></a>
-## Sources
+## Canonical sources
 
-| Subject | Canonical source |
-| --- | --- |
-| Product behavior and package directions | [architecture](architecture.md) |
-| Wire fields and validation | [Rust contracts](../crates/contracts/src), [API OpenAPI](../contracts/generated/api-v2.openapi.json), [Runtime OpenAPI](../contracts/generated/runtime-v1.openapi.json), [domain schema](../contracts/generated/domain-v1.openapi.json) |
-| Persistence and migrations | [Store](../crates/store/src), [migrations](../migrations) |
-| UI and brand | [web source](../apps/web/src), [product icon](../apps/web/public/icon.svg) |
-| User operation | [README](../README.md), [deployment bundle](../deploy/docker/README.md), [service Skill](../skills/quazonai/SKILL.md) |
-| Delivery, recovery and measurements | [operations](operations.md), actual Issue/PR/Actions records |
+[Architecture](architecture.md) · [TS contracts](../packages/contracts/src/index.ts) · [Service](../apps/service) · [Rust science](../apps/job) · [Migrations](../migrations) · [operations](operations.md) · [README](../README.md) · [deployment](../deploy/docker/README.md) · [review](review.md).
 
 <a id="native"></a>
 ## Native entrypoints
 
-[AGENTS.md](../AGENTS.md) remains the coding-agent entry. [skills/quazonai/SKILL.md](../skills/quazonai/SKILL.md) is the independently installable service-operation Skill; its [portable-package checks](../apps/server/tests/client_skill.rs) do not require developer documentation. [GitHub workflows](../.github/workflows) and the [PR template](../.github/PULL_REQUEST_TEMPLATE.md) retain their native locations. Instruction reviews use the [evaluation cases](evals/suite.md).
+[AGENTS.md](../AGENTS.md) is the coding context. [Service Skill](../skills/quazonai/SKILL.md) operates an installed service, not development or the retired Mission engine. Workflows remain at [.github/workflows](../.github/workflows), PR context at [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md), task evidence under `tasks/<task-id>/task.md`, and independent Agent evaluations under [evals](evals/suite.md). New task IDs/prose default to English when `.opensdlc/config.json` is absent.

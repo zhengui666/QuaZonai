@@ -13,7 +13,7 @@ fn main() -> Result<()> {
     let run = |reuse: bool| -> Result<(std::time::Duration, f64, u64)> {
         let started = Instant::now();
         let compiled = reuse
-            .then(|| SignalModule::new(black_box(&bytes)))
+            .then(|| SignalModule::new(black_box(&bytes), true))
             .transpose()?;
         let mut checksum = 0.0;
         let mut fuel = 0;
@@ -27,7 +27,7 @@ fn main() -> Result<()> {
                     110.0, 100.0, 105.0, 102.0, 25.0, 100.0, 112.0, 98.0,
                 ]))?);
             }
-            fuel += 100_000 - model.remaining_fuel();
+            fuel += 100_000 - model.remaining_fuel().unwrap();
         }
         Ok((started.elapsed(), checksum, fuel))
     };

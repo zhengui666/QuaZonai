@@ -21,10 +21,7 @@ pub fn policy(
         )
     };
     let instruments = super::instruments(bars)?;
-    if !(1..=64).contains(&requirements.len())
-        || !(1..=100_000).contains(&horizon)
-        || !requirements.iter().any(|r| r.required)
-    {
+    if requirements.is_empty() || horizon == 0 || !requirements.iter().any(|r| r.required) {
         return Err(invalid());
     }
     for r in requirements.iter().filter(|r| r.required) {

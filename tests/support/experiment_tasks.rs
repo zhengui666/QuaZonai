@@ -1,6 +1,8 @@
 //! Controlled native protocol fixtures, not rustc/Wasmi execution or market evidence.
 #![allow(dead_code)]
 use super::{cycle_support, mission_support, runtime_support};
+#[path = "historical_alpha.rs"]
+pub mod historical_alpha;
 use contracts::{
     artifacts::{ArtifactCreate, ResearchArtifactKind},
     experiments::ExperimentProposalV1,
@@ -8,6 +10,8 @@ use contracts::{
     runtime::{RuntimeArtifactSchemaV1, RuntimeProbeOutcomeV1, RuntimeProbeRequestV1},
     DbCounter, Id, SchemaV1,
 };
+#[path = "external_evaluation_report.rs"]
+mod external_report;
 use sqlx::PgPool;
 use store::{
     authority::Actor,
@@ -20,10 +24,10 @@ pub fn limits() -> JobLimitsV1 {
     JobLimitsV1 {
         schema_version: SchemaV1,
         experiments: 1,
-        cpu_seconds: DbCounter::new(10).unwrap(),
-        wall_seconds: 60,
-        memory_mib: 1024,
-        output_bytes: DbCounter::new(1024 * 1024).unwrap(),
+        cpu_seconds: Some(DbCounter::new(10).unwrap()),
+        wall_seconds: Some(60),
+        memory_mib: Some(1024),
+        output_bytes: Some(DbCounter::new(1024 * 1024).unwrap()),
     }
 }
 
@@ -35,30 +39,6 @@ pub async fn trial_usage(pool: &PgPool, lease: &RunLease) -> (i64, i64) {
     .fetch_one(pool)
     .await
     .unwrap()
-}
-
-pub async fn result_turn(
-    store: &Store,
-    f: &cycle_support::Fixture,
-    lease: &RunLease,
-) -> Result<bool, StoreError> {
-    let reading = f.objects.clone();
-    let writing = f.objects.clone();
-    store
-        .prepare_mission_result_turn(
-            lease.run.id,
-            &lease.fence,
-            move |id, size| {
-                let objects = reading.clone();
-                async move { objects.read(id, size).map_err(|_| StoreError::Integrity) }
-            },
-            move |object| async move {
-                writing
-                    .put(object.id, &object.bytes)
-                    .map_err(|_| StoreError::Integrity)
-            },
-        )
-        .await
 }
 
 pub async fn start(
@@ -172,17 +152,23 @@ async fn upload(
 pub async fn setup(pool: &PgPool) -> (Store, Actor, cycle_support::Fixture, RunLease, Id) {
     let (store, actor, f, cycle, preparation) = mission_support::setup(pool).await;
     mission_support::complete(pool, &store, &f, preparation, false).await;
-    assert!(store.advance_initial_cycle(preparation).await.unwrap());
-    let message = store.read_mission_messages(60, 1).await.unwrap().remove(0);
-    let Some(ClaimResult::Leased(lease)) = store
-        .claim_mission(&message, "compiler-parent", 120)
+    let message_id: i64 =
+        sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+            .bind(preparation.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    store
+        .acknowledge_run(&store::lifecycle::RunMessage {
+            message_id,
+            run_id: preparation,
+            read_count: 1,
+        })
         .await
-        .unwrap()
-    else {
-        panic!("Mission lease required")
-    };
+        .unwrap();
+    let lease = historical_alpha::parent(pool, &store, &actor, &f, cycle).await;
     let experiment = propose(pool, &store, &actor, &f, cycle).await;
-    (store, actor, f, *lease, experiment)
+    (store, actor, f, lease, experiment)
 }
 pub fn capabilities(
     now: chrono::DateTime<chrono::Utc>,
@@ -325,8 +311,27 @@ pub async fn complete_sealed(
     .await
 }
 
+pub async fn complete_external_evaluation(
+    pool: &PgPool,
+    store: &Store,
+    f: &cycle_support::Fixture,
+    run: Id,
+    minimum_bytes: Option<usize>,
+) -> Id {
+    complete_native(
+        pool,
+        store,
+        f,
+        run,
+        Observation::ExternalEvaluation { minimum_bytes },
+        None,
+    )
+    .await
+}
+
 enum Observation {
     Compilation,
+    ExternalEvaluation { minimum_bytes: Option<usize> },
     Forecast,
     Validation { rows: usize, ic: f64 },
     Sealed,
@@ -344,13 +349,17 @@ async fn complete_native(
     let lease = if let Some(lease) = claimed {
         lease
     } else {
-        let message = store
-            .read_native_run_messages(1, 100)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|m| m.run_id == run)
-            .unwrap();
+        let message_id: i64 =
+            sqlx::query_scalar("SELECT msg_id FROM pgmq.q_runs WHERE message->>'run_id'=$1")
+                .bind(run.to_string())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let message = store::lifecycle::RunMessage {
+            message_id,
+            run_id: run,
+            read_count: 1,
+        };
         let Some(ClaimResult::Leased(lease)) = store
             .claim_native_run(&message, "compile-result", 60)
             .await
@@ -385,11 +394,60 @@ async fn complete_native(
             model_storage_ref: model_ref,
             rustc_version: "rustc 1.98.1 (controlled observation)".into(),
             target: "wasm32-unknown-unknown".into(),
-            abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
+            abi: {
+                let size = job
+                    .spec
+                    .inputs
+                    .iter()
+                    .find_map(|input| match input {
+                        RuntimeInputV1::Artifact {
+                            artifact_id,
+                            byte_count,
+                            ..
+                        } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                        _ => None,
+                    })
+                    .unwrap();
+                let task: contracts::execution::NativeTaskParametersV1 = serde_json::from_slice(
+                    &f.objects
+                        .read(job.spec.parameters_artifact_id, size)
+                        .unwrap(),
+                )
+                .unwrap();
+                if matches!(
+                    task,
+                    contracts::execution::NativeTaskParametersV1::CompileFeatureModel { .. }
+                ) {
+                    contracts::science::FEATURE_MODEL_ABI_V2.into()
+                } else {
+                    "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into()
+                }
+            },
             module_bytes: DbCounter::new(wasm.len() as u64).unwrap(),
         })
         .unwrap();
         vec![wasm, report]
+    } else if let Observation::ExternalEvaluation { minimum_bytes } = observation {
+        let size = job
+            .spec
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                RuntimeInputV1::Artifact {
+                    artifact_id,
+                    byte_count,
+                    ..
+                } if *artifact_id == job.spec.parameters_artifact_id => Some(*byte_count),
+                _ => None,
+            })
+            .unwrap();
+        let task: contracts::execution::NativeTaskParametersV1 = serde_json::from_slice(
+            &f.objects
+                .read(job.spec.parameters_artifact_id, size)
+                .unwrap(),
+        )
+        .unwrap();
+        vec![serde_json::to_vec(&external_report::report(&task, minimum_bytes)).unwrap()]
     } else if let Observation::Validation { rows, ic } = observation {
         let size = job
             .spec
@@ -516,7 +574,7 @@ async fn complete_native(
                 ("nautilus-persistence".into(), "0.63.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
-            consumed_fuel: DbCounter::new(u64::from(rows)).unwrap(),
+            consumed_fuel: Some(DbCounter::new(u64::from(rows)).unwrap()),
             points,
         };
         let bytes = if let Some(model) = calibration {
@@ -741,7 +799,7 @@ fn validation_report(
             ("linregress".into(), "0.5.4".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
         ]),
-        consumed_fuel: count(1000),
+        consumed_fuel: Some(count(1000)),
         unique_test_observations: count(unique.len() as u64),
         folds,
     }

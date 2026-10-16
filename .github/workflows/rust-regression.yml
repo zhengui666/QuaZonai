@@ -1,0 +1,49 @@
+name: Full scientific kernel
+on:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+      artifact_label:
+        type: string
+        default: formal
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact science revision, or selected branch
+        type: string
+permissions:
+  contents: read
+jobs:
+  science:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: '1.98.1'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: |
+            apps/service/package-lock.json
+            apps/research/package-lock.json
+      - run: |
+          npm ci --prefix apps/service --no-audit --no-fund
+          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-full
+          cache-bin: false
+          cache-workspace-crates: false
+      - run: make check-native-full

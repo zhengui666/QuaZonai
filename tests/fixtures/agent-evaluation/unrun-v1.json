@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "report_kind": "AGENT_EVALUATION",
+  "mode": "PROTOCOL_ONLY",
+  "status": "UNRUN",
+  "recorded_at": "2026-09-30T00:00:00Z",
+  "runner": {
+    "name": "report-validator-fixture",
+    "version": "1"
+  },
+  "subject": {
+    "name": "codex",
+    "version": "unobserved"
+  },
+  "requested": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "max"
+  },
+  "source_revision": "fixture-not-a-source-revision",
+  "source_sha256": "2dc815a9cf7b6bf38c7bc32d97feec1ebfbba6745fba363ff4058e4db6c5a22b",
+  "suite_id": "protocol-fixture-v1",
+  "suite_sha256": "d401a17c5bfe62f6df9c23587df52e1fb98fda61809c1dff567834ed6e4fe247",
+  "tuning": {
+    "id": "protocol-tuning-v1",
+    "sha256": "0ad93ec46d103d990fdd926be508a8957ce09ab76e4260f08a0927e1a4ea50b0",
+    "case_ids": [
+      "protocol-tuning"
+    ]
+  },
+  "held_out": {
+    "id": "protocol-held-out-v1",
+    "sha256": "e0c8c0456cc22d14f5268d5ff836be854f2afcd2b51250f721d17c31748cc399",
+    "case_ids": [
+      "protocol-held-out"
+    ]
+  },
+  "cases": [
+    {
+      "id": "protocol-tuning",
+      "split": "TUNING",
+      "scenario_sha256": "fd9618e2c1134887e8d37ce095faa2ec8adf7969f7a56e1ce8dd1eea847270cb",
+      "status": "UNRUN",
+      "reason": "Protocol fixture only. No Agent invocation has run.",
+      "observed": null,
+      "measurements": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "elapsed_ms": null,
+        "tool_calls": null,
+        "cost": null
+      },
+      "required_assertions": [
+        "expected-result"
+      ],
+      "assertions": []
+    },
+    {
+      "id": "protocol-held-out",
+      "split": "HELD_OUT",
+      "scenario_sha256": "21f79b3968dc15a19ba7d12d97a926816673439dfd55d1263b8c07ac8132067e",
+      "status": "UNRUN",
+      "reason": "Protocol fixture only. No Agent invocation has run.",
+      "observed": null,
+      "measurements": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "elapsed_ms": null,
+        "tool_calls": null,
+        "cost": null
+      },
+      "required_assertions": [
+        "expected-result"
+      ],
+      "assertions": []
+    }
+  ]
+}

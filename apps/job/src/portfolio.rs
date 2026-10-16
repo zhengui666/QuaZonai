@@ -42,8 +42,9 @@ pub fn build(
         original == request.current_weights,
         "PORTFOLIO_CURRENT_WEIGHTS_SOURCE_MISMATCH"
     );
+    let market = crate::catalog::load_catalog(catalog, &request.selection)?;
     let prepared = prepare(
-        catalog,
+        &market,
         &request.selection,
         &request.mandate,
         &request.execution_settings,
@@ -52,13 +53,11 @@ pub fn build(
         &mut read,
     )?;
     let bar_notionals = if request.rolling_liquidity.is_some() {
-        crate::catalog::last_bar_notionals(&crate::catalog::load_catalog(
-            catalog,
-            &request.selection,
-        )?)?
+        crate::catalog::last_bar_notionals(&market)?
     } else {
         Vec::new()
     };
+    drop(market);
     let source_assets = domain::execution::portfolio_rolling_liquidity_assets(
         &request.selection,
         &request.assets,
@@ -93,12 +92,16 @@ pub(crate) struct Prepared {
     pub forecasts: PortfolioForecastInputV1,
     pub returns: PortfolioReturnHistoryV1,
     pub slippage: Vec<NativePortfolioSlippageReferenceV1>,
-    pub consumed_fuel: DbCounter,
+    pub consumed_fuel: Option<DbCounter>,
+    /// Same order as models; only explicit budgets have a measured remainder.
+    pub remaining_fuel: Vec<Option<DbCounter>>,
 }
 
-/// Pure model/catalog preparation, deliberately without any weights-source identity.
+/// Borrow the caller's selected market so forecasts and liquidity use the same
+/// authorized native rows. No catalog cache or state is shared across cutoffs.
+/// Deliberately without any weights-source identity.
 pub(crate) fn prepare(
-    catalog: &Path,
+    market: &crate::catalog::NativeMarketData,
     selection: &NativeBarSelectionV1,
     mandate: &MandateContentV1,
     settings: &NativeSimulationSettingsV1,
@@ -106,9 +109,8 @@ pub(crate) fn prepare(
     models: &[NativePortfolioAlphaV1],
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<Prepared> {
-    ensure!((2..=256).contains(&models.len()), "PORTFOLIO_MEMBERS");
-    let market = crate::catalog::load_catalog(catalog, selection)?;
-    crate::simulation::execution_market(&market, settings)?;
+    ensure!(models.len() >= 2, "PORTFOLIO_MEMBERS");
+    crate::simulation::execution_market(market, settings)?;
     let until = selection
         .decision_cutoff_ns
         .get()
@@ -126,16 +128,9 @@ pub(crate) fn prepare(
     let horizon = models[0].parameters.label_horizon_observations as usize;
     let first = &market.series[0];
     let rows = first.bars.len();
+    ensure!(rows >= horizon + 2, "PORTFOLIO_RETURN_SAMPLE_LIMIT");
     ensure!(
-        rows >= horizon + 2 && rows - horizon <= MAX_RETURN_OBSERVATIONS,
-        "PORTFOLIO_RETURN_SAMPLE_LIMIT"
-    );
-    ensure!(
-        market
-            .series
-            .len()
-            .checked_mul(rows - horizon)
-            .is_some_and(|n| n <= MAX_RETURN_VALUES),
+        market.series.len().checked_mul(rows - horizon).is_some(),
         "PORTFOLIO_RETURN_SIZE_LIMIT"
     );
     let instruments = market
@@ -190,15 +185,16 @@ pub(crate) fn prepare(
         })
         .collect();
     let mut members = Vec::new();
-    let mut consumed = 0_u64;
+    let mut consumed = Some(0_u64);
+    let mut remaining_fuel = Vec::with_capacity(models.len());
     for member in models {
         let module = read(member.model_artifact_id)?;
         let calibration: Option<NativeFrozenCalibrationV1> = member
             .calibration_artifact_id
             .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)))
             .transpose()?;
-        let result = crate::forecast::forecast_market(
-            &market,
+        let (consumed_fuel, points) = crate::forecast::forecast_latest_market(
+            market,
             &NativeForecastRequestV1 {
                 schema_version: SchemaV1,
                 selection: selection.clone(),
@@ -206,14 +202,25 @@ pub(crate) fn prepare(
             },
             &module,
         )?;
+        remaining_fuel.push(
+            member
+                .parameters
+                .total_fuel
+                .zip(consumed_fuel)
+                .map(|(total, used)| count(total.get() - used.get()))
+                .transpose()?,
+        );
         consumed = consumed
-            .checked_add(result.consumed_fuel.get())
-            .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))?;
+            .zip(consumed_fuel)
+            .map(|(sum, next)| {
+                sum.checked_add(next.get())
+                    .ok_or_else(|| anyhow::anyhow!("PORTFOLIO_FUEL_OVERFLOW"))
+            })
+            .transpose()?;
         let mut forecasts = Vec::new();
         let mut available = 0;
         for (instrument, bar_type) in instruments.iter().zip(&selection.bar_types) {
-            let point = result
-                .points
+            let point = points
                 .iter()
                 .rev()
                 .find(|p| &p.instrument_id == instrument)
@@ -301,7 +308,8 @@ pub(crate) fn prepare(
             asset_returns,
         },
         slippage: slippage_references,
-        consumed_fuel: count(consumed)?,
+        consumed_fuel: consumed.map(count).transpose()?,
+        remaining_fuel,
     })
 }
 

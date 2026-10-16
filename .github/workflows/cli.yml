@@ -1,0 +1,83 @@
+name: Portable Node CLI
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      revision:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: linux-x86_64, runner: ubuntu-22.04, node: linux-x64, suffix: tar.gz}
+          - {platform: macos-x86_64, runner: macos-15-intel, node: darwin-x64, suffix: tar.gz}
+          - {platform: macos-aarch64, runner: macos-15, node: darwin-arm64, suffix: tar.gz}
+          - {platform: windows-x86_64, runner: windows-2025, node: win-x64, suffix: zip}
+    env:
+      VERSION: ${{ inputs.version }}
+      REVISION: ${{ inputs.revision }}
+      NODE_VERSION: '22.19.0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: apps/cli/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Fetch the official pinned platform runtime, not a custom executable
+        env:
+          NODE_PLATFORM: ${{ matrix.node }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          curl --fail --location --retry 3 --max-time 180 \
+            --output "$RUNNER_TEMP/node.$SUFFIX" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-$NODE_PLATFORM.$SUFFIX"
+          if [[ "$SUFFIX" == zip ]]; then
+            python -m zipfile -e "$RUNNER_TEMP/node.zip" "$RUNNER_TEMP"
+          else
+            tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
+          fi
+      - name: Package JS/dependencies and execute the extracted distribution
+        env:
+          NODE_PLATFORM: ${{ matrix.node }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          python -B deploy/package.py pack-cli --runtime "$RUNNER_TEMP/node-v$NODE_VERSION-$NODE_PLATFORM" \
+            --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
+          python -B deploy/package.py smoke-cli --archive "$RUNNER_TEMP/cli-assets/quazonai-cli-$PLATFORM.$SUFFIX" \
+            --platform "$PLATFORM" --version "$VERSION"
+      - name: Unix installer with the real archive and no host Node
+        if: runner.os != 'Windows'
+        env:
+          QZ_TEST_CLI_ARCHIVE: ${{ runner.temp }}/cli-assets/quazonai-cli-${{ matrix.platform }}.tar.gz
+          QZ_TEST_CLI_VERSION: ${{ inputs.version }}
+        run: node --test deploy/install.test.mjs
+      - name: Windows installer with the real bundled Node
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./deploy/install.test.ps1 -Archive "$env:RUNNER_TEMP/cli-assets/quazonai-cli-windows-x86_64.zip" -Version "$env:VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cli-${{ inputs.version }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/cli-assets/
+          retention-days: 14
+          if-no-files-found: error

@@ -357,7 +357,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
         );
         assert_eq!(
             String::from_utf8(output.stderr).unwrap().trim(),
-            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+            "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED\nSIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
         );
     }
 }

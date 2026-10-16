@@ -181,8 +181,8 @@ pub(crate) fn last_bar_notionals(
 
 fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
     ensure!(
-        (1..=256).contains(&selection.bar_types.len())
-            && (1..=1_000_000).contains(&selection.maximum_rows)
+        !selection.bar_types.is_empty()
+            && selection.maximum_rows >= 1
             && selection.event_start_ns < selection.event_end_ns
             && selection.event_end_ns <= selection.decision_cutoff_ns,
         "CATALOG_SELECTION_INVALID"
@@ -192,10 +192,7 @@ fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
 
 /// Shared canonical native bar parsing, independent of any catalog path.
 pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
-    ensure!(
-        (1..=256).contains(&values.len()),
-        "CATALOG_SELECTION_INVALID"
-    );
+    ensure!(!values.is_empty(), "CATALOG_SELECTION_INVALID");
     let mut instruments = std::collections::BTreeSet::new();
     let mut types = Vec::with_capacity(values.len());
     for text in values {
@@ -291,7 +288,7 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         true,
     )?;
     let mut bars = Vec::new();
-    for item in query.take(selection.maximum_rows as usize + 1) {
+    for item in query {
         ensure!(
             bars.len() < selection.maximum_rows as usize,
             "CATALOG_ROW_LIMIT"
@@ -360,7 +357,11 @@ pub fn validate_native(
         let instrument = selected.instrument_at(available)?;
         if let Some(previous) = selected.bars.last() {
             ensure!(
-                previous.ts_event < bar.ts_event && previous.ts_init < bar.ts_init,
+                // A source response may publish several distinct historical bars
+                // together. Native APIs preserve equal receipt times; never invent
+                // per-row offsets. Event identities and availability order still
+                // reject duplicates, revisions and time travel.
+                previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
                 "CATALOG_NONUNIQUE_OR_REVISED_BAR"
             );
         }

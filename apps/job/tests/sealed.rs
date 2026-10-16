@@ -153,7 +153,10 @@ fn real_sealed_cli_consumes_frozen_model_and_rejects_an_unbound_score() {
     let result = native::command(&args[..5], &request);
     assert!(!result.status.success());
     assert!(result.stdout.is_empty());
-    assert_eq!(result.stderr, b"QZ_NATIVE_JOB_FAILED\n");
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr).lines().next(),
+        Some("QZ_NATIVE_JOB_FAILED")
+    );
 }
 
 #[test]

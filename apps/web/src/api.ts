@@ -1,140 +1,49 @@
-import createClient from 'openapi-fetch';
-import type { components, paths } from './generated/api';
-import { responseKind, validateDecimal, validateProblem, validateResponse } from '@quazonai/web/response-contract';
+import type { Problem } from '../../../packages/contracts/src/index.ts';
 
-export type Schema = components['schemas'];
-export type Problem = Schema['Problem'];
+const API = '/api/v3';
 export const authenticationEvents = new EventTarget();
+export class ApiError extends Error {
+  constructor(message: string, readonly status = 0) { super(message); }
+}
 
-export class ApiFailure extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 0,
-    readonly problem?: Problem,
-    readonly retryAt = 0,
-  ) {
-    super(message);
-    this.name = 'ApiFailure';
+const errors: Record<string, string> = {
+  unsupported_evidence: '研究证据不支持', evidence_unavailable: '研究证据不可用',
+  unauthorized: '请重新登录', invalid_password: '密码不正确',
+  conflict: '操作冲突', not_found: '记录不存在', unavailable: '服务不可用',
+  model_unavailable: '模型不可用，请连接服务并刷新目录', thinking_level_unsupported: '该模型不支持所选推理强度',
+  model_login_in_progress: '此服务已有连接操作，请刷新后继续', model_login_not_found: '连接操作已结束，请重新连接',
+  model_login_cancelled: '连接已取消', model_prompt_changed: '授权步骤已更新，请重试',
+  model_login_failed: '模型服务连接失败', model_logout_failed: '退出未确认，请重试',
+  provider_status_unavailable: '模型服务状态不可用', settings_field_not_mutable: '设置仅支持模型配置',
+};
+export function shortError(error: unknown): string {
+  const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (errors[text]) return errors[text];
+  if (!text || /[{}\[\]<>]/.test(text)) return '请求失败';
+  return text.split('\n')[0]!.slice(0, 72);
+}
+
+type Options = { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown; rawBody?: string; signal?: AbortSignal };
+export async function api<T>(path: string, options: Options = {}): Promise<T> {
+  let response: Response;
+  const body = options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body));
+  try {
+    response = await fetch(`${API}${path}`, {
+      method: options.method ?? 'GET', credentials: 'same-origin', cache: 'no-store',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body, signal: options.signal,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    throw new ApiError('连接失败');
   }
-}
-export function retryAt(value: string | null, now = Date.now()): number {
-  if (value === null) return 0;
-  const timestamp = /^\d+$/.test(value) ? now + Number(value) * 1000 : Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp > now ? timestamp : 0;
-}
-export async function responseFailure(response: Response, schemaPath: string, method: string): Promise<ApiFailure> {
-  const contentType = response.headers.get('content-type');
-  const media = contentType?.split(';', 1)[0]?.trim().toLowerCase();
-  const declared = media === 'application/problem+json' && response.status >= 400
-    && responseKind(schemaPath, method, response.status, contentType) === 'json';
-  let value: unknown;
-  if (declared) {
-    try { value = await response.json(); } catch { value = undefined; }
+  if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/session')) authenticationEvents.dispatchEvent(new Event('required'));
+    const problem: Problem | undefined = await response.json().catch(() => undefined);
+    const fallback = response.status === 401 ? '请重新登录' : response.status === 404 ? '服务或记录不存在' : `请求失败 · ${response.status}`;
+    throw new ApiError(shortError(problem?.message ?? (problem?.error && errors[problem.error]) ?? fallback), response.status);
   }
-  let failure: ApiFailure;
-  if (declared && validateProblem(value) && value.status === response.status
-    && validateResponse(schemaPath, method, response.status, value, contentType)) {
-    failure = new ApiFailure(value.code, value.detail, response.status, value, retryAt(response.headers.get('retry-after')));
-  } else failure = new ApiFailure('HTTP_CONTRACT_ERROR', `响应无效（HTTP ${response.status}）`, response.status);
-  if (response.status === 401 && ['AUTH_REQUIRED', 'HTTP_CONTRACT_ERROR'].includes(failure.code)) {
-    authenticationEvents.dispatchEvent(new Event('required'));
-  }
-  return failure;
+  if (response.status === 204 || response.headers.get('content-length') === '0') return undefined as T;
+  try { return await response.json() as T; }
+  catch { throw new ApiError('响应不可用', response.status); }
 }
-
-export async function validateSuccessfulResponse(response: Response, schemaPath: string, method: string): Promise<Response> {
-  const kind = responseKind(schemaPath, method, response.status, response.headers.get('content-type'));
-  if (kind === undefined) {
-    throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应格式不兼容', response.status);
-  }
-  // Only a declared operation/status/media combination may retain its body.
-  // openapi-fetch, not this middleware, owns parseAs for bytes and streams.
-  if (kind === 'binary' || kind === 'event-stream') return response;
-  let value: unknown;
-  if (kind === 'json') {
-    try { value = await response.clone().json(); }
-    catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
-  }
-  if (!validateResponse(schemaPath, method, response.status, value, response.headers.get('content-type'))) {
-    throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');
-  }
-  return response;
-}
-
-export function makeClient(baseUrl: string) {
-  const origin = new URL(baseUrl).origin;
-  const client = createClient<paths>({
-    baseUrl: origin, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-  });
-  client.use({
-    onRequest({ request }) {
-      if (new URL(request.url).origin !== origin) {
-        throw new ApiFailure('INVALID_ORIGIN', '拒绝向不同来源发送业务请求。');
-      }
-      if (typeof navigator !== 'undefined' && navigator.onLine === false && !['GET', 'HEAD'].includes(request.method)) {
-        throw new ApiFailure('OFFLINE', '离线，操作未提交');
-      }
-      return request;
-    },
-    async onResponse({ response, request, schemaPath }) {
-      if (response.ok) return validateSuccessfulResponse(response, schemaPath, request.method);
-      const failure = await responseFailure(response, schemaPath, request.method);
-      throw failure;
-    },
-    onError({ error }) {
-      if (error instanceof ApiFailure) return error;
-      if (error instanceof Error && error.name === 'AbortError') return error;
-      return new ApiFailure('NETWORK_UNKNOWN', '连接中断，提交结果未知；请重试当前操作');
-    },
-  });
-  return client;
-}
-export const api = makeClient(typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
-
-export function dataOf<T>(result: { data?: T }): T {
-  if (result.data === undefined) throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据缺失');
-  return result.data;
-}
-
-/** One in-memory intent per form. Never persists credentials, form data or keys. */
-export class Intent {
-  private serialized: string | undefined;
-  private key: string | undefined;
-  headers(method: string, path: string, body: unknown): { 'Idempotency-Key': string } {
-    const serialized = JSON.stringify([method, path, body]);
-    if (serialized !== this.serialized || this.key === undefined) {
-      this.serialized = serialized;
-      this.key = crypto.randomUUID();
-    }
-    return { 'Idempotency-Key': this.key };
-  }
-  clear() { this.serialized = undefined; this.key = undefined; }
-}
-
-export function isCounter(value: string, positive = false): boolean {
-  return /^(0|[1-9][0-9]{0,18})(?![\s\S])/.test(value)
-    && BigInt(value) <= 9223372036854775807n && (!positive || value !== '0');
-}
-// The generated native schema owns decimal syntax, precision and byte boundaries.
-export const isDecimal = validateDecimal;
-// Compare validated RFC 3339 instants without losing fractional precision.
-export function sameInstant(left: string, right: string): boolean {
-  const split = (value: string) => /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/i.exec(value);
-  const a = split(left); const b = split(right);
-  if (!a || !b) return false;
-  const seconds = Date.parse(a[1]! + a[3]!);
-  return Number.isFinite(seconds) && seconds === Date.parse(b[1]! + b[3]!)
-    && (a[2] ?? '').replace(/0+$/, '') === (b[2] ?? '').replace(/0+$/, '');
-}
-
-export function displayTime(value: string | null | undefined): string {
-  if (value === null || value === undefined) return '尚无记录';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '时间合同不兼容' : date.toLocaleString('zh-CN', { hour12: false });
-}
-export function terminal(state: Schema['RunState']): boolean {
-  return state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED';
-}
-
-export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

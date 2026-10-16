@@ -1,5 +1,5 @@
 //! Field-dependent native Runtime schemas, generated from the actual output registry.
-use super::{RuntimeOutputV1, MAX_JOB_OUTPUT_BYTES, NATIVE_OUTPUT_CONTRACTS};
+use super::{RuntimeOutputV1, NATIVE_OUTPUT_CONTRACTS};
 use utoipa::{
     openapi::{
         schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Schema, Type},
@@ -7,10 +7,6 @@ use utoipa::{
     },
     PartialSchema, ToSchema,
 };
-
-pub(super) fn job_output_bytes() -> RefOr<Schema> {
-    crate::scalars::bounded_bigint_schema(MAX_JOB_OUTPUT_BYTES, true)
-}
 
 fn strict_object() -> ObjectBuilder {
     ObjectBuilder::new()
@@ -45,7 +41,7 @@ impl PartialSchema for RuntimeOutputV1 {
                     .required("storage_ref")
                     .property("storage_version", literal("1"))
                     .required("storage_version")
-                    .property("byte_count", job_output_bytes())
+                    .property("byte_count", crate::scalars::positive_db_counter_schema())
                     .required("byte_count")
                     .property("media_type", literal(contract.media_type))
                     .required("media_type"),

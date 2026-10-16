@@ -180,6 +180,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/artifacts/{id}/agent-evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A typed view of the same immutable, scoped upload. Never an evaluation gate. */
+        get: operations["agent_evaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/artifacts/{id}/content": {
         parameters: {
             query?: never;
@@ -500,14 +517,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/account": {
+    "/api/v2/capital-exits/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getCodexAccountObservation"];
+        get: operations["get_capital_exit"];
         put?: never;
         post?: never;
         delete?: never;
@@ -516,23 +533,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getLatestCodexAccountOperation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/login/cancel": {
+    "/api/v2/capital-exits/{id}/cancel": {
         parameters: {
             query?: never;
             header?: never;
@@ -541,14 +542,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["cancelCodexLogin"];
+        post: operations["cancel_capital_exit"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/login/start": {
+    "/api/v2/capital-exits/{id}/claim": {
         parameters: {
             query?: never;
             header?: never;
@@ -557,30 +558,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["startCodexLogin"];
+        post: operations["claim_capital_exit"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/login/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexAccountOperation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/logout": {
+    "/api/v2/capital-exits/{id}/evidence": {
         parameters: {
             query?: never;
             header?: never;
@@ -589,30 +574,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["logoutCodexAccount"];
+        post: operations["submit_capital_exit_evidence"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v2/codex/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexModelObservation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/codex/probe": {
+    "/api/v2/capital-exits/{id}/pause": {
         parameters: {
             query?: never;
             header?: never;
@@ -621,7 +590,39 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["probeCodexProfile"];
+        post: operations["pause_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/reconcile-withdrawal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/capital-exits/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resume_capital_exit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -638,6 +639,22 @@ export interface paths {
         get: operations["getResearchCycle"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/cycles/{id}/finish-external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["finishExternalResearchCycle"];
         delete?: never;
         options?: never;
         head?: never;
@@ -740,6 +757,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/data/revisions/{id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["dataset_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/data/revisions/{id}/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_recorded_features"];
+        put?: never;
+        post: operations["register_recorded_feature"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/data/sources": {
         parameters: {
             query?: never;
@@ -830,6 +879,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["validate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/downstream/capital-exit-assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_capital_exit_assessment_requests"];
+        put?: never;
+        post: operations["submit_capital_exit_assessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/downstream/capital-exits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_downstream_capital_exits"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -980,6 +1061,104 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/experiments/{id}/adopt-alpha": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt the accepted result as a reusable policy, preserving its research status. */
+        post: operations["adopt_experiment_alpha"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["evaluate_experiment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_experiment_evaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/experiments/{id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A bounded view of the same adopted report, with identical ResearchRead authority. */
+        get: operations["get_experiment_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/forward/account-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_account_observation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/forward/client-account-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submit_client_account_observation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/forward/messages": {
         parameters: {
             query?: never;
@@ -1086,6 +1265,23 @@ export interface paths {
         get: operations["get_forward_window"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/handoffs/{id}/paper-initial-execution/consume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Atomically consumes one explicit Paper model initialization. It never runs a host. */
+        post: operations["consume_paper_initial_execution"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1540,6 +1736,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/portfolio-candidates/{id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The published strategy candidate's original native result, never a new replay. */
+        get: operations["get_strategy_portfolio_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/portfolio-mandates": {
         parameters: {
             query?: never;
@@ -1661,7 +1874,23 @@ export interface paths {
         };
         get: operations["listProjectResearchCycles"];
         put?: never;
-        post: operations["startResearchCycle"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{id}/cycles/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startExternalResearchCycle"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1812,6 +2041,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/projects/{project_id}/account-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_account_sources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/account-sources/{source_id}/client-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_account_client_binding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/account-sources/{source_id}/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_account_current"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/account-sources/{source_id}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_account_observations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/capital-exit-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["preview_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/projects/{project_id}/capital-exits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_capital_exits"];
+        put?: never;
+        post: operations["start_capital_exit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/release-decisions/{id}/reopen": {
         parameters: {
             query?: never;
@@ -1908,6 +2233,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/research": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableResearch"];
+        put?: never;
+        post: operations["startDurableResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDurableTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDurableUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDurableResearch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/research/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stopDurableResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/runs": {
         parameters: {
             query?: never;
@@ -1932,6 +2353,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/runs/{id}/agent-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One read-only owner projection of retained original Agent facts. */
+        get: operations["get_historical_agent_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1988,38 +2426,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/settings/codex": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listCodexProfiles"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/settings/codex/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCodexProfile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch: operations["updateCodexProfile"];
-        trace?: never;
-    };
     "/api/v2/settings/credentials": {
         parameters: {
             query?: never;
@@ -2040,12 +2446,173 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AcceptedExperimentSourceV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            evaluation_run_id: components["schemas"]["Id"];
+            experiment_id: components["schemas"]["Id"];
+            report_artifact_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Additive source provenance. Account values and identity remain in the original
+         *     source/observation records; a V1 source has no such binding and is not upgraded.
+         */
+        AccountClientBindingV2: {
+            native_client_id: string;
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
+            source_id: components["schemas"]["Id"];
+        };
+        /** @enum {string} */
+        AccountConnectionFreshnessV1: "UNKNOWN" | "CONNECTED" | "DISCONNECTED" | "STALE";
+        /** @enum {string} */
+        AccountConnectionV1: "UNKNOWN" | "CONNECTED" | "DISCONNECTED";
+        AccountCurrentV1: {
+            latest_snapshot?: null | components["schemas"]["AccountObservationV1"];
+            source: components["schemas"]["AccountSourceV1"];
+            /** @description Native flags describe valuation inputs, not current transport connectivity. */
+            valuation: components["schemas"]["AccountValuationV1"];
+        };
+        AccountMoneyV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+        };
+        AccountObservationReceiptV1: {
+            replayed: boolean;
+            resource: components["schemas"]["AccountObservationV1"];
+        };
+        AccountObservationReceiptV2: {
+            native_client_id: string;
+            replayed: boolean;
+            resource: components["schemas"]["AccountObservationV1"];
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
+        };
+        AccountObservationSubmitV1: {
+            binding: components["schemas"]["NativeAccountBindingV1"];
+            connection: components["schemas"]["AccountConnectionV1"];
+            dropped_events: components["schemas"]["DbCounter"];
+            /** @description Source heartbeat time, separate from the native valuation and server receipt clocks. */
+            observed_at_ns: components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** @description Starts at one. Every attempted emission, including a dropped frame, consumes a sequence. */
+            sequence: components["schemas"]["DbCounter"];
+            snapshot?: null | components["schemas"]["NativePortfolioSnapshotV1"];
+        };
+        /**
+         * @description Original V1 native values plus the actual client checked by the node producer.
+         *     The receiving service trusts its authorized producer; a caller-supplied string
+         *     is not cryptographic proof of a native client or of a venue account connection.
+         */
+        AccountObservationSubmitV2: {
+            native_client_id: string;
+            observation: components["schemas"]["AccountObservationSubmitV1"];
+            schema_version: components["schemas"]["NativeClientObservationSchemaV2"];
+        };
+        AccountObservationV1: {
+            downstream_id: components["schemas"]["Id"];
+            gap_before: boolean;
+            id: components["schemas"]["Id"];
+            observation: components["schemas"]["AccountObservationSubmitV1"];
+            /** Format: date-time */
+            received_at: string;
+            source_id: components["schemas"]["Id"];
+        };
+        AccountSourceV1: {
+            binding: components["schemas"]["NativeAccountBindingV1"];
+            /** Format: date-time */
+            checked_at: string;
+            connection: components["schemas"]["AccountConnectionFreshnessV1"];
+            downstream_id: components["schemas"]["Id"];
+            dropped_events: components["schemas"]["DbCounter"];
+            has_gap: boolean;
+            id: components["schemas"]["Id"];
+            last_observation_id: components["schemas"]["Id"];
+            last_observed_at_ns: components["schemas"]["DbCounter"];
+            /** Format: date-time */
+            last_received_at: string;
+            last_sequence: components["schemas"]["DbCounter"];
+            latest_snapshot_id?: null | components["schemas"]["Id"];
+        };
+        /** @enum {string} */
+        AccountValuationV1: "UNAVAILABLE" | "PRICED" | "STALE" | "UNPRICED";
+        AgentEvaluationAssertionV1: {
+            /** @description Hash of the externally retained, auditable observation; not its raw content. */
+            evidence_sha256: components["schemas"]["EvaluationSha256"];
+            id: string;
+            passed: boolean;
+        };
+        AgentEvaluationCaseV1: {
+            assertions: components["schemas"]["AgentEvaluationAssertionV1"][];
+            id: string;
+            measurements: components["schemas"]["AgentEvaluationMeasurementsV1"];
+            observed?: null | components["schemas"]["AgentEvaluationObservedV1"];
+            reason: string;
+            /** @description IDs fixed by the suite before execution; PASS requires every one with evidence. */
+            required_assertions: string[];
+            scenario_sha256: components["schemas"]["EvaluationSha256"];
+            split: components["schemas"]["AgentEvaluationSplit"];
+            status: components["schemas"]["AgentEvaluationStatus"];
+        };
+        AgentEvaluationCostV1: {
+            amount: components["schemas"]["DecimalValue"];
+            /** @enum {string} */
+            currency: "AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL";
+        };
+        AgentEvaluationDatasetV1: {
+            case_ids: string[];
+            id: string;
+            sha256: components["schemas"]["EvaluationSha256"];
+        };
+        AgentEvaluationIdentityV1: {
+            name: string;
+            version: string;
+        };
+        AgentEvaluationMeasurementsV1: {
+            cost?: null | components["schemas"]["AgentEvaluationCostV1"];
+            elapsed_ms?: null | components["schemas"]["DbCounter"];
+            input_tokens?: null | components["schemas"]["DbCounter"];
+            output_tokens?: null | components["schemas"]["DbCounter"];
+            tool_calls?: null | components["schemas"]["DbCounter"];
+        };
+        /** @enum {string} */
+        AgentEvaluationMode: "LIVE" | "PROTOCOL_ONLY";
+        AgentEvaluationObservedV1: {
+            /** @description Public native invocation identity, never hidden reasoning or credentials. */
+            invocation_id: string;
+            settings: components["schemas"]["AgentEvaluationPolicyV1"];
+        };
+        AgentEvaluationPolicyV1: {
+            model: string;
+            reasoning_effort: string;
+        };
+        /** @enum {string} */
+        AgentEvaluationReportKind: "AGENT_EVALUATION";
+        AgentEvaluationReportV1: {
+            cases: components["schemas"]["AgentEvaluationCaseV1"][];
+            held_out: components["schemas"]["AgentEvaluationDatasetV1"];
+            mode: components["schemas"]["AgentEvaluationMode"];
+            /** Format: date-time */
+            recorded_at: string;
+            report_kind: components["schemas"]["AgentEvaluationReportKind"];
+            requested: components["schemas"]["AgentEvaluationPolicyV1"];
+            runner: components["schemas"]["AgentEvaluationIdentityV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_revision: string;
+            source_sha256: components["schemas"]["EvaluationSha256"];
+            status: components["schemas"]["AgentEvaluationStatus"];
+            subject: components["schemas"]["AgentEvaluationIdentityV1"];
+            suite_id: string;
+            suite_sha256: components["schemas"]["EvaluationSha256"];
+            tuning: components["schemas"]["AgentEvaluationDatasetV1"];
+        };
+        /** @enum {string} */
+        AgentEvaluationSplit: "TUNING" | "HELD_OUT";
+        /** @enum {string} */
+        AgentEvaluationStatus: "PASS" | "FAIL" | "BLOCKED" | "UNRUN";
         /** @enum {string} */
         AllocationObjective: "MIN_RISK" | "MAX_UTILITY" | "RISK_BUDGETING";
         /** @enum {string} */
         AllocationRisk: "VARIANCE" | "CVAR";
         AllocationTargetV1: {
-            currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             instrument_id: string;
             weight: components["schemas"]["DecimalValue"];
         };
@@ -2055,27 +2622,25 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             policy_id: components["schemas"]["Id"];
             runtime_id: components["schemas"]["Id"];
@@ -2083,6 +2648,11 @@ export interface components {
         };
         /** @enum {string} */
         AlphaLifecycle: "RESEARCH" | "QUALIFIED" | "SUSPENDED" | "RETIRED";
+        /**
+         * @description Legacy forecast bytes keep their original shape; weight strategies carry an
+         *     explicit output discriminator and no inapplicable forecast fields.
+         */
+        AlphaVersionEnvelopeV2: components["schemas"]["AlphaVersionView"] | components["schemas"]["StrategyAlphaVersionV1"];
         AlphaVersionView: {
             alpha_id: components["schemas"]["Id"];
             calibration_id?: null | components["schemas"]["Id"];
@@ -2158,11 +2728,7 @@ export interface components {
         /** @enum {string} */
         ArtifactAccess: "OPERATOR" | "RESEARCH" | "EVALUATOR_ONLY" | "DELIVERY";
         ArtifactCreate: {
-            /**
-             * @description The server enforces at most 2097152 UTF-8 bytes, including JSON whitespace,
-             *     and preserves the original bytes. JSON Schema string length counts characters,
-             *     so clients must check encoded UTF-8 byte length separately before submission.
-             */
+            /** @description Original UTF-8 bytes, including JSON whitespace, are preserved. */
             content: string;
             kind: components["schemas"]["ResearchArtifactKind"];
             project_id: components["schemas"]["Id"];
@@ -2244,31 +2810,23 @@ export interface components {
             role: components["schemas"]["DataPartition"];
         };
         BriefContentV1: {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cpu_seconds?: null | string;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_memory_mib?: null | number;
+                max_output_bytes?: null | string;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_turns_per_mission?: null | number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2315,31 +2873,23 @@ export interface components {
             /** Format: uuid */
             universe_version_id: string;
         } | {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cpu_seconds?: null | string;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_memory_mib?: null | number;
+                max_output_bytes?: null | string;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_turns_per_mission?: null | number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2386,31 +2936,23 @@ export interface components {
             /** Format: uuid */
             universe_version_id: string;
         } | {
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             benchmark_ref?: null | string;
             budget: {
                 cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
                 cost_enforcement: components["schemas"]["CostEnforcement"];
                 max_cost_decimal?: null | string;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_cpu_seconds: string;
-                /** Format: int32 */
-                max_cycles_per_day: number;
+                max_cpu_seconds?: null | string;
+                max_cycles_per_day?: null | number;
                 /** Format: int64 */
                 max_experiments: number;
-                /** Format: int64 */
-                max_memory_mib: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                max_output_bytes: string;
-                /** Format: int32 */
-                max_parallel_runs: number;
-                /** Format: int32 */
-                max_repair_turns: number;
+                max_memory_mib?: null | number;
+                max_output_bytes?: null | string;
+                max_parallel_runs?: null | number;
+                max_repair_turns?: null | number;
                 max_tokens?: null | string;
-                /** Format: int32 */
-                max_turns_per_mission: number;
-                /** Format: int64 */
-                max_wall_seconds: number;
+                max_turns_per_mission?: null | number;
+                max_wall_seconds?: null | number;
                 /** Format: int64 */
                 min_cycle_interval_seconds: number;
                 /** @enum {integer} */
@@ -2516,25 +3058,17 @@ export interface components {
             cost_currency?: null | ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL");
             cost_enforcement: components["schemas"]["CostEnforcement"];
             max_cost_decimal?: null | string;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_cpu_seconds: string;
-            /** Format: int32 */
-            max_cycles_per_day: number;
+            max_cpu_seconds?: null | string;
+            max_cycles_per_day?: null | number;
             /** Format: int64 */
             max_experiments: number;
-            /** Format: int64 */
-            max_memory_mib: number;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_output_bytes: string;
-            /** Format: int32 */
-            max_parallel_runs: number;
-            /** Format: int32 */
-            max_repair_turns: number;
+            max_memory_mib?: null | number;
+            max_output_bytes?: null | string;
+            max_parallel_runs?: null | number;
+            max_repair_turns?: null | number;
             max_tokens?: null | string;
-            /** Format: int32 */
-            max_turns_per_mission: number;
-            /** Format: int64 */
-            max_wall_seconds: number;
+            max_turns_per_mission?: null | number;
+            max_wall_seconds?: null | number;
             /** Format: int64 */
             min_cycle_interval_seconds: number;
             /** @enum {integer} */
@@ -2597,27 +3131,25 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -2657,7 +3189,312 @@ export interface components {
             target_artifact_id?: null | components["schemas"]["Id"];
         };
         /** @enum {string} */
-        CandidateWeightsSourceV1: "FORWARD_SNAPSHOT" | "LAST_TARGET" | "NONE";
+        CandidateWeightsSourceV1: "PAPER_INITIAL_CAPITAL" | "FORWARD_SNAPSHOT" | "LAST_TARGET" | "NONE";
+        CapitalExitActionV1: {
+            /** @enum {string} */
+            action: "PAUSE";
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "CANCEL";
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "RESUME";
+            expected_revision: components["schemas"]["Revision"];
+            preview_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        } | {
+            /** @enum {string} */
+            action: "RECONCILE_WITHDRAWAL";
+            currency: string;
+            expected_revision: components["schemas"]["Revision"];
+            external_transfer_ref?: string | null;
+            schema_version: components["schemas"]["SchemaV1"];
+            user_reported_amount: components["schemas"]["DecimalValue"];
+        };
+        CapitalExitAssessmentReceiptV1: {
+            account_source_id: components["schemas"]["Id"];
+            artifact_id: components["schemas"]["Id"];
+            external_message_id: string;
+            id: components["schemas"]["Id"];
+            /** Format: date-time */
+            received_at: string;
+        };
+        /** @enum {string} */
+        CapitalExitAvailabilityBasisV1: "NATIVE_VENUE_AVAILABLE" | "CONTROLLED_SANDBOX";
+        /** @enum {string} */
+        CapitalExitCapabilityV1: "SUPPORTED" | "UNSUPPORTED" | "BLOCKED";
+        CapitalExitClaimV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_source_id: components["schemas"]["Id"];
+            command_id: components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            external_claim_id: string;
+            owner_binding_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CapitalExitCostLimitV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            reference_evidence_id: components["schemas"]["Id"];
+        };
+        CapitalExitEvidenceKindV1: {
+            controlled_strategy_ids: string[];
+            invalidated_child_timer_refs: string[];
+            invalidated_target_claim_refs: string[];
+            /** @enum {string} */
+            kind: "FENCE_APPLIED";
+            native_gate_report_ref: string;
+            remaining_target_authority_ref?: string | null;
+            remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+            resolved_inflight_report_ref: string;
+        } | {
+            /** @enum {string} */
+            kind: "NATIVE_PROGRESS";
+            native_order_refs: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            native_position_refs: string[];
+            native_report_ref: string;
+            phase: components["schemas"]["CapitalExitStateV1"];
+            reason_codes: string[];
+            released_cash_amount?: null | components["schemas"]["AccountMoneyV1"];
+        } | {
+            available_cash: components["schemas"]["AccountMoneyV1"];
+            basis: components["schemas"]["CapitalExitAvailabilityBasisV1"];
+            /** @enum {string} */
+            kind: "WITHDRAWABILITY_OBSERVED";
+            margin_report_ref: string;
+            native_availability_report_ref: string;
+            open_orders_report_ref: string;
+            settlement_report_ref: string;
+            venue: string;
+        } | {
+            after_observation_id: components["schemas"]["Id"];
+            amount: components["schemas"]["AccountMoneyV1"];
+            before_observation_id: components["schemas"]["Id"];
+            external_transfer_ref: string;
+            /** @enum {string} */
+            kind: "WITHDRAWAL_RECONCILED";
+            native_cash_movement_ref: string;
+            /** @description Already observed after the transfer; never subtract amount from it again. */
+            observed_managed_capital_after: components["schemas"]["AccountMoneyV1"];
+        };
+        CapitalExitFundsV1: {
+            /** Format: date-time */
+            evidence_asof?: string | null;
+            /** Format: date-time */
+            evidence_valid_until?: string | null;
+            reconciled_withdrawal_amount: components["schemas"]["AccountMoneyV1"];
+            released_cash_amount?: null | components["schemas"]["AccountMoneyV1"];
+            requested_amount: components["schemas"]["AccountMoneyV1"];
+            reserved_amount: components["schemas"]["AccountMoneyV1"];
+            unreleased_amount?: null | components["schemas"]["AccountMoneyV1"];
+            verified_withdrawable_amount?: null | components["schemas"]["AccountMoneyV1"];
+            withdrawability: components["schemas"]["CapitalExitWithdrawabilityV1"];
+        };
+        CapitalExitNativeOrderRefV1: {
+            native_client_order_id: string;
+            native_instrument_id: string;
+            native_strategy_id: string;
+            original_event_refs: string[];
+        };
+        /**
+         * @description Original owner-computed read-side assessment. Publishing this never starts an
+         *     exit or grants execution authority. The configured owner supplies native facts.
+         */
+        CapitalExitOwnerAssessmentV1: {
+            account_source_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            asof: string;
+            capability: components["schemas"]["CapitalExitCapabilityV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            expected_account_control_revision: components["schemas"]["Revision"];
+            external_message_id: string;
+            funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+            native_evidence: unknown;
+            native_report_ref: string;
+            owner_binding_ref: string;
+            proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            reason_codes: string[];
+            reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+            request: components["schemas"]["CapitalExitPreviewRequestV1"];
+            retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            sequence: components["schemas"]["DbCounter"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        CapitalExitOwnerCommandV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            command_id: components["schemas"]["Id"];
+            instruction: components["schemas"]["CapitalExitOwnerInstructionV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CapitalExitOwnerEvidenceV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_source_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            asof: string;
+            command_id: components["schemas"]["Id"];
+            evidence: components["schemas"]["CapitalExitEvidenceKindV1"];
+            external_claim_id: string;
+            external_message_id: string;
+            intent_id: components["schemas"]["Id"];
+            native_account_id: string;
+            /** @description Exact original report, retained immutably on intake. No server-synthesized ledger. */
+            native_evidence: unknown;
+            native_session_id: string;
+            original_event_refs: string[];
+            owner_binding_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            sequence: components["schemas"]["DbCounter"];
+            source_observation_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /**
+         * @description Original instruction for this exact owner command. A lifecycle phase alone
+         *     cannot recover the user's withdrawal report or authorize further reductions.
+         */
+        CapitalExitOwnerInstructionV1: {
+            /** @enum {string} */
+            action: "START";
+        } | {
+            /** @enum {string} */
+            action: "PAUSE";
+        } | {
+            /** @enum {string} */
+            action: "CANCEL";
+        } | {
+            /** @enum {string} */
+            action: "RESUME";
+        } | {
+            /** @enum {string} */
+            action: "RECONCILE_WITHDRAWAL";
+            currency: string;
+            external_transfer_ref?: string | null;
+            user_reported_amount: components["schemas"]["DecimalValue"];
+        };
+        CapitalExitPolicyV1: {
+            /** @enum {string} */
+            kind: "CASH_ONLY";
+        } | {
+            /** Format: date-time */
+            deadline: string;
+            /** @enum {string} */
+            kind: "BOUNDED_LIMIT";
+            legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            max_execution_cost: components["schemas"]["CapitalExitCostLimitV1"];
+        };
+        CapitalExitPreviewFundsV1: {
+            estimated_execution_cost?: null | components["schemas"]["AccountMoneyV1"];
+            estimated_release?: null | components["schemas"]["AccountMoneyV1"];
+            existing_unrealized_pnl?: null | components["schemas"]["AccountMoneyV1"];
+            managed_capital_before?: null | components["schemas"]["AccountMoneyV1"];
+            native_equity?: null | components["schemas"]["AccountMoneyV1"];
+            native_free_cash?: null | components["schemas"]["AccountMoneyV1"];
+            native_locked_cash?: null | components["schemas"]["AccountMoneyV1"];
+            native_total_cash?: null | components["schemas"]["AccountMoneyV1"];
+            remaining_managed_capital?: null | components["schemas"]["AccountMoneyV1"];
+            requested: components["schemas"]["AccountMoneyV1"];
+            verified_idle_cash?: null | components["schemas"]["AccountMoneyV1"];
+        };
+        CapitalExitPreviewRequestV1: {
+            account_source_id: components["schemas"]["Id"];
+            expected_source_observation_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+        };
+        CapitalExitPreviewV1: {
+            account_source_id: components["schemas"]["Id"];
+            capability: components["schemas"]["CapitalExitCapabilityV1"];
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            expected_account_control_revision?: null | components["schemas"]["Revision"];
+            funds: components["schemas"]["CapitalExitPreviewFundsV1"];
+            id: components["schemas"]["Id"];
+            /** @description Resolved from trusted owner configuration, never from the request. */
+            managed_account_key?: string | null;
+            original_observation_id: components["schemas"]["Id"];
+            owner_binding_ref?: string | null;
+            plan_artifact_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            project_id: components["schemas"]["Id"];
+            proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            reason_codes: string[];
+            reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+            remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+            retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+            /** Format: date-time */
+            valid_until: string;
+        };
+        CapitalExitReductionLegV1: {
+            instrument_id: string;
+            maximum_reduction_quantity: components["schemas"]["DecimalValue"];
+            minimum_sell_price: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        CapitalExitRemainingTradingV1: "FENCED_PENDING_TARGET" | "BUDGET_AWARE";
+        CapitalExitScopeV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            /** @enum {string} */
+            kind: "AMOUNT";
+        } | {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+            /** @enum {string} */
+            kind: "PORTFOLIO_SCOPE";
+            release_ids: components["schemas"]["Id"][];
+            stream_ids: components["schemas"]["Id"][];
+        };
+        CapitalExitStartV1: {
+            acknowledged_plan_artifact_id: components["schemas"]["Id"];
+            expected_account_control_revision: components["schemas"]["Revision"];
+            expected_source_observation_id: components["schemas"]["Id"];
+            preview_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        CapitalExitStateV1: "REQUESTED" | "FENCING" | "CANCELLING_OPENERS" | "REDUCING" | "WAITING_EVIDENCE" | "PAUSED" | "CANCELLING_EXIT" | "CANCELLED_RESERVED" | "RECONCILING_WITHDRAWAL" | "COMPLETED" | "BLOCKED";
+        CapitalExitViewV1: {
+            account_control_epoch: components["schemas"]["DbCounter"];
+            account_control_revision: components["schemas"]["Revision"];
+            account_source_id: components["schemas"]["Id"];
+            /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+            command_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            evidence_refs: components["schemas"]["Id"][];
+            external_claim_id?: string | null;
+            funds: components["schemas"]["CapitalExitFundsV1"];
+            id: components["schemas"]["Id"];
+            last_phase: components["schemas"]["CapitalExitStateV1"];
+            managed_account_key: string;
+            owner_binding_ref: string;
+            owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+            plan_artifact_id: components["schemas"]["Id"];
+            policy: components["schemas"]["CapitalExitPolicyV1"];
+            preview_id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            reason_codes: string[];
+            remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
+            revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+            scope: components["schemas"]["CapitalExitScopeV1"];
+            state: components["schemas"]["CapitalExitStateV1"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @enum {string} */
+        CapitalExitWithdrawabilityV1: "UNVERIFIED" | "VERIFIED" | "STALE" | "SIMULATED";
         CliDevice: {
             /** Format: date-time */
             created_at: string;
@@ -2676,150 +3513,10 @@ export interface components {
             device: components["schemas"]["CliDevice"];
             token: string;
         };
-        /** @enum {string} */
-        CodexAccountActionV1: "LOGIN" | "LOGOUT";
-        /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
-        CodexAccountOperationRefV1: {
-            action: components["schemas"]["CodexAccountActionV1"];
-            /** Format: date-time */
-            created_at: string;
-            /**
-             * Format: date-time
-             * @description Local bounded wait deadline, not an assertion about the native device code.
-             */
-            deadline_at: string;
-            id: components["schemas"]["Id"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-        };
-        /** @enum {string} */
-        CodexAccountOperationStateV1: "REQUESTED" | "WAITING" | "CANCEL_REQUESTED" | "SUCCEEDED" | "CANCELLED" | "FAILED" | "UNKNOWN";
-        CodexAccountOperationV1: {
-            account?: null | components["schemas"]["CodexAccountV1"];
-            /** Format: date-time */
-            finished_at?: string | null;
-            operation: components["schemas"]["CodexAccountOperationRefV1"];
-            reason?: null | components["schemas"]["CodexAccountReasonV1"];
-            revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            state: components["schemas"]["CodexAccountOperationStateV1"];
-            /** Format: date-time */
-            updated_at: string;
-        };
-        /** @enum {string} */
-        CodexAccountReasonV1: "NATIVE_LOGIN_COMPLETED" | "NATIVE_LOGIN_REJECTED" | "NATIVE_LOGOUT_COMPLETED" | "NATIVE_CANCEL_CONFIRMED" | "CONFIRMED_NOT_SENT" | "NATIVE_RESPONSE_UNKNOWN" | "NATIVE_CONTRACT_UNSUPPORTED" | "NATIVE_VERSION_UNSUPPORTED" | "DEPLOYMENT_UNAVAILABLE" | "PROFILE_CHANGED" | "WAIT_WINDOW_ENDED" | "OWNER_UNAVAILABLE";
-        CodexAccountRequestV1: {
-            expected_revision: components["schemas"]["Revision"];
-            profile_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexAccountStartV1: {
-            acceptance: components["schemas"]["CommandResult_CodexAccountOperationRefV1"];
-            current: components["schemas"]["CodexAccountOperationV1"];
-            device_code?: null | components["schemas"]["CodexDeviceCodeV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexAccountV1: {
-            authentication_kind?: null | components["schemas"]["CodexAuthenticationKind"];
-            plan_type?: string | null;
-            requires_openai_auth: boolean;
-        };
-        CodexAdvertisedModelV1: {
-            capability: components["schemas"]["ModelCapabilityV1"];
-            default_service_tier?: string | null;
-            service_tiers: components["schemas"]["CodexServiceTierV1"][];
-        };
-        /** @enum {string} */
-        CodexAuthenticationKind: "API_KEY" | "CHATGPT" | "AMAZON_BEDROCK";
-        CodexDeviceCodeV1: {
-            user_code: string;
-            verification_url: string;
-        };
-        CodexEffectiveSettingsV1: {
-            model: string;
-            provider: string;
-            reasoning_effort?: string | null;
-            service_tier?: string | null;
-        };
-        CodexLoginCancelV1: {
-            expected_revision: components["schemas"]["Revision"];
-            operation_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        /** @enum {string} */
-        CodexObservationStateV1: "NEVER_PROBED" | "STALE" | "AVAILABLE" | "UNAVAILABLE";
-        CodexObservationV1: {
-            observation?: null | components["schemas"]["CodexProbeViewV1"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            state: components["schemas"]["CodexObservationStateV1"];
-        };
-        /** @enum {string} */
-        CodexProbeFailureV1: "DEPLOYMENT_UNAVAILABLE" | "NATIVE_UNAVAILABLE" | "VERSION_UNSUPPORTED" | "CONTRACT_UNSUPPORTED" | "AUTHENTICATION_REQUIRED" | "MODEL_SETTINGS_UNSUPPORTED";
-        CodexProbeOutcomeV1: {
-            account: components["schemas"]["CodexAccountV1"];
-            effective: components["schemas"]["CodexEffectiveSettingsV1"];
-            models: components["schemas"]["CodexAdvertisedModelV1"][];
-            /**
-             * @description Model from the override-free native Thread. Absent only in historical
-             *     observations; never infer it from the post-override effective model.
-             */
-            native_default_model?: string | null;
-            native_version: string;
-            /** @enum {string} */
-            status: "AVAILABLE";
-        } | {
-            reason: components["schemas"]["CodexProbeFailureV1"];
-            /** @enum {string} */
-            status: "UNAVAILABLE";
-        };
-        CodexProbeRequestV1: {
-            expected_revision: components["schemas"]["Revision"];
-            profile_id: components["schemas"]["Id"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexProbeViewV1: {
-            id: components["schemas"]["Id"];
-            /** Format: date-time */
-            observed_at: string;
-            outcome: components["schemas"]["CodexProbeOutcomeV1"];
-            profile_id: components["schemas"]["Id"];
-            profile_revision: components["schemas"]["Revision"];
-            schema_version: components["schemas"]["SchemaV1"];
-            /** Format: date-time */
-            valid_until: string;
-        };
+        /** @description Original Codex profile reference retained only in historical cycle views. */
         CodexProfileChoiceV1: {
             expected_revision: components["schemas"]["Revision"];
             profile_id: components["schemas"]["Id"];
-        };
-        CodexProfileUpdateV1: {
-            expected_revision: components["schemas"]["Revision"];
-            model_settings: components["schemas"]["SavedModelSettingsV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CodexProfileViewV1: {
-            connection_mode: components["schemas"]["ConnectionMode"];
-            /** Format: date-time */
-            created_at: string;
-            /**
-             * @description An opaque deployment label, never a path. None identifies a historical
-             *     unregistered reference, which must not be exposed or guessed into a mount.
-             */
-            home_binding?: string | null;
-            id: components["schemas"]["Id"];
-            model_settings: components["schemas"]["SavedModelSettingsV1"];
-            name: string;
-            profile_origin: components["schemas"]["ProfileOrigin"];
-            revision: components["schemas"]["Revision"];
-            /** Format: date-time */
-            updated_at: string;
-        };
-        CodexServiceTierV1: {
-            description: string;
-            id: string;
-            name: string;
         };
         CommandResult_ApprovalRevocationViewV1: {
             replayed: boolean;
@@ -2914,71 +3611,76 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_CodexAccountOperationRefV1: {
+        CommandResult_CapitalExitAssessmentReceiptV1: {
             replayed: boolean;
-            /** @description Immutable acceptance reference; a receipt is never rewritten to track progress. */
             resource: {
-                action: components["schemas"]["CodexAccountActionV1"];
-                /** Format: date-time */
-                created_at: string;
-                /**
-                 * Format: date-time
-                 * @description Local bounded wait deadline, not an assertion about the native device code.
-                 */
-                deadline_at: string;
+                account_source_id: components["schemas"]["Id"];
+                artifact_id: components["schemas"]["Id"];
+                external_message_id: string;
                 id: components["schemas"]["Id"];
-                profile_id: components["schemas"]["Id"];
-                profile_revision: components["schemas"]["Revision"];
+                /** Format: date-time */
+                received_at: string;
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_CodexAccountOperationV1: {
+        CommandResult_CapitalExitPreviewV1: {
             replayed: boolean;
             resource: {
-                account?: null | components["schemas"]["CodexAccountV1"];
-                /** Format: date-time */
-                finished_at?: string | null;
-                operation: components["schemas"]["CodexAccountOperationRefV1"];
-                reason?: null | components["schemas"]["CodexAccountReasonV1"];
-                revision: components["schemas"]["Revision"];
-                schema_version: components["schemas"]["SchemaV1"];
-                state: components["schemas"]["CodexAccountOperationStateV1"];
-                /** Format: date-time */
-                updated_at: string;
-            };
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CommandResult_CodexProbeViewV1: {
-            replayed: boolean;
-            resource: {
+                account_source_id: components["schemas"]["Id"];
+                capability: components["schemas"]["CapitalExitCapabilityV1"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                expected_account_control_revision?: null | components["schemas"]["Revision"];
+                funds: components["schemas"]["CapitalExitPreviewFundsV1"];
                 id: components["schemas"]["Id"];
-                /** Format: date-time */
-                observed_at: string;
-                outcome: components["schemas"]["CodexProbeOutcomeV1"];
-                profile_id: components["schemas"]["Id"];
-                profile_revision: components["schemas"]["Revision"];
+                /** @description Resolved from trusted owner configuration, never from the request. */
+                managed_account_key?: string | null;
+                original_observation_id: components["schemas"]["Id"];
+                owner_binding_ref?: string | null;
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                project_id: components["schemas"]["Id"];
+                proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                reason_codes: string[];
+                reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+                remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+                retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
                 schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
                 /** Format: date-time */
                 valid_until: string;
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_CodexProfileViewV1: {
+        CommandResult_CapitalExitViewV1: {
             replayed: boolean;
             resource: {
-                connection_mode: components["schemas"]["ConnectionMode"];
+                account_control_epoch: components["schemas"]["DbCounter"];
+                account_control_revision: components["schemas"]["Revision"];
+                account_source_id: components["schemas"]["Id"];
+                /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+                command_id: components["schemas"]["Id"];
                 /** Format: date-time */
                 created_at: string;
-                /**
-                 * @description An opaque deployment label, never a path. None identifies a historical
-                 *     unregistered reference, which must not be exposed or guessed into a mount.
-                 */
-                home_binding?: string | null;
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                external_claim_id?: string | null;
+                funds: components["schemas"]["CapitalExitFundsV1"];
                 id: components["schemas"]["Id"];
-                model_settings: components["schemas"]["SavedModelSettingsV1"];
-                name: string;
-                profile_origin: components["schemas"]["ProfileOrigin"];
+                last_phase: components["schemas"]["CapitalExitStateV1"];
+                managed_account_key: string;
+                owner_binding_ref: string;
+                owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                preview_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason_codes: string[];
+                remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
                 revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                state: components["schemas"]["CapitalExitStateV1"];
                 /** Format: date-time */
                 updated_at: string;
             };
@@ -3001,12 +3703,36 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_CycleStartedV1: {
+        CommandResult_CycleViewV1: {
             replayed: boolean;
             resource: {
-                cycle: components["schemas"]["CycleViewV1"];
-                run: components["schemas"]["RunSnapshotV1"];
+                available_actions: components["schemas"]["CycleReadAction"][];
+                brief_id: components["schemas"]["Id"];
+                budget: components["schemas"]["BudgetV1"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                ended_at?: string | null;
+                id: components["schemas"]["Id"];
+                initial_run_id?: null | components["schemas"]["Id"];
+                next_action?: string | null;
+                /** Format: int32 */
+                ordinal: number;
+                outcome?: null | components["schemas"]["CycleOutcome"];
+                project_id: components["schemas"]["Id"];
+                researcher_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
+                reserved_cpu_seconds: components["schemas"]["DbCounter"];
+                /** Format: int64 */
+                reserved_experiments: number;
+                reviewer_profile?: null | components["schemas"]["CodexProfileChoiceV1"];
+                revision: components["schemas"]["Revision"];
                 schema_version: components["schemas"]["SchemaV1"];
+                /** Format: date-time */
+                started_at?: string | null;
+                state: components["schemas"]["CycleState"];
+                trigger: components["schemas"]["CycleTrigger"];
+                /** Format: int64 */
+                used_experiments: number;
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3270,11 +3996,11 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_HandoffClaimViewV1: {
+        CommandResult_HandoffClaimViewV2: {
             replayed: boolean;
             resource: {
                 handoff: components["schemas"]["HandoffViewV1"];
-                package: components["schemas"]["TargetPackageV1"];
+                package: components["schemas"]["TargetPackageEnvelopeV2"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3343,17 +4069,9 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_MandateViewV1: {
+        CommandResult_MandateViewEnvelopeV2: {
             replayed: boolean;
-            resource: {
-                content: components["schemas"]["MandateContentV1"];
-                /** Format: date-time */
-                created_at: string;
-                id: components["schemas"]["Id"];
-                project_id: components["schemas"]["Id"];
-                /** Format: int32 */
-                version: number;
-            };
+            resource: components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_OperatorGrantView: {
@@ -3368,6 +4086,35 @@ export interface components {
                 id: components["schemas"]["Id"];
                 operation: components["schemas"]["OperatorOperation"];
                 target_id: components["schemas"]["Id"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        CommandResult_PaperInitialExecutionViewV1: {
+            replayed: boolean;
+            /**
+             * @description Audit data only, never a serializable execution permit. Only the current
+             *     authenticated HTTP response with CommandResult.replayed=false may be checked
+             *     for an in-process, non-Clone one-use permit. Files/replays cannot mint one.
+             */
+            resource: {
+                /**
+                 * @description Original immutable HANDOFF_CLAIM receipt body. A new consumer uses these
+                 *     canonical target bytes, not an owner-edited local package with matching IDs.
+                 */
+                claim: components["schemas"]["HandoffClaimViewV2"];
+                /**
+                 * Format: date-time
+                 * @description Real server receipt time, never the model's historical initial cutoff.
+                 */
+                consumed_at: string;
+                /** @description Existing credential that claimed the target and consumed this attempt. */
+                consuming_credential_id: components["schemas"]["Id"];
+                owner_instance_id: components["schemas"]["Id"];
+                /** @description Resolved by Store from the original release, never supplied by the host. */
+                package_artifact_id: components["schemas"]["Id"];
+                paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+                schema_version: components["schemas"]["SchemaV1"];
+                state: components["schemas"]["PaperInitialExecutionStateV1"];
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3424,6 +4171,26 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_RecordedFeatureViewV1: {
+            replayed: boolean;
+            /**
+             * @description Project research-read projection of frozen registration evidence. Historical
+             *     reads do not imply that a grant is currently valid for new scientific use.
+             */
+            resource: {
+                artifact_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                /** @description Original fragment descriptor including byte size, count and exact clocks. */
+                fragment: components["schemas"]["RecordedFeatureFragmentV1"];
+                partition: components["schemas"]["DataPartition"];
+                project_id: components["schemas"]["Id"];
+                source_binding: components["schemas"]["RecordedFeatureSourceBindingV1"];
+                source_selection_end_ns: components["schemas"]["DbCounter"];
+                source_selection_start_ns: components["schemas"]["DbCounter"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         CommandResult_ReleaseDecisionViewV1: {
             replayed: boolean;
             resource: {
@@ -3447,27 +4214,9 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
-        CommandResult_ReleaseViewV1: {
+        CommandResult_ReleaseViewEnvelopeV2: {
             replayed: boolean;
-            resource: {
-                /** Format: date-time */
-                asof: string;
-                candidate_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                environment: components["schemas"]["PackageOriginV1"];
-                evaluation_id: components["schemas"]["Id"];
-                id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                market_capability_version: string;
-                package_artifact_id: components["schemas"]["Id"];
-                package_schema_version: components["schemas"]["PackageSchemaVersion"];
-                project_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                valid_from: string;
-                /** Format: date-time */
-                valid_until: string;
-            };
+            resource: components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         CommandResult_RunSnapshotV1: {
@@ -3480,7 +4229,7 @@ export interface components {
                 current_attempt_no: number;
                 cycle_id?: null | components["schemas"]["Id"];
                 /** Format: date-time */
-                deadline_at: string;
+                deadline_at?: string | null;
                 /** Format: date-time */
                 finished_at?: string | null;
                 id: components["schemas"]["Id"];
@@ -3531,12 +4280,27 @@ export interface components {
             };
             schema_version: components["schemas"]["SchemaV1"];
         };
+        CommandResult_StrategyAlphaVersionV1: {
+            replayed: boolean;
+            resource: {
+                alpha_id: components["schemas"]["Id"];
+                /** Format: date-time */
+                created_at: string;
+                experiment_id: components["schemas"]["Id"];
+                id: components["schemas"]["Id"];
+                output_kind: components["schemas"]["StrategyOutputKindV1"];
+                policy: components["schemas"]["FrozenTargetPolicyV1"];
+                project_id: components["schemas"]["Id"];
+                root_lineage_id: components["schemas"]["Id"];
+                schema_version: components["schemas"]["SchemaV1"];
+                version: components["schemas"]["Revision"];
+            };
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         ComparableScope: "FAMILY_LINEAGE";
         /** @enum {string} */
         Comparator: "GT" | "GE" | "LT" | "LE" | "BETWEEN";
-        /** @enum {string} */
-        ConnectionMode: "SYSTEM" | "CUSTOM_PROVIDER";
         /** @enum {string} */
         ConservativeAssumption: "CONSERVATIVE_ASSUMPTION";
         /** @enum {string} */
@@ -3576,6 +4340,19 @@ export interface components {
             revoked_at?: string | null;
             scope_codes: components["schemas"]["MachineScope"][];
         };
+        CycleFinishExternalIntent: {
+            cycle_id: components["schemas"]["Id"];
+            request: components["schemas"]["CycleFinishExternalV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Close an external cycle only after every admitted scientific stage settles.
+         *     Unexecuted proposals remain history; this does not create a review or PASS.
+         */
+        CycleFinishExternalV1: {
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         /** @enum {string} */
         CycleOutcome: "QUALIFIED_CANDIDATES" | "NO_SUPPORTED_CANDIDATE" | "BUDGET_EXHAUSTED" | "INCONCLUSIVE";
         /** @enum {string} */
@@ -3614,24 +4391,6 @@ export interface components {
             status: components["schemas"]["SelectionStatus"];
             trial_count: components["schemas"]["DbCounter"];
             unfinished_count: components["schemas"]["DbCounter"];
-        };
-        CycleStartIntent: {
-            project_id: components["schemas"]["Id"];
-            request: components["schemas"]["CycleStartV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CycleStartV1: {
-            brief_id: components["schemas"]["Id"];
-            /** @description The Project revision; the Brief and execution context are immutable. */
-            expected_revision: components["schemas"]["Revision"];
-            researcher_profile: components["schemas"]["CodexProfileChoiceV1"];
-            reviewer_profile: components["schemas"]["CodexProfileChoiceV1"];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
-        CycleStartedV1: {
-            cycle: components["schemas"]["CycleViewV1"];
-            run: components["schemas"]["RunSnapshotV1"];
-            schema_version: components["schemas"]["SchemaV1"];
         };
         /** @enum {string} */
         CycleState: "QUEUED" | "RUNNING" | "WAITING_INPUT" | "PAUSING" | "PAUSED" | "COMPLETED" | "CANCELLED" | "FAILED";
@@ -3772,31 +4531,74 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             project_id: components["schemas"]["Id"];
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Owner-only audit projection of the two immutable registration documents.
+         *     Reading this summary does not revalidate the native snapshot, attest historical
+         *     availability, extend its license, or change the registered origin/PIT labels.
+         */
+        DatasetEvidenceViewV1: {
+            /**
+             * Format: date-time
+             * @description Read-time license observation only; does not authorize new data use.
+             */
+            checked_at: string;
+            data_use_grant_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            license_state: components["schemas"]["DataLicenseState"];
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            partition: components["schemas"]["DataPartition"];
+            /** @description The persisted label, not a new historical-availability attestation. */
+            pit_status: components["schemas"]["PitStatus"];
+            provider_kind: components["schemas"]["DataProviderKind"];
+            quality: components["schemas"]["DatasetQualitySummaryV1"];
+            quality_artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            registration_observed_at: string;
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            runtime_enabled: boolean;
+            schema_version: components["schemas"]["SchemaV1"];
+            source_enabled: boolean;
+            source_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Original registration-time measurements only. No prices, quantities,
+         *     instruments, settlements, samples, or raw native documents are returned.
+         */
+        DatasetQualitySummaryV1: {
+            available_through_ns: components["schemas"]["DbCounter"];
+            /** Format: date-time */
+            checked_at: string;
+            first_event_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            instrument_count: number;
+            last_event_ns: components["schemas"]["DbCounter"];
+            native_version: string;
+            row_count: components["schemas"]["DbCounter"];
         };
         DatasetRegister: {
             existing_universe_version_id?: null | components["schemas"]["Id"];
@@ -3846,17 +4648,6 @@ export interface components {
         DecimalValue: string;
         /** @enum {string} */
         Decision: "PASS" | "REJECT" | "INCONCLUSIVE";
-        /** @description Native observation only. This does not authorize approval or delivery. */
-        DownstreamCapabilitiesV1: {
-            accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
-            accepting_targets: boolean;
-            /** Format: date-time */
-            checked_at: string;
-            delivery_mode: components["schemas"]["DownstreamDeliveryModeV1"];
-            environments: components["schemas"]["ForwardEnvironmentV1"][];
-            market_capability_versions: string[];
-            schema_version: components["schemas"]["SchemaV1"];
-        };
         DownstreamConfigurationV1: {
             accepted_package_versions: components["schemas"]["PackageSchemaVersion"][];
             development_http: boolean;
@@ -3866,7 +4657,14 @@ export interface components {
             name: string;
         };
         DownstreamCreate: {
-            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            configuration: {
+                accepted_package_versions: "2"[];
+                development_http: boolean;
+                enabled: boolean;
+                endpoint: string;
+                environments: components["schemas"]["DownstreamEnvironments"];
+                name: string;
+            };
             credential_ref: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -3875,7 +4673,17 @@ export interface components {
         /** @enum {string} */
         DownstreamEnvironments: "PAPER" | "LIVE" | "BOTH";
         DownstreamProbeOutcomeV1: {
-            capabilities: components["schemas"]["DownstreamCapabilitiesV1"];
+            /** @description Native observation only. This does not authorize approval or delivery. */
+            capabilities: {
+                accepted_package_versions: ("1" | "2")[];
+                accepting_targets: boolean;
+                /** Format: date-time */
+                checked_at: string;
+                delivery_mode: components["schemas"]["DownstreamDeliveryModeV1"];
+                environments: components["schemas"]["ForwardEnvironmentV1"][];
+                market_capability_versions: string[];
+                schema_version: components["schemas"]["SchemaV1"];
+            };
             /** @enum {string} */
             status: "AVAILABLE";
         } | {
@@ -3904,7 +4712,7 @@ export interface components {
         DownstreamReadinessState: "NOT_CHECKED" | "DISABLED" | "STALE" | "UNAVAILABLE" | "AVAILABLE";
         DownstreamReadinessV1: {
             available_environments: components["schemas"]["ForwardEnvironmentV1"][];
-            available_package_versions: components["schemas"]["PackageSchemaVersion"][];
+            available_package_versions: components["schemas"]["TargetPackageVersionV2"][];
             downstream_id: components["schemas"]["Id"];
             integration_revision: components["schemas"]["Revision"];
             latest_observation?: null | components["schemas"]["DownstreamProbeViewV1"];
@@ -3912,7 +4720,14 @@ export interface components {
             state: components["schemas"]["DownstreamReadinessState"];
         };
         DownstreamUpdate: {
-            configuration: components["schemas"]["DownstreamConfigurationV1"];
+            configuration: {
+                accepted_package_versions: "2"[];
+                development_http: boolean;
+                enabled: boolean;
+                endpoint: string;
+                environments: components["schemas"]["DownstreamEnvironments"];
+                name: string;
+            };
             credential_ref?: null | components["schemas"]["Id"];
             expected_revision: components["schemas"]["Revision"];
             schema_version: components["schemas"]["SchemaV1"];
@@ -3930,10 +4745,11 @@ export interface components {
         DownstreamWeightsSubmitV1: {
             asof_ns: components["schemas"]["DbCounter"];
             available_ns: components["schemas"]["DbCounter"];
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             cash_weight: components["schemas"]["DecimalValue"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
             external_message_id: string;
+            paper_initialization?: null | components["schemas"]["PaperInitializationRefV1"];
             project_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
             valid_until_ns: components["schemas"]["DbCounter"];
@@ -3948,6 +4764,55 @@ export interface components {
             /** Format: date-time */
             received_at: string;
             report_artifact_id: components["schemas"]["Id"];
+        };
+        DurableModelViewV1: {
+            modelId: string;
+            name: string;
+            provider: string;
+            reasoning: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Native admission closure or an unavailable/unknown transport outcome. */
+        DurableResearchAdmissionUnavailableV1: components["schemas"]["DurableResearchErrorV1"] | components["schemas"]["Problem"];
+        DurableResearchErrorV1: {
+            error: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchInputV1: {
+            /** @description Extension-owned data: no core asset, source or factor enum. */
+            data: {
+                [key: string]: unknown;
+            };
+            goal: string;
+            model: components["schemas"]["DurableResearchModelV1"];
+            /** @description Original evaluation/selection/stop criteria and optional user limits. */
+            policy: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchModelV1: {
+            modelId: string;
+            provider: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableResearchStartV1: {
+            input: components["schemas"]["DurableResearchInputV1"];
+            requestId: string;
+        } & {
+            [key: string]: unknown;
+        };
+        DurableSubmissionReceiptV1: {
+            /** Format: int64 */
+            conversationId: number;
+            /** Format: int64 */
+            submissionId: number;
+        } & {
+            [key: string]: unknown;
         };
         EquityCurveDataV1: {
             series: components["schemas"]["EquitySeriesV1"];
@@ -4037,6 +4902,7 @@ export interface components {
             /** Format: int32 */
             version: number;
         };
+        EvaluationSha256: string;
         EvaluationView: {
             /** Format: date-time */
             checked_at: string;
@@ -4098,6 +4964,62 @@ export interface components {
             venue_capability_ref: string;
         };
         /** @enum {string} */
+        ExperimentDecisionOutputV1: "TARGET_WEIGHT";
+        ExperimentEquityPreviewV1: {
+            distinct_point_count: components["schemas"]["DbCounter"];
+            points: components["schemas"]["EquityPointV1"][];
+            sampled: boolean;
+            /**
+             * @description Display only: first/last and uniformly spaced indices of the projected series.
+             *     No interpolated values/timestamps; never use preview points to estimate metrics.
+             */
+            sampling_method: string;
+            source_point_count: components["schemas"]["DbCounter"];
+            /** @description Native, or the existing UTC bucket-end projection before preview selection. */
+            source_resolution: components["schemas"]["EquityResolution"];
+        };
+        ExperimentEvaluateIntent: {
+            experiment_id: components["schemas"]["Id"];
+            request: components["schemas"]["ExperimentEvaluateV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @description Direct owner execution of an immutable proposal under its existing cycle. */
+        ExperimentEvaluateV1: {
+            compile_limits: components["schemas"]["JobLimitsV1"];
+            evaluation_limits: components["schemas"]["JobLimitsV1"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        ExperimentFoldSummaryV1: {
+            account_id: string;
+            account_kind: components["schemas"]["NativeAccountKind"];
+            base_currency: string;
+            commissions?: null | components["schemas"]["DecimalValue"];
+            commissions_reason?: string | null;
+            daily_return_count: components["schemas"]["DbCounter"];
+            decision_count: components["schemas"]["DbCounter"];
+            equity_preview: components["schemas"]["ExperimentEquityPreviewV1"];
+            /** Format: int32 */
+            fold_index: number;
+            /** @description Native UTC daily return drawdown, negative fraction: -0.20 means 20%. */
+            max_drawdown: components["schemas"]["ExperimentSummaryStatisticV1"];
+            /**
+             * @description Native account PnL (total), including the engine's unrealized-PnL argument.
+             *     Never recomputed from preview points or relabeled as economic net profit.
+             */
+            native_account_pnl: components["schemas"]["ExperimentSummaryStatisticV1"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            return_frequency: string;
+            /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
+            sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            spot_cash?: null | components["schemas"]["NativeSpotCashSummaryV1"];
+            starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
         ExperimentOutcome: "PENDING" | "SUPPORTED" | "REJECTED" | "INVALID" | "INCONCLUSIVE";
         ExperimentProposalV1: {
             code_artifact_id?: null | string;
@@ -4119,6 +5041,39 @@ export interface components {
         ExperimentResultVisibility: "PENDING" | "RESEARCH" | "RESTRICTED";
         /** @enum {string} */
         ExperimentSource: "CODEX" | "OPTUNA" | "OPERATOR";
+        /** @description A direct selection from native statistics, with original missingness retained. */
+        ExperimentSummaryStatisticV1: {
+            /** Format: int32 */
+            annualization_days?: number | null;
+            method_id: string;
+            native_key: string;
+            reason_code?: string | null;
+            scope: string;
+            status: components["schemas"]["MetricStatus"];
+            unit: string;
+            /** Format: double */
+            value: number | null;
+        };
+        ExperimentSummaryV1: {
+            dataset_revision_id: components["schemas"]["Id"];
+            experiment_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            /** @description Each fold starts with fresh capital. No aggregate/average Sharpe or joined equity. */
+            folds: components["schemas"]["ExperimentFoldSummaryV1"][];
+            instrument_id: string;
+            /**
+             * @description Independent frozen-policy replay; no fitted-model, external-training PIT,
+             *     Alpha qualification or investment-performance claim follows from it.
+             */
+            interpretation: string;
+            model_artifact_id: components["schemas"]["Id"];
+            native_versions: {
+                [key: string]: string;
+            };
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         ExperimentView: {
             author_attempt_id?: null | components["schemas"]["Id"];
             author_run_id?: null | components["schemas"]["Id"];
@@ -4146,10 +5101,117 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        ExternalCycleStartIntent: {
+            project_id: components["schemas"]["Id"];
+            request: components["schemas"]["ExternalCycleStartV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @description An owner-managed scientific cycle. No embedded researcher/reviewer session. */
+        ExternalCycleStartV1: {
+            brief_id: components["schemas"]["Id"];
+            expected_revision: components["schemas"]["Revision"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        FeatureAvailabilityV1: {
+            /** @enum {string} */
+            basis: "OBSERVED";
+        } | {
+            /** @enum {string} */
+            basis: "MODELED_LAG";
+            lag_ns: components["schemas"]["DbCounter"];
+        };
+        FeatureDefinitionV1: {
+            availability: components["schemas"]["FeatureAvailabilityV1"];
+            feature_key: string;
+            max_age_ns?: null | components["schemas"]["DbCounter"];
+            source_key: string;
+            /** @description Caller-declared immutable source reference. Not a fetch URL or PIT grant. */
+            source_ref: string;
+        };
+        /** @enum {string} */
+        FeatureMissingReasonV1: "NOT_YET_AVAILABLE" | "EXPIRED" | "SOURCE_MISSING";
+        FeatureReplayInitializationV1: {
+            first_decision_ns: components["schemas"]["DbCounter"];
+            first_event_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            first_ordinal: number;
+            /** Format: int32 */
+            source_fold_index: number;
+        };
+        FeatureValueV1: {
+            effective_available_ns?: null | components["schemas"]["DbCounter"];
+            event_ns?: null | components["schemas"]["DbCounter"];
+            missing_reason?: null | components["schemas"]["FeatureMissingReasonV1"];
+            observed_available_ns?: null | components["schemas"]["DbCounter"];
+            sequence?: null | components["schemas"]["DbCounter"];
+            /** Format: double */
+            value: number | null;
+        };
         FieldError: {
             code: string;
             field: string;
             message: string;
+        };
+        /**
+         * @description All Build identities refer to the Candidate's original accepted Build, not its
+         *     later Study. Study evidence remains in evaluation_refs and provenance refs.
+         */
+        ForecastEvaluationSourceV2: {
+            build_accepted_attempt_id: components["schemas"]["Id"];
+            /** @description Original research Build fact; delivery still uses the approved Handoff environment. */
+            build_environment: components["schemas"]["ForwardEnvironmentV1"];
+            build_input_set_id: components["schemas"]["Id"];
+            build_parameters_artifact_id: components["schemas"]["Id"];
+            build_report_artifact_id: components["schemas"]["Id"];
+            build_run_id: components["schemas"]["Id"];
+            current_weights_artifact_id: components["schemas"]["Id"];
+            /** @description Original Build task Dataset, checked against its unique Forward binding. */
+            forward_dataset_revision_id: components["schemas"]["Id"];
+            forward_metadata_artifact_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Forecast qualification and evaluation remain distinct from native weight decisions.
+         * @enum {string}
+         */
+        ForecastReleaseSourceV2: "FORECAST_EVALUATION";
+        /** @description Version-two forecast target delivery. No caller-supplied account initialization. */
+        ForecastTargetPackageV2: {
+            /** Format: date-time */
+            asof: string;
+            base_currency: string;
+            candidate_id: components["schemas"]["Id"];
+            capital_assumption: components["schemas"]["DecimalValue"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            compatible_market_capabilities: string[];
+            constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
+            cost_assumption_ref: components["schemas"]["Id"];
+            /** @description Original Build weights, never a newly observed or fresh-cash account. */
+            current_weights: components["schemas"]["PortfolioCurrentWeightsV1"];
+            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
+            engine_versions: {
+                [key: string]: string;
+            };
+            environment_origin: components["schemas"]["PackageOriginV1"];
+            evaluation_refs: components["schemas"]["Id"][];
+            /** @description Original Build execution assumptions, not current downstream settings. */
+            execution_settings: components["schemas"]["NativeSimulationSettingsV1"];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            forward_dataset: components["schemas"]["FrozenForwardDatasetV2"];
+            input_revision_refs: components["schemas"]["Id"][];
+            limitations: string[];
+            mandate_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
+            project_id: components["schemas"]["Id"];
+            provenance_artifact_refs: components["schemas"]["Id"][];
+            qualification_refs: components["schemas"]["Id"][];
+            release_id: components["schemas"]["Id"];
+            source: components["schemas"]["ForecastEvaluationSourceV2"];
+            source_kind: components["schemas"]["ForecastReleaseSourceV2"];
+            targets: components["schemas"]["PackageTargetV1"][];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
         };
         /** @enum {string} */
         ForecastUnit: "RETURN_PER_HORIZON" | "RESIDUAL_RETURN_PER_HORIZON" | "UNITLESS_SCORE";
@@ -4239,10 +5301,107 @@ export interface components {
             /** Format: date-time */
             window_start?: string | null;
         };
+        /**
+         * @description Declared initialization of the next fresh Paper session, not an observed
+         *     balance or a snapshot from a different account/session.
+         */
+        FreshPaperCashV1: {
+            account_id: string;
+            base_currency: string;
+            downstream_id: components["schemas"]["Id"];
+            execution_assumptions_id: components["schemas"]["Id"];
+            starting_capital: components["schemas"]["DecimalValue"];
+            trader_id: string;
+        };
         FrozenBriefV1: {
             brief: components["schemas"]["BriefView"];
             execution_context: components["schemas"]["BriefExecutionContextV1"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Claim-contained projection of the original registered Forward Dataset. It
+         *     contains only bounded metadata and complete original definition histories for
+         *     the frozen portfolio's assets, including zero targets and existing holdings.
+         *     No catalog locator, raw market rows, credentials or current eligibility is carried.
+         */
+        FrozenForwardDatasetV2: {
+            /** Format: date-time */
+            available_through: string;
+            data_kind: components["schemas"]["RuntimeDataKind"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            event_end: string;
+            /** Format: date-time */
+            event_start: string;
+            /** @description Original externally tagged Nautilus InstrumentAny values, never rewritten. */
+            instrument_definitions: unknown[];
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            partition: components["schemas"]["DataPartition"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            row_count: components["schemas"]["DbCounter"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            storage_version: string;
+        };
+        FrozenSpotFeeRuleV1: {
+            basis: components["schemas"]["SpotFeeBasisV1"];
+            /** @description Bind to the untouched native currency definition, including precision. */
+            currency_code: string;
+            /** Format: int32 */
+            currency_precision: number;
+            fee_currency: components["schemas"]["SpotFeeCurrencyV1"];
+            instrument_id: string;
+            liquidity: components["schemas"]["SpotFeeLiquidityV1"];
+            order_side: components["schemas"]["SpotFeeOrderSideV1"];
+            /** @description Signed fraction, not percentage points: 0.0007 means 0.070%. */
+            rate: components["schemas"]["DecimalValue"];
+            rounding: components["schemas"]["SpotFeeRoundingV1"];
+        };
+        FrozenSpotFeeScheduleV1: {
+            /** @description Exactly four rules per admitted instrument: Buy/Sell x Maker/Taker. */
+            rules: components["schemas"]["FrozenSpotFeeRuleV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["FrozenSpotFeeSourceV1"];
+            /**
+             * @description Declared half-open scenario window; source applicability is NOT verified.
+             *     Containment here is never evidence of historical, present or future fees.
+             */
+            valid_from_ns: components["schemas"]["DbCounter"];
+            valid_until_ns: components["schemas"]["DbCounter"];
+        };
+        FrozenSpotFeeSourceV1: {
+            /** @description State unverified tier, discounts, fee-currency and rounding assumptions. */
+            assumptions: string;
+            observed_at_ns: components["schemas"]["DbCounter"];
+            /**
+             * @description Source/capture identity for traceability, not proof of applicable-window coverage.
+             *     A settings copy's artifact ID does not establish independent fee evidence.
+             */
+            source_ref: string;
+            source_uri: string;
+            status: components["schemas"]["SpotFeeEvidenceStatusV1"];
+        };
+        /**
+         * @description A fresh instance replays every decision from the original fold start. It
+         *     retains WASM globals/memory and original ordinals between predictions.
+         */
+        FrozenTargetPolicyV1: {
+            base_currency: string;
+            code_artifact_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            feature_schema: components["schemas"]["FeatureDefinitionV1"][];
+            initialization: components["schemas"]["FeatureReplayInitializationV1"];
+            instrument_id: string;
+            model_abi: string;
+            model_artifact_id: components["schemas"]["Id"];
+            output_kind: components["schemas"]["StrategyOutputKindV1"];
+            parameter_artifact_id: components["schemas"]["Id"];
+            runtime_image_ref: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["AcceptedExperimentSourceV1"];
+            target_ttl_ns: components["schemas"]["DbCounter"];
         };
         GroupBoundV1: {
             group_id: string;
@@ -4261,12 +5420,12 @@ export interface components {
         };
         HandoffClaimV1: {
             external_claim_id: string;
-            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        HandoffClaimViewV1: {
+        HandoffClaimViewV2: {
             handoff: components["schemas"]["HandoffViewV1"];
-            package: components["schemas"]["TargetPackageV1"];
+            package: components["schemas"]["TargetPackageEnvelopeV2"];
         };
         HandoffOfferV1: {
             approval_id: components["schemas"]["Id"];
@@ -4300,6 +5459,14 @@ export interface components {
             revision: components["schemas"]["Revision"];
             state: components["schemas"]["HandoffStateV1"];
             supersedes_handoff_id?: null | components["schemas"]["Id"];
+        };
+        /** @description Original retired Agent facts, never durable identities or reconstructed outcomes. */
+        HistoricalAgentHistoryV1: {
+            execution: unknown;
+            profile?: unknown;
+            schema_version: components["schemas"]["SchemaV1"];
+            turns: components["schemas"]["Page_Value"];
+            wakes: components["schemas"]["Page_Value"];
         };
         /** @enum {string} */
         HistoricalArtifactOutcomeV1: "COPIED" | "MISSING" | "UNSUPPORTED" | "UNREADABLE" | "SEALED_RETAINED" | "MANUAL_REVIEW_REQUIRED";
@@ -4552,6 +5719,20 @@ export interface components {
         };
         /** @enum {string} */
         IsolationProfile: "OCI_RESEARCH_V1";
+        JobLimitsV1: {
+            cpu_seconds?: null | components["schemas"]["DbCounter"];
+            /**
+             * Format: int64
+             * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
+             */
+            experiments: number;
+            /** Format: int64 */
+            memory_mib?: number | null;
+            output_bytes?: null | components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int64 */
+            wall_seconds?: number | null;
+        };
         LabelIntervalSupportV1: {
             fixed_bars: boolean;
             fixed_duration: boolean;
@@ -4586,6 +5767,7 @@ export interface components {
             risk_measure: components["schemas"]["AllocationRisk"];
             universe_version_id: components["schemas"]["Id"];
         };
+        MandateCreateEnvelopeV2: components["schemas"]["MandateCreateV1"] | components["schemas"]["StrategyMandateCreateV1"];
         MandateCreateV1: {
             content: components["schemas"]["MandateContentV1"];
             expected_runtime_revision: components["schemas"]["Revision"];
@@ -4593,6 +5775,7 @@ export interface components {
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        MandateViewEnvelopeV2: components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"];
         MandateViewV1: {
             content: components["schemas"]["MandateContentV1"];
             /** Format: date-time */
@@ -4640,21 +5823,109 @@ export interface components {
         };
         /** @enum {string} */
         MissingSelectionMetric: "INCONCLUSIVE";
-        ModelCapabilityV1: {
-            default_reasoning_effort: string;
-            display_name: string;
-            /** Format: date-time */
-            fetched_at: string;
-            hidden: boolean;
-            id: string;
-            is_default: boolean;
-            model: string;
-            profile_revision: components["schemas"]["Revision"];
+        NativeAccountBalanceV1: {
+            free: components["schemas"]["AccountMoneyV1"];
+            locked: components["schemas"]["AccountMoneyV1"];
+            total: components["schemas"]["AccountMoneyV1"];
+        };
+        NativeAccountBindingV1: {
+            environment: components["schemas"]["ForwardEnvironmentV1"];
+            native_account_id: string;
+            /** @description Stable for this observer/node session. Restart with a new identity when the cursor is lost. */
+            native_session_id: string;
+            native_trader_id: string;
+            native_version: string;
+            project_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
-            supported_reasoning_efforts: components["schemas"]["ReasoningEffortCapability"][];
         };
         /** @enum {string} */
         NativeAccountKind: "CASH" | "MARGIN";
+        NativeAccountMarginV1: {
+            initial: components["schemas"]["AccountMoneyV1"];
+            instrument_id?: string | null;
+            maintenance: components["schemas"]["AccountMoneyV1"];
+        };
+        /** @enum {string} */
+        NativeAccountTypeV1: "CASH" | "MARGIN" | "BETTING" | "WALLET";
+        NativeBarSelectionV1: {
+            /** @description Complete native BarType strings, never SQL or directory prefixes. */
+            bar_types: string[];
+            decision_cutoff_ns: components["schemas"]["DbCounter"];
+            /** @description Exclusive event-time boundary. */
+            event_end_ns: components["schemas"]["DbCounter"];
+            event_start_ns: components["schemas"]["DbCounter"];
+            /** Format: int32 */
+            maximum_rows: number;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Original Dataset-owned native definitions and close observations. This is a
+         *     provenance binding for the existing Nautilus adapter, not a lifecycle model.
+         */
+        NativeBinaryOptionContextV1: {
+            /**
+             * @description Original externally tagged BinaryOption versions, including native clocks,
+             *     identity, activation/expiration, collateral and the recorded fee schedule.
+             */
+            instrument_definitions: unknown[];
+            /** @description Complete two-outcome conditions; only original available closes are carried. */
+            settlements: components["schemas"]["NativeSettlementGroupV1"][];
+        };
+        /** @enum {integer} */
+        NativeClientObservationSchemaV2: 2;
+        NativeExperimentDecisionV1: {
+            decision_ns: components["schemas"]["DbCounter"];
+            event_ns: components["schemas"]["DbCounter"];
+            features: components["schemas"]["FeatureValueV1"][];
+            label_available_ns?: null | components["schemas"]["DbCounter"];
+            label_end_ns?: null | components["schemas"]["DbCounter"];
+            /** Format: double */
+            label_return: number | null;
+            /** Format: int32 */
+            ordinal: number;
+            target_weight: components["schemas"]["DecimalValue"];
+        };
+        NativeExperimentEvaluationRequestV1: {
+            binary_option?: null | components["schemas"]["NativeBinaryOptionContextV1"];
+            decision_output: components["schemas"]["ExperimentDecisionOutputV1"];
+            feature_schema: components["schemas"]["FeatureDefinitionV1"][];
+            instrument_id: string;
+            /** Format: int32 */
+            label_horizon_observations: number;
+            schema_version: components["schemas"]["SchemaV1"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            split_policy: components["schemas"]["SplitPolicyV1"];
+            target_ttl_ns: components["schemas"]["DbCounter"];
+            total_fuel?: null | components["schemas"]["DbCounter"];
+        };
+        NativeExperimentEvaluationResultV1: {
+            consumed_fuel: null | components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_ids: components["schemas"]["Id"][];
+            /** Format: int32 */
+            feature_count: number;
+            folds: components["schemas"]["NativeExperimentFoldV1"][];
+            instrument_id: string;
+            model_artifact_id: components["schemas"]["Id"];
+            native_versions: {
+                [key: string]: string;
+            };
+            /** @description Original frozen request, including ordered feature meanings and limits. */
+            request: components["schemas"]["NativeExperimentEvaluationRequestV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_row_count: components["schemas"]["DbCounter"];
+        };
+        NativeExperimentFoldV1: {
+            decisions: components["schemas"]["NativeExperimentDecisionV1"][];
+            /** Format: int32 */
+            fold_index: number;
+            simulation: components["schemas"]["NativeSimulationResultV1"];
+            /** @description Exact generated targets replayed through the existing native engine. */
+            simulation_request: components["schemas"]["NativeSimulationRequestV1"];
+            training_end_available_ns: components["schemas"]["DbCounter"];
+            training_ordinals: number[];
+        };
         NativeFeeRateV1: {
             instrument_id: string;
             maker: components["schemas"]["DecimalValue"];
@@ -4752,6 +6023,37 @@ export interface components {
             upstream_class: "ndarray_stats::CorrelationExt::cov";
             /** @enum {string} */
             upstream_version: "0.7.0";
+        } | {
+            /** @enum {string} */
+            adapter_kind: "FROZEN_SPOT_FEE_SCENARIO";
+            /** @enum {string} */
+            native_version: "0.63.0";
+            parameters: {
+                acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+                schedule: components["schemas"]["FrozenSpotFeeScheduleV1"];
+            };
+            /** @enum {integer} */
+            schema_version: 1;
+        };
+        /** @description Lossless public field projection; no equity or PnL arithmetic occurs in Q. */
+        NativePortfolioSnapshotV1: {
+            account_id: string;
+            account_type: components["schemas"]["NativeAccountTypeV1"];
+            balances: components["schemas"]["NativeAccountBalanceV1"][];
+            base_currency?: string | null;
+            base_currency_equity?: null | components["schemas"]["AccountMoneyV1"];
+            event_id: string;
+            is_stale: boolean;
+            margins: components["schemas"]["NativeAccountMarginV1"][];
+            /** @description Native session/cache history only, never broker lifetime profit. */
+            realized_pnls: components["schemas"]["AccountMoneyV1"][];
+            stale_currencies: string[];
+            stale_instruments: string[];
+            total_equity: components["schemas"]["AccountMoneyV1"][];
+            ts_event: components["schemas"]["DbCounter"];
+            ts_init: components["schemas"]["DbCounter"];
+            unpriced_instruments: string[];
+            unrealized_pnls: components["schemas"]["AccountMoneyV1"][];
         };
         NativeReturnV1: {
             reason_code?: string | null;
@@ -4759,6 +6061,8 @@ export interface components {
             /** Format: double */
             value: number | null;
         };
+        /** @enum {string} */
+        NativeReturnsKind: "PORTFOLIO_DAILY";
         /** @description Original per-rebalance measurement policy, not a previously measured snapshot. */
         NativeRollingBarLiquidityPolicyV1: {
             /** Format: int32 */
@@ -4766,44 +6070,342 @@ export interface components {
             participation_limit: components["schemas"]["DecimalValue"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        NativeSettlementGroupV1: {
+            condition_id: string;
+            /** @description The complete two-outcome condition, even when only one token is traded. */
+            outcomes: components["schemas"]["NativeSettlementOutcomeV1"][];
+            source_reference: string;
+        };
+        NativeSettlementOutcomeV1: {
+            close_price: components["schemas"]["DecimalValue"];
+            instrument_id: string;
+            ts_event: components["schemas"]["DbCounter"];
+            ts_init: components["schemas"]["DbCounter"];
+        };
+        NativeSimulationRequestV1: {
+            schema_version: components["schemas"]["SchemaV1"];
+            selection: components["schemas"]["NativeBarSelectionV1"];
+            settings: components["schemas"]["NativeSimulationSettingsV1"];
+            /** @description Complete original condition payouts; not inferred from a last bar or expiry. */
+            settlements?: components["schemas"]["NativeSettlementGroupV1"][];
+            target_points: components["schemas"]["NativeTargetPointV1"][];
+        };
+        NativeSimulationResultV1: {
+            /** @description Unmodified native canonical document; stored as restricted simulation evidence. */
+            canonical_result: unknown;
+            consumed_target_points: components["schemas"]["DbCounter"];
+            events: components["schemas"]["DbCounter"];
+            iterations: components["schemas"]["DbCounter"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            returns: components["schemas"]["NativeReturnV1"][];
+            /** @description UTC daily equity changes from native snapshots, never per-position fallback. */
+            returns_kind: components["schemas"]["NativeReturnsKind"];
+            returns_reason?: string | null;
+            returns_status: components["schemas"]["MetricStatus"];
+            schema_version: components["schemas"]["SchemaV1"];
+            spot_cash_report?: null | components["schemas"]["NativeSpotCashReportV1"];
+            statistics: components["schemas"]["NativeStatisticV1"][];
+            summary: {
+                [key: string]: string;
+            };
+        };
         NativeSimulationSettingsV1: {
             account_kind: components["schemas"]["NativeAccountKind"];
-            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD");
+            base_currency: ("AED" | "AFN" | "ALL" | "AMD" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN" | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BOV" | "BRL" | "BSD" | "BTN" | "BWP" | "BYN" | "BZD" | "CAD" | "CDF" | "CHE" | "CHF" | "CHW" | "CLF" | "CLP" | "CNY" | "COP" | "COU" | "CRC" | "CUC" | "CUP" | "CVE" | "CZK" | "DJF" | "DKK" | "DOP" | "DZD" | "EGP" | "ERN" | "ETB" | "EUR" | "FJD" | "FKP" | "GBP" | "GEL" | "GHS" | "GIP" | "GMD" | "GNF" | "GTQ" | "GYD" | "HKD" | "HNL" | "HRK" | "HTG" | "HUF" | "IDR" | "ILS" | "INR" | "IQD" | "IRR" | "ISK" | "JMD" | "JOD" | "JPY" | "KES" | "KGS" | "KHR" | "KMF" | "KPW" | "KRW" | "KWD" | "KYD" | "KZT" | "LAK" | "LBP" | "LKR" | "LRD" | "LSL" | "LYD" | "MAD" | "MDL" | "MGA" | "MKD" | "MMK" | "MNT" | "MOP" | "MRU" | "MUR" | "MVR" | "MWK" | "MXN" | "MXV" | "MYR" | "MZN" | "NAD" | "NGN" | "NIO" | "NOK" | "NPR" | "NZD" | "OMR" | "PAB" | "PEN" | "PGK" | "PHP" | "PKR" | "PLN" | "PYG" | "QAR" | "RON" | "RSD" | "RUB" | "RWF" | "SAR" | "SBD" | "SCR" | "SDG" | "SEK" | "SGD" | "SHP" | "SLE" | "SLL" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS" | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD" | "USN" | "UYI" | "UYU" | "UYW" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAD" | "XAF" | "XAG" | "XAU" | "XBA" | "XBB" | "XBC" | "XBD" | "XCD" | "XCG" | "XDR" | "XOF" | "XPD" | "XPF" | "XPT" | "XSU" | "XTS" | "XUA" | "XXX" | "YER" | "ZAR" | "ZMW" | "ZWG" | "ZWL") | ("USDC" | "USDC.e" | "pUSD") | "USDT";
             exposure_tolerance: components["schemas"]["DecimalValue"];
             fee_model: components["schemas"]["NativeModelRefV1"];
             fee_rates: components["schemas"]["NativeFeeRateV1"][];
             fill_model: components["schemas"]["NativeModelRefV1"];
             latency_model: components["schemas"]["NativeModelRefV1"];
             leverage: components["schemas"]["DecimalValue"];
+            multi_currency_spot_cash?: null | components["schemas"]["NativeSpotCashPolicyV1"];
             schema_version: components["schemas"]["SchemaV1"];
             /** Format: int32 */
             snapshot_interval_ms: number;
             starting_capital: components["schemas"]["DecimalValue"];
         };
+        /**
+         * @description Shared-account native replay projection, also used by experiment fold summaries.
+         *     This view selects existing statistics and observations; it does not rerun science.
+         */
+        NativeSimulationSummaryV1: {
+            account_id: string;
+            account_kind: components["schemas"]["NativeAccountKind"];
+            base_currency: string;
+            commissions?: null | components["schemas"]["DecimalValue"];
+            commissions_reason?: string | null;
+            daily_return_count: components["schemas"]["DbCounter"];
+            decision_count: components["schemas"]["DbCounter"];
+            equity_preview: components["schemas"]["ExperimentEquityPreviewV1"];
+            /** @description Native UTC daily return drawdown, negative fraction: -0.20 means 20%. */
+            max_drawdown: components["schemas"]["ExperimentSummaryStatisticV1"];
+            /**
+             * @description Native account PnL (total), including the engine's unrealized-PnL argument.
+             *     Never recomputed from preview points or relabeled as economic net profit.
+             */
+            native_account_pnl: components["schemas"]["ExperimentSummaryStatisticV1"];
+            native_version: string;
+            orders: components["schemas"]["DbCounter"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            positions: components["schemas"]["DbCounter"];
+            return_frequency: string;
+            /** @description Native UTC daily portfolio returns, zero risk-free rate, frozen annualization. */
+            sharpe_ratio: components["schemas"]["ExperimentSummaryStatisticV1"];
+            spot_cash?: null | components["schemas"]["NativeSpotCashSummaryV1"];
+            starting_capital: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description Actual native observation path. Both variants retain the untouched snapshot.
+         *     The source adapter states which original native event clock the Bar uses.
+         *     Its complete Bar stays unchanged; valuation uses the source-bound close.
+         * @enum {string}
+         */
+        NativeSpotBarEventTimeV1: "OPEN" | "CLOSE_EXCLUSIVE";
+        /** @description A row from one unchanged native account snapshot. Total already includes locked. */
+        NativeSpotCashBalanceV1: {
+            currency: string;
+            free: components["schemas"]["DecimalValue"];
+            locked: components["schemas"]["DecimalValue"];
+            total: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description Runtime facts projected only by the owner of a completed fresh one-shot run.
+         *     The owner must establish closed engine ownership and inspect the actual run
+         *     receipt and complete native event stream. A generic snapshot observer cannot
+         *     produce this evidence. These wire fields bind that proof; they do not
+         *     authenticate it, and a caller-supplied count is not itself proof of no flows.
+         */
+        NativeSpotCashFlowEvidenceV1: {
+            account_id: string;
+            closing_snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            dataset_revision_id: components["schemas"]["Id"];
+            external_flow_count: null | components["schemas"]["DbCounter"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            /**
+             * @description The actual official run ID from the completed engine receipt, not an ID
+             *     reserved before the engine has publicly supplied it.
+             */
+            native_run_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            observed_snapshot_count: components["schemas"]["DbCounter"];
+            opening_snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            session_id: components["schemas"]["Id"];
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotCashModeV1: "MULTI_CURRENCY_CASH";
+        NativeSpotCashMoneyV1: {
+            amount: components["schemas"]["DecimalValue"];
+            currency: string;
+        };
+        NativeSpotCashObservationKindV1: {
+            bar_close_ns: components["schemas"]["DbCounter"];
+            bar_open_ns: components["schemas"]["DbCounter"];
+            event_time: components["schemas"]["NativeSpotBarEventTimeV1"];
+            /** @enum {string} */
+            kind: "BAR";
+            /** @description Original serialization of the complete official Bar, including precision. */
+            native: unknown;
+            source_row_key: string;
+        } | {
+            frame: components["schemas"]["NativeSpotValuationFrameV1"];
+            /** @enum {string} */
+            kind: "SNAPSHOT";
+            /** @description Original complete PortfolioSnapshot, with its actual native event UUID. */
+            native: unknown;
+            origin: components["schemas"]["NativeSpotSnapshotOriginV1"];
+            valuation: components["schemas"]["ReportCurrencyValuationV1"];
+        };
+        NativeSpotCashObservationV1: components["schemas"]["NativeSpotCashObservationKindV1"] & {
+            native_clock_ns: components["schemas"]["DbCounter"];
+            sequence: components["schemas"]["DbCounter"];
+        };
+        NativeSpotCashPolicyV1: {
+            allowed_instrument_ids: string[];
+            /**
+             * @description Native intraday timers emit only while positions are open; never infer a
+             *     complete intraday grid from snapshot_interval_ms.
+             */
+            daily_sampling: components["schemas"]["NativeSpotDailySamplingV1"];
+            /** @description Frozen maximum age. Never use a current/live price for historical equity. */
+            maximum_price_age_ns: components["schemas"]["DbCounter"];
+            mode: components["schemas"]["NativeSpotCashModeV1"];
+            price_method: components["schemas"]["NativeSpotPriceMethodV1"];
+            report_currency: string;
+            returns_policy: components["schemas"]["ReportCurrencyDailyPolicyV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        NativeSpotCashReportV1: {
+            daily_returns: components["schemas"]["ReportCurrencyDailyReturnsV1"];
+            fee_acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+            fee_schedule: components["schemas"]["FrozenSpotFeeScheduleV1"];
+            flow_evidence: components["schemas"]["NativeSpotCashFlowEvidenceV1"];
+            instruments: components["schemas"]["NativeSpotInstrumentV1"][];
+            /**
+             * @description Original serialization of the official completed BacktestResult. Its
+             *     instance/run UUIDs are not present in deterministic canonical_result.
+             */
+            native_run_receipt: unknown;
+            /** @description Complete ordered observer tape, including official decision-time snapshots. */
+            observations: components["schemas"]["NativeSpotCashObservationV1"][];
+            schema_version: components["schemas"]["SchemaV1"];
+            session: components["schemas"]["NativeSpotCashSessionV1"];
+            source_evidence?: null | components["schemas"]["NativeSpotCashSourceEvidenceV1"];
+            /**
+             * @description Official statistics evaluated only on complete report-currency daily returns.
+             *     They are separate from the engine's native-currency statistics.
+             */
+            statistics: components["schemas"]["NativeStatisticV1"][];
+        };
+        /**
+         * @description Execution-local facts for one fresh, exclusively owned observer session.
+         *     The native run identity is available only in its eventual completion receipt.
+         */
+        NativeSpotCashSessionV1: {
+            account_id: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            period_end_ns: components["schemas"]["DbCounter"];
+            period_start_ns: components["schemas"]["DbCounter"];
+            /** @description QZ observer session UUIDv7; not the official native run or instance ID. */
+            session_id: components["schemas"]["Id"];
+            venue: string;
+        };
+        NativeSpotCashSnapshotV1: {
+            account_kind: components["schemas"]["NativeAccountKind"];
+            balances: components["schemas"]["NativeSpotCashBalanceV1"][];
+            /** @description Adapter must establish that every native currency row was retained. */
+            balances_complete: boolean;
+            binding: components["schemas"]["NativeSpotSnapshotBindingV1"];
+            native_base_currency: string | null;
+        };
+        /**
+         * @description Kept separately from valuation completeness, native receipts and fee policy.
+         *     Actual retrieval clocks cannot certify when old candles were first public.
+         */
+        NativeSpotCashSourceEvidenceV1: {
+            capture_id: components["schemas"]["Id"];
+            first_received_ns: components["schemas"]["DbCounter"];
+            historical_availability: components["schemas"]["SpotCashHistoricalAvailabilityV1"];
+            last_received_ns: components["schemas"]["DbCounter"];
+            method: components["schemas"]["SpotCashSourceMethodV1"];
+            native_version: string;
+            network: components["schemas"]["SpotCashSourceNetworkV1"];
+            response_count: components["schemas"]["DbCounter"];
+            schema_version: components["schemas"]["SchemaV1"];
+            selected_row_count: components["schemas"]["DbCounter"];
+        };
+        /** @description Read-only report projection. Balance mark changes are not native account PnL. */
+        NativeSpotCashSummaryV1: {
+            /** @description All original native fee currencies; never aggregated at an assumed FX rate. */
+            commissions_by_currency: components["schemas"]["NativeSpotCashMoneyV1"][];
+            commissions_reason?: string | null;
+            fee_acceptance: components["schemas"]["SpotCashFeeAcceptanceV1"];
+            native_pnl_by_currency: components["schemas"]["NativeStatisticV1"][];
+            report_currency: string;
+            source_evidence?: null | components["schemas"]["NativeSpotCashSourceEvidenceV1"];
+            valuation_basis: string;
+            valuation_change?: null | components["schemas"]["DecimalValue"];
+            valuation_change_reason?: string | null;
+        };
+        /** @enum {string} */
+        NativeSpotDailySamplingV1: "NATIVE_UTC_MIDNIGHT_BOUNDARIES";
+        /** @description Narrow projection of an authoritative native instrument, never a symbol guess. */
+        NativeSpotInstrumentV1: {
+            base_currency: string;
+            has_expiration: boolean;
+            instrument_id: string;
+            is_inverse: boolean;
+            multiplier: components["schemas"]["DecimalValue"];
+            /** @description Adapter must copy the native enum variant; only CurrencyPair is admitted. */
+            native_kind: string;
+            quote_currency: string;
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotPriceMethodV1: "CLOSED_BAR_CLOSE";
+        /** @description Exact source binding and both clocks for a known direct spot close price. */
+        NativeSpotPriceV1: {
+            available_ns: components["schemas"]["DbCounter"];
+            bar_open_ns: components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** @description Closed-bar end, not the candle's opening timestamp. */
+            event_ns: components["schemas"]["DbCounter"];
+            instrument_id: string;
+            method: components["schemas"]["NativeSpotPriceMethodV1"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            /** @description Global replay ordering within this session, copied by the native adapter. */
+            observed_sequence: components["schemas"]["DbCounter"];
+            price: components["schemas"]["DecimalValue"];
+            session_id: components["schemas"]["Id"];
+            /**
+             * @description Exact row in the frozen dataset revision. The adapter must establish
+             *     native Bar equality with that row; a supplied key alone proves nothing.
+             */
+            source_row_key: string;
+        };
+        /**
+         * Format: uuid
+         * @description An identity copied from the official engine, never a generated QZ Id (UUIDv7).
+         *     Deliberately has no constructor that generates or reserves an identity.
+         */
+        NativeSpotRuntimeIdV1: string;
+        /** @description Identity of the original snapshot, retained in every valuation observation. */
+        NativeSpotSnapshotBindingV1: {
+            account_id: string;
+            asof_ns: components["schemas"]["DbCounter"];
+            dataset_revision_id: components["schemas"]["Id"];
+            /** @description Copy snapshot.event_id directly from the official PortfolioSnapshot. */
+            event_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            native_instance_id: components["schemas"]["NativeSpotRuntimeIdV1"];
+            origin: components["schemas"]["NativeSpotSnapshotOriginV1"];
+            session_id: components["schemas"]["Id"];
+            /** @description Global replay sequence at capture, in the same ordering as price observations. */
+            snapshot_sequence: components["schemas"]["DbCounter"];
+            venue: string;
+        };
+        /** @enum {string} */
+        NativeSpotSnapshotOriginV1: "NATIVE_PUBLICATION" | "DECISION_BUILD";
+        NativeSpotValuationFrameV1: {
+            /**
+             * @description At most one already selected as-of price per instrument. The adapter must
+             *     select from the frozen catalog, not accept arbitrary user-asserted marks.
+             */
+            prices: components["schemas"]["NativeSpotPriceV1"][];
+            snapshot: components["schemas"]["NativeSpotCashSnapshotV1"];
+        };
+        /** @enum {string} */
+        NativeStatisticGroup: "PNL" | "RETURNS" | "GENERAL";
+        NativeStatisticV1: {
+            currency?: string | null;
+            group: components["schemas"]["NativeStatisticGroup"];
+            native_key: string;
+            reason_code?: string | null;
+            /** Format: double */
+            value: number | null;
+        };
+        NativeTargetDecisionSourceV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            alpha_version_ids: components["schemas"]["Id"][];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+        };
+        NativeTargetPointV1: {
+            asof_ns: components["schemas"]["DbCounter"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            schema_version: components["schemas"]["SchemaV1"];
+            targets: components["schemas"]["AllocationTargetV1"][];
+            valid_until_ns: components["schemas"]["DbCounter"];
+        };
         OperatorCommand: {
             /** @enum {string} */
             operation: "MIGRATION_IMPORT";
             request: components["schemas"]["HistoricalImportRequestV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_PROFILE_UPDATE";
-            request: components["schemas"]["CodexProfileUpdateV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_PROBE";
-            request: components["schemas"]["CodexProbeRequestV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGIN_START";
-            request: components["schemas"]["CodexAccountRequestV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGIN_CANCEL";
-            request: components["schemas"]["CodexLoginCancelV1"];
-        } | {
-            /** @enum {string} */
-            operation: "CODEX_LOGOUT";
-            request: components["schemas"]["CodexAccountRequestV1"];
         } | {
             /** @enum {string} */
             operation: "BRIEF_FREEZE";
@@ -4830,6 +6432,10 @@ export interface components {
             request: components["schemas"]["DatasetRegister"];
         } | {
             /** @enum {string} */
+            operation: "RECORDED_FEATURE_REGISTER";
+            request: components["schemas"]["RecordedFeatureRegisterIntentV1"];
+        } | {
+            /** @enum {string} */
             operation: "DATA_VALIDATE";
             request: components["schemas"]["DataValidateRequest"];
         } | {
@@ -4838,8 +6444,16 @@ export interface components {
             request: components["schemas"]["AlphaEvaluateRequestV1"];
         } | {
             /** @enum {string} */
+            operation: "EXPERIMENT_EVALUATE";
+            request: components["schemas"]["ExperimentEvaluateIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "EXPERIMENT_ADOPT_ALPHA";
+            request: components["schemas"]["StrategyAlphaAdoptIntentV1"];
+        } | {
+            /** @enum {string} */
             operation: "PORTFOLIO_BUILD";
-            request: components["schemas"]["PortfolioBuildRequestV1"];
+            request: components["schemas"]["PortfolioBuildEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "PORTFOLIO_SIMULATE";
@@ -4851,7 +6465,7 @@ export interface components {
         } | {
             /** @enum {string} */
             operation: "RELEASE_CREATE";
-            request: components["schemas"]["ReleaseCreateV1"];
+            request: components["schemas"]["ReleaseCreateEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "RELEASE_APPROVE";
@@ -4882,8 +6496,12 @@ export interface components {
             request: components["schemas"]["ReleaseReopenV1"];
         } | {
             /** @enum {string} */
-            operation: "CYCLE_START";
-            request: components["schemas"]["CycleStartIntent"];
+            operation: "CYCLE_START_EXTERNAL";
+            request: components["schemas"]["ExternalCycleStartIntent"];
+        } | {
+            /** @enum {string} */
+            operation: "CYCLE_FINISH_EXTERNAL";
+            request: components["schemas"]["CycleFinishExternalIntent"];
         } | {
             /** @enum {string} */
             operation: "INTEGRATION_SECRET_REGISTER";
@@ -4919,7 +6537,7 @@ export interface components {
         } | {
             /** @enum {string} */
             operation: "MANDATE_CREATE";
-            request: components["schemas"]["MandateCreateV1"];
+            request: components["schemas"]["MandateCreateEnvelopeV2"];
         } | {
             /** @enum {string} */
             operation: "EXECUTION_ASSUMPTIONS_CREATE";
@@ -4977,38 +6595,59 @@ export interface components {
             operation: components["schemas"]["OperatorOperation"];
             target_id: components["schemas"]["Id"];
         };
+        /**
+         * @description Includes retired operation names solely to decode original command receipts.
+         *     Retired names have no executable `OperatorCommand` variant.
+         * @enum {string}
+         */
+        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "RECORDED_FEATURE_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "EXPERIMENT_EVALUATE" | "EXPERIMENT_ADOPT_ALPHA" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "SCIENTIFIC_CYCLE_PREPARE" | "CYCLE_START_EXTERNAL" | "CYCLE_FINISH_EXTERNAL" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
         /** @enum {string} */
-        OperatorOperation: "MIGRATION_IMPORT" | "CODEX_PROFILE_CREATE" | "CODEX_PROFILE_UPDATE" | "CODEX_PROBE" | "CODEX_LOGIN_START" | "CODEX_LOGIN_CANCEL" | "CODEX_LOGOUT" | "DATA_SOURCE_CREATE" | "DATA_SOURCE_UPDATE" | "DATA_GRANT_CREATE" | "DATA_GRANT_REVOKE" | "DATASET_REGISTER" | "DATA_VALIDATE" | "ALPHA_EVALUATE" | "PORTFOLIO_BUILD" | "PORTFOLIO_SIMULATE" | "RELEASE_CREATE" | "RELEASE_APPROVE" | "HANDOFF_OFFER" | "APPROVAL_REVOKE" | "POLICY_AUTHORIZE" | "POLICY_REVOKE" | "RELEASE_REJECT" | "RELEASE_REOPEN" | "BRIEF_FREEZE" | "CYCLE_START" | "INTEGRATION_SECRET_REGISTER" | "RUNTIME_PROBE" | "DOWNSTREAM_PROBE" | "RUNTIME_CREATE" | "RUNTIME_UPDATE" | "DOWNSTREAM_CREATE" | "DOWNSTREAM_UPDATE" | "BRIEF_CREATE" | "MANDATE_CREATE" | "EXECUTION_ASSUMPTIONS_CREATE" | "BRIEF_UPDATE" | "PROJECT_CREATE" | "PROJECT_UPDATE" | "PRINCIPAL_CREATE" | "PRINCIPAL_UPDATE" | "CREDENTIAL_ISSUE" | "CREDENTIAL_REVOKE" | "INPUT_SET_CREATE" | "EVALUATION_POLICY_CREATE";
-        /** @enum {string} */
-        PackageOriginV1: "DEMO" | "REAL";
-        /** @enum {string} */
-        PackageSchemaVersion: "1";
+        PackageOriginV1: "DEMO" | "REAL" | "SYNTHETIC";
+        /**
+         * @description Persisted release/configuration history may contain V1. Only V2 is deliverable.
+         * @enum {string}
+         */
+        PackageSchemaVersion: "1" | "2";
         PackageTargetV1: {
             currency: string;
             instrument_id: string;
             target_weight: components["schemas"]["DecimalValue"];
         };
-        Page_AlphaVersionView: {
+        Page_AccountObservationV1: {
             items: {
-                alpha_id: components["schemas"]["Id"];
-                calibration_id?: null | components["schemas"]["Id"];
-                code_artifact_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                experiment_id: components["schemas"]["Id"];
-                forecast_unit: components["schemas"]["ForecastUnit"];
-                horizon_kind: components["schemas"]["HorizonKind"];
-                horizon_value?: null | components["schemas"]["DbCounter"];
+                downstream_id: components["schemas"]["Id"];
+                gap_before: boolean;
                 id: components["schemas"]["Id"];
-                model_artifact_id?: null | components["schemas"]["Id"];
-                origin?: null | components["schemas"]["DataOrigin"];
-                project_id: components["schemas"]["Id"];
-                root_lineage_id: components["schemas"]["Id"];
-                runtime_image_ref: string;
-                signal_contract_version: string;
-                signal_kind: components["schemas"]["TargetKind"];
-                version: components["schemas"]["Revision"];
+                observation: components["schemas"]["AccountObservationSubmitV1"];
+                /** Format: date-time */
+                received_at: string;
+                source_id: components["schemas"]["Id"];
             }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_AccountSourceV1: {
+            items: {
+                binding: components["schemas"]["NativeAccountBindingV1"];
+                /** Format: date-time */
+                checked_at: string;
+                connection: components["schemas"]["AccountConnectionFreshnessV1"];
+                downstream_id: components["schemas"]["Id"];
+                dropped_events: components["schemas"]["DbCounter"];
+                has_gap: boolean;
+                id: components["schemas"]["Id"];
+                last_observation_id: components["schemas"]["Id"];
+                last_observed_at_ns: components["schemas"]["DbCounter"];
+                /** Format: date-time */
+                last_received_at: string;
+                last_sequence: components["schemas"]["DbCounter"];
+                latest_snapshot_id?: null | components["schemas"]["Id"];
+            }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_AlphaVersionEnvelopeV2: {
+            items: (components["schemas"]["AlphaVersionView"] | components["schemas"]["StrategyAlphaVersionV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5122,49 +6761,63 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_CandidateViewV1: {
+        Page_CapitalExitPreviewV1: {
             items: {
-                allocation_evaluation_id?: null | components["schemas"]["Id"];
-                cash_weight?: null | components["schemas"]["DecimalValue"];
-                covariance_artifact_id?: null | components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                current_weights_artifact_id?: null | components["schemas"]["Id"];
-                current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
-                /** Format: date-time */
-                decision_asof: string;
-                diagnostics_artifact_id: components["schemas"]["Id"];
-                evidence_status: components["schemas"]["EvidenceStatus"];
-                execution_status: components["schemas"]["RunState"];
-                forecast_artifact_id?: null | components["schemas"]["Id"];
+                account_source_id: components["schemas"]["Id"];
+                capability: components["schemas"]["CapitalExitCapabilityV1"];
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                expected_account_control_revision?: null | components["schemas"]["Revision"];
+                funds: components["schemas"]["CapitalExitPreviewFundsV1"];
                 id: components["schemas"]["Id"];
-                input_set_id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                origin: components["schemas"]["DataOrigin"];
+                /** @description Resolved from trusted owner configuration, never from the request. */
+                managed_account_key?: string | null;
+                original_observation_id: components["schemas"]["Id"];
+                owner_binding_ref?: string | null;
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
                 project_id: components["schemas"]["Id"];
-                reason_code?: string | null;
-                run_id: components["schemas"]["Id"];
-                solver_status: components["schemas"]["SolverStatus"];
-                target_artifact_id?: null | components["schemas"]["Id"];
+                proposed_cancellations: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                reason_codes: string[];
+                reduction_legs: components["schemas"]["CapitalExitReductionLegV1"][];
+                remaining_risk_evidence_id?: null | components["schemas"]["Id"];
+                retained_protective_orders: components["schemas"]["CapitalExitNativeOrderRefV1"][];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                /** Format: date-time */
+                valid_until: string;
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_CodexProfileViewV1: {
+        Page_CapitalExitViewV1: {
             items: {
-                connection_mode: components["schemas"]["ConnectionMode"];
+                account_control_epoch: components["schemas"]["DbCounter"];
+                account_control_revision: components["schemas"]["Revision"];
+                account_source_id: components["schemas"]["Id"];
+                /** @description Changes on each owner instruction. Claims and evidence bind this exact command. */
+                command_id: components["schemas"]["Id"];
                 /** Format: date-time */
                 created_at: string;
-                /**
-                 * @description An opaque deployment label, never a path. None identifies a historical
-                 *     unregistered reference, which must not be exposed or guessed into a mount.
-                 */
-                home_binding?: string | null;
+                environment: components["schemas"]["ForwardEnvironmentV1"];
+                evidence_refs: components["schemas"]["Id"][];
+                external_claim_id?: string | null;
+                funds: components["schemas"]["CapitalExitFundsV1"];
                 id: components["schemas"]["Id"];
-                model_settings: components["schemas"]["SavedModelSettingsV1"];
-                name: string;
-                profile_origin: components["schemas"]["ProfileOrigin"];
+                last_phase: components["schemas"]["CapitalExitStateV1"];
+                managed_account_key: string;
+                owner_binding_ref: string;
+                owner_command: components["schemas"]["CapitalExitOwnerCommandV1"];
+                plan_artifact_id: components["schemas"]["Id"];
+                policy: components["schemas"]["CapitalExitPolicyV1"];
+                preview_id: components["schemas"]["Id"];
+                project_id: components["schemas"]["Id"];
+                reason_codes: string[];
+                remaining_trading: components["schemas"]["CapitalExitRemainingTradingV1"];
                 revision: components["schemas"]["Revision"];
+                schema_version: components["schemas"]["SchemaV1"];
+                scope: components["schemas"]["CapitalExitScopeV1"];
+                state: components["schemas"]["CapitalExitStateV1"];
                 /** Format: date-time */
                 updated_at: string;
             }[];
@@ -5608,16 +7261,8 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_MandateViewV1: {
-            items: {
-                content: components["schemas"]["MandateContentV1"];
-                /** Format: date-time */
-                created_at: string;
-                id: components["schemas"]["Id"];
-                project_id: components["schemas"]["Id"];
-                /** Format: int32 */
-                version: number;
-            }[];
+        Page_MandateViewEnvelopeV2: {
+            items: (components["schemas"]["MandateViewV1"] | components["schemas"]["StrategyMandateViewV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5658,6 +7303,11 @@ export interface components {
                 id: components["schemas"]["Id"];
                 reason: string;
             }[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        Page_PortfolioCandidateListEnvelopeV2: {
+            items: (components["schemas"]["CandidateViewV1"] | components["schemas"]["StrategyPortfolioCandidateV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5745,26 +7395,8 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
-        Page_ReleaseViewV1: {
-            items: {
-                /** Format: date-time */
-                asof: string;
-                candidate_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                created_at: string;
-                environment: components["schemas"]["PackageOriginV1"];
-                evaluation_id: components["schemas"]["Id"];
-                id: components["schemas"]["Id"];
-                mandate_id: components["schemas"]["Id"];
-                market_capability_version: string;
-                package_artifact_id: components["schemas"]["Id"];
-                package_schema_version: components["schemas"]["PackageSchemaVersion"];
-                project_id: components["schemas"]["Id"];
-                /** Format: date-time */
-                valid_from: string;
-                /** Format: date-time */
-                valid_until: string;
-            }[];
+        Page_ReleaseViewEnvelopeV2: {
+            items: (components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"])[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
@@ -5777,7 +7409,7 @@ export interface components {
                 current_attempt_no: number;
                 cycle_id?: null | components["schemas"]["Id"];
                 /** Format: date-time */
-                deadline_at: string;
+                deadline_at?: string | null;
                 /** Format: date-time */
                 finished_at?: string | null;
                 id: components["schemas"]["Id"];
@@ -5841,6 +7473,11 @@ export interface components {
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
+        Page_Value: {
+            items: unknown[];
+            next_cursor?: null | components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
         Page_WakeViewV1: {
             items: {
                 consumed_cycle_id?: null | components["schemas"]["Id"];
@@ -5860,6 +7497,62 @@ export interface components {
             }[];
             next_cursor?: null | components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Consume one existing model-capital root for an original accepted Paper claim.
+         *     The caller cannot supply capital, targets, artifact locators or a receipt time.
+         */
+        PaperInitialExecutionConsumeV1: {
+            external_claim_id: string;
+            /**
+             * @description Newly generated by the current service process. Never restored from a
+             *     configuration, claim, journal or earlier execution receipt.
+             */
+            owner_instance_id: components["schemas"]["Id"];
+            paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+            release_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description An immutable attempt-consumption fact, not proof that a native engine started.
+         * @enum {string}
+         */
+        PaperInitialExecutionStateV1: "CONSUMED";
+        /**
+         * @description Audit data only, never a serializable execution permit. Only the current
+         *     authenticated HTTP response with CommandResult.replayed=false may be checked
+         *     for an in-process, non-Clone one-use permit. Files/replays cannot mint one.
+         */
+        PaperInitialExecutionViewV1: {
+            /**
+             * @description Original immutable HANDOFF_CLAIM receipt body. A new consumer uses these
+             *     canonical target bytes, not an owner-edited local package with matching IDs.
+             */
+            claim: components["schemas"]["HandoffClaimViewV2"];
+            /**
+             * Format: date-time
+             * @description Real server receipt time, never the model's historical initial cutoff.
+             */
+            consumed_at: string;
+            /** @description Existing credential that claimed the target and consumed this attempt. */
+            consuming_credential_id: components["schemas"]["Id"];
+            owner_instance_id: components["schemas"]["Id"];
+            /** @description Resolved by Store from the original release, never supplied by the host. */
+            package_artifact_id: components["schemas"]["Id"];
+            paper_initialization: components["schemas"]["PaperInitializationRefV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+            state: components["schemas"]["PaperInitialExecutionStateV1"];
+        };
+        /**
+         * @description Immutable initialization lineage, not an account balance or execution ledger.
+         *     The artifact is the original initial-weights document. The scope deliberately
+         *     excludes project, mandate and session IDs, so those cannot reset capital.
+         */
+        PaperInitializationRefV1: {
+            account_id: string;
+            artifact_id: components["schemas"]["Id"];
+            downstream_id: components["schemas"]["Id"];
+            trader_id: string;
         };
         PasswordChange: {
             current_password: string;
@@ -5889,6 +7582,7 @@ export interface components {
             reason: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
+        PortfolioBuildEnvelopeV2: components["schemas"]["PortfolioBuildRequestV1"] | components["schemas"]["StrategyPortfolioBuildV1"];
         /** @description Source references only; trusted admission resolves the original native inputs. */
         PortfolioBuildRequestV1: {
             current_weights_source: components["schemas"]["PortfolioBuildWeightsV1"];
@@ -5897,27 +7591,25 @@ export interface components {
             expected_runtime_revision: components["schemas"]["Revision"];
             input_set_id: components["schemas"]["Id"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             mandate_id: components["schemas"]["Id"];
             members: components["schemas"]["PortfolioMemberSelectionV1"][];
@@ -5932,7 +7624,16 @@ export interface components {
             candidate_id: components["schemas"]["Id"];
             /** @enum {string} */
             kind: "LAST_TARGET";
+        } | {
+            account_id: string;
+            downstream_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            kind: "PAPER_INITIAL_CAPITAL";
+            trader_id: string;
         };
+        PortfolioCandidateEnvelopeV2: components["schemas"]["CandidateDetailV1"] | components["schemas"]["StrategyPortfolioCandidateV1"];
+        /** @description List rows preserve the original flat forecast header, unlike detail responses. */
+        PortfolioCandidateListEnvelopeV2: components["schemas"]["CandidateViewV1"] | components["schemas"]["StrategyPortfolioCandidateV1"];
         PortfolioConstraintsV1: {
             asset_overrides: components["schemas"]["AssetBoundV1"][];
             group_bounds: components["schemas"]["GroupBoundV1"][];
@@ -5958,6 +7659,7 @@ export interface components {
             available_ns: components["schemas"]["DbCounter"];
             base_currency: string;
             cash_weight: components["schemas"]["DecimalValue"];
+            paper_initialization?: null | components["schemas"]["PaperInitializationRefV1"];
             schema_version: components["schemas"]["SchemaV1"];
             source: components["schemas"]["PortfolioWeightsSourceV1"];
             valid_until_ns: components["schemas"]["DbCounter"];
@@ -5979,32 +7681,34 @@ export interface components {
             cycle_id: components["schemas"]["Id"];
             expected_runtime_revision: components["schemas"]["Revision"];
             limits: {
-                cpu_seconds: components["schemas"]["DbCounter"];
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
                 /**
                  * Format: int64
                  * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
                  */
                 experiments: number;
                 /** Format: int64 */
-                memory_mib: number;
-                output_bytes: components["schemas"]["DbCounter"];
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
                 schema_version: components["schemas"]["SchemaV1"];
                 /** Format: int64 */
-                wall_seconds: number;
+                wall_seconds?: number | null;
             } & {
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                cpu_seconds?: string;
+                cpu_seconds?: null | string;
                 /** @enum {integer} */
                 experiments?: 0;
-                memory_mib?: number;
-                /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-                output_bytes?: string;
-                wall_seconds?: number;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
             };
             runtime_id: components["schemas"]["Id"];
             schema_version: components["schemas"]["SchemaV1"];
         };
         PortfolioWeightsSourceV1: {
+            account_start: components["schemas"]["FreshPaperCashV1"];
+            /** @enum {string} */
+            kind: "PAPER_INITIAL_CAPITAL";
+        } | {
             downstream_id: components["schemas"]["Id"];
             external_message_id: string;
             /** @enum {string} */
@@ -6058,8 +7762,6 @@ export interface components {
             title: string;
             type: string;
         };
-        /** @enum {string} */
-        ProfileOrigin: "MANAGED_VOLUME" | "OPERATOR_MOUNT";
         ProjectCreate: {
             description: string;
             fork_from_project_id?: null | components["schemas"]["Id"];
@@ -6119,10 +7821,6 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
-        ReasoningEffortCapability: {
-            description: string;
-            reasoning_effort: string;
-        };
         /** @enum {string} */
         RebalanceKind: "MANUAL" | "FIXED_INTERVAL" | "CALENDAR_SESSION";
         /** @description Frozen scheduling intent, not a timer or permission to create a Release. */
@@ -6140,6 +7838,80 @@ export interface components {
             target_ttl_seconds: number;
             timezone: string;
         };
+        RecordedFeatureFragmentV1: {
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            byte_count: string;
+            max_event_ns: components["schemas"]["DbCounter"];
+            max_observed_available_ns: components["schemas"]["DbCounter"];
+            min_event_ns: components["schemas"]["DbCounter"];
+            min_observed_available_ns: components["schemas"]["DbCounter"];
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            observations: string;
+            /** @description Stable attachment key, never a filesystem path. */
+            part_key: string;
+        };
+        RecordedFeatureListV1: {
+            items: components["schemas"]["RecordedFeatureViewV1"][];
+        };
+        /**
+         * @description Small nonsecret approval/receipt input derived from the original upload.
+         *     A matching intent does not replace Store's original-byte replay comparison.
+         */
+        RecordedFeatureRegisterIntentV1: {
+            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
+            byte_count: string;
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Register an existing recorded attachment using its exact UTF-8 bytes. The
+         *     frozen Dataset metadata is authoritative; no client origin/PIT/license claims.
+         *     Deliberately no Debug, as with ArtifactCreate, to avoid logging the raw content.
+         */
+        RecordedFeatureRegisterV1: {
+            /**
+             * @description Original UTF-8 bytes; whitespace and final newline are retained.
+             *     This is a string, never a parsed JSON Value to be reserialized for storage.
+             */
+            content: string;
+            /** @description Must equal the Dataset ID in the route and normalized operator intent. */
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /**
+         * @description Immutable source identity resolved from the registered feature relationship.
+         *     It is never supplied by a registration client and never extends grant scope.
+         */
+        RecordedFeatureSourceBindingV1: {
+            data_use_grant_id: components["schemas"]["Id"];
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_part_key: string;
+            native_metadata_artifact_id: components["schemas"]["Id"];
+            origin: components["schemas"]["DataOrigin"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+            source_id: components["schemas"]["Id"];
+        };
+        /**
+         * @description Project research-read projection of frozen registration evidence. Historical
+         *     reads do not imply that a grant is currently valid for new scientific use.
+         */
+        RecordedFeatureViewV1: {
+            artifact_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            /** @description Original fragment descriptor including byte size, count and exact clocks. */
+            fragment: components["schemas"]["RecordedFeatureFragmentV1"];
+            partition: components["schemas"]["DataPartition"];
+            project_id: components["schemas"]["Id"];
+            source_binding: components["schemas"]["RecordedFeatureSourceBindingV1"];
+            source_selection_end_ns: components["schemas"]["DbCounter"];
+            source_selection_start_ns: components["schemas"]["DbCounter"];
+        };
         ReleaseApproveV1: {
             downstream_id: components["schemas"]["Id"];
             environment: components["schemas"]["ForwardEnvironmentV1"];
@@ -6149,6 +7921,7 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        ReleaseCreateEnvelopeV2: components["schemas"]["ReleaseCreateV1"] | components["schemas"]["StrategyReleaseCreateV1"];
         ReleaseCreateV1: {
             candidate_id: components["schemas"]["Id"];
             evaluation_id: components["schemas"]["Id"];
@@ -6189,6 +7962,7 @@ export interface components {
             reason_code: string;
             schema_version: components["schemas"]["SchemaV1"];
         };
+        ReleaseViewEnvelopeV2: components["schemas"]["ReleaseViewV1"] | components["schemas"]["StrategyReleaseViewV1"];
         ReleaseViewV1: {
             /** Format: date-time */
             asof: string;
@@ -6208,6 +7982,65 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        /** @enum {string} */
+        ReportCurrencyDailyPolicyV1: "FRESH_SIMULATION_NO_EXTERNAL_FLOWS";
+        ReportCurrencyDailyReturnV1: {
+            closing_snapshot?: null | components["schemas"]["NativeSpotSnapshotBindingV1"];
+            day_end_ns: components["schemas"]["DbCounter"];
+            day_start_ns: components["schemas"]["DbCounter"];
+            opening_snapshot?: null | components["schemas"]["NativeSpotSnapshotBindingV1"];
+            reason?: null | components["schemas"]["ReportCurrencyReturnFailureV1"];
+            /** Format: double */
+            value: number | null;
+        };
+        ReportCurrencyDailyReturnsV1: {
+            /** Format: int32 */
+            annualization_days: number;
+            /**
+             * @description Only complete UTC calendar days inside the requested window. Missing
+             *     observations remain None with a reason, never zero or carried forward.
+             */
+            days: components["schemas"]["ReportCurrencyDailyReturnV1"][];
+            flow_evidence: components["schemas"]["NativeSpotCashFlowEvidenceV1"];
+            kind: components["schemas"]["ReportCurrencyReturnsKindV1"];
+            policy: components["schemas"]["NativeSpotCashPolicyV1"];
+            report_currency: string;
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        /** @enum {string} */
+        ReportCurrencyReturnFailureV1: "SNAPSHOT_GAP" | "VALUATION_UNAVAILABLE" | "NON_POSITIVE_OPENING_EQUITY" | "ARITHMETIC_OUT_OF_RANGE";
+        /** @enum {string} */
+        ReportCurrencyReturnsKindV1: "REPORT_CURRENCY_DAILY";
+        ReportCurrencyValuationLegV1: {
+            currency: string;
+            native_total: components["schemas"]["DecimalValue"];
+            price?: null | components["schemas"]["NativeSpotPriceV1"];
+            report_value: components["schemas"]["DecimalValue"];
+        };
+        /**
+         * @description A separate QZ derived artifact. Never embed this in nativeSnapshot or pretend
+         *     it is the official engine's single-currency portfolio equity.
+         */
+        ReportCurrencyValuationOutcomeV1: {
+            legs: components["schemas"]["ReportCurrencyValuationLegV1"][];
+            /** @enum {string} */
+            status: "COMPLETE";
+            total: components["schemas"]["DecimalValue"];
+        } | {
+            reason: components["schemas"]["ReportValuationFailureV1"];
+            /** @enum {string} */
+            status: "UNAVAILABLE";
+        };
+        ReportCurrencyValuationV1: {
+            outcome: components["schemas"]["ReportCurrencyValuationOutcomeV1"];
+            /** @description Copied from the same immutable simulation settings used by this context. */
+            policy: components["schemas"]["NativeSpotCashPolicyV1"];
+            report_currency: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            snapshot: components["schemas"]["NativeSpotSnapshotBindingV1"];
+        };
+        /** @enum {string} */
+        ReportValuationFailureV1: "INVALID_SNAPSHOT_BINDING" | "UNSUPPORTED_ACCOUNT" | "INCOMPLETE_BALANCES" | "INVALID_BALANCE" | "DUPLICATE_CURRENCY" | "UNKNOWN_CURRENCY" | "INVALID_PRICE_SOURCE" | "UNKNOWN_PRICE_INSTRUMENT" | "DUPLICATE_PRICE" | "MISSING_PRICE" | "FUTURE_PRICE" | "AMBIGUOUS_PRICE_ORDER" | "PRICE_METHOD_MISMATCH" | "REPLAY_SEQUENCE_CONFLICT" | "REPLAY_CLOCK_CONFLICT" | "PRICE_SOURCE_CONFLICT" | "STALE_PRICE" | "NON_POSITIVE_PRICE" | "ARITHMETIC_OUT_OF_RANGE";
         /** @enum {string} */
         ResearchArtifactKind: "CODE" | "PARAMETERS" | "REPORT";
         /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
@@ -6233,7 +8066,7 @@ export interface components {
             event_type: string;
             /** Format: date-time */
             occurred_at: string;
-            /** @description Public extensible schema-v1 JSON object; serialized UTF-8 is limited to 65536 bytes. Known event types additionally validate their specific payload contract. */
+            /** @description Public extensible schema-v1 JSON object. Known event types additionally validate their specific payload contract. */
             payload: {
                 /** @enum {integer} */
                 schema_version: 1;
@@ -6272,7 +8105,7 @@ export interface components {
             current_attempt_no: number;
             cycle_id?: null | components["schemas"]["Id"];
             /** Format: date-time */
-            deadline_at: string;
+            deadline_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
             id: components["schemas"]["Id"];
@@ -6307,14 +8140,16 @@ export interface components {
             isolation_profile: components["schemas"]["IsolationProfile"];
             job_kinds: components["schemas"]["RunKind"][];
             label_interval_support: components["schemas"]["LabelIntervalSupportV1"];
-            /** Format: int32 */
+            /** Format: int64 */
             max_cpu: number;
             /** Format: int32 */
             max_memory_mib: number;
-            /** @description Canonical decimal string in the PostgreSQL signed bigint range; nonnegative counters or positive revisions. */
-            max_output_bytes: string;
-            /** Format: int32 */
-            max_wall_seconds: number;
+            max_output_bytes?: null | string;
+            /**
+             * Format: int32
+             * @description Explicit operator-selected Runtime ceiling. None imposes no wall-time cap.
+             */
+            max_wall_seconds?: number | null;
             protocol_versions: components["schemas"]["SchemaV1"][];
             runtime_version: string;
             schema_version: components["schemas"]["SchemaV1"];
@@ -6458,13 +8293,6 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        SavedModelSettingsV1: {
-            saved_fast_mode: boolean;
-            saved_model?: string | null;
-            saved_reasoning_effort?: string | null;
-            schema_version: components["schemas"]["SchemaV1"];
-            use_default_model_settings: boolean;
-        };
         /** @enum {integer} */
         SchemaV1: 1;
         /** @enum {string} */
@@ -6528,6 +8356,33 @@ export interface components {
             test_size: components["schemas"]["DbCounter"];
             train_size: components["schemas"]["DbCounter"];
         };
+        /**
+         * @description Explicit frozen research-policy acceptance, never an applicability assertion.
+         * @enum {string}
+         */
+        SpotCashFeeAcceptanceV1: "PUBLIC_RATE_SCENARIO_UNVERIFIED_APPLICABILITY";
+        /** @enum {string} */
+        SpotCashHistoricalAvailabilityV1: "UNVERIFIED";
+        /** @enum {string} */
+        SpotCashSourceMethodV1: "HYPERLIQUID_PUBLIC_REST_CANDLE_SNAPSHOT";
+        /** @enum {string} */
+        SpotCashSourceNetworkV1: "MAINNET";
+        /** @enum {string} */
+        SpotFeeBasisV1: "BASE_QUANTITY" | "QUOTE_NOTIONAL";
+        /** @enum {string} */
+        SpotFeeCurrencyV1: "BASE" | "QUOTE";
+        /** @enum {string} */
+        SpotFeeEvidenceStatusV1: "CONSERVATIVE_ASSUMPTION" | "PUBLIC_RATE_SCENARIO_UNVERIFIED_APPLICABILITY" | "SYNTHETIC" | "DATA_BACKED";
+        /** @enum {string} */
+        SpotFeeLiquidityV1: "MAKER" | "TAKER";
+        /** @enum {string} */
+        SpotFeeOrderSideV1: "BUY" | "SELL";
+        /**
+         * @description Exact decimal arithmetic, rounded once per fill before native Money construction.
+         *     This is an explicit research convention, not a verified exchange rounding rule.
+         * @enum {string}
+         */
+        SpotFeeRoundingV1: "HALF_EVEN_CURRENCY_PRECISION";
         StopRuleV1: {
             schema_version: components["schemas"]["SchemaV1"];
             stop_on_budget: boolean;
@@ -6538,8 +8393,219 @@ export interface components {
             stop_on_qualified_count: number;
         };
         /** @enum {string} */
+        StrategyAllocationMethodV1: "FIXED_TARGET_WEIGHTS";
+        StrategyAlphaAdoptIntentV1: {
+            experiment_id: components["schemas"]["Id"];
+            request: components["schemas"]["StrategyAlphaAdoptV1"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyAlphaAdoptV1: {
+            expected_revision: components["schemas"]["Revision"];
+            name: string;
+            schema_version: components["schemas"]["SchemaV1"];
+            /**
+             * Format: int32
+             * @description Selects an original fold; its clocks and ordinals are resolved by Store.
+             */
+            source_fold_index: number;
+        };
+        StrategyAlphaVersionV1: {
+            alpha_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            experiment_id: components["schemas"]["Id"];
+            id: components["schemas"]["Id"];
+            output_kind: components["schemas"]["StrategyOutputKindV1"];
+            policy: components["schemas"]["FrozenTargetPolicyV1"];
+            project_id: components["schemas"]["Id"];
+            root_lineage_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            version: components["schemas"]["Revision"];
+        };
+        StrategyCurrentInputsV1: {
+            alpha_version_id: components["schemas"]["Id"];
+            /** @description New observations retain the frozen feature dictionary and source meaning. */
+            feature_artifact_ids: components["schemas"]["Id"][];
+        };
+        /** @description Market/feature provenance remains separate from the simulated account. */
+        StrategyInputProvenanceV1: {
+            dataset_revision_id: components["schemas"]["Id"];
+            feature_artifact_origins: {
+                [key: string]: components["schemas"]["DataOrigin"];
+            };
+            /**
+             * @description Only registered features have bindings. None preserves old reports;
+             *     new fields require a matching Job binary as well as Server/Runtime.
+             *     A current decision may also retain bindings for its historical policy Dataset.
+             */
+            feature_source_bindings?: {
+                [key: string]: components["schemas"]["RecordedFeatureSourceBindingV1"];
+            } | null;
+            market_data_origin: components["schemas"]["DataOrigin"];
+            pit_status: components["schemas"]["PitStatus"];
+            revision_policy: components["schemas"]["DataRevisionPolicy"];
+        };
+        StrategyMandateContentV1: {
+            allocation_method: components["schemas"]["StrategyAllocationMethodV1"];
+            base_currency: string;
+            capital_assumption: components["schemas"]["DecimalValue"];
+            constraints: components["schemas"]["PortfolioConstraintsV1"];
+            execution_assumptions_id: components["schemas"]["Id"];
+            exposure_tolerance: components["schemas"]["DecimalValue"];
+            /** Format: int32 */
+            max_input_age_seconds: number;
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int32 */
+            target_ttl_seconds: number;
+            universe_version_id: components["schemas"]["Id"];
+        };
+        StrategyMandateCreateV1: {
+            content: components["schemas"]["StrategyMandateContentV1"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            project_id: components["schemas"]["Id"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyMandateViewV1: {
+            content: components["schemas"]["StrategyMandateContentV1"];
+            /** Format: date-time */
+            created_at: string;
+            id: components["schemas"]["Id"];
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            /** Format: int32 */
+            version: number;
+        };
+        StrategyMemberSelectionV1: {
+            alpha_version_id: components["schemas"]["Id"];
+            ensemble_weight: components["schemas"]["DecimalValue"];
+        };
+        /** @enum {string} */
+        StrategyOutputKindV1: "TARGET_WEIGHT";
+        StrategyPortfolioBuildV1: {
+            cycle_id: components["schemas"]["Id"];
+            expected_runtime_revision: components["schemas"]["Revision"];
+            input_set_id: components["schemas"]["Id"];
+            limits: {
+                cpu_seconds?: null | components["schemas"]["DbCounter"];
+                /**
+                 * Format: int64
+                 * @description Zero for trusted non-trial stages or Mission control; scientific trials are positive.
+                 */
+                experiments: number;
+                /** Format: int64 */
+                memory_mib?: number | null;
+                output_bytes?: null | components["schemas"]["DbCounter"];
+                schema_version: components["schemas"]["SchemaV1"];
+                /** Format: int64 */
+                wall_seconds?: number | null;
+            } & {
+                cpu_seconds?: null | string;
+                /** @enum {integer} */
+                experiments?: 0;
+                memory_mib?: null | number;
+                output_bytes?: null | string;
+                wall_seconds?: null | number;
+            };
+            mandate_id: components["schemas"]["Id"];
+            members: components["schemas"]["StrategyMemberSelectionV1"][];
+            purpose: components["schemas"]["StrategyPortfolioPurposeV1"];
+            runtime_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyPortfolioSourceV1"];
+        };
+        StrategyPortfolioCandidateV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            allocation_method: components["schemas"]["StrategyAllocationMethodV1"];
+            cash_weight: components["schemas"]["DecimalValue"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decision_asof: string;
+            id: components["schemas"]["Id"];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            input_set_id: components["schemas"]["Id"];
+            mandate_id: components["schemas"]["Id"];
+            members: components["schemas"]["StrategyMemberSelectionV1"][];
+            project_id: components["schemas"]["Id"];
+            purpose: components["schemas"]["StrategyPortfolioPurposeV1"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyPortfolioSourceV1"];
+            targets: components["schemas"]["AllocationTargetV1"][];
+        };
+        StrategyPortfolioPurposeV1: {
+            /** @enum {string} */
+            purpose: "HISTORICAL_REPLAY";
+        } | {
+            account_start: components["schemas"]["FreshPaperCashV1"];
+            member_inputs: components["schemas"]["StrategyCurrentInputsV1"][];
+            /** @enum {string} */
+            purpose: "CURRENT_DECISION";
+        };
+        /** @enum {string} */
+        StrategyPortfolioSourceV1: "STRATEGY_ALPHA";
+        StrategyPortfolioSummaryOutcomeV1: {
+            /** @enum {string} */
+            purpose: "HISTORICAL_REPLAY";
+            /** @description One original shared-capital simulation; never summed member curves. */
+            simulation: components["schemas"]["NativeSimulationSummaryV1"];
+        } | {
+            /** @enum {string} */
+            purpose: "CURRENT_DECISION";
+            /** @description A target-only decision has no simulated returns or historical equity. */
+            reason_code: string;
+        };
+        /** @description Bounded read-only projection of a published candidate's accepted native report. */
+        StrategyPortfolioSummaryV1: {
+            accepted_attempt_id: components["schemas"]["Id"];
+            candidate_id: components["schemas"]["Id"];
+            input_provenance: components["schemas"]["StrategyInputProvenanceV1"];
+            /** @description Accepted execution is not scientific qualification, PIT or delivery approval. */
+            interpretation: string;
+            native_versions: {
+                [key: string]: string;
+            };
+            outcome: components["schemas"]["StrategyPortfolioSummaryOutcomeV1"];
+            project_id: components["schemas"]["Id"];
+            report_artifact_id: components["schemas"]["Id"];
+            run_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+        };
+        StrategyReleaseCreateV1: {
+            candidate_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
+        };
+        /** @enum {string} */
+        StrategyReleaseSourceV1: "NATIVE_TARGET_DECISION";
+        StrategyReleaseViewV1: {
+            /** Format: date-time */
+            asof: string;
+            candidate_id: components["schemas"]["Id"];
+            /** Format: date-time */
+            created_at: string;
+            execution_environment: components["schemas"]["ForwardEnvironmentV1"];
+            id: components["schemas"]["Id"];
+            mandate_id: components["schemas"]["Id"];
+            market_capability_version: string;
+            package_artifact_id: components["schemas"]["Id"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
+            project_id: components["schemas"]["Id"];
+            schema_version: components["schemas"]["SchemaV1"];
+            source: components["schemas"]["NativeTargetDecisionSourceV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
+            /** Format: date-time */
+            valid_from: string;
+            /** Format: date-time */
+            valid_until: string;
+        };
+        /** @enum {string} */
         TargetKind: "SCORE" | "EXPECTED_RETURN";
-        TargetPackageV1: {
+        TargetPackageEnvelopeV2: components["schemas"]["ForecastTargetPackageV2"] | components["schemas"]["TargetPackageV2"];
+        TargetPackageV2: {
+            account_start: components["schemas"]["FreshPaperCashV1"];
             /** Format: date-time */
             asof: string;
             base_currency: string;
@@ -6549,27 +8615,29 @@ export interface components {
             compatible_market_capabilities: string[];
             constraints_summary: components["schemas"]["PortfolioConstraintsV1"];
             cost_assumption_ref: components["schemas"]["Id"];
-            current_weights_source: components["schemas"]["CandidateWeightsSourceV1"];
             engine_versions: {
                 [key: string]: string;
             };
-            environment_origin: components["schemas"]["PackageOriginV1"];
-            evaluation_refs: components["schemas"]["Id"][];
+            execution_environment: components["schemas"]["ForwardEnvironmentV1"];
+            execution_settings: components["schemas"]["NativeSimulationSettingsV1"];
             exposure_tolerance: components["schemas"]["DecimalValue"];
             input_revision_refs: components["schemas"]["Id"][];
             limitations: string[];
             mandate_id: components["schemas"]["Id"];
-            package_schema_version: components["schemas"]["PackageSchemaVersion"];
+            package_schema_version: components["schemas"]["TargetPackageVersionV2"];
             project_id: components["schemas"]["Id"];
             provenance_artifact_refs: components["schemas"]["Id"][];
-            qualification_refs: components["schemas"]["Id"][];
             release_id: components["schemas"]["Id"];
+            source: components["schemas"]["NativeTargetDecisionSourceV1"];
+            source_kind: components["schemas"]["StrategyReleaseSourceV1"];
             targets: components["schemas"]["PackageTargetV1"][];
             /** Format: date-time */
             valid_from: string;
             /** Format: date-time */
             valid_until: string;
         };
+        /** @enum {string} */
+        TargetPackageVersionV2: "2";
         /** @enum {string} */
         TlsPolicy: "SYSTEM_CA" | "PINNED_CA";
         /** @enum {string} */
@@ -7025,7 +9093,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_AlphaVersionView"];
+                    "application/json": components["schemas"]["Page_AlphaVersionEnvelopeV2"];
                 };
             };
             401: {
@@ -7097,7 +9165,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AlphaVersionView"];
+                    "application/json": components["schemas"]["AlphaVersionEnvelopeV2"];
                 };
             };
             401: {
@@ -7563,6 +9631,77 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    agent_evaluation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentEvaluationReportV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -8789,301 +10928,7 @@ export interface operations {
             };
         };
     };
-    getCodexAccountObservation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexObservationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getLatestCodexAccountOperation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": null | components["schemas"]["CodexAccountOperationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    cancelCodexLogin: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexLoginCancelV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexAccountOperationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    startCodexLogin: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexAccountRequestV1"];
-            };
-        };
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexAccountStartV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexAccountOperation: {
+    get_capital_exit: {
         parameters: {
             query?: never;
             header?: never;
@@ -9099,7 +10944,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CodexAccountOperationV1"];
+                    "application/json": components["schemas"]["CapitalExitViewV1"];
                 };
             };
             401: {
@@ -9126,14 +10971,6 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
             /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
             429: {
                 headers: {
@@ -9146,19 +10983,21 @@ export interface operations {
             };
         };
     };
-    logoutCodexAccount: {
+    cancel_capital_exit: {
         parameters: {
             query?: never;
             header: {
                 /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
-            path?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CodexAccountRequestV1"];
+                "application/json": components["schemas"]["CapitalExitActionV1"];
             };
         };
         responses: {
@@ -9167,7 +11006,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CodexAccountStartV1"];
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
                 };
             };
             401: {
@@ -9220,101 +11059,32 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
         };
     };
-    getCodexModelObservation: {
-        parameters: {
-            query: {
-                profile_id: components["schemas"]["Id"];
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexObservationV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    probeCodexProfile: {
+    claim_capital_exit: {
         parameters: {
             query?: never;
             header: {
                 /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
                 "Idempotency-Key": string;
             };
-            path?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CodexProbeRequestV1"];
+                "application/json": components["schemas"]["CapitalExitClaimV1"];
             };
         };
         responses: {
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProbeViewV1"];
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
                 };
             };
             401: {
@@ -9367,8 +11137,312 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            503: {
+        };
+    };
+    submit_capital_exit_evidence: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitOwnerEvidenceV1"];
+            };
+        };
+        responses: {
+            201: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    pause_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    reconcile_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resume_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitActionV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9413,6 +11487,92 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    finishExternalResearchCycle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CycleFinishExternalV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CycleViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9939,6 +12099,236 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    dataset_evidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetEvidenceViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_recorded_features: {
+        parameters: {
+            query: {
+                project_id: components["schemas"]["Id"];
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordedFeatureListV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    register_recorded_feature: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordedFeatureRegisterV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RecordedFeatureViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10650,6 +13040,194 @@ export interface operations {
             };
             503: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_capital_exit_assessment_requests: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitPreviewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_capital_exit_assessment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitOwnerAssessmentV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitAssessmentReceiptV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_downstream_capital_exits: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -11457,6 +14035,452 @@ export interface operations {
             };
         };
     };
+    adopt_experiment_alpha: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategyAlphaAdoptV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_StrategyAlphaVersionV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    evaluate_experiment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExperimentEvaluateV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_RunSnapshotV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_experiment_evaluation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeExperimentEvaluationResultV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_experiment_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperimentSummaryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_account_observation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountObservationSubmitV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountObservationReceiptV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    submit_client_account_observation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountObservationSubmitV2"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    /** @description Present only after deployment-opted-in Paper owner registration succeeds for this exact original source. Absent means no capital-exit registration acknowledgement; it is not funds readiness. */
+                    "x-qz-capital-exit-source"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountObservationReceiptV2"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     submit_forward_message: {
         parameters: {
             query?: never;
@@ -11886,7 +14910,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_HandoffClaimViewV1"];
+                    "application/json": components["schemas"]["CommandResult_HandoffClaimViewV2"];
                 };
             };
             401: {
@@ -11987,6 +15011,92 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    consume_paper_initial_execution: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperInitialExecutionConsumeV1"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_PaperInitialExecutionViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14258,7 +17368,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PortfolioBuildRequestV1"];
+                "application/json": components["schemas"]["PortfolioBuildEnvelopeV2"];
             };
         };
         responses: {
@@ -14346,7 +17456,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CandidateDetailV1"];
+                    "application/json": components["schemas"]["PortfolioCandidateEnvelopeV2"];
                 };
             };
             401: {
@@ -14467,6 +17577,77 @@ export interface operations {
             };
         };
     };
+    get_strategy_portfolio_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyPortfolioSummaryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_mandate: {
         parameters: {
             query?: never;
@@ -14479,7 +17660,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MandateCreateV1"];
+                "application/json": components["schemas"]["MandateCreateEnvelopeV2"];
             };
         };
         responses: {
@@ -14488,7 +17669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_MandateViewV1"];
+                    "application/json": components["schemas"]["CommandResult_MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -14559,7 +17740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MandateViewV1"];
+                    "application/json": components["schemas"]["MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -15293,7 +18474,7 @@ export interface operations {
             };
         };
     };
-    startResearchCycle: {
+    startExternalResearchCycle: {
         parameters: {
             query?: never;
             header: {
@@ -15307,16 +18488,16 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CycleStartV1"];
+                "application/json": components["schemas"]["ExternalCycleStartV1"];
             };
         };
         responses: {
-            202: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_CycleStartedV1"];
+                    "application/json": components["schemas"]["CommandResult_CycleViewV1"];
                 };
             };
             401: {
@@ -15744,7 +18925,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_CandidateViewV1"];
+                    "application/json": components["schemas"]["Page_PortfolioCandidateListEnvelopeV2"];
                 };
             };
             401: {
@@ -15810,7 +18991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_MandateViewV1"];
+                    "application/json": components["schemas"]["Page_MandateViewEnvelopeV2"];
                 };
             };
             401: {
@@ -15876,7 +19057,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_ReleaseViewV1"];
+                    "application/json": components["schemas"]["Page_ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
@@ -15997,6 +19178,489 @@ export interface operations {
             };
         };
     };
+    list_account_sources: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AccountSourceV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_account_client_binding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+                source_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountClientBindingV2"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_account_current: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+                source_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountCurrentV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_account_observations: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+                source_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AccountObservationV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    preview_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitPreviewRequestV1"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitPreviewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_capital_exits: {
+        parameters: {
+            query?: {
+                cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    start_capital_exit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
+                "Idempotency-Key": string;
+            };
+            path: {
+                project_id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CapitalExitStartV1"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResult_CapitalExitViewV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     reopen_release: {
         parameters: {
             query?: never;
@@ -16087,7 +19751,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReleaseCreateV1"];
+                "application/json": components["schemas"]["ReleaseCreateEnvelopeV2"];
             };
         };
         responses: {
@@ -16096,7 +19760,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CommandResult_ReleaseViewV1"];
+                    "application/json": components["schemas"]["CommandResult_ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
@@ -16175,7 +19839,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReleaseViewV1"];
+                    "application/json": components["schemas"]["ReleaseViewEnvelopeV2"];
                 };
             };
             401: {
@@ -16518,6 +20182,514 @@ export interface operations {
             };
         };
     };
+    listDurableResearch: {
+        parameters: {
+            query?: {
+                /** @description JSON-encoded native pi-durable Cursor */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native pi-durable JSON snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    startDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DurableResearchStartV1"];
+            };
+        };
+        responses: {
+            /** @description Native submission admitted or replayed; not completion */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableSubmissionReceiptV1"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            /** @description Native research_maintenance admission error or transport Problem */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
+                    "application/problem+json": components["schemas"]["DurableResearchAdmissionUnavailableV1"];
+                };
+            };
+        };
+    };
+    listDurableModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableModelViewV1"][];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listDurableTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDurableUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native pi-durable JSON snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    stopDurableResearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Native stop request accepted, not cancellation proof */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableResearchErrorV1"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_runs: {
         parameters: {
             query?: {
@@ -16620,6 +20792,73 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_historical_agent_history: {
+        parameters: {
+            query?: {
+                turn_cursor?: components["schemas"]["Id"];
+                wake_cursor?: components["schemas"]["Id"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoricalAgentHistoryV1"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16847,211 +21086,6 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    listCodexProfiles: {
-        parameters: {
-            query?: {
-                cursor?: components["schemas"]["Id"];
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Page_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    getCodexProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    updateCodexProfile: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description One printable ASCII header value, 1–200 bytes; no leading/trailing space or controls. Internal spaces are allowed. Repeated headers are rejected. */
-                "Idempotency-Key": string;
-            };
-            path: {
-                id: components["schemas"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CodexProfileUpdateV1"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResult_CodexProfileViewV1"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Authentication/capacity limit, or BUDGET_EXHAUSTED for frozen resource quotas. Only retryable limits may include Retry-After; budget exhaustion is nonretryable and does not include it. */
-            429: {
-                headers: {
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            503: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {

@@ -15,7 +15,8 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vite/client", "vite-plugin-pwa/react", "node"]
+    "types": ["vite/client", "node"]
   },
-  "include": ["src", "tests", "vite.config.ts", "playwright*.config.ts"]
+  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"],
+  "exclude": ["src/generated"]
 }

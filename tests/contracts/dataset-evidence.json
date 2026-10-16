@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "dataset_revision_id": "018fc823-8e40-7000-8000-000000000001",
+  "source_id": "018fc823-8e40-7000-8000-000000000002",
+  "data_use_grant_id": "018fc823-8e40-7000-8000-000000000003",
+  "native_metadata_artifact_id": "018fc823-8e40-7000-8000-000000000004",
+  "quality_artifact_id": "018fc823-8e40-7000-8000-000000000005",
+  "registration_observed_at": "2026-09-01T00:00:00Z",
+  "provider_kind": "NAUTILUS_CATALOG",
+  "partition": "DISCOVERY",
+  "origin": "FIXTURE",
+  "pit_status": "UNVERIFIED",
+  "revision_policy": "AS_KNOWN_THEN",
+  "source_enabled": true,
+  "runtime_enabled": true,
+  "license_state": "REVOKED",
+  "checked_at": "2026-09-02T00:00:00Z",
+  "quality": {
+    "native_version": "nautilus-persistence/0.63.0",
+    "checked_at": "2026-08-31T00:00:00Z",
+    "row_count": "9007199254740993",
+    "instrument_count": 1,
+    "first_event_ns": "9007199254740993",
+    "last_event_ns": "9007199254740994",
+    "available_through_ns": "9007199254740995"
+  }
+}

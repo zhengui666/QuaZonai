@@ -6,12 +6,18 @@ use chrono::{DateTime, Utc};
 use contracts::{
     execution::{NativeDataQualityReportV1, NativeModelCompilationV1},
     portfolio::{AllocationResultV1, SolverStatus},
-    runtime_jobs::{native_output_contract, RuntimeOutputV1, MAX_JOB_OUTPUT_BYTES},
+    runtime_jobs::{native_output_contract, RuntimeOutputV1},
     science::{NativeBarSelectionV1, NativeForecastResultV1, NativeSimulationResultV1},
 };
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod experiment;
+mod experiment_summary;
+mod strategy_summary;
+pub use experiment::binding as check_experiment_evaluation;
+pub use experiment_summary::experiment_summary;
+pub use strategy_summary::strategy_portfolio_summary;
 mod forecast;
 mod sealed;
 pub use sealed::{
@@ -20,8 +26,11 @@ pub use sealed::{
 };
 mod equity_curve;
 mod simulation;
+mod spot_cash_report;
 pub use equity_curve::{equity_curve_query, portfolio_equity_curve};
+pub(crate) use simulation::binding as check_simulation;
 pub use simulation::metrics as portfolio_simulation_metrics;
+pub(crate) use spot_cash_report::dataset as check_simulation_dataset;
 mod study;
 pub use study::binding as check_portfolio_study;
 mod validation;
@@ -78,7 +87,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| bad("native_output.checked_at"))?;
     if value.native_version != "nautilus-persistence/0.63.0"
-        || !(1..=256).contains(&value.datasets.len())
+        || value.datasets.is_empty()
         || !value
             .checked_at
             .timestamp_subsec_nanos()
@@ -128,8 +137,12 @@ fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
     text(&value.rustc_version, 1, 512, false)?;
     if !value.rustc_version.starts_with("rustc 1.98.1 ")
         || value.target != "wasm32-unknown-unknown"
-        || value.abi != "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
-        || !(8..=2 * 1024 * 1024).contains(&value.module_bytes.get())
+        || ![
+            "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64",
+            contracts::science::FEATURE_MODEL_ABI_V2,
+        ]
+        .contains(&value.abi.as_str())
+        || value.module_bytes.get() < 8
     {
         return Err(bad("native_output.compilation"));
     }
@@ -157,7 +170,7 @@ fn allocation(value: &AllocationResultV1) -> Result<(), DomainError> {
         text(reason, 1, 120, false)?;
     }
     if let Some(targets) = &value.targets {
-        if !(1..=256).contains(&targets.len())
+        if targets.is_empty()
             || value.objective_value.is_none()
             || value.primal_residual.is_none()
             || value.dual_residual.is_none()
@@ -187,21 +200,22 @@ pub fn output_shape(output: &RuntimeOutputV1, bytes: &[u8]) -> Result<(), Domain
         || output.storage_version.get() != 1
         || bytes.is_empty()
         || bytes.len() as u64 != output.byte_count.get()
-        || bytes.len() as u64 > MAX_JOB_OUTPUT_BYTES
     {
         return Err(bad("native_output"));
     }
     match contract.name {
-        "qz.wasm_model"
-            if bytes.starts_with(b"\0asm\x01\0\0\0") && bytes.len() <= 2 * 1024 * 1024 =>
-        {
-            Ok(())
-        }
+        "qz.wasm_model" if bytes.starts_with(b"\0asm\x01\0\0\0") => Ok(()),
         "qz.model_compilation" => compilation(&decode(bytes)?),
         "qz.data_quality" => quality(&decode(bytes)?),
         "qz.native_forecast" => forecast::shape(&decode::<NativeForecastResultV1>(bytes)?),
         "qz.alpha_validation" => validation::shape(&decode(bytes)?),
+        "qz.experiment_evaluation" => experiment::shape(&decode(bytes)?),
         "qz.alpha_sealed" => sealed::shape(&decode(bytes)?),
+        "qz.strategy_portfolio" => {
+            let result: contracts::strategy_portfolio::NativeStrategyCompositionResultV1 =
+                decode(bytes)?;
+            super::strategy_composition_result(&result.request, &result)
+        }
         "qz.native_portfolio" => {
             let result: contracts::science::NativePortfolioBuildResultV1 = decode(bytes)?;
             allocation(&result.allocation)?;
@@ -312,9 +326,16 @@ pub fn output_bindings(
             )?;
         }
         NativeTaskParametersV1::ValidateData { .. } => {}
-        NativeTaskParametersV1::StudyPortfolio { request, .. } => {
+        NativeTaskParametersV1::StudyPortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
             let result = decode(body("qz.portfolio_study")?.1)?;
             study::binding(request, &result)?;
+            if let Some(simulation) = &result.simulation {
+                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
+            }
             let original = contracts::portfolio_history::batch(request, &result)
                 .map_err(|_| bad("portfolio_history.source"))?;
             let actual = contracts::portfolio_history::read(body("qz.portfolio_history")?.1)
@@ -325,10 +346,22 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::CompileModel {
             code_artifact_id, ..
+        }
+        | NativeTaskParametersV1::CompileFeatureModel {
+            code_artifact_id, ..
         } => {
             let value: NativeModelCompilationV1 = decode(body("qz.model_compilation")?.1)?;
             let model = body("qz.wasm_model")?.0;
-            if value.code_artifact_id != *code_artifact_id
+            let abi = if matches!(
+                parameters,
+                NativeTaskParametersV1::CompileFeatureModel { .. }
+            ) {
+                contracts::science::FEATURE_MODEL_ABI_V2
+            } else {
+                "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64"
+            };
+            if value.abi != abi
+                || value.code_artifact_id != *code_artifact_id
                 || value.model_storage_ref != model.storage_ref
                 || value.module_bytes != model.byte_count
             {
@@ -337,6 +370,21 @@ pub fn output_bindings(
         }
         NativeTaskParametersV1::EvaluateAlpha { request, .. } => {
             forecast::binding(request, &decode(body("qz.native_forecast")?.1)?)?;
+        }
+        NativeTaskParametersV1::EvaluateExperiment {
+            request,
+            dataset_revision_id,
+            model_artifact_id,
+            feature_artifact_ids,
+            ..
+        } => {
+            experiment::binding(
+                request,
+                *dataset_revision_id,
+                *model_artifact_id,
+                feature_artifact_ids,
+                &decode(body("qz.experiment_evaluation")?.1)?,
+            )?;
         }
         NativeTaskParametersV1::ValidateAlpha { request, .. } => {
             validation::binding(request, &decode(body("qz.alpha_validation")?.1)?)?;
@@ -351,13 +399,42 @@ pub fn output_bindings(
             }
             sealed::binding(request, calibration, &decode(body("qz.alpha_sealed")?.1)?)?;
         }
+        NativeTaskParametersV1::ComposeStrategyTargets {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            let result = decode(body("qz.strategy_portfolio")?.1)?;
+            super::strategy_composition_result(request, &result)?;
+            if let contracts::strategy_portfolio::StrategyCompositionOutcomeV1::HistoricalReplay {
+                simulation,
+                ..
+            } = &result.outcome
+            {
+                spot_cash_report::dataset(simulation, *dataset_revision_id)?;
+            }
+        }
         NativeTaskParametersV1::BuildPortfolio { request, .. } => {
             super::portfolio_build_result(request, &decode(body("qz.native_portfolio")?.1)?)?;
         }
-        NativeTaskParametersV1::SimulatePortfolio { request, .. }
-        | NativeTaskParametersV1::SimulateCandidate { request, .. }
-        | NativeTaskParametersV1::SimulatePortfolioSequence { request, .. } => {
-            simulation::binding(request, &decode(body("qz.native_simulation")?.1)?)?;
+        NativeTaskParametersV1::SimulatePortfolio {
+            dataset_revision_id,
+            request,
+            ..
+        }
+        | NativeTaskParametersV1::SimulateCandidate {
+            dataset_revision_id,
+            request,
+            ..
+        }
+        | NativeTaskParametersV1::SimulatePortfolioSequence {
+            dataset_revision_id,
+            request,
+            ..
+        } => {
+            let result = decode(body("qz.native_simulation")?.1)?;
+            simulation::binding(request, &result)?;
+            spot_cash_report::dataset(&result, *dataset_revision_id)?;
         }
     }
     Ok(())

@@ -34,7 +34,7 @@ pub fn portfolio_study_plan(plan: &PortfolioStudyPlanV1) -> Result<(), DomainErr
         ));
     }
     if let Some(cutoffs) = &plan.manual_cutoffs {
-        if !(2..=256).contains(&cutoffs.len())
+        if cutoffs.len() < 2
             || cutoffs.first() != Some(&plan.evaluation_start)
             || cutoffs.iter().any(|time| !valid_time(time))
             || cutoffs.windows(2).any(|pair| pair[0] >= pair[1])
@@ -48,53 +48,6 @@ pub fn portfolio_study_plan(plan: &PortfolioStudyPlanV1) -> Result<(), DomainErr
     Ok(())
 }
 
-pub fn input_partition_allowed(purpose: InputPurpose, role: DataPartition) -> bool {
-    match purpose {
-        InputPurpose::Discovery => role == DataPartition::Discovery,
-        InputPurpose::Validation => role == DataPartition::Validation,
-        InputPurpose::Sealed => role == DataPartition::Sealed,
-        InputPurpose::Forward => role == DataPartition::Forward,
-        InputPurpose::Portfolio => {
-            matches!(role, DataPartition::Discovery | DataPartition::Validation)
-        }
-    }
-}
-
-pub fn input_set(request: &InputSetCreate) -> Result<(), DomainError> {
-    if !request
-        .decision_cutoff
-        .timestamp_subsec_nanos()
-        .is_multiple_of(1000)
-    {
-        return Err(invalid("decision_cutoff", "DATABASE_TIME_PRECISION"));
-    }
-    if !(1..=256).contains(&request.items.len()) {
-        return Err(invalid("items", "ITEM_COUNT"));
-    }
-    let mut seen = BTreeSet::new();
-    for (index, item) in request.items.iter().enumerate() {
-        let identity = match item {
-            InputItemV1::Dataset {
-                dataset_revision_id,
-                role,
-            } => {
-                let allowed = input_partition_allowed(request.purpose, *role);
-                if !allowed {
-                    return Err(invalid(
-                        format!("items.{index}.role"),
-                        "PARTITION_PURPOSE_MISMATCH",
-                    ));
-                }
-                (0, *dataset_revision_id)
-            }
-            InputItemV1::Artifact { artifact_id, .. } => (1, *artifact_id),
-        };
-        if !seen.insert(identity) {
-            return Err(invalid(format!("items.{index}"), "DUPLICATE_INPUT"));
-        }
-    }
-    Ok(())
-}
 pub fn split(request: &SplitPolicyV1) -> Result<(), DomainError> {
     for (field, value) in [
         ("train_size", request.train_size),
@@ -201,9 +154,6 @@ pub fn evaluation_policy(request: &EvaluationPolicyCreate) -> Result<(), DomainE
     if !request.maximum_missing_fraction.is_fraction() {
         return Err(invalid("maximum_missing_fraction", "FRACTION_RANGE"));
     }
-    if request.required_capabilities.len() > 64 {
-        return Err(invalid("required_capabilities", "CAPABILITY_COUNT"));
-    }
     let mut capabilities = BTreeSet::new();
     for (index, c) in request.required_capabilities.iter().enumerate() {
         bounded_text(format!("required_capabilities.{index}"), c, 120, false)?;
@@ -247,7 +197,7 @@ pub(crate) fn metric_requirements(
     requirements: &[MetricRequirementV1],
     prefix: &str,
 ) -> Result<(), DomainError> {
-    if !(1..=64).contains(&requirements.len()) {
+    if requirements.is_empty() {
         return Err(invalid(prefix, "METRIC_COUNT"));
     }
     let mut metrics = BTreeSet::new();
@@ -259,7 +209,7 @@ pub(crate) fn metric_requirements(
             return Err(invalid(field, "DUPLICATE_METRIC"));
         }
         metric_thresholds(m, &field)?;
-        if !(1..=64).contains(&m.method_allowlist.len()) {
+        if m.method_allowlist.is_empty() {
             return Err(invalid(format!("{field}.method_allowlist"), "METHOD_COUNT"));
         }
         let mut methods = BTreeSet::new();

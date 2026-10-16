@@ -1,35 +1,16 @@
-import { defineConfig, devices } from '@playwright/test';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { defineConfig } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 
-const origin = process.env.QUAZONAI_WEB_E2E_ORIGIN;
-const fixture = process.env.QUAZONAI_WEB_E2E_FIXTURE;
-if (!origin || !fixture || !isAbsolute(fixture)) {
-  throw new Error('Run npm run test:e2e; a fresh private Rust/PostgreSQL fixture is required');
-}
-const url = new URL(origin);
-if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port
-  || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-  throw new Error('Native browser acceptance requires its own loopback HTTP origin');
-}
-
+const scratch = process.env.PI_SCRATCH_DIR ?? tmpdir();
+const port = Number(process.env.QUAZONAI_WEB_E2E_PORT ?? 5181);
 export default defineConfig({
-  testDir: './tests',
-  testMatch: ['**/native-auth.spec.ts', '**/native-console.spec.ts'],
-  // Playwright can emit error-context.md even with screenshots/trace disabled.
-  // Keep every raw failure artifact inside the harness-owned private directory.
-  outputDir: resolve(dirname(fixture), 'playwright-output'),
-  fullyParallel: false,
-  workers: 1,
-  retries: 0,
-  forbidOnly: Boolean(process.env.CI),
-  timeout: 120_000,
-  expect: { timeout: 20_000 },
-  reporter: [['list']],
-  use: {
-    ...devices['Desktop Chrome'],
-    baseURL: url.origin,
-    viewport: { width: 1440, height: 1000 },
-    trace: 'off', screenshot: 'off', video: 'off',
+  testDir: './tests', testMatch: 'workspace.spec.ts', workers: 1, retries: 0, timeout: 45_000,
+  outputDir: resolve(scratch, 'quazonai-web-playwright'), reporter: 'list',
+  use: { baseURL: `http://127.0.0.1:${port}`, viewport: { width: 1440, height: 1000 }, screenshot: 'only-on-failure', trace: 'off' },
+  webServer: {
+    command: `npm run dev -- --port ${port}`,
+    url: `http://127.0.0.1:${port}`, reuseExistingServer: !process.env.CI,
+    env: { QUAZONAI_WEB_CACHE_DIR: resolve(scratch, 'quazonai-web-vite') },
   },
-  projects: [{ name: 'real-rust-postgres', use: { browserName: 'chromium' } }],
 });

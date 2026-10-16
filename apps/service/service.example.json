@@ -1,0 +1,19 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "dataDir": "../../data",
+  "research": {
+    "database": "../../data/research/research.sqlite",
+    "modules": [
+      "../research/plugins/research.ts",
+      "../research/plugins/factor-wasm.ts",
+      "../research/plugins/heldout-wasm.ts",
+      "../research/plugins/catalog-input.ts",
+      "../research/plugins/validation-compare.ts"
+    ],
+    "providerModules": []
+  },
+  "datasets": [],
+  "connections": [],
+  "extensions": []
+}

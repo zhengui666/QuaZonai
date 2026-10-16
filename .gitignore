@@ -1,5 +1,5 @@
 /target/
-**/node_modules/
+**/node_modules
 **/dist/
 __pycache__/
 # Local developer handoffs, copied upstream sources, and execution evidence.
@@ -11,3 +11,9 @@ __pycache__/
 !.env.example
 *.log
 .DS_Store
+# Local research host configuration may refer to private provider modules/state.
+/apps/research/research.json
+/apps/service/quazonai.json
+/quazonai.json
+**/test-results/
+**/playwright-report/

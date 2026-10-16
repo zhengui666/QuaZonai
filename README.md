@@ -4,55 +4,67 @@
 
 # QuaZonai
 
-个人量化研究工作台。从研究假设出发，组织 Alpha 实验、组合回测和目标组合交付，保存输入、过程与结果。支持浏览器和 PWA，不发送真实交易订单。
+个人 AI 量化研究工作台：idea → 研究与独立评价 → 策略组合与共享账户回测 → 实盘／模拟盘观测。使用 TypeScript、官方 Pi Durable、NautilusTrader 和 Clarabel；Rust 仅保留科学内核。QZ 只交付目标，不持有券商账户、不发送真实交易订单。
 
-[安装](#quickstart) · [使用](#usage) · [更新与恢复](deploy/docker/README.md#update) · [Agent Skill](#agent-skill)
+[安装](#quickstart) · [使用](#usage) · [更新与恢复](deploy/docker/README.md#update-and-recovery) · [Agent Skill](#agent-skill)
 
 <a id="quickstart"></a>
 ## 安装
 
-需要 Linux x86_64、本机 Docker Engine、Docker Compose 2.20+、Python 3.10+、Git、systemd 和 cgroup v2。Worker 需要 glibc 2.36+、OpenSSL 3；不支持 Docker Desktop、远程 Docker、rootless 或 userns-remap。完整前提见[部署手册](deploy/docker/README.md#prerequisites)。
+服务需要 Linux x86_64、Docker Engine、Docker Compose 2.20+、Bash 4.4+、curl、tar、awk、GNU coreutils 和 util-linux。无需宿主 Node.js、Python、Rust 或独立 Worker；完整前提见[部署手册](deploy/docker/README.md#install)。
 
-从 [GitHub Releases](https://github.com/zhengui666/QuaZonai/releases) 选择提供 `quazonai-deploy.tar.gz` 的版本，下载后执行：
-
-```sh
-mkdir quazonai-install
-tar -xzf quazonai-deploy.tar.gz -C quazonai-install
-cd quazonai-install
-```
-
-以普通用户启动：
+安装最新**已完整发布的 dev 版本**：
 
 ```sh
-loginctl enable-linger "$USER"
-bash deploy.sh
+sh -c 'f=$(mktemp) || exit; cleanup() { rm -f -- "$f"; }; trap cleanup 0; trap "exit 1" 1 2 3 15; curl --fail --location --proto "=https" --proto-redir "=https" --tlsv1.2 --output "$f" https://raw.githubusercontent.com/zhengui666/QuaZonai/dev/deploy/install.sh && bash "$f" "$@"' sh
 ```
 
-打开 **http://localhost:8081**。默认安装目录为 `$HOME/.local/share/quazonai`。
+指定版本在末尾加 `--version v<版本>`，已有目录加 `--directory /绝对路径`，仅安装远程 CLI 加 `--cli-only`。新入口随完整 Release 发布后生效；远程 dev 提交不等于镜像和安装包已经发布。
 
-部署包按版本清单从 GHCR 拉取应用、科学计算、Codex 和数据库镜像，并安装同源 Worker 与 Runtime 网关。宿主机无需安装 Rust、Node.js 或 Codex。[科学 Runtime 与数据目录](deploy/docker/README.md#scientific-runtime)需要另外配置。
+默认安装目录 `$HOME/.local/share/quazonai`，打开 **http://localhost:8081** 完成密码设置。部署包拉取应用、科学计算和 PostgreSQL 镜像，不在安装主机编译。Node 应用是官方 durable 数据库的唯一所有者，Docker 自动重启后接续原任务。
+
+**旧 Rust／Worker 安装不支持自动跨架构升级。** 新管理器会在修改旧状态前拒绝；继续使用原部署包完成对账和备份。原数据库、迁移、密钥、journal 和历史记录不能删除后假装迁移成功。详见[旧安装兼容边界](deploy/docker/README.md#legacy-rust-installations)。
+
+CLI 包包含官方 Node 运行时，支持 Linux、macOS Intel／Apple Silicon 和 Windows x86_64。Linux／macOS 安装到 `$HOME/.local/bin`，Windows 安装到 `%LOCALAPPDATA%\QuaZonai\bin`：
+
+```sh
+quazonai --origin http://localhost:8081 login
+quazonai research models
+```
+
+HTTP 只用于可信网络；公网使用 HTTPS。登录保存原有连接配置，后续命令复用同一凭据，不自动降级 HTTPS。
 
 <a id="usage"></a>
 ## 开始研究
 
-在「设置 → Codex → ChatGPT Auth」登录 ChatGPT，按页面提示完成授权，再为研究员和审阅员选择模型与推理强度。登录信息保存在独立目录，应用更新后继续使用。
+工作台仅保留五页：**研究看板、策略组合、观测、设置、扩展**。在研究页选择已配置的模型与数据集并输入 idea；组合页查看真实共享账户回测曲线；观测页读取所绑定的实盘／模拟盘连接。
 
-登记真实数据与可用 Runtime，创建项目并冻结研究问题、输入和预算，启动研究周期。在运行详情查看进度与失败原因，在 Alpha 与组合详情检查评估、历史价值曲线和交付记录。
+私有 `data/service.json` 登记数据集、显式策略政策、连接和官方 Extension；`data/research/provider.env` 保存 Provider 环境配置。凭据不进入研究正文、浏览器表单或日志。没有模型、数据或证据时明确失败，不使用演示数据补齐。宿主配置与恢复见[研究指南](apps/research/README.md)。
 
-Polymarket 公开历史来源、按需下载与原生目录转换见[历史数据准备](runtimes/data/README.md)；研究准入仍需对应的历史可得性和质量证据。
+```sh
+quazonai datasets
+quazonai research start --file research-request.json
+quazonai research list
+quazonai research get <id>
+quazonai research stop <id>
+quazonai portfolio list
+quazonai observation list
+```
 
-右上角可切换浅色、深色主题。浏览器支持时可安装为 PWA；检测到新版本后按提示更新。
+保留原始提交文件与 `requestId`；超时后用同一正文、同一身份重放原回执。HTTP 202 仅表示接收。官方 durable 负责重试、子任务、重放、取消和恢复；研究继续沿用原试验账本和预算。独立样本不反馈模型调参，计算成功与回测曲线都不代表盈利或获准实盘交易。
+
+数据获取与原生准备见[来源插件](runtimes/data/source-plugins.md)和[历史数据准备](runtimes/data/README.md)。准备成功不代替来源许可、历史可得性或质量证据。开发与精简核心链路检查见[项目入口](.opensdlc/project.md#commands)。
 
 <a id="agent-skill"></a>
 ## 通过 Agent 操作
 
-在 Agent 所在环境准备 Git 和 Node.js 22.20+（含 npm/npx），然后安装操作 Skill：
+Agent 环境准备 Git 和 Node.js 22.20+（含 npm/npx），然后安装服务操作 Skill：
 
 ```sh
 npx skills add zhengui666/QuaZonai --skill quazonai
 ```
 
-Skill 操作已有 QuaZonai 服务；连接方式见[连接说明](skills/quazonai/references/connection.md)。
+Skill 操作已有服务，不负责开发或部署；见[连接说明](skills/quazonai/references/connection.md)。
 
 ## 许可
 

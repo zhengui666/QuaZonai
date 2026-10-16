@@ -3,158 +3,84 @@
 <a id="product"></a>
 ## 产品边界
 
-QuaZonai 面向单人本机研究。项目冻结研究问题、数据、验证政策与预算；研究员提出实验，独立评估形成 Alpha 资格，组合研究生成候选与目标包。用户通过 Web/PWA、CLI 或 Mission MCP 查看和推进同一套持久记录。
+QuaZonai 是单人、本机、可扩展的无人值守研究工作台。核心链路是 idea → 研究试验与独立评价 → 策略／组合回测 → 目标交付与实盘／模拟盘观测。组合是研究结果的可选消费者，不是因子研究的前置条件。QZ 不持有券商账户、不发送金融订单；下游回执不等于实际成交。
 
-QZ 只交付目标，不连接券商账户或执行真实订单。任务执行状态、证据质量与研究决策分别记录；`SUCCEEDED` 不等于 `VALID` 或 `PASS`。失败、取消、淘汰和无效试验保留在原账本。
+前端只保留研究看板、策略组合与回测曲线、实盘／模拟盘观测、设置、扩展五个页面。状态、指标、表格和曲线直接表达事实，不展示原始 JSON、合同编辑器或解释性段落。
 
 <a id="modules"></a>
-## 模块与依赖
+## 模块与复用
 
-| 模块 | 责任 | 第一方生产/构建依赖 |
-| --- | --- | --- |
-| [contracts](../crates/contracts/src) | Wire 类型、严格序列化、公开 schema | 无 |
-| [domain](../crates/domain/src) | 预算、准入、资格与状态转换的纯规则 | contracts |
-| [integrations](../crates/integrations/src) | 原生 Codex、MCP、外部协议适配 | contracts |
-| [store](../crates/store/src) | SQLx 事务、并发控制、幂等回执、PGMQ | contracts、domain |
-| [server](../apps/server/src) | HTTP/CLI/MCP、API 与 Worker 编排 | contracts、domain、store、integrations |
-| [runtime](../apps/runtime/src) | 科学任务网关、OCI 生命周期、持久 journal | contracts、domain、integrations |
-| [job](../apps/job/src) | 类型化科学计算与原生结果文件 | contracts、domain |
-| [web](../apps/web/src) | React、Ant Design、生成客户端、PWA | 公开 API 合同 |
+| 入口 | 责任 |
+| --- | --- |
+| [TypeScript contracts](../packages/contracts/src/index.ts) | 当前 HTTP／CLI／Web DTO；十进制和纳秒沿用字符串 |
+| [Service](../apps/service) | Fastify HTTP、所有者鉴权、配置、业务事实、科学进程适配、目标回执与账户观测 |
+| [Research](../apps/research) | 官方 Pi Durable 宿主与 Extension；研究事实和试验账本 |
+| [CLI](../apps/cli) | 同一 HTTP API 的客户端，不直接打开服务数据库 |
+| [Web](../apps/web) | React、官方 Ant Design、ECharts 与五页交互 |
+| [Native job](../apps/job) | 原生计算、数据目录、科学回放、Nautilus 模拟与账户快照 |
+| [Rust contracts](../crates/contracts/src)、[domain](../crates/domain/src) | 科学内核所需的 Wire／Arrow 类型、数值、PIT、分区、费用与科学结果校验 |
+| [Migrations](../migrations) | 保留已应用的 PostgreSQL 与原 Runtime SQLite 迁移；不重置历史数据库 |
 
-依赖方向由 [architecture 测试](../crates/contracts/tests/architecture.rs)检查。测试辅助跨层复用不改变生产依赖；领域层不执行 SQL、HTTP 或容器操作。
+非科学控制面不再依赖 Rust server、Store、Runtime 网关、integrations 或 Rust CLI。历史 PostgreSQL 记录通过只读适配访问，不伪造新的成功 Run／Attempt 或把旧执行身份改成 durable 身份。
 
-复用边界：Codex 管理 Thread/Turn/Item、模型目录、登录和工具循环；NautilusTrader 管理原生目录、撮合、共享资金模拟与权益；Clarabel 负责求解；Wasmi 执行有界模型；Arrow 保存列式结果；PostgreSQL/PGMQ 负责事务与消息。QZ 只补充研究规则和跨组件关联。部署 Python 与原生历史数据适配保留在现有边界内，不扩展成第二套领域服务。
-
-第三方实现来自仓库外的官方版本包或固定官方上游修订；本仓库不保存第三方组件源码，不修改依赖，不以 fork 或源码覆盖补足能力。集成与兼容检查归 QuaZonai，通过公开 API 调用原生组件。依赖来源和仓库组件清单由同一架构测试检查；许可证声明与既有数据库兼容迁移保留。
+官方 Pi Durable／pi-ai／Chord 负责模型与工具循环、Conversation、Submission、Task、原生持久化、重放、子任务、取消、等待、压缩和用量。QZ 不实现第二套任务数据库或调度器。NautilusTrader 负责目录、指标、撮合、共享资金模拟及权益；Clarabel 负责求解，Wasmi 负责有界模型执行，Arrow 保存原生列式结果。第三方实现只来自官方包或固定官方修订，不复制、修改或 fork。
 
 <a id="contracts"></a>
-## 合同与身份
+## 身份、输入与结果
 
-字段、枚举和输入限制以 [Rust DTO](../crates/contracts/src)、[API OpenAPI](../contracts/generated/api-v2.openapi.json)、[Runtime OpenAPI](../contracts/generated/runtime-v1.openapi.json)及[领域 schema](../contracts/generated/domain-v1.openapi.json)为准。修改在源定义完成并生成派生文件；客户端不能自行补全未知字段或把不兼容响应解释为有效证据。
+当前 API 为 `/api/v3`。原生科学合同仍在 Rust 源定义；历史生成快照不作为新的 HTTP 服务实现，也不手工改写生成文件。原始请求、`requestId`、原生 Conversation／Submission／Task ID、试验来源与结果关联保持不变。相同身份与正文重放原回执，改变正文返回冲突；超时不能换键重新执行。
 
-实体 ID、版本 ID、版本序号和修订号不可互换。Decimal、超出 JavaScript 安全整数范围的计数与纳秒值按原合同传递，不能先转 `Number` 再序列化。正式指标拒绝 NaN/Infinity；缺失值不变成零。
-
-写命令绑定原请求、幂等键、作用域和预期修订。相同请求重放原回执；改正文、换键或自动修改修订号不是重试。超时可能发生在提交之后，先用原身份对账。冻结对象追加新版本，撤销追加记录，不覆盖已发生的执行或交付。
+十进制、超出 JS 安全整数范围的计数与纳秒不能先转 `Number`。正式指标拒绝 NaN／Infinity，未知值保持 null，缺口不补零。计算成功、研究完成、独立证据和下游 ACK 是不同事实。
 
 <a id="cycle-startup"></a>
-## 周期、预算与执行
+<a id="codex"></a>
+## 原生 Agent 与无人值守
 
-`POST /api/v2/projects/{id}/cycles` 的调用链：
+启动重开原 durable 存储，恢复已提交的原 Task，并按原 request 事实修复 admission 与 submit 之间的缺口。模型超时、SDK／持久重试、压缩、进度写入和工具轮执行方式使用公共 Harness 设置，不导入内部调度器。1.1.0 的 sequential／parallel 是工具轮配置，不是跨会话的全局并发上限。
 
-| 阶段 | 实现与边界 |
-| --- | --- |
-| HTTP | [cycles.rs](../apps/server/src/cycles.rs) 解析 `CycleStartV1`、权限与幂等键，调用 Store；不执行 SQL |
-| 事务准入 | [Store::start_cycle](../crates/store/src/cycles.rs) 重放旧回执，或锁定项目、检查修订、冻结 Brief、数据与 Runtime |
-| 纯规则 | [domain/admission.rs](../crates/domain/src/admission.rs) 计算预算准入；Store 读取并锁定事实、应用结果 |
-| 原子发布 | [lifecycle.rs](../crates/store/src/lifecycle.rs) 同事务预留预算、写 QUEUED Run/事件、PGMQ 消息及关联 |
-| 领取 | [queue.rs](../crates/store/src/lifecycle/queue.rs) 领取已提交任务；HTTP 202 仅表示排队，不表示完成 |
+未完成研究的继续／停止由研究 Extension 在原预算、试验和停止条件下记录；失败试验不能变成免费重算。安全计算可按原任务重放，外部副作用结果未知时必须先对账。关闭宿主暂停原工作，不能把本地退出写成远端取消。观察者断开不取消研究；显式停止核对原生终态。
 
-回归入口：[HTTP 周期](../apps/server/tests/cycles_http.rs)、[Store 周期](../crates/store/tests/cycles.rs)、[原子准入](../crates/store/tests/atomic_cycle_admission.rs)。
-
-PGMQ 是至少一次投递，不提供外部副作用的 exactly-once。Run、Attempt、预算预约、远端身份、事件与结果采纳共同约束重复执行。重启、换 UUID 或重建项目不能清零原试验与数据暴露记录。领取后的输入和期限不能被新配置替换。
-
-取消先记录意图，再核对实际远端停止及晚到创建/启动结果；断线、404、本地进程退出或停止观察均不证明远端已终止。原远端结果未知时保持对账状态，不另建一份计算。SSE 使用原游标恢复；游标失效须披露事件缺口并读取当前快照。
+Provider 与模型来自实际配置的官方目录，无静默模型回退。凭据留在明确配置的宿主存储／环境，既不进入研究输入，也不传给科学子进程。模型质量、真实账户结果和全天候运行的实际观察时间必须单独披露，短协议测试不作替代。
 
 <a id="data"></a>
-## 数据与研究隔离
+## 数据与独立评价
 
-Brief 冻结假设、经济含义、Universe、数据授权、预测期限、基准、费用/容量、验证分区、选择/停止规则及预算。政策变更创建新版本，不能事后改阈值使既有结果通过。
+保留原数据目录、Instrument 定义、Universe 历史、来源、许可、质量、可得时间和研究版本。`event_at`、`available_at`、`decision_at` 不可互换；PIT 要求 `available_at <= decision_at`。抓取成功、当前成分或重述后的数值不冒充历史可得。
 
-原始目录/snapshot、Instrument 定义、Universe 历史成员、交易日历、质量报告和许可必须可追溯。`event_at`、`available_at`、`decision_at` 分别表示事件、当时可得与决策时间；PIT 要求 `available_at <= decision_at`。抓取时间、当前成分或重述后的数据不能冒充历史可得信息。
+[公开行情准备](../runtimes/data/hyperliquid.md)按声明式文件/字段映射导入来源中全部市场的 BAR、逐笔、盘口快照与资金费率观测；下载和转换不按交易所或币种分支。合约与历史标识解析复用官方适配器，不用标识补造合约参数。币种原生属性随目录保留，通用读入/分区准备恢复它们。可选官方高精度格式保留十位小数，既有目录及默认科学构建不变；新格式消费者必须使用同一精度构建。原始文件与许可留在操作边界；当前参数、事件时间代理、快照盘口和本地读回不建立历史覆盖、PIT 或永续资金费结算能力。缺失映射或拒绝行产生不完整报告和失败退出；可确定标识但历史定义缺失则单独计数。科学入口仍使用原 BAR 合同。
 
-[公开行情准备](../runtimes/data/README.md#hyperliquid-all-market-archive)按声明式文件/字段映射导入来源中全部市场的 BAR、逐笔、盘口快照与资金费率观测；下载和转换不按交易所或币种分支。合约与历史标识解析复用官方适配器，不用标识补造合约参数。原生币种定义随目录保留并由通用读入/分区准备恢复。可选官方高精度格式保留十位小数，既有目录及默认科学构建不变；新格式消费者必须使用同一精度构建。原始文件与许可留在操作边界；当前参数、事件时间代理、快照盘口和本地读回成功不建立历史覆盖、PIT 或永续资金费结算能力。缺失映射或记录拒绝在不完整报告和失败退出中披露，标识可确定但历史定义缺失则单独计数；科学入口仍使用原 BAR 合同。
-
-Discovery、Validation、Sealed、Forward 按冻结用途隔离。原始值、样本、指标、图表和摘要都可能暴露数据；暴露沿根血缘继承，在评估器获得读取能力前预约。崩溃或取消不退还已发生的读取机会。研究员不能通过日志/预览读取 Sealed，独立评估器不能改写研究工作区。披露后的数据不再作为未接触的独立样本。
-
-时间验证使用支持对应标签区间的原生 purge/embargo。变量标签区间没有受支持实现时报告不支持，不用固定行数近似。选择统计需要完整可比试验集合；CPCV 不等于 CSCV/PBO。未接通并验证的 DSR/PBO 等必需指标返回不确定结论，不生成常量或伪指标。
-
-撤销许可或资格后，历史记录仍可审计，但不能据此批准新研究或新交付。测试来源不能改标 REAL；缺数据、协议能力或合法来源时保留具体失败。
-
-<a id="codex"></a>
-## Codex 与 Mission
-
-研究员和独立审阅员共用原生账户，但使用独立会话、工作区和角色设置。模型与推理强度来自实际 Codex 目录与能力；完整消费模型分页，不维护固定模型清单。“本机默认”沿用原生配置，不配置第三方 provider URL/API key。
-
-容器部署的 API 探测与 Worker Mission 均调用独立 Codex 镜像中的 App Server；连接失败不回退宿主 Codex。ChatGPT 设备码授权、令牌保存/刷新由原生 Codex 承担。浏览器可启动、观察、取消登录和确认退出；刷新页面不重新泄露设备码。QZ 不读取或复制 `auth.json`。
-
-Mission 固定原输入、角色模型配置、预算、工具绑定和原生执行身份。工具调用结果回到原 Thread；不能通过另起 Thread 或静态报告代替科学反馈。MCP 使用官方 SDK，工具权限绑定项目/Mission/Attempt，不开放通用 Shell、任意 SQL 或 Docker 控制。 `research.get_brief` 和 `run.get` 接受空参数，使用启动器绑定；产物版本与提案的版本、Cycle 由适配层填入，原生 HTTP 合同继续校验研究字段。
-
-每个 App Server 会话独立容器。CPU、内存、进程数及墙钟受原生限制；Worker 退出不重置任务期限。取消核对实际 container ID。只记录公开调用和可观察结果，不索取或保存隐藏推理。
+Discovery／Validation／Sealed／Forward 的原用途与暴露账本保持隔离。研究员不能读 Sealed，最终评价不反馈模型继续调参；复制目录、改标签或重启不能重置暴露与预算。失败、取消、无效及已比较试验继续留在账本。缺数据、来源不合格或原生接口不支持时保留具体失败，不生成假指标或假资格。
 
 <a id="runtime"></a>
-## 科学 Runtime 与产物
+## 科学执行
 
-Runtime 接收已登记的镜像、不可变输入引用和固定任务，不拥有预算、数据许可或交付资格。配置与类型见 [runtime/config.rs](../apps/runtime/src/config.rs) 和 [Runtime 合同](../crates/contracts/src/runtime_jobs.rs)。`images` 按 `job_kind/image_ref` 绑定不可变镜像身份；`catalogs` 按 `root/metadata_file` 登记原目录；资源和存储上限由宿主配置决定，不从任务正文接收任意挂载或命令。
+TypeScript 适配层只执行已登记的原生科学操作，捕获原输入、模型、政策、期限与原 Task 身份。执行和清理优先复用官方 NodeExecutionEnv／Task 子任务能力；不接受模型指定任意宿主命令。输出必须对应原请求，进程 exit 0 或文件存在不等于证据通过。
 
-Gateway journal 保存提交身份、launch、取消与结果；重启恢复原任务，不把新镜像/路径套进旧身份。任务只挂载自己冻结的输入，编译不获得 Dataset。输出经完整类型、请求绑定、大小和数值检查后才可采纳，文件存在或进程 exit 0 不等于正式成功。
-
-Artifact 绑定内容、类型、来源和原生产者；正式文件不可覆盖。MODEL、PARAMETERS、REPORT 和数据授权有各自语义，不能用一份参数副本伪造真实费用/容量来源。授权已撤销或报告不完整时拒绝新采纳。
-
-原生计算与 OCI 回归位于 [job/tests](../apps/job/tests)、[runtime/tests](../apps/runtime/tests)及[Native Runtime 工作流](../.github/workflows/native-runtime.yml)。源码变更后必须使用重新构建的镜像验证，`--version` 或 doctor 不代替执行、取消与恢复。
+Rust 仅保留必要计算与原生引擎接口。Wasm 使用有限燃料、内存和时间。数据获取、原生目录准备及许可证边界见[数据指南](../runtimes/data/README.md)和[来源插件](../runtimes/data/source-plugins.md)。
 
 <a id="portfolio"></a>
-## Alpha、组合与历史
+## 策略组合与曲线
 
-Alpha 输出 score、expected_return、uncertainty，不输出订单。Score 未经允许训练段校准不能冒充收益或仓位。实验、校准、评估与资格绑定原版本；至少两个合格 Alpha 的真实预测经资产、单位、共同期限、币种和覆盖率对齐后进入组合。
+任意因子分数不是收益预测或仓位；转成策略必须使用显式的原政策和来源适配，不能默认归一化后冒充目标。组合绑定原研究／试验、模型、费用、币种、共同期限、资金和市场输入。Clarabel 无解不返回备用权重，未知持仓不按资产清单猜测。
 
-组合 Build/Study 冻结原 MODEL、校准、费用、日历、当前权重及原始目录选择。当前权重必须有可核验来源，不能由资产清单猜测。求解复用原生估计器和 Clarabel；方差与 CVaR 的单位、周期、模型和风险预算按冻结合同解释。无解、零风险或无效对偶见证不返回备用权重。
-
-Nautilus 在一个共享资金账户内执行目标序列，保留原生成交、费用和权益。不能加总单 Alpha 回测曲线作为组合净值，也不能重复扣费。历史 BAR 参与率只是冻结条件下的观测，不冒充盘口深度或未来成交保证。
-
-官方 `nautilus-backtest 0.63.0` 未公开回测内原位更新合约定义的接口。QuaZonai 在共享模拟入口拒绝包含定义变更的选择，适用于单次模拟、候选、组合序列与滚动 Study；数据准备、质量测量及按时点规划仍保留完整原始历史。规格稳定窗口使用其原始定义，不能通过删除版本、预载未来规格、重建撮合器或拼接独立净值规避限制。详见[历史数据指南](../runtimes/data/README.md)。
-
-[portfolio_history.rs](../crates/contracts/src/portfolio_history.rs) 是 Arrow 历史读写合同；Study 输出绑定原 manifest、请求、报告和完整行列元数据。历史价值曲线读取同一已验证组合序列；缺口不插入零值，不重算另一份权威净值。模拟成功本身不创建 PORTFOLIO 资格或交付授权。
-
-<a id="polymarket"></a>
-## Polymarket
-
-历史准备复用 Nautilus 原生 Polymarket 适配器与 Parquet catalog。网络、分页或结算失败不得生成替代目录；原始来源、资产映射、历史可得时间和结算证据随 snapshot 冻结。不得把今日 Gamma 状态或交易末价当历史结算。
-
-[公开历史数据准备](../runtimes/data/README.md)在操作边界固定数据集版本、许可与文件校验和，并按资产和时间转换链上成交、聚合 BAR 或盘口快照。下载器不依赖交易所；来源字段解释仅在历史适配器中。公开归档、事件时间与本地转换成功均不自动成为 PIT 或完整覆盖证据，也不扩展通用研究合同支持的数据类型。
-
-通用 `catalog-prepare` 与托管 `DATA_VALIDATE` 共用原生质量测量，按显式声明复制隔离分区并回读原始定义、BAR 和结算，最后发布目录元数据；不推断来源资格或改写历史时间。捕获源适配器可核对原始 Gamma、双连接成交与决议收包记录；资格范围仍限于经过核验的市场窗口。Sealed 的原始值只保留在独立评估目录，准备材料不进入研究员挂载。
-
-通用 EVM 采集器按显式区块冻结双 RPC 原始日志和区块头；Polymarket 可选准备入口复用 Alloy 解码 v1/v2 原始整数，并核对同一成交的有损归档字段。链上事件时间与本次取回时间分别保留，不能代替历史收包、费率制度或许可证据；该能力不进入离线科学 Worker。
-
-二元资产的币种、费用、交易截止、结算来源及目标期限保持一致。已结算持仓按冻结结算证据兑现，未来期限不越过允许交易区间。研究抵押币与 Codex 成本预算的法币单位分开；不把旧 USD 配置或旧探测当作新能力。准备与回归入口位于 [job 源码](../apps/job/src)和[Polymarket history 工作流](../.github/workflows/polymarket-history.yml)。
+回测权益来自 Nautilus 的同一个共享资金账户。不能加总单 Alpha 曲线、拼接独立本金的验证折曲线或重复扣费。图表是原生权益的显示投影，不生成第二份权威净值。官方 0.63.0 不支持的合约定义原位更新仍明确拒绝，保留原始规格历史和稳定窗口能力。
 
 <a id="handoff"></a>
-## 目标交付
+## 目标与观测
 
-研究 Release 冻结原 Candidate、评估、目标包与来源。批准、Offer、Claim、ACK 和撤销是不同记录：批准不等于已领取，ACK 不等于 QZ 执行了交易。创建、领取时重验当前来源、资格、下游配置、期限及拒绝/撤销历史。
+目标包、下游身份、原回执、到期、Claim／ACK／撤销互不混淆。同一外部身份重放原结果，不刷新期限。未知提交结果先核对，不能另发一份目标或推断撤单。实盘／模拟盘页面读取所绑定的真实账户来源、会话、序列、时间和权益／持仓；未连接和缺指标保持未知，测试输入不改标 REAL。
 
-同一外部 Claim/ACK 身份重放原结果，不刷新期限；改编号或正文不能覆盖终态。撤销与 supersede 只影响尚未领取的 Offer，已领取事实不变，也不代表下游撤单。自动化政策同样冻结版本与预算；异常不能绕过交付条件。
+<a id="polymarket"></a>
+## 市场适配
+
+Polymarket 等来源复用官方 Nautilus 适配器及原目录。历史费率、许可、PIT、交易截止与结算证据保留；当前 API 状态、最后价格或链上取回时间不能代替原可得性和结算事实。科学成功不授权实盘执行。
 
 <a id="web"></a>
-## Web 与 PWA
-
-界面以项目、实验、Alpha、组合、交付、运行为主对象；版本和证据放详情。使用官方 Ant Design 表单、反馈与主题，图表复用 ECharts。移动端保留同等操作能力，长表格和详情不能因视口收窄丢失操作。
-
-实例首次访问设置密码，之后输入密码登录；可选择记住浏览器 30 天，否则使用最长 12 小时的会话 cookie。密码使用原生 Argon2id 保存校验值，过期或撤销的会话不能自动恢复。设置的“鉴权管理”支持改密和撤销指定 CLI 机器；改密使浏览器会话失效，CLI 机器保持到主动撤销。
-
-对外命令 `quazonai` 是原生 `server` 的安装链接；CLI 与 MCP 通过 [service_http](../apps/server/src/service_http.rs) 共享地址、敏感请求头、无重定向客户端、有限响应及严格 JSON/Problem 解析，各适配层保留自己的身份、期限和输出规则。
-
-外部所有者 CLI 使用与前端相同的实例地址和密码交互登录，保存独立的不透明机器令牌，永久记住该机器，无需再领取单次 Operator grant。该设备拥有所有者操作权限，每次业务事务重验撤销；密码和令牌不得进入模型上下文。原有受限 Machine/Mission、独立 Reviewer 与 Downstream 身份保持各自边界。API 监听 loopback，公开前端地址使用 HTTPS，开发 HTTP 仅限明确启用的 loopback。
-
-表单沿用服务端的字段、联合约束和错误；HTTP 202、过期缓存和未知结果不能展示为成功。PWA 检测新前端版本后提示用户更新，不在编辑中静默替换页面。
-
 <a id="container-release"></a>
-## 镜像与持久状态
+## 界面与交付
 
-Web/API/Caddy 同镜像，PostgreSQL/PGMQ 独立 Compose 服务，Worker 从同镜像提取 server 并由宿主 systemd user manager 运行。应用镜像同时提供匹配的 Runtime 网关二进制；科学 job 与 Codex 由 CI 制作独立 GHCR 镜像。安装器按 manifest 拉取已有镜像。原生资源、数据目录、journal 与登录目录分别保持原身份。
+浏览器、CLI 与 Skill 操作同一服务。暖色界面保留完整的加载、空白、错误、提交、重放和状态反馈；移动端不丢操作。页面不以 202、缓存或未知终态显示成功。
 
-| 文件 | 关键字段与不变量 |
-| --- | --- |
-| `release.json` | `schema_version=2`、完整 `version` tag、40 位 `revision`、固定 GHCR digest 的 `image/database_image/runtime_image/codex_image`、精确 `codex_version`；不包含私有配置 |
-| `installation.json` | 保存原 `root/uid/gid/home/codex_home/path/unit_directory`、端口、密码、Compose `project`、`bundle`、本安装 `codex_runtime_image` 启动别名及可选 `runtime_targets/downstream_targets`；首次建库前持久化身份，重试不重生 |
-| `.env` | 独立 Codex 的精确 `CODEX_VERSION`；应用升级保留，不作为 Shell 执行 |
-| `pending.json` | 原 `previous/target/backup/phase`；恢复同一操作，不清空或重建安装 |
-| `current` | 仅在目标 HTTP 与 Worker 启动检查成功后选择新版本 |
+应用镜像携带官方 Node、TypeScript 服务／CLI、Web 和匹配科学入口。官方 durable 调度在单一应用所有者中运行，不再提取 Rust Worker。容器重启恢复原数据目录；备份在写入者停止后进行。升级保留安装身份、配置、凭据、数据库、产物、journal 和备份，无法接续的旧活动必须明确拒绝升级而非清零。
 
-升级在下载/ABI 检查后确认静止点；关闭 API 后、停止 Worker 前再查 Run，防止竞态准入。先持久化 `preparing`，静止备份成功并落盘后写 `migrating`，才执行迁移。迁移前失败可恢复旧处理器；迁移后不启动旧程序访问新 schema。
-
-Worker 配置原子写入并同步后，先保存 `starting` 再启动候选。`starting` 重试恢复同一容器和 Worker，不重复迁移、不停止可能已拥有 Run 的候选。激活依次同步 `current`、启用 Worker 恢复、开启应用自动重启、清除 pending。缺少 phase 的旧记录按可能已迁移处理。
-
-Codex 更新先拉取已发布镜像并执行真实版本与 sandbox 检查，再持部署锁确认 Run/会话静止，切换镜像与 `.env`。启动器与更新器使用同一锁；运行会话不长期持锁。认证目录保持原位置，失败或中断按原目标对账，不回退宿主可执行文件。
-
-实现：[deploy/docker](../deploy/docker)。发布和诊断：[operations](operations.md)。安装、更新与备份：[部署手册](../deploy/docker/README.md)。
+实际命令与验证见[项目入口](project.md#commands)，运行和恢复见[operations](operations.md)，安装包见[部署手册](../deploy/docker/README.md)。

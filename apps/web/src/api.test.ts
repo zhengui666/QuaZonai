@@ -1,90 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import { ApiFailure, Intent, sameInstant, dataOf, isCounter, isDecimal, responseFailure, validateSuccessfulResponse, retryAt } from './api';
-import { validateResponse } from './generated/responses.cjs';
+import { expect, it, vi } from 'vitest';
+import { api, ApiError, shortError } from './api';
+import { captureResearchIntent, clearResearchIntent, readResearchIntent } from './request-intent';
 
-const problem = {
-  type: 'urn:quazonai:problem:revision-conflict', title: 'REVISION_CONFLICT', status: 409,
-  code: 'REVISION_CONFLICT', detail: '请重新载入。', request_id: '01990000-0000-7000-8000-000000000001',
-  retryable: false, current_revision: '9007199254740993', field_errors: [], safe_next_actions: ['RELOAD'],
-};
-describe('strict API values and response parsing', () => {
-  it('rejects malformed pages and preserves an explicit empty page', async () => {
-    await expect(validateSuccessfulResponse(Response.json({}), '/api/v2/projects', 'GET'))
-      .rejects.toMatchObject({ code: 'HTTP_CONTRACT_ERROR' });
-    const body = { schema_version: 1, items: [], next_cursor: null };
-    const response = Response.json(body);
-    expect(await validateSuccessfulResponse(response, '/api/v2/projects', 'GET')).toBe(response);
-    expect(response.bodyUsed).toBe(false);
-    expect(await response.json()).toEqual(body);
-    expect(dataOf({ data: body })).toEqual(body);
-    expect(() => dataOf({})).toThrow(ApiFailure);
-  });
-  it('keeps revision conflicts precise above Number.MAX_SAFE_INTEGER', async () => {
-    const failure = await responseFailure(Response.json(problem, { status: 409, headers: { 'Content-Type': 'application/problem+json' } }), '/api/v2/projects/{id}', 'PATCH');
-    expect(failure).toBeInstanceOf(ApiFailure);
-    expect(failure.problem?.current_revision).toBe('9007199254740993');
-    expect(failure.code).toBe('REVISION_CONFLICT');
-  });
-  it('does not display proxy HTML or fabricated raw errors', async () => {
-    const failure = await responseFailure(new Response('<h1>private proxy details</h1>', { status: 502 }), '/api/v2/projects', 'GET');
-    expect(failure.code).toBe('HTTP_CONTRACT_ERROR');
-    expect(failure.message).not.toContain('private proxy');
-  });
-  it('accepts only canonical Codex response operations', () => {
-    const collection = '/api/v2/settings/codex';
-    expect(validateResponse(collection, 'GET', 200, {
-      schema_version: 1, items: [], next_cursor: null,
-    })).toBe(true);
-    expect(validateResponse('/api/v2/settings/codex/{id}', 'PATCH', 409, problem, 'application/problem+json')).toBe(true);
-    // A valid Problem would have been accepted by the removed wrapper operation.
-    expect(validateResponse(collection, 'PATCH', 409, problem, 'application/problem+json')).toBe(false);
-    expect(validateResponse(collection, 'POST', 409, problem, 'application/problem+json')).toBe(false);
-  });
-  it('validates password auth responses and rejects the removed bootstrap contract', () => {
-    expect(validateResponse('/api/v2/auth/session', 'GET', 200, {
-      schema_version: 1, authenticated_at: '2026-09-20T00:00:00Z', expires_at: '2026-09-20T12:00:00Z',
-    })).toBe(true);
-    expect(validateResponse('/api/v2/auth/session', 'GET', 200, { schema_version: 1 })).toBe(false);
-    expect(validateResponse('/api/v2/bootstrap/status', 'GET', 200, {
-      schema_version: 1, initialized: false, setup_allowed: true,
-    })).toBe(false);
-    expect(validateResponse('/api/v2/auth/status', 'GET', 200, { schema_version: 1, setup_required: true })).toBe(true);
-    expect(validateResponse('/api/v2/auth/logout', 'POST', 204, undefined)).toBe(true);
-  });
-});
-describe('canonical scalar and command identity', () => {
-  it('reuses the original idempotency key for the exact same retry', () => {
-    const intent = new Intent(); const request = { name: 'Research', schema_version: 1 };
-    const first = intent.headers('POST', '/api/v2/projects', request);
-    expect(intent.headers('POST', '/api/v2/projects', { ...request })).toEqual(first);
-    expect(intent.headers('POST', '/api/v2/projects', { ...request, name: 'Different' })).not.toEqual(first);
-    intent.clear();
-    expect(intent.headers('POST', '/api/v2/projects', request)).not.toEqual(first);
-  });
-  it.each(['0', '1', '9007199254740993', '9223372036854775807'])('accepts canonical database counter %s as a string', value => {
-    expect(isCounter(value)).toBe(true);
-  });
-  it.each(['-1', '01', '1.0', '1e3', ' 1', '1\n', '9223372036854775808', ''])('rejects noncanonical or overflowing counter %j', value => {
-    expect(isCounter(value)).toBe(false);
-  });
-  it('requires positive counters when requested', () => { expect(isCounter('0', true)).toBe(false); });
-  it('does not coerce decimal money through floating point', () => {
-    expect(isDecimal('12345678901234567890.123456789012345678')).toBe(true);
-    expect(isDecimal('1e-8')).toBe(false);
-    expect(isDecimal('0.1234567890123456789')).toBe(false);
-  });
-  it('parses Retry-After without allowing a past or invalid deadline', () => {
-    expect(retryAt('30', 1000)).toBe(31000);
-    expect(retryAt('nonsense', 1000)).toBe(0);
-    expect(retryAt('Thu, 01 Jan 1970 00:00:02 GMT', 1000)).toBe(2000);
-    expect(retryAt(null, 1000)).toBe(0);
-  });
-});
-
-it('compares expiry instants without discarding fractional digits', () => {
-  expect(sameInstant('2098-01-01T00:00:00.000Z', '2098-01-01T00:00:00.000999Z')).toBe(false);
-  expect(sameInstant('2098-01-01T00:00:00.123456Z', '2098-01-01T00:00:00.123457Z')).toBe(false);
-  expect(sameInstant('2098-01-01T00:00:00.123456Z', '2098-01-01T08:00:00.123456000+08:00')).toBe(true);
-  expect(sameInstant('2098-01-01T00:00:00.000Z', '2098-01-01T00:00:00Z')).toBe(true);
-  expect(sameInstant('invalid', 'invalid')).toBe(false);
+it('persists the exact research request across a failed send and a fresh retry', async () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
+  const input = { goal: '测试研究', model: { provider: 'test', modelId: 'test-model' }, datasetId: 'test-data', maxTrials: 2 };
+  const captured = captureResearchIntent(input, storage); input.goal = '已修改';
+  const fetch = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(Response.json({ conversationId: 7, submissionId: 9 }, { status: 202 }));
+  vi.stubGlobal('fetch', fetch);
+  try {
+    await expect(api('/research', { method: 'POST', rawBody: captured.raw })).rejects.toBeInstanceOf(ApiError);
+    const recovered = readResearchIntent(storage)!;
+    expect(recovered.raw).toBe(captured.raw); expect(recovered.value.goal).toBe('测试研究');
+    await expect(api('/research', { method: 'POST', rawBody: recovered.raw })).resolves.toEqual({ conversationId: 7, submissionId: 9 });
+    expect(fetch.mock.calls.map(call => call[1].body)).toEqual([captured.raw, captured.raw]);
+    expect(fetch.mock.calls[0]![0]).toBe('/api/v3/research'); expect(fetch.mock.calls[0]![1].credentials).toBe('same-origin');
+    expect(shortError('{"error":"raw payload"}')).toBe('请求失败');
+    clearResearchIntent(storage); expect(readResearchIntent(storage)).toBeUndefined();
+  } finally { vi.unstubAllGlobals(); }
 });

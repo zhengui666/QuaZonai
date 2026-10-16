@@ -36,8 +36,10 @@ for (const document of ['domain-v1', 'api-v2']) {
 
   const budget = schemas.BudgetV1.allOf[0];
   for (const field of ['max_cpu_seconds', 'max_output_bytes']) {
-    assert.ok(budget.required.includes(field), `${field}: required cap`);
-    checkBigint(budget.properties[field], `${document}/BudgetV1.${field}`, positiveCases);
+    assert.ok(!budget.required.includes(field), `${field}: omission is allowed`);
+    const choices = budget.properties[field].oneOf;
+    assert.ok(choices.some(schema => schema.type === 'null'), field);
+    checkBigint(choices.find(schema => schema.type === 'string'), `${document}/BudgetV1.${field}`, positiveCases);
   }
   const optional = budget.properties.max_tokens.oneOf;
   assert.equal(optional.length, 2, 'max_tokens: exactly null or a positive decimal string');
@@ -49,15 +51,21 @@ for (const document of ['domain-v1', 'api-v2']) {
 
   for (const [field, minimum, maximum] of [
     ['max_experiments', 1, 4294967295],
-    ['max_parallel_runs', 1, 65535],
-    ['max_turns_per_mission', 1, 65535],
-    ['max_repair_turns', 0, 65535],
+    ['max_parallel_runs', 1, 4294967295],
+    ['max_turns_per_mission', 1, 4294967295],
+    ['max_repair_turns', 0, 4294967295],
     ['max_wall_seconds', 1, 4294967295],
     ['max_memory_mib', 1, 4294967295],
-    ['max_cycles_per_day', 1, 65535],
+    ['max_cycles_per_day', 1, 4294967295],
     ['min_cycle_interval_seconds', 0, 4294967295],
   ]) {
-    const schema = budget.properties[field];
+    const optional = ['max_memory_mib', 'max_parallel_runs', 'max_wall_seconds', 'max_turns_per_mission', 'max_repair_turns', 'max_cycles_per_day'].includes(field);
+    const property = budget.properties[field];
+    if (optional) {
+      assert.ok(property.oneOf.some(schema => schema.type === 'null'), field);
+      assert.ok(!budget.required.includes(field), `${field}: omission is allowed`);
+    }
+    const schema = optional ? property.oneOf.find(schema => schema.type === 'integer') : property;
     assert.equal(schema.type, 'integer', field);
     assert.equal(schema.minimum, minimum, `${document}/${field}: minimum`);
     assert.equal(schema.maximum, maximum, `${document}/${field}: maximum`);

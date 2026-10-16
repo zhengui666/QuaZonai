@@ -52,27 +52,29 @@ fn input_union_rejects_mixed_references_and_unregistered_roles() {
 }
 #[test]
 fn generated_policy_schema_exposes_native_scalar_and_array_boundaries() {
-    let schema: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
-    let schemas = &schema["components"]["schemas"];
+    use utoipa::PartialSchema;
+    let selection = serde_json::to_value(SelectionParametersV1::schema()).unwrap();
+    let policy = serde_json::to_value(EvaluationPolicyCreate::schema()).unwrap();
+    let inputs = serde_json::to_value(InputSetCreate::schema()).unwrap();
+    assert_eq!(selection["properties"]["candidate_count"]["maximum"], 65535);
     assert_eq!(
-        schemas["SelectionParametersV1"]["properties"]["candidate_count"]["maximum"],
-        65535
-    );
-    assert_eq!(
-        schemas["EvaluationPolicyCreate"]["properties"]["minimum_observations"]["maximum"],
+        policy["properties"]["minimum_observations"]["maximum"],
         2147483647
     );
+    assert_eq!(inputs["properties"]["items"]["maxItems"], 65536);
     assert_eq!(
-        schemas["InputSetCreate"]["properties"]["items"]["maxItems"],
-        256
+        inputs["properties"]["decision_cutoff"]["format"],
+        "date-time"
+    );
+    let schema: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    let schemas = &schema["components"]["schemas"];
+    assert_ne!(
+        schemas["NativeBarSelectionV1"]["properties"]["maximum_rows"]["maximum"],
+        1000000
     );
     assert_eq!(
         schemas["SplitPolicyV1"]["properties"]["interval_validation_required"]["enum"],
         json!([true])
-    );
-    assert_eq!(
-        schemas["InputSetCreate"]["properties"]["decision_cutoff"]["format"],
-        "date-time"
     );
     assert!(schemas["DbCounter"]["maxLength"].as_u64().is_some());
 }
@@ -87,7 +89,7 @@ fn nested_metric_schema_has_both_array_and_item_boundaries() {
     }
     let a = &m["method_allowlist"];
     assert_eq!(a["minItems"], 1);
-    assert_eq!(a["maxItems"], 64);
+    assert!(a["maxItems"].is_null());
     assert_eq!(a["uniqueItems"], true);
     assert_eq!(a["items"]["minLength"], 1);
     assert_eq!(a["items"]["maxLength"], 120);
@@ -95,19 +97,18 @@ fn nested_metric_schema_has_both_array_and_item_boundaries() {
 
 #[test]
 fn review_policy_fraction_and_capabilities_publish_the_remaining_bounds() {
-    let schema: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
-    for name in ["EvaluationPolicyCreate", "EvaluationPolicyView"] {
-        let p = &schema["components"]["schemas"][name]["properties"];
-        assert!(
-            p["maximum_missing_fraction"]["allOf"].is_array(),
-            "{name}: exact decimal plus fraction bounds"
-        );
-        let caps = &p["required_capabilities"];
-        assert_eq!(caps["maxItems"], 64);
-        assert_eq!(caps["uniqueItems"], true);
-        assert_eq!(caps["items"]["minLength"], 1);
-        assert_eq!(caps["items"]["maxLength"], 120);
-    }
+    use utoipa::PartialSchema;
+    let schema = serde_json::to_value(EvaluationPolicyCreate::schema()).unwrap();
+    let p = &schema["properties"];
+    assert!(
+        p["maximum_missing_fraction"]["allOf"].is_array(),
+        "exact decimal plus fraction bounds"
+    );
+    let caps = &p["required_capabilities"];
+    assert!(caps["maxItems"].is_null());
+    assert_eq!(caps["uniqueItems"], true);
+    assert_eq!(caps["items"]["minLength"], 1);
+    assert_eq!(caps["items"]["maxLength"], 120);
 }
 
 #[test]

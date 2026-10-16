@@ -1,0 +1,61 @@
+//! Forward execution inheritance does not change scientific/source validity.
+use contracts::{lifecycle::JobLimitsV1, DbCounter, SchemaV1};
+use domain::{execution_limits::forward_evaluation, DomainError};
+fn source(cpu: Option<u64>, wall: Option<u32>, memory: u32, output: Option<u64>) -> JobLimitsV1 {
+    JobLimitsV1 {
+        schema_version: SchemaV1,
+        experiments: 3,
+        cpu_seconds: cpu.map(|n| DbCounter::new(n).unwrap()),
+        wall_seconds: wall,
+        memory_mib: Some(memory),
+        output_bytes: output.map(|n| DbCounter::new(n).unwrap()),
+    }
+}
+#[test]
+fn absent_source_caps_stay_absent_with_memory_and_no_trial() {
+    let result = forward_evaluation(&source(None, None, 2048, None)).unwrap();
+    assert_eq!(
+        result,
+        JobLimitsV1 {
+            experiments: 0,
+            ..source(None, None, 2048, None)
+        }
+    );
+}
+#[test]
+fn finite_measurement_preserves_exact_source_without_hidden_clamps() {
+    for input in [
+        source(Some(300), Some(3600), 4096, Some(67108864)),
+        source(Some(4), Some(5), 128, Some(512)),
+        source(Some(30), Some(1), 512, Some(1048576)),
+        source(None, Some(90), 512, None),
+    ] {
+        assert_eq!(
+            forward_evaluation(&input).unwrap(),
+            JobLimitsV1 {
+                experiments: 0,
+                ..input
+            }
+        );
+    }
+}
+#[test]
+fn invalid_original_limits_and_unenforced_cpu_are_refused() {
+    for input in [
+        source(Some(0), Some(1), 512, None),
+        source(None, Some(0), 512, None),
+        source(None, None, 0, None),
+        source(None, None, 512, Some(0)),
+    ] {
+        assert!(matches!(
+            forward_evaluation(&input),
+            Err(DomainError::Invalid("forward_parent_limits"))
+        ));
+    }
+    assert!(matches!(
+        forward_evaluation(&source(Some(1), None, 512, None)),
+        Err(DomainError::CapabilityUnavailable(
+            "independent_cpu_enforcement"
+        ))
+    ));
+}

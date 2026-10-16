@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-30T00:00:00Z",
+  "runner": {
+    "name": "offline-controller-self-test",
+    "version": "1"
+  },
+  "subject": {
+    "name": "codex",
+    "version": "unobserved"
+  },
+  "requested": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "max"
+  },
+  "source_revision": "public-fixture-not-a-candidate",
+  "source_file": "source.txt",
+  "suite_id": "public-controller-self-test-v1",
+  "tuning": {
+    "id": "public-tuning-fixture",
+    "cases": [
+      {
+        "id": "public-tuning-case",
+        "scenario_file": "tuning.txt",
+        "assertions": [
+          {
+            "id": "answer",
+            "predicate": {
+              "kind": "EQUALS",
+              "pointer": "/answer",
+              "value": "fixture-only"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "held_out": {
+    "id": "public-held-out-shaped-fixture",
+    "cases": [
+      {
+        "id": "public-held-out-shaped-case",
+        "scenario_file": "held-out.txt",
+        "assertions": [
+          {
+            "id": "answer-present",
+            "predicate": {
+              "kind": "EXISTS",
+              "pointer": "/answer"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

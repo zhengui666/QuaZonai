@@ -1,4 +1,7 @@
 //! Shared native account/positions/fees, not an average of independent strategy NAVs.
+#[path = "support/portfolio_returns.rs"]
+mod portfolio_returns;
+use portfolio_returns::assert_daily_returns_unavailable;
 #[path = "support/market.rs"]
 mod market;
 use contracts::{
@@ -210,21 +213,6 @@ fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
         .all(|r| r.value.is_none_or(f64::is_finite)));
     CanonicalBacktestResult::from_slice(&serde_json::to_vec(&result.canonical_result).unwrap())
         .unwrap();
-}
-
-fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
-    assert_eq!(result.returns_kind, NativeReturnsKind::PortfolioDaily);
-    assert_eq!(result.returns_status, MetricStatus::InsufficientData);
-    assert_eq!(
-        result.returns_reason.as_deref(),
-        Some("PORTFOLIO_DAILY_RETURNS_UNAVAILABLE")
-    );
-    assert!(result.returns.is_empty());
-    assert!(result
-        .statistics
-        .iter()
-        .filter(|stat| stat.group == NativeStatisticGroup::Returns)
-        .all(|stat| stat.value.is_none()));
 }
 
 #[test]
@@ -484,8 +472,11 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
                 "SIMULATION_MARKET_UNSUPPORTED"
             );
             assert_eq!(
-                simulate(directory.path(), &request).unwrap_err().trim(),
-                "QZ_NATIVE_JOB_FAILED"
+                simulate(directory.path(), &request)
+                    .unwrap_err()
+                    .lines()
+                    .next(),
+                Some("QZ_SIMULATION_MARKET_UNSUPPORTED")
             );
         }
         assert!(
@@ -574,8 +565,49 @@ fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expi
             "unsupported instruments must not publish a simulation result"
         );
         assert_eq!(
-            String::from_utf8(output.stderr).unwrap().trim(),
-            "QZ_NATIVE_JOB_FAILED"
+            String::from_utf8(output.stderr).unwrap().lines().next(),
+            Some("QZ_NATIVE_JOB_FAILED")
         );
+    }
+}
+
+#[test]
+fn queued_increase_must_fill_before_a_due_next_target_uses_positions() {
+    let (directory, mut request) = market("0", 20);
+    let mut opening = request.target_points[0].clone();
+    opening.targets[0].weight = "0".parse().unwrap();
+    opening.targets[1].weight = "0.4".parse().unwrap();
+    opening.cash_weight = "0.6".parse().unwrap();
+    let mut rotate = opening.clone();
+    rotate.asof_ns = instant(7);
+    rotate.targets[0].weight = "0.4".parse().unwrap();
+    rotate.targets[1].weight = "0".parse().unwrap();
+    let mut exit = rotate.clone();
+    exit.asof_ns = instant(8);
+    exit.targets[0].weight = "0".parse().unwrap();
+    exit.cash_weight = "1".parse().unwrap();
+    request.target_points = vec![opening, rotate, exit];
+
+    let result = simulate(directory.path(), &request).unwrap();
+    // The second series sells on the BAR where exit becomes due, after both
+    // same-time prices arrive. Its queued buy of the first series is Initialized
+    // during the sell's position callback. Exit must await that real buy/position,
+    // not consume itself at zero because open/inflight omit Initialized orders.
+    assert_eq!(result.orders.get(), 4);
+    assert_eq!(result.summary["positions.open"], "0");
+    assert_eq!(result.summary["orders.open"], "0");
+    assert_eq!(result.summary["orders.inflight"], "0");
+    let fills = result.canonical_result["fills"].as_array().unwrap();
+    for target in &request.target_points[0].targets {
+        let mut sides = fills
+            .iter()
+            .filter_map(|fill| {
+                let filled = fill.get("event")?.get("Filled")?;
+                (filled["instrument_id"] == target.instrument_id)
+                    .then(|| filled["order_side"].as_str().unwrap())
+            })
+            .collect::<Vec<_>>();
+        sides.sort_unstable(); // canonical fills are normalized, not chronological
+        assert_eq!(sides, ["BUY", "SELL"]);
     }
 }

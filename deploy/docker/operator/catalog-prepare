@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/quazonai/operator/bin/source-tools catalog-prepare "$@"

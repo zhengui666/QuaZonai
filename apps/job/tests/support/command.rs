@@ -20,5 +20,17 @@ pub fn command(args: &[&OsStr], value: &impl serde::Serialize) -> Output {
         .unwrap()
         .write_all(&serde_json::to_vec(value).unwrap())
         .unwrap();
-    child.wait_with_output().unwrap()
+    let output = child.wait_with_output().unwrap();
+    if !output.status.success() {
+        eprintln!(
+            "native stage={}; status={}; stderr: {}",
+            args.first()
+                .copied()
+                .unwrap_or(OsStr::new("unknown"))
+                .to_string_lossy(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    output
 }

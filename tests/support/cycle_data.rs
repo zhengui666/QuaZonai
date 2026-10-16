@@ -145,6 +145,66 @@ pub async fn register(
         Option<contracts::science::NativeCalendarSessionsV1>,
     ),
 ) {
+    register_with_grant_lifetime(
+        pool,
+        store,
+        actor,
+        data,
+        revision,
+        objects,
+        (origin, allowed_uses, calendar),
+        false,
+    )
+    .await;
+}
+
+// Keep fixture dependencies and the grant lifetime explicit at each call site.
+#[allow(clippy::too_many_arguments)]
+pub async fn register_with_grant_lifetime(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    data: &mut research_support::ResearchFixture,
+    revision: Revision,
+    objects: Arc<ArtifactStore>,
+    (origin, allowed_uses, calendar): (
+        DataOrigin,
+        DataUse,
+        Option<contracts::science::NativeCalendarSessionsV1>,
+    ),
+    permanent_grant: bool,
+) {
+    register_with_features(
+        pool,
+        store,
+        actor,
+        data,
+        revision,
+        objects,
+        (origin, allowed_uses, calendar),
+        permanent_grant,
+        None,
+    )
+    .await;
+}
+
+// Keep fixture dependencies and paired feature declarations explicit at each call site.
+#[allow(clippy::too_many_arguments)]
+pub async fn register_with_features(
+    pool: &PgPool,
+    store: &Store,
+    actor: &Actor,
+    data: &mut research_support::ResearchFixture,
+    revision: Revision,
+    objects: Arc<ArtifactStore>,
+    (origin, allowed_uses, calendar): (
+        DataOrigin,
+        DataUse,
+        Option<contracts::science::NativeCalendarSessionsV1>,
+    ),
+    permanent_grant: bool,
+    recorded: Option<contracts::catalogs::RecordedFeatureInputsV1>,
+) {
     let license = ArtifactCreate {
         schema_version: SchemaV1,
         project_id: data.project,
@@ -186,12 +246,17 @@ pub async fn register(
             &DataGrantCreate {
                 schema_version: SchemaV1,
                 source_id: source.id,
-                license_reference: "Only synthetic regression data, not an investment license"
-                    .into(),
+                license_reference: if recorded.is_some() {
+                    "Controlled fixture grant covers catalog and paired feature attachments; not an investment license"
+                } else { "Only synthetic regression data, not an investment license" }.into(),
                 evidence_artifact_id: proof,
                 allowed_uses,
                 valid_from: observed - Duration::hours(1),
-                valid_until: Some(observed + Duration::days(1)),
+                valid_until: if permanent_grant {
+                    None
+                } else {
+                    Some(observed + Duration::days(1))
+                },
             },
         )
         .await
@@ -231,6 +296,12 @@ pub async fn register(
         metadata.native_snapshot_ref = format!("cycle-fixture/{}/{name}", data.project);
         metadata.storage_version = format!("{name}-fixture-v1");
         metadata.partition = role;
+        if recorded
+            .as_ref()
+            .is_some_and(|recorded| recorded.partition == role)
+        {
+            metadata.recorded_feature_inputs = recorded.clone();
+        }
         metadata.event_start = time(start);
         metadata.event_end = time(end);
         metadata.available_through = time("2020-01-02T00:00:00Z");

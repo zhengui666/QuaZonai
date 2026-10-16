@@ -1,12 +1,14 @@
 //! Thin prediction-market adaptation. Nautilus owns every fill, position and cash movement.
 use crate::catalog::NativeMarketData;
 use anyhow::{ensure, Result};
+use bigdecimal::BigDecimal;
 use contracts::science::{NativeBarSelectionV1, NativeSimulationSettingsV1};
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::fee::{FeeModel, FeeModelHandle, MakerTakerFeeModel};
 use nautilus_model::{
     data::{Data, InstrumentClose},
     enums::InstrumentCloseType,
+    identifiers::{ClientOrderId, InstrumentId},
     instruments::{Instrument, InstrumentAny},
     orders::{Order, OrderAny},
     types::{Money, Price, Quantity},
@@ -15,9 +17,121 @@ use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use nautilus_polymarket::models::PolymarketFeeModel;
 use rust_decimal::Decimal;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    fmt,
     path::Path,
+    rc::Rc,
+    str::FromStr,
 };
+
+#[cfg(test)]
+mod fee_tests;
+
+/// Original failed native fill inputs; this does not represent an OrderRejected.
+#[derive(Clone, Debug)]
+pub struct FillFeeFailure {
+    pub reason: String,
+    pub client_order_id: ClientOrderId,
+    pub instrument_id: InstrumentId,
+    pub quantity: Quantity,
+    pub price: Price,
+}
+
+impl fmt::Display for FillFeeFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
+impl std::error::Error for FillFeeFailure {}
+
+/// One observer per run/session. Only venue handle clones share its first error.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FillFeeObserver(Rc<RefCell<Option<FillFeeFailure>>>);
+
+impl FillFeeObserver {
+    pub(crate) fn wrap(&self, delegate: FeeModelHandle) -> FeeModelHandle {
+        FeeModelHandle::new(ObservedFillFee {
+            delegate,
+            observer: self.clone(),
+        })
+    }
+
+    pub(crate) fn failure(&self) -> Option<FillFeeFailure> {
+        self.0.borrow().clone()
+    }
+
+    pub(crate) fn check(&self) -> Result<()> {
+        match self.failure() {
+            Some(failure) => Err(anyhow::Error::new(failure)),
+            None => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ObservedFillFee {
+    delegate: FeeModelHandle,
+    observer: FillFeeObserver,
+}
+
+impl ObservedFillFee {
+    fn observe(
+        &self,
+        result: Result<Money>,
+        order: &OrderAny,
+        quantity: Quantity,
+        price: Price,
+        instrument: &InstrumentAny,
+    ) -> Result<Money> {
+        if let Err(error) = &result {
+            let mut first = self.observer.0.borrow_mut();
+            if first.is_none() {
+                *first = Some(FillFeeFailure {
+                    reason: format!("{error:#}"),
+                    client_order_id: order.client_order_id(),
+                    instrument_id: instrument.id(),
+                    quantity,
+                    price,
+                });
+            }
+        }
+        result
+    }
+}
+
+impl FeeModel for ObservedFillFee {
+    fn get_commission(
+        &self,
+        order: &OrderAny,
+        quantity: Quantity,
+        price: Price,
+        instrument: &InstrumentAny,
+    ) -> Result<Money> {
+        let result = self
+            .delegate
+            .get_commission(order, quantity, price, instrument);
+        self.observe(result, order, quantity, price, instrument)
+    }
+
+    fn get_commission_with_context(
+        &self,
+        order: &OrderAny,
+        quantity: Quantity,
+        price: Price,
+        instrument: &InstrumentAny,
+        underlying_px: Option<Price>,
+    ) -> Result<Money> {
+        let result = self.delegate.get_commission_with_context(
+            order,
+            quantity,
+            price,
+            instrument,
+            underlying_px,
+        );
+        self.observe(result, order, quantity, price, instrument)
+    }
+}
 
 /// The native expiry adapter emits a reduce-only EXPIRATION order. It represents
 /// redemption, not a taker trade, so dispatch that event to zero trading commission.
@@ -40,13 +154,23 @@ impl FeeModel for SettlementAwarePolymarketFee {
             return Ok(Money::zero(instrument.quote_currency()));
         }
         ensure!(
-            quantity
-                .as_decimal()
-                .checked_mul(price.as_decimal())
-                .is_some_and(|notional| notional >= Decimal::ONE),
-            "POLYMARKET_RESEARCH_MINIMUM_FILL_NOTIONAL"
+            quantity.as_decimal() > Decimal::ZERO && price.as_decimal() > Decimal::ZERO,
+            "POLYMARKET_FILL_QUANTITY_PRICE_RANGE"
         );
-        PolymarketFeeModel.get_commission(order, quantity, price, instrument)
+        let commission = PolymarketFeeModel.get_commission(order, quantity, price, instrument)?;
+        ensure!(
+            commission.currency == instrument.quote_currency(),
+            "POLYMARKET_FILL_FEE_CURRENCY_MISMATCH"
+        );
+        let rate = domain::prediction::planning_fee(&native_payload(instrument)?)?;
+        let quantity = BigDecimal::from_str(&quantity.as_decimal().to_string())?;
+        let price = BigDecimal::from_str(&price.as_decimal().to_string())?;
+        let actual = BigDecimal::from_str(&commission.as_decimal().to_string())?;
+        ensure!(
+            actual <= quantity * price * rate.as_decimal(),
+            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+        );
+        Ok(commission)
     }
 }
 
@@ -171,7 +295,7 @@ pub(crate) fn catalog_closes(
         true,
     )?;
     let mut seen = BTreeSet::new();
-    let mut closes = Vec::new();
+    let mut verified_closes = Vec::new();
     for record in query.take(ids.len() + 1) {
         let Data::InstrumentClose(close) = record? else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
@@ -202,17 +326,34 @@ pub(crate) fn catalog_closes(
                     && close.close_price.precision == binary.price_precision,
                 "POLYMARKET_CLOSE_CONTRACT_INVALID"
             );
-            if close.ts_init.as_u64() >= selection.event_start_ns.get()
-                && close.ts_init.as_u64() < selection.event_end_ns.get()
-            {
-                closes.push(close);
-            }
         }
+        verified_closes.push(close);
     }
     ensure!(
         seen.len() == expected.len(),
         "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
     );
+    // A selected BAR at any member's close receipt has no authoritative tie order.
+    let close_receipts = verified_closes
+        .iter()
+        .map(|close| close.ts_init)
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        market
+            .series
+            .iter()
+            .flat_map(|series| &series.bars)
+            .all(|bar| !close_receipts.contains(&bar.ts_init)),
+        "POLYMARKET_CLOSE_BAR_RECEIPT_AMBIGUOUS"
+    );
+    let mut closes = verified_closes
+        .into_iter()
+        .filter(|close| {
+            binaries.contains_key(&close.instrument_id)
+                && close.ts_init.as_u64() >= selection.event_start_ns.get()
+                && close.ts_init.as_u64() < selection.event_end_ns.get()
+        })
+        .collect::<Vec<_>>();
     // Keep original arrival ordering, including ties; no synthetic timestamp is added.
     closes.sort_by_key(|c| c.ts_init);
     Ok(closes)
@@ -236,6 +377,54 @@ pub(crate) fn close_events(
         }
     }
     Ok(closes)
+}
+
+/// Bind Store's original native context to the mounted catalog. Definition
+/// slicing uses the existing native selector; no instrument is synthesized.
+pub(crate) fn bind_target_context(
+    root: &Path,
+    market: &NativeMarketData,
+    selection: &NativeBarSelectionV1,
+    context: Option<&contracts::settlement::NativeBinaryOptionContextV1>,
+) -> Result<()> {
+    let is_binary = market
+        .series
+        .iter()
+        .any(|s| matches!(s.instrument, InstrumentAny::BinaryOption(_)));
+    ensure!(
+        is_binary == context.is_some(),
+        "POLYMARKET_TARGET_CONTEXT_REQUIRED"
+    );
+    if let Some(context) = context {
+        let instruments = context
+            .instrument_definitions
+            .iter()
+            .cloned()
+            .map(serde_json::from_value)
+            .collect::<std::result::Result<Vec<InstrumentAny>, _>>()?;
+        let expected = crate::catalog::select_instrument_versions(instruments, selection)?;
+        let actual = market
+            .series
+            .iter()
+            .map(|series| {
+                (
+                    series.instrument.id().to_string(),
+                    std::iter::once(series.instrument.clone())
+                        .chain(series.instrument_updates.iter().cloned())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        ensure!(
+            serde_json::to_value(expected)? == serde_json::to_value(actual)?,
+            "POLYMARKET_TARGET_NATIVE_SOURCE_MISMATCH"
+        );
+        // This original reader validates both siblings' native close type,
+        // payout and clocks; Store binds their Dataset metadata. The existing
+        // replay owns expiry cash movements.
+        catalog_closes(root, market, selection, &context.settlements)?;
+    }
+    Ok(())
 }
 
 /// Native instruments remain the authority for the target's usable trading window.

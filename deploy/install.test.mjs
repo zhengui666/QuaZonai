@@ -1,71 +1,41 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
-const bundle = fileURLToPath(new URL('./docker/', import.meta.url));
-const guide = await readFile(join(bundle, 'README.md'), 'utf8');
-const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-const operations = await readFile(new URL('../.opensdlc/operations.md', import.meta.url), 'utf8');
-const documents = [readme, guide, operations];
-
-function succeeds(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 10_000, ...options });
-  assert.ifError(result.error);
-  assert.equal(result.signal, null, result.stderr);
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout;
+const installer = fileURLToPath(new URL('./install.sh', import.meta.url));
+const scratch = process.env.PI_SCRATCH_DIR ?? process.env.RUNNER_TEMP ?? tmpdir();
+function run(command, args, env) {
+  const result = spawnSync(command, args, { env, encoding: 'utf8', timeout: 60_000 });
+  assert.equal(result.status, 0, result.stderr); return result.stdout;
 }
-
-test('documented deployment and maintenance commands have valid Bash syntax', () => {
-  for (const text of documents) {
-    const blocks = [...text.matchAll(/```sh\n([\s\S]*?)\n```/g)];
-    assert.ok(blocks.length > 0, 'The guide must contain executable examples');
-    for (const [, script] of blocks) succeeds('bash', ['-n'], { input: script });
+test('help has valid shell syntax and does not initialize installation state', async (t) => {
+  const home = await mkdtemp(join(scratch, 'qz-install-help-')); t.after(() => rm(home, { recursive: true, force: true }));
+  for (const name of ['install.sh', 'docker/manage.sh', 'docker/deploy.sh', 'docker/update.sh']) {
+    const script = fileURLToPath(new URL(name, import.meta.url));
+    run('bash', ['-n', script]);
+    assert.match(run('bash', [script, '--help'], { ...process.env, HOME: home }), /usage:/i);
   }
+  assert.deepEqual(await readdir(home), []);
 });
-
-test('embedded Python maintenance examples compile without executing operations', () => {
-  const scripts = documents.flatMap(text => [...text.matchAll(/python3[^\n]*<<'PY'\n([\s\S]*?)\nPY/g)]);
-  assert.ok(scripts.length > 0, 'Expected revision lookup and maintenance examples');
-  for (const [, script] of scripts) {
-    succeeds('python3', ['-B', '-c', 'import sys; compile(sys.stdin.read(), "<documented-python>", "exec")'], { input: script });
+test('real release distribution installs/repeats with bundled Node and preserves client config', { skip: !process.env.QZ_TEST_CLI_ARCHIVE }, async (t) => {
+  const root = await mkdtemp(join(scratch, 'qz-cli-install-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const tools = join(root, 'tools'); const home = join(root, 'home space'); const bin = join(home, 'bin');
+  await mkdir(tools); await mkdir(home);
+  // Host Node/npm are deliberately absent from PATH. Only download is controlled;
+  // archive extraction, bundled official Node and installed CLI execute for real.
+  for (const tool of ['bash', 'env', 'tar', 'gzip', 'awk', 'sort', 'cmp', 'mktemp', 'chmod', 'cp', 'mv', 'mkdir', 'rm', 'uname', 'dirname']) {
+    const path = run('which', [tool]).trim(); await symlink(path, join(tools, tool));
   }
-});
-
-test('documented deployment entrypoints expose native help without creating an installation', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'quazonai-guide-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const options = {
-    cwd: root,
-    env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'), PYTHONDONTWRITEBYTECODE: '1' },
-  };
-  // Only native --help is executed. Docker, login, migration and the guide's
-  // privileged commands are never invoked; real lifecycle tests live in smoke.py.
-  for (const script of ['deploy.sh', 'update.sh', 'codex-login.sh', 'codex-update.sh', 'runtime.sh']) {
-    assert.ok(guide.includes(script), `Missing documented entrypoint: ${script}`);
-    const help = succeeds('bash', [join(bundle, script), '--help'], options);
-    assert.match(help, /usage:/i);
-    assert.match(help, /--directory/);
-  }
-  for (const operation of ['apply-update', 'status']) {
-    assert.ok(guide.includes(`manage.py ${operation}`));
-    const help = succeeds('python3', ['-B', join(bundle, 'manage.py'), operation, '--help'], options);
-    assert.match(help, /usage:/i);
-  }
-  assert.deepEqual(await readdir(root), [], 'Help must not initialize state or credentials');
-});
-
-test('deployment routes use prebuilt images without checkout or local image production', () => {
-  for (const document of documents) {
-    for (const [, block] of document.matchAll(/```sh\n([\s\S]*?)\n```/g)) {
-      assert.doesNotMatch(block, /\bgit\s+clone\b|\bcargo\s+(?:build|run|install)\b|\bdocker\s+(?:build|buildx|image\s+(?:build|save|load))\b|\btarget\/release\/runtime\b/);
-    }
-  }
-  assert.match(guide, /GHCR/);
-  assert.match(guide, /runtime\.sh/);
-  assert.doesNotMatch(guide, /project\.md#runtime-image-build/);
+  await writeFile(join(tools, 'curl'), '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = --output ]; then shift; output=$1; fi; shift; done\nexec cp "$QZ_TEST_CLI_ARCHIVE" "$output"\n', { mode: 0o755 });
+  const env = { ...process.env, HOME: home, TMPDIR: root, PATH: tools };
+  const config = join(home, 'original-client.json'); await writeFile(config, 'original device connection\n');
+  const version = process.env.QZ_TEST_CLI_VERSION;
+  for (let i = 0; i < 2; i++) run('/bin/bash', [installer, '--cli-only', '--version', version, '--bin-dir', bin], env);
+  assert.equal(run(join(bin, 'quazonai'), ['--version'], env).trim(), `quazonai ${version}`);
+  assert.match(run(join(bin, 'quazonai'), ['--help'], env), /research/);
+  assert.equal(await readFile(config, 'utf8'), 'original device connection\n');
+  assert.match(await readFile(join(bin, 'quazonai'), 'utf8'), /quazonai-cli\/releases/);
 });

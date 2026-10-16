@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Freeze bounded public EVM logs and headers; never qualifies historical availability.
+"""Freeze selected public EVM logs and headers; never qualifies historical availability.
 
 No resume or overwrite: choose a new output after a failed or completed acquisition.
 The archive records observations and source URLs, not a data license or PIT claim.
 Connection failures before a response opens allow three attempts with 1s/2s backoff.
-HTTP errors and response-body failures are never retried. Each open has a 30s timeout;
-the 60s body-reading deadline starts after open succeeds, not before all attempts.
+HTTP errors and response-body failures are never retried. Connections and idle
+socket reads have a 30s timeout; a healthy transfer has no total wall-time limit.
 """
 
 import argparse
@@ -26,10 +26,6 @@ import urllib.request
 from snapshot import DEFAULT_MAX_BYTES, publish_bytes, safe_local
 
 
-MAX_BLOCKS = 4096
-MAX_PROVIDERS = 4
-MAX_ADDRESSES = 256
-MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 CHUNK = 64 * 1024
 ZERO_HASH = "0x" + "00" * 32
 
@@ -67,11 +63,11 @@ def select_blocks(blocks=None, first=None, last=None):
     else:
         u64(first)
         u64(last)
-        if first > last or last - first >= MAX_BLOCKS:
-            raise ValueError("invalid or oversized block range")
+        if first > last:
+            raise ValueError("invalid block range")
         selected = list(range(first, last + 1))
-    if not 1 <= len(selected) <= MAX_BLOCKS:
-        raise ValueError("select between 1 and 4096 blocks")
+    if not selected:
+        raise ValueError("select at least one block")
     return selected
 
 
@@ -119,9 +115,9 @@ def invalid_constant(_):
     raise ValueError("invalid JSON numeric constant")
 
 
-def rpc_call(endpoint, method, params, remaining):
-    limit = min(MAX_RESPONSE_BYTES, remaining)
-    if limit <= 0:
+def rpc_call(endpoint, method, params, remaining=None):
+    limit = remaining
+    if limit is not None and limit <= 0:
         raise ValueError("download byte budget exhausted")
     request = urllib.request.Request(
         endpoint,
@@ -141,29 +137,24 @@ def rpc_call(endpoint, method, params, remaining):
             if attempt == 2:
                 raise
             time.sleep(attempt + 1)
-    deadline = time.monotonic() + 60
     body = bytearray()
     with response:
         if response.status != 200 or response.headers.get("Content-Encoding", "identity") != "identity":
             raise ValueError("unexpected RPC HTTP response")
         declared = response.headers.get("Content-Length")
         if declared is not None:
-            if not re.fullmatch(r"[0-9]+", declared) or int(declared) > limit:
+            if not re.fullmatch(r"[0-9]+", declared) or (limit is not None and int(declared) > limit):
                 raise ValueError("RPC response exceeds byte budget")
             declared = int(declared)
-        while len(body) < limit:
-            if time.monotonic() > deadline:
-                raise ValueError("RPC response deadline exceeded")
-            chunk = response.read1(min(CHUNK, limit - len(body)))
-            if time.monotonic() > deadline:
-                raise ValueError("RPC response deadline exceeded")
+        while limit is None or len(body) < limit:
+            chunk = response.read1(CHUNK if limit is None else min(CHUNK, limit - len(body)))
             if not chunk:
                 break
             body.extend(chunk)
         # Without a length, reaching the limit cannot prove EOF without reading
         # beyond the budget. Fail closed instead of consuming an extra byte.
         if ((declared is not None and len(body) != declared)
-                or (declared is None and len(body) == limit)):
+                or (limit is not None and declared is None and len(body) == limit)):
             raise ValueError("RPC response truncated or byte budget exhausted")
     value = json.loads(body, object_pairs_hook=unique_object, parse_constant=invalid_constant)
     if (not isinstance(value, dict) or value.get("jsonrpc") != "2.0"
@@ -227,27 +218,30 @@ def canonical_logs(response, header, addresses, topic0):
 def download(chain_id, endpoints, blocks, addresses, topic0, output, max_bytes=DEFAULT_MAX_BYTES):
     u64(chain_id)
     blocks = select_blocks(blocks)
-    if type(max_bytes) is not int or max_bytes <= 0:
+    if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
         raise ValueError("positive byte budget required")
-    if not 2 <= len(endpoints) <= MAX_PROVIDERS:
-        raise ValueError("select between two and four public RPC endpoints")
+    if len(endpoints) < 2:
+        raise ValueError("select at least two public RPC endpoints")
     hosts = [endpoint_host(endpoint) for endpoint in endpoints]
     if len(set(hosts)) != len(hosts):
         raise ValueError("every RPC endpoint must use a different public host")
-    if not 1 <= len(addresses) <= MAX_ADDRESSES:
-        raise ValueError("select between one and 256 contract addresses")
+    if not addresses:
+        raise ValueError("select at least one contract address")
     addresses = sorted({hex_bytes(address, 20) for address in addresses})
     topic0 = hex_bytes(topic0, 32)
     output = Path(os.path.abspath(output))
     safe_local(output.parent, output.name)
     if output.exists():
         raise ValueError("output already exists; choose a new output file")
-    remaining = max_bytes
+    downloaded_bytes = 0
 
     def request(endpoint, method, params):
-        nonlocal remaining
-        response, consumed = rpc_call(endpoint, method, params, remaining)
-        remaining -= consumed
+        nonlocal downloaded_bytes
+        response, consumed = rpc_call(endpoint, method, params,
+            None if max_bytes is None else max_bytes - downloaded_bytes)
+        downloaded_bytes += consumed
+        if max_bytes is not None and downloaded_bytes > max_bytes:
+            raise ValueError("download byte budget exhausted")
         return response
 
     observations = []
@@ -293,28 +287,28 @@ def download(chain_id, endpoints, blocks, addresses, topic0, output, max_bytes=D
                "query": {"blocks": blocks, "addresses": addresses, "topic0": topic0},
                "observations": observations}
     content = (json.dumps(archive, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
-    if len(content) > max_bytes:
+    if max_bytes is not None and len(content) > max_bytes:
         raise ValueError("archive exceeds byte budget")
     output.parent.mkdir(parents=True, exist_ok=True)
     safe_local(output.parent, output.name)
     publish_bytes(output, content)
     return {"file": str(output), "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
             "rows": rows, "blocks": len(blocks), "providers": len(endpoints),
-            "downloaded_bytes": max_bytes - remaining}
+            "downloaded_bytes": downloaded_bytes}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chain-id", required=True, type=cli_u64)
-    parser.add_argument("--rpc", required=True, action="append", help="anonymous public HTTPS endpoint; two to four unique hosts")
+    parser.add_argument("--rpc", required=True, action="append", help="anonymous public HTTPS endpoint; at least two unique hosts")
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--block", action="append", type=cli_u64)
     selection.add_argument("--from-block", type=cli_u64)
     parser.add_argument("--to-block", type=cli_u64, help="inclusive range end")
-    parser.add_argument("--address", required=True, action="append", help="contract address; at most 256")
+    parser.add_argument("--address", required=True, action="append", help="explicit contract address (repeatable)")
     parser.add_argument("--topic0", required=True)
-    parser.add_argument("--max-bytes", type=cli_u64, default=DEFAULT_MAX_BYTES,
-                        help="total response-body and output byte limit")
+    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
+                        help="optional explicit total response-body and output byte budget; default unlimited")
     parser.add_argument("--output", required=True, type=Path, help="new JSON file; no resume or overwrite")
     args = parser.parse_args(argv)
     try:

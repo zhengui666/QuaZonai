@@ -34,12 +34,12 @@ pub struct NativeAlphaSealedResultV1 {
         serialize_with = "serialize_returns",
         deserialize_with = "deserialize_returns"
     )]
-    #[schema(min_items = 1, max_items = 1000000)]
+    #[schema(min_items = 1)]
     pub expected_returns: Vec<Option<f64>>,
     pub calibration_source_report_artifact_id: Option<Id>,
     pub calibration_fit_end_available_ns: Option<DbCounter>,
     pub native_versions: BTreeMap<String, String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<NativeSealedAssetMetricsV1>,
 }
 

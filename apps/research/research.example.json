@@ -1,0 +1,17 @@
+{
+  "database": "../../var/research/durable.sqlite",
+  "port": 8092,
+  "modules": [
+    "./plugins/research.ts",
+    "./plugins/factor-wasm.ts",
+    "./plugins/heldout-wasm.ts",
+    "./plugins/catalog-input.ts"
+  ],
+  "providerModules": [],
+  "thinkingLevel": "medium",
+  "settings": {
+    "stream": { "maxRetries": 0 },
+    "retry": { "enabled": true, "maxRetries": 6, "baseDelayMs": 2000, "maxAgentDelayMs": 60000 },
+    "progress": { "partialIntervalMs": 250, "outputIntervalMs": 250 }
+  }
+}

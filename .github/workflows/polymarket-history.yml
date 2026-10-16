@@ -1,51 +1,40 @@
-name: Polymarket history
+name: Native source tools
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: polymarket-history-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  native-history:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
+  source-tools:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
     env:
       RUSTUP_TOOLCHAIN: '1.98.1'
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
-      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Verify exact source and native toolchain
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
-          rustup run "$RUSTUP_TOOLCHAIN" rustc -Vv
-          rustup run "$RUSTUP_TOOLCHAIN" cargo fmt --all -- --check
-      - name: Check operator-only native data preparation
-        run: |
-          set -euo pipefail
-          python3 -B -m unittest discover -s runtimes/data -v
-          cargo clippy --locked -p job --features polymarket-history,catalog-prepare,market-history --all-targets -- -D warnings
-          cargo test --locked -p job --features polymarket-history,catalog-prepare,market-history --bin polymarket-history --bin market-history --test catalog_prepare --test catalog --test managed --test instrument_versions --test native_instrument_updates
-          cargo test --locked -p job --features market-history --lib catalog::currencies
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- --help
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- fetch --help
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- import --help
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- archive --help
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- chain --help
-          cargo run --locked -q -p job --features polymarket-history --bin polymarket-history -- capture --help
-          cargo run --locked -q -p job --features catalog-prepare --bin catalog-prepare -- --help
-          cargo run --locked -q -p job --features market-history --bin market-history -- --help
-          cargo run --locked -q -p job --features market-history --bin market-history -- import --help
-          cargo run --locked -q -p job --features market-history --bin market-history -- hyperliquid-instruments --help
-          python3 -I runtimes/data/hub.py --help
-          git diff --exit-code
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: |
+            apps/service/package-lock.json
+            apps/research/package-lock.json
+      - run: |
+          npm ci --prefix apps/service --no-audit --no-fund
+          npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          prefix-key: quazonai-science-v2
+          key: ubuntu-22-debug
+          cache-bin: false
+          cache-workspace-crates: false
+      - run: python3 -B -m unittest discover -s runtimes/data -v
+      - run: |
+          cargo test --locked -p job --features native-paper-test,native-sandbox-test,catalog-prepare,polymarket-history \
+            --lib --test source_tools --test polymarket_v2_source --test catalog_prepare --test catalog --test managed \
+            --test instrument_versions --test native_instrument_updates --test candle_ingest \
+            --test archive_candle_ingest --test batched_observation

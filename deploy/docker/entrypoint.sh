@@ -1,28 +1,16 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-if [[ "${1:-console}" != console ]]; then
-  exec /opt/quazonai/bin/server "$@"
-fi
-children=()
-stop() {
-  trap - TERM INT
-  if ((${#children[@]})); then
-    kill -TERM "${children[@]}" 2>/dev/null || true
-    wait "${children[@]}" 2>/dev/null || true
-  fi
-}
-trap 'stop; exit 143' TERM
-trap 'stop; exit 130' INT
-/opt/quazonai/bin/server serve &
-children+=("$!")
-XDG_CONFIG_HOME=/tmp/caddy-config XDG_DATA_HOME=/tmp/caddy-data \
-  /usr/bin/caddy run --config /opt/quazonai/Caddyfile --adapter caddyfile &
-children+=("$!")
-set +e
-wait -n "${children[@]}"
-status=$?
-set -e
-stop
-# An unexpected clean child exit must also restart the whole console.
-((status != 0)) || status=1
-exit "$status"
+set -euo pipefail
+case "${1:-serve}" in
+  serve|console)
+    : "${QZ_CONFIG:?Persistent service config path is required}"
+    : "${QZ_RESEARCH_PROVIDER_ENV:?Private provider environment file is required}"
+    # The service owns the only programmatic Pi Durable writer and scheduler.
+    # tini forwards SIGTERM; the service drains HTTP and suspends the same DB.
+    exec node --env-file="$QZ_RESEARCH_PROVIDER_ENV" --experimental-strip-types /opt/quazonai/apps/service/src/main.ts
+    ;;
+  cli) shift; exec node --experimental-strip-types /opt/quazonai/apps/cli/src/main.ts "$@" ;;
+  configure) shift; exec node /opt/quazonai/deploy/docker/configure.mjs "$@" ;;
+  maintenance) shift; exec node /opt/quazonai/deploy/docker/maintenance.mjs "$@" ;;
+  job) shift; exec /opt/quazonai/bin/job "$@" ;;
+  *) printf 'Use serve, cli, configure, maintenance or job.\n' >&2; exit 2 ;;
+esac

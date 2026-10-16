@@ -3,10 +3,6 @@ use crate::{DecimalValue, SchemaV1};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-pub const MAX_ALLOCATION_ASSETS: usize = 256;
-pub const MAX_ALLOCATION_GROUPS: usize = 64;
-pub const MAX_RETURN_OBSERVATIONS: usize = 100_000;
-pub const MAX_RETURN_VALUES: usize = 1_000_000;
 pub const CLARABEL_CLASS: &str = "clarabel::solver::DefaultSolver";
 pub const CLARABEL_VERSION: &str = "0.11.1";
 pub const FIXED_ENSEMBLE_CLASS: &str = "ndarray::ArrayBase::dot";
@@ -53,12 +49,12 @@ pub struct AlphaForecastV1 {
     pub asof_ns: crate::DbCounter,
     pub available_ns: crate::DbCounter,
     pub ensemble_weight: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
     #[serde(serialize_with = "serialize_finite_values")]
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub forecasts: Vec<f64>,
 }
 
@@ -73,11 +69,11 @@ pub struct PortfolioForecastInputV1 {
     pub base_currency: String,
     #[schema(minimum = 1)]
     pub max_input_age_seconds: u32,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
-    #[schema(min_items = 2, max_items = 256)]
+    #[schema(min_items = 2)]
     pub members: Vec<AlphaForecastV1>,
 }
 
@@ -166,9 +162,7 @@ pub struct PortfolioConstraintsV1 {
     /// Positive per-horizon variance (VARIANCE) or expected loss return (CVAR) bound.
     /// Not volatility or annualized risk; allowance is bound * exposure_tolerance.
     pub max_ex_ante_risk: Option<DecimalValue>,
-    #[schema(max_items = 64)]
     pub group_bounds: Vec<GroupBoundV1>,
-    #[schema(max_items = 256)]
     pub asset_overrides: Vec<AssetBoundV1>,
     pub transaction_costs_ref: crate::Id,
     pub liquidity_ref: Option<crate::Id>,
@@ -194,7 +188,7 @@ pub enum RiskBudgetSign {
 pub struct RiskBudgetSettingsV1 {
     pub schema_version: SchemaV1,
     pub risky_gross_exposure: DecimalValue,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<RiskBudgetAssetV1>,
 }
 
@@ -207,7 +201,7 @@ pub struct AllocatorSettingsV1 {
     pub cvar_confidence: Option<DecimalValue>,
     /// Required only for RISK_BUDGETING; explicit asset identity, share, sign and scale.
     pub risk_budgeting: Option<RiskBudgetSettingsV1>,
-    #[schema(minimum = 1, maximum = 100000)]
+    #[schema(minimum = 1)]
     pub max_iterations: u32,
     /// Numerical stopping tolerance, not permission to violate the mandate.
     pub solver_tolerance: DecimalValue,
@@ -243,145 +237,13 @@ pub struct MandateContentV1 {
     pub exposure_tolerance: DecimalValue,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MandateCreateV1 {
-    pub schema_version: SchemaV1,
-    pub project_id: crate::Id,
-    pub runtime_id: crate::Id,
-    pub expected_runtime_revision: crate::Revision,
-    pub content: MandateContentV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PortfolioMemberSelectionV1 {
-    pub qualification_id: crate::Id,
-    pub ensemble_weight: DecimalValue,
-}
-
-/// Source references only; trusted admission resolves the original native inputs.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PortfolioBuildRequestV1 {
-    pub schema_version: SchemaV1,
-    pub cycle_id: crate::Id,
-    pub mandate_id: crate::Id,
-    pub input_set_id: crate::Id,
-    pub runtime_id: crate::Id,
-    pub expected_runtime_revision: crate::Revision,
-    pub current_weights_source: PortfolioBuildWeightsV1,
-    pub environment: crate::forward::ForwardEnvironmentV1,
-    #[schema(min_items = 2, max_items = 256)]
-    pub members: Vec<PortfolioMemberSelectionV1>,
-    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
-    pub limits: crate::lifecycle::JobLimitsV1,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
-pub enum PortfolioBuildWeightsV1 {
-    ForwardSnapshot { snapshot_id: crate::Id },
-    LastTarget { candidate_id: crate::Id },
-}
-
-/// Original-source hold simulation intent; never accepts replacement targets or settings.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateSimulationRequestV1 {
-    pub schema_version: crate::SchemaV1,
-    pub cycle_id: crate::Id,
-    pub candidate_id: crate::Id,
-    pub input_set_id: crate::Id,
-    pub runtime_id: crate::Id,
-    pub expected_runtime_revision: crate::Revision,
-    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
-    pub limits: crate::lifecycle::JobLimitsV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PortfolioStudyRequestV1 {
-    pub schema_version: crate::SchemaV1,
-    pub cycle_id: crate::Id,
-    pub candidate_id: crate::Id,
-    pub runtime_id: crate::Id,
-    pub expected_runtime_revision: crate::Revision,
-    #[schema(schema_with = crate::data::bounded_native_limits_schema)]
-    pub limits: crate::lifecycle::JobLimitsV1,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MandateViewV1 {
-    pub id: crate::Id,
-    pub project_id: crate::Id,
-    pub version: u32,
-    pub content: MandateContentV1,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CandidateWeightsSourceV1 {
+    PaperInitialCapital,
     ForwardSnapshot,
     LastTarget,
     None,
-}
-
-/// Original publication facts, never a current eligibility or delivery verdict.
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateViewV1 {
-    pub id: crate::Id,
-    pub project_id: crate::Id,
-    pub mandate_id: crate::Id,
-    pub input_set_id: crate::Id,
-    pub run_id: crate::Id,
-    pub decision_asof: chrono::DateTime<chrono::Utc>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub execution_status: crate::runs::RunState,
-    pub solver_status: SolverStatus,
-    pub evidence_status: crate::evidence::EvidenceStatus,
-    pub origin: crate::research::DataOrigin,
-    pub reason_code: Option<String>,
-    pub forecast_artifact_id: Option<crate::Id>,
-    pub covariance_artifact_id: Option<crate::Id>,
-    pub diagnostics_artifact_id: crate::Id,
-    pub target_artifact_id: Option<crate::Id>,
-    pub allocation_evaluation_id: Option<crate::Id>,
-    pub cash_weight: Option<DecimalValue>,
-    pub current_weights_source: CandidateWeightsSourceV1,
-    pub current_weights_artifact_id: Option<crate::Id>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateMemberV1 {
-    pub alpha_version_id: crate::Id,
-    pub qualification_id: crate::Id,
-    pub ensemble_weight: DecimalValue,
-    pub calibration_id: Option<crate::Id>,
-    pub forecast_unit: String,
-    pub coverage_fraction: DecimalValue,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateTargetV1 {
-    pub instrument_id: String,
-    pub target_weight: DecimalValue,
-    pub currency: String,
-    pub asof: chrono::DateTime<chrono::Utc>,
-    pub valid_until: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateDetailV1 {
-    pub header: CandidateViewV1,
-    pub members: Vec<CandidateMemberV1>,
-    pub targets: Vec<CandidateTargetV1>,
 }
 
 /// Only implemented native adapters. Role and linked upstream identity are
@@ -393,6 +255,12 @@ pub struct CandidateDetailV1 {
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    /// QZ-owned thin adapter through the official native FeeModel trait.
+    FrozenSpotFeeScenario {
+        schema_version: SchemaV1,
+        native_version: String,
+        parameters: crate::spot_fees::FrozenSpotFeeScenarioParametersV1,
+    },
     NautilusDefaultFill {
         schema_version: SchemaV1,
         upstream_class: String,
@@ -506,6 +374,22 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
                     .required("parameters"),
             );
         }
+        schema = schema.item(
+            ObjectBuilder::new()
+                .schema_type(Type::Object)
+                .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                .property("schema_version", SchemaV1::schema())
+                .required("schema_version")
+                .property("adapter_kind", literal("FROZEN_SPOT_FEE_SCENARIO"))
+                .required("adapter_kind")
+                .property("native_version", literal(NAUTILUS_EXECUTION_VERSION))
+                .required("native_version")
+                .property(
+                    "parameters",
+                    crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schema(),
+                )
+                .required("parameters"),
+        );
         schema.into()
     }
 }
@@ -517,6 +401,7 @@ impl ToSchema for NativeModelRefV1 {
         )>,
     ) {
         AllocatorSettingsV1::schemas(schemas);
+        crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schemas(schemas);
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -541,15 +426,15 @@ pub struct PortfolioReturnHistoryV1 {
     pub base_currency: String,
     pub horizon_kind: crate::brief::HorizonKind,
     pub horizon_value: crate::DbCounter,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub instrument_ids: Vec<String>,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub bar_types: Vec<String>,
     /// Common completed return windows, in strictly increasing end-time order.
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub end_ns: Vec<crate::DbCounter>,
     /// Latest availability of all assets in each window, not just event time.
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub available_ns: Vec<crate::DbCounter>,
     /// Asset-major simple returns over the same horizon as the forecasts.
     #[serde(serialize_with = "serialize_finite_matrix")]
@@ -573,7 +458,7 @@ pub struct AllocationInputV1 {
     pub alpha_ensemble: NativeModelRefV1,
     pub covariance_estimator: NativeModelRefV1,
     pub return_history: PortfolioReturnHistoryV1,
-    #[schema(min_items = 1, max_items = 256)]
+    #[schema(min_items = 1)]
     pub assets: Vec<AllocationAssetV1>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -632,7 +517,7 @@ pub struct CvarRiskBudgetWitnessV1 {
     pub schema_version: SchemaV1,
     /// Native dual weights in the original return-history scenario order.
     #[serde(serialize_with = "serialize_finite_values")]
-    #[schema(min_items = 2, max_items = 100000)]
+    #[schema(min_items = 2)]
     pub scenario_weights: Vec<f64>,
 }
 
@@ -649,23 +534,18 @@ fn return_history_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Sc
     use utoipa::openapi::schema::{ArrayBuilder, KnownFormat, ObjectBuilder, SchemaFormat, Type};
     ArrayBuilder::new()
         .min_items(Some(1))
-        .max_items(Some(MAX_ALLOCATION_ASSETS))
         .items(
-            ArrayBuilder::new()
-                .min_items(Some(2))
-                .max_items(Some(MAX_RETURN_OBSERVATIONS))
-                .items(
-                    ObjectBuilder::new()
-                        .schema_type(Type::Number)
-                        .format(Some(SchemaFormat::KnownFormat(KnownFormat::Double))),
-                ),
+            ArrayBuilder::new().min_items(Some(2)).items(
+                ObjectBuilder::new()
+                    .schema_type(Type::Number)
+                    .format(Some(SchemaFormat::KnownFormat(KnownFormat::Double))),
+            ),
         )
         .into()
 }
 fn group_membership_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     use utoipa::openapi::schema::{ArrayBuilder, ObjectBuilder, Type};
     ArrayBuilder::new()
-        .max_items(Some(MAX_ALLOCATION_GROUPS))
         .unique_items(true)
         .items(
             ObjectBuilder::new()
