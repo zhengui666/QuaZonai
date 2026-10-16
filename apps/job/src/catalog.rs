@@ -238,7 +238,7 @@ fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("CATALOG_ROOT_INVALID"))?;
     // Use the fallible native constructor. Cloud storage support is not enabled.
-    let mut catalog = ParquetDataCatalog::from_uri(text, None, Some(4096), None, None)?;
+    let catalog = ParquetDataCatalog::from_uri(text, None, Some(4096), None, None)?;
     // The pinned native push decoder subtracts this untrusted length unchecked.
     // Check only the fixed-size footer boundary; native Parquet still parses all
     // metadata and pages. Runtime mounts are already scoped and immutable.
@@ -351,7 +351,9 @@ pub(crate) fn load_price_bars(
                 "CATALOG_NONUNIQUE_OR_REVISED_BAR"
             );
         }
+        ensure!(!bar.volume.is_undefined(), "CATALOG_VOLUME_UNDEFINED");
         for price in [bar.open, bar.high, bar.low, bar.close] {
+            ensure!(!price.is_undefined(), "CATALOG_PRICE_UNDEFINED");
             ensure!(
                 price.as_f64().is_finite() && price.as_f64() > 0.0,
                 "UNSUPPORTED_NONPOSITIVE_PRICE"

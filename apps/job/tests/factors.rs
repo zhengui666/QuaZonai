@@ -736,3 +736,49 @@ fn price_volume_factors_retain_native_row_and_clock_checks() {
         );
     }
 }
+
+#[test]
+fn price_volume_factors_reject_undefined_native_values() {
+    use nautilus_model::types::{price::PRICE_UNDEF, quantity::QUANTITY_UNDEF, Price, Quantity};
+    let (original, request) = mixed_catalog(0.0, false);
+    let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
+    for undefined_volume in [false, true] {
+        let prices = tempfile::tempdir().unwrap();
+        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+            prices.path().to_str().unwrap(),
+            None,
+            Some(16),
+            None,
+            None,
+        )
+        .unwrap();
+        for series in &market.series {
+            let mut bars = series.bars.clone();
+            for bar in &mut bars {
+                if undefined_volume {
+                    bar.volume = Quantity::from_raw(QUANTITY_UNDEF, 0);
+                } else {
+                    let absent = Price::from_raw(PRICE_UNDEF, 0);
+                    bar.open = absent;
+                    bar.high = absent;
+                    bar.low = absent;
+                    bar.close = absent;
+                }
+            }
+            catalog.write_to_parquet(&bars, None, None, None).unwrap();
+        }
+        let result = evaluate_factor(prices.path(), &request, &module(VOLUME_SCORE));
+        assert!(
+            result.is_err(),
+            "undefined native values must not produce factor metrics"
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            if undefined_volume {
+                "CATALOG_VOLUME_UNDEFINED"
+            } else {
+                "CATALOG_PRICE_UNDEFINED"
+            }
+        );
+    }
+}
