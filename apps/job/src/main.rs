@@ -49,6 +49,13 @@ enum Operation {
         #[arg(long)]
         model: PathBuf,
     },
+    /// Predict research scores from observed price/volume BARs, without trading definitions.
+    ForecastFactor {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+    },
     /// Evaluate arbitrary factor scores with shared time cuts; no targets or accounts.
     /// Catalog/model paths are trusted local CLI configuration only.
     EvaluateFactor {
@@ -180,6 +187,11 @@ fn run(operation: Operation) -> Result<()> {
         Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
+            &catalog,
+            &input()?,
+            &model_bytes(&model)?,
+        )?),
+        Operation::ForecastFactor { catalog, model } => output(&job::forecast::forecast_factor(
             &catalog,
             &input()?,
             &model_bytes(&model)?,

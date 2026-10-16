@@ -255,6 +255,12 @@ pub enum CandidateWeightsSourceV1 {
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    /// QZ-owned recorded v2 transaction-cost replay through official FeeModel.
+    PolymarketV2RecordedFees {
+        schema_version: SchemaV1,
+        native_version: String,
+        parameters: crate::recorded_fees::RecordedTradeFeeParametersV1,
+    },
     /// QZ-owned thin adapter through the official native FeeModel trait.
     FrozenSpotFeeScenario {
         schema_version: SchemaV1,
@@ -374,22 +380,30 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
                     .required("parameters"),
             );
         }
-        schema = schema.item(
-            ObjectBuilder::new()
-                .schema_type(Type::Object)
-                .additional_properties(Some(AdditionalProperties::FreeForm(false)))
-                .property("schema_version", SchemaV1::schema())
-                .required("schema_version")
-                .property("adapter_kind", literal("FROZEN_SPOT_FEE_SCENARIO"))
-                .required("adapter_kind")
-                .property("native_version", literal(NAUTILUS_EXECUTION_VERSION))
-                .required("native_version")
-                .property(
-                    "parameters",
-                    crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schema(),
-                )
-                .required("parameters"),
-        );
+        for (kind, parameters) in [
+            (
+                "FROZEN_SPOT_FEE_SCENARIO",
+                crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schema(),
+            ),
+            (
+                "POLYMARKET_V2_RECORDED_FEES",
+                crate::recorded_fees::RecordedTradeFeeParametersV1::schema(),
+            ),
+        ] {
+            schema = schema.item(
+                ObjectBuilder::new()
+                    .schema_type(Type::Object)
+                    .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                    .property("schema_version", SchemaV1::schema())
+                    .required("schema_version")
+                    .property("adapter_kind", literal(kind))
+                    .required("adapter_kind")
+                    .property("native_version", literal(NAUTILUS_EXECUTION_VERSION))
+                    .required("native_version")
+                    .property("parameters", parameters)
+                    .required("parameters"),
+            );
+        }
         schema.into()
     }
 }
@@ -402,6 +416,7 @@ impl ToSchema for NativeModelRefV1 {
     ) {
         AllocatorSettingsV1::schemas(schemas);
         crate::spot_fees::FrozenSpotFeeScenarioParametersV1::schemas(schemas);
+        crate::recorded_fees::RecordedTradeFeeParametersV1::schemas(schemas);
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]

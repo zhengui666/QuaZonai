@@ -895,6 +895,13 @@ pub(crate) fn paper_target_strategy(
 ) -> Result<(TargetReplay, Rc<RefCell<ReplayStatus>>)> {
     domain::portfolio::simulation_settings(&settings)?;
     ensure!(
+        !matches!(
+            settings.fee_model,
+            contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedFees { .. }
+        ),
+        "RECORDED_FEES_BACKTEST_ONLY"
+    );
+    ensure!(
         !point.targets.is_empty()
             && point.targets.len() == bar_types.len()
             && point.asof_ns < point.valid_until_ns,
@@ -1144,7 +1151,12 @@ fn validate_point(
                 && target.currency == settings.base_currency,
             "SIMULATION_TARGET_IDENTITY"
         );
-        if settings.account_kind == NativeAccountKind::Cash {
+        if settings.account_kind == NativeAccountKind::Cash
+            || matches!(
+                settings.fee_model,
+                contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedFees { .. }
+            )
+        {
             ensure!(
                 target.weight.is_nonnegative() && point.cash_weight.is_nonnegative(),
                 "CASH_SHORTING_UNSUPPORTED"
@@ -1413,8 +1425,22 @@ fn run_with_strategy_and_spot(
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
         let fill_fees = crate::prediction::FillFeeObserver::default();
+        let recorded_fees = if matches!(
+            settings.fee_model,
+            contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedFees { .. }
+        ) {
+            Some(crate::recorded_fees::RecordedFeeModel::load(
+                root,
+                &market,
+                engine.kernel().clock.clone(),
+            )?)
+        } else {
+            None
+        };
         let fee = if is_spot {
             crate::spot_cash_runtime::fee_model(request, &market)?
+        } else if let Some(model) = &recorded_fees {
+            model.handle()
         } else {
             crate::prediction::fee_model(settings)
         };
@@ -1437,7 +1463,9 @@ fn run_with_strategy_and_spot(
                 .map_err(anyhow::Error::msg)?])
                 .default_leverage(native_decimal(&settings.leverage)?)
                 .fee_model(
-                    if domain::prediction::uses_native_fee(&settings.fee_model) {
+                    if domain::prediction::uses_native_fee(&settings.fee_model)
+                        || recorded_fees.is_some()
+                    {
                         fill_fees.wrap(fee)
                     } else {
                         fee
@@ -1613,6 +1641,9 @@ fn run_with_strategy_and_spot(
         };
         Ok(Some(NativeSimulationResultV1 {
             spot_cash_report,
+            recorded_fee_replay: recorded_fees
+                .as_ref()
+                .map(crate::recorded_fees::RecordedFeeModel::report),
             schema_version: SchemaV1,
             native_version: "0.63.0".into(),
             iterations: count(native.iterations)?,

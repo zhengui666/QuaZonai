@@ -154,6 +154,12 @@ pub fn simulation_models(
         _ => return Err(unavailable()),
     };
     match &settings.fee_model {
+        NativeModelRefV1::PolymarketV2RecordedFees { native_version, .. }
+            if native_version == NAUTILUS_EXECUTION_VERSION
+                && settings.multi_currency_spot_cash.is_none()
+                && settings.account_kind == contracts::science::NativeAccountKind::Margin
+                && settings.leverage.as_decimal() == &BigDecimal::from(1)
+                && settings.base_currency == "pUSD" => {}
         NativeModelRefV1::FrozenSpotFeeScenario { native_version, parameters, .. }
             if native_version == NAUTILUS_EXECUTION_VERSION
                 && settings.multi_currency_spot_cash.is_some()

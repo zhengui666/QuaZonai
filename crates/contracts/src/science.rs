@@ -234,6 +234,8 @@ pub enum NativeReturnsKind {
 pub struct NativeSimulationResultV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot_cash_report: Option<crate::spot_cash_report::NativeSpotCashReportV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_fee_replay: Option<crate::recorded_fees::RecordedFeeReplayV1>,
     pub schema_version: SchemaV1,
     pub native_version: String,
     pub iterations: DbCounter,

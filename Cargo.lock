@@ -4325,6 +4325,8 @@ dependencies = [
  "nautilus-trading",
  "ndarray 0.17.1",
  "ndarray-stats",
+ "num-bigint 0.4.8",
+ "num-rational",
  "parquet",
  "rc-zip",
  "rust_decimal",

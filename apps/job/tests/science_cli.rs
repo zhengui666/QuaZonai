@@ -48,6 +48,49 @@ fn real_native_cli_forecasts_and_replays_a_single_shared_account() {
 }
 
 #[test]
+fn price_bar_forecast_cli_matches_the_original_features_without_trading_definitions() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+
+    let (original, request) = market("0", 20);
+    let forecast_request = forecast_request(&request);
+    let wasm = module("local.get 2 local.get 3 f64.sub");
+    let expected = job::forecast::forecast(original.path(), &forecast_request, &wasm).unwrap();
+    let data = job::catalog::load_catalog(original.path(), &request.selection).unwrap();
+    let prices = tempfile::tempdir().unwrap();
+    let catalog =
+        ParquetDataCatalog::from_uri(prices.path().to_str().unwrap(), None, Some(16), None, None)
+            .unwrap();
+    for series in &data.series {
+        catalog
+            .write_to_parquet(&series.bars, None, None, None)
+            .unwrap();
+    }
+    let model = prices.path().join("model.wasm");
+    std::fs::write(&model, &wasm).unwrap();
+    let result = command(
+        &[
+            "forecast-factor".as_ref(),
+            "--catalog".as_ref(),
+            prices.path().as_os_str(),
+            "--model".as_ref(),
+            model.as_os_str(),
+        ],
+        &forecast_request,
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let observed: NativeForecastResultV1 = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        serde_json::to_value(observed).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert!(job::forecast::forecast(prices.path(), &forecast_request, &wasm).is_err());
+}
+
+#[test]
 fn native_cli_reports_invalid_model_cause_without_echoing_model_contents() {
     let (directory, request) = market("0", 20);
     let model = directory.path().join("private-sentinel.wasm");

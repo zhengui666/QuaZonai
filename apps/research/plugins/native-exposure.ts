@@ -37,7 +37,7 @@ function overlaps(left: JsonObject, right: JsonObject): boolean {
     && BigInt(left.start as string) < BigInt(right.end as string) && BigInt(right.start as string) < BigInt(left.end as string);
 }
 
-export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean): Promise<void> {
+export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject): Promise<void> {
   const window = await footprint(data);
   const kind = reserve ? 'FINAL' : 'ITERATION';
   const selection = object(object(object(data.request, 'request').forecast, 'forecast').selection, 'selection');
@@ -47,7 +47,8 @@ export async function checkExposure(api: ToolExecutionApi, context: Context, dat
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
   // against final exposures so a new root cannot reset an exposed study.
-  const checked = reserve ? window : { ...window, end: selection.event_end_ns! };
+  const end = finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
+  const checked = reserve ? window : { ...window, end };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
     const previous = ledger.windows.find((item) => (reserve || item.kind !== 'ITERATION')

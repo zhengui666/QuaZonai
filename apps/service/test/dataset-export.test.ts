@@ -114,6 +114,30 @@ test('prefix-only research preparation cannot silently enable a full-range portf
   } finally { await primary.cleanup(); await sealed.cleanup(); }
 });
 
+test('explicit price-volume HELDOUT strategy retains a prefix primary and its original full sealed replay binding', async () => {
+  const primary = await fixture(); const sealed = await fixture('SEALED');
+  try {
+    primary.receipt.source_window.end_seconds -= 300; await primary.saveReceipt();
+    const prefixRequest = structuredClone(primary.request);
+    Object.assign(prefixRequest.forecast.selection, { event_end_ns: at(300), decision_cutoff_ns: at(300) });
+    await primary.saveRequest({ ...prefixRequest, forecast: { ...prefixRequest.forecast, parameters: { ...prefixRequest.forecast.parameters, total_fuel: null } } });
+    const { total_fuel: _fuel, ...parameters } = sealed.request.forecast.parameters;
+    await sealed.saveRequest({ ...sealed.request, forecast: { ...sealed.request.forecast, parameters } });
+    const strategy = { name: 'original-conditional-policy', kind: 'factor-threshold', instrumentId: instrument,
+      threshold: 0.1, investedWeight: '0.25', targetTtlNs: '1000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
+      simulationSettings: { base_currency: 'pUSD', starting_capital: '3000' } };
+    const strategyPath = join(primary.directory, 'strategy.json'); await writeFile(strategyPath, JSON.stringify(strategy));
+    const originals = await Promise.all([readFile(primary.requestPath, 'utf8'), readFile(sealed.requestPath, 'utf8')]);
+    const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath, strategy: strategyPath });
+    assert.deepEqual(result.strategy, strategy);
+    assert.deepEqual(result.data, { catalog: primary.catalog, request: JSON.parse(originals[0]!), sealed: { catalog: sealed.catalog, request: JSON.parse(originals[1]!) } });
+    assert.deepEqual(await Promise.all([readFile(primary.requestPath, 'utf8'), readFile(sealed.requestPath, 'utf8')]), originals);
+    assert.notEqual(result.data.catalog, (result.data.sealed as { catalog: string }).catalog);
+    const config = join(primary.directory, 'service.json'); await writeFile(config, JSON.stringify({ datasets: [result], extensions: [] }));
+    assert.deepEqual((await loadConfig(config)).datasets[0]!.strategy, strategy);
+  } finally { await primary.cleanup(); await sealed.cleanup(); }
+});
+
 test('a wide declared primary selection cannot hide prefix-only conversion from portfolio export', async () => {
   const primary = await fixture('DISCOVERY', true); const sealed = await fixture('SEALED');
   try {
@@ -220,7 +244,8 @@ test('incompatible optional strategy contracts fail before publication', async (
       threshold: 0.1, investedWeight: '0.25', targetTtlNs: '1000000000', simulationSettings: { base_currency: 'pUSD' } };
     for (const change of [{ simulationSettings: { base_currency: 'USD' } }, { threshold: null }, { investedWeight: '1.01' },
       { investedWeight: '0' }, { targetTtlNs: '0' }, { targetTtlNs: (maxDbCounter + 1n).toString() },
-      { targetTtlNs: (maxDbCounter - BigInt(at(900)) + 1n).toString() }, { name: '' }, { simulationSettings: null }]) {
+      { targetTtlNs: (maxDbCounter - BigInt(at(900)) + 1n).toString() }, { name: '' }, { simulationSettings: null },
+      { forecastMode: 'unsupported' }, { evaluationPartition: 'VALIDATION' }]) {
       await writeFile(file, JSON.stringify({ ...strategy, ...change }));
       await assert.rejects(exportDataset({ ...f.options, strategy: file }));
       await assert.rejects(readFile(f.options.output), { code: 'ENOENT' });

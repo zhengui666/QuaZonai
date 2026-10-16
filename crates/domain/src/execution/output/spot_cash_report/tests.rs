@@ -323,6 +323,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         .collect();
     let result = NativeSimulationResultV1 {
         spot_cash_report: Some(report),
+        recorded_fee_replay: None,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
         iterations: count(3),

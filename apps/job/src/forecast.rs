@@ -75,7 +75,7 @@ pub(crate) fn forecast_market(
 }
 
 /// Price-only research never creates simulation instrument definitions.
-pub(crate) fn forecast_factor(
+pub fn forecast_factor(
     catalog_root: &Path,
     request: &NativeForecastRequestV1,
     module: &[u8],

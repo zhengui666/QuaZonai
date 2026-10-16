@@ -12,8 +12,9 @@ import { partitionBoundaries } from './native-exposure.ts';
 
 const wabt = await wabtFactory();
 
-function normalizedRequest(data: JsonObject): JsonObject {
-  const request = structuredClone(object(data.request, 'native_request'));
+export function normalizedRequest(data: JsonObject): JsonObject {
+  // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
+  const request = JSON.parse(JSON.stringify(object(data.request, 'native_request'))) as JsonObject;
   partitionBoundaries(request);
   const parameters = object(object(request.forecast, 'forecast').parameters, 'parameters');
   // The native optional-fuel contract serializes both null and absence as omitted.
@@ -21,11 +22,12 @@ function normalizedRequest(data: JsonObject): JsonObject {
   return request;
 }
 
-export function iterationRequest(data: JsonObject): JsonObject {
+export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): JsonObject {
   const request = normalizedRequest(data);
   const forecast = object(request.forecast, 'forecast_request');
   const selection = object(forecast.selection, 'catalog_selection');
   selection.event_end_ns = request.validation_end_ns!;
+  if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;
   return request;
 }
 
