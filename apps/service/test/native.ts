@@ -193,7 +193,8 @@ test('two original studies → native target blending → one fee-affected share
   } finally { await service.close(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'} ensemble research trades validation then independent heldout in one native account and replays the sealed selection`, { timeout: 120_000 }, async () => {
+for (const variant of ['legacy', 'fixed-pool', 'historical'] as const) test(`${variant} ensemble research trades validation then owner-only final in one native account and replays the original selection`, { timeout: 120_000 }, async () => {
+  const universe = variant !== 'legacy'; const historical = variant === 'historical';
   assert.ok(process.env.QZ_JOB_BINARY, 'QZ_JOB_BINARY must include forecast-factor');
   assert.ok(process.env.QZ_BROWSER_FIXTURE, 'QZ_BROWSER_FIXTURE must name the matching prepared.json');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-native-ensemble-'));
@@ -227,8 +228,10 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'
       datasets: [{ id: 'ensemble-native-fixture', name: 'Synthetic native protocol control', currency: 'USD', source: 'FIXTURE', assetClass: 'SPOT', start: null, end: null, ready: true,
         data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } },
         strategy: { name: 'original-conditional-threshold', kind: 'factor-threshold', instrumentId: universe ? 'ETH-USD.COINBASE' : 'BTC-USD.COINBASE', ...(universe ? { instrumentIds: ['ETH-USD.COINBASE', 'BTC-USD.COINBASE'] } : {}), threshold: 0, investedWeight: '0.25',
-          targetTtlNs: '7200000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings } }] });
+          targetTtlNs: '7200000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', ...(historical ? { evidenceMode: 'HISTORICAL_REASSESSMENT' } : {}), simulationSettings } }] });
     service = await createService({ config, models });
+    const priorExposure = { catalog: sealed, barTypes: request.forecast.selection.bar_types, start: request.validation_end_ns, end: finalRequest.forecast.selection.event_end_ns, kind: 'FINAL', taskId: 9000, conversationId: 8000 };
+    if (historical) await service.research.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(priorExposure); }, context);
     let selected: number | undefined;
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Native causal ensemble control, not market performance.', members, ...(universe ? { instrumentId: 'BTC-USD.COINBASE' } : {}) }), { stopReason: 'toolUse' }),
@@ -237,6 +240,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'
         assert.ok(feedback && feedback.role === 'toolResult');
         const result = JSON.parse(feedback.content.filter((item) => item.type === 'text').map((item) => item.text).join(''));
         assert.equal(result.portfolio.partition, 'VALIDATION');
+        assert.equal(result.portfolio.evidenceMode, historical ? 'HISTORICAL_REASSESSMENT' : undefined);
         assert.ok(result.portfolio.statistics.length);
         assert.equal(JSON.stringify(result).includes('canonical_result'), false);
         assert.equal(JSON.stringify(result).includes('label_return'), false);
@@ -275,6 +279,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'
     const heldout = (final.partitions as JsonObject[]).find((partition) => partition.partition === 'HELDOUT')!;
     assert.ok(BigInt(String(object(object(heldout.metric).counts).included)) > 0n);
     assert.equal(object(final.portfolio).partition, 'HELDOUT');
+    assert.equal(object(final.portfolio).evidenceMode, historical ? 'HISTORICAL_REASSESSMENT' : undefined);
     const finalTask = await service.research.harness.waitForTask(final.evidenceTaskId as TaskId<JsonObject>, context);
     assert.equal(finalTask.state.outcome.status, 'completed');
     const native = object(finalTask.state.outcome.status === 'completed' ? finalTask.state.outcome.result.native : null);
@@ -292,6 +297,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'
     assert.deepEqual(object(replay.selection).bar_types, ['BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL']);
     assert.deepEqual(replay.settings, selectedSettings);
     assert.deepEqual(object(object((fact.native!.sources as JsonObject[])[0]).policy).simulationSettings, selectedSettings);
+    assert.equal(object((fact.native!.sources as JsonObject[])[0]!.policy).evidenceMode, historical ? 'HISTORICAL_REASSESSMENT' : undefined);
     assert.deepEqual(object(fact.evidence[0]!.input).data, config.datasets[0]!.data);
     assert.deepEqual(object(object(fact.evidence[0]!.selected).proposal).strategy, config.datasets[0]!.strategy);
     assert.equal((simulationSettings.fee_rates as JsonObject[]).length, universe ? 2 : 1);
@@ -300,7 +306,9 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'
       assert.ok(BigInt(String(point.asof_ns)) >= BigInt(request.validation_end_ns));
       assert.ok(BigInt(String(point.asof_ns)) < BigInt(finalRequest.forecast.selection.event_end_ns));
     }
-    assert.deepEqual((await service.research.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
+    const exposures = (await service.research.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(exposures.map((window) => window.kind), historical ? ['FINAL', 'HISTORICAL_ITERATION', 'HISTORICAL_FINAL'] : ['ITERATION', 'FINAL']);
+    if (historical) assert.deepEqual(exposures[0], priorExposure);
     assert.equal(faux.state.callCount, 2);
   } finally { await service?.close(); await rm(directory, { recursive: true, force: true }); }
 });
