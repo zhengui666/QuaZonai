@@ -611,3 +611,124 @@ fn queued_increase_must_fill_before_a_due_next_target_uses_positions() {
         assert_eq!(sides, ["BUY", "SELL"]);
     }
 }
+
+#[test]
+fn calendar_daily_return_statistics_retain_real_flat_account_days() {
+    const DAY: u64 = 86_400_000_000_000;
+    let (directory, mut request) = market("0", 2 * 1440 + 20);
+    let start = request.selection.event_start_ns.get() / DAY * DAY;
+    let end = request.selection.event_end_ns.get().div_ceil(DAY) * DAY;
+    request.selection.event_start_ns = count(start);
+    request.selection.event_end_ns = count(end);
+    request.selection.decision_cutoff_ns = count(end);
+    request.settings.snapshot_interval_ms = 86_400_000;
+    request.target_points.truncate(1);
+    request.target_points[0].cash_weight = "1".parse().unwrap();
+    for target in &mut request.target_points[0].targets {
+        target.weight = "0".parse().unwrap();
+    }
+    let result = simulate(directory.path(), &request).unwrap();
+    let metric = |key: &str| {
+        result
+            .statistics
+            .iter()
+            .find(|row| row.native_key == key)
+            .unwrap_or_else(|| panic!("missing original-account statistic: {key}"))
+    };
+    let days = ((end - start) / DAY) as f64;
+    assert_eq!(result.orders.get(), 0);
+    // At Unix epoch day zero the native baseline cannot precede the epoch.
+    // Preserve its two real zero-return days, not an invented third return.
+    assert_eq!(result.returns.len(), 2);
+    assert!(result.returns.iter().all(|row| row.value == Some(0.0)));
+    assert_eq!(metric("Calendar Expected Days").value, Some(days));
+    assert_eq!(metric("Calendar Observed Return Days").value, Some(2.0));
+    assert_eq!(metric("Calendar Coverage Ratio").value, Some(2.0 / days));
+    for key in [
+        "Calendar Geometric Daily Return",
+        "Calendar Minimum Daily Return",
+        "Calendar Maximum Daily Return",
+        "Calendar Maximum Absolute Deviation",
+        "Calendar Negative Days",
+        "Calendar Zero Days",
+    ] {
+        assert!(metric(key).value.is_none(), "{key}");
+        assert_eq!(
+            metric(key).reason_code.as_deref(),
+            Some("PORTFOLIO_CALENDAR_RETURNS_INCOMPLETE")
+        );
+    }
+    assert!(metric("Sharpe Ratio (252 days)").value.is_none());
+}
+
+#[test]
+fn calendar_daily_return_statistics_do_not_qualify_an_intraday_window() {
+    let (directory, request) = market("0", 20);
+    let result = simulate(directory.path(), &request).unwrap();
+    assert_daily_returns_unavailable(&result);
+    let row = result
+        .statistics
+        .iter()
+        .find(|row| row.native_key == "Calendar Geometric Daily Return")
+        .unwrap();
+    assert!(row.value.is_none());
+    assert_eq!(
+        row.reason_code.as_deref(),
+        Some("PORTFOLIO_CALENDAR_WINDOW_NOT_WHOLE_DAYS")
+    );
+}
+
+#[test]
+fn calendar_daily_return_statistics_match_the_original_native_account_series() {
+    const DAY: u64 = 86_400_000_000_000;
+    let (directory, mut request) = market("0.001", 2 * 1440 + 20);
+    let start = request.selection.event_start_ns.get() / DAY * DAY + DAY;
+    let end = request.selection.event_end_ns.get().div_ceil(DAY) * DAY;
+    request.selection.event_start_ns = count(start);
+    request.selection.event_end_ns = count(end);
+    request.selection.decision_cutoff_ns = count(end);
+    request.settings.snapshot_interval_ms = 86_400_000;
+    for point in &mut request.target_points {
+        point.asof_ns = count(point.asof_ns.get() + DAY);
+    }
+    // A real final-day native close creates its account snapshot. Do not
+    // synthesize a calendar boundary snapshot when the engine did not emit one.
+    let mut exit = request.target_points.last().unwrap().clone();
+    exit.asof_ns = instant(2 * 1440 + 10);
+    exit.cash_weight = "1".parse().unwrap();
+    for target in &mut exit.targets {
+        target.weight = "0".parse().unwrap();
+    }
+    request.target_points.push(exit);
+    let result = simulate(directory.path(), &request).unwrap();
+    let values: Vec<f64> = result
+        .returns
+        .iter()
+        .map(|row| row.value.unwrap())
+        .collect();
+    assert_eq!(values.len() as u64, (end - start) / DAY);
+    assert!(result.orders.get() > 0);
+    let geometric =
+        (values.iter().map(|value| value.ln_1p()).sum::<f64>() / values.len() as f64).exp_m1();
+    let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let deviation = values
+        .iter()
+        .map(|value| (value - geometric).abs())
+        .fold(0.0, f64::max);
+    for (key, expected) in [
+        ("Calendar Coverage Ratio", 1.0),
+        ("Calendar Geometric Daily Return", geometric),
+        ("Calendar Minimum Daily Return", minimum),
+        ("Calendar Maximum Daily Return", maximum),
+        ("Calendar Maximum Absolute Deviation", deviation),
+    ] {
+        let row = result
+            .statistics
+            .iter()
+            .find(|row| row.native_key == key)
+            .unwrap();
+        assert!((row.value.unwrap() - expected).abs() < 1e-14, "{key}");
+        assert!(row.reason_code.is_none());
+    }
+}
