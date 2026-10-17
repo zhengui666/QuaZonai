@@ -26,17 +26,19 @@ export type ResearchStart = { requestId: string; input: ResearchInput } | {
   requestId: string; goal: string; model: ModelRef; thinkingLevel?: ThinkingLevel; datasetId: string; maxTrials: number;
 };
 export interface ResearchReceipt { conversationId: number; submissionId: number }
-export interface Metric { key: string; label: string; value: number | string | null; unit?: string }
+export interface Metric { key: string; label: string; value: number | string | null; unit?: string; status?: string; partition?: string; component?: number }
 export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string;
   createdAt: string | null; updatedAt: string | null;
 }
 export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; error: string | null }
-export interface TaskView { id: number; name: string; status: string; error: string | null }
+export interface TaskView { id: number; name: string; status: string; error: string | null; outcome?: string }
+export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null }
 export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
-  submission?: { id: number; status: string } | null;
-  final: { status: string; trialId: number | null; reason: string | null; metrics: Metric[] } | null;
+  dataset?: RecordedDataset | null; datasetId?: string | null;
+  submission?: { id: number; status: string; reason?: string | null } | null;
+  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; metrics: Metric[] } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;
@@ -52,6 +54,7 @@ export interface PortfolioView {
   id: string; name: string; researchIds: number[]; datasetId: string; status: string;
   capital: string; currency: string; createdAt: string; taskId: number | null;
   metrics: Metric[]; curve: EquityPoint[]; targets: TargetWeight[]; error: string | null;
+  weights?: { researchId: number; weight: string }[]; targetExpiresAt?: string | null; targetExpired?: boolean;
 }
 export type ObservationMode = 'paper' | 'live';
 export interface PositionView { instrumentId: string; quantity: string; value: string | null; pnl: string | null }
@@ -61,12 +64,14 @@ export interface ObservationView {
   id: string; name: string; portfolioId: string; mode: ObservationMode; status: string;
   currency: string; equity: string | null; cash: string | null; updatedAt: string | null;
   positions: PositionView[]; curve: EquityPoint[]; receipt: TargetReceipt | null; error: string | null;
+  connectionId?: string; connectionName?: string;
+  provenance?: { clientId: string; accountId: string; sequence: string; nativeClockNs: string } | null;
 }
 export interface ConnectionView { id: string; name: string; mode: ObservationMode; connected: boolean }
 export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null }
 export interface WorkspaceView { name: string; connections: ConnectionView[] }
 export interface ExtensionView {
-  name: string; version: string | null; enabled: boolean; kind: string;
+  name: string; version: string | null; enabled: boolean; kind: string; required?: boolean;
   state: 'loaded' | 'disabled' | 'pending_restart' | 'error'; error: string | null;
 }
 export interface UsageView { inputTokens: number | null; outputTokens: number | null; cost: string | null; activeTasks: number }

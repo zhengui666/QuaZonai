@@ -1,68 +1,60 @@
-import { App, Button, Form, Modal, Select, Table, Tabs } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Button, Form, Select, Segmented, Table } from 'antd';
+import { ArrowClockwiseIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, ArrowsLeftRightIcon, CaretDownIcon, ClockIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useState } from 'react';
-import type { ObservationMode, ObservationStart, ObservationView, PortfolioView, PositionView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
+import type { ObservationMode, ObservationView, PortfolioView, PositionView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 import { api } from './api';
-import { display, ErrorNotice, isActive, isReady, NoData, number, PageHeading, QueryPanel, RefreshButton, Status, Surface, time, useResource } from './ui';
+import { readDraft, removeDraft, saveDraft, useCommand } from './commands';
+import { useResource } from './data-hooks';
+import { currentRoute, href, navigate, type Route } from './router';
+import { Copy, Empty, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, Timestamp, useConfirm } from './ui';
 const EquityPlot = lazy(() => import('./equity-plot'));
-
-export function Observations() {
-  const listing = useResource<ObservationView[]>('/observations', 8000); const [mode, setMode] = useState<ObservationMode>('paper');
-  const [selected, setSelected] = useState<string>(); const [creating, setCreating] = useState(false);
-  const items = listing.data?.filter(item => item.mode === mode) ?? []; const value = items.find(item => item.id === selected) ?? items[0];
-  return <div className="page"><PageHeading title="盘面观测" count={listing.data ? items.length : undefined} action={<><RefreshButton loading={listing.isFetching} label="刷新观测列表" onClick={() => { void listing.refetch(); }} /><Button type="primary" icon={<PlusOutlined aria-hidden />} onClick={() => setCreating(true)}>新建观测</Button></>} />
-    <Tabs activeKey={mode} onChange={value => { setMode(value as ObservationMode); setSelected(undefined); }} items={[{ key: 'paper', label: '模拟盘' }, { key: 'live', label: '实盘' }]} />
-    <QueryPanel query={listing}>{value ? <div className="observation-layout"><section className="surface selection-list" aria-label="观测列表">{items.map(item => <button key={item.id} aria-pressed={value.id === item.id} onClick={() => setSelected(item.id)}><strong>{display(item.name)}</strong><span className="selection-meta"><Status value={item.status} /><span>{display(item.currency)}</span></span></button>)}</section>
-      <ObservationRecord key={value.id} value={value} stale={listing.isError} />
-    </div> : <Surface><NoData text={mode === 'paper' ? '暂无模拟盘观测' : '暂无实盘观测'} /></Surface>}</QueryPanel>
-    {creating && <ObservationForm mode={mode} close={() => setCreating(false)} started={value => { setSelected(value.id); setCreating(false); }} />}
+export default function Observations({ route }: { route: Route }) { return route.creating ? <ObservationBuilder route={route} /> : route.id ? <ObservationDetail id={route.id} /> : <ObservationList route={route} />; }
+function ObservationList({ route }: { route: Route }) {
+  const query = useResource<ObservationView[]>('/observations', { poll: 5000 }); const mode = route.params.get('mode') ?? 'all';
+  const values = query.data?.filter(item => mode === 'all' || item.mode === mode);
+  return <div className="index-page"><header className="page-heading"><h1>目标与观测</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/observations/new')}>新建观测</Button></header><div className="list-toolbar"><Segmented aria-label="观测模式" value={mode} options={[{ value: 'all', label: '全部' }, { value: 'paper', label: '模拟' }, { value: 'live', label: '实盘' }]} onChange={value => navigate(`/observations${value === 'all' ? '' : `?mode=${value}`}`, true)} /></div><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />
+    {query.isPending ? <Loading /> : !values?.length ? !query.error && <Empty title={mode === 'live' ? '尚无实盘观测' : mode === 'paper' ? '尚无模拟观测' : '尚无观测'} action={<a className="text-link" href={href('/portfolios')}>查看组合回测 <ArrowUpRightIcon size={14} /></a>} /> : <Table<ObservationView> rowKey="id" pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 700 }} dataSource={values} columns={[
+      { title: '名称', render: (_value, row) => <a className="record-link" href={href(`/observations/${encodeURIComponent(row.id)}`)}>{row.name}</a> }, { title: '模式', render: (_value, row) => <span className="mode-label">{row.mode === 'live' ? '实盘' : '模拟'}</span> },
+      { title: '目标回执', render: (_value, row) => row.receipt ? <Status plain value={row.receipt.status} /> : <span className="quiet">未提供</span> }, { title: '观测状态', render: (_value, row) => <Status plain value={row.status} /> }, { title: '上次快照', render: (_value, row) => <Timestamp value={row.updatedAt} /> },
+    ]} />}
   </div>;
 }
-function ObservationRecord({ value, stale }: { value: ObservationView; stale: boolean }) {
-  const client = useQueryClient(); const { message } = App.useApp(); const [busy, setBusy] = useState<'refresh' | 'stop'>(); const [error, setError] = useState<unknown>();
-  async function act(action: 'refresh' | 'stop') {
-    setBusy(action); setError(undefined);
-    try {
-      const updated = await api<ObservationView>(`/observations/${encodeURIComponent(value.id)}/${action}`, { method: 'POST' });
-      client.setQueryData<ObservationView[]>(['/observations'], previous => previous?.map(item => item.id === updated.id ? updated : item));
-      void message.success(action === 'refresh' ? '已刷新' : '已接纳');
-    } catch (failure) { setError(failure); }
-    finally { setBusy(undefined); }
-  }
-  const receipt = value.receipt;
-  return <div className="detail-stack"><Surface><div className="detail-heading"><h2>{display(value.name)}</h2><Status value={value.status} /></div>
-    <div className="toolbar" style={{ marginBlock: '16px 24px' }}><Button onClick={() => { void act('refresh'); }} loading={busy === 'refresh'} disabled={!!busy || stale}>刷新账户</Button><Button onClick={() => { void act('stop'); }} loading={busy === 'stop'} disabled={!!busy || stale || !isActive(value.status)}>停止观测</Button><span className="muted">{time(value.updatedAt)}</span></div>
-    <ErrorNotice error={error} /><ErrorNotice error={value.error} /><dl className="account-grid"><div><dt>账户净值</dt><dd>{number(value.equity)}<small>{display(value.currency)}</small></dd></div><div><dt>可用现金</dt><dd>{number(value.cash)}<small>{display(value.currency)}</small></dd></div></dl>
-  </Surface><Surface><Suspense fallback={<div role="status">加载曲线</div>}><EquityPlot points={value.curve} currency={value.currency} title="账户曲线" /></Suspense></Surface>
-    <Surface title="持仓"><Table<PositionView> rowKey="instrumentId" dataSource={value.positions} pagination={false} size="small" locale={{ emptyText: '暂无持仓' }} columns={[
-      { title: '标的', dataIndex: 'instrumentId', render: display }, { title: '数量', dataIndex: 'quantity', align: 'right', render: display },
-      { title: '市值', dataIndex: 'value', align: 'right', render: display }, { title: '盈亏', dataIndex: 'pnl', align: 'right', render: display },
-    ]} /></Surface><Surface title="目标回执" extra={<Status value={receipt?.status} />}>{receipt ? <dl className="receipt-grid">
-      <div><dt>回执</dt><dd>{display(receipt.id)}</dd></div><div><dt>外部编号</dt><dd>{display(receipt.externalId)}</dd></div>
-      <div><dt>到期</dt><dd>{time(receipt.expiresAt)}</dd></div><div><dt>确认</dt><dd>{time(receipt.acknowledgedAt)}</dd></div>
-    </dl> : <NoData text="暂无回执" />}</Surface>
-  </div>;
+function ObservationDetail({ id }: { id: string }) {
+  const cache = useQueryClient(); const query = useResource<ObservationView[]>('/observations', { poll: 5000 }); const value = query.data?.find(item => item.id === id);
+  const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(); const confirm = useConfirm();
+  const update = async (operation: 'refresh' | 'stop') => {
+    if (busy) return; setBusy(true); setError(undefined);
+    try { const next = await api<ObservationView>(`/observations/${encodeURIComponent(id)}/${operation}`, { method: 'POST' }); cache.setQueryData<ObservationView[]>(['/observations'], old => old?.map(row => row.id === id ? next : row)); void cache.invalidateQueries({ queryKey: ['/workspace'] }); }
+    catch (failure) { setError(failure); } finally { setBusy(false); }
+  };
+  const reconcile = value?.status === 'STOPPED' || ['PENDING', 'UNCERTAIN'].includes(value?.receipt?.status ?? '');
+  const hasSnapshot = value?.updatedAt != null;
+  return <div className="observation-page"><a className="text-link back-link" href={href('/observations')}><ArrowLeftIcon size={14} />目标与观测</a><header className="page-heading"><h1>目标与观测</h1></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !value ? !query.error && <Empty title="未找到观测记录" /> : <article className="observation-document">
+    <header className="observation-heading"><div><div className="record-context"><span className="mode-label">{value.mode === 'live' ? '实盘' : '模拟'}</span><span>{value.connectionName ?? value.connectionId ?? '连接名称未记录'}</span><Status plain value={value.status} /></div><h2>{value.name}</h2><a className="text-link origin-link" href={href(`/portfolios/${encodeURIComponent(value.portfolioId)}`)}>原始组合 <ArrowUpRightIcon size={13} /></a></div><Button type="primary" loading={busy} icon={<ArrowClockwiseIcon size={15} />} onClick={() => { void update('refresh'); }}>{reconcile ? '核对回执' : '更新快照'}</Button></header>
+    <ErrorNotice error={error} />{value.error && <div className="recorded-error observation-error" role="alert"><span>最近操作未完成</span><details><summary>技术详情</summary><code>{value.error}</code></details></div>}
+    <section className="receipt-section"><div className="section-heading"><h3>目标回执</h3>{value.receipt && <Status value={value.receipt.status} />}</div>{value.receipt ? <><Facts items={[["回执身份", <><code>{value.receipt.id}</code><Copy value={value.receipt.id} /></>], ["到期时间", <Timestamp value={value.receipt.expiresAt} />], ["下游身份", value.receipt.externalId ?? '未提供'], ["接收时间", <Timestamp value={value.receipt.acknowledgedAt} />]]} /><details className="provenance-disclosure"><summary>来源与身份</summary><Facts items={[["连接", value.connectionId ?? '未记录'], ["客户端", value.provenance?.clientId ?? '未记录'], ["账户", value.provenance?.accountId ?? '未记录'], ["快照序列", value.provenance ? <code>{value.provenance.sequence}</code> : '未记录'], ["原生时钟", value.provenance ? <code>{value.provenance.nativeClockNs}</code> : '未记录']]} /></details></> : <p className="quiet">未提供回执</p>}</section>
+    <section className="snapshot-section"><div className="section-heading"><h3>账户快照</h3><span className="quiet">{hasSnapshot ? <>上次快照 <Timestamp value={value.updatedAt} /></> : '尚无快照'}</span></div><div className="snapshot-values"><div><span>权益 <code>{value.currency}</code></span><strong><Exact value={value.equity} /></strong></div><div><span>现金 <code>{value.currency}</code></span><strong><Exact value={value.cash} /></strong></div></div>
+    {hasSnapshot && value.curve.length ? <Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} /></Suspense> : <div className="snapshot-empty"><ClockIcon size={17} /><span>尚无账户快照</span></div>}</section>
+    <section className="positions-section"><div className="section-heading"><h3>持仓</h3></div>{!hasSnapshot ? <p className="quiet">尚无快照</p> : !value.positions.length ? <p className="quiet">无持仓</p> : <Table<PositionView> rowKey={(row, index) => `${row.instrumentId}/${index}`} pagination={false} size="small" scroll={{ x: 550 }} dataSource={value.positions} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: '数量', align: 'right', render: (_cell, row) => <Exact value={row.quantity} /> }, { title: '市值', align: 'right', render: (_cell, row) => <Exact value={row.value} /> }, { title: '盈亏', align: 'right', render: (_cell, row) => <Exact value={row.pnl} /> }]} />}</section>
+    <footer className="observation-footer"><span className="quiet">{value.status === 'STOPPED' ? '本地观测已停止' : ''}</span><Button danger loading={busy} disabled={value.status === 'STOPPED'} onClick={() => confirm('停止观测？', '仅停止本地观测，不撤回下游目标。', () => { void update('stop'); })}>停止观测</Button></footer>
+  </article>}</div>;
 }
-function ObservationForm({ mode, close, started }: { mode: ObservationMode; close: () => void; started: (value: ObservationView) => void }) {
-  const portfolios = useResource<PortfolioView[]>('/portfolios'); const settings = useResource<WorkspaceView>('/workspace'); const client = useQueryClient(); const { message } = App.useApp();
-  const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(); const [pending, setPending] = useState<{ fields: string; body: ObservationStart }>();
-  const ready = portfolios.data?.filter(item => isReady(item.status)) ?? []; const connections = settings.data?.connections.filter(item => item.mode === mode) ?? [];
-  async function submit(values: { portfolioId: string; connectionId: string }) {
-    setBusy(true); setError(undefined); const fields = JSON.stringify(values); const body = pending?.fields === fields ? pending.body : { requestId: crypto.randomUUID(), mode, ...values }; setPending({ fields, body });
-    try {
-      const value = await api<ObservationView>('/observations', { method: 'POST', body });
-      client.setQueryData<ObservationView[]>(['/observations'], previous => previous ? [...previous.filter(item => item.id !== value.id), value] : [value]);
-      void client.invalidateQueries({ queryKey: ['/observations'] }); void message.success('已接纳'); started(value);
-    } catch (failure) { setError(failure); }
-    finally { setBusy(false); }
-  }
-  return <Modal title={mode === 'paper' ? '新建模拟盘观测' : '新建实盘观测'} open onCancel={close} footer={null} width={520} closable={!busy} maskClosable={!busy} keyboard={!busy}>
-    <ErrorNotice error={portfolios.error} retry={() => { void portfolios.refetch(); }} /><ErrorNotice error={settings.error} retry={() => { void settings.refetch(); }} />
-    <Form layout="vertical" requiredMark={false} disabled={busy} onFinish={submit}>
-      <Form.Item name="portfolioId" label="策略组合" rules={[{ required: true, message: '请选择组合' }]}><Select showSearch optionFilterProp="label" placeholder="选择就绪组合" loading={portfolios.isPending} notFoundContent={portfolios.isPending ? '加载中' : '暂无就绪组合'} options={ready.map(item => ({ value: item.id, label: item.name }))} /></Form.Item>
-      <Form.Item name="connectionId" label="连接" rules={[{ required: true, message: '请选择连接' }]}><Select placeholder="选择连接" loading={settings.isPending} notFoundContent={settings.isPending ? '加载中' : '暂无可用连接'} options={connections.map(item => ({ value: item.id, label: item.name }))} /></Form.Item>
-      <ErrorNotice error={error} /><div className="form-actions"><Button disabled={busy} onClick={close}>关闭</Button><Button type="primary" htmlType="submit" loading={busy} disabled={portfolios.isError || settings.isError || !ready.length || !connections.length}>开始观测</Button></div>
-    </Form>
-  </Modal>;
+function ObservationBuilder({ route }: { route: Route }) {
+  const cache = useQueryClient(); const portfolios = useResource<PortfolioView[]>('/portfolios', { poll: 5000 }); const workspace = useResource<WorkspaceView>('/workspace');
+  const [form] = Form.useForm(); const initialized = useRef(false); const [draft] = useState(() => readDraft<Record<string, unknown>>('observation'));
+  const command = useCommand<ObservationView>('observations', value => { removeDraft('observation'); void cache.invalidateQueries({ queryKey: ['/observations'] }); if (currentRoute().page === 'observations' && currentRoute().creating) navigate(`/observations/${encodeURIComponent(value.id)}`); });
+  const mode = Form.useWatch('mode', form) as ObservationMode | undefined;
+  useEffect(() => { if (initialized.current || !portfolios.data || !workspace.data) return; initialized.current = true; form.setFieldsValue(command.values ?? { mode: workspace.data.connections.some(item => item.mode === 'paper') ? 'paper' : undefined, ...draft, ...(route.params.get('portfolio') ? { portfolioId: route.params.get('portfolio') } : {}) }); }, [portfolios.data, workspace.data]);
+  return <div className="authoring-page"><a className="text-link back-link" href={href('/observations')}><ArrowLeftIcon size={14} />目标与观测</a><div className="authoring-heading"><div className="authoring-symbol"><ArrowsLeftRightIcon size={24} /></div><h1>新建观测</h1></div><ErrorNotice error={portfolios.error ?? workspace.error} retry={() => { void portfolios.refetch(); void workspace.refetch(); }} />
+    {portfolios.isPending || workspace.isPending ? <Loading /> : <>
+    {!workspace.data?.connections.length && <div className="prerequisite">尚无已配置连接 <a href="https://github.com/zhengui666/QuaZonai/blob/dev/apps/research/README.md" target="_blank" rel="noreferrer">配置说明 <ArrowUpRightIcon size={13} /></a></div>}
+    <PendingCommand command={command} />
+    <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} disabled={!!command.pending || command.busy} onValuesChange={(_changed, values) => { if (!command.pending) saveDraft('observation', values); }} onFinish={(values: { portfolioId: string; mode: ObservationMode; connectionId: string }) => { void command.submit(values); }}>
+      <Form.Item label="组合" name="portfolioId" rules={[{ required: true, message: '请选择有目标的组合' }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} options={portfolios.data?.map(item => ({ value: item.id, label: `${item.name}${item.targetExpired ? ' / 目标已过期' : ''}`, disabled: item.status !== 'COMPUTED' || !item.targets.length || item.targetExpired }))} /></Form.Item>
+      <Form.Item label="模式" name="mode" rules={[{ required: true, message: '请选择模式' }]}><Select suffixIcon={<CaretDownIcon size={14} />} options={(['paper', 'live'] as const).map(value => ({ value, label: value === 'paper' ? '模拟' : '实盘', disabled: !workspace.data?.connections.some(item => item.mode === value) }))} onChange={() => { form.setFieldValue('connectionId', undefined); saveDraft('observation', form.getFieldsValue()); }} /></Form.Item>
+      <Form.Item label="连接" name="connectionId" rules={[{ required: true, message: '请选择连接' }]}><Select suffixIcon={<CaretDownIcon size={14} />} options={workspace.data?.connections.filter(item => item.mode === mode).map(item => ({ value: item.id, label: item.name }))} /></Form.Item>
+      <p className="quiet">仅交付目标，由下游执行</p><ErrorNotice error={command.error} /><div className="form-actions"><Button disabled={false} onClick={() => navigate('/observations')}>取消</Button>{command.pending ? <Button type="primary" disabled={false} loading={command.busy} onClick={() => { void command.submit(); }}>核对提交</Button> : <Button type="primary" htmlType="submit" disabled={!workspace.data?.connections.length}>交付并观测 <ArrowRightIcon size={15} /></Button>}</div>
+    </Form></>}
+  </div>;
 }

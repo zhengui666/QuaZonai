@@ -10,7 +10,7 @@ export const Application = defineDoc<{
   sessions: Record<string, { digest: string; expires: number; kind: string; name: string }>;
   settings: JsonObject | null;
   extensionEnabled: Record<string, boolean>;
-  researchRequests: Record<string, { original: JsonValue; input: JsonObject }>;
+  researchRequests: Record<string, { original: JsonValue; input: JsonObject; dataset?: JsonObject }>;
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
 }>({

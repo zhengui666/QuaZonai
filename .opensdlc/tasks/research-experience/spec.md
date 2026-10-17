@@ -652,7 +652,8 @@ Implement presentation facts from already-recorded source data. All additions ar
 | `ResearchDetail.final` | Separate optional `error` from selection `reason` | `study.final.error` and `study.final.reason` independently | Final failure is currently obscured when a reason exists |
 | `TaskView` | Optional terminal `outcome` distinct from lifecycle `status` | Native `record.state.outcome.status` | `terminal` can mean failed/aborted, not completed |
 | `ResearchDetail` | Optional original registered dataset ID and captured display facts for new admissions where practical | Original application request; new admission may capture the public dataset metadata beside the original request | Name/source cannot be reconstructed as historical fact from today's registry; full-input/older records remain explicit gaps |
-| `PortfolioView` | Optional recorded member weights for detail | Captured `PortfolioFact.weights`/original input, not reconstructed normalization | P04 must show actual allocation after reload |
+| `PortfolioView` | Optional recorded member weights and target expiry, with expiry read against server time | Captured `PortfolioFact.weights`/original input, not reconstructed normalization | P04 must show actual allocation after reload |
+| `ExtensionView` | Optional required-extension flag | Existing service-required extension set | X01 cannot offer an unsupported disable action |
 | `ObservationView` | Optional captured connection identity and snapshot provenance | Original `ObservationFact.connection/input` and accepted snapshot `clientId/accountId/sequence/nativeClockNs` | O04 must identify what account/source a snapshot belongs to, without exposing URL/token/credentials |
 
 Keep domain validation in the service. Do not implement a second portfolio-eligibility state machine; clear local prerequisites and actual admission errors suffice. Preserve exact integer/decimal/nanosecond strings. Metrics with no recorded unit must not acquire an invented one. Scientific statuses remain original facts.
@@ -752,7 +753,7 @@ Run `make check-web`, the adapted browser suite and `make check-ts` for changed 
 - **Chosen:** minimal additive read facts. **Rejected:** new retry/resume/finalize/eligibility state machines. Reason: the actual service owns scientific behavior and command identity.
 - **Chosen:** task-owned browser service and official Faux Provider for deterministic interactions. **Rejected:** claiming intercepted HTTP tests prove real-service or scientific acceptance.
 
-**Owner decision:** The overall delivery goal is accepted, but visual design is not. The owner first requested component-level detail, then rejected the first detailed prototype with `UI 不够精美，过度粗糙`. Revision 2 replaces that visual treatment rather than treating technical checks as aesthetic acceptance. This specification and the updated references remain unapproved for production implementation. No completed application, owner usability test, final-Head review or merge is claimed.
+**Owner decision:** After requesting component-level detail and rejecting the first detailed prototype with `UI 不够精美，过度粗糙`, the owner accepted revision 2 and this implementation plan with `开始开发合并`. Development, verification, review and remote `dev` merge are authorized. This does not claim completed application acceptance, owner usability testing, final-Head review or merge.
 
 <a id="prototypes"></a>
 ## 19. Labelled visual references and actual inspection

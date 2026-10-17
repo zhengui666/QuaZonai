@@ -33,7 +33,7 @@ The authoritative [component specification and research](spec.md) contains:
 - **38 observable acceptance scenarios**, with actual-service, controlled transport, native-core, visual and human-testing scope distinguished.
 - Labelled design-only prototype references; sample data does not connect to or represent a running installation.
 
-**Decision status:** The owner requested component-level detail, then rejected the first detailed visual prototype (`49bdca5b`) with `UI 不够精美，过度粗糙`. Visual revision 2 is now prepared for review, not approved for production implementation. Do not treat a specification, an axe pass or a clean build as aesthetic acceptance.
+**Decision status:** After rejecting the first detailed visual prototype (`49bdca5b`), the owner accepted visual revision 2 (`8e0c13e5`) and its component plan with the explicit instruction `开始开发合并`. Implementation, ordinary verification, PR review/remediation and remote `dev` merge are authorized. Deployment and real-account operations remain out of scope.
 
 **Visual revision 2:** Replaced the full-height green administrative rail with slim top navigation; removed nested evidence cards; separated the unboxed research directory from one working document; changed large surfaces to neutral paper/graphite; made primary actions neutral high-contrast; actually loaded Geist/Geist Mono; adopted one Phosphor icon family; refined status glyphs, numeric baselines, trial-row expansion and mobile full-bleed composition. User jobs and scientific/receipt boundaries remain unchanged.
 
@@ -70,16 +70,16 @@ These checks do **not** establish real HTTP integration, scientific correctness,
 <a id="review"></a>
 ## Review
 
-No application PR, final-Head independent review or GitHub Codex review exists for this task yet. The owner's first visual review rejected the prototype. The new visual revision is still a design proposal, not an accepted or implemented application.
+No application PR, final-Head independent review or GitHub Codex review exists for this task yet. The owner's first visual review rejected the prototype. The owner subsequently accepted visual revision 2 and instructed development/merge. Application implementation and final-Head review are now in progress; no review pass is claimed yet.
 
 <a id="delivery"></a>
 ## Delivery
 
-Design research, the detailed component specification and revised labelled visual prototypes are prepared. The first visual treatment was rejected; the new treatment has not been accepted. Production implementation and remote merge remain unfinished. No production service, original workspace change or real account was modified.
+Design research, the detailed component specification and revised labelled visual prototypes are prepared. The first visual treatment was rejected; revision 2 was accepted with `开始开发合并`. Application implementation and remote merge remain unfinished. No production service, original workspace change or real account was modified.
 
 <a id="handoff"></a>
 ## Handoff
 
 Continue in `.pi/worktrees/research-experience` on `feat/research-experience`. Read this task and [spec.md](spec.md), then the owner's actual decision before implementation. The design-only preview is served on `127.0.0.1:4187` from `/tmp/qz-design-prototype`; it is not QuaZonai's service. Its build/check scripts and temporary public research downloads are task-owned `/tmp` material. Do not mistake preview records, screenshots or static bundled code for application acceptance.
 
-Next action: show the materially revised visual references and incorporate the owner's actual feedback. Only after visual/spec acceptance implement through final-Head verification/review and remote `dev` merge; do not automatically advance from prototype checks.
+Next action: execute the accepted implementation plan, preserve original command/provider/recovery behavior, verify the actual new application, obtain exact-Head review/CI, then merge and verify remote `dev`.

@@ -1,86 +1,70 @@
-import { Alert, Button, Empty, Skeleton, Tag } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
-import type { JsonObject, Metric, ModelRef, Page, ResearchSummary } from '../../../packages/contracts/src/index.ts';
-import { api, shortError } from './api';
+import { App, Button, Skeleton, Table } from 'antd';
+import { CheckCircleIcon, ClockIcon, CopyIcon, FlaskIcon, InfoIcon, WarningCircleIcon } from '@phosphor-icons/react';
+import { useState, type ReactNode } from 'react';
+import type { Metric } from '../../../packages/contracts/src/index.ts';
+import { ApiError, shortError } from './api';
 
-export function useResource<T>(path: string, poll: number | false = false, enabled = true) {
-  return useQuery({ queryKey: [path], queryFn: ({ signal }) => api<T>(path, { signal }), refetchInterval: poll, enabled });
-}
-export function useResearch(poll: number | false = false) {
-  const query = useInfiniteQuery({
-    queryKey: ['/research'], initialPageParam: undefined as JsonObject | undefined,
-    queryFn: ({ signal, pageParam }) => api<Page<ResearchSummary>>('/research' + (pageParam ? `?cursor=${encodeURIComponent(JSON.stringify(pageParam))}` : ''), { signal }),
-    getNextPageParam: page => page.cursor, refetchInterval: poll,
-  });
-  const items = query.data ? [...new Map(query.data.pages.flatMap(page => page.items).map(item => [item.id, item])).values()] : undefined;
-  return { ...query, data: items ? { items } : undefined };
-}
-export function MoreResearch({ query }: { query: { hasNextPage: boolean; isFetching: boolean; fetchNextPage: () => Promise<unknown> } }) {
-  return query.hasNextPage ? <Button onClick={() => { void query.fetchNextPage(); }} loading={query.isFetching}>载入更多</Button> : null;
-}
-export function useMedia(query: string) {
-  const [matches, setMatches] = useState(() => matchMedia(query).matches);
-  useEffect(() => {
-    const media = matchMedia(query); const update = () => setMatches(media.matches);
-    update(); media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, [query]);
-  return matches;
-}
-export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
-  return error ? <Alert className="error-notice" role="alert" type="error" showIcon title={shortError(error)}
-    action={retry && <Button size="small" onClick={retry}>重试</Button>} /> : null;
-}
-type QueryState = { isPending: boolean; error: unknown; data?: unknown; refetch: () => Promise<unknown> };
-export function QueryPanel({ query, children }: { query: QueryState; children: ReactNode }) {
-  if (query.isPending) return <div role="status" aria-label="加载中" className="loading-state"><Skeleton active={false} paragraph={{ rows: 3 }} /></div>;
-  return <><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.data !== undefined && children}</>;
-}
-export function NoData({ text = '暂无记录' }: { text?: string }) {
-  return <div className="empty-state"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={text} /></div>;
-}
-export function PageHeading({ title, count, action }: { title: string; count?: number; action?: ReactNode }) {
-  return <header className="page-heading"><div><h1>{title}</h1>{count !== undefined && <span className="heading-count">{count} 项</span>}</div><div className="heading-actions">{action}</div></header>;
-}
-export function RefreshButton({ loading, onClick, label = '刷新' }: { loading: boolean; onClick: () => void; label?: string }) {
-  return <Button className="refresh-button" icon={<ReloadOutlined aria-hidden />} loading={loading} aria-label={label} title={label} onClick={onClick} />;
-}
 const labels: Record<string, string> = {
-  queued: '排队中', pending: '等待中', running: '运行中', stopping: '停止中', stopped: '已停止',
-  cancelled: '已取消', completed: '已完成', succeeded: '已完成', failed: '失败', error: '异常',
-  ready: '就绪', loaded: '已加载', disabled: '已停用', pending_restart: '待重启',
-  active: '运行中', accepted: '已接纳', submitted: '已提交', delivered: '已交付',
-  acknowledged: '已确认', expired: '已过期', rejected: '已拒绝', issued: '已签发',
-  done: '已完成', complete: '已完成', success: '成功', stopping_requested: '停止中',
-  computed: '已计算', observing: '观测中', idle: '空闲', uncertain: '待核对', not_offered: '未交付',
+  RUNNING: '研究中', IDLE: '当前无执行', STARTED: '计算中', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', REJECTED: '已拒绝',
+  QUEUED: '待执行', OBSERVING: '已获取快照', UNCERTAIN: '待核对', PENDING: '待接收', ACKNOWLEDGED: '已接收', EXPIRED: '已过期', REVOKED: '已撤销', NOT_OFFERED: '未交付',
+  loaded: '已加载', disabled: '已停用', pending_restart: '待重启', error: '加载失败', running: '执行中', pending: '待执行', waiting: '等待中', completing: '收尾中',
+  terminal: '已结束', completed: '已完成', failed: '失败', aborted: '已中止', faulted: '执行异常', done: '已回答', queued: '待处理', placed: '已送入执行', unanswered: '未完成回答', cancelled: '已取消',
 };
-export function isActive(status: string) { return ['queued', 'pending', 'running', 'active', 'observing'].includes(status.toLowerCase()); }
-export function isReady(status: string) { return ['ready', 'computed'].includes(status.toLowerCase()); }
-export function Status({ value }: { value: string | null | undefined }) {
-  const status = value?.toLowerCase();
-  const tone = status && ['ready', 'computed', 'completed', 'succeeded', 'loaded', 'acknowledged', 'success', 'done', 'complete'].includes(status) ? 'good'
-    : status && ['failed', 'error', 'rejected'].includes(status) ? 'bad'
-      : status && ['running', 'active', 'observing', 'pending', 'queued', 'stopping', 'pending_restart', 'issued', 'submitted', 'uncertain'].includes(status) ? 'busy' : 'quiet';
-  return <Tag className={`status status-${tone}`}><span aria-hidden className="status-dot" />{status ? labels[status] ?? value : '—'}</Tag>;
+export function stateLabel(value: string) { return labels[value] ?? value; }
+export function Status({ value, plain = false, label }: { value: string; plain?: boolean; label?: string }) {
+  const tone = /FAILED|REJECTED|failed|faulted|^error$/.test(value) ? 'error' : /UNCERTAIN|pending_restart|unanswered/.test(value) ? 'warning' : /RUNNING|STARTED|running/.test(value) ? 'active' : 'neutral';
+  const Icon = tone === 'error' || tone === 'warning' ? WarningCircleIcon : /RUNNING|STARTED|QUEUED|PENDING|running|pending|queued|waiting|completing/.test(value) ? ClockIcon : /COMPUTED|ACKNOWLEDGED|OBSERVING|^loaded$|^completed$|^done$|^configured$|^ready$/.test(value) ? CheckCircleIcon : InfoIcon;
+  return <span className={`status ${tone} ${plain ? 'plain' : ''}`}><Icon size={14} />{label ?? stateLabel(value)}</span>;
 }
-export function display(value: string | number | null | undefined) { return value === null || value === undefined || value === '' ? '—' : value; }
-export function number(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === '') return '—';
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(parsed) : '—';
+export function Loading({ rows = 3 }: { rows?: number }) { return <div className="loading-state" role="status" aria-label="加载中"><Skeleton active={false} title paragraph={{ rows }} /></div>; }
+export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
+  if (!error) return null;
+  return <div className="error-notice" role="alert"><div className="error-heading"><WarningCircleIcon size={17} /><span>{shortError(error)}</span>{retry && <Button size="small" onClick={retry}>重试</Button>}</div>{error instanceof ApiError && error.code && <details><summary>技术详情</summary><code>{error.code}</code></details>}</div>;
 }
-export function time(value: string | null | undefined) {
-  if (!value || Number.isNaN(Date.parse(value))) return '—';
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
+export function Empty({ title, action, children }: { title: string; action?: ReactNode; children?: ReactNode }) { return <div className="empty"><div className="empty-icon"><FlaskIcon size={24} weight="duotone" /></div><h3>{title}</h3>{children}{action}</div>; }
+export function Facts({ items }: { items: [string, ReactNode][] }) { return <dl className="facts">{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? '未提供'}</dd></div>)}</dl>; }
+export function Timestamp({ value }: { value: string | null | undefined }) { return value ? <time dateTime={value}>{value.replace('T', ' ').replace(/Z$/, ' UTC')}</time> : <span className="quiet">未记录</span>; }
+export function exact(value: number | string | null | undefined, missing = '未提供') { return value == null ? missing : String(value); }
+export function Exact({ value, unit, missing }: { value: number | string | null | undefined; unit?: string; missing?: string }) { return <span className="exact-value">{exact(value, missing)}{value != null && unit && <span className="value-unit"> {unit}</span>}</span>; }
+const availability: Record<string, string> = { INSUFFICIENT_SAMPLES: '样本不足', CONSTANT_SCORE: '分数恒定', CONSTANT_LABEL: '标签恒定', NONFINITE_DATA: '数据非有限', NONFINITE_RESULT: '结果非有限', AVAILABLE: '可用' };
+export function metricStatus(metric: Metric) { return metric.status ? availability[metric.status] ?? metric.status : metric.value == null ? '未提供' : ''; }
+export function metricLabel(metric: Metric) {
+  const key = metric.key;
+  if (/pearson_ic$/.test(key)) return 'Pearson IC';
+  const counts: Record<string, string> = { observations: '总观测', included: '有效观测', excluded: '排除观测', indicator_warmup: '预热观测', incomplete_labels: '标签不完整', cross_boundary_labels: '跨区间标签', prediction_outside_partition: '区间外预测' };
+  if (key.includes('counts.')) return counts[key.split('.').at(-1)!] ?? metric.label;
+  return metric.label;
 }
-export function modelKey(model: ModelRef | null | undefined) { return model ? `${model.provider}::${model.modelId}` : undefined; }
-export function MetricGrid({ metrics }: { metrics: Metric[] }) {
-  return metrics.length ? <dl className="metric-grid">{metrics.map(metric => <div key={metric.key}>
-    <dt>{metric.label}</dt><dd>{display(metric.value)}{metric.value !== null && metric.value !== '' && metric.unit && <small>{metric.unit}</small>}</dd>
-  </div>)}</dl> : <div className="muted metric-empty">暂无指标</div>;
+export function Metrics({ metrics }: { metrics: Metric[] }) {
+  if (!metrics.length) return <p className="quiet">未提供指标</p>;
+  return <Table<Metric> className="metric-table" rowKey="key" size="small" pagination={false} dataSource={metrics} columns={[
+    { title: '指标', render: (_value, metric) => <div className="metric-name">{metricLabel(metric)}{metric.partition && <small>{({ TRAIN: '训练', VALIDATION: '验证', HELDOUT: '独立样本' } as Record<string, string>)[metric.partition] ?? metric.partition}{metric.component !== undefined && ` / 分量 ${metric.component}`}</small>}</div> },
+    { title: '数值', align: 'right', render: (_value, metric) => <Exact value={metric.value} unit={metric.unit} missing="不可用" /> },
+    { title: '可用性', render: (_value, metric) => <span className="quiet">{metricStatus(metric)}</span> },
+  ]} />;
 }
-export function Surface({ title, extra, children, className = '' }: { title?: string; extra?: ReactNode; children: ReactNode; className?: string }) {
-  return <section className={`surface ${className}`}>{title && <div className="section-heading"><h2>{title}</h2>{extra}</div>}{children}</section>;
+export function EvidenceMetrics({ metrics }: { metrics: Metric[] }) {
+  const independent = metrics.filter(metric => metric.partition === 'HELDOUT' || metric.key.startsWith('HELDOUT.'));
+  const source = independent.length ? independent : metrics.some(metric => metric.partition || /^(TRAIN|VALIDATION|HELDOUT)\./.test(metric.key)) ? [] : metrics;
+  const ic = source.find(metric => /(?:pearson_ic|^ic)$/.test(metric.key));
+  const included = source.find(metric => metric.key.endsWith('counts.included'));
+  const excluded = source.find(metric => metric.key.endsWith('counts.excluded'));
+  if (!ic && !included && !excluded) return <Metrics metrics={metrics} />;
+  return <><div className="metric-grid">
+    {ic && <div className="metric-primary"><span className="metric-label">{independent.length ? '独立样本 IC' : metricLabel(ic)}</span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
+    {[included, excluded].filter((item): item is Metric => !!item).map(metric => <div className="metric-count" key={metric.key}><span className="metric-label">{metricLabel(metric)}</span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
+  </div>{independent.length > 0 && <div className="partition-row"><span className="partition-label">独立样本</span>{ic?.component !== undefined && <span>分量 <code>{ic.component}</code></span>}</div>}<details className="metrics-disclosure"><summary>全部指标</summary><Metrics metrics={metrics} /></details></>;
+}
+export function Copy({ value, label = '复制身份' }: { value: string; label?: string }) {
+  const [status, setStatus] = useState('');
+  return <span className="copy-control"><Button type="text" aria-label={label} icon={<CopyIcon size={14} />} onClick={() => { void navigator.clipboard.writeText(value).then(() => setStatus('已复制'), () => setStatus('未能复制')); }} /><span role="status">{status}</span></span>;
+}
+export function PendingCommand({ command }: { command: { pending?: { persisted: boolean }; busy: boolean; values?: Record<string, unknown> } }) {
+  if (!command.pending || command.busy) return null;
+  const identity = command.values?.requestId;
+  return <div className="pending-command" role="status"><div>提交结果待核对{!command.pending.persisted && <span> / 请保留此页面</span>}</div>{typeof identity === 'string' && <details><summary>原始提交身份</summary><code>{identity}</code><Copy value={identity} /></details>}</div>;
+}
+export function useConfirm() {
+  const { modal } = App.useApp();
+  return (title: string, content: string, action: () => void) => modal.confirm({ title, content, okText: title.replace('？', ''), cancelText: '取消', okButtonProps: { danger: true }, onOk: () => { action(); } });
 }
