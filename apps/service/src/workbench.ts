@@ -30,17 +30,17 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const [facts, native] = await Promise.all([snapshot(), host.harness.snapshot(Requests, context)]);
     for (const [key, request] of Object.entries(facts?.researchRequests ?? {})) {
       // The host repairs its own native admission gap; never resubmit its stopped/final studies.
-      if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput);
+      if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput, true);
     }
   }
   async function startResearch(value: unknown) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
-    if (nativeAdmission?.recovery || !nativeAdmission && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
+    const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
+    if (nativeAdmission?.recovery || !nativeAdmission && !old && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      return host.start(requestId, old.input as NativeResearchInput);
+      return host.start(requestId, old.input as NativeResearchInput, true);
     }
     const submission = body as unknown as ResearchStart;
     let input: ResearchInput;

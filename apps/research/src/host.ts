@@ -85,7 +85,7 @@ export async function openResearch(options: {
     harness.resume();
   } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
 
-  async function start(requestId: string, value: ResearchInput) {
+  async function start(requestId: string, value: ResearchInput, originalAdmission = false) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
     const input = researchInput(value);
     const id = await harness.commit(async (tx) => {
@@ -97,7 +97,12 @@ export async function openResearch(options: {
         if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
         return existing.conversationId;
       }
-      if (isRecoveryRequestId(requestId)) throw new Error('request_id_conflict');
+      if (isRecoveryRequestId(requestId)) {
+        // Only the service's persisted original admission may repair this old gap;
+        // even that cannot clone an actual legacy native continuation receipt.
+        const priorConversation = Number(requestId.split(':')[1]);
+        if (!originalAdmission || Number.isSafeInteger(priorConversation) && await tx.submissionByRequest(priorConversation as ConversationId, requestId)) throw new Error('request_id_conflict');
+      }
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
       if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
@@ -182,9 +187,9 @@ export async function openResearch(options: {
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry,
-    async start(requestId: string, value: ResearchInput) {
+    async start(requestId: string, value: ResearchInput, originalAdmission = false) {
       if (!accepting) throw new Error('research_closing');
-      const admission = start(requestId, value);
+      const admission = start(requestId, value, originalAdmission);
       admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },
