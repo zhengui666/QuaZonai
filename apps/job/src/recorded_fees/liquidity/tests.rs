@@ -450,3 +450,20 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
         .iter()
         .all(|fill| fill.fill_quantity == "10".parse().unwrap()));
 }
+
+#[test]
+fn native_final_bar_reduction_settles_before_the_running_strategy_stops() {
+    let (directory, _, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    request.settings.snapshot_interval_ms = 86_400_000;
+    request.target_points[1].asof_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.unwrap();
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills[1].order_side, "SELL");
+    assert_eq!(report.fills[1].fill_ns.get(), 6 * MINUTE_NS + 1);
+    assert_eq!(report.fills[1].bar_end_ns.get(), 6 * MINUTE_NS);
+    assert!(report.fills.iter().all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get()));
+    assert!(result.summary.iter().any(|(k, v)| k == "orders.open" && v == "0"));
+    assert!(result.summary.iter().any(|(k, v)| k == "orders.inflight" && v == "0"));
+}
