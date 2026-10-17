@@ -384,3 +384,54 @@ fn repeating_quantity_ratio_remains_exact_until_one_currency_rounding() {
         "3"
     );
 }
+
+#[test]
+fn native_source_audit_precision_does_not_change_fees_quantities_or_account_balance() {
+    let (directory, _, request) = native_scenario();
+    let baseline = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let path = directory.path().join(RECORDED_FEES_FILE);
+    let mut original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    original["records"][0]["price"] = serde_json::json!("0.0030000000375025784");
+    original["records"][0]["usdc_amount"] = serde_json::json!("0.00007000000000000001");
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let before = baseline.recorded_fee_replay.unwrap();
+    let report = result.recorded_fee_replay.unwrap();
+    assert_eq!(report.fills.len(), before.fills.len());
+    for (actual, expected) in report.fills.iter().zip(&before.fills) {
+        assert_eq!(actual.commission, expected.commission);
+        assert_eq!(actual.fill_quantity, expected.fill_quantity);
+        assert_eq!(actual.fill_price, expected.fill_price);
+        assert_eq!(actual.fill_ns, expected.fill_ns);
+        for (allocation, previous) in actual.allocations.iter().zip(&expected.allocations) {
+            assert_eq!(allocation.original.id, previous.original.id);
+            assert_eq!(allocation.allocated_quantity, previous.allocated_quantity);
+            assert_eq!(
+                allocation.allocated_fee_numerator,
+                previous.allocated_fee_numerator
+            );
+            assert_eq!(
+                allocation.allocated_fee_denominator,
+                previous.allocated_fee_denominator
+            );
+        }
+    }
+    let audit = serde_json::to_value(&report).unwrap();
+    assert_eq!(
+        audit["fills"][0]["allocations"][0]["original"],
+        original["records"][0]
+    );
+    let roundtrip: RecordedFeeReplayV1 = serde_json::from_value(audit.clone()).unwrap();
+    assert_eq!(serde_json::to_value(roundtrip).unwrap(), audit);
+    let balance = |summary: &std::collections::BTreeMap<String, String>| {
+        summary
+            .iter()
+            .find(|(key, _)| key.ends_with(".balance.pUSD.total"))
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(balance(&result.summary), balance(&baseline.summary));
+}
