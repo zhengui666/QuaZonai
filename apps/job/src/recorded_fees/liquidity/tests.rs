@@ -492,7 +492,14 @@ fn native_open_position_does_not_add_daily_zero_returns_in_an_empty_tail() {
     request.target_points[1].cash_weight = "0.95".parse().unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
     assert_eq!(result.recorded_fee_replay.as_ref().unwrap().fills.len(), 2);
-    assert!(result.returns.iter().all(|point| point.timestamp_ns.get() <= 6 * MINUTE_NS + 1), "empty tail produced returns: {:?}", result.returns);
+    assert!(
+        result
+            .returns
+            .iter()
+            .all(|point| point.timestamp_ns.get() <= 6 * MINUTE_NS + 1),
+        "empty tail produced returns: {:?}",
+        result.returns
+    );
 }
 
 #[test]
@@ -501,8 +508,11 @@ fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
     data.series[0].bars[0].ts_init = (8 * MINUTE_NS).into();
     let source: RecordedTradeFeesV1 = serde_json::from_reader(
         std::fs::File::open(directory.path().join(RECORDED_FEES_FILE)).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
     let (_, clock) = model();
     let error = RecordedFeeModel::new(source, &data, clock).unwrap_err();
-    assert!(error.to_string().contains("RECORDED_FEE_BAR_CLOCK_MISMATCH"));
+    assert!(error
+        .to_string()
+        .contains("RECORDED_FEE_BAR_CLOCK_MISMATCH"));
 }

@@ -172,6 +172,7 @@ pub(crate) struct TargetReplay {
     outstanding_orders: BTreeSet<ClientOrderId>,
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
+    recorded_data_end_ns: Option<u64>,
     paper: Option<PaperClock>,
     capital_exit_gate: Option<(crate::capital_exit_gate::CapitalExitGate, DbCounter)>,
     capital_exit_source_pending: bool,
@@ -512,6 +513,7 @@ impl TargetReplay {
             return;
         }
         if !self.awaiting_settlement || !self.orders_settled() {
+            self.finish_recorded_tail();
             return;
         }
         // Native position events follow order fills and the Portfolio's higher-
@@ -521,6 +523,24 @@ impl TargetReplay {
             if let Err(error) = self.apply_bar(&bar, receipt_ns) {
                 self.status.borrow_mut().record_callback_error(error);
             }
+        }
+        self.finish_recorded_tail();
+    }
+
+    fn finish_recorded_tail(&self) {
+        let Some(end) = self.recorded_data_end_ns else {
+            return;
+        };
+        let status = self.status.borrow();
+        let finished = self.latest.values().map(|bar| bar.ts_init.as_u64()).max() == Some(end)
+            && status.consumed == self.points.len()
+            && status.failure.is_none()
+            && self.orders_settled();
+        drop(status);
+        if finished {
+            // The native engine stops at this settled timestamp, not after an
+            // unrelated periodic snapshot sequence across a data-empty tail.
+            self.shutdown_system(Some("RECORDED_REPLAY_SETTLED".into()));
         }
     }
 
@@ -925,6 +945,7 @@ impl DataActor for TargetReplay {
             self.status.borrow_mut().record_callback_error(error);
             return Err(anyhow::anyhow!("NATIVE_TARGET_REPLAY_FAILED"));
         }
+        self.finish_recorded_tail();
         Ok(())
     }
 }
@@ -1001,6 +1022,7 @@ pub(crate) fn paper_target_strategy(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events: BTreeMap::new(),
+        recorded_data_end_ns: None,
         status: status.clone(),
         strategy_constraints: None,
         capital_exit_gate: None,
@@ -1448,6 +1470,17 @@ fn run_with_strategy_and_spot(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events,
+        recorded_data_end_ns: if recorded_liquidity(&request.settings) {
+            market
+                .series
+                .iter()
+                .flat_map(|series| &series.bars)
+                .map(|bar| bar.ts_init.as_u64())
+                .chain(closes.iter().map(|close| close.ts_init.as_u64()))
+                .max()
+        } else {
+            None
+        },
         status: status.clone(),
         capital_exit_gate: None,
         capital_exit_source_pending: false,
