@@ -265,3 +265,19 @@ test('light/dark and 320–1024 layouts retain exact long facts without page ove
   }
   expect(errors).toEqual([]);
 });
+
+test('recovered research keeps original identity separate from current execution', async ({ page }) => {
+  await contract(page);
+  await page.route('**/api/v3/research/7', route => route.fulfill({ json: {
+    id: 7, title: '原研究恢复身份', status: 'RUNNING', trials: 18, model: 'test/test-model', createdAt: null, updatedAt: null,
+    input: { goal: '原研究恢复身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 100 } },
+    originalSubmission: { id: 17, requestId: 'owner-original-request', status: 'unanswered', reason: 'model_error' },
+    submission: { id: 80, requestId: 'qz.research.resume:7:17', status: 'placed' },
+    trialRecords: [], tasks: [{ id: 81, name: 'pi.generation', status: 'running', error: null }], final: null,
+  } }));
+  await page.goto('/#/research/7'); await page.getByRole('tab', { name: '输入与执行', exact: true }).click();
+  const original = page.locator('section').filter({ has: page.getByRole('heading', { name: '原始身份', exact: true }) });
+  await expect(original).toContainText('owner-original-request'); await expect(original).not.toContainText('qz.research.resume');
+  const current = page.locator('section').filter({ has: page.getByRole('heading', { name: '当前执行', exact: true }) });
+  await expect(current).toContainText('80'); await expect(current).toContainText('qz.research.resume:7:17');
+});
