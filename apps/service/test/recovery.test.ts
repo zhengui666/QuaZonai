@@ -141,6 +141,13 @@ test('legacy model-error continuation receipt replays without clearing a later s
     await state.restart();
     assert.deepEqual(await state.service.research.resume(receipt.conversationId, receipt.submissionId), next);
     assert.deepEqual((await state.service.research.state(receipt.conversationId)).research, before);
+    const recoveryKey = `qz.research.resume:${receipt.conversationId}:${receipt.submissionId}`;
+    const admissions = (await state.service.work.snapshot())!.researchRequests;
+    const direct = await state.service.research.start(recoveryKey, before!.input!).then(() => 'admitted_duplicate', error => error.message);
+    const collision = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId: recoveryKey, input: before!.input } });
+    assert.equal(direct, 'request_id_conflict'); assert.equal(collision.statusCode, 409, collision.body);
+    assert.deepEqual((await state.service.work.snapshot())!.researchRequests, admissions);
+    assert.equal((await state.service.research.list()).items.length, 1);
     assert.equal(state.faux.state.callCount, 2);
   } finally { await state.cleanup(); }
 });
