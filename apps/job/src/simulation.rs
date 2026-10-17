@@ -172,7 +172,7 @@ pub(crate) struct TargetReplay {
     outstanding_orders: BTreeSet<ClientOrderId>,
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
-    recorded_data_end_ns: Option<u64>,
+    recorded_bar_ends: Option<BTreeMap<InstrumentId, u64>>,
     paper: Option<PaperClock>,
     capital_exit_gate: Option<(crate::capital_exit_gate::CapitalExitGate, DbCounter)>,
     capital_exit_source_pending: bool,
@@ -528,11 +528,13 @@ impl TargetReplay {
     }
 
     fn finish_recorded_tail(&self) {
-        let Some(end) = self.recorded_data_end_ns else {
+        let Some(ends) = &self.recorded_bar_ends else {
             return;
         };
         let status = self.status.borrow();
-        let finished = self.latest.values().map(|bar| bar.ts_init.as_u64()).max() == Some(end)
+        let finished = ends
+            .iter()
+            .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end))
             && status.consumed == self.points.len()
             && status.failure.is_none()
             && self.orders_settled();
@@ -1022,7 +1024,7 @@ pub(crate) fn paper_target_strategy(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events: BTreeMap::new(),
-        recorded_data_end_ns: None,
+        recorded_bar_ends: None,
         status: status.clone(),
         strategy_constraints: None,
         capital_exit_gate: None,
@@ -1470,17 +1472,21 @@ fn run_with_strategy_and_spot(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events,
-        recorded_data_end_ns: if recorded_liquidity(&request.settings) {
-            market
-                .series
-                .iter()
-                .flat_map(|series| &series.bars)
-                .map(|bar| bar.ts_init.as_u64())
-                .chain(closes.iter().map(|close| close.ts_init.as_u64()))
-                .max()
-        } else {
-            None
-        },
+        // Recorded fees require CurrencyPair series; native BinaryOption close
+        // events cannot enter this mode. Every selected series must deliver its
+        // own final BAR, including synchronized final timestamps.
+        recorded_bar_ends: recorded_liquidity(&request.settings).then(|| {
+            market.series.iter().flat_map(|series| &series.bars).fold(
+                BTreeMap::<InstrumentId, u64>::new(),
+                |mut ends, bar| {
+                    let time = bar.ts_init.as_u64();
+                    ends.entry(bar.bar_type.instrument_id())
+                        .and_modify(|end| *end = (*end).max(time))
+                        .or_insert(time);
+                    ends
+                },
+            )
+        }),
         status: status.clone(),
         capital_exit_gate: None,
         capital_exit_source_pending: false,

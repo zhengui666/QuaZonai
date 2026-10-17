@@ -599,8 +599,10 @@ fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     let snapshot = result.canonical_result["portfolio_snapshots"]
         .as_array()
         .unwrap()
-        .last()
+        .iter()
+        .max_by_key(|row| row["ts_event"].as_str().unwrap().parse::<u64>().unwrap())
         .unwrap();
+    assert_eq!(snapshot["ts_event"], (6 * MINUTE_NS).to_string());
     let equity = snapshot["total_equity"][0].as_str().unwrap();
     assert_eq!(
         Money::from_str(equity).unwrap().as_decimal(),
