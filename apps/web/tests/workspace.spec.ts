@@ -117,6 +117,16 @@ test('request conflicts require explicit editing and retain downloadable origina
   await page.reload(); await expect(page.locator('.previous-command')).toBeVisible(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Original conflicted question'); await page.getByLabel('研究问题', { exact: true }).fill('Explicit corrected question'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect.poll(() => bodies.length).toBe(2); expect(JSON.parse(bodies[1]!).requestId).not.toBe(JSON.parse(original).requestId); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBe(bodies[1]); await expect(page.locator('pre')).toHaveCount(0);
 });
 
+test('portfolio initialization failure keeps the restored draft unavailable until a successful retry', async ({ page }) => {
+  await contract(page); let available = false; await page.route('**/api/v3/datasets', route => available ? route.fallback() : route.fulfill({ status: 503, json: { error: 'temporary_unavailable' } })); await page.addInitScript(() => sessionStorage.setItem('quazonai.draft.portfolio', JSON.stringify({ name: 'Preserved portfolio draft', researchIds: [8], weights: { 8: '1' }, capital: '1000.250000000000000001', datasetId: 'test-data' })));
+  await page.goto('/#/portfolios/new?research=8'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.getByLabel('组合名称', { exact: true })).not.toBeVisible(); available = true; await page.getByRole('button', { name: '重试', exact: true }).click(); await expect(page.getByLabel('组合名称', { exact: true })).toHaveValue('Preserved portfolio draft'); await expect(page.getByLabel('本金', { exact: true })).toHaveValue('1000.250000000000000001'); await page.getByLabel('组合名称', { exact: true }).fill('New explicit edit'); await expect(page.getByLabel('组合名称', { exact: true })).toHaveValue('New explicit edit');
+});
+
+test('observation initialization failure preserves its draft until workspace retry succeeds', async ({ page }) => {
+  await contract(page); let available = false; await page.route('**/api/v3/workspace', route => available ? route.fallback() : route.fulfill({ status: 503, json: { error: 'temporary_unavailable' } })); await page.addInitScript(() => sessionStorage.setItem('quazonai.draft.observation', JSON.stringify({ portfolioId: 'p1', mode: 'paper', connectionId: 'paper-test' })));
+  await page.goto('/#/observations/new'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.getByLabel('组合', { exact: true })).not.toBeVisible(); available = true; await page.getByRole('button', { name: '重试', exact: true }).click(); const selected = page.locator('.ant-form-item').filter({ has: page.getByLabel('组合', { exact: true }) }); await expect(selected).toContainText('测试 · 多因子组合'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('连接', { exact: true }) })).toContainText('测试模拟连接');
+});
+
 test('portfolio authoring waits for the initiating study before exposing restored fields', async ({ page }) => {
   await contract(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/api/v3/research/8', async route => { await held; return route.fallback(); });
