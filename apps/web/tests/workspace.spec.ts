@@ -82,7 +82,12 @@ async function contract(page: BrowserPage, setup = false) {
   return { writes, observation, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { defaultModel: null, thinkingLevel: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
-async function audit(page: BrowserPage) { await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0); expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]); }
+async function audit(page: BrowserPage) {
+  await expect(page.locator('.ant-select-dropdown:visible')).toHaveCount(0);
+  // Inspect settled surfaces, not alpha-blended entrance frames; ignore perpetual busy glyphs.
+  await page.evaluate(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().iterations)).map(animation => animation.finished.catch(() => undefined))); });
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+}
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.study-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
 
 test('owner setup/login and uncertain research preserve the exact body after changed defaults and reload', async ({ page }, info) => {

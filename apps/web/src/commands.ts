@@ -21,8 +21,8 @@ function read(kind: Kind): Envelope | undefined {
   } catch { /* Session storage and the legacy store can fail independently. */ }
   try { if (kind === 'research') { const legacy = readResearchIntent(); if (legacy) { const command = { raw: legacy.raw, persisted: true }; memory.set(kind, command); return command; } } } catch { /* The original in-memory command is still preferred. */ }
 }
-function clear(kind: Kind, raw: string) {
-  if (memory.get(kind)?.raw !== raw) return false;
+function clear(kind: Kind, command: Envelope) {
+  if (memory.get(kind) !== command) return false;
   memory.delete(kind); updateExitNotice();
   try { sessionStorage.removeItem(key(kind)); } catch { /* The service retains the acknowledged identity. */ }
   try { if (kind === 'research') clearResearchIntent(); } catch { /* One failed store must not prevent clearing the other. */ }
@@ -42,23 +42,25 @@ export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
       const raw = JSON.stringify({ requestId: crypto.randomUUID(), ...input });
       let persisted = false;
       try { sessionStorage.setItem(key(kind), raw); persisted = true; } catch { /* Keep the original command in memory. */ }
-      command = { raw, persisted }; memory.set(kind, command); updateExitNotice(); original.current = command; setPending(command);
+      command = { raw, persisted };
     }
+    // Each explicit attempt owns its cleanup, without changing the original request bytes.
+    command = { ...command }; memory.set(kind, command); updateExitNotice(); original.current = command; setPending(command);
     inFlight.current = true; setBusy(true); setError(undefined);
     try {
       const result = await api<T>(`/${kind}`, { method: 'POST', rawBody: command.raw });
-      if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); accepted(result); }
+      if (clear(kind, command)) { original.current = undefined; setPending(undefined); accepted(result); }
     } catch (failure) {
       setError(failure);
-      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && failure.status !== 401 && failure.code !== 'request_id_conflict') { if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); } }
+      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && failure.status !== 401 && failure.code !== 'request_id_conflict') { clear(kind, command); if (original.current === command) { original.current = undefined; setPending(undefined); } }
     } finally { inFlight.current = false; setBusy(false); }
   }
   const canAbandon = !!pending && !busy && error instanceof ApiError && error.code === 'request_id_conflict';
   function abandon() {
     const command = original.current;
-    if (!canAbandon || !command || memory.get(kind)?.raw !== command.raw) return;
+    if (!canAbandon || !command || memory.get(kind) !== command) return;
     saveDraft(previousKey, command.raw); setPreviousRaw(command.raw);
-    if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); setError(undefined); }
+    if (clear(kind, command)) { original.current = undefined; setPending(undefined); setError(undefined); }
   }
   return { pending, busy, error, submit, abandon, canAbandon, previousRaw, previousPersisted: draftIsPersisted(previousKey), values: pending ? JSON.parse(pending.raw) as Record<string, unknown> : undefined };
 }
