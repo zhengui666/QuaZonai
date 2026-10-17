@@ -52,6 +52,13 @@ export async function openResearch(options: {
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
   const watchers = new Set<ConversationWatch>();
+  // Serialize owner commands only; official Durable still owns all execution.
+  const ownerChanges = new Map<number, Promise<unknown>>();
+  async function ownerChange<T>(id: number, operation: () => Promise<T>): Promise<T> {
+    const prior = ownerChanges.get(id) ?? Promise.resolve();
+    const next = prior.catch(() => {}).then(operation); ownerChanges.set(id, next);
+    try { return await next; } finally { if (ownerChanges.get(id) === next) ownerChanges.delete(id); }
+  }
 
   async function conversation(id: number) {
     if (!Number.isSafeInteger(id) || id < 0) throw new Error('invalid_research_id');
@@ -139,7 +146,10 @@ export async function openResearch(options: {
     const handle = await conversation(id);
     const requestId = recoveryRequestId(id, previousId);
     const existing = await harness.commit((tx) => tx.submissionByRequest(handle.id, requestId), context);
-    if (existing) return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
+    if (existing) {
+      if (existing.type !== 'input' || existing.id <= previousId || existing.conversationId !== handle.id) throw new Error('recovery_request_conflict');
+      return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
+    }
     const current = await state(id); const study = current.research;
     if (!study?.input) throw new Error('research_not_found');
     if (study.final) throw new Error('research_already_final');
@@ -161,7 +171,7 @@ export async function openResearch(options: {
     state, diagnostics,
     async resume(id: number, previousId: number) {
       if (!accepting) throw new Error('research_closing');
-      const admission = resume(id, previousId); admissions.add(admission);
+      const admission = ownerChange(id, () => resume(id, previousId)); admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },
     async list(cursor?: Cursor) {
@@ -182,13 +192,15 @@ export async function openResearch(options: {
       return watch;
     },
     async stop(id: number) {
-      const study = await conversation(id);
-      await harness.commit(async (tx) => {
-        const facts = await tx.doc(Study, study.id);
-        facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
-      }, context);
-      await study.abort(context, { background: true });
-      return this.view(id);
+      return ownerChange(id, async () => {
+        const study = await conversation(id);
+        await harness.commit(async (tx) => {
+          const facts = await tx.doc(Study, study.id);
+          facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
+        }, context);
+        await study.abort(context, { background: true });
+        return this.view(id);
+      });
     },
     async tasks(cursor?: Cursor) {
       return { ...await harness.inspect(context), records: await harness.commit((tx) => tx.scanTasks({ order: 'descending' }, 100, cursor), context) };

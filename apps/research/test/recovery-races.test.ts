@@ -58,6 +58,8 @@ test('duplicate recovery replays the same receipt across a delayed state read', 
     const results = await Promise.all([firstResult, secondResult]);
     assert.ok(results.every(result => 'value' in result), 'duplicate calls must not turn one original recovery into a409');
     assert.deepEqual(results[0], results[1]);
+    const recovered = results[0]; assert.ok(recovered && 'value' in recovered);
+    await (await state.host.harness.submission(recovered.value.submissionId, context))!.wait(context);
     assert.equal(state.faux.state.callCount, 2);
   } finally { release.resolve(); state.storage.scanSubmissions = scan; await state.close(); }
 });
