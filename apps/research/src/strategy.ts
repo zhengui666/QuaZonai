@@ -8,6 +8,7 @@ export interface ThresholdPolicy {
   name: string;
   kind: 'factor-threshold';
   instrumentId: string;
+  instrumentIds?: string[];
   threshold: number;
   investedWeight: string;
   targetTtlNs: string;
@@ -47,7 +48,33 @@ export function thresholdPolicy(value: JsonObject): ThresholdPolicy {
   if (value.kind !== 'factor-threshold') throw new Error('strategy_adapter_unsupported');
   if (value.forecastMode !== undefined && value.forecastMode !== 'price-volume') throw new Error('strategy_forecast_mode_invalid');
   if (value.evaluationPartition !== undefined && value.evaluationPartition !== 'HELDOUT') throw new Error('strategy_evaluation_partition_invalid');
+  if (value.instrumentIds !== undefined) {
+    const ids = value.instrumentIds;
+    if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== 'string' || !id.trim())
+      || new Set(ids).size !== ids.length) throw new Error('strategy_instrument_universe_invalid');
+    if (!ids.includes(value.instrumentId!)) throw new Error('strategy_base_instrument_not_allowed');
+  }
   return value as unknown as ThresholdPolicy;
+}
+
+/** Resolve only a registered proposal's choice inside the original admitted universe. */
+export function resolveStrategyPolicy(proposal: JsonObject, original: JsonObject): ThresholdPolicy {
+  const policy = thresholdPolicy(original);
+  if (proposal.instrumentId === undefined && policy.instrumentIds === undefined) return policy;
+  const selected = proposal.instrumentId === undefined ? policy.instrumentId : proposal.instrumentId;
+  if (typeof selected !== 'string' || !selected.trim()) throw new Error('strategy_instrument_invalid');
+  if (!(policy.instrumentIds ?? [policy.instrumentId]).includes(selected)) throw new Error('strategy_instrument_not_allowed');
+  if (policy.instrumentIds === undefined) return { ...policy, instrumentId: selected };
+  // Native requires one original reserve per simulated series, not the full admitted table.
+  // JSON also copies durable transaction proxies without changing decimal/source values.
+  const simulationSettings = JSON.parse(JSON.stringify(policy.simulationSettings)) as JsonObject;
+  const rates = simulationSettings.fee_rates;
+  if (!Array.isArray(rates)) throw new Error('strategy_instrument_fee_missing');
+  const selectedRates = rates.filter((rate) => rate !== null && typeof rate === 'object' && !Array.isArray(rate) && rate.instrument_id === selected);
+  if (!selectedRates.length) throw new Error('strategy_instrument_fee_missing');
+  if (selectedRates.length !== 1) throw new Error('strategy_instrument_fee_duplicate');
+  simulationSettings.fee_rates = selectedRates;
+  return { ...policy, instrumentId: selected, simulationSettings };
 }
 
 function counter(value: unknown, name: string): string {
@@ -91,10 +118,17 @@ export function thresholdTargets(forecasts: JsonObject, policy: ThresholdPolicy,
   return points;
 }
 
-export function simulationSelection(request: JsonObject, partition?: StrategyPartition): JsonObject {
+export function simulationSelection(request: JsonObject, partition?: StrategyPartition, policy?: ThresholdPolicy): JsonObject {
   const selection = structuredClone(object(object(request.forecast, 'forecast_request').selection, 'selection'));
   if (partition === 'VALIDATION') { selection.event_start_ns = request.train_end_ns!; selection.event_end_ns = request.validation_end_ns!; selection.decision_cutoff_ns = request.validation_end_ns!; }
   if (partition === 'HELDOUT') selection.event_start_ns = request.validation_end_ns!;
+  if (policy?.instrumentIds !== undefined) {
+    if (!Array.isArray(selection.bar_types) || selection.bar_types.some((bar) => typeof bar !== 'string')) throw new Error('strategy_bar_types_invalid');
+    // A BAR type ends in step/aggregation/price/source; symbols themselves can contain hyphens.
+    const bars = (selection.bar_types as string[]).filter((bar) => bar.split('-').slice(0, -4).join('-') === policy.instrumentId);
+    if (!bars.length) throw new Error('strategy_instrument_bars_missing');
+    selection.bar_types = bars;
+  }
   return selection;
 }
 

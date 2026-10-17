@@ -47,7 +47,7 @@ export async function blendTargets(binary: string, memberRows: JsonObject[][], w
 export async function forecastMembers(binary: string, catalog: string, members: StrategyMember[], request: JsonObject, policy: ThresholdPolicy, currency: string,
   directory: string, context: Context, diagnostics = false, partition?: StrategyPartition, forceBlend = false) {
   const components: JsonObject[] = []; const memberRows: JsonObject[][] = [];
-  const selection = simulationSelection(request, partition);
+  const selection = simulationSelection(request, partition, policy);
   for (const [index, member] of members.entries()) {
     const modelPath = join(directory, `model-${index}.wasm`);
     const module = wabt.parseWat('selected-factor.wat', member.model);

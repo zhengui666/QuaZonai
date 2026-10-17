@@ -55,6 +55,8 @@ use std::{
     sync::Arc,
 };
 
+mod calendar_returns;
+
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
         .map_err(|_| anyhow::anyhow!("NATIVE_DECIMAL_RANGE"))
@@ -1255,7 +1257,7 @@ fn validate_point(
 fn portfolio_return_analysis(
     engine: &BacktestEngine,
     settings: &NativeSimulationSettingsV1,
-) -> Result<PortfolioAnalyzer> {
+) -> Result<(PortfolioAnalyzer, bool)> {
     let accounts = engine.kernel().cache.borrow().accounts_all_owned();
     ensure!(accounts.len() == 1, "SIMULATION_ACCOUNT_COUNT_MISMATCH");
     let account_ids = accounts
@@ -1267,6 +1269,9 @@ fn portfolio_return_analysis(
         .portfolio
         .borrow()
         .snapshots(&account_ids[0]);
+    let fully_priced = snapshots
+        .iter()
+        .all(|snapshot| snapshot.unpriced_instruments.is_empty());
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
     let period = domain::prediction::portfolio_annualization_days(&settings.fee_model);
@@ -1291,7 +1296,7 @@ fn portfolio_return_analysis(
         }
     }
     analyzer.set_portfolio_returns_from_snapshots(&account_ids, &snapshots);
-    Ok(analyzer)
+    Ok((analyzer, fully_priced))
 }
 
 /// Explicit managed/CLI simulation dispatch. The ID names app.dataset_revisions,
@@ -1713,11 +1718,22 @@ fn run_with_strategy_and_spot(
                 ));
             }
         }
-        let daily = if is_spot {
-            PortfolioAnalyzer::default()
+        let (daily, fully_priced) = if is_spot {
+            (PortfolioAnalyzer::default(), false)
         } else {
             portfolio_return_analysis(&engine, &request.settings)?
         };
+        if !is_spot {
+            statistics.extend(calendar_returns::statistics(
+                request.selection.event_start_ns.get(),
+                request.selection.event_end_ns.get(),
+                fully_priced,
+                daily
+                    .portfolio_returns()
+                    .iter()
+                    .map(|(time, value)| (time.as_u64(), *value)),
+            ));
+        }
         for (group, values) in [
             (
                 NativeStatisticGroup::Returns,

@@ -3,7 +3,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../../research/src/documents.ts';
-import { strategyMembers } from '../../research/src/strategy.ts';
+import { resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
 import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import type { ThresholdPolicy } from './config.ts';
 import { json, object, Problem } from './facts.ts';
@@ -36,22 +36,27 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const proposal = object(trial.proposal, 'selected_proposal');
       const result = object(object(source.final, 'independent_final').result, 'independent_result');
       const request = structuredClone(object(result.request, 'independent_request'));
-      if (Array.isArray(input.evidence) && canonical(object(studyInput.policy).strategy ?? null) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
+      const originalPolicy = (studyInput.policy as JsonObject | undefined)?.strategy;
+      // Retain v1 single-evidence consumer semantics; instrument choices always bind the original base policy.
+      const bound = Array.isArray(input.evidence) || proposal.instrumentId !== undefined || input.policy.instrumentIds !== undefined
+        || (originalPolicy as JsonObject | undefined)?.instrumentIds !== undefined;
+      if (bound && canonical(originalPolicy ?? null) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
+      const policy = resolveStrategyPolicy(proposal, bound ? object(originalPolicy, 'strategy_policy') : json(input.policy));
       const members = strategyMembers(proposal);
       // Forecast keeps the complete original prefix even when only HELDOUT is traded.
-      const targets = await forecastMembers(input.binary, input.catalog, members, request, input.policy, input.currency, directory, context, false, input.policy.evaluationPartition, proposal.members !== undefined);
+      const targets = await forecastMembers(input.binary, input.catalog, members, request, policy, input.currency, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
       if (selection && canonical(selection) !== canonical(targets.selection)) throw new Problem('strategy_selection_mismatch');
       selection = targets.selection;
       memberRows.push(targets.points);
       const first = targets.components[0]!;
       sources.push({ researchId: source.researchId ?? null, trialId: trial.taskId ?? null, model: studyInput.model ?? null,
-        policy: json(input.policy), members: members.map((member) => ({ ...member })), components: targets.components,
+        policy: json(policy), members: members.map((member) => ({ ...member })), components: targets.components,
         forecastRequest: first.forecastRequest!, forecasts: first.forecasts!, target_points: targets.points,
         rows: targets.rows, weights: targets.weights, blend: targets.blend });
     }
     const combined = await blendTargets(input.binary, memberRows, weights, directory, context);
     const simulationRequest: JsonObject = { schema_version: 1, selection: selection!,
-      settings: { ...input.policy.simulationSettings, starting_capital: input.capital }, target_points: combined.points };
+      settings: { ...object(object(sources[0]!.policy).simulationSettings), starting_capital: input.capital }, target_points: combined.points };
     const simulation = await nativeJob(input.binary, 'simulate', simulationRequest, ['--catalog', input.catalog], directory, context);
     const curve = nativeCurve(simulation, input.currency);
     const statistics: Metric[] = Array.isArray(simulation.statistics) ? simulation.statistics.map((item) => {

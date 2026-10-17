@@ -13,7 +13,7 @@ import { computePortfolio } from '../src/native.ts';
 import type { ServiceOptions } from '../src/config.ts';
 
 // Actual durable/HTTP orchestration with a labelled wire probe; no numerical/market-performance claim.
-test('selected ensemble consumer captures original sealed catalog, keeps full forecast prefix and replays HELDOUT only', async () => {
+for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'legacy'} selected ensemble consumer retains original sealed binding and replays HELDOUT only`, async () => {
   const state = await setup(); const previous = process.env.QZ_JOB_BINARY;
   try {
     await state.service.close();
@@ -26,18 +26,25 @@ test('selected ensemble consumer captures original sealed catalog, keeps full fo
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('../../research/test/portfolio-protocol.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
     process.env.QZ_JOB_BINARY = binary;
     const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
-      selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
+      selection: { schema_version: 1, bar_types: universe ? ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL'] : ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
       parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
     const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
     const dataset = state.options.config.datasets[0]!;
     dataset.data = { catalog: prefix, request, sealed: { catalog: sealed, request: finalRequest } };
     Object.assign(dataset.strategy!, { forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
       simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY' } });
+    if (universe) {
+      Object.assign(dataset.strategy!, { instrumentId: 'BASE.SIM', instrumentIds: ['BASE.SIM', 'TEST.SIM'] });
+      dataset.strategy!.simulationSettings.fee_rates = [{ instrument_id: 'BASE.SIM', maker: '0.004000', taker: '0.006000' },
+        { instrument_id: 'TEST.SIM', maker: '0.001234567890123456', taker: '0.009876543210987654' }];
+    }
+    const selectedSettings = universe ? { ...dataset.strategy!.simulationSettings,
+      fee_rates: (dataset.strategy!.simulationSettings.fee_rates as JsonObject[]).filter((rate) => rate.instrument_id === 'TEST.SIM') } : dataset.strategy!.simulationSettings;
     (state.options as ServiceOptions).extensions = [research, strategy];
     await state.restart();
     const members = [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
     state.faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'One ensemble wire protocol, not a profitability claim.', members }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'One ensemble wire protocol, not a profitability claim.', members, ...(universe ? { instrumentId: 'TEST.SIM' } : {}) }), { stopReason: 'toolUse' }),
       async () => {
         const page = await state.service.research.list(); const view = await state.service.research.view(page.items[0]!.id);
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Selection precedes final exposure.' }), { stopReason: 'toolUse' });
@@ -57,18 +64,34 @@ test('selected ensemble consumer captures original sealed catalog, keeps full fo
     const fact = await state.service.work.getPortfolio(view.id);
     assert.equal(fact.view.status, 'COMPUTED', fact.view.error ?? '');
     assert.deepEqual(object(object(fact.evidence[0]!.selected).proposal).members, members);
+    const proposal = object(object(fact.evidence[0]!.selected).proposal);
+    assert.deepEqual(proposal.strategy, dataset.strategy);
+    assert.deepEqual(proposal.request, dataset.data.request);
+    assert.equal(proposal.instrumentId, universe ? 'TEST.SIM' : undefined);
+    assert.equal(object(fact.policy).instrumentId, universe ? 'BASE.SIM' : 'TEST.SIM');
     const native = fact.native!; const captured = String(native.catalog);
     assert.deepEqual(JSON.parse(await readFile(join(captured, 'binding.json'), 'utf8')), { name: 'SEALED', end: '30' });
     assert.deepEqual(dataset.data, original.input!.data); // No sealed values were copied into primary.
     const simulation = object(native.simulationRequest); const selection = object(simulation.selection);
     assert.equal(selection.event_start_ns, '20'); assert.equal(selection.event_end_ns, '30');
+    assert.deepEqual(selection.bar_types, ['TEST.SIM-1-MINUTE-LAST-EXTERNAL']);
+    assert.deepEqual(simulation.settings, selectedSettings);
     assert.deepEqual((simulation.target_points as JsonObject[]).map((point) => point.asof_ns), ['20', '23', '29']);
     const source = object((native.sources as JsonObject[])[0]);
     assert.deepEqual(source.members, members); assert.deepEqual(source.weights, ['0.25', '0.75']);
+    assert.deepEqual(source.policy, { ...dataset.strategy, instrumentId: 'TEST.SIM', simulationSettings: selectedSettings });
+    assert.ok((source.target_points as JsonObject[]).every((point) => (point.targets as JsonObject[]).every((target) => target.instrument_id === 'TEST.SIM')));
     assert.equal(object(object(source.forecastRequest).selection).event_start_ns, '0');
     assert.equal(object(object(source.forecastRequest).selection).event_end_ns, '30');
+    assert.deepEqual(object(object(source.forecastRequest).selection).bar_types, request.forecast.selection.bar_types);
     const calls = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject);
     assert.equal(calls.filter((call) => call.command === 'simulate').length, 3); // iteration + independent final + replay, one account each
+    for (const call of calls.filter((call) => ['evaluate-factor', 'forecast-factor'].includes(String(call.command)))) {
+      const request = object(call.input);
+      const selection = object(call.command === 'evaluate-factor' ? object(request.forecast).selection : request.selection);
+      assert.deepEqual(selection.bar_types, finalRequest.forecast.selection.bar_types);
+      assert.equal(selection.event_start_ns, '0');
+    }
     assert.equal((await state.service.work.startPortfolio(input)).id, view.id);
     assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, calls.length);
     assert.equal(state.faux.state.callCount, 2);
@@ -77,11 +100,39 @@ test('selected ensemble consumer captures original sealed catalog, keeps full fo
       evidence: [fact.evidence[0]!, { ...fact.evidence[0]!, researchId: 999 }], weights: ['0.125', '0.875'], policy: dataset.strategy! }, context);
     const sources = combined.native.sources as JsonObject[];
     assert.deepEqual(sources.map((item) => item.weights), [['0.25', '0.75'], ['0.25', '0.75']]);
+    assert.ok(sources.every((item) => object(item.policy).instrumentId === 'TEST.SIM'));
+    assert.deepEqual(object(combined.native.simulationRequest).settings, selectedSettings);
     assert.deepEqual(combined.native.weights, ['0.125', '0.875']);
     const nested = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject).slice(calls.length);
     assert.equal(nested.filter((call) => call.command === 'blend-targets').length, 3);
     assert.equal(nested.filter((call) => call.command === 'simulate').length, 1);
+    if (universe) {
+      for (const evidence of [fact.evidence, fact.evidence[0]!]) {
+        await assert.rejects(computePortfolio({ id: 'test-only-override', dataDir: state.directory, catalog: captured, binary, capital: '3000', currency: 'USD',
+          evidence, policy: { ...dataset.strategy!, instrumentId: 'TEST.SIM' } }, context), /strategy_policy_mismatch/);
+      }
+      const { instrumentIds: _universe, ...removedUniverse } = dataset.strategy!;
+      await assert.rejects(computePortfolio({ id: 'test-only-removed-universe', dataDir: state.directory, catalog: captured, binary, capital: '3000', currency: 'USD',
+        evidence: fact.evidence[0]!, policy: removedUniverse }, context), /strategy_policy_mismatch/);
+      const after = (await readFile(log, 'utf8')).trim().split('\n').length;
+      assert.equal(after, calls.length + nested.length); // Rejected overrides start no native work.
+    }
   } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await state.cleanup(); }
+});
+
+test('legacy v1 single-evidence replay retains the consumer policy and whole original interval', async () => {
+  const state = await setup();
+  try {
+    const dataset = state.options.config.datasets[0]!;
+    const policy = { ...dataset.strategy!, name: 'legacy-consumer-policy', threshold: -1 };
+    const evidence = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
+    const result = await computePortfolio({ id: 'legacy-v1', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
+      capital: '3000', currency: 'USD', evidence, policy }, context);
+    assert.deepEqual(object(result.native.simulationRequest).selection, object(object(dataset.data.request).forecast).selection);
+    assert.deepEqual(object((result.native.sources as JsonObject[])[0]).policy, policy);
+    assert.equal(object((result.target.targets as JsonObject[])[0]).instrument_id, 'TEST.SIM');
+    assert.equal(result.curve[0]!.value, '3000');
+  } finally { await state.cleanup(); }
 });
 
 test('research metric projection keeps component IC and actual native account keys, including unavailable values', () => {
