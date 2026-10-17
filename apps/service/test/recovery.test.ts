@@ -151,3 +151,28 @@ test('legacy model-error continuation receipt replays without clearing a later s
     assert.equal(state.faux.state.callCount, 2);
   } finally { await state.cleanup(); }
 });
+
+test('upgrade repairs an original application admission using a legacy recovery-shaped owner key', { timeout: 20_000 }, async () => {
+  const state = await setup();
+  try {
+    const requestId = 'qz.research.resume:9000:9001';
+    const original = { requestId, goal: 'Previously admitted owner request', model: state.model, datasetId: 'controlled', maxTrials: 1 };
+    const input = { goal: original.goal, model: state.model, data: state.options.config.datasets[0]!.data, policy: { max_trials: 1 } };
+    const { Application } = await import('../src/facts.ts');
+    // Original accepted Application→Requests gap from before namespace reservation.
+    await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).researchRequests[`request:${requestId}`] = { original, input }; }, context);
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    await state.restart();
+    const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: original });
+    assert.equal(replay.statusCode, 202, replay.body); const receipt = replay.json();
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const current = await state.service.research.state(receipt.conversationId);
+    assert.deepEqual(current.research!.input, input); assert.equal(current.research!.trials.length, 1);
+    assert.equal(current.originalSubmission!.requestId, requestId); assert.equal((await state.service.research.list()).items.length, 1);
+    const fresh = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...original, requestId: 'qz.research.resume:9002:9003' } });
+    assert.equal(fresh.statusCode, 409); assert.equal(state.faux.state.callCount, 1);
+    await state.restart();
+    assert.deepEqual((await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: original })).json(), receipt);
+    assert.equal(state.faux.state.callCount, 1);
+  } finally { await state.cleanup(); }
+});
