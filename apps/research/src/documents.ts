@@ -15,12 +15,16 @@ export const Study = defineDoc<{
   input: ResearchInput | null;
   trials: JsonObject[];
   final: JsonObject | null;
+  previousStops?: { previousSubmissionId: number; final: JsonObject }[];
 }>({
   kind: 'qz.study', version: 1, scope: 'conversation', history: 'rewindable',
   fork: 'current', initial: () => ({ input: null, trials: [], final: null }),
 });
 
-export const Requests = defineDoc<{ requests: Record<string, { input: JsonValue; conversationId: ConversationId }> }>({
+export const Requests = defineDoc<{ requests: Record<string, {
+  input: JsonValue; conversationId: ConversationId;
+  recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' };
+}> }>({
   kind: 'qz.research-requests', version: 1, scope: 'session',
   initial: () => ({ requests: {} }),
 });

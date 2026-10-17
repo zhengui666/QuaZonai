@@ -16,7 +16,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
   research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
-  research diagnostics ID | research resume ID --submission-id ORIGINAL_FAILED_SUBMISSION
+  research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
   portfolio build --file REQUEST.json | list | get ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   settings get | set --file SETTINGS.json

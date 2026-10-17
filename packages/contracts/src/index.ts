@@ -45,6 +45,7 @@ export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   dataset?: RecordedDataset | null; datasetId?: string | null;
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
+  previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   final: { status: string; trialId: number | null; reason: string | null; error?: string | null; metrics: Metric[] } | null;
 }
 export interface DatasetView {

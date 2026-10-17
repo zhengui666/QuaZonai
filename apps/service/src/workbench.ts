@@ -34,6 +34,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function startResearch(value: unknown) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
+    if ((await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`]?.recovery) throw new Problem('request_id_conflict', 409);
     const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);

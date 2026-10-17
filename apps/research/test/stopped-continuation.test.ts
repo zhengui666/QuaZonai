@@ -95,7 +95,7 @@ test('saved continuation intent repairs only the missing native input after reop
     await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
     const facts = (await state.host.state(next.conversationId)).research!;
     assert.equal(facts.trials.length, 2); assert.deepEqual(Reflect.get(facts, 'previousStops'), Reflect.get(interrupted, 'previousStops'));
-    const handle = (await state.host.harness.conversation(next.conversationId, context))!;
+    const handle = (await state.host.harness.conversation(state.receipt.conversationId, context))!;
     const entries = JSON.stringify((await handle.context(context)).messages);
     assert.match(entries, /owner requests continuation/); assert.match(entries, /successor generations/);
     assert.equal(state.faux.state.callCount, 4);

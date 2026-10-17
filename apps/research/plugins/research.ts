@@ -6,7 +6,7 @@ import { modelFeedback } from '../src/feedback.ts';
 
 export default defineExtension({
   name: 'qz.research',
-  sections: [section('research', () => `Research factors, not mandatory trading strategies. Read research_brief; follow nextAfterTrialId using afterTrialId to disclose every page. Use research_trial(trialId) to recover original validation feedback instead of reevaluating a proposal. Propose a falsifiable hypothesis, use the registered data/factor/evaluation tools, inspect validation feedback and iterate. Keep failed and compared trials. Never tune against final held-out results, look ahead, invent data or call computation qualification. Respect the original criteria, explicit trial budget and stop rule. Use the registered final evaluator for a selected factor if an unseen holdout is configured; otherwise research_finish. Finalize in a single-tool round, without reads or computations in that round. Portfolios and target delivery are optional.`)],
+  sections: [section('research', () => `Research factors, not mandatory trading strategies. Read research_brief; follow nextAfterTrialId using afterTrialId to disclose every page. Use research_trial(trialId) to recover original validation feedback instead of reevaluating a proposal. Propose a falsifiable hypothesis, use the registered data/factor/evaluation tools, inspect validation feedback and iterate. Keep failed and compared trials. Never tune against final held-out results, look ahead, invent data or call computation qualification. Respect the original criteria, explicit trial budget and stop rule. The running native host supplies successor generations when an unfinished response yields; a response boundary, tool-call count or finite invocation is not a scientific stop rule and requires no separate background loop. Do not claim execution after the host closes. Use research_finish only for an actual original stop condition. Use the registered final evaluator for a selected factor if an unseen holdout is configured; otherwise research_finish. Finalize in a single-tool round, without reads or computations in that round. Portfolios and target delivery are optional.`)],
   // Native terminate is unanimous per round, not an immediate global stop.
   // Mark subsequent read/error results terminal after a recorded final; never
   // return final metrics to the model or permit more scientific computation.
@@ -50,7 +50,7 @@ export default defineExtension({
       },
     }),
     defineTool({
-      name: 'research_finish', description: 'End research without exposing an unseen sample. Call alone in a final tool round. Record the stop reason and optional selected trial. Use a registered final evaluator when final held-out assessment is requested.',
+      name: 'research_finish', description: 'End research at an actual original stop condition without exposing an unseen sample. A response boundary, tool-call count or finite invocation is not a stop condition: the running native host supplies successor generations for unfinished research. Call alone in a final tool round. Record the actual stop reason and optional selected trial. Use a registered final evaluator when final held-out assessment is requested.',
       parameters: Type.Object({ reason: Type.String(), trialId: Type.Optional(Type.Integer()) }),
       replay: 'safe', executionMode: 'sequential',
       async execute(args, api, context) {

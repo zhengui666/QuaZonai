@@ -114,6 +114,9 @@ test('owner reads retain the complete prior unselected stop after same-study con
     assert.deepEqual(detail.previousStops, [{ previousSubmissionId: receipt.submissionId, final: before.final }]);
     assert.equal(detail.originalSubmission.id, receipt.submissionId); assert.equal(detail.submission.id, next.submissionId);
     assert.equal(detail.trials, 2); assert.deepEqual(detail.input, before.input); assert.equal(detail.datasetId, 'controlled');
+    const admissions = (await state.service.work.snapshot())!.researchRequests;
+    const collision = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId: `qz.research.resume:${receipt.conversationId}:${receipt.submissionId}`, input: detail.input } });
+    assert.equal(collision.statusCode, 409, collision.body); assert.deepEqual((await state.service.work.snapshot())!.researchRequests, admissions);
     const after = (await state.service.research.state(receipt.conversationId)).research!; assert.deepEqual(after.trials[0], before.trials[0]);
     await state.restart();
     assert.deepEqual((await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json().previousStops, detail.previousStops);
@@ -141,4 +144,3 @@ test('legacy model-error continuation receipt replays without clearing a later s
     assert.equal(state.faux.state.callCount, 2);
   } finally { await state.cleanup(); }
 });
-

@@ -65,6 +65,7 @@ export async function researchDetail(host: ResearchHost, id: number, admitted?: 
     createdAt: null, updatedAt: null, input, dataset,
     datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
     submission: submissionView(submission), originalSubmission: submissionView(view.originalSubmission),
+    ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
       status: String(trial.status), metrics: metrics(trial.result), error: publicExecutionError(trial.error, 'scientific_execution_failed'),
