@@ -103,9 +103,9 @@ export async function createService(options: ServiceOptions) {
   });
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
-  app.post(`${API}/portfolios`, async (request, reply) => reply.code(202).send(await work.startPortfolio(request.body)));
+  app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
   app.get(`${API}/observations`, async () => Object.values((await work.snapshot())!.observations).map((item) => observationView(observation(item))));
-  app.post(`${API}/observations`, async (request, reply) => reply.code(202).send(await work.startObservation(request.body)));
+  app.post(`${API}/observations`, async (request, reply) => { const view = await work.startObservation(request.body); return reply.code(202).send(observationView(await work.getObservation(view.id))); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/refresh`, async (request) => { await work.refreshObservation(request.params.id); return observationView(await work.getObservation(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/stop`, async (request) => {
     const id = request.params.id;

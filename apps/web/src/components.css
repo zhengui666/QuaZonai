@@ -43,6 +43,8 @@ details[open] > summary { margin-bottom: 14px; }
 .prerequisite, .pending-command { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin-bottom: 22px; font-size: 12px; }
 .prerequisite a { display: inline-flex; gap: 4px; align-items: center; color: var(--accent); text-decoration: none; }
 .pending-command code { overflow-wrap: anywhere; }
+.previous-command { margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.previous-command .facts { margin-block: 14px; }
 .pending-command { flex-direction: column; align-items: stretch; justify-content: flex-start; color: var(--warning); background: var(--warning-fill); border-color: transparent; }
 .authoring-page .ant-input-affix-wrapper, .authoring-page .ant-select { width: 100%; }
 .authoring-page .ant-input-affix-wrapper input.ant-input { line-height: 26px; }
@@ -139,7 +141,7 @@ details[open] > summary { margin-bottom: 14px; }
   .extension-control { max-width: 95px; }
   .ant-input-password-icon[role='button'], .ant-input-clear-icon { width: 44px; height: 44px; }
   .auth-document .ant-input-affix-wrapper, .auth-document .ant-btn-primary { min-height: 44px; }
-  .metrics-disclosure > summary, .provenance-disclosure > summary, .curve-details > summary { min-height: 44px; display: flex; align-items: center; }
+  .metrics-disclosure > summary, .provenance-disclosure > summary, .curve-details > summary, .previous-command > summary { min-height: 44px; display: flex; align-items: center; }
   .study-document > .error-notice { margin-inline: 20px; }
   .section-heading { flex-wrap: wrap; }
   .metric-grid.long-counts { grid-template-columns: 1fr; }

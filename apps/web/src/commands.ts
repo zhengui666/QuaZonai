@@ -21,13 +21,16 @@ function read(kind: Kind): Envelope | undefined {
   } catch { /* Session storage and the legacy store can fail independently. */ }
   try { if (kind === 'research') { const legacy = readResearchIntent(); if (legacy) { const command = { raw: legacy.raw, persisted: true }; memory.set(kind, command); return command; } } } catch { /* The original in-memory command is still preferred. */ }
 }
-function clear(kind: Kind) {
+function clear(kind: Kind, raw: string) {
+  if (memory.get(kind)?.raw !== raw) return false;
   memory.delete(kind); updateExitNotice();
   try { sessionStorage.removeItem(key(kind)); } catch { /* The service retains the acknowledged identity. */ }
   try { if (kind === 'research') clearResearchIntent(); } catch { /* One failed store must not prevent clearing the other. */ }
+  return true;
 }
 export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
   const [pending, setPending] = useState<Envelope | undefined>(() => read(kind));
+  const previousKey = `command.previous.${kind}`; const [previousRaw, setPreviousRaw] = useState(() => readDraft<string>(previousKey));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
   const original = useRef(pending); const inFlight = useRef(false);
@@ -44,13 +47,20 @@ export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
     inFlight.current = true; setBusy(true); setError(undefined);
     try {
       const result = await api<T>(`/${kind}`, { method: 'POST', rawBody: command.raw });
-      clear(kind); original.current = undefined; setPending(undefined); accepted(result);
+      if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); accepted(result); }
     } catch (failure) {
       setError(failure);
-      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && failure.status !== 401 && failure.code !== 'request_id_conflict') { clear(kind); original.current = undefined; setPending(undefined); }
+      if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && failure.status !== 401 && failure.code !== 'request_id_conflict') { if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); } }
     } finally { inFlight.current = false; setBusy(false); }
   }
-  return { pending, busy, error, submit, values: pending ? JSON.parse(pending.raw) as Record<string, unknown> : undefined };
+  const canAbandon = !!pending && !busy && error instanceof ApiError && error.code === 'request_id_conflict';
+  function abandon() {
+    const command = original.current;
+    if (!canAbandon || !command || memory.get(kind)?.raw !== command.raw) return;
+    saveDraft(previousKey, command.raw); setPreviousRaw(command.raw);
+    if (clear(kind, command.raw)) { original.current = undefined; setPending(undefined); setError(undefined); }
+  }
+  return { pending, busy, error, submit, abandon, canAbandon, previousRaw, previousPersisted: draftIsPersisted(previousKey), values: pending ? JSON.parse(pending.raw) as Record<string, unknown> : undefined };
 }
 export function readDraft<T>(key: string): T | undefined { if (drafts.has(key)) return drafts.get(key)!.value as T; try { const raw = sessionStorage.getItem(`quazonai.draft.${key}`); if (!raw) return; const value = JSON.parse(raw) as T; drafts.set(key, { value, persisted: true }); return value; } catch { return; } }
 export function draftIsPersisted(key: string) { return drafts.get(key)?.persisted ?? true; }

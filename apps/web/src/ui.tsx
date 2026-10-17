@@ -1,19 +1,19 @@
 import { App, Button, Skeleton, Table } from 'antd';
 import { CheckCircleIcon, ClockIcon, CopyIcon, FlaskIcon, InfoIcon, WarningCircleIcon } from '@phosphor-icons/react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Metric } from '../../../packages/contracts/src/index.ts';
 import { ApiError, shortError } from './api';
 
 const labels: Record<string, string> = {
   RUNNING: '研究中', IDLE: '当前无执行', STARTED: '计算中', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', REJECTED: '已拒绝',
-  QUEUED: '待执行', OBSERVING: '已获取快照', UNCERTAIN: '待核对', PENDING: '待接收', ACKNOWLEDGED: '已接收', EXPIRED: '已过期', REVOKED: '已撤销', NOT_OFFERED: '未交付',
+  QUEUED: '待执行', OBSERVING: '观测中', UNCERTAIN: '待核对', PENDING: '待接收', ACKNOWLEDGED: '已接收', EXPIRED: '已过期', REVOKED: '已撤销', NOT_OFFERED: '未交付',
   loaded: '已加载', disabled: '已停用', pending_restart: '待重启', error: '加载失败', running: '执行中', pending: '待执行', waiting: '等待中', completing: '收尾中',
   terminal: '已结束', completed: '已完成', failed: '失败', aborted: '已中止', faulted: '执行异常', done: '已回答', queued: '待处理', placed: '已送入执行', unanswered: '未完成回答', cancelled: '已取消',
 };
 export function stateLabel(value: string) { return labels[value] ?? value; }
 export function Status({ value, plain = false, label }: { value: string; plain?: boolean; label?: string }) {
   const tone = /FAILED|REJECTED|failed|faulted|^error$/.test(value) ? 'error' : /UNCERTAIN|pending_restart|unanswered/.test(value) ? 'warning' : /RUNNING|STARTED|running/.test(value) ? 'active' : 'neutral';
-  const Icon = tone === 'error' || tone === 'warning' ? WarningCircleIcon : /RUNNING|STARTED|QUEUED|PENDING|running|pending|queued|waiting|completing/.test(value) ? ClockIcon : /COMPUTED|ACKNOWLEDGED|OBSERVING|^loaded$|^completed$|^done$|^configured$|^ready$/.test(value) ? CheckCircleIcon : InfoIcon;
+  const Icon = tone === 'error' || tone === 'warning' ? WarningCircleIcon : /RUNNING|STARTED|QUEUED|PENDING|running|pending|queued|waiting|completing/.test(value) ? ClockIcon : /COMPUTED|ACKNOWLEDGED|^loaded$|^completed$|^done$|^configured$|^ready$/.test(value) ? CheckCircleIcon : InfoIcon;
   return <span className={`status ${tone} ${plain ? 'plain' : ''}`}><Icon size={14} />{label ?? stateLabel(value)}</span>;
 }
 export function Loading({ rows = 3 }: { rows?: number }) { return <div className="loading-state" role="status" aria-label="加载中"><Skeleton active={false} title paragraph={{ rows }} /></div>; }
@@ -59,13 +59,18 @@ export function EvidenceMetrics({ metrics }: { metrics: Metric[] }) {
 }
 export function Copy({ value, label = '复制身份' }: { value: string; label?: string }) {
   const [status, setStatus] = useState('');
-  return <span className="copy-control"><Button type="text" aria-label={label} icon={<CopyIcon size={14} />} onClick={() => { void navigator.clipboard.writeText(value).then(() => setStatus('已复制'), () => setStatus('未能复制')); }} /><span role="status">{status}</span></span>;
+  return <span className="copy-control"><Button disabled={false} type="text" aria-label={label} icon={<CopyIcon size={14} />} onClick={() => { void navigator.clipboard.writeText(value).then(() => setStatus('已复制'), () => setStatus('未能复制')); }} /><span role="status">{status}</span></span>;
 }
 export function DraftNotice({ saved }: { saved: boolean }) { return saved ? null : <p className="draft-notice" role="status">草稿未保存，请勿刷新页面</p>; }
-export function PendingCommand({ command }: { command: { pending?: { persisted: boolean }; busy: boolean; values?: Record<string, unknown> } }) {
-  if (!command.pending || command.busy) return null;
-  const identity = command.values?.requestId;
-  return <div className="pending-command" role="status"><div>提交结果待核对{!command.pending.persisted && <span> / 请保留此页面</span>}</div>{typeof identity === 'string' && <details><summary>原始提交身份</summary><code>{identity}</code><Copy value={identity} label="复制原始提交身份" /></details>}</div>;
+export function PendingCommand({ command }: { command: { pending?: { persisted: boolean }; busy: boolean; values?: Record<string, unknown>; canAbandon?: boolean; abandon?: () => void; previousRaw?: string; previousPersisted?: boolean } }) {
+  const confirm = useConfirm(); const identity = command.values?.requestId;
+  return <>{command.pending && !command.busy && <div className="pending-command" role="status"><div>提交结果待核对{!command.pending.persisted && <span> / 请保留此页面</span>}</div>{typeof identity === 'string' && <details><summary>原始提交身份</summary><code>{identity}</code><Copy value={identity} label="复制原始提交身份" /></details>}{command.canAbandon && <Button disabled={false} onClick={() => confirm('保留原提交并重新编辑？', '不取消原提交；下一次提交使用新身份。', () => command.abandon?.())}>重新编辑</Button>}</div>}{command.previousRaw && <PreviousCommand raw={command.previousRaw} persisted={command.previousPersisted !== false} />}</>;
+}
+function PreviousCommand({ raw, persisted }: { raw: string; persisted: boolean }) {
+  const [download, setDownload] = useState(''); const record = JSON.parse(raw) as Record<string, unknown>;
+  useEffect(() => { const url = URL.createObjectURL(new Blob([raw], { type: 'application/json;charset=utf-8' })); setDownload(url); return () => URL.revokeObjectURL(url); }, [raw]);
+  const subject = [record.goal, record.name, record.portfolioId].find(value => typeof value === 'string');
+  return <details className="previous-command"><summary>上一份原提交</summary><Facts items={[['请求身份', typeof record.requestId === 'string' ? <><code>{record.requestId}</code><Copy value={record.requestId} label="复制上一份请求身份" /></> : '未记录'], ['原提交内容', typeof subject === 'string' ? subject : '未记录']]} />{!persisted && <p className="draft-notice">原提交未保存，请先下载</p>}<Button href={download} download="quazonai-original-command.json" disabled={!download}>下载原提交</Button></details>;
 }
 export function useConfirm() {
   const { modal } = App.useApp();

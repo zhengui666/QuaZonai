@@ -11,7 +11,7 @@ import type { ModelLoginRequest } from './model-login';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, Status, useConfirm } from './ui';
 type Fields = { model?: string; thinking: ThinkingLevel | 'default' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
-function fields(value: SettingsView): Fields { return { ...(value.defaultModel ? { model: modelKey(value.defaultModel) } : {}), thinking: value.thinkingLevel ?? 'default' }; }
+function fields(value: SettingsView): Fields { return { model: value.defaultModel ? modelKey(value.defaultModel) : undefined, thinking: value.thinkingLevel ?? 'default' }; }
 function payload(value: Fields): SettingsView { return { defaultModel: value.model ? JSON.parse(value.model) as ModelRef : null, thinkingLevel: value.model && value.thinking !== 'default' ? value.thinking : null }; }
 export default function Settings({ connect }: { connect: (value: ModelLoginRequest) => void }) {
   const cache = useQueryClient(); const catalog = useResource<ModelCatalog>('/models'); const preferences = useResource<SettingsView>('/settings'); const usage = useResource<UsageView>('/usage', { poll: 10000 });
@@ -25,7 +25,7 @@ export default function Settings({ connect }: { connect: (value: ModelLoginReque
   useEffect(() => {
     const next = preferences.data; if (!next) return;
     if (!initialized.current) { initialized.current = true; form.setFieldsValue(readDraft<Fields>('settings') ?? fields(next)); }
-    else if (baseline.current && JSON.stringify(payload(form.getFieldsValue())) === JSON.stringify(baseline.current)) form.setFieldsValue(fields(next));
+    else if (baseline.current && JSON.stringify(payload(form.getFieldsValue())) === JSON.stringify(baseline.current)) { form.setFieldsValue(fields(next)); removeDraft('settings'); setDraftSaved(true); }
     baseline.current = next; setSaved(next);
   }, [preferences.data]);
   async function save() {

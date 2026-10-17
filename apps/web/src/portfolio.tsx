@@ -45,7 +45,11 @@ function PortfolioBuilder({ route }: { route: Route }) {
     if (initialized.current || !datasets.data || studies.isPending || hasInitial && initialStudy.isPending) return;
     initialized.current = true;
     if (command.values) { const pairs = command.values.weights as { researchId: number; weight: string }[] | undefined; form.setFieldsValue({ ...command.values, weights: Object.fromEntries(pairs?.map(pair => [String(pair.researchId), pair.weight]) ?? []) } as PortfolioFields); }
-    else form.setFieldsValue(draft ?? { researchIds: hasInitial ? [initialId] : [], weights: hasInitial ? { [initialId]: '1' } : {}, ...(initialStudy.data?.datasetId ? { datasetId: initialStudy.data.datasetId } : {}) });
+    else {
+      const researchIds = [...(draft?.researchIds ?? [])]; const allocations = { ...draft?.weights };
+      if (hasInitial && !researchIds.includes(initialId)) { researchIds.push(initialId); allocations[String(initialId)] = researchIds.length === 1 ? '1' : ''; }
+      form.setFieldsValue({ ...(!draft?.datasetId && initialStudy.data?.datasetId ? { datasetId: initialStudy.data.datasetId } : {}), ...draft, researchIds, weights: allocations });
+    }
   }, [datasets.data, studies.isPending, initialStudy.isPending]);
   const values = (ids ?? []).map(id => decimalUnits(weights?.[String(id)] ?? ''));
   const sum = values.length && values.every((value): value is bigint => value !== undefined && value > 0n) ? values.reduce((a, b) => a + b, 0n) : undefined;

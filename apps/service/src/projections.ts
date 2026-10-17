@@ -4,6 +4,12 @@ import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioV
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
 import type { ObservationFact, PortfolioFact, ResearchAdmissions } from './facts.ts';
 
+// Opaque public-code convention, as on the HTTP error boundary; raw diagnostics stay in Durable.
+function publicExecutionError(value: unknown, fallback: string): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  return /^[a-z][a-z0-9_]{0,127}$/.test(value) ? value : fallback;
+}
+
 /** Retain native scalar values; missing metrics are not converted into zero. */
 export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   if (!value || typeof value !== 'object') return [];
@@ -53,29 +59,29 @@ export async function researchDetail(host: ResearchHost, id: number, admitted?: 
   const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
   const submission = view.submission ? await host.submission(view.submission.id) : null;
   return {
-    id, title: input.goal, status: final ? String(final.status) : records.items.some((task) => task.state.status !== 'terminal') ? 'RUNNING' : 'IDLE',
+    id, title: input.goal, status: final ? String(final.status) : records.items.some((task) => task.state.status !== 'terminal') || ['queued', 'placed'].includes(submission?.status ?? '') ? 'RUNNING' : 'IDLE',
     trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
     createdAt: null, updatedAt: null, input, dataset,
     datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
     submission: submission ? { id: submission.id, status: submission.status, ...(view.submission?.requestId ? { requestId: view.submission.requestId } : {}), ...(submission.status === 'unanswered' ? { reason: submission.reason } : {}) } : null,
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
-      status: String(trial.status), metrics: metrics(trial.result), error: typeof trial.error === 'string' ? trial.error : null,
+      status: String(trial.status), metrics: metrics(trial.result), error: publicExecutionError(trial.error, 'scientific_execution_failed'),
     })), tasks,
     final: final ? { status: String(final.status), trialId: typeof final.trialId === 'number' ? final.trialId : null,
       reason: typeof final.reason === 'string' ? final.reason : null,
-      error: typeof final.error === 'string' ? final.error : null, metrics: metrics(final.result) } : null,
+      error: publicExecutionError(final.error, 'scientific_execution_failed'), metrics: metrics(final.result) } : null,
   };
 }
 
 export function portfolioView(fact: PortfolioFact): PortfolioView {
-  return { ...fact.view, ...(fact.weights ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
+  return { ...fact.view, error: publicExecutionError(fact.view.error, 'backtest_failed'), ...(fact.weights ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
     targetExpiresAt: typeof fact.target?.valid_until_ns === 'string' ? nsTime(fact.target.valid_until_ns) : null,
     ...(typeof fact.target?.valid_until_ns === 'string' ? { targetExpired: BigInt(counter(fact.target.valid_until_ns, 'expiry')) <= BigInt(nowNs()) } : {}) };
 }
 export function observationView(fact: ObservationFact): ObservationView {
   const snapshot = fact.snapshot;
-  return { ...fact.view, connectionId: fact.connection.id, connectionName: fact.connection.name,
+  return { ...fact.view, error: publicExecutionError(fact.view.error, 'observation_operation_failed'), connectionId: fact.connection.id, connectionName: fact.connection.name,
     provenance: snapshot ? { clientId: String(snapshot.clientId), accountId: String(snapshot.accountId),
       sequence: counter(snapshot.sequence, 'account_sequence'), nativeClockNs: counter(snapshot.nativeClockNs, 'account_clock') } : null };
 }

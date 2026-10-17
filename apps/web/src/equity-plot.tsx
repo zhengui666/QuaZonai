@@ -7,6 +7,7 @@ import { SVGRenderer } from 'echarts/renderers';
 import { Table } from 'antd';
 import type { EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { useAppearance } from './App';
+import { equityCoordinates } from './equity-values';
 import { Empty, Exact, Timestamp } from './ui';
 echarts.use([LineChart, GridComponent, TooltipComponent, AriaComponent, SVGRenderer]);
 export default function EquityPlot({ points, currency }: { points: EquityPoint[]; currency: string }) {
@@ -22,10 +23,10 @@ export default function EquityPlot({ points, currency }: { points: EquityPoint[]
     return () => { observer.disconnect(); instance.dispose(); chart.current = undefined; };
   }, [drawable]);
   useEffect(() => {
-    const values = points.map(point => point.value === null || !Number.isFinite(Number(point.value)) ? null : Number(point.value));
-    chart.current?.setOption({ animation: false, textStyle: { fontFamily: '"Geist Variable", system-ui, sans-serif' }, aria: { enabled: true, label: { description } }, grid: { top: 20, right: 24, bottom: 35, left: 70 },
+    const values = equityCoordinates(points);
+    chart.current?.setOption({ animation: false, useUTC: true, textStyle: { fontFamily: '"Geist Variable", system-ui, sans-serif' }, aria: { enabled: true, label: { description } }, grid: { top: 20, right: 24, bottom: 35, left: 70 },
       tooltip: { trigger: 'axis', renderMode: 'richText', formatter: (params: unknown) => { const item = (Array.isArray(params) ? params[0] : params) as { dataIndex: number } | undefined; const point = item && points[item.dataIndex]; return point ? `${point.at}\n${point.value ?? '未提供'} ${currency}` : ''; } },
-      xAxis: { type: 'category', boundaryGap: false, data: points.map(point => point.at), axisLine: { lineStyle: { color: dark ? '#38414A' : '#E0E5EA' } }, axisTick: { show: false }, axisLabel: { color: dark ? '#A7B1BC' : '#626F7B', hideOverlap: true, formatter: (value: string) => intraday ? value.slice(11, 19) : value.slice(0, 10) } },
+      xAxis: { type: 'time', boundaryGap: false, minInterval: intraday ? 0 : 86_400_000, axisLine: { lineStyle: { color: dark ? '#38414A' : '#E0E5EA' } }, axisTick: { show: false }, axisLabel: { color: dark ? '#A7B1BC' : '#626F7B', hideOverlap: true, formatter: (value: number) => { const at = new Date(value).toISOString(); return intraday ? at.slice(11, 19) : at.slice(0, 10); } } },
       yAxis: { type: 'value', scale: true, axisLabel: { color: dark ? '#A7B1BC' : '#626F7B' }, splitLine: { lineStyle: { color: dark ? '#38414A' : '#E0E5EA' } } },
       series: [{ type: 'line', data: values, connectNulls: false, smooth: false, showSymbol: true, symbolSize: 5, lineStyle: { width: 2, color: dark ? '#94C7BC' : '#2A6B62' }, itemStyle: { color: dark ? '#94C7BC' : '#2A6B62' } }],
     });
