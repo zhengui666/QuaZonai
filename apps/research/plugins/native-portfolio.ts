@@ -91,6 +91,7 @@ export async function evaluatePortfolio(input: PortfolioEvaluationInput, context
       partitions_component: { index: 0, meaning: 'COMPONENT_FACTOR_DIAGNOSTICS_NOT_ACCOUNT_METRICS' },
       components: targets.components.map((component) => ({ index: component.index!, weight: object(component.member, 'member').weight!, summary: component.summary! })),
       portfolio: { partition: input.partition, native_version: simulation.native_version ?? null,
+        ...(input.policy.evidenceMode ? { evidenceMode: input.policy.evidenceMode } : {}),
         statistics: simulation.statistics ?? [], summary: simulation.summary ?? {},
         iterations: simulation.iterations ?? null, events: simulation.events ?? null, orders: simulation.orders ?? null,
         positions: simulation.positions ?? null, consumed_target_points: simulation.consumed_target_points ?? null,
