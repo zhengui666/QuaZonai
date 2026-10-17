@@ -9,7 +9,7 @@
 
 **Endpoint:** Reviewed, tested delivery through [PR #208](https://github.com/zhengui666/QuaZonai/pull/208) into remote `dev`. Production deployment, paid inference and real-account operations are outside this authorization. The PR owns the exact checked/reviewed Head and actual merge state.
 
-**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, initially based on `2d9f12fb`; integrated subsequent remote `dev` changes through `fd6f9f9a`. Original-workspace unrelated changes remain untouched. No `.opensdlc/config.json` exists: workflow prose uses English; UI copy uses Chinese.
+**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, initially based on `2d9f12fb`; integrated subsequent remote `dev` changes through `6fefd0b8` (including the separately reviewed research-feedback PR #209). Original-workspace unrelated changes remain untouched. No `.opensdlc/config.json` exists: workflow prose uses English; UI copy uses Chinese.
 
 <a id="intent"></a>
 ## Intent
