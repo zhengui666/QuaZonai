@@ -4,13 +4,14 @@ import type { JsonValue } from '@earendil-works/chord';
 import type { ObservationView, PortfolioStart, PortfolioView, SettingsView, ObservationStart } from '../../../packages/contracts/src/index.ts';
 import type { ConnectionConfig } from './config.ts';
 
+export type ResearchAdmissions = Record<string, { original: JsonValue; input: JsonObject; dataset?: JsonObject }>;
 export const Application = defineDoc<{
   passwordHash: string | null;
   modelDeviceId: string | null;
   sessions: Record<string, { digest: string; expires: number; kind: string; name: string }>;
   settings: JsonObject | null;
   extensionEnabled: Record<string, boolean>;
-  researchRequests: Record<string, { original: JsonValue; input: JsonObject }>;
+  researchRequests: ResearchAdmissions;
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
 }>({

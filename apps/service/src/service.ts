@@ -15,7 +15,7 @@ import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
-import { researchDetail } from './projections.ts';
+import { observationView, portfolioView, researchDetail } from './projections.ts';
 import { workbench } from './workbench.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -83,9 +83,9 @@ export async function createService(options: ServiceOptions) {
   app.get(`${API}/datasets`, async () => config.datasets.map(({ data: _data, policy: _policy, strategy: _strategy, ...view }) => view));
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
-    const page = await research.list(cursor); const items: ResearchSummary[] = [];
+    const page = await research.list(cursor); const items: ResearchSummary[] = []; const admitted = (await work.snapshot())?.researchRequests;
     for (const row of page.items) {
-      const detail = await researchDetail(research, row.id);
+      const detail = await researchDetail(research, row.id, admitted);
       const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, ...summary } = detail; items.push(summary);
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
@@ -101,12 +101,12 @@ export async function createService(options: ServiceOptions) {
       outputTokens: sources.length ? sources.reduce((sum, value) => sum + value.output, 0) : null,
       cost: null, activeTasks: (await research.tasks()).tasks.length };
   });
-  app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolio(item).view));
-  app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => (await work.getPortfolio(request.params.id)).view);
-  app.post(`${API}/portfolios`, async (request, reply) => reply.code(202).send(await work.startPortfolio(request.body)));
-  app.get(`${API}/observations`, async () => Object.values((await work.snapshot())!.observations).map((item) => observation(item).view));
-  app.post(`${API}/observations`, async (request, reply) => reply.code(202).send(await work.startObservation(request.body)));
-  app.post<{ Params: { id: string } }>(`${API}/observations/:id/refresh`, (request) => work.refreshObservation(request.params.id));
+  app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
+  app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
+  app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
+  app.get(`${API}/observations`, async () => Object.values((await work.snapshot())!.observations).map((item) => observationView(observation(item))));
+  app.post(`${API}/observations`, async (request, reply) => { const view = await work.startObservation(request.body); return reply.code(202).send(observationView(await work.getObservation(view.id))); });
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/refresh`, async (request) => { await work.refreshObservation(request.params.id); return observationView(await work.getObservation(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/stop`, async (request) => {
     const id = request.params.id;
     const taskId = await research.harness.commit(async (tx) => {
@@ -115,7 +115,7 @@ export async function createService(options: ServiceOptions) {
     }, context);
     await research.harness.abortTask(taskId as TaskId, context);
     await research.harness.waitForTask(taskId as TaskId, context);
-    return (await work.getObservation(id)).view;
+    return observationView(await work.getObservation(id));
   });
   registerModels(app, research, work.getSettings);
   app.get(`${API}/workspace`, async (): Promise<WorkspaceView> => {
@@ -123,7 +123,7 @@ export async function createService(options: ServiceOptions) {
     return { name: config.name, connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
       connected: views.some((fact) => fact.connection.id === connection.id && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
   });
-  app.get(`${API}/extensions`, async () => [...extensions.values()]);
+  app.get(`${API}/extensions`, async () => [...extensions.values()].map(item => ({ ...item, required: requiredExtensions.has(item.name) })));
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {
     const found = extensions.get(request.params.name); if (!found) throw new Problem('extension_not_found', 404);
     const enabled = object(request.body).enabled; if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
@@ -137,7 +137,7 @@ export async function createService(options: ServiceOptions) {
       found.enabled = enabled; const loaded = !!research.registry.snapshot().extension(found.name);
       found.state = loaded === enabled ? enabled ? 'loaded' : 'disabled' : 'pending_restart';
     }, context);
-    return found;
+    return { ...found, required: requiredExtensions.has(found.name) };
   });
   if (archive) for (const kind of ['projects', 'runs'] as const) app.get(`${API}/archive/${kind}`, async () => {
     const client = await archive.connect().catch(() => { throw new Problem('archive_unavailable', 503); });

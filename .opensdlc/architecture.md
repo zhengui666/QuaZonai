@@ -16,7 +16,7 @@ QuaZonai 是单人、本机、可扩展的无人值守研究工作台。核心�
 | [Service](../apps/service) | Fastify HTTP、所有者鉴权、配置、业务事实、科学进程适配、目标回执与账户观测 |
 | [Research](../apps/research) | 官方 Pi Durable 宿主与 Extension；研究事实和试验账本 |
 | [CLI](../apps/cli) | 同一 HTTP API 的客户端，不直接打开服务数据库 |
-| [Web](../apps/web) | React、官方 Ant Design、ECharts 与五页交互 |
+| [Web](../apps/web) | React、官方 Ant Design、ECharts 与六个研究工作区 |
 | [Native job](../apps/job) | 原生计算、数据目录、科学回放、Nautilus 模拟与账户快照 |
 | [Rust contracts](../crates/contracts/src)、[domain](../crates/domain/src) | 科学内核所需的 Wire／Arrow 类型、数值、PIT、分区、费用与科学结果校验 |
 | [Migrations](../migrations) | 保留已应用的 PostgreSQL 与原 Runtime SQLite 迁移；不重置历史数据库 |
@@ -79,7 +79,9 @@ Polymarket 等来源复用官方 Nautilus 适配器及原目录。历史费率�
 <a id="container-release"></a>
 ## 界面与交付
 
-浏览器、CLI 与 Skill 操作同一服务。暖色界面保留完整的加载、空白、错误、提交、重放和状态反馈；移动端不丢操作。页面不以 202、缓存或未知终态显示成功。
+浏览器、CLI 与 Skill 操作同一服务。界面以研究为主，数据、组合回测、目标与观测、模型设置和扩展为独立入口；使用中性纸面／深色石墨主题、顶部导航和单一工作文档。原始输入、失败试验、独立证据、精确数值与回执／账户事实分别呈现，移动端不丢操作。页面不以 202、缓存或未知终态显示成功。
+
+非敏感草稿和待核对命令保留在当前浏览器标签页；未知提交重放原始请求，不生成新身份；迟到响应不能清除较新的命令。已确认身份冲突须显式结束核对，保留原提交供下载，再由用户发起新提交。模型密钥和密码不进入浏览器草稿。设置采用显式保存，账户刷新保持手动；本地停止不代表下游撤回。执行错误只投影公开错误码，原诊断保留在 Durable；观测状态不替代快照事实，权益图按实际时间间隔绘制。组件与恢复行为见[研究工作台设计](tasks/research-experience/spec.md)，浏览器检查包含临时真实 HTTP 服务，科学证据仍由原生核心检查负责。
 
 应用镜像携带官方 Node、TypeScript 服务／CLI、Web 和匹配科学入口。官方 durable 调度在单一应用所有者中运行，不再提取 Rust Worker。容器重启恢复原数据目录；备份在写入者停止后进行。升级保留安装身份、配置、凭据、数据库、产物、journal 和备份，无法接续的旧活动必须明确拒绝升级而非清零。
 

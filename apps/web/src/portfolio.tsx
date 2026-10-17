@@ -1,59 +1,75 @@
-import { App, Button, Form, Input, InputNumber, Modal, Select, Table } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Button, Form, Input, Select, Table } from 'antd';
+import { ArrowLeftIcon, ArrowRightIcon, ArrowUpRightIcon, CaretDownIcon, ChartLineUpIcon, FlaskIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useState } from 'react';
-import type { DatasetView, PortfolioStart, PortfolioView, TargetWeight } from '../../../packages/contracts/src/index.ts';
-import { api } from './api';
-import { display, ErrorNotice, MetricGrid, MoreResearch, NoData, number, PageHeading, QueryPanel, RefreshButton, Status, Surface, time, useResearch, useResource } from './ui';
+import type { DatasetView, PortfolioView, ResearchDetail } from '../../../packages/contracts/src/index.ts';
+import { decimalUnits, draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
+import { useResource, useStudies } from './data-hooks';
+import { currentRoute, href, navigate, type Route } from './router';
+import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, Metrics, PendingCommand, Status, Timestamp } from './ui';
 const EquityPlot = lazy(() => import('./equity-plot'));
-
-export function Portfolios() {
-  const listing = useResource<PortfolioView[]>('/portfolios', 8000); const [selected, setSelected] = useState<string>(); const [creating, setCreating] = useState(false);
-  const id = selected ?? listing.data?.[0]?.id;
-  return <div className="page"><PageHeading title="策略组合" count={listing.data?.length} action={<><RefreshButton loading={listing.isFetching} label="刷新组合" onClick={() => { void listing.refetch(); }} /><Button type="primary" icon={<PlusOutlined aria-hidden />} onClick={() => setCreating(true)}>新建组合</Button></>} />
-    <QueryPanel query={listing}>{listing.data?.length ? <div className="portfolio-layout"><section className="surface selection-list" aria-label="组合列表">{listing.data.map(item => <button key={item.id} aria-pressed={id === item.id} onClick={() => setSelected(item.id)}>
-      <strong>{display(item.name)}</strong><span className="selection-meta"><Status value={item.status} /><span>{item.researchIds.length} 项研究</span></span>
-    </button>)}</section>{id && <PortfolioRecord key={id} id={id} />}</div> : <Surface><NoData text="暂无策略组合" /></Surface>}</QueryPanel>
-    {creating && <PortfolioForm close={() => setCreating(false)} started={value => { setSelected(value.id); setCreating(false); }} />}
+export default function Portfolios({ route }: { route: Route }) { return route.creating ? <PortfolioBuilder route={route} /> : route.id ? <PortfolioDetail id={route.id} /> : <PortfolioList />; }
+function PortfolioList() {
+  const query = useResource<PortfolioView[]>('/portfolios', { poll: 5000 });
+  return <div className="index-page"><header className="page-heading"><h1>组合回测</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/portfolios/new')}>创建组合</Button></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !query.data?.length ? !query.error && <Empty title="尚无策略组合" action={<a className="text-link" href={href('/research')}>查看研究 <ArrowUpRightIcon size={14} /></a>} /> : <Table<PortfolioView> rowKey="id" dataSource={query.data} pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 700 }} columns={[
+    { title: '组合名称', render: (_value, row) => <a className="record-link" href={href(`/portfolios/${encodeURIComponent(row.id)}`)}>{row.name}</a> }, { title: '状态', render: (_value, row) => <Status plain value={row.status} /> },
+    { title: '数据集', dataIndex: 'datasetId' }, { title: '研究数', align: 'right', render: (_value, row) => row.researchIds.length }, { title: '本金', align: 'right', render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> }, { title: '创建时间', render: (_value, row) => <Timestamp value={row.createdAt} /> },
+  ]} />}</div>;
+}
+function PortfolioDetail({ id }: { id: string }) {
+  const query = useResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, { poll: 3000 }); const value = query.data;
+  return <div className="portfolio-result"><a className="text-link back-link" href={href('/portfolios')}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <Status value={value.status} />}</div><h1>{value?.name ?? '组合回测'}</h1></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
+    {value.error && <div className="recorded-error" role="alert"><span>回测未完成</span><details><summary>技术详情</summary><code>{value.error}</code></details></div>}
+    <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
+    <section className="result-section"><h3>研究与权重</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: '原始研究', render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>研究 #{row.researchId}</a> }, { title: '权重', align: 'right', render: (_cell, row) => <Exact value={row.weight} missing="未记录" /> }]} /></section>
+    <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} /></Suspense></section>
+    <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>
+    <section className="result-section"><div className="section-heading"><h3>目标权重</h3>{value.status === 'COMPUTED' && value.targets.length > 0 && (value.targetExpired ? <span className="quiet">目标已过期</span> : <Button onClick={() => navigate(`/observations/new?portfolio=${encodeURIComponent(value.id)}`)}>交付目标 <ArrowUpRightIcon size={14} /></Button>)}</div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: '目标权重', align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>
+  </div>}</article></div>;
+}
+type PortfolioFields = { name: string; datasetId: string; researchIds: number[]; capital: string; weights: Record<string, string> };
+function PortfolioBuilder({ route }: { route: Route }) {
+  const cache = useQueryClient(); const studies = useStudies(); const datasets = useResource<DatasetView[]>('/datasets');
+  const initialId = Number(route.params.get('research')); const hasInitial = route.params.has('research') && Number.isSafeInteger(initialId) && initialId >= 0;
+  const origin = hasInitial ? { path: `/research/${initialId}`, label: '原始研究' } : { path: '/portfolios', label: '组合回测' };
+  const initialStudy = useResource<ResearchDetail>(`/research/${initialId}`, { enabled: hasInitial });
+  const [form] = Form.useForm<PortfolioFields>(); const initialized = useRef(false); const [allocationError, setAllocationError] = useState<string>();
+  const [draft] = useState(() => readDraft<PortfolioFields>('portfolio')); const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted('portfolio'));
+  const command = useCommand<PortfolioView>('portfolios', value => { removeDraft('portfolio'); void cache.invalidateQueries({ queryKey: ['/portfolios'] }); if (currentRoute().page === 'portfolios' && currentRoute().creating) navigate(`/portfolios/${encodeURIComponent(value.id)}`); });
+  const ids = Form.useWatch('researchIds', form) as number[] | undefined;
+  const weights = Form.useWatch('weights', form) as Record<string, string> | undefined;
+  const datasetId = Form.useWatch('datasetId', form) as string | undefined;
+  const rows = new Map<number, { id: number; title: string; status: string; datasetId?: string | null }>(studies.items.map(item => [item.id, item])); if (initialStudy.data) rows.set(initialStudy.data.id, initialStudy.data);
+  for (const id of ids ?? []) if (!rows.has(id)) rows.set(id, { id, title: `研究 #${id}（未加载）`, status: 'UNKNOWN' });
+  useEffect(() => {
+    if (initialized.current || !datasets.data || studies.isPending || hasInitial && !initialStudy.data) return;
+    initialized.current = true;
+    if (command.values) { const pairs = command.values.weights as { researchId: number; weight: string }[] | undefined; form.setFieldsValue({ ...command.values, weights: Object.fromEntries(pairs?.map(pair => [String(pair.researchId), pair.weight]) ?? []) } as PortfolioFields); }
+    else {
+      const researchIds = [...(draft?.researchIds ?? [])]; const allocations = { ...draft?.weights };
+      if (hasInitial && !researchIds.includes(initialId)) { researchIds.push(initialId); allocations[String(initialId)] = researchIds.length === 1 ? '1' : ''; }
+      form.setFieldsValue({ ...(!draft?.datasetId && initialStudy.data?.datasetId ? { datasetId: initialStudy.data.datasetId } : {}), ...draft, researchIds, weights: allocations });
+    }
+  }, [datasets.data, studies.isPending, initialStudy.data, initialStudy.isPending]);
+  const values = (ids ?? []).map(id => decimalUnits(weights?.[String(id)] ?? ''));
+  const sum = values.length && values.every((value): value is bigint => value !== undefined && value > 0n) ? values.reduce((a, b) => a + b, 0n) : undefined;
+  const ready = datasets.data?.find(item => item.id === datasetId);
+  return <div className="authoring-page"><a className="text-link back-link" href={href(origin.path)}><ArrowLeftIcon size={14} />{origin.label}</a><div className="authoring-heading"><div className="authoring-symbol"><ChartLineUpIcon size={24} weight="duotone" /></div><h1>创建组合</h1></div>
+    <ErrorNotice error={datasets.error ?? studies.error ?? initialStudy.error} retry={() => { void datasets.refetch(); void studies.refetch(); if (hasInitial) void initialStudy.refetch(); }} />
+    {datasets.isPending || studies.isPending || hasInitial && initialStudy.isPending ? <Loading /> : datasets.data && (!hasInitial || initialStudy.data) && <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} disabled={!!command.pending || command.busy} onValuesChange={(_changed, value) => { setAllocationError(undefined); if (!command.pending) setDraftSaved(saveDraft('portfolio', value)); }} onFinish={value => {
+      if (sum !== 1_000_000_000_000_000_000n) { setAllocationError('权重合计须为 1'); if (value.researchIds[0] !== undefined) form.scrollToField(['weights', String(value.researchIds[0])], { focus: true }); return; }
+      void command.submit({ name: value.name, datasetId: value.datasetId, researchIds: value.researchIds, capital: value.capital, weights: value.researchIds.map(researchId => ({ researchId, weight: value.weights[String(researchId)] })) });
+    }}>
+      <PendingCommand command={command} />
+      <Form.Item label="组合名称" name="name" rules={[{ required: true, whitespace: true, message: '请输入组合名称' }]}><Input autoFocus /></Form.Item>
+      <Form.Item label="数据集" name="datasetId" rules={[{ required: true, message: '请选择数据集' }]}><Select suffixIcon={<CaretDownIcon size={14} />} options={datasets.data?.map(item => ({ value: item.id, label: `${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>
+      <div className="form-section-heading"><FlaskIcon size={16} /><h2>研究与权重</h2></div>
+      <Form.Item label="原始研究" name="researchIds" rules={[{ required: true, type: 'array', min: 1, message: '请选择有独立结果的研究' }]}><Select mode="multiple" showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} options={[...rows.values()].map(item => ({ value: item.id, label: `#${item.id} / ${item.title}`, disabled: item.status !== 'COMPUTED' }))} onChange={(selected: number[]) => { if (selected.length === 1 && !form.getFieldValue(['weights', String(selected[0])])) form.setFieldValue(['weights', String(selected[0])], '1'); setDraftSaved(saveDraft('portfolio', { ...form.getFieldsValue(), weights: form.getFieldValue('weights') })); }} /></Form.Item>
+      {studies.hasNextPage && <Button type="text" disabled={false} loading={studies.isFetchingNextPage} onClick={() => { void studies.fetchNextPage(); }}>加载更多研究</Button>}
+      {(ids ?? []).map(id => <div className="member-row" key={id}><div><span className="selected-mark">所选研究</span><h3>{rows.get(id)?.title ?? `研究 #${id}`}</h3><div className="member-origin"><code>#{id}</code><Status plain value={rows.get(id)?.status ?? 'UNKNOWN'} /><span>{rows.get(id)?.datasetId ?? '数据身份未记录'}</span></div></div><Form.Item label={`研究 ${id} 权重`} name={['weights', String(id)]} rules={[{ required: true, message: '请输入权重' }, { validator: (_rule, value: string) => !value || (decimalUnits(value) ?? 0n) > 0n ? Promise.resolve() : Promise.reject(new Error('请输入正数，最多 18 位小数')) }]}><Input inputMode="decimal" /></Form.Item></div>)}
+      {(ids?.length ?? 0) > 0 && <p className="allocation-total" role={allocationError ? 'alert' : 'status'}>合计 <code>{sum === undefined ? '未完整填写' : `${sum / 1_000_000_000_000_000_000n}.${(sum % 1_000_000_000_000_000_000n).toString().padStart(18, '0')}`.replace(/\.?0+$/, '')}</code>{allocationError && <span className="error-text">{allocationError}</span>}</p>}
+      <Form.Item label="本金" name="capital" rules={[{ required: true, message: '请输入本金' }, { validator: (_rule, value: string) => !value || (decimalUnits(value) ?? 0n) > 0n ? Promise.resolve() : Promise.reject(new Error('请输入正数，最多 18 位小数')) }]}><Input inputMode="decimal" suffix={<span className="input-unit">{ready?.currency ?? ''}</span>} /></Form.Item>
+      <ErrorNotice error={command.error} /><DraftNotice saved={draftSaved || !!command.pending} /><div className="form-actions"><Button disabled={false} onClick={() => navigate(origin.path)}>取消</Button>{command.pending ? <Button type="primary" disabled={command.busy} aria-busy={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>{command.busy ? '提交中' : '核对提交'}</Button> : <Button type="primary" htmlType="submit">运行回测 <ArrowRightIcon size={15} /></Button>}</div>
+    </Form>}
   </div>;
-}
-function PortfolioRecord({ id }: { id: string }) {
-  const detail = useResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, 5000); const datasets = useResource<DatasetView[]>('/datasets'); const value = detail.data;
-  return <QueryPanel query={detail}>{value && <div className="detail-stack">
-    <Surface><div className="detail-heading"><h2>{display(value.name)}</h2><Status value={value.status} /></div><div className="record-meta" style={{ marginTop: 16 }}>
-      <span>资本 {number(value.capital)} {display(value.currency)}</span><span>{datasets.data?.find(item => item.id === value.datasetId)?.name ?? '—'}</span><span>{value.researchIds.map(id => `#${id}`).join(' · ') || '—'}</span><span>{time(value.createdAt)}</span>
-    </div><div style={{ marginTop: 24 }}><MetricGrid metrics={value.metrics} /></div><ErrorNotice error={value.error} /></Surface>
-    <Surface><Suspense fallback={<div role="status">加载曲线</div>}><EquityPlot points={value.curve} currency={value.currency} title="共享账户回测" /></Suspense></Surface>
-    <Surface title="目标权重" extra={<RefreshButton loading={detail.isFetching} label="刷新组合详情" onClick={() => { void detail.refetch(); }} />}><Table<TargetWeight> rowKey="instrumentId" dataSource={value.targets} pagination={false} size="small" locale={{ emptyText: '暂无目标权重' }} columns={[
-      { title: '标的', dataIndex: 'instrumentId', render: display }, { title: '权重', dataIndex: 'weight', align: 'right', render: display },
-    ]} /></Surface>
-  </div>}</QueryPanel>;
-}
-type Fields = { name: string; researchIds: number[]; datasetId: string; capital: string; weights?: Record<string, string> };
-function PortfolioForm({ close, started }: { close: () => void; started: (value: PortfolioView) => void }) {
-  const research = useResearch(); const datasets = useResource<DatasetView[]>('/datasets'); const client = useQueryClient(); const { message } = App.useApp();
-  const [form] = Form.useForm<Fields>(); const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>(); const [pending, setPending] = useState<{ fields: string; body: PortfolioStart }>();
-  const selectedIds = Form.useWatch('researchIds', form) as number[] | undefined;
-  const readyDatasets = datasets.data?.filter(item => item.ready) ?? [];
-  async function submit(values: Fields) {
-    setBusy(true); setError(undefined);
-    const { weights, ...selection } = values;
-    const fields = JSON.stringify(values); const body = pending?.fields === fields ? pending.body : { requestId: crypto.randomUUID(), ...selection, name: values.name.trim(), weights: values.researchIds.map(researchId => ({ researchId, weight: weights?.[String(researchId)] ?? (values.researchIds.length === 1 ? '1' : '') })) };
-    setPending({ fields, body });
-    try { const value = await api<PortfolioView>('/portfolios', { method: 'POST', body }); client.setQueryData([`/portfolios/${encodeURIComponent(value.id)}`], value); client.setQueryData<PortfolioView[]>(['/portfolios'], previous => [...(previous?.filter(item => item.id !== value.id) ?? []), value]); await client.invalidateQueries({ queryKey: ['/portfolios'] }); void message.success('已接纳'); started(value); }
-    catch (failure) { setError(failure); }
-    finally { setBusy(false); }
-  }
-  return <Modal title="新建组合" open onCancel={close} footer={null} width={600} closable={!busy} maskClosable={!busy} keyboard={!busy} afterOpenChange={open => { if (open) form.getFieldInstance('name')?.focus(); }}>
-    <ErrorNotice error={research.error} retry={() => { void research.refetch(); }} /><ErrorNotice error={datasets.error} retry={() => { void datasets.refetch(); }} />
-    <Form form={form} layout="vertical" requiredMark={false} disabled={busy} onFinish={submit}>
-      <Form.Item name="name" label="组合名称" rules={[{ required: true, whitespace: true, message: '请输入名称' }]}><Input autoFocus /></Form.Item>
-      <Form.Item name="researchIds" label="研究" rules={[{ required: true, type: 'array', min: 1, message: '请选择研究' }]}><Select mode="multiple" showSearch optionFilterProp="label" placeholder="选择研究" loading={research.isPending} notFoundContent={research.isPending ? '加载中' : '暂无研究'} options={research.data?.items.map(item => ({ value: item.id, label: `#${item.id} · ${item.title}` }))} /></Form.Item>
-      <MoreResearch query={research} />
-      <div className="form-grid">{selectedIds?.map(id => <Form.Item key={id} name={['weights', String(id)]} label={`#${id} 权重`} initialValue={selectedIds.length === 1 ? '1' : undefined} rules={[{ required: true, message: '请输入权重' }]}><InputNumber stringMode min="0.000000000000000001" max="1" /></Form.Item>)}</div>
-      <div className="form-grid"><Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}><Select showSearch optionFilterProp="label" placeholder="选择数据集" loading={datasets.isPending} notFoundContent={datasets.isPending ? '加载中' : '暂无就绪数据集'} options={readyDatasets.map(item => ({ value: item.id, label: `${item.name} · ${item.currency}` }))} /></Form.Item>
-        <Form.Item name="capital" label="初始资本" rules={[{ required: true, message: '请输入资本' }, { validator: (_, value) => !value || Number(value) > 0 ? Promise.resolve() : Promise.reject(new Error('资本须大于 0')) }]}><InputNumber stringMode min="0.01" /></Form.Item></div>
-      <ErrorNotice error={error} /><div className="form-actions"><Button disabled={busy} onClick={close}>关闭</Button><Button type="primary" htmlType="submit" loading={busy} disabled={research.isError || datasets.isError || !research.data?.items.length || !readyDatasets.length}>开始回测</Button></div>
-    </Form>
-  </Modal>;
 }

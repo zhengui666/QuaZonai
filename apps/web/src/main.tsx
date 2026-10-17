@@ -2,7 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import 'antd/dist/reset.css';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles.css';
+import './components.css';
 
 // Retire the previous PWA worker; authenticated requests stay network-only.
 if ('serviceWorker' in navigator) {

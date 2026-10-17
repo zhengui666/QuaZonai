@@ -41,6 +41,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }
     const submission = body as unknown as ResearchStart;
     let input: ResearchInput;
+    let capturedDataset: import('../../../packages/contracts/src/index.ts').RecordedDataset | undefined;
+    const captureDataset = (configured: ServiceConfig['datasets'][number]) => {
+      const { id, name, assetClass, currency, source, start, end } = configured;
+      return { id, name, assetClass, currency, source, start, end };
+    };
     if ('input' in submission) {
       const native = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
       if (native) {
@@ -55,9 +60,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       input = structuredClone(submission.input);
       object(input, 'research_input'); text(input.goal, 'goal');
       const data = object(input.data, 'dataset');
-      if (!config.datasets.some((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data))) throw new Problem('dataset_input_unregistered');
+      const registered = config.datasets.find((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data));
+      if (!registered) throw new Problem('dataset_input_unregistered');
     } else {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
+      capturedDataset = captureDataset(configured);
       if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
       const preferences = await getSettings();
       const thinkingLevel = submission.thinkingLevel ?? (preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId ? preferences.thinkingLevel : null);
@@ -75,7 +82,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated) };
+      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) };
     }, context);
     return host.start(requestId, validated);
   }

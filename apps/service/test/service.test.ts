@@ -22,13 +22,14 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     assert.equal((await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...input, maxTrials: 2 } })).statusCode, 409);
     const detail = (await app.inject({ url: `${api}/research/${receipt.conversationId}`, headers: state.headers })).json();
     assert.equal(detail.trialRecords.length, 1); assert.equal(detail.final.metrics.find((item: { key: string }) => item.key.endsWith('pearson_ic')).value, null);
-    assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done' });
+    assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: input.requestId });
     state.faux.setResponses([fauxAssistantMessage('No scientific result claimed.')]);
     const original = { goal: 'Original full input', model: state.model, data: state.options.config.datasets[0]!.data, policy: {} };
     const full = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'full-input', input: original } });
     assert.equal(full.statusCode, 202, full.body);
     await (await state.service.research.harness.submission(full.json().submissionId, context))!.wait(context);
-    assert.deepEqual((await app.inject({ url: `${api}/research/${full.json().conversationId}`, headers: state.headers })).json().input, original);
+    const fullDetail = (await app.inject({ url: `${api}/research/${full.json().conversationId}`, headers: state.headers })).json();
+    assert.deepEqual(fullDetail.input, original); assert.equal(fullDetail.dataset, null); assert.equal(fullDetail.datasetId, null);
     const invalid = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
       payload: { requestId: 'invalid-full-input', input: { ...original, policy: { budget: 9007199254740992 } } } });
     assert.equal(invalid.statusCode, 400); assert.equal(invalid.json().error, 'invalid_json_number');
@@ -93,12 +94,18 @@ test('connected controlled-model → explicit native protocol → shared-account
     const { input, view } = await built(state); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     assert.deepEqual(view.targets, [{ instrumentId: 'TEST.SIM', weight: '0.250000000000000001' }]);
     assert.equal(view.curve[0]!.value, input.capital); assert.equal(view.metrics[0]!.value, null);
+    const displayedPortfolio = (await state.service.app.inject({ url: `${api}/portfolios/${view.id}`, headers: state.headers })).json();
+    assert.deepEqual(displayedPortfolio.weights, input.researchIds.map(researchId => ({ researchId, weight: '1' }))); assert.equal(displayedPortfolio.targetExpired, false); assert.match(displayedPortfolio.targetExpiresAt, /\.\d{9}Z$/);
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers, payload: { ...input, capital: '2000' } })).statusCode, 409);
     const command = { requestId: 'observe', portfolioId: view.id, mode: 'paper', connectionId: 'protocol-paper' };
     const start = await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: command }); assert.equal(start.statusCode, 202, start.body);
     const observed = await settledObservation(state.service, start.json().id);
     assert.equal(observed.status, 'OBSERVING', observed.error ?? ''); assert.equal(observed.receipt!.externalId, 'original-external-identity');
     assert.equal(observed.equity, '1234.123456789012345678'); assert.equal(observed.cash, null); assert.equal(observed.updatedAt, '2027-01-15T08:00:00.123456789Z');
+    const displayedObservation = (await state.service.app.inject({ url: `${api}/observations`, headers: state.headers })).json().find((item: { id: string }) => item.id === observed.id);
+    assert.equal(displayedObservation.connectionId, 'protocol-paper'); assert.equal(displayedObservation.connectionName, 'Protocol only');
+    assert.deepEqual(displayedObservation.provenance, { clientId: 'client-original', accountId: 'account-original', sequence: '9007199254740995', nativeClockNs: '1800000000123456789' });
+    assert.equal('url' in displayedObservation, false); assert.equal('tokenEnv' in displayedObservation, false);
     assert.equal(remote.saved.id, observed.receipt!.id); assert.equal(remote.saved.expiresAt, observed.receipt!.expiresAt);
     assert.deepEqual(remote.saved.target, (await state.service.work.getPortfolio(view.id)).target);
     assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/observations`, headers: state.headers, payload: command })).json().id, observed.id);
