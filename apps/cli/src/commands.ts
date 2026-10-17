@@ -16,6 +16,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
   research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
+  research diagnostics ID | research resume ID --submission-id ORIGINAL_FAILED_SUBMISSION
   portfolio build --file REQUEST.json | list | get ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   settings get | set --file SETTINGS.json
@@ -31,6 +32,7 @@ const options = {
   file: { type: 'string' as const }, goal: { type: 'string' as const }, dataset: { type: 'string' as const },
   model: { type: 'string' as const }, 'max-trials': { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
+  'submission-id': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CliError('json_object_required');
@@ -101,9 +103,15 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (action === 'list') {
       if (values.cursor) object(JSON.parse(values.cursor));
       path = `/research${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
-    } else if (['get', 'watch', 'wait', 'stop'].includes(action)) {
+    } else if (['get', 'watch', 'wait', 'stop', 'diagnostics', 'resume'].includes(action)) {
       path = `/research/${researchId(id)}`;
       if (action === 'stop') { method = 'POST'; path += '/stop'; }
+      if (action === 'diagnostics') path += '/diagnostics';
+      if (action === 'resume') {
+        const submissionId = researchId(values['submission-id']);
+        if (submissionId < 1) throw new CliError('original_failed_submission_id_required');
+        method = 'POST'; path += '/resume'; body = JSON.stringify({ submissionId });
+      }
     } else throw new CliError('unknown_research_command');
   } else if (group === 'portfolio' || group === 'backtest') {
     if (action === 'build') {

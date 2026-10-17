@@ -10,6 +10,8 @@ quazonai datasets
 quazonai research start --file original-request.json
 quazonai research get CONVERSATION_ID
 quazonai research wait CONVERSATION_ID --timeout 30
+quazonai research diagnostics CONVERSATION_ID
+quazonai research resume CONVERSATION_ID --submission-id ORIGINAL_FAILED_SUBMISSION
 quazonai portfolio build --file original-portfolio.json
 quazonai observation start --file original-observation.json
 ```
@@ -23,6 +25,8 @@ HTTPS verifies certificates, with an optional explicit private CA. Explicit HTTP
 All starts require an **explicit original requestId**. File requests are sent with original bytes, preserving decimal strings and safe numeric IDs; `--request-id` asserts the file's ID rather than replacing it. Goal flags require `--dataset`, `--model provider:modelId`, `--max-trials` and `--request-id`. There are no automatic write retries or generated replacement keys. After an unknown outcome, replay only that same original body/ID.
 
 Watch/wait poll only the existing research-detail endpoint. The service must expose the original native `submission:{id,status}` projection; there is no invented submission endpoint/status machine. HTTP 202, IDLE, final facts and empty tasks cannot establish settlement. No default observation or HTTP deadline is imposed; Ctrl-C and an explicit `--timeout` detach observation without cancelling admitted work. Wait exits 0 for native `done`, 2 for `unanswered`, 124 for timeout, 130 for detach. Done does not mean independently evaluated evidence passed. Watch produces NDJSON snapshots/results.
+
+`diagnostics` reads original native identity/status and a safe model-error category, never raw provider text or model reasoning. After owner authorization and reconciliation of a model failure, `resume ID --submission-id FAILED_ID` admits one new input to the **same** original conversation, retaining input/model/thinking level, trials, budget and exposure. The service derives one stable request key from those exact IDs; replaying the same command returns the same linked continuation receipt without another model round. The old failed submission/task remains failed. No automatic write retry, replacement research or counter reset occurs. Final/stopped, busy/non-model-failed and exhausted studies cannot be resumed. Native `submission` in reads tracks the latest input while `originalSubmission` preserves admission identity; 202 still does not establish completed recovery or scientific qualification.
 
 Portfolios are optional real shared-account backtest consumers, not summed factor curves. Observation `paper/live` is an existing source binding, never trading launch; `get` uses list/select where the server get route is optional. No broker orders, retired envelope relay, capital-exit control or withdrawal commands are advertised. Missing values/unsupported adapters fail truthfully.
 

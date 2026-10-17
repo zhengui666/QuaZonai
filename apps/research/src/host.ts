@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
-import { configure, createRegistry, Harness } from '@earendil-works/pi-durable';
+import { configure, createRegistry, GenerationTask, Harness } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { pathToFileURL } from 'node:url';
@@ -16,6 +16,7 @@ import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { researchContinuation } from './continuation.ts';
 
+import { modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
 const context = BACKGROUND_CONTEXT;
 
 export async function openResearch(options: {
@@ -34,6 +35,7 @@ export async function openResearch(options: {
   const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
   let models: Models;
   let harness!: Harness;
+  let storage!: Storage;
   const registry = createRegistry();
   try {
     models = options.models ?? await configuredModels(options.providerModules, credentials);
@@ -44,7 +46,7 @@ export async function openResearch(options: {
     }
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
-    const storage = options.storage ?? await openNodeSqliteStorage(options.database);
+    storage = options.storage ?? await openNodeSqliteStorage(options.database);
     harness = await Harness.open(storage, { models, registry, settings }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
@@ -107,6 +109,46 @@ export async function openResearch(options: {
     return await harness.commit((tx) => tx.submissionByRequest(id as ConversationId, binding[0].slice('request:'.length)), context) ?? null;
   }
 
+  async function latestSubmission(id: number) {
+    let cursor: Cursor | undefined;
+    do {
+      const page = await storage.scanSubmissions({ conversationId: id as ConversationId, order: 'descending' }, 100, cursor, context);
+      const input = page.items.find((item) => item.type === 'input');
+      if (input) return input;
+      cursor = page.next;
+    } while (cursor);
+    return null;
+  }
+  async function state(id: number) {
+    await conversation(id);
+    return { research: await harness.snapshot(Study, id as ConversationId, context),
+      submission: await latestSubmission(id), originalSubmission: await submissionFor(id) };
+  }
+  async function diagnostics(id: number) {
+    const current = await state(id);
+    if (!current.research?.input) throw new Error('research_not_found');
+    const page = await harness.commit((tx) => tx.scanTasks({ conversationId: id as ConversationId, kind: GenerationTask.definition.name, order: 'descending' }, 1), context);
+    const generation = page.items[0];
+    const outcome = generation?.state.status === 'terminal' ? generation.state.outcome : undefined;
+    return { conversationId: id, originalSubmission: submissionView(current.originalSubmission), submission: submissionView(current.submission),
+      generation: generation ? { taskId: generation.id as number, status: generation.state.status,
+        outcome: outcome?.status ?? null, error: outcome && (outcome.status === 'failed' || outcome.status === 'faulted') ? modelErrorCode(outcome.error.message) : null } : null };
+  }
+  async function resume(id: number, previousId: number) {
+    if (!Number.isSafeInteger(previousId) || previousId < 1) throw new Error('invalid_submission_id');
+    const handle = await conversation(id);
+    const requestId = recoveryRequestId(id, previousId);
+    const existing = await harness.commit((tx) => tx.submissionByRequest(handle.id, requestId), context);
+    if (existing) return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
+    const current = await state(id); const study = current.research;
+    if (!study?.input) throw new Error('research_not_found');
+    if (study.final) throw new Error('research_already_final');
+    if (current.submission?.id !== previousId || current.submission.status !== 'unanswered' || current.submission.reason !== 'model_error') throw new Error('research_not_recoverable_conflict');
+    const maximum = study.input.policy.max_trials;
+    if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
+    const next = await handle.submit({ type: 'input', content: recoveryInput(previousId), requestId, whenBusy: 'reject' }, context);
+    return { conversationId: id, submissionId: next.id, previousSubmissionId: previousId };
+  }
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry,
@@ -114,6 +156,12 @@ export async function openResearch(options: {
       if (!accepting) throw new Error('research_closing');
       const admission = start(requestId, value);
       admissions.add(admission);
+      try { return await admission; } finally { admissions.delete(admission); }
+    },
+    state, diagnostics,
+    async resume(id: number, previousId: number) {
+      if (!accepting) throw new Error('research_closing');
+      const admission = resume(id, previousId); admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },
     async list(cursor?: Cursor) {

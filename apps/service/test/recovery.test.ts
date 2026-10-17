@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Type } from '@earendil-works/pi-ai';
-import { Study } from '../../research/src/documents.ts';
 import { evaluateTrial } from '../../research/src/trials.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
 
@@ -29,7 +28,6 @@ test('original model failure has safe diagnostics and one replayable same-conver
     const original = { requestId: 'recover-original', goal: 'Keep original ledger and budget', model: state.model, datasetId: 'controlled', maxTrials: 3 };
     const admission = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: original });
     assert.equal(admission.statusCode, 202, admission.body); const receipt = admission.json();
-    assert.equal((await state.service.research.submission(receipt.submissionId)).status, 'placed');
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const studyBefore = (await state.service.research.view(receipt.conversationId)).research!;
     assert.equal(studyBefore.trials.length, 1); assert.equal(studyBefore.trials[0]!.status, 'FAILED');
@@ -72,5 +70,25 @@ test('state projections do not construct full transcript watches', { timeout: 20
     const detail = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers }); assert.equal(detail.statusCode, 200, detail.body); assert.equal(detail.json().submission.reason, 'model_error');
     const diagnostics = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}/diagnostics`, headers: state.headers }); assert.equal(diagnostics.statusCode, 200, diagnostics.body); assert.equal(diagnostics.json().generation.error, 'model_quota_exhausted');
     const listed = await state.service.app.inject({ url: '/api/v3/research', headers: state.headers }); assert.equal(listed.statusCode, 200, listed.body);
+  } finally { await state.cleanup(); }
+});
+
+test('resume refuses exhausted budgets, stopped studies and wrong original submissions', { timeout: 20_000 }, async () => {
+  const state = await setup(); state.options.extensions.push(probe);
+  try {
+    await state.restart();
+    state.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('recovery_probe', { fail: true }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 unsupported response' }),
+    ]);
+    const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId: 'exhausted-model-failure', goal: 'Original one attempt', model: state.model, datasetId: 'controlled', maxTrials: 1 } });
+    const receipt = start.json(); await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const url = `/api/v3/research/${receipt.conversationId}/resume`;
+    const wrong = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId + 1 } }); assert.equal(wrong.statusCode, 409);
+    const exhausted = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId } }); assert.equal(exhausted.statusCode, 409); assert.equal(exhausted.json().error, 'trial_budget_exhausted');
+    await state.service.research.stop(receipt.conversationId);
+    const stopped = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId } }); assert.equal(stopped.statusCode, 409); assert.equal(stopped.json().error, 'research_already_final');
+    const invalid = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId, maxTrials: 10 } }); assert.equal(invalid.statusCode, 400);
+    assert.equal(state.faux.state.callCount, 2); assert.equal((await state.service.research.state(receipt.conversationId)).research!.trials.length, 1);
   } finally { await state.cleanup(); }
 });

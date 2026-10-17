@@ -66,7 +66,7 @@ export async function createService(options: ServiceOptions) {
   try {
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
-    const status = error instanceof Problem ? error.statusCode : /conflict|already/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable/.test(message) ? 400 : 500);
+    const status = error instanceof Problem ? error.statusCode : /conflict|already|trial_budget_exhausted/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable/.test(message) ? 400 : 500);
     const code = error instanceof Problem || /^[a-z][a-z0-9_]+$/.test(message) ? message : status < 500 ? 'invalid_request' : 'internal_error';
     reply.code(status).send({ error: code });
   });
@@ -91,6 +91,12 @@ export async function createService(options: ServiceOptions) {
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => researchDetail(research, Number(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, (request) => research.diagnostics(Number(request.params.id)));
+  app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
+    const body = object(request.body);
+    if (Object.keys(body).length !== 1 || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
+    return reply.code(202).send(await research.resume(Number(request.params.id), body.submissionId));
+  });
   app.post(`${API}/research`, async (request, reply) => reply.code(202).send(await work.startResearch(request.body)));
   app.post<{ Params: { id: string } }>(`${API}/research/:id/stop`, async (request, reply) => {
     const id = Number(request.params.id); await research.stop(id); return reply.code(202).send(await researchDetail(research, id));
