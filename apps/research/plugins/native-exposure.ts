@@ -53,8 +53,10 @@ export async function checkExposure(api: ToolExecutionApi, context: Context, dat
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
     const previous = ledger.windows.find((item) => (reserve || item.kind !== 'ITERATION')
+      && (!historical || item.conversationId !== api.conversationId)
       && !(item.taskId === api.taskId && item.kind === kind) && overlaps(item, checked));
     if (previous && !historical) throw new Error('heldout_already_exposed');
+    if (historical && !previous) throw new Error('historical_exposure_required');
     if (!ledger.windows.some((item) => item.taskId === api.taskId && item.kind === kind)) {
       // Owner-bound reassessment adds permanent, explicitly non-independent facts; it never rewrites prior exposure.
       ledger.windows.push({ ...window, kind, taskId: api.taskId, conversationId: api.conversationId,

@@ -396,7 +396,7 @@ for (const ownStudy of [false, true]) test(`historical reassessment requires pri
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials[0]!.status, 'FAILED', JSON.stringify(facts.trials));
     assert.equal(facts.trials[0]!.error, 'historical_exposure_required');
-    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, seeded ? [seeded] : []);
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))?.windows ?? [], seeded ? [seeded] : []);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
   } finally { await host.close(); await state.cleanup(); }
 });
