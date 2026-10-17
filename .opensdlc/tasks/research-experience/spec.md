@@ -305,7 +305,7 @@ The identifiers below are design/test references, not a mandate to create one Re
 ### F17. Exact-value chart
 
 - **Anatomy:** heading `账户权益`, currency, actual time/value axes, one native equity series, readout for original point, `查看数据` disclosure. Height 300px desktop, 240px mobile.
-- **Behavior:** native snapshots on a true elapsed-time axis, not equally spaced categories; chart Number conversion is display-only; labels/data table retain original decimal/time strings. Nulls are gaps; `connectNulls` is false. No interpolated fake samples, smoothing that changes interpretation, cumulative factor-curve sum or locally recomputed authoritative NAV.
+- **Behavior:** native snapshots on a true elapsed-time axis, not equally spaced categories; chart Number conversion is display-only; labels/data table retain original decimal/time strings. Nulls are gaps; `connectNulls` is false. No interpolated fake samples, smoothing that changes interpretation, cumulative factor-curve sum or locally recomputed authoritative NAV. Histories above 200 points omit per-point SVG symbols only; the line and paginated exact table retain every original record.
 - **Accessibility:** semantic summary of existing record count/date extent, accessible exact-point table; pointer tooltip is not the only way to read a value. Plot uses one theme accent and sufficient line contrast.
 - **Acceptance:** a missing snapshot does not produce a flat zero line; one point remains inspectable; changing theme resizes/recolors without losing data.
 
@@ -410,7 +410,7 @@ Submission phases:
 - **Submitting:** construct one `requestId` and capture the exact simplified body; freeze these command fields while pending. The button reads `提交中`.
 - **Accepted:** retain returned original conversation/submission identities, clear only the resolved pending command, open that study; scientific status is still read from the service.
 - **Uncertain:** keep original command unchanged, show `提交结果待核对` and `核对提交`. Replaying uses the exact captured request/body, not current defaults or a new ID.
-- **Definitive rejected:** show specific field/context error; editing may create a genuinely new command only after the original was definitively not admitted.
+- **Definitive rejected:** show specific field/context error; every mounted copy follows the same rejection without another resend merely to unlock. Editing may create a genuinely new command only after the original was definitively not admitted.
 
 If sessionStorage is unavailable, keep a memory draft and honestly indicate if persistence failed; never claim `已保存` without a write. Do not store provider credentials, owner passwords or raw private input objects. Leaving/reloading an uncertain form must not silently discard its original command.
 
@@ -529,7 +529,7 @@ STOPPED preserves receipt/account facts. If the original receipt remains uncerta
 
 A quiet list, not marketing cards: provider name, `已配置`/`未配置`/`状态不可用`, supported authentication action(s), pending-login state and actual provider error. A configured provider with no available models does not become ready by assumption.
 
-One visible authentication action is used when only one method exists. If OAuth and API key are both supported, show explicit method choices labelled `登录` / `API Key`; do not guess which provider credential to use. Disconnect uses `断开` and a scoped confirmation. If environment authentication remains after logout, show returned `仍已配置`; never force the display to disconnected.
+One visible authentication action is used when only one method exists. If OAuth and API key are both supported, show explicit method choices labelled `登录` / `API Key`; do not guess which provider credential to use. Disconnect uses `断开` and a scoped confirmation. Per-provider pending state remains visible across navigation until deletion and catalog refresh settle, preventing another disconnect or overlapping authentication action. If environment authentication remains after logout, show returned `仍已配置`; never force the display to disconnected.
 
 ### M02. Provider authentication dialog
 
