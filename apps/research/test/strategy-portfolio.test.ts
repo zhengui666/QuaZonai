@@ -11,7 +11,7 @@ import research from '../plugins/research.ts';
 import strategy from '../plugins/strategy-portfolio.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import { iterationRequest } from '../plugins/native-wasm.ts';
-import { exactWeights, intervalTargets, replayCatalog, strategyMembers } from '../src/strategy.ts';
+import { exactWeights, intervalTargets, replayCatalog, resolveStrategyPolicy, simulationSelection, strategyMembers, thresholdPolicy, thresholdTargets } from '../src/strategy.ts';
 import { object } from '../src/trials.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -23,7 +23,7 @@ function textResult(transcript: { messages: readonly unknown[] }, name: string) 
   return JSON.parse(latest.content.filter((item) => item.type === 'text').map((item) => item.text).join('')) as JsonObject;
 }
 
-async function setup() {
+async function setup(universe = false) {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-ensemble-protocol-'));
   const catalog = join(directory, 'prefix'); const sealed = join(directory, 'sealed');
   await mkdir(catalog); await mkdir(sealed);
@@ -35,12 +35,13 @@ async function setup() {
   process.env.QZ_TEST_PROVIDER_SECRET = 'test-only-isolation-marker';
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
-    selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
+    selection: { schema_version: 1, bar_types: universe ? ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL'] : ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
     parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
   const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
   const input = { goal: 'Protocol-only ensemble selection; no scientific or market performance claim.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
-    data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } }, policy: { max_trials: 2, strategy: { name: 'original-policy', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0,
-      investedWeight: '0.25', targetTtlNs: '5', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY' } } } };
+    data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } }, policy: { max_trials: 2, strategy: { name: 'original-policy', kind: 'factor-threshold', instrumentId: universe ? 'BASE.SIM' : 'TEST.SIM', ...(universe ? { instrumentIds: ['BASE.SIM', 'TEST.SIM'] } : {}), threshold: 0,
+      investedWeight: '0.25', targetTtlNs: '5', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY',
+        ...(universe ? { fee_rates: [{ instrument_id: 'BASE.SIM', maker: '0.004000', taker: '0.006000' }, { instrument_id: 'TEST.SIM', maker: '0.001234567890123456', taker: '0.009876543210987654' }] } : {}) } } } };
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [research, strategy] };
   return { directory, input, options, faux, log, async calls() { return (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject); },
     async cleanup() { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; delete process.env.QZ_TEST_PROVIDER_SECRET; await rm(directory, { recursive: true, force: true }); } };
@@ -77,6 +78,7 @@ test('one ensemble trial retains members/weights, validation-only account feedba
     assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'COMPUTED']);
     assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').members, members);
     assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').request, state.input.data.request);
+    assert.deepEqual(facts.trials[1]!.proposal, { hypothesis: 'One complete original ensemble, not two free member probes.', members, request: state.input.data.request, strategy: state.input.policy.strategy });
     assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
     assert.deepEqual(facts.final!.comparedTrials, facts.trials.map((trial) => trial.taskId));
     const final = object(facts.final!.result, 'final');
@@ -133,6 +135,158 @@ test('invalid ensemble weights consume the existing budget and rejected proposal
     assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
   } finally { await host.close(); await state.cleanup(); }
+});
+
+test('an allowed non-base instrument stays in the original proposal and resolved owner-only final evidence', async () => {
+  const state = await setup(true); const host = await openResearch(state.options);
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Choose only from the original fixed pool.', members, instrumentId: 'TEST.SIM' }),
+    (transcript) => {
+      const result = textResult(transcript, 'strategy_portfolio_evaluate');
+      assert.deepEqual(result.request, iterationRequest(state.input.data, true));
+      assert.equal(JSON.stringify(result).includes('RAW_FORECAST'), false);
+      assert.equal(JSON.stringify(result).includes('canonical_result'), false);
+      return tool('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Retain the original selected instrument.' });
+    },
+  ]);
+  try {
+    const receipt = await host.start('selected-instrument', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(facts.input, state.input);
+    assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
+    assert.deepEqual(facts.trials[0]!.proposal, { hypothesis: 'Choose only from the original fixed pool.', members, instrumentId: 'TEST.SIM', request: state.input.data.request, strategy: state.input.policy.strategy });
+    assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
+    for (const result of [object(facts.trials[0]!.result, 'trial_result'), object(facts.final!.result, 'final_result')]) {
+      const child = await host.harness.waitForTask(result.evidenceTaskId as TaskId<JsonObject>, context);
+      assert.equal(child.state.outcome.status, 'completed');
+      const native = object(child.state.outcome.status === 'completed' ? child.state.outcome.result.native : null, 'native_evidence');
+      const settings = state.input.policy.strategy.simulationSettings;
+      const selectedSettings = { ...settings, fee_rates: settings.fee_rates!.filter((rate) => rate.instrument_id === 'TEST.SIM') };
+      assert.deepEqual(native.policy, { ...state.input.policy.strategy, instrumentId: 'TEST.SIM', simulationSettings: selectedSettings });
+      assert.deepEqual(native.members, members);
+      const simulation = object(native.simulationRequest, 'simulation_request');
+      assert.deepEqual(object(simulation.selection, 'selection').bar_types, ['TEST.SIM-1-MINUTE-LAST-EXTERNAL']);
+      assert.deepEqual(simulation.settings, selectedSettings);
+      assert.ok((simulation.target_points as JsonObject[]).every((point) => (point.targets as JsonObject[]).every((target) => target.instrument_id === 'TEST.SIM')));
+    }
+    const calls = await state.calls();
+    for (const call of calls.filter((call) => ['evaluate-factor', 'forecast-factor'].includes(String(call.command)))) {
+      const request = object(call.input, 'native_input');
+      const selection = object(call.command === 'evaluate-factor' ? object(request.forecast, 'forecast').selection : request.selection, 'selection');
+      assert.deepEqual(selection.bar_types, state.input.data.request.forecast.selection.bar_types);
+      assert.equal(selection.event_start_ns, '0');
+    }
+    assert.deepEqual(calls.filter((call) => call.command === 'simulate').map((call) => object(call.binding, 'binding').name), ['PRIMARY', 'SEALED']);
+    assert.equal(state.input.policy.strategy.instrumentId, 'BASE.SIM');
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+for (const universe of [false, true]) test(`outside ${universe ? 'declared universe' : 'legacy base instrument'} durably fails and consumes the original budget`, async () => {
+  const state = await setup(universe); state.input.policy.max_trials = 1;
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Not an admitted instrument.', members, instrumentId: 'OUTSIDE.SIM' }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'No free instrument retry.', members, instrumentId: 'TEST.SIM' }),
+  ]);
+  const host = await openResearch(state.options);
+  try {
+    const receipt = await host.start(`invalid-instrument-${universe}`, state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'REJECTED']);
+    assert.equal(facts.trials[0]!.error, 'strategy_instrument_not_allowed');
+    assert.equal(object(facts.trials[0]!.proposal, 'proposal').instrumentId, 'OUTSIDE.SIM');
+    assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').strategy, state.input.policy.strategy);
+    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
+    assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
+    await assert.rejects(readFile(state.log), { code: 'ENOENT' });
+    await host.close();
+    const restored = await openResearch(state.options);
+    try { assert.deepEqual((await restored.view(receipt.conversationId)).research, facts); }
+    finally { await restored.close(); }
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+for (const explicit of [false, true]) for (const duplicate of [false, true]) test(`${explicit ? 'explicit choice' : 'implicit base'} with ${duplicate ? 'duplicate' : 'missing'} original fee entries durably consumes an attempt`, async () => {
+  const state = await setup(true); state.input.policy.max_trials = 1;
+  const selected = explicit ? 'TEST.SIM' : 'BASE.SIM';
+  const settings = state.input.policy.strategy.simulationSettings;
+  const fee = settings.fee_rates!.find((rate) => rate.instrument_id === selected)!;
+  settings.fee_rates = duplicate ? [...settings.fee_rates!, { ...fee }] : settings.fee_rates!.filter((rate) => rate.instrument_id !== selected);
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Exact original reserve required.', members, ...(explicit ? { instrumentId: selected } : {}) }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'No free reserve retry.', members }),
+  ]);
+  const host = await openResearch(state.options);
+  try {
+    const receipt = await host.start(`invalid-fees-${explicit}-${duplicate}`, state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'REJECTED']);
+    assert.equal(facts.trials[0]!.error, duplicate ? 'strategy_instrument_fee_duplicate' : 'strategy_instrument_fee_missing');
+    assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').strategy, state.input.policy.strategy);
+    assert.deepEqual(facts.input, state.input);
+    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
+    assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
+    await assert.rejects(readFile(state.log), { code: 'ENOENT' });
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('universe resolution selects exactly one unchanged original fee reserve for explicit and implicit instruments', () => {
+  const fees = [{ instrument_id: 'BASE.SIM', maker: '0.004000', taker: '0.006000' },
+    { instrument_id: 'ALT-YES.SIM', maker: '0.001234567890123456', taker: '0.009876543210987654' }];
+  const settings = { base_currency: 'pUSD', starting_capital: '3000.000000000000000001', fee_rates: fees, leverage: '1',
+    fee_model: { adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', parameters: { original_source: 'unchanged' } },
+    latency_model: { parameters: { insert_latency_ns: '1000000' } }, exposure_tolerance: '0.000001' };
+  const original = { name: 'original', kind: 'factor-threshold', instrumentId: 'BASE.SIM', instrumentIds: ['BASE.SIM', 'ALT-YES.SIM'], simulationSettings: settings };
+  const before = structuredClone(original);
+  const proposals: JsonObject[] = [{}, { instrumentId: 'BASE.SIM' }, { instrumentId: 'ALT-YES.SIM' }];
+  for (const proposal of proposals) {
+    const selected = proposal.instrumentId ?? original.instrumentId;
+    const resolved = resolveStrategyPolicy(proposal, original);
+    assert.deepEqual(resolved, { ...original, instrumentId: selected, simulationSettings: { ...settings, fee_rates: fees.filter((fee) => fee.instrument_id === selected) } });
+    assert.notEqual(resolved.simulationSettings, settings);
+    assert.notEqual(resolved.simulationSettings.fee_rates, fees);
+    assert.deepEqual(original, before);
+  }
+  for (const fee_rates of [null, [], [fees[0]!], [{ ...fees[1]!, instrument_id: 'ALT-YES.SIM-OTHER' }]]) {
+    assert.throws(() => resolveStrategyPolicy({ instrumentId: 'ALT-YES.SIM' }, { ...original, simulationSettings: { ...settings, fee_rates } }), /strategy_instrument_fee_missing/);
+  }
+  assert.throws(() => resolveStrategyPolicy({}, { ...original, simulationSettings: { ...settings, fee_rates: [fees[0]!, fees[0]!] } }), /strategy_instrument_fee_duplicate/);
+  const { instrumentIds: _universe, ...legacy } = original;
+  assert.equal(resolveStrategyPolicy({}, legacy), legacy);
+  assert.equal(resolveStrategyPolicy({ instrumentId: 'BASE.SIM' }, legacy).simulationSettings, settings);
+});
+
+test('fixed-universe validation, exact BAR matching and legacy absence never rewrite the original policy/request', () => {
+  const legacy: JsonObject = { name: 'original', kind: 'factor-threshold', instrumentId: 'BASE.SIM', threshold: 0, investedWeight: '1', targetTtlNs: '5', simulationSettings: { base_currency: 'USD' } };
+  assert.equal(resolveStrategyPolicy({}, legacy), legacy);
+  assert.deepEqual(resolveStrategyPolicy({ instrumentId: 'BASE.SIM' }, legacy), legacy);
+  assert.throws(() => resolveStrategyPolicy({ instrumentId: 'ALT-YES.SIM' }, legacy), /strategy_instrument_not_allowed/);
+  const original: JsonObject = { ...legacy, instrumentIds: ['BASE.SIM', 'ALT-YES.SIM'], simulationSettings: { ...object(legacy.simulationSettings, 'settings'),
+    fee_rates: [{ instrument_id: 'BASE.SIM', maker: '0.004', taker: '0.006' }, { instrument_id: 'ALT-YES.SIM', maker: '0.001', taker: '0.002' }] } };
+  for (const ids of [null, 'BASE.SIM', [], ['BASE.SIM', 'BASE.SIM'], ['BASE.SIM', ''], ['BASE.SIM', '  '], ['BASE.SIM', 2]]) {
+    assert.throws(() => thresholdPolicy({ ...original, instrumentIds: ids }), /strategy_instrument_universe_invalid/);
+  }
+  assert.throws(() => thresholdPolicy({ ...original, instrumentIds: ['ALT-YES.SIM'] }), /strategy_base_instrument_not_allowed/);
+  for (const instrumentId of ['', '  ', 2, null]) assert.throws(() => resolveStrategyPolicy({ instrumentId }, original), /strategy_instrument_invalid/);
+  const policy = resolveStrategyPolicy({ instrumentId: 'ALT-YES.SIM' }, original);
+  assert.deepEqual(policy, { ...original, instrumentId: 'ALT-YES.SIM', simulationSettings: { ...object(original.simulationSettings, 'settings'),
+    fee_rates: [{ instrument_id: 'ALT-YES.SIM', maker: '0.001', taker: '0.002' }] } });
+  assert.equal(original.instrumentId, 'BASE.SIM');
+  const bars = ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'ALT-YES.SIM-1-MINUTE-LAST-EXTERNAL', 'ALT-YES.SIM-5-MINUTE-LAST-EXTERNAL', 'ALT-YES.SIM-OTHER-1-MINUTE-LAST-EXTERNAL'];
+  const selection = { bar_types: bars, event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' };
+  const request = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection } };
+  assert.deepEqual(simulationSelection(request, 'VALIDATION', thresholdPolicy(legacy)).bar_types, bars);
+  assert.deepEqual(simulationSelection(request, 'VALIDATION', policy), { ...selection, bar_types: bars.slice(1, 3), event_start_ns: '10', event_end_ns: '20', decision_cutoff_ns: '20' });
+  assert.deepEqual(simulationSelection(request, 'HELDOUT', policy), { ...selection, bar_types: bars.slice(1, 3), event_start_ns: '20' });
+  assert.deepEqual(request.forecast.selection, selection);
+  for (const bar_types of [[], [bars[0]!], [bars[3]!]]) {
+    assert.throws(() => simulationSelection({ ...request, forecast: { selection: { ...selection, bar_types } } }, 'VALIDATION', policy), /strategy_instrument_bars_missing/);
+  }
+  assert.throws(() => simulationSelection({ ...request, forecast: { selection: {} } }, 'VALIDATION', policy), /strategy_bar_types_invalid/);
+  assert.throws(() => thresholdTargets({ points: [{ instrument_id: 'BASE.SIM', forecast: 1, event_ns: '10', available_ns: '10' }] }, policy, 'USD'), /strategy_observations_missing/);
 });
 
 test('exact proposals, half-open target filtering and original sealed catalog matching do not rewrite inputs', () => {
