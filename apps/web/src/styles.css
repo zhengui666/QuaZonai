@@ -61,14 +61,14 @@ main { max-width: 1360px; margin: 0 auto; padding: 32px 40px 48px; }
 .collection-tools .ant-input-affix-wrapper { padding-inline: 10px; }
 .collection-tools .ant-input-prefix { color: var(--secondary); margin-right: 7px; }
 .collection-scope { display: flex; justify-content: space-between; align-items: center; padding: 15px 6px 12px; color: var(--secondary); font-size: 12px; }
-.study-list { display: grid; gap: 7px; }
-.study-row { position: relative; padding: 16px 16px 15px; border-radius: 9px; text-decoration: none; background: transparent; }
+.study-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
+.study-row { min-width: 0; position: relative; padding: 16px 16px 15px; border-radius: 9px; text-decoration: none; background: transparent; }
 .study-row:hover { background: var(--hover); }
 .study-row.active { background: var(--selected); }
 .study-row.active::before { content: ''; position: absolute; top: 19px; bottom: 19px; left: 0; width: 2px; border-radius: 2px; background: var(--accent); }
 .study-row-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .study-row-top > code { font-size: 11px; color: var(--secondary); }
-.study-row h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; line-height: 24px; font-weight: 550; }
+.study-row h3 { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; line-height: 24px; font-weight: 550; }
 .study-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--secondary); font-size: 12px; margin-top: 13px; }
 .status { display: inline-flex; align-items: center; gap: 5px; width: fit-content; min-height: 25px; padding: 2px 7px; border-radius: 4px; background: var(--inset); color: var(--secondary); white-space: nowrap; font-size: 12px; font-weight: 450; }
 .status.plain { min-height: 20px; padding: 0; background: none; }

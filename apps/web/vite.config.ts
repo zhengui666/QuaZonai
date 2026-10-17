@@ -14,9 +14,9 @@ export default defineConfig({
   build: {
     target: ['es2022', 'safari16'], sourcemap: false,
     rollupOptions: { output: { manualChunks(id) {
-      if (/\/node_modules\/(echarts|zrender|echarts-for-react|size-sensor)\//.test(id)) return 'charts';
+      if (/\/node_modules\/(echarts|zrender)\//.test(id)) return 'charts';
       if (id.includes('/node_modules/')) return 'vendor';
     } } },
   },
-  test: { include: ['src/api.test.ts'], environment: 'node' },
+  test: { include: ['src/*.test.ts'], environment: 'node' },
 });

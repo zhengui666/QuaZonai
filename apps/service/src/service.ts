@@ -83,9 +83,9 @@ export async function createService(options: ServiceOptions) {
   app.get(`${API}/datasets`, async () => config.datasets.map(({ data: _data, policy: _policy, strategy: _strategy, ...view }) => view));
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
-    const page = await research.list(cursor); const items: ResearchSummary[] = [];
+    const page = await research.list(cursor); const items: ResearchSummary[] = []; const admitted = (await work.snapshot())?.researchRequests;
     for (const row of page.items) {
-      const detail = await researchDetail(research, row.id);
+      const detail = await researchDetail(research, row.id, admitted);
       const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, ...summary } = detail; items.push(summary);
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };

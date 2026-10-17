@@ -153,7 +153,7 @@ test('two original studies → native target blending → one fee-affected share
       assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
       assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.63.0');
       const detail = (await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json();
-      assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done' });
+      assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: `native-idea-${receipts.indexOf(receipt)}` });
     }
     assert.deepEqual((await service.research.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'ITERATION', 'FINAL']);
     const researchIds = receipts.map((receipt) => receipt.conversationId);

@@ -49,20 +49,23 @@ export function EvidenceMetrics({ metrics }: { metrics: Metric[] }) {
   const ic = source.find(metric => /(?:pearson_ic|^ic)$/.test(metric.key));
   const included = source.find(metric => metric.key.endsWith('counts.included'));
   const excluded = source.find(metric => metric.key.endsWith('counts.excluded'));
+  const counters = [included, excluded].filter((item): item is Metric => !!item);
+  const longCounts = counters.some(metric => String(metric.value).length > 9);
   if (!ic && !included && !excluded) return <Metrics metrics={metrics} />;
-  return <><div className="metric-grid">
+  return <><div className={`metric-grid${longCounts ? ' long-counts' : ''}`} data-columns={counters.length + Number(!!ic)}>
     {ic && <div className="metric-primary"><span className="metric-label">{independent.length ? '独立样本 IC' : metricLabel(ic)}</span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
-    {[included, excluded].filter((item): item is Metric => !!item).map(metric => <div className="metric-count" key={metric.key}><span className="metric-label">{metricLabel(metric)}</span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
+    {counters.map(metric => <div className="metric-count" key={metric.key}><span className="metric-label">{metricLabel(metric)}</span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
   </div>{independent.length > 0 && <div className="partition-row"><span className="partition-label">独立样本</span>{ic?.component !== undefined && <span>分量 <code>{ic.component}</code></span>}</div>}<details className="metrics-disclosure"><summary>全部指标</summary><Metrics metrics={metrics} /></details></>;
 }
 export function Copy({ value, label = '复制身份' }: { value: string; label?: string }) {
   const [status, setStatus] = useState('');
   return <span className="copy-control"><Button type="text" aria-label={label} icon={<CopyIcon size={14} />} onClick={() => { void navigator.clipboard.writeText(value).then(() => setStatus('已复制'), () => setStatus('未能复制')); }} /><span role="status">{status}</span></span>;
 }
+export function DraftNotice({ saved }: { saved: boolean }) { return saved ? null : <p className="draft-notice" role="status">草稿未保存，请勿刷新页面</p>; }
 export function PendingCommand({ command }: { command: { pending?: { persisted: boolean }; busy: boolean; values?: Record<string, unknown> } }) {
   if (!command.pending || command.busy) return null;
   const identity = command.values?.requestId;
-  return <div className="pending-command" role="status"><div>提交结果待核对{!command.pending.persisted && <span> / 请保留此页面</span>}</div>{typeof identity === 'string' && <details><summary>原始提交身份</summary><code>{identity}</code><Copy value={identity} /></details>}</div>;
+  return <div className="pending-command" role="status"><div>提交结果待核对{!command.pending.persisted && <span> / 请保留此页面</span>}</div>{typeof identity === 'string' && <details><summary>原始提交身份</summary><code>{identity}</code><Copy value={identity} label="复制原始提交身份" /></details>}</div>;
 }
 export function useConfirm() {
   const { modal } = App.useApp();

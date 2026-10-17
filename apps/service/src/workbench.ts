@@ -62,7 +62,6 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const data = object(input.data, 'dataset');
       const registered = config.datasets.find((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data));
       if (!registered) throw new Problem('dataset_input_unregistered');
-      capturedDataset = captureDataset(registered);
     } else {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       capturedDataset = captureDataset(configured);

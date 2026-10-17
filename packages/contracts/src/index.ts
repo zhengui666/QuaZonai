@@ -28,7 +28,7 @@ export type ResearchStart = { requestId: string; input: ResearchInput } | {
 export interface ResearchReceipt { conversationId: number; submissionId: number }
 export interface Metric { key: string; label: string; value: number | string | null; unit?: string; status?: string; partition?: string; component?: number }
 export interface ResearchSummary {
-  id: number; title: string; status: string; trials: number; model: string;
+  id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
   createdAt: string | null; updatedAt: string | null;
 }
 export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; error: string | null }
@@ -37,7 +37,7 @@ export interface RecordedDataset { id: string; name: string; assetClass: string;
 export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   dataset?: RecordedDataset | null; datasetId?: string | null;
-  submission?: { id: number; status: string; reason?: string | null } | null;
+  submission?: { id: number; status: string; requestId?: string; reason?: string | null } | null;
   final: { status: string; trialId: number | null; reason: string | null; error?: string | null; metrics: Metric[] } | null;
 }
 export interface DatasetView {

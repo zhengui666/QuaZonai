@@ -14,6 +14,7 @@ import type { TaskId } from '@earendil-works/pi-durable';
 import type { JsonObject } from '../../../packages/contracts/src/index.ts';
 
 export const context = BACKGROUND_CONTEXT;
+export { fauxAssistantMessage, fauxToolCall };
 export const wat = '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))';
 // Only protocol facts, NOT native evidence; production modules never install this extension.
 export const controlledResearch = defineExtension({ name: 'test.protocol-research', tools: [defineTool({
@@ -27,7 +28,7 @@ export const controlledResearch = defineExtension({ name: 'test.protocol-researc
   },
 })] });
 
-export async function setup() {
+export async function setup(owner = true, staticDir?: string) {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-service-test-'));
   const catalog = join(directory, 'catalog'); await mkdir(catalog);
   const binary = join(directory, 'controlled-job');
@@ -36,13 +37,14 @@ export async function setup() {
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const model = { provider: faux.provider.id, modelId: faux.getModel().id };
   const request = { schema_version: 1, train_end_ns: '1', validation_end_ns: '2', forecast: { schema_version: 1, selection: {}, parameters: {} } };
-  const config = configDefaults({ dataDir: directory, research: { database: join(directory, 'original-research.sqlite') }, jobBinary: binary,
+  const config = configDefaults({ dataDir: directory, staticDir, research: { database: join(directory, 'original-research.sqlite') }, jobBinary: binary,
     datasets: [{ id: 'controlled', name: 'Protocol dataset', assetClass: 'TEST', currency: 'USD', source: 'test only', start: null, end: null, ready: true,
       data: { catalog, request }, strategy: { name: 'fixed-before-trials', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0, investedWeight: '0.250000000000000001', targetTtlNs: '60000000000', simulationSettings: { base_currency: 'USD' } } }] });
   const options = { config, models, extensions: [controlledResearch] };
   let service = await createService(options);
-  const response = await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'local-owner-test' } }); assert.equal(response.statusCode, 200, response.body);
-  const headers = { cookie: response.cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ') };
+  const response = owner ? await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'local-owner-test' } }) : undefined;
+  if (response) assert.equal(response.statusCode, 200, response.body);
+  const headers = { cookie: response?.cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ') ?? '' };
   return { directory, options, model, faux, headers, get service() { return service; },
     async restart() { await service.close(); service = await createService(options); },
     async cleanup() { await service.close(); await rm(directory, { recursive: true, force: true }); } };

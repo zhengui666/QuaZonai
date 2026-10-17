@@ -6,24 +6,25 @@ type Kind = 'research' | 'portfolios' | 'observations';
 interface Envelope { raw: string; persisted: boolean }
 const key = (kind: Kind) => `quazonai.command.${kind}.v3`;
 const memory = new Map<Kind, Envelope>();
-const drafts = new Map<string, unknown>();
+const drafts = new Map<string, { value: unknown; persisted: boolean }>();
 const exitNotice = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
 function updateExitNotice() {
   if (typeof window === 'undefined') return;
   window.removeEventListener('beforeunload', exitNotice);
-  if ([...memory.values()].some(command => !command.persisted)) window.addEventListener('beforeunload', exitNotice);
+  if ([...memory.values(), ...drafts.values()].some(item => !item.persisted)) window.addEventListener('beforeunload', exitNotice);
 }
 function read(kind: Kind): Envelope | undefined {
   if (memory.has(kind)) return memory.get(kind);
   try {
     const raw = sessionStorage.getItem(key(kind));
     if (raw && typeof JSON.parse(raw).requestId === 'string') { const command = { raw, persisted: true }; memory.set(kind, command); return command; }
-    if (kind === 'research') { const legacy = readResearchIntent(); if (legacy) { const command = { raw: legacy.raw, persisted: true }; memory.set(kind, command); return command; } }
-  } catch { /* Unavailable storage does not claim persistence. */ }
+  } catch { /* Session storage and the legacy store can fail independently. */ }
+  try { if (kind === 'research') { const legacy = readResearchIntent(); if (legacy) { const command = { raw: legacy.raw, persisted: true }; memory.set(kind, command); return command; } } } catch { /* The original in-memory command is still preferred. */ }
 }
 function clear(kind: Kind) {
   memory.delete(kind); updateExitNotice();
-  try { sessionStorage.removeItem(key(kind)); if (kind === 'research') clearResearchIntent(); } catch { /* The acknowledged identity is already retained by the service. */ }
+  try { sessionStorage.removeItem(key(kind)); } catch { /* The service retains the acknowledged identity. */ }
+  try { if (kind === 'research') clearResearchIntent(); } catch { /* One failed store must not prevent clearing the other. */ }
 }
 export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
   const [pending, setPending] = useState<Envelope | undefined>(() => read(kind));
@@ -51,9 +52,10 @@ export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
   }
   return { pending, busy, error, submit, values: pending ? JSON.parse(pending.raw) as Record<string, unknown> : undefined };
 }
-export function readDraft<T>(key: string): T | undefined { if (drafts.has(key)) return drafts.get(key) as T; try { const value = sessionStorage.getItem(`quazonai.draft.${key}`); return value ? JSON.parse(value) as T : undefined; } catch { return; } }
-export function saveDraft(key: string, value: unknown) { drafts.set(key, value); try { sessionStorage.setItem(`quazonai.draft.${key}`, JSON.stringify(value)); } catch { /* No saved-state claim is made. */ } }
-export function removeDraft(key: string) { drafts.delete(key); try { sessionStorage.removeItem(`quazonai.draft.${key}`); } catch { /* Nothing to remove when storage is unavailable. */ } }
+export function readDraft<T>(key: string): T | undefined { if (drafts.has(key)) return drafts.get(key)!.value as T; try { const raw = sessionStorage.getItem(`quazonai.draft.${key}`); if (!raw) return; const value = JSON.parse(raw) as T; drafts.set(key, { value, persisted: true }); return value; } catch { return; } }
+export function draftIsPersisted(key: string) { return drafts.get(key)?.persisted ?? true; }
+export function saveDraft(key: string, value: unknown) { let persisted = false; try { sessionStorage.setItem(`quazonai.draft.${key}`, JSON.stringify(value)); persisted = true; } catch { /* Retain the nonsecret edit in this runtime. */ } drafts.set(key, { value, persisted }); updateExitNotice(); return persisted; }
+export function removeDraft(key: string) { drafts.delete(key); updateExitNotice(); try { sessionStorage.removeItem(`quazonai.draft.${key}`); } catch { /* Nothing to remove when storage is unavailable. */ } }
 export function decimalUnits(value: string): bigint | undefined {
   if (!/^-?\d+(?:\.\d{1,18})?$/.test(value)) return;
   const negative = value.startsWith('-'); const [whole, fraction = ''] = (negative ? value.slice(1) : value).split('.');
