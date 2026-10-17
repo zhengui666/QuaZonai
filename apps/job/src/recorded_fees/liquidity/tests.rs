@@ -463,7 +463,16 @@ fn native_final_bar_reduction_settles_before_the_running_strategy_stops() {
     assert_eq!(report.fills[1].order_side, "SELL");
     assert_eq!(report.fills[1].fill_ns.get(), 6 * MINUTE_NS + 1);
     assert_eq!(report.fills[1].bar_end_ns.get(), 6 * MINUTE_NS);
-    assert!(report.fills.iter().all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get()));
-    assert!(result.summary.iter().any(|(k, v)| k == "orders.open" && v == "0"));
-    assert!(result.summary.iter().any(|(k, v)| k == "orders.inflight" && v == "0"));
+    assert!(report
+        .fills
+        .iter()
+        .all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get()));
+    assert!(result
+        .summary
+        .iter()
+        .any(|(k, v)| k == "orders.open" && v == "0"));
+    assert!(result
+        .summary
+        .iter()
+        .any(|(k, v)| k == "orders.inflight" && v == "0"));
 }

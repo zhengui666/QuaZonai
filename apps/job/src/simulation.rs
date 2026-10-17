@@ -1597,7 +1597,12 @@ fn run_with_strategy_and_spot(
         append_settlement_events(&mut events, closes);
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
-        let native_result = engine.run(None, None, None, false);
+        // Keep the strategy running for in-window trailing arrival callbacks.
+        // Native run(None) otherwise stops it at the final BAR timestamp before
+        // draining positive-latency remainders. The selection end is exclusive.
+        let replay_end =
+            recorded_liquidity(settings).then(|| (request.selection.event_end_ns.get() - 1).into());
+        let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;
         if let Some(observer) = liquidity_errors {
@@ -1626,7 +1631,9 @@ fn run_with_strategy_and_spot(
         }
         ensure!(
             observed.consumed == request.target_points.len(),
-            "NATIVE_TARGETS_NOT_CONSUMED"
+            "NATIVE_TARGETS_NOT_CONSUMED: consumed={} expected={}",
+            observed.consumed,
+            request.target_points.len()
         );
         let native = engine.get_result();
         ensure!(
