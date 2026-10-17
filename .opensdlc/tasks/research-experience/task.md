@@ -9,7 +9,7 @@
 
 **Endpoint:** Reviewed, tested delivery through [PR #208](https://github.com/zhengui666/QuaZonai/pull/208) into remote `dev`. Production deployment, paid inference and real-account operations are outside this authorization. The PR owns the exact checked/reviewed Head and actual merge state.
 
-**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, initially based on `2d9f12fb`; integrated subsequent remote `dev` changes through `0c2da121`. Original-workspace unrelated changes remain untouched. No `.opensdlc/config.json` exists: workflow prose uses English; UI copy uses Chinese.
+**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, initially based on `2d9f12fb`; integrated subsequent remote `dev` changes through `fd6f9f9a`. Original-workspace unrelated changes remain untouched. No `.opensdlc/config.json` exists: workflow prose uses English; UI copy uses Chinese.
 
 <a id="intent"></a>
 ## Intent
@@ -45,24 +45,25 @@ The labelled [prototype assets](assets/) are design-only records, not service ev
 
 ### Application integration
 
-The following local checks passed before the final upstream integration/review cycle; exact final-Head results are authoritative in [PR #208](https://github.com/zhengui666/QuaZonai/pull/208):
+The following local integration checks include review remediation; exact final-Head results are authoritative in [PR #208](https://github.com/zhengui666/QuaZonai/pull/208):
 
-- `make check-web`: strict Web types, four unit tests and production build. ECharts is lazy-loaded; Vite still reports large vendor/chart chunks. No production Core Web Vitals claim is made.
-- `npm --prefix apps/web run test:e2e`: **15 Chromium cases passed**. They cover owner setup/login, exact replay after lost responses and changed defaults, cursor filtering, null/partition/component evidence, original failed/selected trials and native outcomes, exact capital/weights/curve values, target-only observation, secret prompts/cancellation, disappeared login, explicit settings save/races, extensions, dataset disclosure/return, stopping a held refresh, zero/maximum-safe budgets, keyboard and reduced motion.
+- `make check-web`: strict Web types, five unit tests and production build. ECharts is lazy-loaded; Vite still reports large vendor/chart chunks. No production Core Web Vitals claim is made.
+- `npm --prefix apps/web run test:e2e`: **22 Chromium cases passed**. They cover owner setup/login, exact replay after lost responses and changed defaults, cursor filtering, null/partition/component evidence, original failed/selected trials and native outcomes, exact capital/weights/curve values, target-only observation, secret prompts/cancellation, disappeared login, explicit settings save/races, extensions, dataset disclosure/return, stopping a held refresh, zero/maximum-safe budgets, keyboard and reduced motion.
 - The layout sweep covers seven actual views at 320, 390, 768 and 1024 in both themes, with page-overflow and research-row containment assertions. Tagged axe checks include WCAG 2 A/AA, 2.1 AA and 2.2 AA; checked views reported no violations. This is not full accessibility conformance or a human usability study.
 - `make check-ts check-deploy`: Service, Research and CLI types/tests plus source/package helper checks passed. The optional formal release-distribution test is skipped when its artifact is absent; no installation acceptance is claimed from that skip.
 
-Two browser cases exercise a disposable real HTTP service, official Faux Provider, actual Durable SQLite and production Web assets. The first uses no API interception and crosses owner setup → study → recorded evidence → backtest → uncertain target delivery → service reopen → original receipt reconciliation → nullable account snapshot → local stop. The other deliberately drops a real admission response after acceptance and verifies identical request bytes, one original study and one provider execution after reload. Original receipt/expiry and one downstream offer remain unchanged.
+Three browser cases exercise a disposable real HTTP service, official Faux Provider, actual Durable SQLite and production Web assets. The first uses no API interception and crosses owner setup → study → recorded evidence → backtest → uncertain target delivery → service reopen → original receipt reconciliation → nullable account snapshot → local stop. Another deliberately drops a real admission response after acceptance and verifies identical request bytes, one original study and one provider execution after reload. The late-response case resolves A, starts B, releases A's original response, reloads and resolves B with its original bytes: two studies and two executions, not a new identity or a deleted draft. Original receipt/expiry and one downstream offer remain unchanged.
 
 The browser scientific subprocess is explicitly a **TEST_ONLY protocol probe**, not the actual scientific kernel or evidence qualification. Retained native/core/scientific CI remains required. No paid model, real-account, profitability, literal unattended-day, owner interview/usability or production performance result is claimed.
 
 ### Inspected application images
 
 - [Light research](assets/application-research-light.png) and [dark research](assets/application-research-dark.png): controlled test responses; inspected actual application composition and long exact counters.
-- [Mobile authoring](assets/application-new-study-mobile.png): actual application validation/focus state, controlled catalog.
+- [Mobile authoring](assets/application-new-study-mobile.png) and [preserved original command](assets/application-original-conflict-mobile.png): actual validation/focus and recovery states, controlled catalog.
+- [Backtest result](assets/application-portfolio.png): actual time-scaled chart, null gap and exact raw table under controlled responses.
 - [Real HTTP research](assets/application-http-research.png) and [receipt/account observation](assets/application-http-observation.png): disposable service and protocol-only records, not market evidence.
 
-The look-and-fix loop corrected an overflowing long research row, long-counter layout, password/clear touch targets, neutral-label contrast, actual auth-query transition and asynchronous recovery/stop/settings boundaries. Technical checks are not presented as owner aesthetic or human-task acceptance.
+The look-and-fix loop corrected an overflowing long research row, long-counter layout, password/clear touch targets, neutral-label contrast, actual auth-query transition and asynchronous recovery/stop/settings boundaries. Technical checks are not presented as owner aesthetic or human-task acceptance. Review regressions also cover idle/unanswered stops, settled stopped receipts, missing snapshots, initiating-study draft merges, confirmed conflict exit/download and cleared defaults. The reproducible pre-fix tests are preserved in `c5f16e07`; the late-command and cleared-model failures were observed before their fixes. Exact review findings and resolution belong to the PR.
 
 <a id="review"></a>
 ## Review

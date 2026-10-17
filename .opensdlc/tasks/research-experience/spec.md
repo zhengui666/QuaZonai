@@ -292,12 +292,12 @@ The identifiers below are design/test references, not a mandate to create one Re
 ### F15. Error panel
 
 - **Anatomy:** concise translated problem, one valid repair/retry action, optional `技术详情` with original public error code. Preserve the input/draft.
-- **Behavior:** known 4xx prerequisite failures route to repair; uncertain network/5xx after a mutation retain original identity; auth expiry uses the owner access flow. A request conflict is not automatically retried with a new ID.
+- **Behavior:** known 4xx prerequisite failures route to repair; uncertain network/5xx after a mutation retain original identity; auth expiry uses the owner access flow. A request conflict is not automatically retried with a new ID. After a confirmed conflict, an explicit scoped `重新编辑` action retains the previous exact nonsecret command for inspection/download and unlocks editing; only a subsequent explicit submission creates another identity. Unknown outcomes do not expose this action.
 - **Acceptance:** `dataset_not_ready`, model unavailability and missing independent evidence have different messages and actions.
 
 ### F16. Scoped confirmation
 
-- **Use:** explicit owner stop, observation stop or provider disconnect; not routine reads, navigation, form saves or every mutation.
+- **Use:** explicit owner stop, observation stop, confirmed request-conflict abandonment or provider disconnect; not routine reads, navigation, form saves or every mutation.
 - **Anatomy:** action-specific title, affected record name, one short consequence, `取消`, explicit action verb. No generic `确定`/`操作成功`.
 - **Behavior:** official focus trap and return; dismissing cannot issue a mutation. Pending action prevents duplicate activation; errors remain in context.
 - **Acceptance:** observation stop says `仅停止本地观测` and does not mention cancelling orders or withdrawing targets.
@@ -305,7 +305,7 @@ The identifiers below are design/test references, not a mandate to create one Re
 ### F17. Exact-value chart
 
 - **Anatomy:** heading `账户权益`, currency, actual time/value axes, one native equity series, readout for original point, `查看数据` disclosure. Height 300px desktop, 240px mobile.
-- **Behavior:** native snapshots only; chart Number conversion is display-only; labels/data table retain original decimal/time strings. Nulls are gaps; `connectNulls` is false. No interpolated fake samples, smoothing that changes interpretation, cumulative factor-curve sum or locally recomputed authoritative NAV.
+- **Behavior:** native snapshots on a true elapsed-time axis, not equally spaced categories; chart Number conversion is display-only; labels/data table retain original decimal/time strings. Nulls are gaps; `connectNulls` is false. No interpolated fake samples, smoothing that changes interpretation, cumulative factor-curve sum or locally recomputed authoritative NAV.
 - **Accessibility:** semantic summary of existing record count/date extent, accessible exact-point table; pointer tooltip is not the only way to read a value. Plot uses one theme accent and sufficient line contrast.
 - **Acceptance:** a missing snapshot does not produce a flat zero line; one point remains inspectable; changing theme resizes/recolors without losing data.
 
@@ -446,7 +446,7 @@ Do not show summed factor sparklines, invented annualized returns, fictional rec
 
 Full-page builder width up to 900px. Actual original research choices display human-readable goal, independent result state and captured/current dataset identity with honest historical gaps. Only clear known prerequisites are applied locally; original service admission is authoritative for dataset/policy/selection compatibility.
 
-Selecting research never runs a probe or re-evaluates it. Multiple members remain individually visible with a remove action, original ID and explicit weight. The initiating study is preselected visibly. No `Select all` across unseen cursor pages; more research remains loadable.
+Selecting research never runs a probe or re-evaluates it. Multiple members remain individually visible with a remove action, original ID and explicit weight. The initiating study is preselected visibly, including when restoring another unsubmitted draft. Preserve existing allocations; a newly added member in a multi-member draft needs an explicit weight rather than silent normalization. No `Select all` across unseen cursor pages; more research remains loadable.
 
 ### P03. Exact allocation and capital form
 
@@ -483,7 +483,7 @@ Do not silently choose a live connection. Require explicit selection when no una
 
 Collection rows: original name, **模拟/实盘**, **目标回执**, **观测状态**, **快照时间**. Selecting opens the record. Do not collapse the two states into one green `在线` badge. Header retains portfolio link, connection identity when recorded and a clearly visible mode label.
 
-Use `上次快照` for actual snapshot time, not `实时`. Polling the collection reads stored facts; it does not imply the downstream account was polled. No automatic account-fetch loop is added without an actual supported policy.
+Use `上次快照` for actual snapshot time, not `实时`. `OBSERVING` is an observation state, not proof that an account snapshot exists. Polling the collection reads stored facts; it does not imply the downstream account was polled. No automatic account-fetch loop is added without an actual supported policy.
 
 ### O03. Receipt block
 
@@ -512,7 +512,7 @@ A secondary provenance disclosure shows captured connection ID plus actual clien
 
 ### O05. Refresh/reconciliation action
 
-One primary action changes label by the actual receipt context: `核对回执` when uncertain/pending reconciliation, otherwise `更新快照`. It invokes the same existing `/refresh` operation; it never creates a second observation/request/receipt or extends original expiry.
+One primary action follows the actual receipt context: `核对回执` when uncertain/pending reconciliation, or `更新快照` for an acknowledged, non-stopped observation. Settled stopped receipts and unsupported receipt states have no refresh action. It invokes the same existing `/refresh` operation; it never creates a second observation/request/receipt or extends original expiry.
 
 During request, show `核对中` or `更新中`, preserve last successful snapshot, and retain the original selected record. Error shows inline and leaves previous facts visible with their original time. Do not stamp them with local fetch time. A repeated identical snapshot remains the same historical point; no duplicate chart point is fabricated by the browser.
 
