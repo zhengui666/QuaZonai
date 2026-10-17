@@ -15,6 +15,7 @@ export interface ThresholdPolicy {
   simulationSettings: JsonObject;
   forecastMode?: 'price-volume';
   evaluationPartition?: 'HELDOUT';
+  evidenceMode?: 'HISTORICAL_REASSESSMENT';
 }
 export interface StrategyMember { model: string; weight: string }
 export type StrategyPartition = 'VALIDATION' | 'HELDOUT';
@@ -48,6 +49,7 @@ export function thresholdPolicy(value: JsonObject): ThresholdPolicy {
   if (value.kind !== 'factor-threshold') throw new Error('strategy_adapter_unsupported');
   if (value.forecastMode !== undefined && value.forecastMode !== 'price-volume') throw new Error('strategy_forecast_mode_invalid');
   if (value.evaluationPartition !== undefined && value.evaluationPartition !== 'HELDOUT') throw new Error('strategy_evaluation_partition_invalid');
+  if (value.evidenceMode !== undefined && value.evidenceMode !== 'HISTORICAL_REASSESSMENT') throw new Error('strategy_evidence_mode_invalid');
   if (value.instrumentIds !== undefined) {
     const ids = value.instrumentIds;
     if (!Array.isArray(ids) || !ids.length || ids.some((id) => typeof id !== 'string' || !id.trim())

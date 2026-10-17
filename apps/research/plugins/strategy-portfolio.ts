@@ -11,7 +11,7 @@ export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
   tools: [defineTool({
     name: 'strategy_portfolio_evaluate',
-    description: 'Propose one complete Wasm ensemble with exact positive decimal weights summing to 1. Optionally select instrumentId inside the original fixed instrumentIds universe; absence retains the admitted base instrument. Fixed threshold/fees/capital map each component to targets; native exact blending and ONE shared account trade VALIDATION only. Feedback is native account statistics and component IC/count summaries, never heldout or raw arrays. Each proposal, including failure, consumes one original trial.',
+    description: 'Propose one complete Wasm ensemble with exact positive decimal weights summing to 1. Optionally select instrumentId inside the original fixed instrumentIds universe; absence retains the admitted base instrument. Fixed threshold/fees/capital map each component to targets; native exact blending and ONE shared account trade VALIDATION only. Feedback is native account statistics and component IC/count summaries, never heldout or raw arrays. An original HISTORICAL_REASSESSMENT binding explicitly denotes exposed history, never unseen evidence; the agent cannot change that mode. Each proposal, including failure, consumes one original trial.',
     parameters: Type.Object({ hypothesis: Type.String(), members: Type.Array(Type.Object({ model: Type.String(), weight: Type.String() })), instrumentId: Type.Optional(Type.String()) }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
@@ -22,13 +22,13 @@ export default defineExtension({
         const members = strategyMembers(proposal);
         const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));
         const request = iterationRequest(input.data, true);
-        await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
+        await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
         return runPortfolio(api, context, { members, policy, data: { ...input.data, request }, partition: 'VALIDATION', binary: process.env.QZ_JOB_BINARY ?? 'job' });
       }));
     },
   }), defineTool({
     name: 'strategy_portfolio_finalize',
-    description: 'Select an original COMPUTED ensemble for ONE independent HELDOUT shared-account evaluation using the original sealed binding/policy. Ends research. Final metrics are owner-only and are NEVER returned for tuning. Call alone in the final round.',
+    description: 'Select an original COMPUTED ensemble for ONE owner-only HELDOUT shared-account final evaluation using the original sealed binding/policy. Default exposure rules require independent data; an original HISTORICAL_REASSESSMENT binding permits only explicitly exposed historical reassessment, not unseen evidence. Ends research. Final metrics are NEVER returned for tuning. Call alone in the final round.',
     parameters: Type.Object({ trialId: Type.Integer(), reason: Type.String() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
@@ -49,14 +49,14 @@ export default defineExtension({
       }, context);
       if (!selected.settled) {
         try {
-          await checkExposure(api, context, data, true);
+          await checkExposure(api, context, data, true, undefined, selected.policy.evidenceMode);
           const result = await runPortfolio(api, context, { members: selected.members, policy: selected.policy, data, partition: 'HELDOUT', binary: process.env.QZ_JOB_BINARY ?? 'job' });
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.status = 'FAILED'; final.error = error instanceof Error ? error.message : 'heldout_failed'; }, context);
         }
       }
-      return { content: [{ type: 'text', text: 'Research ended. Original ensemble selection, exposure and independent outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
+      return { content: [{ type: 'text', text: 'Research ended. Original ensemble selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };
     },
   })],
 });

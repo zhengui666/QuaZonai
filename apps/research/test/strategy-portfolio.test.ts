@@ -327,3 +327,102 @@ test('owner stop aborts the ensemble child and joins its provider-free native pr
     if (child.state.status === 'terminal') assert.equal(child.state.outcome.status, 'aborted');
   } finally { await host.close(); await state.cleanup(); }
 });
+
+test('explicit historical reassessment preserves prior exposure and cannot become fresh independent evidence', async () => {
+  const state = await setup();
+  Object.assign(state.input.policy.strategy, { evidenceMode: 'HISTORICAL_REASSESSMENT' });
+  const host = await openResearch(state.options);
+  const original = { catalog: state.input.data.sealed.catalog, barTypes: state.input.data.request.forecast.selection.bar_types, start: '20', end: '30', kind: 'FINAL', taskId: 9000, conversationId: 8000 };
+  try {
+    await host.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(original); }, context);
+    state.faux.setResponses([
+      tool('strategy_portfolio_evaluate', { hypothesis: 'Owner-bound exposed history is not unseen evidence.', members }),
+      (transcript) => {
+        const result = textResult(transcript, 'strategy_portfolio_evaluate');
+        assert.equal(object(result.portfolio, 'portfolio').evidenceMode, 'HISTORICAL_REASSESSMENT');
+        return tool('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Once-only owner history reassessment, not independent qualification.' });
+      },
+    ]);
+    const receipt = await host.start('explicit-history', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
+    assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
+    assert.equal(object(object(facts.final!.result, 'final').portfolio, 'portfolio').evidenceMode, 'HISTORICAL_REASSESSMENT');
+    assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').strategy, state.input.policy.strategy);
+    const windows = (await host.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(windows[0], original);
+    assert.deepEqual(windows.map((window) => window.kind), ['FINAL', 'HISTORICAL_ITERATION', 'HISTORICAL_FINAL']);
+    for (const window of windows.slice(1)) {
+      assert.equal(window.evidenceMode, 'HISTORICAL_REASSESSMENT');
+      assert.deepEqual(window.priorExposureTaskIds, [9000]);
+    }
+    const calls = await state.calls();
+    const strict = JSON.parse(JSON.stringify(state.input)) as typeof state.input;
+    delete (strict.policy.strategy as JsonObject).evidenceMode;
+    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Renaming cannot undo historical exposure.', members }), tool('research_finish', { reason: 'Still exposed.' })]);
+    const reset = await host.start('still-not-fresh', strict);
+    await (await host.harness.submission(reset.submissionId, context))!.wait(context);
+    assert.equal((await host.view(reset.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, windows);
+    assert.equal((await state.calls()).length, calls.length);
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('unsupported evidence modes do not silently authorize historical reuse', async () => {
+  const state = await setup();
+  try { assert.throws(() => thresholdPolicy({ ...state.input.policy.strategy, evidenceMode: 'REUSE_ANYTHING' }), /strategy_evidence_mode_invalid/); }
+  finally { await state.cleanup(); }
+});
+
+for (const ownStudy of [false, true]) test(`historical reassessment requires prior other-study exposure, not ${ownStudy ? 'self-bootstrapped history' : 'an empty ledger'}`, async () => {
+  const state = await setup(); Object.assign(state.input.policy.strategy, { evidenceMode: 'HISTORICAL_REASSESSMENT' });
+  const host = await openResearch(state.options);
+  let seeded: JsonObject | undefined;
+  try {
+    state.faux.setResponses([
+      async () => {
+        if (ownStudy) {
+          const page = await host.list();
+          seeded = { catalog: state.input.data.catalog, barTypes: state.input.data.request.forecast.selection.bar_types, start: '0', end: '20', kind: 'HISTORICAL_ITERATION', taskId: 9000, conversationId: page.items[0]!.id, evidenceMode: 'HISTORICAL_REASSESSMENT', priorExposureTaskIds: [] };
+          await host.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(seeded!); }, context);
+        }
+        return tool('strategy_portfolio_evaluate', { hypothesis: 'A historical label cannot manufacture earlier exposure.', members });
+      },
+      tool('research_finish', { reason: 'No prior other-study exposed window.' }),
+    ]);
+    const receipt = await host.start('prior-history-required', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'FAILED', JSON.stringify(facts.trials));
+    assert.equal(facts.trials[0]!.error, 'historical_exposure_required');
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))?.windows ?? [], seeded ? [seeded] : []);
+    await assert.rejects(readFile(state.log), { code: 'ENOENT' });
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('explicit history can reassess another stopped studys original iteration exposure', async () => {
+  const state = await setup(); Object.assign(state.input.policy.strategy, { evidenceMode: 'HISTORICAL_REASSESSMENT' });
+  const host = await openResearch(state.options);
+  const original = { catalog: state.input.data.catalog, barTypes: state.input.data.request.forecast.selection.bar_types, start: '0', end: '20', kind: 'ITERATION', taskId: 9000, conversationId: 8000 };
+  try {
+    await host.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(original); }, context);
+    state.faux.setResponses([
+      tool('strategy_portfolio_evaluate', { hypothesis: 'Reassess a previously exposed iteration prefix, not fresh data.', members }),
+      tool('research_finish', { reason: 'Protocol-only historical prefix control, no final exposure requested.' }),
+    ]);
+    const receipt = await host.start('prior-iteration-history', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
+    assert.equal(object(object(facts.trials[0]!.result, 'result').portfolio, 'portfolio').evidenceMode, 'HISTORICAL_REASSESSMENT');
+    const windows = (await host.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(windows[0], original);
+    assert.deepEqual(windows.map((window) => window.kind), ['ITERATION', 'HISTORICAL_ITERATION']);
+    assert.deepEqual(windows[1]!.priorExposureTaskIds, [9000]);
+    const calls = (await state.calls()).filter((call) => call.command === 'simulate');
+    assert.equal(calls.length, 1);
+    assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_start_ns, '10');
+    assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_end_ns, '20');
+  } finally { await host.close(); await state.cleanup(); }
+});
