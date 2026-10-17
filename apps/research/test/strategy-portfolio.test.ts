@@ -20,7 +20,8 @@ const members = [{ model: positive, weight: '0.2500000000000000001' }, { model: 
 const tool = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 function textResult(transcript: { messages: readonly unknown[] }, name: string) {
   const latest = transcript.messages.filter((item) => (item as { role: string; toolName?: string }).role === 'toolResult' && (item as { toolName?: string }).toolName === name).at(-1) as { content: { type: string; text?: string }[] };
-  return JSON.parse(latest.content.filter((item) => item.type === 'text').map((item) => item.text).join('')) as JsonObject;
+  try { return JSON.parse(latest.content.filter((item) => item.type === 'text').map((item) => item.text).join('')) as JsonObject; }
+  catch (error) { console.error(`${name}: incomplete model-facing JSON: ${String(error)}`); throw error; }
 }
 
 async function setup(universe = false) {
@@ -424,5 +425,115 @@ test('explicit history can reassess another stopped studys original iteration ex
     assert.equal(calls.length, 1);
     assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_start_ns, '10');
     assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_end_ns, '20');
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('large ensemble feedback and original-trial reads deliver the same account scalars without recomputation', async () => {
+  const state = await setup(); state.input.policy.max_trials = 1;
+  await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', diagnostic_assets: 24 }));
+  const ensemble = ['0.4', '0.25', '0.25', '0.1'].map((weight) => ({ model: positive, weight }));
+  const host = await openResearch(state.options);
+  let evaluated: JsonObject; let trialId: number;
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Protocol-only long component reports, not market evidence.', members: ensemble }),
+    (transcript) => {
+      evaluated = textResult(transcript, 'strategy_portfolio_evaluate'); trialId = evaluated.trialId as number;
+      assert.equal(object(evaluated.portfolio, 'portfolio').partition, 'VALIDATION');
+      assert.equal(object((object(evaluated.portfolio, 'portfolio').statistics as JsonObject[])[0]!, 'statistic').value, null);
+      assert.ok(Buffer.byteLength(JSON.stringify(evaluated)) < 16_384);
+      assert.equal(JSON.stringify(evaluated).includes('"assets"'), false);
+      return tool('research_trial', { trialId });
+    },
+    (transcript) => {
+      const read = textResult(transcript, 'research_trial');
+      assert.equal(read.trialId, trialId); assert.equal(read.status, 'COMPUTED');
+      assert.deepEqual(object(read.result, 'original_result').portfolio, evaluated.portfolio);
+      assert.deepEqual(object(read.result, 'original_result').components, evaluated.components);
+      assert.equal(JSON.stringify(read).includes('RAW_FORECAST'), false);
+      assert.equal(JSON.stringify(read).includes('HELDOUT_OWNER_ONLY'), false);
+      return tool('research_brief', {});
+    },
+    (transcript) => {
+      const brief = textResult(transcript, 'research_brief');
+      assert.equal(brief.totalTrials, 1); assert.equal(brief.nextAfterTrialId, null);
+      assert.deepEqual((brief.trials as JsonObject[]).map((row) => row.taskId), [trialId]);
+      assert.equal(JSON.stringify(brief).includes('"assets"'), false);
+      return tool('research_finish', { reason: 'Protocol checks only; no selected market candidate.' });
+    },
+  ]);
+  try {
+    const receipt = await host.start('large-ensemble-feedback', state.input);
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials.length, 1); assert.equal(facts.trials[0]!.status, 'COMPUTED');
+    assert.deepEqual(facts.trials[0]!.proposal, { hypothesis: 'Protocol-only long component reports, not market evidence.', members: ensemble, request: state.input.data.request, strategy: state.input.policy.strategy });
+    const original = object(facts.trials[0]!.result, 'original_result');
+    const components = original.components as JsonObject[];
+    assert.equal((object((object(components[0]!.summary, 'summary').partitions as JsonObject[])[0]!, 'partition').assets as JsonObject[]).length, 24);
+    assert.deepEqual(components.map((component) => component.weight), ensemble.map((member) => member.weight));
+    const evidence = await host.harness.waitForTask(original.evidenceTaskId as TaskId<JsonObject>, context);
+    assert.equal(evidence.state.outcome.status, 'completed');
+    const native = object(evidence.state.outcome.status === 'completed' ? evidence.state.outcome.result.native : null, 'native');
+    assert.deepEqual(object(native.simulation, 'simulation').statistics, object(evaluated!.portfolio, 'portfolio').statistics);
+    assert.ok(JSON.stringify(native).includes('RAW_FORECAST_AND_LABELS_PROTOCOL_ONLY'));
+    const calls = await state.calls();
+    assert.equal(calls.filter((call) => call.command === 'evaluate-factor').length, 4);
+    assert.equal(calls.filter((call) => call.command === 'forecast-factor').length, 4);
+    assert.equal(calls.filter((call) => call.command === 'simulate').length, 1);
+    assert.equal(calls.length, 10);
+    assert.equal(facts.final!.trialId, null);
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('large historical ledger pages disclose every trial and read failures without consuming remaining trials', async () => {
+  const state = await setup(); state.input.policy.max_trials = 4;
+  await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', diagnostic_assets: 24 }));
+  const host = await openResearch(state.options); let ids: number[]; let firstPage: number[];
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Original failed control remains disclosed.', members: [{ model: 'invalid wat', weight: '1' }] }),
+    ...Array.from({ length: 3 }, (_, index) => tool('strategy_portfolio_evaluate', { hypothesis: `Protocol-only stored long trial ${index}.`, members })),
+    tool('research_brief', {}),
+    (transcript) => {
+      const brief = textResult(transcript, 'research_brief'); ids = (brief.trials as JsonObject[]).map((row) => row.taskId as number);
+      assert.equal(brief.totalTrials, 4); assert.equal(ids.length, 4);
+      assert.equal(brief.nextAfterTrialId, null);
+      assert.equal((brief.trials as JsonObject[])[0]!.status, 'FAILED');
+      assert.equal(JSON.stringify(brief).includes('"assets"'), false);
+      assert.equal(JSON.stringify(brief).includes('"model":"(module'), false);
+      assert.equal('sealed' in object(brief.data, 'data'), false);
+      assert.ok(Buffer.byteLength(JSON.stringify(brief)) < 16_384);
+      return tool('research_brief', { limit: 2 });
+    },
+    (transcript) => {
+      const page = textResult(transcript, 'research_brief'); firstPage = (page.trials as JsonObject[]).map((row) => row.taskId as number);
+      assert.deepEqual(firstPage, ids.slice(0, 2)); assert.equal(page.totalTrials, 4); assert.equal(page.nextAfterTrialId, firstPage[1]);
+      return tool('research_brief', { afterTrialId: page.nextAfterTrialId, limit: 2 });
+    },
+    (transcript) => {
+      const page = textResult(transcript, 'research_brief');
+      assert.deepEqual([...firstPage, ...(page.trials as JsonObject[]).map((row) => row.taskId as number)], ids);
+      assert.equal(page.nextAfterTrialId, null);
+      return tool('research_trial', { trialId: ids[0] });
+    },
+    (transcript) => {
+      const read = textResult(transcript, 'research_trial');
+      assert.equal(read.trialId, ids[0]); assert.equal(read.status, 'FAILED'); assert.equal(read.result, null); assert.equal(typeof read.error, 'string');
+      return tool('research_trial', { trialId: 999999999 });
+    },
+    (transcript) => {
+      const message = transcript.messages.filter((item) => (item as { role: string; toolName?: string }).role === 'toolResult' && (item as { toolName?: string }).toolName === 'research_trial').at(-1) as { isError?: boolean; content: { type: string; text?: string }[] };
+      assert.equal(message.isError, true); assert.match(JSON.stringify(message.content), /research_trial_not_found/);
+      return tool('research_finish', { reason: 'Read-only disclosure complete; no new scientific run.' });
+    },
+  ]);
+  try {
+    const receipt = await host.start('large-brief-feedback', state.input);
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials.length, 4); assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'COMPUTED', 'COMPUTED', 'COMPUTED']);
+    assert.deepEqual(facts.trials.map((trial) => trial.taskId), ids!);
+    assert.deepEqual(facts.input, state.input);
+    assert.equal((await state.calls()).filter((call) => call.command === 'simulate').length, 3);
+    assert.ok((object((object(facts.trials[3]!.result, 'result').components as JsonObject[])[0]!.summary, 'summary').partitions as JsonObject[]).some((partition) => (partition.assets as JsonObject[]).length === 24));
   } finally { await host.close(); await state.cleanup(); }
 });
