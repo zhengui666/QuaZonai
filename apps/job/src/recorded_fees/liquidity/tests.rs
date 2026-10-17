@@ -363,6 +363,14 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     let (directory, _, mut request) = native_scenario();
     recorded_settings(&mut request);
     request.target_points[1].asof_ns = DbCounter::new(2 * MINUTE_NS).unwrap();
+    // Keep the next target due while the first IOC is settling; the new exact
+    // latency wakeup would otherwise settle a 1ns order before the next BAR.
+    request.settings.latency_model = serde_json::from_value(serde_json::json!({
+        "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
+        "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
+        "upstream_version":"0.63.0",
+        "parameters":{"base_latency_ns":"0","insert_latency_ns":"60000000000","update_latency_ns":"0","cancel_latency_ns":"0"}
+    })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
     let report = result.recorded_fee_replay.unwrap();
     assert_eq!(report.fills.len(), 2);
@@ -370,4 +378,75 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     assert_eq!(report.fills[1].bar_end_ns.get(), 3 * MINUTE_NS);
     assert_eq!(report.fills[0].fill_quantity, "10".parse().unwrap());
     assert_eq!(report.fills[1].fill_quantity, "10".parse().unwrap());
+}
+
+#[test]
+fn native_ioc_fills_at_declared_positive_latency_not_the_next_bar() {
+    let (directory, _, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    request.settings.snapshot_interval_ms = 86_400_000;
+    request.settings.latency_model = serde_json::from_value(serde_json::json!({
+        "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
+        "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
+        "upstream_version":"0.63.0",
+        "parameters":{"base_latency_ns":"0","insert_latency_ns":"1000000","update_latency_ns":"0","cancel_latency_ns":"0"}
+    })).unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.unwrap();
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills[0].fill_ns.get(), MINUTE_NS + 1_000_000);
+    assert_eq!(report.fills[1].fill_ns.get(), 4 * MINUTE_NS + 1_000_000);
+    assert_eq!(report.fills[0].bar_end_ns.get(), MINUTE_NS);
+    assert_eq!(report.fills[1].bar_end_ns.get(), 4 * MINUTE_NS);
+}
+
+#[test]
+fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (directory, mut data, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    let gap = 2 * 86_400_000_000_000;
+    for bar in data.series[0].bars.iter_mut().skip(1) {
+        bar.ts_init = (bar.ts_init.as_u64() + gap).into();
+        bar.ts_event = bar.ts_init;
+    }
+    let path = directory.path().join(RECORDED_FEES_FILE);
+    let mut source: RecordedTradeFeesV1 =
+        serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
+    for record in &mut source.records {
+        if record.ts_event_ns.get() >= MINUTE_NS {
+            record.ts_event_ns = DbCounter::new(record.ts_event_ns.get() + gap).unwrap();
+        }
+    }
+    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    std::fs::remove_dir_all(directory.path().join("data/bars")).unwrap();
+    ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap()
+    .write_to_parquet(&data.series[0].bars, None, None, None)
+    .unwrap();
+    let end = DbCounter::new(7 * MINUTE_NS + gap).unwrap();
+    request.target_points[1].asof_ns = DbCounter::new(4 * MINUTE_NS + gap).unwrap();
+    for point in &mut request.target_points {
+        point.valid_until_ns = end;
+    }
+    request.selection.event_end_ns = end;
+    request.selection.decision_cutoff_ns = end;
+    request.settings.snapshot_interval_ms = 86_400_000;
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.unwrap();
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills[0].fill_ns.get(), MINUTE_NS + 1);
+    assert_eq!(report.fills[1].fill_ns.get(), 4 * MINUTE_NS + gap + 1);
+    assert_eq!(report.fills[0].allocations[0].original.id, "a");
+    assert_eq!(report.fills[1].bar_end_ns.get(), 4 * MINUTE_NS + gap);
+    assert!(report
+        .fills
+        .iter()
+        .all(|fill| fill.fill_quantity == "10".parse().unwrap()));
 }
