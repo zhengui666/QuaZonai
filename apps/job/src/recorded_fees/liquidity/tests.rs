@@ -363,6 +363,14 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     let (directory, _, mut request) = native_scenario();
     recorded_settings(&mut request);
     request.target_points[1].asof_ns = DbCounter::new(2 * MINUTE_NS).unwrap();
+    // Keep the next target due while the first IOC is settling; the new exact
+    // latency wakeup would otherwise settle a 1ns order before the next BAR.
+    request.settings.latency_model = serde_json::from_value(serde_json::json!({
+        "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
+        "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
+        "upstream_version":"0.63.0",
+        "parameters":{"base_latency_ns":"0","insert_latency_ns":"60000000000","update_latency_ns":"0","cancel_latency_ns":"0"}
+    })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
     let report = result.recorded_fee_replay.unwrap();
     assert_eq!(report.fills.len(), 2);
@@ -413,8 +421,15 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
     std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
     std::fs::remove_dir_all(directory.path().join("data/bars")).unwrap();
     ParquetDataCatalog::from_uri(
-        directory.path().to_str().unwrap(), None, Some(16), None, None,
-    ).unwrap().write_to_parquet(&data.series[0].bars, None, None, None).unwrap();
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap()
+    .write_to_parquet(&data.series[0].bars, None, None, None)
+    .unwrap();
     let end = DbCounter::new(7 * MINUTE_NS + gap).unwrap();
     request.target_points[1].asof_ns = DbCounter::new(4 * MINUTE_NS + gap).unwrap();
     for point in &mut request.target_points {
@@ -430,5 +445,8 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
     assert_eq!(report.fills[1].fill_ns.get(), 4 * MINUTE_NS + gap + 1);
     assert_eq!(report.fills[0].allocations[0].original.id, "a");
     assert_eq!(report.fills[1].bar_end_ns.get(), 4 * MINUTE_NS + gap);
-    assert!(report.fills.iter().all(|fill| fill.fill_quantity == "10".parse().unwrap()));
+    assert!(report
+        .fills
+        .iter()
+        .all(|fill| fill.fill_quantity == "10".parse().unwrap()));
 }

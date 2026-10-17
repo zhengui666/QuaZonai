@@ -15,7 +15,11 @@ use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
 };
-use nautilus_common::{actor::DataActor, logging::logger::LoggerConfig};
+use nautilus_common::{
+    actor::DataActor,
+    logging::logger::LoggerConfig,
+    timer::{TimeEvent, TimeEventCallback},
+};
 use nautilus_execution::models::{
     fill::{DefaultFillModel, FillModelHandle},
     latency::{LatencyModelHandle, StaticLatencyModel},
@@ -416,6 +420,25 @@ impl TargetReplay {
         } else {
             None
         };
+        if self.paper.is_none() && recorded_liquidity(&self.settings) {
+            let arrival = self
+                .clock()
+                .timestamp_ns()
+                .as_u64()
+                .checked_add(self.latency_ns)
+                .ok_or_else(|| anyhow::anyhow!("NATIVE_LATENCY_TIME_RANGE"))?;
+            let name = format!("RECORDED-INSERT:{}", order.client_order_id());
+            let callback: Rc<dyn Fn(TimeEvent)> = Rc::new(|_| {});
+            // Static latency queues the command but does not wake the engine.
+            // Let the official timer loop settle it at arrival, not a later BAR
+            // or account snapshot. This adds no market data or synthetic fill.
+            self.clock().set_time_alert_ns(
+                &name,
+                arrival.into(),
+                Some(TimeEventCallback::from(callback)),
+                None,
+            )?;
+        }
         self.submit_order(order, None, client_id, None)
     }
 

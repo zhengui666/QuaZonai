@@ -82,7 +82,12 @@ impl RecordedLiquidityModel {
         let bucket = state
             .buckets
             .get(&key)
-            .context("RECORDED_LIQUIDITY_CLOCK_UNMATCHED")?;
+            .with_context(|| {
+                format!(
+                    "RECORDED_LIQUIDITY_CLOCK_UNMATCHED: instrument={} fill_ns={} bar_end_ns={} order={}",
+                    key.0, now, key.1, order.client_order_id()
+                )
+            })?;
         let available: BigDecimal = bucket
             .records
             .iter()
