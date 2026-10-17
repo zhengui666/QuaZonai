@@ -21,9 +21,12 @@ if (command === 'evaluate-factor') {
   console.log(JSON.stringify({ request: input, native_versions: { protocol: 'TEST_ONLY' }, consumed_fuel: null,
     diagnostic_prediction: prediction,
     partitions: ['TRAIN', 'VALIDATION', 'HELDOUT'].map((partition) => ({ partition, metric: {
-      counts: { observations: partition === 'HELDOUT' && !full ? '0' : '2', included: partition === 'HELDOUT' && !full ? '0' : '2' },
+      counts: { observations: partition === 'HELDOUT' && !full ? '0' : '2', included: partition === 'HELDOUT' && !full ? '0' : '2', excluded: '0', indicator_warmup: '0', incomplete_labels: '0', cross_boundary_labels: '0', prediction_outside_partition: '0' },
       pearson_ic: { value: null, status: 'TEST_ONLY_NO_SCIENCE' },
-    } })) }));
+    }, assets: Array.from({ length: binding?.diagnostic_assets ?? 0 }, (_, index) => ({
+      instrument_id: `${String(index).padStart(76, '0')}.SIM`,
+      metric: { counts: { observations: '2', included: '2', excluded: '0', indicator_warmup: '0', incomplete_labels: '0', cross_boundary_labels: '0', prediction_outside_partition: '0' }, pearson_ic: { value: null, status: 'TEST_ONLY_NO_SCIENCE' } },
+    })) })) }));
 } else if (command === 'forecast-factor' || command === 'forecast') {
   assert.equal(selection.event_start_ns, '0', 'forecast must retain its warmup prefix');
   const clocks = ['1', '9', '10', '12', '15', '19', '20', '23', '29'];
