@@ -11,7 +11,9 @@ This specification replaces the initial high-level proposal. It does not use exi
 
 **Product boundary:** A single local quantitative researcher delegates finite studies, inspects original trials and independent evidence, and may consume results in optional shared-account simulations and target-only downstream observation. QZ does not hold brokerage credentials or place financial orders. Do not add collaboration, multi-user administration, trading controls, a second scheduler, a generic policy editor or a plugin marketplace.
 
-**Design Read:** A professional research workbench for a single quantitative researcher, with a calm, precise product language, using official Ant Design primitives and a new semantic theme.
+**Visual revision 2:** The owner rejected the first detailed prototype as insufficiently refined and overly rough. This revision replaces its green-tinted administrative shell, repeated outlined containers and fallback-only typography. The current direction is a precision research document: neutral paper/graphite surfaces, restrained teal links/selection, a single working-document surface and deliberate typography.
+
+**Design Read:** A professional research workbench for a single quantitative researcher, with a precise, refined utilitarian language. Official Ant Design primitives provide interaction behavior; Geist/Geist Mono, one Phosphor icon family and application-specific semantic composition provide the visual identity.
 
 `DESIGN_VARIANCE: 5`, `MOTION_INTENSITY: 3`, `VISUAL_DENSITY: 6`. Moderate list/detail asymmetry supports comparison; density serves working information; motion is restricted to direct feedback. The marketing skill's hero, stock-photography, logo-wall and scroll-storytelling rules are inapplicable to these product surfaces.
 
@@ -34,7 +36,7 @@ Sources were retrieved on **2026-10-17**. The catalog contains **13 sources**: s
 | S8 | ProductPlan, [State of Product Management 2026](https://www.productplan.com/ebooks/the-state-of-product-management-report-2026), [public report PDF](https://3434168.fs1.hubspotusercontent-na1.net/hubfs/3434168/SPM26/State%20of%20Product%20Management%202026_Final.pdf). Inspected executive summary/method context, participant profile and selected sections on pp. 54-78. | The report surveyed nearly 250 product professionals in Q4 2025. It separates generating more output from improving decisions. Respondents report evidence fragmentation, difficulty connecting insight to decisions and workflow integration friction. Traceability is more valuable than another activity counter. | Vendor-sponsored, self-reported and organizational. The report markets its own platform; that recommendation is not adopted. Sample percentages do not estimate QZ's needs or benefits. No enterprise alignment/governance layer is added. |
 | S9 | Andrew Boyagi, Atlassian/DX/Wakefield Research, [developer-experience research](https://www.atlassian.com/blog/developer/developer-experience-report-2024), page dated January 14, 2025. Full public research summary. | Survey of more than 2,100 developers/managers highlights disagreement about friction and the danger of measuring output while missing experience. Investigate task obstacles rather than assume AI output volume means user value. | Developer work is not factor research; the public summary is not the full survey instrument. Only the caution about indirect measures transfers. No claimed QZ productivity increase follows. |
 | S10 | W3C, [Understanding SC 4.1.3: Status Messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html). Inspected criterion, intent, examples and techniques. | Announce important asynchronous results without unnecessarily moving focus. Live regions must not become a stream of repetitive polling announcements. | The Understanding document is informative guidance for the actual WCAG criterion. Passing axe alone does not demonstrate full conformance. |
-| S11 | W3C, [Understanding SC 2.5.8: Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html). Inspected criterion, spacing/overlap exceptions and examples. | AA minimum is 24x24 CSS px with exceptions; larger targets help touch/motor use. This design chooses 40px desktop and 44px touch controls, not an inaccurate claim that AA universally requires 44px. | Targets must be tested after layout; nominal icon size is not target size. Dense charts need an equivalent accessible data route. |
+| S11 | W3C, [Understanding SC 2.5.8: Target Size (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html). Inspected criterion, spacing/overlap exceptions and examples. | AA minimum is 24x24 CSS px with exceptions; larger targets help touch/motor use. This design chooses 38-40px ordinary desktop controls, 34-36px compact auxiliary controls and 44px touch controls, not an inaccurate claim that AA universally requires 44px. | Targets must be tested after layout; nominal icon size is not target size. Dense charts need an equivalent accessible data route. |
 | S12 | Ant Design, [Alignment](https://ant.design/docs/spec/alignment/). Full specification page. | Shared left edges support scanning; right-aligned numeric columns support comparison. | Its recommendation to use equal decimal places must not override original scientific decimal precision. Exact strings take precedence here. |
 | S13 | Ant Design, [Data Display](https://ant.design/docs/spec/data-display/). Full specification page. | Choose display order by importance/frequency/association, preserve extreme/empty states, use tables for structured comparison and controlled disclosure for detail. | Do not copy every pattern. No carousel, decorative timeline or default grid of cards is needed. Unknown semantic values use explicit wording rather than an ambiguous dash. |
 
@@ -86,7 +88,7 @@ There is one owner, not several invented personas. The owner moves among three m
 
 ### 4.1 Navigation
 
-Primary navigation, in order: **研究**, **数据**, **组合回测**, **目标与观测**. Secondary navigation: **模型设置**, **扩展**. Appearance and owner logout live in a small footer control group. Keep the product name **QuaZonai**; do not invent a new brand or modify existing legal content.
+Primary navigation, in order: **研究**, **数据**, **组合回测**, **目标与观测**. Secondary navigation: **模型设置**, **扩展**. Appearance and owner logout live in the right side of the desktop top bar; mobile exposes appearance in the navigation Drawer. Keep the product name **QuaZonai**; do not invent a new brand or modify existing legal content.
 
 Do not add an overview landing page. It would duplicate the research list and add a click before the work. Do not add a global search box when the API offers only a paginated research list.
 
@@ -111,11 +113,11 @@ Use ordinary anchors and native history/hash navigation; no router dependency is
 
 ### 4.2 Desktop layout
 
-At 1440px, use a 216px rail, 32px main horizontal inset and a 24px work-region gap. Main content is capped at 1440px and remains left-aligned inside that available region. The cap is for readable density, not an instruction to center every block.
+Use a 64px desktop top bar rather than a full-height sidebar. Brand and four primary destinations sit on the left; the two settings destinations, appearance and owner access sit on the right. The current destination has a restrained 2px underline, not another tinted rounded container. At desktop widths all navigation stays on one line.
 
-Research detail uses `320px minmax(0,1fr)` inside the main area; the collection owns one grouped surface, not a stack of elevated cards. The selected working area owns a header, a 44px tab strip and the active content. Its minimum useful width is 480px. If those cannot fit, switch composition rather than shrink labels or tables into illegibility.
+Main content is capped at 1360px including 40px horizontal padding. Research uses `280px minmax(0,1fr)` with a 32px gap. The collection sits directly on the neutral canvas, without an outer card. Only the selected study is a coherent working-document surface with a thin perimeter, 14px radius and almost imperceptible tinted elevation. Its input context, tabs, metrics and trial rows are not nested cards. Ordinary document padding is 30px; use aligned values and sparse separators to organize content.
 
-At 1024-1279px, the rail becomes 184px, main inset 24px, and collection 280px if a detail remains usable. At 768-1023px, keep a compact header/navigation control and show collection or selected detail as the main page; do not squeeze three columns into a tablet. Below 768px, use a single-column page with 16px insets and explicit list/detail navigation.
+At 1024-1279px use 28px page padding, a 256px collection and 24px gap. If useful detail width cannot be retained, switch composition rather than squeeze text. Below 1024px use a 58px compact header and a navigation Drawer; show list or selected detail as the main page. Below 768px the header is 56px, document content has 20px insets, and the selected document loses its desktop perimeter/radius/shadow so it reads as an app screen rather than a card inside a phone.
 
 ### 4.3 Scroll and focus
 
@@ -130,37 +132,37 @@ Use a visible-on-focus `跳到内容` link. Route changes focus the new main hea
 
 | Token | Light | Dark | Intended use |
 | --- | --- | --- | --- |
-| `canvas` | `#F4F7F5` | `#111B16` | Page background |
-| `surface` | `#FCFDFC` | `#17251D` | Grouped working surface |
-| `surfaceInset` | `#EDF2EE` | `#1E3026` | Read-only inset, compact grouping |
-| `text` | `#172A23` | `#E9F0EB` | Body and primary values |
-| `textSecondary` | `#52645B` | `#A3B8A9` | Labels, metadata, placeholders |
-| `accent` | `#246B4E` | `#8BC6A0` | Primary action, selected navigation, chart line |
-| `accentText` | `#FCFDFC` | `#12251B` | Text on accent-filled controls |
-| `accentSelected` | `#E6F0E9` | `#243E2E` | Selection fill |
-| `divider` | `#CCD7D0` | `#3A5042` | Structural separators, not essential control boundaries |
-| `controlBorder` | `#81948A` | `#6B8473` | Input boundary/focus-independent outline |
-| `warningText` / `warningFill` | `#805C1B` / `#FAF1DF` | `#E5BE73` / `#352D1E` | Pending reconciliation, restart requirement |
-| `errorText` / `errorFill` | `#B0403E` / `#FAEDEB` | `#F19B93` / `#38231F` | Actual failed/rejected operations |
+| `canvas` | `#F5F6F8` | `#171B20` | Neutral page background |
+| `surface` | `#FDFEFE` | `#20252B` | Working document and controls |
+| `surfaceInset` | `#F1F4F6` | `#292F36` | Quiet grouping, expanded original record |
+| `text` | `#26313A` | `#E7ECF1` | Body and primary values |
+| `textSecondary` | `#626F7B` | `#A7B1BC` | Labels, metadata, placeholders |
+| `accent` | `#2A6B62` | `#94C7BC` | Links, current-navigation underline, chart line |
+| `primary` / `primaryText` | `#293740` / `#FCFDFE` | `#E7ECF1` / `#202830` | Neutral high-contrast primary actions |
+| `accentSelected` | `#EDF3F1` | `#2B3B3A` | One selected research row |
+| `divider` | `#E0E5EA` | `#38414A` | Structural separators, not essential control boundaries |
+| `controlBorder` | `#8795A1` | `#70808E` | Input boundary/focus-independent outline |
+| `warningText` / `warningFill` | `#815D26` / `#FBF3E5` | `#E8C482` / `#3B3224` | Pending reconciliation, restart requirement |
+| `errorText` / `errorFill` | `#AF433E` / `#FCF0EE` | `#F0A29A` / `#3D2C2C` | Actual failed/rejected operations |
 
-Semantic warning/error are not additional decorative accents. No section inverts theme independently. Forest green does not mean scientific qualification. `COMPUTED` uses a neutral outcome label; the action accent is not a verdict.
+Color is a scarce resource: large surfaces are neutral, primary actions are graphite in light mode and off-white in dark mode, and teal identifies links/selection rather than bathing the interface. Semantic warning/error are not decorative accents. `COMPUTED` has a neutral outcome label, never a qualification color.
 
-Calculated token-pair contrast before implementation: body 14.80:1 light / 13.75:1 dark; secondary 6.18:1 / 7.57:1; primary CTA 6.26:1 / 8.18:1; field border 3.15:1 / 3.92:1; warning text 5.40:1 / 7.73:1; error text 5.04:1 / 6.90:1. These are color calculations, not a claim that rendered components passed. Hover/disabled/selected/focus combinations still require browser checks.
+Calculated token-pair contrast for revision 2: body 13.13:1 light / 12.98:1 dark; secondary 5.10:1 / 7.10:1; primary CTA 12.02:1 / 12.55:1; field border 3.04:1 / 3.80:1; warning text 5.40:1 / 7.59:1; error text 5.10:1 / 6.48:1; accent text 6.15:1 / 8.20:1. These are specified color-pair calculations, not full rendered conformance or visual-quality acceptance. Component-derived hover/disabled/focus colors still require browser inspection.
 
 Use a single application-level official Ant `ConfigProvider`, its documented light/dark algorithms and semantic seed tokens. Layout CSS consumes matching variables. Do not fight the library with pervasive per-component overrides or a second design system.
 
 ### 5.2 Typography
 
-Use a self-hosted Geist variable face for Latin text with native CJK sans fallback. Before adding the absent font dependency, run `npm install --prefix apps/web @fontsource-variable/geist`; no Google Fonts request at runtime. Chinese uses an installed legible platform fallback rather than downloading a huge character set without need.
+Use self-hosted `Geist Variable` and `Geist Mono Variable`, with native Noto Sans CJK SC/platform sans for Chinese. The revised prototype actually loads these fonts; it no longer merely names an unavailable Geist fallback. Production installation, after design acceptance, is `npm install --prefix apps/web @fontsource-variable/geist @fontsource-variable/geist-mono @phosphor-icons/react`. The prototype dependencies remain isolated in `/tmp/qz-design-prototype`; no application dependency has been changed. Preserve their upstream license notices when adding production packages. No Google Fonts request occurs at runtime.
 
 | Role | Size / line height | Weight | Rule |
 | --- | --- | --- | --- |
-| Page heading | 28 / 38px desktop, 24 / 34px mobile | 600 | One clear page title, no marketing display scale |
-| Selected goal/record title | 22 / 32px | 600 | Full authored content remains accessible |
-| Section heading | 17 / 26px | 600 | No uppercase eyebrow above every heading |
+| Page heading | 25-26 / 36-38px desktop, 23-24 / 34-36px mobile | 600 | One clear page title, no marketing display scale |
+| Selected goal/record title | 26 / 38px desktop, 23 / 36px mobile | 600 | The selected goal is the document's h1; full authored content remains accessible |
+| Section heading | 15-16 / 24-25px | 550-600 | No uppercase eyebrow above every heading |
 | Body and form value | 14 / 22px desktop, 16 / 24px touch forms | 400 | Main facts remain readable on laptops |
 | Control label | 14 / 20px | 500 | Not all bold text |
-| Metadata | 12 / 18px minimum | 400 | Never the only place for required information |
+| Metadata | 12 / 18px normally; 11px only for supplemental technical identities/captions | 400-450 | Never make tiny metadata the only route to required information |
 | Major financial value | 26 / 34px | 500 | Right/decimal alignment where compared |
 | Numeric table cell | 13-14 / 20px | 400 | Tabular numerals; exact strings retained |
 
@@ -170,13 +172,13 @@ Use monospace only for numeric/technical identity fields. Chinese body text is n
 
 Spacing scale: 4, 8, 12, 16, 24, 32, 48px. A field label sits 8px above its control; helper/error sits 8px below. Related fields use 16px gaps; separate groups use 24px. Page sections use 32px. Do not compensate for poor grouping with extra borders.
 
-Radii: 4px for status labels; 8px for controls/selection; 12px for modal or genuinely grouped surfaces. No arbitrary pill controls inside otherwise rectangular working layouts. Elevation is reserved for menus/dialogs; normal content uses borders/space. No glass, grain, glows or gradients.
+Radius roles: 4px metadata/status labels; 7px controls and short action links; 9px selected rows/small glyph wells; 14px working documents and dialogs. No arbitrary pills. Use one almost imperceptible, neutral-tinted working-document shadow (`0 5px 20px rgb(38 49 58 / .025)`) only where it separates the main document from its directory. Internal metric/trial/settings groups use space or functional separators, not more cards. On mobile the document perimeter and shadow disappear. No glass, grain, glows or gradients.
 
 Document layer tokens in the theme module: base content 0, sticky controls 10, shell/mobile navigation 20, official popups/dialogs in the library's own documented popup layer, with no competing arbitrary high-z-index content. Respect the component library's overlay/focus management.
 
 ### 5.4 Interaction finish
 
-Controls are 40px high desktop and at least 44px in touch layouts, with at least 8px between adjacent actions. Icons are from one official `@ant-design/icons` family already available in the project. Icons are normally 16px, navigation 18px; never hand-draw paths. Text labels accompany primary navigation/actions.
+Ordinary controls are 38-40px high desktop; compact auxiliary actions are 34-36px, and touch actions at least 44px, with at least 8px separation. Use one visible application icon family, official `@phosphor-icons/react`, normally 14-18px regular weight. Reserve duotone for the single creation-context glyph; do not scatter icon tiles throughout the page. Primary desktop navigation is text-led. Glyphs beside text are decorative to assistive technology; icon-only buttons have explicit accessible names. Never hand-draw paths.
 
 Hover, active and focus are distinct: hover tint for pointer discovery, active `scale(.98)` only on safe small controls, and a visible 2px focus indicator with offset. No active transformation on an entire table row. Use 120-160ms opacity/transform feedback only when motion is permitted; reduced-motion removes it. Status/data updates never animate layout or count upward from zero.
 
@@ -195,21 +197,21 @@ The identifiers below are design/test references, not a mandate to create one Re
 
 ### F01. Application frame and theme
 
-- **Anatomy:** owner/session boundary, rail or compact navigation, main content, one contextual status area, official popup context.
+- **Anatomy:** owner/session boundary, slim top navigation or compact mobile header, main content, one contextual status area, official popup context.
 - **Behavior:** one Query client and one theme root; theme choices `跟随系统`, `浅色`, `深色` persist locally. System mode responds to OS changes. Theme does not reset route/draft/selection.
 - **States:** initial session pending uses a stable shell skeleton; unauthenticated renders A01; expired auth returns to A01 while preserving a nonsecret pending request for the same origin; service unavailable renders a retryable root state.
 - **Acceptance:** both themes retain hierarchy; no light popup on a dark page; polling failures do not replace the whole app with a blank screen.
 
-### F02. Navigation rail / mobile navigation
+### F02. Top navigation / mobile navigation
 
-- **Anatomy:** product name, primary four links, a separated secondary two-link group, appearance/owner controls. Desktop link height 40px, 12px horizontal padding, 8px radius.
-- **Selected state:** tinted full link background, clear label weight and `aria-current=page`; not a decorative dot. Keyboard focus is independently visible.
-- **Mobile:** a 56px header with `打开导航` button; official Drawer contains the same named links at 44px height. Selected navigation closes the Drawer and updates main focus. No hover-only labels or icon-only bottom bar.
-- **Acceptance:** all six destinations work by keyboard/touch; browser Back never opens the Drawer unexpectedly.
+- **Anatomy:** 64px desktop bar, brand at the left, four text-led primary links, two right-hand settings destinations and appearance/logout controls. No permanent administrative sidebar or duplicate brand subtitle.
+- **Selected state:** text weight plus a restrained 2px underline, with `aria-current=page`; no full tinted tab/card or decorative status dot. Keyboard focus is independently visible.
+- **Mobile/tablet:** below 1024px the compact header opens an official Drawer with the same named links. Touch links/buttons are 44px. Selecting a destination closes the Drawer and updates main focus. No hover-only names or icon-only bottom bar.
+- **Acceptance:** the desktop bar stays on one line at 1024px; all six destinations remain keyboard/touch reachable; browser Back never unexpectedly opens the Drawer.
 
 ### F03. Page header
 
-- **Anatomy:** a breadcrumb only for detail/new pages, one `h1`, optional short factual count, one primary action. Secondary actions remain adjacent but visually quieter.
+- **Anatomy:** a breadcrumb only for detail/new pages, one `h1`, optional short factual count, one primary action. In Research the selected goal is h1 and the directory has a smaller Research heading with its creation action, avoiding a redundant page-title block. Secondary actions remain adjacent but quieter.
 - **Behavior:** page title is not a hero; no welcome paragraph or duplicate primary CTA within the same first screen. Do not place a floating right-hand explainer opposite the heading.
 - **Mobile:** title and action form two rows only when needed; action label never wraps internally.
 - **Acceptance:** 1280x720 shows meaningful data below the header; title/actions do not consume most of the viewport.
@@ -230,7 +232,7 @@ The identifiers below are design/test references, not a mandate to create one Re
 
 ### F06. Status label
 
-- **Anatomy:** compact 4px-radius text label, normally 24-28px high, no pulsing dot. Source context determines wording; color alone never conveys state.
+- **Anatomy:** 4px-radius compact neutral label in a document header; a plain glyph-plus-text variant in record rows. Use recognizable clock/check/warning glyphs for actual states, never pulsing colored dots. Source context determines wording; color alone never conveys state.
 - **Mapping:** research, trial, native task, submission, receipt, extension and provider states are separate dictionaries. An unknown enum is shown in neutral original form, not mapped to success.
 - **Acceptance:** a `terminal` native task is not shown as `完成` unless its outcome is completed. `COMPUTED` is not `验证通过`; `ACKNOWLEDGED` is not `已成交`.
 
@@ -243,7 +245,7 @@ The identifiers below are design/test references, not a mandate to create one Re
 
 ### F08. Search/filter toolbar
 
-- **Anatomy:** visible label `搜索已加载研究`, clearable input, status filter `全部状态`, result count and conditional `清除筛选`.
+- **Anatomy:** a compact inline search/filter row, with persistent accessible label `搜索已加载研究`, search glyph, clearable input, `全部状态` control and a visible loaded-record scope. A visually hidden label is acceptable for this familiar search tool; it is not replaced by a placeholder. Authoring fields still use visible labels above controls. Render exactly one `清除筛选`: beside matching results or inside the no-match state, not both.
 - **Behavior:** filter loaded records synchronously; show scope as `已加载 N 条` and result count `匹配 M 条`. No claim of global search. Polling does not clear filters.
 - **Empty:** distinguish no records from no matches. `清除筛选` retains the collection; `加载更多` stays available when the server cursor exists even if loaded results have no match.
 - **Acceptance:** a record on a later page is reachable; filtering never hides the server pagination control.
@@ -252,12 +254,12 @@ The identifiers below are design/test references, not a mandate to create one Re
 
 - **Anatomy:** semantic `dl`; short muted label above or beside a readable value. Use two columns only when both remain legible. Long technical values wrap or have an explicit full-value/copy affordance.
 - **Behavior:** absent means `未记录` or `未提供` as appropriate; zero stays `0`. No whole JSON object dump. Copy acknowledges only an actual successful clipboard operation.
-- **Mobile:** single-column fact blocks; no offscreen horizontal key/value grid.
+- **Mobile:** one column for long values; two columns only for short independent facts that remain readable and wrap fully. Never force an offscreen horizontal key/value grid.
 - **Acceptance:** a long provider/model ID and large exact amount do not overflow the page or become indistinguishable ellipses.
 
 ### F10. Working table
 
-- **Anatomy:** clear caption/heading, meaningful first column, compact header, 48px default rows; long hypotheses may grow. Related metrics adjacent; numeric columns right-aligned/tabular.
+- **Anatomy:** clear caption/heading, meaningful first column, compact header, approximately 52px default rows; long hypotheses may grow. Related metrics adjacent; numeric columns right-aligned/tabular.
 - **Behavior:** local sort only when explicitly labelled as loaded records; unknown numbers sort last. Use exact decimal comparison where needed, not lossy Number coercion. One inline expanded record is preferred for long trial content. Preserve all rows through pagination when local paging is needed.
 - **Mobile:** labelled `overflow-x:auto` region with keyboard focus and minimum readable column widths; preserve identity column where helpful. Do not delete critical columns or turn every number into an unrelated card.
 - **Acceptance:** full column meaning remains known while scrolling; actions remain reachable without hovering; no generic top-and-bottom border on every cell.
@@ -318,7 +320,7 @@ The identifiers below are design/test references, not a mandate to create one Re
 
 ### R01. Study collection
 
-Use the F08 toolbar above a compact collection, followed by a native-cursor `加载更多` button only when available. Default order follows descending original native identity; do not fake recency from null timestamps. Show `已加载 N 条`, not `全部 N 条` when more pages exist.
+The directory sits directly on the page canvas, not inside another framed card. Its heading contains the single `新建研究` action. Use the compact F08 toolbar above the collection, followed by a native-cursor `加载更多` button only when available. Default order follows descending original native identity; do not fake recency from null timestamps. Show `已加载 N 条`, not `全部 N 条` when more pages exist.
 
 The initial unselected desktop right region says `选择一项研究` without a second primary CTA. On mobile, show the collection as its own page. Returning from a detail restores filter and selected study context. When a selected ID is outside loaded pages, its direct detail query still works; do not require loading every earlier page.
 
@@ -326,7 +328,7 @@ Initial error occupies the collection region; subsequent page error preserves pr
 
 ### R02. Study row
 
-Anatomy, top to bottom: two-line goal preview, context-specific scientific/active state label, compact secondary facts `试验 N 次` and model name. Original ID is secondary, not the primary title. Row spacing is 16px; selected state uses the shared tint and a clear link/current state. A whole row can be one anchor; never nest independent buttons inside that anchor.
+Anatomy: a small original-ID/contextual-state line; a stronger two-line human-readable goal; then trial count/model. ID is visually secondary, never the main title. Use 16px insets, 12px metadata and 14px goal text with controlled medium weight. Selection is one quiet tinted row and a 2px leading indicator, not a bordered card. A whole row is one anchor; never nest independent buttons inside it.
 
 Do not display a timestamp when the projection returns null. Do not display a success sparkline or invented percentage. The complete goal appears in R04, even if the row preview truncates. Background failure remains visible through the status label.
 
@@ -338,7 +340,7 @@ Filter controls remain visible above results. Counts are loaded-record counts. C
 
 ### R04. Selected study header
 
-Anatomy: back/list breadcrumb when needed, full goal, a compact line of actual status/trial count/model, and a `停止研究` secondary danger action only when original research work can still be stopped. A long goal starts as two lines with `展开` and keeps the full content in the document when expanded.
+Anatomy: a small record breadcrumb and neutral scientific state; the full goal as the working document's h1; then aligned dataset/model/trial-budget context. Use the captured budget for `N / M 次试验` when known, never as a completion percentage. A quiet `研究操作` menu contains original identities and a stop action only while original research can still be stopped. A long goal starts as two lines with `展开`, retaining full content when expanded.
 
 Below it, show **证据**, **试验**, **输入与执行** tabs. A scientific final `STARTED` is `独立评估中`, not `研究完成`. If stop intent is recorded while native tasks remain live, show `停止中` for execution, while preserving the original recorded final status in Inputs and execution. Only actual settled execution supports `已停止` as the execution result.
 
@@ -346,7 +348,7 @@ The default header is not a collection of four disconnected KPI cards. No token 
 
 ### R05. Independent result panel
 
-Use one coherent evidence section leading with `独立评估`, its recorded status and original selected trial link. Branches:
+Use one unboxed evidence section inside the working document. Its heading is `独立评估`, with a compact original selected-trial action at the right. Do not repeat the same computed badge both here and in the document header. Metrics are adjacent aligned values with only functional vertical separators, not three individual cards. Beneath them show the recorded partition/component once. Branches:
 
 | Facts | Primary presentation | Available next action |
 | --- | --- | --- |
@@ -373,9 +375,11 @@ Primary compact summary includes only existing, recognized IC/sample-count field
 
 ### R07. Trial ledger and expansion
 
-Desktop columns: **假设**, **状态**, **验证指标**, **独立选择**, **详情**. If multiple comparable metrics exist, offer a concise metric selector or grouped columns without pushing hypothesis/identity away. Do not compare different partitions under the same unlabeled heading.
+Desktop columns: **假设与身份**, **验证指标**, **状态**, **独立选择**, and the right-hand **详情** action. If multiple comparable metrics exist, offer a concise metric selector or grouped columns without pushing hypothesis/identity away. Do not compare different partitions under the same unlabeled heading.
 
 Each trial retains original task/trial identity; failed/rejected attempts are present. `STARTED` -> `计算中`, `COMPUTED` -> `已计算`, `FAILED` -> `失败`, `REJECTED` -> `已拒绝`, with original error/reason available. Selection label means exactly `所选试验`, not best/profitable.
+
+The Evidence tab may show the latest three original trial rows as a compact reentry aid, with identity, hypothesis, state and a link to the complete ledger. This is not a new summary/selection engine. Selecting a preview opens the matching original trial; failures remain visible. Full table order is hypothesis/identity, adjacent metric, status, original selection and a right-hand expansion control; headers have no heavy filled band.
 
 An expanded row shows full hypothesis, all recorded partition metrics and actual public error. At most one expansion at a time keeps comparison legible. No additional nested accordion inside the expanded row. The selected trial link in R05 opens this tab, reveals the matching row and places it in view. If its row cannot be found, state the missing reference rather than choose another trial.
 
@@ -390,7 +394,7 @@ Native task inspection currently covers only the latest 100 records; label `最�
 
 ### R09. New-study form and submission identity
 
-Full-page form width up to 720px, keeping ordinary navigation. Field order:
+Use an unboxed full-page form up to 680px wide under the slim top navigation. A single small creation glyph accompanies the heading; do not frame the entire form and every input group in nested cards. The goal/data group is followed by a sparse separator and `运行设置`, containing model and the reasoning/budget pair. Field order:
 
 1. **研究问题:** required TextArea, initially 4 rows, grows to a bounded comfortable height with internal scrolling; placeholder is a short example, not the label. Do not generate a hypothesis on the owner's behalf.
 2. **数据集:** searchable actual registered options; label with name, compact source/coverage below selection. Nonready entries remain inspectable but cannot be submitted as ready. A dataset selected from Data is explicit preselection, not an invisible automatic substitution.
@@ -398,7 +402,7 @@ Full-page form width up to 720px, keeping ordinary navigation. Field order:
 4. **推理强度:** only supported choices for the selected model. Nonreasoning model has the actual `off` value; stale unsupported selection is cleared visibly, not submitted silently.
 5. **试验预算:** explicit nonnegative safe integer with `次` suffix, matching existing admission rules including zero; do not add an arbitrary UI maximum, time estimate or monetary cap. Helper: `失败试验也计入预算` only when useful beside this control.
 
-Two-column model/reasoning row on desktop, explicit single-column mobile. Footer has `取消` and `开始研究`; cancel returns to the originating workspace. Button remains available for validation feedback when fields are incomplete; real unavailable prerequisites instead show a direct repair state.
+Model is a full-width field. Reasoning and budget share a two-column desktop row; mobile explicitly stacks all controls. Footer has `取消` and `开始研究`; cancel returns to the originating workspace. Button remains available for validation feedback when fields are incomplete; real unavailable prerequisites instead show a direct repair state.
 
 Submission phases:
 
@@ -748,12 +752,12 @@ Run `make check-web`, the adapted browser suite and `make check-ts` for changed 
 - **Chosen:** minimal additive read facts. **Rejected:** new retry/resume/finalize/eligibility state machines. Reason: the actual service owns scientific behavior and command identity.
 - **Chosen:** task-owned browser service and official Faux Provider for deterministic interactions. **Rejected:** claiming intercepted HTTP tests prove real-service or scientific acceptance.
 
-**Owner decision:** The original overall goal is accepted. The owner requested this detailed revision instead of approving the first high-level design. This component specification and its labelled prototype references still require review before production implementation. No application implementation, completed usability testing, exact-Head review or merge is claimed here.
+**Owner decision:** The overall delivery goal is accepted, but visual design is not. The owner first requested component-level detail, then rejected the first detailed prototype with `UI 不够精美，过度粗糙`. Revision 2 replaces that visual treatment rather than treating technical checks as aesthetic acceptance. This specification and the updated references remain unapproved for production implementation. No completed application, owner usability test, final-Head review or merge is claimed.
 
 <a id="prototypes"></a>
 ## 19. Labelled visual references and actual inspection
 
-Every reference below was rendered in Chromium from the separate [design-only React prototype](assets/prototype.tsx) and [prototype stylesheet](assets/prototype.css), using official Ant components. Its top bar explicitly says that records are examples and it does not connect to a service. Numbers, sample identities and hypotheses are prototype content, not scientific/account evidence. There is no fabricated equity curve. The prototype uses installed font fallbacks; self-hosted production Geist remains an implementation step.
+Every reference below was rendered in Chromium from the separate [design-only React prototype](assets/prototype.tsx) and [prototype stylesheet](assets/prototype.css), using official Ant components. Its top bar explicitly says that records are examples and it does not connect to a service. Numbers, sample identities and hypotheses are prototype content, not scientific/account evidence. There is no fabricated equity curve. Revision 2 actually serves the official Geist/Geist Mono font assets locally and uses Phosphor icons; it no longer relies on an unavailable-font fallback. These dependencies and generated bundles remain in the isolated preview directory, not the application or vendored repository source.
 
 | Reference | Purpose |
 | --- | --- |

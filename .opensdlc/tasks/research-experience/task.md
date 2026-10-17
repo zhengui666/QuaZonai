@@ -33,7 +33,9 @@ The authoritative [component specification and research](spec.md) contains:
 - **38 observable acceptance scenarios**, with actual-service, controlled transport, native-core, visual and human-testing scope distinguished.
 - Labelled design-only prototype references; sample data does not connect to or represent a running installation.
 
-**Decision status:** The owner did not approve the initial high-level proposal; the follow-up requested this deeper design. The component-level revision and prototypes are for the owner's review before production implementation. Do not label them an accepted design or completed application.
+**Decision status:** The owner requested component-level detail, then rejected the first detailed visual prototype (`49bdca5b`) with `UI 不够精美，过度粗糙`. Visual revision 2 is now prepared for review, not approved for production implementation. Do not treat a specification, an axe pass or a clean build as aesthetic acceptance.
+
+**Visual revision 2:** Replaced the full-height green administrative rail with slim top navigation; removed nested evidence cards; separated the unboxed research directory from one working document; changed large surfaces to neutral paper/graphite; made primary actions neutral high-contrast; actually loaded Geist/Geist Mono; adopted one Phosphor icon family; refined status glyphs, numeric baselines, trial-row expansion and mobile full-bleed composition. User jobs and scientific/receipt boundaries remain unchanged.
 
 <a id="plan"></a>
 ## Implementation plan
@@ -54,30 +56,30 @@ Preserve meaningful assertions while adapting selectors and explicitly changed b
 
 ### Design prototype only
 
-The prototype uses official Ant components and fabricated, visibly labelled sample records, not a service connection. Its code/assets are under [assets](assets); generated third-party bundles and research PDFs stay outside the repository in task-owned temporary directories.
+The prototype uses official Ant components, self-hosted official Fontsource Geist/Geist Mono assets, Phosphor icons and visibly labelled example records, not a service connection. Its own code/screenshots are under [assets](assets). Prototype-only npm dependencies, generated third-party bundles/font assets and research PDFs remain isolated outside the repository in task-owned temporary directories; application dependencies/locks are unchanged.
 
 - Strict prototype TypeScript check and esbuild bundle: passed.
 - Chromium screenshots: 12 saved design references, including light/dark and mobile.
 - Layout sweep: 28 combinations (seven prototype views at widths 320, 390, 768 and 1024), no page horizontal overflow observed.
 - Axe checks on six selected prototype views with WCAG 2 A/AA, 2.1 AA and 2.2 AA tags: zero reported violations. This is not full conformance or production acceptance.
 - Checked prototype interactions: local search/clear, expansion of the correct failed-trial row, field-local invalid-submit feedback and mobile navigation to Data.
-- No browser page errors in the checked prototype views. Rendered screenshots were inspected and small interaction/spacing issues corrected.
+- No browser page errors in the checked prototype views. Revision-2 screenshots were inspected across workspaces; reduced visual nesting, removed redundant clear-filter actions, and corrected trial expansion, typography, control targets and radius roles. Browser verification confirms the local Geist face loads rather than silently falling back.
 
 These checks do **not** establish real HTTP integration, scientific correctness, model quality, profitability, complete component-state coverage, measured production Core Web Vitals, human usability or final-Head CI/review.
 
 <a id="review"></a>
 ## Review
 
-No application PR, final-Head independent review or GitHub Codex review exists for this task yet. The owner is reviewing the component-level specification/visual references, not an implemented application.
+No application PR, final-Head independent review or GitHub Codex review exists for this task yet. The owner's first visual review rejected the prototype. The new visual revision is still a design proposal, not an accepted or implemented application.
 
 <a id="delivery"></a>
 ## Delivery
 
-Design research, the detailed component specification and labelled prototypes are prepared. Production implementation and remote merge remain unfinished. No production service, original workspace change or real account was modified.
+Design research, the detailed component specification and revised labelled visual prototypes are prepared. The first visual treatment was rejected; the new treatment has not been accepted. Production implementation and remote merge remain unfinished. No production service, original workspace change or real account was modified.
 
 <a id="handoff"></a>
 ## Handoff
 
 Continue in `.pi/worktrees/research-experience` on `feat/research-experience`. Read this task and [spec.md](spec.md), then the owner's actual decision before implementation. The design-only preview is served on `127.0.0.1:4187` from `/tmp/qz-design-prototype`; it is not QuaZonai's service. Its build/check scripts and temporary public research downloads are task-owned `/tmp` material. Do not mistake preview records, screenshots or static bundled code for application acceptance.
 
-Next action: owner reviews the component-level revision and labelled visual references; implement the accepted revision through final-Head verification/review and remote `dev` merge.
+Next action: show the materially revised visual references and incorporate the owner's actual feedback. Only after visual/spec acceptance implement through final-Head verification/review and remote `dev` merge; do not automatically advance from prototype checks.
