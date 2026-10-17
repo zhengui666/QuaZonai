@@ -4,6 +4,7 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Type } from '@earendil-works/pi-ai';
 import { evaluateTrial } from '../../research/src/trials.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
+import research from '../../research/plugins/research.ts';
 
 const probe = defineExtension({ name: 'test.recovery-probe', tools: [defineTool({
   name: 'recovery_probe', description: 'Test-only ledger observation', parameters: Type.Object({ fail: Type.Boolean() }), replay: 'safe',
@@ -92,3 +93,52 @@ test('resume refuses exhausted budgets, stopped studies and wrong original submi
     assert.equal(state.faux.state.callCount, 2); assert.equal((await state.service.research.state(receipt.conversationId)).research!.trials.length, 1);
   } finally { await state.cleanup(); }
 });
+
+test('owner reads retain the complete prior unselected stop after same-study continuation', { timeout: 20_000 }, async () => {
+  const state = await setup(); state.options.extensions.push(probe, research);
+  try {
+    await state.restart();
+    state.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('recovery_probe', { fail: false }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Finite invocation, original objective still unmet' }), { stopReason: 'toolUse' }),
+    ]);
+    const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId: 'continue-original-stop', goal: 'Original multi-generation research', model: state.model, datasetId: 'controlled', maxTrials: 3 } });
+    const receipt = start.json(); assert.equal(start.statusCode, 202, start.body);
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const before = (await state.service.research.state(receipt.conversationId)).research!;
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    const resumed = await state.service.app.inject({ method: 'POST', url: `/api/v3/research/${receipt.conversationId}/resume`, headers: state.headers, payload: { submissionId: receipt.submissionId } });
+    assert.equal(resumed.statusCode, 202, resumed.body);
+    const next = resumed.json(); await (await state.service.research.harness.submission(next.submissionId, context))!.wait(context);
+    const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
+    assert.deepEqual(detail.previousStops, [{ previousSubmissionId: receipt.submissionId, final: before.final }]);
+    assert.equal(detail.originalSubmission.id, receipt.submissionId); assert.equal(detail.submission.id, next.submissionId);
+    assert.equal(detail.trials, 2); assert.deepEqual(detail.input, before.input); assert.equal(detail.datasetId, 'controlled');
+    const after = (await state.service.research.state(receipt.conversationId)).research!; assert.deepEqual(after.trials[0], before.trials[0]);
+    await state.restart();
+    assert.deepEqual((await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json().previousStops, detail.previousStops);
+    assert.equal(state.faux.state.callCount, 3);
+  } finally { await state.cleanup(); }
+});
+
+test('legacy model-error continuation receipt replays without clearing a later stop', { timeout: 20_000 }, async () => {
+  const state = await setup(); state.options.extensions.push(research);
+  try {
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 unsupported test-only' })]);
+    const start = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId: 'legacy-recovery', goal: 'Original legacy recovery', model: state.model, datasetId: 'controlled', maxTrials: 3 } });
+    const receipt = start.json(); await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Recorded later stop' }), { stopReason: 'toolUse' })]);
+    const next = await state.service.research.resume(receipt.conversationId, receipt.submissionId);
+    await (await state.service.research.harness.submission(next.submissionId, context))!.wait(context);
+    // PR210 native receipts predate additive continuation-admission metadata.
+    const { Requests } = await import('../../research/src/documents.ts');
+    await state.service.research.harness.commit(async tx => { delete (await tx.doc(Requests)).requests[`request:qz.research.resume:${receipt.conversationId}:${receipt.submissionId}`]; }, context);
+    const before = (await state.service.research.state(receipt.conversationId)).research;
+    await state.restart();
+    assert.deepEqual(await state.service.research.resume(receipt.conversationId, receipt.submissionId), next);
+    assert.deepEqual((await state.service.research.state(receipt.conversationId)).research, before);
+    assert.equal(state.faux.state.callCount, 2);
+  } finally { await state.cleanup(); }
+});
+

@@ -281,3 +281,21 @@ test('recovered research keeps original identity separate from current execution
   const current = page.locator('section').filter({ has: page.getByRole('heading', { name: '当前执行', exact: true }) });
   await expect(current).toContainText('80'); await expect(current).toContainText('qz.research.resume:7:17');
 });
+
+test('continued research displays the prior unselected stop without replacing original identity', async ({ page }) => {
+  await contract(page);
+  await page.route('**/api/v3/research/7', route => route.fulfill({ json: {
+    id: 7, title: '原研究停止后续作', status: 'RUNNING', trials: 123, model: 'test/test-model', createdAt: null, updatedAt: null,
+    input: { goal: '原研究停止后续作', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 299941 } },
+    originalSubmission: { id: 17, requestId: 'owner-original-request', status: 'unanswered', reason: 'model_error' },
+    submission: { id: 90, requestId: 'qz.research.resume:7:80', status: 'placed' },
+    previousStops: [{ previousSubmissionId: 80, final: { taskId: 89, status: 'STOPPED', trialId: null, result: null, comparedTrials: [82], reason: 'INCOMPLETE_EXECUTION: response boundary is not a scientific stop' } }],
+    trialRecords: [], tasks: [{ id: 91, name: 'pi.generation', status: 'running', error: null }], final: null,
+  } }));
+  await page.goto('/#/research/7'); await page.getByRole('tab', { name: '输入与执行', exact: true }).click();
+  const history = page.locator('section').filter({ has: page.getByRole('heading', { name: '历史停止记录', exact: true }) });
+  await expect(history).toContainText('80'); await expect(history).toContainText('89'); await expect(history).toContainText('INCOMPLETE_EXECUTION: response boundary is not a scientific stop');
+  const original = page.locator('section').filter({ has: page.getByRole('heading', { name: '原始身份', exact: true }) });
+  await expect(original).toContainText('owner-original-request'); await expect(original).not.toContainText('qz.research.resume');
+  await expect(page.getByRole('heading', { name: '当前执行', exact: true })).toBeVisible();
+});
