@@ -392,8 +392,18 @@ fn native_source_audit_precision_does_not_change_fees_quantities_or_account_bala
     let path = directory.path().join(RECORDED_FEES_FILE);
     let mut original: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    original["records"][0]["price"] = serde_json::json!("0.0030000000375025784");
-    original["records"][0]["usdc_amount"] = serde_json::json!("0.00007000000000000001");
+    let consumed_id = &baseline.recorded_fee_replay.as_ref().unwrap().fills[0].allocations[0]
+        .original
+        .id;
+    let selected = original["records"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["id"].as_str() == Some(consumed_id.as_str()))
+        .unwrap();
+    selected["price"] = serde_json::json!("0.0030000000375025784");
+    selected["usdc_amount"] = serde_json::json!("0.00007000000000000001");
+    let original_record = selected.clone();
     std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
 
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -405,6 +415,7 @@ fn native_source_audit_precision_does_not_change_fees_quantities_or_account_bala
         assert_eq!(actual.fill_quantity, expected.fill_quantity);
         assert_eq!(actual.fill_price, expected.fill_price);
         assert_eq!(actual.fill_ns, expected.fill_ns);
+        assert_eq!(actual.allocations.len(), expected.allocations.len());
         for (allocation, previous) in actual.allocations.iter().zip(&expected.allocations) {
             assert_eq!(allocation.original.id, previous.original.id);
             assert_eq!(allocation.allocated_quantity, previous.allocated_quantity);
@@ -421,7 +432,7 @@ fn native_source_audit_precision_does_not_change_fees_quantities_or_account_bala
     let audit = serde_json::to_value(&report).unwrap();
     assert_eq!(
         audit["fills"][0]["allocations"][0]["original"],
-        original["records"][0]
+        original_record
     );
     let roundtrip: RecordedFeeReplayV1 = serde_json::from_value(audit.clone()).unwrap();
     assert_eq!(serde_json::to_value(roundtrip).unwrap(), audit);
@@ -434,4 +445,18 @@ fn native_source_audit_precision_does_not_change_fees_quantities_or_account_bala
             .clone()
     };
     assert_eq!(balance(&result.summary), balance(&baseline.summary));
+}
+
+#[test]
+fn source_audit_decimals_still_reject_nonpositive_records() {
+    let (_, clock) = model();
+    for field in ["price", "usdc_amount"] {
+        for value in ["0", "-0.1"] {
+            let mut original = serde_json::to_value(source()).unwrap();
+            original["records"][0][field] = serde_json::json!(value);
+            let parsed = serde_json::from_value(original).unwrap();
+            let error = RecordedFeeModel::new(parsed, &market(), clock.clone()).unwrap_err();
+            assert!(error.to_string().contains("RECORDED_FEE_RECORD_INVALID"));
+        }
+    }
 }
