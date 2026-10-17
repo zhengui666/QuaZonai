@@ -128,3 +128,27 @@ test('bounded wait uses native settled submissions, not final/IDLE/empty tasks; 
     assert.ok(calls.every((call) => call === 'GET /api/v3/research/42'));
   } finally { await config.close(); await api.close(); }
 });
+
+test('diagnostics and resume use the original numeric identities without implicit retries', async () => {
+  const sent: { method: string; url: string; bytes: string }[] = []; let drop = true;
+  const api = await server((request, response, bytes) => {
+    sent.push({ method: request.method!, url: request.url!, bytes });
+    if (request.method === 'POST') {
+      if (drop) { drop = false; request.socket.destroy(); return; }
+      json(response, { conversationId: 508, submissionId: 625, previousSubmissionId: 516 }, 202);
+    } else json(response, { conversationId: 508, generation: { taskId: 620, error: 'model_error' } });
+  });
+  const config = await configuration(api.origin);
+  try {
+    const output: unknown[] = []; const emit = (value: unknown) => { output.push(value); };
+    await run(['research', 'diagnostics', '508'], emit);
+    await assert.rejects(run(['research', 'resume', '508', '--submission-id', '516'], emit), /write_outcome_unknown_retain_original_request/);
+    assert.equal(sent.length, 2);
+    await run(['research', 'resume', '508', '--submission-id', '516'], emit);
+    assert.deepEqual(sent.map(({ method, url }) => [method, url]), [['GET', '/api/v3/research/508/diagnostics'], ['POST', '/api/v3/research/508/resume'], ['POST', '/api/v3/research/508/resume']]);
+    assert.equal(sent[1]!.bytes, '{"submissionId":516}'); assert.equal(sent[2]!.bytes, sent[1]!.bytes);
+    assert.deepEqual(output.at(-1), { conversationId: 508, submissionId: 625, previousSubmissionId: 516 });
+    await assert.rejects(run(['research', 'resume', '508']), /native_numeric_research_id_required/);
+    assert.equal(sent.length, 3);
+  } finally { await config.close(); await api.close(); }
+});

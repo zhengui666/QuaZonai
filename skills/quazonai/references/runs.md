@@ -8,9 +8,9 @@ quazonai research watch CONVERSATION_ID --timeout 30
 quazonai research wait CONVERSATION_ID --timeout 30
 ```
 
-Timeout units are seconds; the default is 30. Watch emits NDJSON snapshots and a final observation result. Wait returns a result and exit 0 only for native submission `done`, exit 2 for native `unanswered`, or exit 124 when its observation budget ends before settlement. Done means the native submission settled, not that scientific evidence passed. A bounded watch ending normally says nothing about research completion.
+Timeout units are seconds; there is no default observation deadline. Watch emits NDJSON snapshots and a final observation result. Wait returns exit0 for native `done`, exit2 for `unanswered`, or exit124 when its explicit observation budget ends before settlement. Done means submission settlement, not scientific qualification. A bounded watch ending says nothing about research completion.
 
-The service must project the original native submission status. If that projection is unavailable, the CLI reports `nativeSubmissionAvailable:false` and cannot declare settlement from IDLE, a final record, HTTP 202 or empty tasks. Report the service capability gap instead of inventing an endpoint or another status store.
+The service projects the latest native input submission and separately retains `originalSubmission`. An explicit owner-authorized recovery uses a new normal input in the same conversation; it never reopens or overwrites the original failed submission/task. If native projection is unavailable, the CLI reports `nativeSubmissionAvailable:false` and cannot infer settlement from IDLE, a final record or empty tasks. Use the [recovery procedure](recovery.md), not an invented route or a replacement study.
 
 Ctrl-C/detachment stops only observation. It does not revoke the original admission, reset budgets or stop scientific work. Read the same research ID again when requested; polling is not a gap-free durable event history.
 

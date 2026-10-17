@@ -2,6 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
+import { submissionView } from '../../research/src/recovery.ts';
 import type { ObservationFact, PortfolioFact, ResearchAdmissions } from './facts.ts';
 
 // Opaque public-code convention, as on the HTTP error boundary; raw diagnostics stay in Durable.
@@ -42,11 +43,11 @@ export function metrics(value: Json | undefined, prefix = ''): Metric[] {
   });
 }
 export async function researchDetail(host: ResearchHost, id: number, admitted?: ResearchAdmissions): Promise<ResearchDetail> {
-  const view = await host.view(id);
+  const view = await host.state(id);
   const study = view.research;
   if (!study?.input) throw new Problem('research_not_found', 404);
   const input = study.input as ResearchInput;
-  const records = await host.harness.commit((tx) => tx.scanTasks({ conversationId: view.conversation.id, order: 'descending' }, 100), BACKGROUND_CONTEXT);
+  const records = await host.harness.commit((tx) => tx.scanTasks({ conversationId: id as import('@earendil-works/pi-durable').ConversationId, order: 'descending' }, 100), BACKGROUND_CONTEXT);
   const tasks: TaskView[] = records.items.map((record) => ({
     id: record.id, name: record.kind, status: record.state.status,
     ...(record.state.status === 'terminal' ? { outcome: record.state.outcome.status } : {}),
@@ -54,16 +55,16 @@ export async function researchDetail(host: ResearchHost, id: number, admitted?: 
   }));
   const final = study.final;
   const admissions = admitted ?? (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
-  const admission = view.submission?.requestId ? admissions?.[`request:${view.submission.requestId}`] : undefined;
+  const admission = view.originalSubmission?.requestId ? admissions?.[`request:${view.originalSubmission.requestId}`] : undefined;
   const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
   const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
-  const submission = view.submission ? await host.submission(view.submission.id) : null;
+  const submission = view.submission;
   return {
     id, title: input.goal, status: final ? String(final.status) : records.items.some((task) => task.state.status !== 'terminal') || ['queued', 'placed'].includes(submission?.status ?? '') ? 'RUNNING' : 'IDLE',
     trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
     createdAt: null, updatedAt: null, input, dataset,
     datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
-    submission: submission ? { id: submission.id, status: submission.status, ...(view.submission?.requestId ? { requestId: view.submission.requestId } : {}), ...(submission.status === 'unanswered' ? { reason: submission.reason } : {}) } : null,
+    submission: submissionView(submission), originalSubmission: submissionView(view.originalSubmission),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
       status: String(trial.status), metrics: metrics(trial.result), error: publicExecutionError(trial.error, 'scientific_execution_failed'),

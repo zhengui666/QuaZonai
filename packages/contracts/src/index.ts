@@ -26,6 +26,13 @@ export type ResearchStart = { requestId: string; input: ResearchInput } | {
   requestId: string; goal: string; model: ModelRef; thinkingLevel?: ThinkingLevel; datasetId: string; maxTrials: number;
 };
 export interface ResearchReceipt { conversationId: number; submissionId: number }
+export interface ResearchResume { submissionId: number }
+export interface ResearchResumeReceipt extends ResearchReceipt { previousSubmissionId: number }
+export interface ResearchSubmissionView { id: number; status: string; requestId?: string; reason?: string | null }
+export interface ResearchDiagnostics {
+  conversationId: number; originalSubmission: ResearchSubmissionView | null; submission: ResearchSubmissionView | null;
+  generation: { taskId: number; status: string; outcome: string | null; error: string | null } | null;
+}
 export interface Metric { key: string; label: string; value: number | string | null; unit?: string; status?: string; partition?: string; component?: number }
 export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
@@ -37,7 +44,7 @@ export interface RecordedDataset { id: string; name: string; assetClass: string;
 export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   dataset?: RecordedDataset | null; datasetId?: string | null;
-  submission?: { id: number; status: string; requestId?: string; reason?: string | null } | null;
+  submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   final: { status: string; trialId: number | null; reason: string | null; error?: string | null; metrics: Metric[] } | null;
 }
 export interface DatasetView {
