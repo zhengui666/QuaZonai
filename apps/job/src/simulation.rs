@@ -112,6 +112,10 @@ pub(crate) struct ReplayStatus {
 }
 
 impl ReplayStatus {
+    fn recorded_replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
+        data_complete && self.consumed == expected_targets && self.failure.is_none()
+    }
+
     fn record_callback_error(&mut self, error: anyhow::Error) {
         if self.failure.is_none() {
             self.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
@@ -532,11 +536,10 @@ impl TargetReplay {
             return;
         };
         let status = self.status.borrow();
-        let finished = ends
+        let data_complete = ends
             .iter()
-            .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end))
-            && status.consumed == self.points.len()
-            && status.failure.is_none()
+            .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
+        let finished = status.recorded_replay_terminal(data_complete, self.points.len())
             && self.orders_settled();
         drop(status);
         if finished {
@@ -2091,5 +2094,22 @@ mod replay_error_tests {
             .finish_run(Err(anyhow::anyhow!("native failure")))
             .unwrap_err();
         assert_eq!(error.to_string(), "native failure");
+    }
+
+    #[test]
+    fn recorded_infeasible_study_is_terminal_without_consuming_future_targets() {
+        let mut status = ReplayStatus::default();
+        assert!(!status.recorded_replay_terminal(false, 1));
+        assert!(!status.recorded_replay_terminal(true, 1));
+        status.study_infeasible = true;
+        assert!(status.recorded_replay_terminal(false, 1));
+        assert_eq!(status.consumed, 0);
+        status.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
+        assert!(!status.recorded_replay_terminal(false, 1));
+        status.failure = None;
+        status.study_infeasible = false;
+        status.consumed = 1;
+        assert!(!status.recorded_replay_terminal(false, 1));
+        assert!(status.recorded_replay_terminal(true, 1));
     }
 }
