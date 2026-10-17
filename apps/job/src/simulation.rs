@@ -113,7 +113,8 @@ pub(crate) struct ReplayStatus {
 
 impl ReplayStatus {
     fn recorded_replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
-        data_complete && self.consumed == expected_targets && self.failure.is_none()
+        self.failure.is_none()
+            && (self.study_infeasible || (data_complete && self.consumed == expected_targets))
     }
 
     fn record_callback_error(&mut self, error: anyhow::Error) {
