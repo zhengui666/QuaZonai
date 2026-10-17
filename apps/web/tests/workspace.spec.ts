@@ -127,6 +127,10 @@ test('observation initialization failure preserves its draft until workspace ret
   await page.goto('/#/observations/new'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.getByLabel('组合', { exact: true })).not.toBeVisible(); available = true; await page.getByRole('button', { name: '重试', exact: true }).click(); const selected = page.locator('.ant-form-item').filter({ has: page.getByLabel('组合', { exact: true }) }); await expect(selected).toContainText('测试 · 多因子组合'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('连接', { exact: true }) })).toContainText('测试模拟连接');
 });
 
+test('an initiating-study failure must recover its captured dataset before authoring starts', async ({ page }) => {
+  await contract(page); let available = false; await page.route('**/api/v3/research/8', route => available ? route.fallback() : route.fulfill({ status: 503, json: { error: 'temporary_unavailable' } })); await page.goto('/#/portfolios/new?research=8'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.getByLabel('组合名称', { exact: true })).not.toBeVisible(); available = true; await page.getByRole('button', { name: '重试', exact: true }).click(); await expect(page.getByLabel('组合名称', { exact: true })).toBeVisible(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('数据集', { exact: true }) })).toContainText('测试数据 / CNY'); await expect(page.getByLabel('研究 8 权重', { exact: true })).toHaveValue('1');
+});
+
 test('portfolio authoring waits for the initiating study before exposing restored fields', async ({ page }) => {
   await contract(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/api/v3/research/8', async route => { await held; return route.fallback(); });
