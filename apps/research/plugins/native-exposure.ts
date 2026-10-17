@@ -52,7 +52,7 @@ export async function checkExposure(api: ToolExecutionApi, context: Context, dat
   const checked = reserve ? window : { ...window, end };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
-    const previous = ledger.windows.find((item) => (reserve || item.kind !== 'ITERATION')
+    const previous = ledger.windows.find((item) => (historical || reserve || item.kind !== 'ITERATION')
       && (!historical || item.conversationId !== api.conversationId)
       && !(item.taskId === api.taskId && item.kind === kind) && overlaps(item, checked));
     if (previous && !historical) throw new Error('heldout_already_exposed');
