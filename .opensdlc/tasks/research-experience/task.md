@@ -5,81 +5,78 @@
 
 **Task ID:** research-experience
 
-**Source:** The owner requested (1) understanding the actual user experience and needs, (2) designing the entire frontend/UI without using the existing frontend/UI as a reference, with backend changes permitted, (3) implementation and (4) merge into remote `dev`. The owner subsequently required a highly detailed component-level plan informed by UI/product research, with no long explanatory/filler passages in the final interface.
+**Source:** The owner requested understanding the actual user experience and needs, designing the entire frontend/UI without using the existing UI as a reference, implementation and merge into remote `dev`. Backend changes are permitted. The owner subsequently required component-level detail informed by UX/product research, with no long explanatory/filler passages in the final interface.
 
-**Endpoint:** A reviewed, tested PR merged into remote `dev`. Production deployment, paid inference and live-account operations are outside this authorization.
+**Endpoint:** Reviewed, tested delivery through [PR #208](https://github.com/zhengui666/QuaZonai/pull/208) into remote `dev`. Production deployment, paid inference and real-account operations are outside this authorization. The PR owns the exact checked/reviewed Head and actual merge state.
 
-**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, based on fetched remote `dev` revision `2d9f12fbafa84da624622e256825bbf874998114`. Original-workspace unrelated changes remain untouched. There is no `.opensdlc/config.json`; new workflow prose uses the English default, while proposed UI copy is Chinese.
+**Workspace:** `.pi/worktrees/research-experience`, branch `feat/research-experience`, initially based on `2d9f12fb`; integrated subsequent remote `dev` changes through `0c2da121`. Original-workspace unrelated changes remain untouched. No `.opensdlc/config.json` exists: workflow prose uses English; UI copy uses Chinese.
 
 <a id="intent"></a>
 ## Intent
 
-The single owner delegates finite unattended quantitative studies. The interface must support asking a question, returning to original work, inspecting all attempts and independent evidence, and optionally consuming the result in a shared-account backtest and target-only observation. It must not mistake computation, model output, independent evidence, target acknowledgement or an account snapshot for one another.
+The single owner delegates finite unattended quantitative studies. Support asking a question, returning to original work, inspecting every attempt and independent evidence, and optionally consuming the result in a shared-account backtest and target-only observation. Computation, model output, independent evidence, target acknowledgement and an account snapshot remain distinct.
 
-This is a full visual/interaction replacement, not a restyle. Domain discovery used current contracts, service/research code and native scientific boundaries. The existing UI has not been used as a design reference. Transport/test behavior will be inspected only to preserve integration and meaningful regressions.
-
-Keep original inputs/identities, budgets, failed attempts, independent-sample isolation, exact strings, nulls, migrations, licenses and user data. Do not add a broker terminal, enterprise administration or a replacement scheduler.
+This is a complete visual/interaction replacement, not a restyle. Discovery used current contracts, services/research code and scientific boundaries. Existing transport/test behavior was inspected for compatibility, not as a visual reference. Keep original inputs/identities, budgets, failed attempts, independent-sample isolation, exact strings, nulls, migrations, licenses and user data. Do not add a broker terminal, enterprise administration or replacement scheduler.
 
 <a id="spec"></a>
 ## Requirements and design
 
-The authoritative [component specification and research](spec.md) contains:
+The authoritative [component specification and research](spec.md) contains 13 inspected public sources with methodological limits, eight principal wireflows, six workspaces, 51 component contracts and 38 acceptance scenarios.
 
-- A 13-source desk-research review with actual inspected scope, methodological limits and explicit research-to-component decisions.
-- Single-owner jobs, eight principal wireflows, six workspace destinations and deep-link/return behavior.
-- Semantic light/dark tokens, calculated contrast pairs, type/spacing/shape/target rules and short-copy discipline.
-- **51 component contracts** covering shared patterns, research, data, portfolios, target/account observation, model settings, extensions and owner access.
-- Exact state/error/replay semantics, minimal additive source DTO/projection changes and implementation organization/order.
-- **38 observable acceptance scenarios**, with actual-service, controlled transport, native-core, visual and human-testing scope distinguished.
-- Labelled design-only prototype references; sample data does not connect to or represent a running installation.
+**Owner decision:** The first prototype (`49bdca5b`) was rejected with `UI 不够精美，过度粗糙`. The owner accepted visual revision 2 (`8e0c13e5`) and the component plan with `开始开发合并`, subsequently reaffirming continuation. Ordinary implementation, verification, review/remediation and remote `dev` merge are authorized; deployment and real-account operations are not.
 
-**Decision status:** After rejecting the first detailed visual prototype (`49bdca5b`), the owner accepted visual revision 2 (`8e0c13e5`) and its component plan with the explicit instruction `开始开发合并`. Implementation, ordinary verification, PR review/remediation and remote `dev` merge are authorized. Deployment and real-account operations remain out of scope.
-
-**Visual revision 2:** Replaced the full-height green administrative rail with slim top navigation; removed nested evidence cards; separated the unboxed research directory from one working document; changed large surfaces to neutral paper/graphite; made primary actions neutral high-contrast; actually loaded Geist/Geist Mono; adopted one Phosphor icon family; refined status glyphs, numeric baselines, trial-row expansion and mobile full-bleed composition. User jobs and scientific/receipt boundaries remain unchanged.
+**Accepted direction:** Neutral paper/graphite surfaces, slim top navigation, unboxed research directory, one working document, local Geist/Geist Mono and Phosphor icons. Evidence uses partition-aware values and deliberate disclosure; unknown values never become zeros or scientific qualification.
 
 <a id="plan"></a>
-## Implementation plan
+## Implementation
 
-Follow [the ordered implementation plan](spec.md#implementation) after the component-level design decision. Build the new shell/access/research/data first, then optional portfolio/observation and settings/extensions. Inspect reusable HTTP/replay mechanics without adopting old presentation. Extend current source DTOs only with recorded display facts; keep science/orchestration unchanged.
+The new shell, access forms, research/data, optional portfolios/observations and settings/extensions replace the previous pages. Additive DTO/read projections expose recorded availability, partitions/components, native outcomes, original request/dataset identity, allocations, target expiry, account provenance and required extensions. Scientific inputs, computation, scheduling, persistence ownership and migrations are unchanged by these presentation additions.
 
-Preserve meaningful assertions while adapting selectors and explicitly changed behavior. Add a disposable real HTTP-service browser path with official Faux Provider, and retain controlled transport checks for intentional failures. Run applicable local/hosted checks, inspect real desktop/mobile/light/dark screenshots, obtain final-Head independent and required GitHub Codex read-only review, resolve findings, and verify the remote `dev` merge. No deployment or live-service/session-daemon restart is included.
+Original simplified commands retain exact JSON and identity across uncertain responses and tab-local navigation/reload. Legacy research intent remains recoverable. Storage failure keeps the edit/command in memory and gives a scoped unload notice rather than claiming persistence. Secrets remain transient. Explicit defaults saving preserves edits and rejects stale response overwrites. Observation stop remains usable during a held account refresh; cancelling its HTTP observer does not claim downstream cancellation.
+
+Full-input and historical research without captured dataset identity stay unknown; the current registry is not substituted as historical fact. Full goals, failures, original selected-trial links, exact amounts/counters/nanoseconds and null reasons remain accessible. Optional consumers do not become research prerequisites.
 
 <a id="verification"></a>
 ## Actual verification
 
-### Discovery and preparation
+### Design references
 
-- Created an isolated worktree from current fetched remote `dev`; installed locked Web, Service, Research and CLI dependencies successfully.
-- Independent read-only domain and HTTP integration discovery confirmed original replay, scientific/receipt boundaries and unsupported public operations. No child edited application implementation or used old UI as a design reference.
-- GitHub access and a local Playwright Chromium cache are available. Existing native executables are present, but exact-Head compatibility has not been established.
-- Existing browser tests intercept HTTP rather than use the actual service. The implementation plan explicitly addresses that gap; no real-service browser acceptance is claimed from those existing tests.
+The labelled [prototype assets](assets/) are design-only records, not service evidence. Revision 2 passed its strict TypeScript/bundle check, 12 screenshots, 28 layout combinations, six tagged axe checks and selected interactions. Those results do not establish application or scientific acceptance.
 
-### Design prototype only
+### Application integration
 
-The prototype uses official Ant components, self-hosted official Fontsource Geist/Geist Mono assets, Phosphor icons and visibly labelled example records, not a service connection. Its own code/screenshots are under [assets](assets). Prototype-only npm dependencies, generated third-party bundles/font assets and research PDFs remain isolated outside the repository in task-owned temporary directories; application dependencies/locks are unchanged.
+The following local checks passed before the final upstream integration/review cycle; exact final-Head results are authoritative in [PR #208](https://github.com/zhengui666/QuaZonai/pull/208):
 
-- Strict prototype TypeScript check and esbuild bundle: passed.
-- Chromium screenshots: 12 saved design references, including light/dark and mobile.
-- Layout sweep: 28 combinations (seven prototype views at widths 320, 390, 768 and 1024), no page horizontal overflow observed.
-- Axe checks on six selected prototype views with WCAG 2 A/AA, 2.1 AA and 2.2 AA tags: zero reported violations. This is not full conformance or production acceptance.
-- Checked prototype interactions: local search/clear, expansion of the correct failed-trial row, field-local invalid-submit feedback and mobile navigation to Data.
-- No browser page errors in the checked prototype views. Revision-2 screenshots were inspected across workspaces; reduced visual nesting, removed redundant clear-filter actions, and corrected trial expansion, typography, control targets and radius roles. Browser verification confirms the local Geist face loads rather than silently falling back.
+- `make check-web`: strict Web types, four unit tests and production build. ECharts is lazy-loaded; Vite still reports large vendor/chart chunks. No production Core Web Vitals claim is made.
+- `npm --prefix apps/web run test:e2e`: **15 Chromium cases passed**. They cover owner setup/login, exact replay after lost responses and changed defaults, cursor filtering, null/partition/component evidence, original failed/selected trials and native outcomes, exact capital/weights/curve values, target-only observation, secret prompts/cancellation, disappeared login, explicit settings save/races, extensions, dataset disclosure/return, stopping a held refresh, zero/maximum-safe budgets, keyboard and reduced motion.
+- The layout sweep covers seven actual views at 320, 390, 768 and 1024 in both themes, with page-overflow and research-row containment assertions. Tagged axe checks include WCAG 2 A/AA, 2.1 AA and 2.2 AA; checked views reported no violations. This is not full accessibility conformance or a human usability study.
+- `make check-ts check-deploy`: Service, Research and CLI types/tests plus source/package helper checks passed. The optional formal release-distribution test is skipped when its artifact is absent; no installation acceptance is claimed from that skip.
 
-These checks do **not** establish real HTTP integration, scientific correctness, model quality, profitability, complete component-state coverage, measured production Core Web Vitals, human usability or final-Head CI/review.
+Two browser cases exercise a disposable real HTTP service, official Faux Provider, actual Durable SQLite and production Web assets. The first uses no API interception and crosses owner setup → study → recorded evidence → backtest → uncertain target delivery → service reopen → original receipt reconciliation → nullable account snapshot → local stop. The other deliberately drops a real admission response after acceptance and verifies identical request bytes, one original study and one provider execution after reload. Original receipt/expiry and one downstream offer remain unchanged.
+
+The browser scientific subprocess is explicitly a **TEST_ONLY protocol probe**, not the actual scientific kernel or evidence qualification. Retained native/core/scientific CI remains required. No paid model, real-account, profitability, literal unattended-day, owner interview/usability or production performance result is claimed.
+
+### Inspected application images
+
+- [Light research](assets/application-research-light.png) and [dark research](assets/application-research-dark.png): controlled test responses; inspected actual application composition and long exact counters.
+- [Mobile authoring](assets/application-new-study-mobile.png): actual application validation/focus state, controlled catalog.
+- [Real HTTP research](assets/application-http-research.png) and [receipt/account observation](assets/application-http-observation.png): disposable service and protocol-only records, not market evidence.
+
+The look-and-fix loop corrected an overflowing long research row, long-counter layout, password/clear touch targets, neutral-label contrast, actual auth-query transition and asynchronous recovery/stop/settings boundaries. Technical checks are not presented as owner aesthetic or human-task acceptance.
 
 <a id="review"></a>
 ## Review
 
-No application PR, final-Head independent review or GitHub Codex review exists for this task yet. The owner's first visual review rejected the prototype. The owner subsequently accepted visual revision 2 and instructed development/merge. Application implementation and final-Head review are now in progress; no review pass is claimed yet.
+[PR #208](https://github.com/zhengui666/QuaZonai/pull/208) is the authoritative location for exact-Head independent read-only review, required GitHub Codex read-only review, findings/remediation and hosted CI. Local author checks are not independent review. Do not infer acceptance from a draft PR, old Head, emoji or this record.
 
 <a id="delivery"></a>
 ## Delivery
 
-Design research, the detailed component specification and revised labelled visual prototypes are prepared. The first visual treatment was rejected; revision 2 was accepted with `开始开发合并`. Application implementation and remote merge remain unfinished. No production service, original workspace change or real account was modified.
+The authorized deliverable is the PR's reviewed and checked revision merged into remote `dev`; actual Head, checks, review and merge state remain in the linked PR rather than a duplicate status ledger. No production service, session daemon or real account was operated. Font/icon notices are distributed with the Web assets; unrelated data, licenses and migrations remain intact.
 
 <a id="handoff"></a>
 ## Handoff
 
-Continue in `.pi/worktrees/research-experience` on `feat/research-experience`. Read this task and [spec.md](spec.md), then the owner's actual decision before implementation. The design-only preview is served on `127.0.0.1:4187` from `/tmp/qz-design-prototype`; it is not QuaZonai's service. Its build/check scripts and temporary public research downloads are task-owned `/tmp` material. Do not mistake preview records, screenshots or static bundled code for application acceptance.
+Resume from the actual state of [PR #208](https://github.com/zhengui666/QuaZonai/pull/208), not from a prototype or an earlier local pass. If still open, finish applicable final-Head CI/review and remediation, then merge/verify remote `dev`. If merged, verify that state before proposing further work. Do not deploy or restart live services under this task's authorization.
 
-Next action: execute the accepted implementation plan, preserve original command/provider/recovery behavior, verify the actual new application, obtain exact-Head review/CI, then merge and verify remote `dev`.
+The old design preview on `127.0.0.1:4187` is task-owned `/tmp/qz-design-prototype` material, not QuaZonai's application or an acceptance service.

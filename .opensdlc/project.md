@@ -21,7 +21,7 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 | --- | --- | --- |
 | Service, Harness, CLI and Skill | `make check-ts` | Types and concise HTTP/core, durable recovery and client checks; official upstream packages |
 | Web | `make check-web` | Types, small unit check, production build |
-| Five-page interactions | `npm --prefix apps/web run test:e2e` | Three Chromium checks; install Chromium through the package's Playwright CLI first |
+| Workbench browser behavior | `npm --prefix apps/web run test:e2e` | Build Web first; install Web, Service and Research dependencies plus Playwright Chromium. Includes production assets on disposable real HTTP/Durable SQLite, controlled failure/race cases, themes, mobile and axe checks |
 | Public source helpers | `make check-source` | Shared HF transport/cache, explicit source selection, offline handoff and failure/recovery fixtures |
 | Installation/package helpers | `make check-deploy` | Source helper tests, shell syntax and disposable package/manager checks; not an installed service |
 | Routine TypeScript work | `make check` | TS, Web and deployment helpers |
@@ -32,7 +32,7 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 
 Build the matching scientific executables once with `bash deploy/docker/native-build.sh debug /absolute/artifact/directory` (or `release`). `CARGO_TARGET_DIR` can reuse the existing cache; `PROFILE=release` selects matching tests. Do not delete unrelated caches or user data. A missing prerequisite, ignored test, old binary or old-Head CI is not a pass.
 
-[CI](../.github/workflows/ci.yml) runs TypeScript, five-page Web and scoped native/core checks. Scientific binaries are built once and passed to the connected test. Push runs retain the exact tested release output for image production. [Rust regression](../.github/workflows/rust-regression.yml) is the manual/formal-release full retained-science check, not the retired Server/Store suite.
+[CI](../.github/workflows/ci.yml) runs TypeScript, six-workspace Web and scoped native/core checks. Scientific binaries are built once and passed to the connected test. Push runs retain the exact tested release output for image production. [Rust regression](../.github/workflows/rust-regression.yml) is the manual/formal-release full retained-science check, not the retired Server/Store suite.
 
 ### Local service
 
@@ -50,7 +50,7 @@ Vite proxies the real API at port 8080. The application opens the official durab
 
 Current API DTOs live in [packages/contracts](../packages/contracts/src/index.ts), imported directly by Service, Web and CLI. Scientific wire rules remain in [Rust contracts](../crates/contracts/src); edit source before running any source-derived export. `contracts/generated/` and `apps/web/src/generated/` are retained historical snapshots and are not the new HTTP API. Never hand-edit them or invoke removed server/runtime generators. `quazonai schema show NAME` exposes the CLI's supported schema views without opening service storage.
 
-Deterministic tests use official Faux Provider and controlled downstream protocols. Native calculations are real, but synthetic catalogs do not establish market/PIT quality, paid-model quality, profitability, real-account results or a literal 24-hour run. Record those separately if authorized.
+Deterministic tests use official Faux Provider and controlled downstream protocols. Browser HTTP tests use an explicitly TEST_ONLY scientific protocol subprocess; they establish HTTP/storage/interaction recovery, not scientific evidence. `check-core` and retained scientific CI execute the matching real kernel. Synthetic catalogs do not establish market/PIT quality, paid-model quality, profitability, real-account results or a literal 24-hour run. Record those separately if authorized.
 
 <a id="runtime-image-build"></a>
 ## Image production
