@@ -22,7 +22,10 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
     let observed = result
         .statistics
         .iter()
-        .filter(|statistic| statistic.group == NativeStatisticGroup::Returns)
+        .filter(|statistic| {
+            statistic.group == NativeStatisticGroup::Returns
+                && !statistic.native_key.starts_with("Calendar ")
+        })
         .collect::<Vec<_>>();
     assert_eq!(observed.len(), expected.len());
     for statistic in observed {
@@ -32,5 +35,32 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
             statistic.reason_code.as_deref(),
             (!value.is_finite()).then_some("NATIVE_STATISTIC_UNAVAILABLE")
         );
+    }
+    // Supplementary QZ account summaries do not replace the exact native set.
+    let calendar = result
+        .statistics
+        .iter()
+        .filter(|statistic| statistic.native_key.starts_with("Calendar "))
+        .collect::<Vec<_>>();
+    assert_eq!(calendar.len(), 9);
+    assert_eq!(
+        calendar
+            .iter()
+            .find(|row| row.native_key == "Calendar Observed Return Days")
+            .unwrap()
+            .value,
+        Some(0.0)
+    );
+    for key in [
+        "Calendar Geometric Daily Return",
+        "Calendar Minimum Daily Return",
+        "Calendar Maximum Daily Return",
+        "Calendar Maximum Absolute Deviation",
+        "Calendar Negative Days",
+        "Calendar Zero Days",
+    ] {
+        let row = calendar.iter().find(|row| row.native_key == key).unwrap();
+        assert!(row.value.is_none(), "{key}");
+        assert!(row.reason_code.is_some());
     }
 }

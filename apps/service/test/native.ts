@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import Fastify from 'fastify';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
-import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { JsonObject, SettledTask, TaskId } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { configDefaults } from '../src/config.ts';
@@ -16,15 +16,23 @@ import { context, settledObservation, wat } from './support.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
 
 
-async function expandedCatalog(directory: string, fixturePath: string, prepare: string, causal = false, count = 599) {
+async function expandedCatalog(directory: string, fixturePath: string, prepare: string, causal = false, count = 599, symbol = 'BTC-USD') {
   const root = dirname(fixturePath); const source = join(directory, 'synthetic-source');
   await cp(join(root, 'acquired'), source, { recursive: true });
   const manifest = JSON.parse(await readFile(join(source, 'acquisition.json'), 'utf8'));
   const row = JSON.parse((await readFile(join(source, 'records.jsonl'), 'utf8')).split('\n')[0]);
+  let instrumentsPath = join(root, 'instruments.json');
+  if (symbol !== 'BTC-USD') {
+    const instruments = JSON.parse(await readFile(instrumentsPath, 'utf8'));
+    Object.assign(instruments[0].CurrencyPair, { id: `${symbol}.COINBASE`, raw_symbol: symbol, base_currency: symbol.split('-')[0] });
+    instrumentsPath = join(directory, 'instruments.json');
+    await writeFile(instrumentsPath, JSON.stringify(instruments));
+  }
+  manifest.selection.instrument = symbol;
   // Synthetic receipt batches give the native matching/account engine time to fill a selected target.
   // Each partition also needs later receipt waves to settle initial fills and fee-driven rebalancing.
   const batchSize = causal ? 50 : 299;
-  const rows = Array.from({ length: count }, (_, index) => ({ ...row, selection_time_seconds: index * 60, event_time_seconds: (index + 1) * 60,
+  const rows = Array.from({ length: count }, (_, index) => ({ ...row, instrument: symbol, selection_time_seconds: index * 60, event_time_seconds: (index + 1) * 60,
     source_response: `raw/${String(Math.floor(index / batchSize)).padStart(4, '0')}.json`, source_row_index: index % batchSize,
     observed_at: causal ? new Date((Math.min((Math.floor(index / batchSize) + 1) * batchSize, count) * 60 + 1) * 1000).toISOString() : `2024-01-02T00:00:0${Math.floor(index / batchSize) + 1}Z` }));
   const records = rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
@@ -37,7 +45,7 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
     const response = structuredClone(template); response.observation.retrieved_at = first.observed_at;
     response.observation.request_started_at = causal ? new Date(batch.at(-1)!.event_time_seconds * 1000).toISOString() : `2024-01-02T00:00:0${Math.floor(start / batchSize)}Z`;
     response.request.start_seconds = first.selection_time_seconds; response.request.end_seconds = batch.at(-1)!.event_time_seconds;
-    response.request.url = `https://api.exchange.coinbase.com/products/BTC-USD/candles?start=${clock(response.request.start_seconds)}&end=${clock(response.request.end_seconds)}&granularity=60`;
+    response.request.url = `https://api.exchange.coinbase.com/products/${symbol}/candles?start=${clock(response.request.start_seconds)}&end=${clock(response.request.end_seconds)}&granularity=60`;
     response.file = { path: first.source_response, size: Buffer.byteLength(raw) }; response.counts = { source_rows: batch.length, selected_rows: batch.length, outside_request_window: 0 };
     manifest.responses.push(response); manifest.raw_response_bytes += response.file.size; await writeFile(join(source, first.source_response), raw);
   }
@@ -47,7 +55,7 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
     const env = new NodeExecutionEnv({ cwd: directory });
     let stderr = '';
     try {
-      const result = getOrThrow(await env.exec([prepare, 'ingest-candles', '--acquisition', join(source, 'acquisition.json'), '--instruments', join(root, 'instruments.json'), '--output', output], {
+      const result = getOrThrow(await env.exec([prepare, 'ingest-candles', '--acquisition', join(source, 'acquisition.json'), '--instruments', instrumentsPath, '--output', output], {
         timeout: 20, inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: process.env.PI_SCRATCH_DIR ?? tmpdir() },
         onOutput: (chunk, _context, info) => { if (info.stream === 'stderr') stderr += chunk; },
       }, context));
@@ -185,7 +193,7 @@ test('two original studies → native target blending → one fee-affected share
   } finally { await service.close(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('ensemble research trades validation then independent heldout in one native account and replays the sealed selection', { timeout: 120_000 }, async () => {
+for (const universe of [false, true]) test(`${universe ? 'fixed-pool' : 'legacy'} ensemble research trades validation then independent heldout in one native account and replays the sealed selection`, { timeout: 120_000 }, async () => {
   assert.ok(process.env.QZ_JOB_BINARY, 'QZ_JOB_BINARY must include forecast-factor');
   assert.ok(process.env.QZ_BROWSER_FIXTURE, 'QZ_BROWSER_FIXTURE must name the matching prepared.json');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-native-ensemble-'));
@@ -196,25 +204,34 @@ test('ensemble research trades validation then independent heldout in one native
     const prepare = process.env.QZ_CATALOG_PREPARE_BINARY ?? join(dirname(process.env.QZ_JOB_BINARY), 'catalog-prepare');
     const catalog = await expandedCatalog(prefixDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, 400);
     const sealed = await expandedCatalog(sealedDir, process.env.QZ_BROWSER_FIXTURE, prepare, true);
+    if (universe) {
+      for (const [root, destination, count] of [[prefixDir, catalog, 400], [sealedDir, sealed, 599]] as const) {
+        const other = join(root, 'other-instrument'); await mkdir(other);
+        await cp(await expandedCatalog(other, process.env.QZ_BROWSER_FIXTURE, prepare, true, count, 'ETH-USD'), destination, { recursive: true });
+      }
+    }
     const fixture = JSON.parse(await readFile(process.env.QZ_BROWSER_FIXTURE, 'utf8'));
     const request = { schema_version: 1, forecast: { schema_version: 1,
-      selection: { ...fixture.selection.selection, maximum_rows: 599, event_end_ns: '24000000000000', decision_cutoff_ns: '24000000000000' },
+      selection: { ...fixture.selection.selection, ...(universe ? { bar_types: ['ETH-USD.COINBASE-1-MINUTE-LAST-EXTERNAL', ...fixture.selection.selection.bar_types] } : {}), maximum_rows: universe ? 1198 : 599, event_end_ns: '24000000000000', decision_cutoff_ns: '24000000000000' },
       parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1 } },
       train_end_ns: '12000000000000', validation_end_ns: '24000000000000' };
     const finalRequest = structuredClone(request);
     Object.assign(finalRequest.forecast.selection, { event_end_ns: '40000000000000', decision_cutoff_ns: '40000000000000' });
     const members = [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
     const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+    const simulationSettings = nativeTestSettings('3000');
+    if (universe) simulationSettings.fee_rates = [{ instrument_id: 'ETH-USD.COINBASE', maker: '0.004000', taker: '0.006000' }, ...(simulationSettings.fee_rates as JsonObject[])];
+    const selectedSettings = universe ? { ...simulationSettings, fee_rates: (simulationSettings.fee_rates as JsonObject[]).filter((fee) => fee.instrument_id === 'BTC-USD.COINBASE') } : simulationSettings;
     const config = configDefaults({ dataDir: directory, jobBinary: process.env.QZ_JOB_BINARY,
       research: { database: join(directory, 'research.sqlite'), modules: ['research', 'strategy-portfolio'].map((name) => resolve('../research/plugins', `${name}.ts`)) },
       datasets: [{ id: 'ensemble-native-fixture', name: 'Synthetic native protocol control', currency: 'USD', source: 'FIXTURE', assetClass: 'SPOT', start: null, end: null, ready: true,
         data: { catalog, request, sealed: { catalog: sealed, request: finalRequest } },
-        strategy: { name: 'original-conditional-threshold', kind: 'factor-threshold', instrumentId: 'BTC-USD.COINBASE', threshold: 0, investedWeight: '0.25',
-          targetTtlNs: '7200000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings: nativeTestSettings('3000') } }] });
+        strategy: { name: 'original-conditional-threshold', kind: 'factor-threshold', instrumentId: universe ? 'ETH-USD.COINBASE' : 'BTC-USD.COINBASE', ...(universe ? { instrumentIds: ['ETH-USD.COINBASE', 'BTC-USD.COINBASE'] } : {}), threshold: 0, investedWeight: '0.25',
+          targetTtlNs: '7200000000000', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT', simulationSettings } }] });
     service = await createService({ config, models });
     let selected: number | undefined;
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Native causal ensemble control, not market performance.', members }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Native causal ensemble control, not market performance.', members, ...(universe ? { instrumentId: 'BTC-USD.COINBASE' } : {}) }), { stopReason: 'toolUse' }),
       (transcript) => {
         const feedback = transcript.messages.findLast((message) => message.role === 'toolResult');
         assert.ok(feedback && feedback.role === 'toolResult');
@@ -235,6 +252,25 @@ test('ensemble research trades validation then independent heldout in one native
     assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
     assert.equal(facts.final!.trialId, selected);
     assert.deepEqual(object(facts.trials[0]!.proposal).members, members);
+    assert.deepEqual(object(facts.trials[0]!.proposal).strategy, config.datasets[0]!.strategy);
+    assert.deepEqual(object(facts.trials[0]!.proposal).request, request);
+    assert.equal(object(facts.trials[0]!.proposal).instrumentId, universe ? 'BTC-USD.COINBASE' : undefined);
+    for (const outcome of [object(facts.trials[0]!.result), object(facts.final!.result)]) {
+      const task: SettledTask<JsonObject> = await service.research.harness.waitForTask(outcome.evidenceTaskId as TaskId<JsonObject>, context);
+      assert.equal(task.state.outcome.status, 'completed');
+      const evidence = object(task.state.outcome.status === 'completed' ? task.state.outcome.result.native : null);
+      assert.deepEqual(object(evidence.policy).simulationSettings, selectedSettings);
+      assert.deepEqual(object(evidence.policy).instrumentId, 'BTC-USD.COINBASE');
+      assert.deepEqual(object(object(evidence.simulationRequest).selection).bar_types, ['BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL']);
+      assert.deepEqual(object(evidence.simulationRequest).settings, selectedSettings);
+      for (const component of evidence.components as JsonObject[]) {
+        assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, request.forecast.selection.bar_types);
+      }
+      assert.equal(object(evidence.simulation).native_version, '0.63.0');
+      assert.ok(BigInt(String(object(evidence.simulation).orders)) > 0n);
+      assert.ok(BigInt(String(object(evidence.simulation).positions)) > 0n);
+      assert.ok(nativeCurve(object(evidence.simulation), 'USD').some((point) => point.value !== null && decimalUnits(point.value) !== decimalUnits('3000')), 'original native fees must affect this flat-price account');
+    }
     const final = object(facts.final!.result);
     const heldout = (final.partitions as JsonObject[]).find((partition) => partition.partition === 'HELDOUT')!;
     assert.ok(BigInt(String(object(object(heldout.metric).counts).included)) > 0n);
@@ -253,6 +289,12 @@ test('ensemble research trades validation then independent heldout in one native
     assert.deepEqual(fact.view.curve, nativeCurve(object(native.simulation), 'USD'));
     const replay = object(fact.native!.simulationRequest);
     assert.equal(object(replay.selection).event_start_ns, request.validation_end_ns);
+    assert.deepEqual(object(replay.selection).bar_types, ['BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL']);
+    assert.deepEqual(replay.settings, selectedSettings);
+    assert.deepEqual(object(object((fact.native!.sources as JsonObject[])[0]).policy).simulationSettings, selectedSettings);
+    assert.deepEqual(object(fact.evidence[0]!.input).data, config.datasets[0]!.data);
+    assert.deepEqual(object(object(fact.evidence[0]!.selected).proposal).strategy, config.datasets[0]!.strategy);
+    assert.equal((simulationSettings.fee_rates as JsonObject[]).length, universe ? 2 : 1);
     for (const point of replay.target_points as JsonObject[]) {
       assert.equal(object((point.targets as JsonObject[])[0]).weight, '0.0625');
       assert.ok(BigInt(String(point.asof_ns)) >= BigInt(request.validation_end_ns));

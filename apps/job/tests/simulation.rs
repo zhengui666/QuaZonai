@@ -655,7 +655,7 @@ fn calendar_daily_return_statistics_retain_real_flat_account_days() {
         assert!(metric(key).value.is_none(), "{key}");
         assert_eq!(
             metric(key).reason_code.as_deref(),
-            Some("PORTFOLIO_CALENDAR_RETURNS_INCOMPLETE")
+            Some("NATIVE_STATISTIC_UNAVAILABLE")
         );
     }
     assert!(metric("Sharpe Ratio (252 days)").value.is_none());
@@ -674,7 +674,7 @@ fn calendar_daily_return_statistics_do_not_qualify_an_intraday_window() {
     assert!(row.value.is_none());
     assert_eq!(
         row.reason_code.as_deref(),
-        Some("PORTFOLIO_CALENDAR_WINDOW_NOT_WHOLE_DAYS")
+        Some("NATIVE_STATISTIC_UNAVAILABLE")
     );
 }
 
