@@ -232,7 +232,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical'] as const) test(`${v
     service = await createService({ config, models });
     const priorExposure = { catalog: sealed, barTypes: request.forecast.selection.bar_types, start: request.validation_end_ns, end: finalRequest.forecast.selection.event_end_ns, kind: 'FINAL', taskId: 9000, conversationId: 8000 };
     if (historical) await service.research.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(priorExposure); }, context);
-    let selected: number | undefined;
+    let selected: number | undefined; let validationFeedback: JsonObject | undefined;
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Native causal ensemble control, not market performance.', members, ...(universe ? { instrumentId: 'BTC-USD.COINBASE' } : {}) }), { stopReason: 'toolUse' }),
       (transcript) => {
@@ -244,14 +244,36 @@ for (const variant of ['legacy', 'fixed-pool', 'historical'] as const) test(`${v
         assert.ok(result.portfolio.statistics.length);
         assert.equal(JSON.stringify(result).includes('canonical_result'), false);
         assert.equal(JSON.stringify(result).includes('label_return'), false);
-        selected = result.trialId;
-        return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Select original ensemble before independent exposure.' }), { stopReason: 'toolUse' });
+        selected = result.trialId; validationFeedback = result;
+        return fauxAssistantMessage(fauxToolCall('research_trial', { trialId: selected! }), { stopReason: 'toolUse' });
+      },
+      (transcript) => {
+        const message = transcript.messages.findLast((message) => message.role === 'toolResult');
+        assert.ok(message && message.role === 'toolResult');
+        const read = JSON.parse(message.content.filter((item) => item.type === 'text').map((item) => item.text).join(''));
+        assert.equal(read.trialId, selected); assert.equal(read.status, 'COMPUTED');
+        assert.deepEqual(read.result.portfolio, validationFeedback!.portfolio);
+        assert.equal(read.result.evidenceTaskId, validationFeedback!.evidenceTaskId);
+        assert.equal(JSON.stringify(read).includes('canonical_result'), false);
+        assert.equal(JSON.stringify(read).includes('label_return'), false);
+        return fauxAssistantMessage(fauxToolCall('research_brief', {}), { stopReason: 'toolUse' });
+      },
+      (transcript) => {
+        const message = transcript.messages.findLast((message) => message.role === 'toolResult');
+        assert.ok(message && message.role === 'toolResult');
+        const brief = JSON.parse(message.content.filter((item) => item.type === 'text').map((item) => item.text).join(''));
+        assert.equal(brief.totalTrials, 1); assert.equal(brief.nextAfterTrialId, null);
+        assert.deepEqual(brief.trials.map((trial: JsonObject) => trial.taskId), [selected]);
+        assert.equal('sealed' in brief.data, false);
+        return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: selected!, reason: 'Select original ensemble after read-only recovery; before final exposure.' }), { stopReason: 'toolUse' });
       },
     ]);
     const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: 'Native ensemble isolation control; synthetic data only.',
       model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
     await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await service.research.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials.length, 1, 'read-only retrieval must not register another candidate');
+    assert.deepEqual(object(object(facts.trials[0]!.result).portfolio).statistics, object(validationFeedback!.portfolio).statistics);
     assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
     assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
     assert.equal(facts.final!.trialId, selected);
@@ -309,6 +331,6 @@ for (const variant of ['legacy', 'fixed-pool', 'historical'] as const) test(`${v
     const exposures = (await service.research.harness.snapshot(Exposures, context))!.windows;
     assert.deepEqual(exposures.map((window) => window.kind), historical ? ['FINAL', 'HISTORICAL_ITERATION', 'HISTORICAL_FINAL'] : ['ITERATION', 'FINAL']);
     if (historical) assert.deepEqual(exposures[0], priorExposure);
-    assert.equal(faux.state.callCount, 2);
+    assert.equal(faux.state.callCount, 4); // Two extra read-only rounds, not extra native evaluations.
   } finally { await service?.close(); await rm(directory, { recursive: true, force: true }); }
 });
