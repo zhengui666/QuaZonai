@@ -12,7 +12,7 @@ use nautilus_model::{
 
 const ID: &str = "123.POLYMARKET";
 
-fn market() -> NativeMarketData {
+pub(super) fn market() -> NativeMarketData {
     let instrument = InstrumentAny::CurrencyPair(
         CurrencyPair::builder()
             .instrument_id(InstrumentId::from(ID))
@@ -81,7 +81,7 @@ fn source() -> RecordedTradeFeesV1 {
         ],
     }
 }
-fn model() -> (RecordedFeeModel, Rc<RefCell<dyn Clock>>) {
+pub(super) fn model() -> (RecordedFeeModel, Rc<RefCell<dyn Clock>>) {
     let clock: Rc<RefCell<dyn Clock>> = Rc::new(RefCell::new(TestClock::new()));
     set_time(&clock, MINUTE_NS);
     (
@@ -89,7 +89,7 @@ fn model() -> (RecordedFeeModel, Rc<RefCell<dyn Clock>>) {
         clock,
     )
 }
-fn set_time(clock: &Rc<RefCell<dyn Clock>>, time: u64) {
+pub(super) fn set_time(clock: &Rc<RefCell<dyn Clock>>, time: u64) {
     clock
         .borrow_mut()
         .as_any_mut()
@@ -108,7 +108,7 @@ fn order() -> OrderAny {
     order.set_liquidity_side(LiquiditySide::Taker);
     order
 }
-fn charge(model: &RecordedFeeModel, quantity: &str) -> Result<Money> {
+pub(super) fn charge(model: &RecordedFeeModel, quantity: &str) -> Result<Money> {
     model.get_commission(
         &order(),
         Quantity::from(quantity),
@@ -218,8 +218,11 @@ fn proportional_fee_rounds_once_per_fill_at_native_currency_precision() {
     );
 }
 
-#[test]
-fn native_shared_account_books_exactly_the_recorded_allocation_once() {
+pub(super) fn native_scenario() -> (
+    tempfile::TempDir,
+    NativeMarketData,
+    contracts::science::NativeSimulationRequestV1,
+) {
     use contracts::{portfolio::AllocationTargetV1, science::*};
     use nautilus_persistence::backend::catalog::ParquetDataCatalog;
     let directory = tempfile::tempdir().unwrap();
@@ -295,6 +298,12 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
             maximum_rows: 6,
         },
     };
+    (directory, data, request)
+}
+
+#[test]
+fn native_shared_account_books_exactly_the_recorded_allocation_once() {
+    let (directory, data, request) = native_scenario();
     #[cfg(feature = "native-paper")]
     {
         let error = crate::simulation::paper_target_strategy(

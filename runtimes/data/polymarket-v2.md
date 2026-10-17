@@ -199,6 +199,23 @@ results retain actual fill time, source BAR time and each original record/alloca
 Nautilus books the returned commission once. No global-average or fitted fee rate
 is charged. Keep prefix and Sealed fee records physically separate.
 
+`POLYMARKET_V2_RECORDED_LIQUIDITY` is an explicit, catalog-backtest-only fill
+policy paired with the recorded-fee adapter, native version `0.63.0` and the
+closed native fill probability/seed parameters. It previews that same original
+record pool at the actual replay clock. Positive MARKET IOC fills are capped by
+both order leaves and remaining source quantity; only the actual fee callback
+consumes records, across both order sides. Native IOC cancellation prevents L1
+remainder extrapolation. A canceled reduction abandons its dependent increases;
+subsequent targets use actual holdings, not assumed released margin. The native
+engine still owns fills, cancellations, positions and money. The book uses the
+native bid/ask, with seeded slippage applied once by Nautilus after the book fill.
+Missing/exhausted pools and unsupported orders fail explicitly; returning an
+empty book would silently fall back to ordinary liquidity. Original callback
+failures are observed after replay even when the upstream engine only logs them.
+This policy is a disclosed quantity-allocation assumption, not historical book
+depth, maker/taker eligibility or available contemporary liquidity. Declare it
+in a new research binding; the legacy default-fill policy remains unchanged.
+
 The share-price accounting proxy is not a historical BinaryOption definition.
 Nautilus CurrencyPair requires the single-currency account to be MARGIN, so this
 conditional model uses leverage 1, nonnegative weights/cash and gross exposure at

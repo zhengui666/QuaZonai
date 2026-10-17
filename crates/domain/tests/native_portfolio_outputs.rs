@@ -399,6 +399,169 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
     )
 }
 
+fn recorded_liquidity_settings() -> NativeSimulationSettingsV1 {
+    let (NativeTaskParametersV1::SimulatePortfolio { request, .. }, _) = simulation() else {
+        unreachable!()
+    };
+    let mut settings = request.settings;
+    let parameters = domain::portfolio::simulation_models(&settings)
+        .unwrap()
+        .0
+        .clone();
+    settings.fill_model = NativeModelRefV1::PolymarketV2RecordedLiquidity {
+        schema_version: SchemaV1,
+        native_version: NAUTILUS_EXECUTION_VERSION.into(),
+        parameters,
+    };
+    settings.fee_model = NativeModelRefV1::PolymarketV2RecordedFees {
+        schema_version: SchemaV1,
+        native_version: NAUTILUS_EXECUTION_VERSION.into(),
+        parameters: contracts::recorded_fees::RecordedTradeFeeParametersV1 {},
+    };
+    settings.base_currency = "pUSD".into();
+    settings.account_kind = NativeAccountKind::Margin;
+    settings
+}
+
+fn fill_parameters_mut(model: &mut NativeModelRefV1) -> &mut NautilusFillParametersV1 {
+    match model {
+        NativeModelRefV1::NautilusDefaultFill { parameters, .. }
+        | NativeModelRefV1::PolymarketV2RecordedLiquidity { parameters, .. } => parameters,
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn recorded_liquidity_requires_recorded_fees_and_exact_native_versions() {
+    use domain::portfolio::{simulation_models, simulation_settings};
+    let original = recorded_liquidity_settings();
+    simulation_settings(&original).unwrap();
+    let unavailable = domain::DomainError::CapabilityUnavailable("native_simulation_models");
+    for version in ["", "0.62.0", "0.63.1"] {
+        for fill_version in [true, false] {
+            let mut settings = original.clone();
+            let model = if fill_version {
+                &mut settings.fill_model
+            } else {
+                &mut settings.fee_model
+            };
+            match model {
+                NativeModelRefV1::PolymarketV2RecordedLiquidity { native_version, .. }
+                | NativeModelRefV1::PolymarketV2RecordedFees { native_version, .. } => {
+                    *native_version = version.into();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(simulation_models(&settings), Err(unavailable.clone()));
+        }
+    }
+    for fee_model in [
+        execution_models::fee(),
+        NativeModelRefV1::NautilusPolymarket {
+            schema_version: SchemaV1,
+            upstream_class: NAUTILUS_POLYMARKET_FEE_CLASS.into(),
+            upstream_version: NAUTILUS_EXECUTION_VERSION.into(),
+            parameters: NautilusFeeParametersV1 {},
+        },
+        original.fill_model.clone(),
+    ] {
+        let mut settings = original.clone();
+        settings.fee_model = fee_model;
+        assert_eq!(simulation_models(&settings), Err(unavailable.clone()));
+    }
+}
+
+#[test]
+fn recorded_liquidity_retains_recorded_fee_account_and_authentic_binary_option_rules() {
+    use domain::portfolio::simulation_models;
+    let original = recorded_liquidity_settings();
+    let mut legacy = original.clone();
+    legacy.fill_model = execution_models::fill();
+    for original in [original, legacy] {
+        simulation_models(&original).unwrap();
+        assert!(!domain::prediction::uses_native_fee(&original.fee_model));
+        for case in 0..4 {
+            let mut settings = original.clone();
+            match case {
+                0 => settings.base_currency = "USDC".into(),
+                1 => settings.account_kind = NativeAccountKind::Cash,
+                2 => settings.leverage = "2".parse().unwrap(),
+                _ => settings.multi_currency_spot_cash = Some(serde_json::from_value(json!({
+                    "schema_version": 1, "mode": "MULTI_CURRENCY_CASH", "report_currency": "pUSD",
+                    "price_method": "CLOSED_BAR_CLOSE", "allowed_instrument_ids": ["A.SIM"],
+                    "returns_policy": "FRESH_SIMULATION_NO_EXTERNAL_FLOWS",
+                    "daily_sampling": "NATIVE_UTC_MIDNIGHT_BOUNDARIES", "maximum_price_age_ns": "1"
+                })).unwrap()),
+            }
+            assert_eq!(
+                simulation_models(&settings),
+                Err(domain::DomainError::CapabilityUnavailable(
+                    "native_simulation_models"
+                )),
+                "account case {case}"
+            );
+        }
+    }
+    let mut authentic = recorded_liquidity_settings();
+    authentic.fill_model = execution_models::fill();
+    authentic.fee_model = NativeModelRefV1::NautilusPolymarket {
+        schema_version: SchemaV1,
+        upstream_class: NAUTILUS_POLYMARKET_FEE_CLASS.into(),
+        upstream_version: NAUTILUS_EXECUTION_VERSION.into(),
+        parameters: NautilusFeeParametersV1 {},
+    };
+    authentic.account_kind = NativeAccountKind::Cash;
+    domain::portfolio::simulation_settings(&authentic).unwrap();
+    assert!(domain::prediction::uses_native_fee(&authentic.fee_model));
+    domain::catalogs::execution_account("BinaryOption", NativeAccountKind::Cash).unwrap();
+    assert!(
+        domain::catalogs::execution_account("BinaryOption", NativeAccountKind::Margin).is_err()
+    );
+}
+
+#[test]
+fn recorded_liquidity_validates_probabilities_seed_and_latency_exactly_as_default_fill() {
+    use domain::portfolio::simulation_models;
+    let recorded = recorded_liquidity_settings();
+    let mut legacy = recorded.clone();
+    legacy.fill_model = execution_models::fill();
+    for mut settings in [recorded, legacy] {
+        for seed in [0, 7, i64::MAX as u64] {
+            for (limit, slippage) in [("0", "1"), ("1", "0"), ("0.75", "0.25")] {
+                let parameters = NautilusFillParametersV1 {
+                    prob_fill_on_limit: limit.parse().unwrap(),
+                    prob_slippage: slippage.parse().unwrap(),
+                    random_seed: count(seed),
+                };
+                *fill_parameters_mut(&mut settings.fill_model) = parameters.clone();
+                assert_eq!(simulation_models(&settings).unwrap().0, &parameters);
+            }
+        }
+        for (limit, slippage) in [
+            ("-0.000000000000000001", "0"),
+            ("1.000000000000000001", "0"),
+            ("1", "-0.000000000000000001"),
+            ("1", "1.000000000000000001"),
+        ] {
+            let parameters = fill_parameters_mut(&mut settings.fill_model);
+            parameters.prob_fill_on_limit = limit.parse().unwrap();
+            parameters.prob_slippage = slippage.parse().unwrap();
+            assert_eq!(
+                simulation_models(&settings),
+                Err(domain::DomainError::Invalid("native_simulation_parameters"))
+            );
+        }
+        let parameters = fill_parameters_mut(&mut settings.fill_model);
+        parameters.prob_fill_on_limit = "1".parse().unwrap();
+        parameters.prob_slippage = "1".parse().unwrap();
+        settings.latency_model = execution_models::latency(0);
+        assert_eq!(
+            simulation_models(&settings),
+            Err(domain::DomainError::Invalid("native_simulation_parameters"))
+        );
+    }
+}
+
 #[test]
 fn simulation_cannot_borrow_another_account_capital_currency_or_return_window() {
     let (parameters, result) = simulation();

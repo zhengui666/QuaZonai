@@ -23,9 +23,12 @@ use nautilus_execution::models::{
 use nautilus_model::{
     accounts::{Account, AccountAny},
     data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus},
-    enums::{AccountType, BookType, MarketStatusAction, OmsType, OrderSide, OrderStatus},
+    enums::{
+        AccountType, BookType, MarketStatusAction, OmsType, OrderSide, OrderStatus, TimeInForce,
+    },
     events::{
-        OrderDenied, OrderFilled, OrderRejected, PositionChanged, PositionClosed, PositionOpened,
+        OrderCanceled, OrderDenied, OrderFilled, OrderRejected, PositionChanged, PositionClosed,
+        PositionOpened,
     },
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, Venue},
     instruments::{Instrument, InstrumentAny},
@@ -57,6 +60,13 @@ fn checked(value: Option<Decimal>) -> Result<Decimal> {
 }
 fn count(value: usize) -> Result<DbCounter> {
     DbCounter::new(u64::try_from(value)?).map_err(anyhow::Error::msg)
+}
+
+fn recorded_liquidity(settings: &NativeSimulationSettingsV1) -> bool {
+    matches!(
+        settings.fill_model,
+        contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedLiquidity { .. }
+    )
 }
 
 fn append_settlement_events(
@@ -186,6 +196,21 @@ nautilus_strategy!(TargetReplay, {
         let mut status = self.status.borrow_mut();
         status.order_rejection = Some(event.reason.to_string());
         status.failure = Some("NATIVE_ORDER_REJECTED");
+    }
+    fn on_order_canceled(&mut self, event: &OrderCanceled) {
+        if !recorded_liquidity(&self.settings) {
+            return;
+        }
+        self.outstanding_orders.remove(&event.client_order_id);
+        if self.reduction_ids.remove(&event.client_order_id) {
+            // A partial IOC reduction did not release the originally requested
+            // margin. Abandon its dependent increases, never assume a full exit.
+            self.deferred_orders.clear();
+            if self.reduction_ids.is_empty() {
+                self.status.borrow_mut().consumed += 1;
+            }
+        }
+        self.resume_after_settlement(event.ts_init.as_u64());
     }
     fn on_order_filled(&mut self, event: &OrderFilled) {
         let now = event.ts_event.as_u64();
@@ -805,11 +830,12 @@ impl TargetReplay {
                 }
                 let quantity = instrument.try_make_qty_from_decimal(amount, Some(true))?;
                 instrument.try_normalize_qty(quantity)?;
+                let time_in_force = recorded_liquidity(&self.settings).then_some(TimeInForce::Ioc);
                 let order = self.order().market(
                     id,
                     side,
                     quantity,
-                    None,
+                    time_in_force,
                     Some(reduce_only),
                     None,
                     None,
@@ -1444,6 +1470,31 @@ fn run_with_strategy_and_spot(
         } else {
             crate::prediction::fee_model(settings)
         };
+        let default_fill = DefaultFillModel::new(
+            fill.prob_fill_on_limit
+                .as_decimal()
+                .to_f64()
+                .ok_or_else(|| anyhow::anyhow!("FILL_PROBABILITY_RANGE"))?,
+            fill.prob_slippage
+                .as_decimal()
+                .to_f64()
+                .ok_or_else(|| anyhow::anyhow!("SLIPPAGE_PROBABILITY_RANGE"))?,
+            Some(fill.random_seed.get()),
+        )?;
+        let mut liquidity_errors = None;
+        let fill_model = if recorded_liquidity(settings) {
+            let model = crate::recorded_fees::RecordedLiquidityModel::new(
+                recorded_fees
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("RECORDED_LIQUIDITY_FEES_REQUIRED"))?
+                    .clone(),
+                default_fill,
+            );
+            liquidity_errors = Some(model.observer());
+            FillModelHandle::new(model)
+        } else {
+            FillModelHandle::new(default_fill)
+        };
         engine.add_venue(
             SimulatedVenueConfig::builder()
                 .venue(venue)
@@ -1471,17 +1522,7 @@ fn run_with_strategy_and_spot(
                         fee
                     },
                 )
-                .fill_model(FillModelHandle::new(DefaultFillModel::new(
-                    fill.prob_fill_on_limit
-                        .as_decimal()
-                        .to_f64()
-                        .ok_or_else(|| anyhow::anyhow!("FILL_PROBABILITY_RANGE"))?,
-                    fill.prob_slippage
-                        .as_decimal()
-                        .to_f64()
-                        .ok_or_else(|| anyhow::anyhow!("SLIPPAGE_PROBABILITY_RANGE"))?,
-                    Some(fill.random_seed.get()),
-                )?))
+                .fill_model(fill_model)
                 .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
                     latency.base_latency_ns.get().into(),
                     latency.insert_latency_ns.get().into(),
@@ -1536,6 +1577,11 @@ fn run_with_strategy_and_spot(
         let native_result = engine.run(None, None, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;
+        if let Some(observer) = liquidity_errors {
+            observer
+                .check()
+                .map_err(|error| error.context("NATIVE_TARGET_REPLAY_FAILED"))?;
+        }
         fill_fees
             .check()
             .map_err(|error| error.context("NATIVE_TARGET_REPLAY_FAILED"))?;
