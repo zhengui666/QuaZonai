@@ -400,3 +400,29 @@ for (const ownStudy of [false, true]) test(`historical reassessment requires pri
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
   } finally { await host.close(); await state.cleanup(); }
 });
+
+test('explicit history can reassess another stopped studys original iteration exposure', async () => {
+  const state = await setup(); Object.assign(state.input.policy.strategy, { evidenceMode: 'HISTORICAL_REASSESSMENT' });
+  const host = await openResearch(state.options);
+  const original = { catalog: state.input.data.catalog, barTypes: state.input.data.request.forecast.selection.bar_types, start: '0', end: '20', kind: 'ITERATION', taskId: 9000, conversationId: 8000 };
+  try {
+    await host.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(original); }, context);
+    state.faux.setResponses([
+      tool('strategy_portfolio_evaluate', { hypothesis: 'Reassess a previously exposed iteration prefix, not fresh data.', members }),
+      tool('research_finish', { reason: 'Protocol-only historical prefix control, no final exposure requested.' }),
+    ]);
+    const receipt = await host.start('prior-iteration-history', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
+    assert.equal(object(object(facts.trials[0]!.result, 'result').portfolio, 'portfolio').evidenceMode, 'HISTORICAL_REASSESSMENT');
+    const windows = (await host.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(windows[0], original);
+    assert.deepEqual(windows.map((window) => window.kind), ['ITERATION', 'HISTORICAL_ITERATION']);
+    assert.deepEqual(windows[1]!.priorExposureTaskIds, [9000]);
+    const calls = (await state.calls()).filter((call) => call.command === 'simulate');
+    assert.equal(calls.length, 1);
+    assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_start_ns, '10');
+    assert.equal(object(object(calls[0]!.input, 'input').selection, 'selection').event_end_ns, '20');
+  } finally { await host.close(); await state.cleanup(); }
+});
