@@ -42,7 +42,7 @@ function PortfolioBuilder({ route }: { route: Route }) {
   const rows = new Map<number, { id: number; title: string; status: string; datasetId?: string | null }>(studies.items.map(item => [item.id, item])); if (initialStudy.data) rows.set(initialStudy.data.id, initialStudy.data);
   for (const id of ids ?? []) if (!rows.has(id)) rows.set(id, { id, title: `研究 #${id}（未加载）`, status: 'UNKNOWN' });
   useEffect(() => {
-    if (initialized.current || !datasets.data || studies.isPending || hasInitial && initialStudy.isPending) return;
+    if (initialized.current || !datasets.data || studies.isPending || hasInitial && !initialStudy.data) return;
     initialized.current = true;
     if (command.values) { const pairs = command.values.weights as { researchId: number; weight: string }[] | undefined; form.setFieldsValue({ ...command.values, weights: Object.fromEntries(pairs?.map(pair => [String(pair.researchId), pair.weight]) ?? []) } as PortfolioFields); }
     else {
@@ -50,13 +50,13 @@ function PortfolioBuilder({ route }: { route: Route }) {
       if (hasInitial && !researchIds.includes(initialId)) { researchIds.push(initialId); allocations[String(initialId)] = researchIds.length === 1 ? '1' : ''; }
       form.setFieldsValue({ ...(!draft?.datasetId && initialStudy.data?.datasetId ? { datasetId: initialStudy.data.datasetId } : {}), ...draft, researchIds, weights: allocations });
     }
-  }, [datasets.data, studies.isPending, initialStudy.isPending]);
+  }, [datasets.data, studies.isPending, initialStudy.data, initialStudy.isPending]);
   const values = (ids ?? []).map(id => decimalUnits(weights?.[String(id)] ?? ''));
   const sum = values.length && values.every((value): value is bigint => value !== undefined && value > 0n) ? values.reduce((a, b) => a + b, 0n) : undefined;
   const ready = datasets.data?.find(item => item.id === datasetId);
   return <div className="authoring-page"><a className="text-link back-link" href={href(origin.path)}><ArrowLeftIcon size={14} />{origin.label}</a><div className="authoring-heading"><div className="authoring-symbol"><ChartLineUpIcon size={24} weight="duotone" /></div><h1>创建组合</h1></div>
     <ErrorNotice error={datasets.error ?? studies.error ?? initialStudy.error} retry={() => { void datasets.refetch(); void studies.refetch(); if (hasInitial) void initialStudy.refetch(); }} />
-    {datasets.isPending || studies.isPending || hasInitial && initialStudy.isPending ? <Loading /> : datasets.data && <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} disabled={!!command.pending || command.busy} onValuesChange={(_changed, value) => { setAllocationError(undefined); if (!command.pending) setDraftSaved(saveDraft('portfolio', value)); }} onFinish={value => {
+    {datasets.isPending || studies.isPending || hasInitial && initialStudy.isPending ? <Loading /> : datasets.data && (!hasInitial || initialStudy.data) && <Form form={form} layout="vertical" validateTrigger="onBlur" scrollToFirstError={{ focus: true }} disabled={!!command.pending || command.busy} onValuesChange={(_changed, value) => { setAllocationError(undefined); if (!command.pending) setDraftSaved(saveDraft('portfolio', value)); }} onFinish={value => {
       if (sum !== 1_000_000_000_000_000_000n) { setAllocationError('权重合计须为 1'); if (value.researchIds[0] !== undefined) form.scrollToField(['weights', String(value.researchIds[0])], { focus: true }); return; }
       void command.submit({ name: value.name, datasetId: value.datasetId, researchIds: value.researchIds, capital: value.capital, weights: value.researchIds.map(researchId => ({ researchId, weight: value.weights[String(researchId)] })) });
     }}>
