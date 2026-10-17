@@ -374,3 +374,29 @@ test('unsupported evidence modes do not silently authorize historical reuse', as
   try { assert.throws(() => thresholdPolicy({ ...state.input.policy.strategy, evidenceMode: 'REUSE_ANYTHING' }), /strategy_evidence_mode_invalid/); }
   finally { await state.cleanup(); }
 });
+
+for (const ownStudy of [false, true]) test(`historical reassessment requires prior other-study exposure, not ${ownStudy ? 'self-bootstrapped history' : 'an empty ledger'}`, async () => {
+  const state = await setup(); Object.assign(state.input.policy.strategy, { evidenceMode: 'HISTORICAL_REASSESSMENT' });
+  const host = await openResearch(state.options);
+  let seeded: JsonObject | undefined;
+  try {
+    state.faux.setResponses([
+      async () => {
+        if (ownStudy) {
+          const page = await host.list();
+          seeded = { catalog: state.input.data.catalog, barTypes: state.input.data.request.forecast.selection.bar_types, start: '0', end: '20', kind: 'HISTORICAL_ITERATION', taskId: 9000, conversationId: page.items[0]!.id, evidenceMode: 'HISTORICAL_REASSESSMENT', priorExposureTaskIds: [] };
+          await host.harness.commit(async (tx) => { (await tx.doc(Exposures)).windows.push(seeded!); }, context);
+        }
+        return tool('strategy_portfolio_evaluate', { hypothesis: 'A historical label cannot manufacture earlier exposure.', members });
+      },
+      tool('research_finish', { reason: 'No prior other-study exposed window.' }),
+    ]);
+    const receipt = await host.start('prior-history-required', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.equal(facts.trials[0]!.status, 'FAILED', JSON.stringify(facts.trials));
+    assert.equal(facts.trials[0]!.error, 'historical_exposure_required');
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, seeded ? [seeded] : []);
+    await assert.rejects(readFile(state.log), { code: 'ENOENT' });
+  } finally { await host.close(); await state.cleanup(); }
+});

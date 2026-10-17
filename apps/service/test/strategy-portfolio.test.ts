@@ -149,3 +149,14 @@ test('native account curve preserves the original mixed-case pUSD collateral and
   assert.equal(nativeCurve(native, 'pUSD')[0]!.value, '3000.000000000000000001');
   assert.throws(() => nativeCurve(native, 'USD'), /native_equity_currency_mismatch/);
 });
+
+test('legacy single-evidence replay cannot remove the original historical classification', async () => {
+  const state = await setup();
+  try {
+    const dataset = state.options.config.datasets[0]!;
+    const original = { ...dataset.strategy!, evidenceMode: 'HISTORICAL_REASSESSMENT' as const };
+    const evidence = { input: { data: dataset.data, policy: { strategy: original } }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
+    await assert.rejects(computePortfolio({ id: 'historical-v1-no-relabel', dataDir: state.directory, catalog: String(dataset.data.catalog), binary: state.options.config.jobBinary,
+      capital: '3000', currency: 'USD', evidence, policy: dataset.strategy! }, context), /strategy_policy_mismatch/);
+  } finally { await state.cleanup(); }
+});
