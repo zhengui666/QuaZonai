@@ -37,9 +37,10 @@ function overlaps(left: JsonObject, right: JsonObject): boolean {
     && BigInt(left.start as string) < BigInt(right.end as string) && BigInt(right.start as string) < BigInt(left.end as string);
 }
 
-export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject): Promise<void> {
+export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT'): Promise<void> {
   const window = await footprint(data);
-  const kind = reserve ? 'FINAL' : 'ITERATION';
+  const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
+  const kind = historical ? (reserve ? 'HISTORICAL_FINAL' : 'HISTORICAL_ITERATION') : (reserve ? 'FINAL' : 'ITERATION');
   const selection = object(object(object(data.request, 'request').forecast, 'forecast').selection, 'selection');
   if (!reserve) {
     window.start = selection.event_start_ns!;
@@ -51,11 +52,15 @@ export async function checkExposure(api: ToolExecutionApi, context: Context, dat
   const checked = reserve ? window : { ...window, end };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
-    const previous = ledger.windows.find((item) => (reserve || item.kind !== 'ITERATION')
+    const previous = ledger.windows.find((item) => (historical || reserve || item.kind !== 'ITERATION')
+      && (!historical || item.conversationId !== api.conversationId)
       && !(item.taskId === api.taskId && item.kind === kind) && overlaps(item, checked));
-    if (previous) throw new Error('heldout_already_exposed');
+    if (previous && !historical) throw new Error('heldout_already_exposed');
+    if (historical && !previous) throw new Error('historical_exposure_required');
     if (!ledger.windows.some((item) => item.taskId === api.taskId && item.kind === kind)) {
-      ledger.windows.push({ ...window, kind, taskId: api.taskId, conversationId: api.conversationId });
+      // Owner-bound reassessment adds permanent, explicitly non-independent facts; it never rewrites prior exposure.
+      ledger.windows.push({ ...window, kind, taskId: api.taskId, conversationId: api.conversationId,
+        ...(historical ? { evidenceMode, priorExposureTaskIds: previous ? [previous.taskId!] : [] } : {}) });
     }
   }, context);
 }
