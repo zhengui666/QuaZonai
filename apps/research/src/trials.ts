@@ -1,6 +1,7 @@
 import type { Context, JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolExecutionResult } from '@earendil-works/pi-durable';
 import { canonical, Study } from './documents.ts';
+import { modelFeedback } from './feedback.ts';
 
 // Scientific facts committed on the upstream transaction line. No task scheduler.
 export async function evaluateTrial(
@@ -64,7 +65,7 @@ export function object(value: JsonValue | undefined, name: string): JsonObject {
 export async function trialFeedback(api: ToolExecutionApi, context: Context, evaluate: () => Promise<JsonObject>): Promise<ToolExecutionResult> {
   try {
     const result = await evaluate();
-    return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, ...result }) }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, ...modelFeedback(result) }) }] };
   } catch (error) {
     if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
     if (!(error instanceof Error) || error.message !== 'trial_budget_exhausted') throw error;
