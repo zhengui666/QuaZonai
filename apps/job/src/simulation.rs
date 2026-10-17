@@ -112,6 +112,11 @@ pub(crate) struct ReplayStatus {
 }
 
 impl ReplayStatus {
+    fn recorded_replay_terminal(&self, data_complete: bool, expected_targets: usize) -> bool {
+        self.failure.is_none()
+            && (self.study_infeasible || (data_complete && self.consumed == expected_targets))
+    }
+
     fn record_callback_error(&mut self, error: anyhow::Error) {
         if self.failure.is_none() {
             self.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
@@ -172,6 +177,7 @@ pub(crate) struct TargetReplay {
     outstanding_orders: BTreeSet<ClientOrderId>,
     settlement_events: BTreeMap<InstrumentId, InstrumentClose>,
     status: Rc<RefCell<ReplayStatus>>,
+    recorded_bar_ends: Option<BTreeMap<InstrumentId, u64>>,
     paper: Option<PaperClock>,
     capital_exit_gate: Option<(crate::capital_exit_gate::CapitalExitGate, DbCounter)>,
     capital_exit_source_pending: bool,
@@ -512,6 +518,7 @@ impl TargetReplay {
             return;
         }
         if !self.awaiting_settlement || !self.orders_settled() {
+            self.finish_recorded_tail();
             return;
         }
         // Native position events follow order fills and the Portfolio's higher-
@@ -521,6 +528,25 @@ impl TargetReplay {
             if let Err(error) = self.apply_bar(&bar, receipt_ns) {
                 self.status.borrow_mut().record_callback_error(error);
             }
+        }
+        self.finish_recorded_tail();
+    }
+
+    fn finish_recorded_tail(&self) {
+        let Some(ends) = &self.recorded_bar_ends else {
+            return;
+        };
+        let status = self.status.borrow();
+        let data_complete = ends
+            .iter()
+            .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
+        let finished = status.recorded_replay_terminal(data_complete, self.points.len())
+            && self.orders_settled();
+        drop(status);
+        if finished {
+            // The native engine stops at this settled timestamp, not after an
+            // unrelated periodic snapshot sequence across a data-empty tail.
+            self.shutdown_system(Some("RECORDED_REPLAY_SETTLED".into()));
         }
     }
 
@@ -925,6 +951,7 @@ impl DataActor for TargetReplay {
             self.status.borrow_mut().record_callback_error(error);
             return Err(anyhow::anyhow!("NATIVE_TARGET_REPLAY_FAILED"));
         }
+        self.finish_recorded_tail();
         Ok(())
     }
 }
@@ -1001,6 +1028,7 @@ pub(crate) fn paper_target_strategy(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events: BTreeMap::new(),
+        recorded_bar_ends: None,
         status: status.clone(),
         strategy_constraints: None,
         capital_exit_gate: None,
@@ -1448,6 +1476,21 @@ fn run_with_strategy_and_spot(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events,
+        // Recorded fees require CurrencyPair series; native BinaryOption close
+        // events cannot enter this mode. Every selected series must deliver its
+        // own final BAR, including synchronized final timestamps.
+        recorded_bar_ends: recorded_liquidity(&request.settings).then(|| {
+            market.series.iter().flat_map(|series| &series.bars).fold(
+                BTreeMap::<InstrumentId, u64>::new(),
+                |mut ends, bar| {
+                    let time = bar.ts_init.as_u64();
+                    ends.entry(bar.bar_type.instrument_id())
+                        .and_modify(|end| *end = (*end).max(time))
+                        .or_insert(time);
+                    ends
+                },
+            )
+        }),
         status: status.clone(),
         capital_exit_gate: None,
         capital_exit_source_pending: false,
@@ -1597,7 +1640,12 @@ fn run_with_strategy_and_spot(
         append_settlement_events(&mut events, closes);
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
-        let native_result = engine.run(None, None, None, false);
+        // Keep the strategy running for in-window trailing arrival callbacks.
+        // Native run(None) otherwise stops it at the final BAR timestamp before
+        // draining positive-latency remainders. The selection end is exclusive.
+        let replay_end =
+            recorded_liquidity(settings).then(|| (request.selection.event_end_ns.get() - 1).into());
+        let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;
         if let Some(observer) = liquidity_errors {
@@ -1626,7 +1674,9 @@ fn run_with_strategy_and_spot(
         }
         ensure!(
             observed.consumed == request.target_points.len(),
-            "NATIVE_TARGETS_NOT_CONSUMED"
+            "NATIVE_TARGETS_NOT_CONSUMED: consumed={} expected={}",
+            observed.consumed,
+            request.target_points.len()
         );
         let native = engine.get_result();
         ensure!(
@@ -2045,5 +2095,22 @@ mod replay_error_tests {
             .finish_run(Err(anyhow::anyhow!("native failure")))
             .unwrap_err();
         assert_eq!(error.to_string(), "native failure");
+    }
+
+    #[test]
+    fn recorded_infeasible_study_is_terminal_without_consuming_future_targets() {
+        let mut status = ReplayStatus::default();
+        assert!(!status.recorded_replay_terminal(false, 1));
+        assert!(!status.recorded_replay_terminal(true, 1));
+        status.study_infeasible = true;
+        assert!(status.recorded_replay_terminal(false, 1));
+        assert_eq!(status.consumed, 0);
+        status.failure = Some("NATIVE_TARGET_REPLAY_FAILED");
+        assert!(!status.recorded_replay_terminal(false, 1));
+        status.failure = None;
+        status.study_infeasible = false;
+        status.consumed = 1;
+        assert!(!status.recorded_replay_terminal(false, 1));
+        assert!(status.recorded_replay_terminal(true, 1));
     }
 }

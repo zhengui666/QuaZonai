@@ -450,3 +450,162 @@ fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
         .iter()
         .all(|fill| fill.fill_quantity == "10".parse().unwrap()));
 }
+
+#[test]
+fn native_final_bar_reduction_settles_before_the_running_strategy_stops() {
+    let (directory, _, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    request.settings.snapshot_interval_ms = 86_400_000;
+    request.target_points[1].asof_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.unwrap();
+    assert_eq!(report.fills.len(), 2);
+    assert_eq!(report.fills[1].order_side, "SELL");
+    assert_eq!(report.fills[1].fill_ns.get(), 6 * MINUTE_NS + 1);
+    assert_eq!(report.fills[1].bar_end_ns.get(), 6 * MINUTE_NS);
+    assert!(report
+        .fills
+        .iter()
+        .all(|fill| fill.fill_ns.get() < request.selection.event_end_ns.get()));
+    assert!(result
+        .summary
+        .iter()
+        .any(|(k, v)| k == "orders.open" && v == "0"));
+    assert!(result
+        .summary
+        .iter()
+        .any(|(k, v)| k == "orders.inflight" && v == "0"));
+}
+
+#[test]
+fn native_open_position_does_not_add_daily_zero_returns_in_an_empty_tail() {
+    let (directory, _, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    let end = DbCounter::new(3 * 86_400_000_000_000).unwrap();
+    request.selection.event_end_ns = end;
+    request.selection.decision_cutoff_ns = end;
+    for point in &mut request.target_points {
+        point.valid_until_ns = end;
+    }
+    request.target_points[1].asof_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    request.target_points[1].targets[0].weight = "0.05".parse().unwrap();
+    request.target_points[1].cash_weight = "0.95".parse().unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    assert_eq!(result.recorded_fee_replay.as_ref().unwrap().fills.len(), 2);
+    assert!(
+        result
+            .returns
+            .iter()
+            .all(|point| point.timestamp_ns.get() <= 6 * MINUTE_NS + 1),
+        "empty tail produced returns: {:?}",
+        result.returns
+    );
+}
+
+#[test]
+fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
+    let (directory, mut data, _) = native_scenario();
+    data.series[0].bars[0].ts_init = (8 * MINUTE_NS).into();
+    let source: RecordedTradeFeesV1 = serde_json::from_reader(
+        std::fs::File::open(directory.path().join(RECORDED_FEES_FILE)).unwrap(),
+    )
+    .unwrap();
+    let (_, clock) = model();
+    let error = RecordedFeeModel::new(source, &data, clock).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("RECORDED_FEE_BAR_CLOCK_MISMATCH"));
+}
+
+#[test]
+fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
+    use nautilus_model::{data::BarType, identifiers::Symbol, instruments::InstrumentAny};
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (directory, mut data, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    let id = InstrumentId::from("456.POLYMARKET");
+    let kind = BarType::from_str("456.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let mut second = data.series.remove(0);
+    let InstrumentAny::CurrencyPair(pair) = &mut second.instrument else {
+        unreachable!();
+    };
+    pair.id = id;
+    pair.raw_symbol = Symbol::new("456");
+    second.bar_type = kind;
+    for bar in &mut second.bars {
+        bar.bar_type = kind;
+    }
+    let last = second.bars.last_mut().unwrap();
+    // Both series end at the same receive time. Only the last-delivered series
+    // changes price, after the sole target and its native IOC have settled.
+    last.open = Price::from("0.8000");
+    last.high = last.open;
+    last.low = last.open;
+    last.close = last.open;
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog.write_instruments(vec![second.instrument]).unwrap();
+    catalog
+        .write_to_parquet(&second.bars, None, None, None)
+        .unwrap();
+    let path = directory.path().join(RECORDED_FEES_FILE);
+    let mut source: RecordedTradeFeesV1 =
+        serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
+    let second_records = source
+        .records
+        .iter()
+        .cloned()
+        .map(|mut record| {
+            record.id = format!("second-{}", record.id);
+            record.instrument_id = id.to_string();
+            if record.ts_event_ns.get() >= 5 * MINUTE_NS {
+                record.price = "0.8".parse().unwrap();
+                record.usdc_amount = "8".parse().unwrap();
+            }
+            record
+        })
+        .collect::<Vec<_>>();
+    source.records.extend(second_records);
+    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    request.selection.bar_types.push(kind.to_string());
+    request.selection.maximum_rows = 12;
+    request.target_points.truncate(1);
+    let point = &mut request.target_points[0];
+    let mut target = point.targets[0].clone();
+    point.targets[0].weight = "0".parse().unwrap();
+    target.instrument_id = id.to_string();
+    point.targets.push(target);
+    request
+        .settings
+        .fee_rates
+        .push(contracts::science::NativeFeeRateV1 {
+            instrument_id: id.to_string(),
+            maker: "0".parse().unwrap(),
+            taker: "0".parse().unwrap(),
+        });
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.as_ref().unwrap();
+    assert_eq!(report.fills.len(), 1);
+    assert_eq!(report.fills[0].instrument_id, id.to_string());
+    assert_eq!(report.fills[0].fill_quantity, "10".parse().unwrap());
+    assert_eq!(result.consumed_target_points.get(), 1);
+    assert_eq!(result.iterations.get(), 12, "a terminal BAR was omitted");
+    let snapshot = result.canonical_result["portfolio_snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .max_by_key(|row| row["ts_event"].as_str().unwrap().parse::<u64>().unwrap())
+        .unwrap();
+    assert_eq!(snapshot["ts_event"], (6 * MINUTE_NS).to_string());
+    let equity = snapshot["total_equity"][0].as_str().unwrap();
+    assert_eq!(
+        Money::from_str(equity).unwrap().as_decimal(),
+        Decimal::from_str("3002.839").unwrap()
+    );
+}
