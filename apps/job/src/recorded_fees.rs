@@ -24,6 +24,9 @@ use std::{
     str::FromStr,
 };
 
+mod liquidity;
+pub(crate) use liquidity::RecordedLiquidityModel;
+
 const MINUTE_NS: u64 = 60_000_000_000;
 const ALLOCATION: &str = "Bind actual native fill clock to its latest completed one-minute boundary; source records from that BAR sorted by (timestamp,id), consumed once FIFO, each allocated_fee = original fee_usdc * allocated_quantity / same-ID original native quantity. Original token_amount also retained. Round the sum once per native fill, half-even at pUSD precision. Conditional cost replay, not inferred historical fee eligibility. No fitted rate, direction/liquidity-role inference, missing-to-zero, or extrapolation beyond recorded quantity.";
 type Key = (String, u64);
@@ -192,6 +195,11 @@ impl RecordedFeeModel {
         })
     }
 
+    fn key(&self, instrument: &InstrumentAny) -> Key {
+        let now = self.clock.borrow().timestamp_ns().as_u64();
+        (instrument.id().to_string(), now / MINUTE_NS * MINUTE_NS)
+    }
+
     pub(crate) fn handle(&self) -> FeeModelHandle {
         FeeModelHandle::new(self.clone())
     }
@@ -219,7 +227,7 @@ impl FeeModel for RecordedFeeModel {
             "RECORDED_FEE_FILL_INVALID"
         );
         let now = self.clock.borrow().timestamp_ns().as_u64();
-        let key = (instrument.id().to_string(), now / MINUTE_NS * MINUTE_NS);
+        let key = self.key(instrument);
         let mut state = self.state.borrow_mut();
         let bucket = state
             .buckets

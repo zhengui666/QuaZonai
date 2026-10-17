@@ -255,6 +255,12 @@ pub enum CandidateWeightsSourceV1 {
     deny_unknown_fields
 )]
 pub enum NativeModelRefV1 {
+    /// QZ-owned recorded v2 quantity-bounded replay through official FillModel.
+    PolymarketV2RecordedLiquidity {
+        schema_version: SchemaV1,
+        native_version: String,
+        parameters: NautilusFillParametersV1,
+    },
     /// QZ-owned recorded v2 transaction-cost replay through official FeeModel.
     PolymarketV2RecordedFees {
         schema_version: SchemaV1,
@@ -388,6 +394,10 @@ impl utoipa::PartialSchema for NativeModelRefV1 {
             (
                 "POLYMARKET_V2_RECORDED_FEES",
                 crate::recorded_fees::RecordedTradeFeeParametersV1::schema(),
+            ),
+            (
+                "POLYMARKET_V2_RECORDED_LIQUIDITY",
+                NautilusFillParametersV1::schema(),
             ),
         ] {
             schema = schema.item(

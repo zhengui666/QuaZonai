@@ -151,6 +151,18 @@ pub fn simulation_models(
         {
             parameters
         }
+        NativeModelRefV1::PolymarketV2RecordedLiquidity {
+            native_version,
+            parameters,
+            ..
+        } if native_version == NAUTILUS_EXECUTION_VERSION
+            && matches!(
+                &settings.fee_model,
+                NativeModelRefV1::PolymarketV2RecordedFees { .. }
+            ) =>
+        {
+            parameters
+        }
         _ => return Err(unavailable()),
     };
     match &settings.fee_model {

@@ -38,9 +38,9 @@ fn model_schema_preserves_exact_native_identity_and_closed_parameters() {
             SAMPLE_COVARIANCE_VERSION,
         ),
     ];
-    // QZ-owned fee adapters do not impersonate upstream classes or weaken the
+    // QZ-owned adapters do not impersonate upstream classes or weaken the
     // seven original native adapters.
-    assert_eq!(variants.len(), expected.len() + 2);
+    assert_eq!(variants.len(), expected.len() + 3);
     for (kind, class, version) in expected {
         let matches = variants
             .iter()
@@ -281,4 +281,146 @@ fn recorded_v2_fee_wire_has_no_fitted_rate_or_upstream_identity() {
     let mut changed = original;
     changed["parameters"]["fee_rate"] = serde_json::json!("0.001");
     assert!(serde_json::from_value::<NativeModelRefV1>(changed).is_err());
+}
+
+#[test]
+fn recorded_v2_liquidity_schema_has_native_identity_and_existing_closed_fill_parameters() {
+    let schema = serde_json::to_value(NativeModelRefV1::schema()).unwrap();
+    let variants = schema["oneOf"].as_array().unwrap();
+    assert_eq!(variants.len(), 10);
+    let matches = variants
+        .iter()
+        .filter(|variant| {
+            variant["properties"]["adapter_kind"]["enum"]
+                == serde_json::json!(["POLYMARKET_V2_RECORDED_LIQUIDITY"])
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 1);
+    let variant = matches[0];
+    assert_eq!(variant["additionalProperties"], false);
+    let fields = [
+        "adapter_kind",
+        "native_version",
+        "parameters",
+        "schema_version",
+    ];
+    assert_eq!(
+        variant["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        fields.into_iter().collect()
+    );
+    assert_eq!(
+        variant["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        fields.into_iter().collect()
+    );
+    assert_eq!(
+        variant["properties"]["schema_version"],
+        serde_json::to_value(contracts::SchemaV1::schema()).unwrap()
+    );
+    assert_eq!(
+        variant["properties"]["native_version"]["enum"],
+        serde_json::json!(["0.63.0"])
+    );
+    assert_eq!(
+        variant["properties"]["parameters"],
+        serde_json::to_value(NautilusFillParametersV1::schema()).unwrap()
+    );
+    assert_eq!(
+        variant["properties"]["parameters"]["additionalProperties"],
+        false
+    );
+}
+
+#[test]
+fn recorded_v2_liquidity_wire_is_closed_and_preserves_default_fill_seed_contract() {
+    let original = serde_json::json!({
+        "schema_version": 1,
+        "adapter_kind": "POLYMARKET_V2_RECORDED_LIQUIDITY",
+        "native_version": NAUTILUS_EXECUTION_VERSION,
+        "parameters": {"prob_fill_on_limit":"0.75", "prob_slippage":"1", "random_seed":"7"}
+    });
+    let parsed = serde_json::from_value::<NativeModelRefV1>(original.clone()).unwrap();
+    assert!(matches!(
+        &parsed,
+        NativeModelRefV1::PolymarketV2RecordedLiquidity { native_version, .. }
+            if native_version == "0.63.0"
+    ));
+    assert_eq!(serde_json::to_value(parsed).unwrap(), original);
+    for field in ["upstream_class", "upstream_version", "wallet"] {
+        let mut changed = original.clone();
+        changed[field] = serde_json::json!("unsupported");
+        assert!(
+            serde_json::from_value::<NativeModelRefV1>(changed).is_err(),
+            "{field}"
+        );
+    }
+    for field in ["fee_rate", "quantity", "unknown"] {
+        let mut changed = original.clone();
+        changed["parameters"][field] = serde_json::json!("1");
+        assert!(
+            serde_json::from_value::<NativeModelRefV1>(changed).is_err(),
+            "{field}"
+        );
+    }
+    for (path, fields) in [
+        (
+            "",
+            [
+                "schema_version",
+                "adapter_kind",
+                "native_version",
+                "parameters",
+            ]
+            .as_slice(),
+        ),
+        (
+            "/parameters",
+            ["prob_fill_on_limit", "prob_slippage", "random_seed"].as_slice(),
+        ),
+    ] {
+        for field in fields {
+            let mut changed = original.clone();
+            changed
+                .pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove(*field);
+            assert!(
+                serde_json::from_value::<NativeModelRefV1>(changed).is_err(),
+                "{path}/{field}"
+            );
+        }
+    }
+    let mut legacy = original.clone();
+    legacy.as_object_mut().unwrap().remove("native_version");
+    legacy["adapter_kind"] = serde_json::json!("NAUTILUS_DEFAULT_FILL");
+    legacy["upstream_class"] = serde_json::json!(NAUTILUS_FILL_CLASS);
+    legacy["upstream_version"] = serde_json::json!(NAUTILUS_EXECUTION_VERSION);
+    for mut model in [original, legacy] {
+        for seed in ["0", "7", "9223372036854775807"] {
+            model["parameters"]["random_seed"] = serde_json::json!(seed);
+            let parsed = serde_json::from_value::<NativeModelRefV1>(model.clone()).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), model);
+        }
+        for seed in [
+            serde_json::json!(7),
+            serde_json::json!("-1"),
+            serde_json::json!("1.5"),
+            serde_json::json!("9223372036854775808"),
+            serde_json::json!(null),
+        ] {
+            model["parameters"]["random_seed"] = seed;
+            assert!(serde_json::from_value::<NativeModelRefV1>(model.clone()).is_err());
+        }
+    }
 }
