@@ -16,7 +16,7 @@ import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { researchContinuation } from './continuation.ts';
 
-import { modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
+import { isRecoveryRequestId, modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
 const context = BACKGROUND_CONTEXT;
 
 export async function openResearch(options: {
@@ -97,6 +97,7 @@ export async function openResearch(options: {
         if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
         return existing.conversationId;
       }
+      if (isRecoveryRequestId(requestId)) throw new Error('request_id_conflict');
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
       if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');

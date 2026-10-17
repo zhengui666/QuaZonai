@@ -7,6 +7,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import type { ResearchInput as NativeResearchInput } from '../../research/src/documents.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
+import { isRecoveryRequestId } from '../../research/src/recovery.ts';
 import { exactWeights, replayCatalog, strategyMembers } from '../../research/src/strategy.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
@@ -34,7 +35,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function startResearch(value: unknown) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
-    if ((await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`]?.recovery) throw new Problem('request_id_conflict', 409);
+    const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
+    if (nativeAdmission?.recovery || !nativeAdmission && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
