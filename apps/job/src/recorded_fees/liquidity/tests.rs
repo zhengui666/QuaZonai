@@ -476,3 +476,33 @@ fn native_final_bar_reduction_settles_before_the_running_strategy_stops() {
         .iter()
         .any(|(k, v)| k == "orders.inflight" && v == "0"));
 }
+
+#[test]
+fn native_open_position_does_not_add_daily_zero_returns_in_an_empty_tail() {
+    let (directory, _, mut request) = native_scenario();
+    recorded_settings(&mut request);
+    let end = DbCounter::new(3 * 86_400_000_000_000).unwrap();
+    request.selection.event_end_ns = end;
+    request.selection.decision_cutoff_ns = end;
+    for point in &mut request.target_points {
+        point.valid_until_ns = end;
+    }
+    request.target_points[1].asof_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    request.target_points[1].targets[0].weight = "0.05".parse().unwrap();
+    request.target_points[1].cash_weight = "0.95".parse().unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    assert_eq!(result.recorded_fee_replay.as_ref().unwrap().fills.len(), 2);
+    assert!(result.returns.iter().all(|point| point.timestamp_ns.get() <= 6 * MINUTE_NS + 1), "empty tail produced returns: {:?}", result.returns);
+}
+
+#[test]
+fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
+    let (directory, mut data, _) = native_scenario();
+    data.series[0].bars[0].ts_init = (8 * MINUTE_NS).into();
+    let source: RecordedTradeFeesV1 = serde_json::from_reader(
+        std::fs::File::open(directory.path().join(RECORDED_FEES_FILE)).unwrap(),
+    ).unwrap();
+    let (_, clock) = model();
+    let error = RecordedFeeModel::new(source, &data, clock).unwrap_err();
+    assert!(error.to_string().contains("RECORDED_FEE_BAR_CLOCK_MISMATCH"));
+}
