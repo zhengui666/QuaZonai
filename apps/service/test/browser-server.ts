@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
 const state = await setup(false, process.env.QZ_BROWSER_STATIC_DIR ?? resolve('../web/dist'));
 state.options.config.datasets[0]!.strategy!.targetTtlNs = '300000000000';
-state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+state.faux.setResponses(Array.from({ length: 2 }, () => fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })));
 if (process.env.QZ_BROWSER_DOWNSTREAM) state.options.config.connections.push({ id: 'browser-paper', name: 'Protocol-only paper connection', mode: 'paper', clientId: 'browser-client', accountId: 'browser-account', url: process.env.QZ_BROWSER_DOWNSTREAM });
 await state.restart(); // createService captures configuration; apply only this test's connection/TTL.
 const url = await state.service.app.listen({ host: '127.0.0.1', port: 0 });

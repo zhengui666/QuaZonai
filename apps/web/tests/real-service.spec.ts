@@ -73,6 +73,25 @@ test('production Web talks to a disposable real HTTP service through setup, evid
   } finally { await state.close(); await new Promise<void>(resolve => remote.close(() => resolve())); }
 });
 
+test('late original admission cannot erase a newer pending command', async ({ page }) => {
+  test.setTimeout(90_000); const state = await service(); const url = state.url; const bodies: string[] = []; let releaseA!: () => void; let releaseB!: () => void; const heldA = new Promise<void>(resolve => { releaseA = resolve; }); const heldB = new Promise<void>(resolve => { releaseB = resolve; }); let lateFinished = false;
+  try {
+    await owner(page, url);
+    await page.route(`${url}/api/v3/research`, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const raw = route.request().postData()!; bodies.push(raw); const ordinal = bodies.length; const response = await route.fetch(); expect(response.status()).toBe(202);
+      if (ordinal === 1) await heldA; if (ordinal === 3) await heldB;
+      await route.fulfill({ response }).catch(() => undefined); if (ordinal === 1) lateFinished = true;
+    });
+    await start(page, url, 'First delayed original'); await expect.poll(() => bodies.length).toBe(1); await page.getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click(); await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('First delayed original'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'First delayed original', level: 1, exact: true })).toBeVisible();
+    await start(page, url, 'Second pending original'); await expect.poll(() => bodies.length).toBe(3); const second = bodies[2]!;
+    releaseA(); await expect.poll(() => lateFinished).toBe(true); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBe(second); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Second pending original');
+    await page.reload(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Second pending original'); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Second pending original', level: 1, exact: true })).toBeVisible();
+    expect(bodies[1]).toBe(bodies[0]); expect(bodies[3]).toBe(second); expect((await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>).items).toHaveLength(2); expect(await state.calls()).toBe(2);
+  } finally { releaseA(); releaseB(); await state.close(); }
+});
+
 test('a deliberately lost real HTTP admission response resolves the same durable study after reload', async ({ page }) => {
   const state = await service(); const url = state.url; const bodies: string[] = [];
   try {

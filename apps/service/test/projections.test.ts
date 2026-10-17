@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import { Study } from '../../research/src/documents.ts';
-import { context, setup, studied } from './support.ts';
+import { built, context, setup, studied } from './support.ts';
+import { Application } from '../src/facts.ts';
 import { metrics } from '../src/projections.ts';
 
 test('read projections retain partition/component availability and native scalar precision', () => {
@@ -14,6 +15,27 @@ test('read projections retain partition/component availability and native scalar
     status: 'CONSTANT_SCORE', partition: 'HELDOUT', component: 2,
   });
   assert.equal(result.find(item => item.key === 'HELDOUT.counts.included')!.value, '9007199254740995');
+});
+
+test('public research failures retain codes but do not expose native stderr', { timeout: 20_000 }, async () => {
+  const state = await setup(); const diagnostic = 'Native failure at /private/test-only/catalog\n' + 'internal diagnostic '.repeat(30);
+  try {
+    const { receipt } = await studied(state, 'private-errors');
+    await state.service.research.harness.commit(async tx => { const study = await tx.doc(Study, receipt.conversationId as ConversationId); study.final!.status = 'FAILED'; study.final!.error = diagnostic; study.trials[0]!.error = diagnostic; }, context);
+    const response = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers }); const view = response.json();
+    assert.equal(view.final.error, 'scientific_execution_failed'); assert.equal(view.trialRecords[0].error, 'scientific_execution_failed'); assert.ok(!response.body.includes('/private/test-only'));
+    const stored = await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context); assert.equal(stored!.final!.error, diagnostic); assert.equal(stored!.trials[0]!.error, diagnostic);
+  } finally { await state.cleanup(); }
+});
+
+test('portfolio reads and original admission replay share public failure projection', { timeout: 20_000 }, async () => {
+  const state = await setup(); const diagnostic = 'Native backtest failed at /private/test-only/catalog';
+  try {
+    const { input, view } = await built(state);
+    await state.service.research.harness.commit(async tx => { const facts = await tx.doc(Application); const fact = facts.portfolios[view.id]!; (fact.view as Record<string, unknown>).error = diagnostic; }, context);
+    const get = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers }); assert.equal(get.json().error, 'backtest_failed'); assert.ok(!get.body.includes('/private/test-only'));
+    const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input }); assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().error, 'backtest_failed'); assert.equal((await state.service.work.getPortfolio(view.id)).view.error, diagnostic);
+  } finally { await state.cleanup(); }
 });
 
 test('captured dataset identity survives registry changes and identical inputs in different studies', { timeout: 20_000 }, async () => {
