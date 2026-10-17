@@ -16,7 +16,7 @@ import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { researchContinuation } from './continuation.ts';
 
-import { modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
+import { isRecoveryRequestId, modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
 const context = BACKGROUND_CONTEXT;
 
 export async function openResearch(options: {
@@ -67,8 +67,8 @@ export async function openResearch(options: {
     return value;
   }
 
-  // Repair only the original admission→submit gap. Existing native submissions
-  // (including unanswered) are never resubmitted; stopped/final studies stay put.
+  // Repair recorded admission→submit gaps only, never repeat a native input.
+  // A later final/owner stop takes precedence over a pending recovery intent.
   try {
     const requests = await harness.snapshot(Requests, context);
     for (const [key, request] of Object.entries(requests?.requests ?? {})) {
@@ -77,12 +77,15 @@ export async function openResearch(options: {
         if (await tx.submissionByRequest(request.conversationId, requestId)) return false;
         return (await tx.doc(Study, request.conversationId)).final === null;
       }, context);
-      if (missing) await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInput(request.input).goal, requestId }, context);
+      if (!missing) continue;
+      if (request.recovery) {
+        if ((await latestSubmission(request.conversationId))?.id === request.recovery.previousSubmissionId) await resume(request.conversationId, request.recovery.previousSubmissionId);
+      } else await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInput(request.input).goal, requestId }, context);
     }
     harness.resume();
   } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
 
-  async function start(requestId: string, value: ResearchInput) {
+  async function start(requestId: string, value: ResearchInput, originalAdmission = false) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
     const input = researchInput(value);
     const id = await harness.commit(async (tx) => {
@@ -90,8 +93,15 @@ export async function openResearch(options: {
       const key = `request:${requestId}`;
       const existing = requests.requests[key];
       if (existing) {
+        if (existing.recovery) throw new Error('request_id_conflict');
         if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
         return existing.conversationId;
+      }
+      if (isRecoveryRequestId(requestId)) {
+        // Only the service's persisted original admission may repair this old gap;
+        // even that cannot clone an actual legacy native continuation receipt.
+        const priorConversation = Number(requestId.split(':')[1]);
+        if (!originalAdmission || Number.isSafeInteger(priorConversation) && await tx.submissionByRequest(priorConversation as ConversationId, requestId)) throw new Error('request_id_conflict');
       }
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
@@ -111,7 +121,7 @@ export async function openResearch(options: {
   }
   async function submissionFor(id: number) {
     const requests = await harness.snapshot(Requests, context);
-    const binding = Object.entries(requests?.requests ?? {}).find(([, request]) => request.conversationId === id);
+    const binding = Object.entries(requests?.requests ?? {}).find(([, request]) => request.conversationId === id && !request.recovery);
     if (!binding) return null;
     return await harness.commit((tx) => tx.submissionByRequest(id as ConversationId, binding[0].slice('request:'.length)), context) ?? null;
   }
@@ -150,21 +160,36 @@ export async function openResearch(options: {
       if (existing.type !== 'input' || existing.id <= previousId || existing.conversationId !== handle.id) throw new Error('recovery_request_conflict');
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
-    const current = await state(id); const study = current.research;
-    if (!study?.input) throw new Error('research_not_found');
-    if (study.final) throw new Error('research_already_final');
-    if (current.submission?.id !== previousId || current.submission.status !== 'unanswered' || current.submission.reason !== 'model_error') throw new Error('research_not_recoverable_conflict');
-    const maximum = study.input.policy.max_trials;
-    if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
-    const next = await handle.submit({ type: 'input', content: recoveryInput(previousId), requestId, whenBusy: 'reject' }, context);
+    const current = await state(id);
+    const mode = await harness.commit(async (tx) => {
+      const study = await tx.doc(Study, handle.id);
+      const requests = await tx.doc(Requests); const key = `request:${requestId}`;
+      const intent = requests.requests[key];
+      if (!study.input) throw new Error('research_not_found');
+      if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
+      const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null && current.submission?.status === 'done';
+      if (study.final && (intent || !stopped)) throw new Error('research_already_final');
+      if (current.submission?.id !== previousId) throw new Error('research_not_recoverable_conflict');
+      const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
+      if (!stopped && !failed && !(intent?.recovery?.mode === 'stopped' && current.submission.status === 'done')) throw new Error('research_not_recoverable_conflict');
+      const maximum = study.input.policy.max_trials;
+      if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
+      const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
+      if (!intent) {
+        if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
+        requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode } };
+      }
+      return mode;
+    }, context);
+    const next = await handle.submit({ type: 'input', content: recoveryInput(previousId, mode), requestId, whenBusy: 'reject' }, context);
     return { conversationId: id, submissionId: next.id, previousSubmissionId: previousId };
   }
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry,
-    async start(requestId: string, value: ResearchInput) {
+    async start(requestId: string, value: ResearchInput, originalAdmission = false) {
       if (!accepting) throw new Error('research_closing');
-      const admission = start(requestId, value);
+      const admission = start(requestId, value, originalAdmission);
       admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },

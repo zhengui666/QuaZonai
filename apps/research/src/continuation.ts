@@ -32,7 +32,7 @@ export function researchContinuation(owner: () => Harness) {
         if (reason) study.final = { taskId: api.taskId, trialId: null, comparedTrials: study.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason, result: null };
         return state.continue;
       }, context);
-      if (again) return { continue: 'The requested study is unfinished. Continue using the original research_brief, criteria and remaining trial budget. Do not reset trials or budgets. If the objective cannot be completed, call research_finish with the actual reason. Finalize in a single-tool round; never use final held-out evidence to tune.' };
+      if (again) return { continue: 'The requested study is unfinished. The running native host supplies successor generations: a response boundary, tool-call count or finite invocation is not a scientific stop rule. Continue using the original research_brief, criteria and remaining trial budget; no separate background loop is required. Do not reset trials or budgets or promise execution after the host closes. Call research_finish only for an actual original stop condition, not because this response must end. Finalize in a single-tool round; never use final held-out evidence to tune.' };
     },
   })] });
 }

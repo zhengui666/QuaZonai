@@ -86,7 +86,7 @@ export async function createService(options: ServiceOptions) {
     const page = await research.list(cursor); const items: ResearchSummary[] = []; const admitted = (await work.snapshot())?.researchRequests;
     for (const row of page.items) {
       const detail = await researchDetail(research, row.id, admitted);
-      const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, ...summary } = detail; items.push(summary);
+      const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _previousStops, ...summary } = detail; items.push(summary);
     }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
