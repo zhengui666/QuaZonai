@@ -79,4 +79,4 @@ Author review covered all `researchDetail` callers, native inspection, original/
 <a id="delivery"></a>
 ## Delivery
 
-Branch `perf/backend-rt` starts at current remote `dev` (`cd64dad9`). Submit the focused Service/test change and this record as a PR to `dev`. Merge only after final-Head checks and required reviews pass. No deployment, production restart, installation change or scientific-result rewrite is included. The original main checkout's unrelated changes remain untouched.
+Branch `perf/backend-rt` starts at remote `dev` (`cd64dad9`). [PR #213](https://github.com/zhengui666/QuaZonai/pull/213) owns the final Head, actual CI/review and merge state. Merge only after final-Head checks and required reviews pass. No deployment, production restart, installation change or scientific-result rewrite is included. The original main checkout's unrelated changes remain untouched.
