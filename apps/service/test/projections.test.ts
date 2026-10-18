@@ -63,3 +63,24 @@ test('captured dataset identity survives registry changes and identical inputs i
     assert.equal(extensions.find((item: { name: string }) => item.name === 'qz.science').required, true);
   } finally { await state.cleanup(); }
 });
+
+for (const endpoint of ['usage', 'research']) test(`${endpoint} summary does not decode historical native task results`, { timeout: 20_000 }, async () => {
+  const state = await setup(); const harness = state.service.research.harness;
+  const commit = harness.commit.bind(harness); let historicalReads = 0;
+  try {
+    await studied(state, `summary-without-history-${endpoint}`);
+    const expected = await state.service.app.inject({ url: `/api/v3/${endpoint}`, headers: state.headers });
+    assert.equal(expected.statusCode, 200, expected.body);
+    harness.commit = (callback, ctx) => commit((tx) => callback(new Proxy(tx, {
+      get(target, property) {
+        if (property === 'scanTasks') return () => { historicalReads++; throw new Error('unexpected_historical_task_read'); };
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    })), ctx);
+    const response = await state.service.app.inject({ url: `/api/v3/${endpoint}`, headers: state.headers });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), expected.json(), 'original summary fields and nullable values remain unchanged');
+    assert.equal(historicalReads, 0);
+  } finally { harness.commit = commit; await state.cleanup(); }
+});
