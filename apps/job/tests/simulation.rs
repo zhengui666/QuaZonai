@@ -732,3 +732,79 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
         assert!(row.reason_code.is_none());
     }
 }
+
+#[test]
+fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_orders() {
+    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    let (source, mut request) = market("0.001", 8);
+    let original = job::catalog::load_catalog(source.path(), &request.selection).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    let delay = 2 * market::INTERVAL_NS;
+    for series in &original.series {
+        catalog
+            .write_instruments(vec![series.instrument.clone()])
+            .unwrap();
+        let mut bars = series.bars.clone();
+        for bar in &mut bars {
+            bar.ts_init = (bar.ts_init.as_u64() + delay).into();
+        }
+        catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    }
+    for point in &mut request.target_points {
+        point.asof_ns = count(point.asof_ns.get() + delay);
+        point.valid_until_ns = instant(13);
+        point.rebalance_instrument_ids = Some(
+            point
+                .targets
+                .iter()
+                .map(|target| target.instrument_id.clone())
+                .collect(),
+        );
+    }
+    request.target_points[1].asof_ns = instant(10);
+    assert!(request.target_points[1].asof_ns > request.selection.event_end_ns);
+    for cutoff in [instant(10), instant(12)] {
+        request.selection.decision_cutoff_ns = cutoff;
+        let observed = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();
+        assert_eq!(observed.rows, 16);
+        let result = job::simulation::simulate(directory.path(), &request).unwrap();
+        assert_eq!(result.consumed_target_points.get(), 2);
+        assert_eq!(result.iterations.get(), 16);
+        assert_eq!(
+            result.canonical_result["accounts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            result.summary.get("orders.open").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            result.summary.get("orders.inflight").map(String::as_str),
+            Some("0")
+        );
+        assert!(result.orders.get() >= 4);
+        let last_snapshot = result.canonical_result["portfolio_snapshots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["ts_event"].as_str().unwrap().parse::<u64>().unwrap())
+            .max()
+            .unwrap();
+        assert!(last_snapshot >= instant(10).get());
+        assert!(
+            last_snapshot < instant(11).get(),
+            "settle actual orders, not an empty tail: {last_snapshot}"
+        );
+    }
+}
