@@ -152,3 +152,27 @@ test('diagnostics and resume use the original numeric identities without implici
     assert.equal(sent.length, 3);
   } finally { await config.close(); await api.close(); }
 });
+
+test('structured validation and factor/account-control commands preserve original file bytes and concrete routes', async () => {
+  const sent: { method: string; url: string; bytes: string }[] = [];
+  const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { received: true }); });
+  const config = await configuration(api.origin); const file = join(config.directory, 'original.json');
+  const specification = { version: 1, name: 'Original structured study', question: 'Original economic question', rationale: 'Explicit falsifiable mechanism', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' } };
+  try {
+    await writeFile(file, JSON.stringify({ requestId: 'unsupported', specification: { ...specification, horizon: 9 } }));
+    await assert.rejects(run(['research', 'start', '--file', file]), /research_override_unsupported/); assert.equal(sent.length, 0);
+    const bytes = JSON.stringify({ requestId: 'original-structured', goal: specification.question, specification, model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered', maxTrials: 2 }, null, 2) + '\n'; await writeFile(file, bytes);
+    await run(['research', 'start', '--file', file], () => {}); assert.equal(sent[0]!.bytes, bytes);
+    await run(['factor', 'list'], () => {}); await run(['factor', 'get', 'r2.t3.m0'], () => {}); await run(['factor', 'capacity', 'r2.t3.m0'], () => {});
+    const assumptions = '{ "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60 }\n'; await writeFile(file, assumptions); await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, assumptions);
+    await writeFile(file, '{"scenarios":["1000"],"participation":"2","maximumAgeSeconds":60}'); await assert.rejects(run(['factor', 'capacity', 'r2.t3.m0', '--file', file]), /research_participation_invalid/);
+    const preview = '{ "requestId":"preview-original", "amount":"100.000000000000000001", "currency":"USD" }\n'; await writeFile(file, preview);
+    await run(['capital', 'status', 'o-original'], () => {}); await run(['capital', 'preview', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, preview);
+    const command = '{"requestId":"command-original","action":"START","previewId":"native-original"}\n'; await writeFile(file, command); await run(['capital', 'command', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, command);
+    const policy = '{"enabled":true,"cashBuffer":"0.000000000000000001","maximumSnapshotAgeSeconds":60}\n'; await writeFile(file, policy); await run(['observation', 'automatic', 'o-original', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, policy);
+    assert.deepEqual(sent.slice(1).map(row => [row.method, row.url]), [
+      ['GET', '/api/v3/factors'], ['GET', '/api/v3/factors/r2.t3.m0'], ['GET', '/api/v3/factors/r2.t3.m0/capacity'], ['POST', '/api/v3/factors/r2.t3.m0/capacity'], ['GET', '/api/v3/observations/o-original/capital-exits'],
+      ['POST', '/api/v3/observations/o-original/capital-exits/preview'], ['POST', '/api/v3/observations/o-original/capital-exits/commands'], ['POST', '/api/v3/observations/o-original/automatic'],
+    ]);
+  } finally { await config.close(); await api.close(); }
+});

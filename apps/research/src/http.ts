@@ -50,7 +50,7 @@ export function researchServer(host: ResearchHost) {
       if (message === 'request_id_conflict') response.statusCode = 409;
       else if (message === 'research_not_found') response.statusCode = 404;
       else if (message === 'research_maintenance') response.statusCode = 503;
-      else if (error instanceof SyntaxError || /(_required|^invalid_|^model_unavailable$)/.test(message)) response.statusCode = 400;
+      else if (error instanceof SyntaxError || /(_required|_invalid|_unsupported|_mismatch|^invalid_|^model_unavailable$)/.test(message)) response.statusCode = 400;
       else response.statusCode = 500;
       response.end(JSON.stringify({ error: response.statusCode === 500 ? 'research_failed' : message }));
     }

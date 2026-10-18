@@ -1,6 +1,6 @@
 import { App, Button, Skeleton, Table } from 'antd';
 import { CheckCircleIcon, ClockIcon, CopyIcon, FlaskIcon, InfoIcon, WarningCircleIcon } from '@phosphor-icons/react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type TableHTMLAttributes } from 'react';
 import type { Metric } from '../../../packages/contracts/src/index.ts';
 import { ApiError, shortError } from './api';
 
@@ -10,6 +10,7 @@ const labels: Record<string, string> = {
   loaded: '已加载', disabled: '已停用', pending_restart: '待重启', error: '加载失败', running: '执行中', pending: '待执行', waiting: '等待中', completing: '收尾中',
   terminal: '已结束', completed: '已完成', failed: '失败', aborted: '已中止', faulted: '执行异常', done: '已回答', queued: '待处理', placed: '已送入执行', unanswered: '未完成回答', cancelled: '已取消',
 };
+export function TableSurface(props: TableHTMLAttributes<HTMLTableElement>) { return <table {...props} tabIndex={0} />; }
 export function stateLabel(value: string) { return labels[value] ?? value; }
 export function Status({ value, plain = false, label }: { value: string; plain?: boolean; label?: string }) {
   const tone = /FAILED|REJECTED|failed|faulted|^error$/.test(value) ? 'error' : /UNCERTAIN|pending_restart|unanswered/.test(value) ? 'warning' : /RUNNING|STARTED|running/.test(value) ? 'active' : 'neutral';

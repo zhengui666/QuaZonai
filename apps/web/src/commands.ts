@@ -2,7 +2,7 @@ import { useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api } from './api';
 import { clearResearchIntent, readResearchIntent } from './request-intent';
 
-type Kind = 'research' | 'portfolios' | 'observations';
+type Kind = 'research' | 'portfolios' | 'observations' | `capital:${string}` | `capital-preview:${string}`;
 interface Envelope { raw: string; persisted: boolean }
 const key = (kind: Kind) => `quazonai.command.${kind}.v3`;
 interface CommandState { pending?: Envelope; error?: unknown }
@@ -32,7 +32,7 @@ function clear(kind: Kind, command: Envelope, error?: unknown) {
   try { if (kind === 'research') clearResearchIntent(); } catch { /* One failed store must not prevent clearing the other. */ }
   publish(kind, { error }); return true;
 }
-export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
+export function useCommand<T>(kind: Kind, accepted: (result: T) => void, path = `/${kind}`) {
   const { pending, error } = useSyncExternalStore(subscribe, () => read(kind));
   const initialRaw = useRef(pending?.raw);
   const previousKey = `command.previous.${kind}`; const [previousRaw, setPreviousRaw] = useState(() => readDraft<string>(previousKey));
@@ -51,7 +51,7 @@ export function useCommand<T>(kind: Kind, accepted: (result: T) => void) {
     command = { ...command }; publish(kind, { pending: command });
     inFlight.current = true; setBusy(true);
     try {
-      const result = await api<T>(`/${kind}`, { method: 'POST', rawBody: command.raw });
+      const result = await api<T>(path, { method: 'POST', rawBody: command.raw });
       if (clear(kind, command)) accepted(result);
     } catch (failure) {
       if (failure instanceof ApiError && failure.status >= 400 && failure.status < 500 && failure.status !== 401 && failure.code !== 'request_id_conflict') clear(kind, command, failure);

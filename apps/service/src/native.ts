@@ -8,12 +8,13 @@ import { blendTargets, executeNative, forecastMembers } from '../../research/plu
 import type { ThresholdPolicy } from './config.ts';
 import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
-import type { Metric } from '../../../packages/contracts/src/index.ts';
+import type { CapacityReport, Metric, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
+import { assessCapacity, capacityPolicy } from './capacity.ts';
 
 export interface PortfolioTaskInput {
   id: string; dataDir: string; catalog: string; binary: string;
   // Original v1 single-evidence inputs keep their kernel, whole interval and default weight 1.
-  capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: ThresholdPolicy; weights?: string[];
+  capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: ThresholdPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }
 
 export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
@@ -66,7 +67,8 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
     }) : [];
     const native: JsonObject = { catalog: input.catalog, sources, rows: combined.rows, weights, blend: combined.blend, simulationRequest, simulation };
     if (sources.length === 1) native.forecasts = sources[0]!.forecasts!;
-    return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: statistics };
+    const capacity: CapacityReport = await assessCapacity(input.binary, input.catalog, simulationRequest, input.capacityPolicy ?? capacityPolicy(evidence), directory, context);
+    return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: statistics, capacity };
   } catch (error) { throw error instanceof Problem ? error : new Problem(error instanceof Error ? error.message : 'portfolio_failed'); }
   finally { await rm(directory, { recursive: true, force: true }); }
 }

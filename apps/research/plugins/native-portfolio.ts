@@ -13,7 +13,7 @@ import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import type { StrategyMember, StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
 import { normalizedRequest } from './native-wasm.ts';
 
-const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets']);
+const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit']);
 const wabt = await wabtFactory();
 
 /** Original JSON stdin and official process cleanup/cancellation; no provider environment or deadline. */

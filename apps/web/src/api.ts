@@ -7,6 +7,8 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  research_capital_scenarios_invalid: '资本情景须为精确正金额', research_participation_invalid: '成交量参与率须大于 0 且不超过 1（0.01 = 1%）',
+  research_liquidity_age_invalid: '请填写正整数流动性数据时差', research_override_unsupported: '存在不支持的研究或容量设置',
   unsupported_evidence: '研究证据不支持', evidence_unavailable: '研究证据不可用',
   authentication_required: '登录已过期', request_id_conflict: '原提交内容不一致',
   dataset_not_ready: '数据集尚未就绪', dataset_not_found: '数据集不存在',

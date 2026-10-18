@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { BACKGROUND_CONTEXT, awaitWithContext } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
@@ -24,17 +24,26 @@ const responses = () => [
   fauxAssistantMessage(fauxToolCall('continuation_trial', {}), { stopReason: 'toolUse' }),
   fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Invocation boundary is not scientific infeasibility' }), { stopReason: 'toolUse' }),
 ];
-async function stoppedStudy(maximum = 3) {
+async function stoppedStudy(maximum = 3, ownerAbort = false) {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-stopped-continuation-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  const options = { database: join(directory, 'original.sqlite'), models, extensions: [probe, research] };
+  let enter!: () => void; const entered = new Promise<void>(resolve => { enter = resolve; });
+  const waiting = defineExtension({ name: 'test.owner-maintenance', tools: [defineTool({ name: 'maintenance_wait', description: 'Test-only cancellable owner maintenance probe', parameters: Type.Object({}),
+    async execute(_args, _api, ctx) { enter(); await awaitWithContext(new Promise<void>(() => {}), ctx); return {}; },
+  })] });
+  const options = { database: join(directory, 'original.sqlite'), models, extensions: [probe, research, waiting] };
   let host = await openResearch(options);
-  faux.setResponses(responses());
+  faux.setResponses(ownerAbort ? [fauxAssistantMessage(fauxToolCall('maintenance_wait', {}), { stopReason: 'toolUse' })] : responses());
   const input = { goal: 'Keep the original goal, data, model and budget', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { max_trials: maximum } };
   const receipt = await host.start('original-owner-key', input);
+  if (ownerAbort) {
+    await entered; await assert.rejects(host.resume(receipt.conversationId, receipt.submissionId), /research_not_recoverable_conflict/);
+    await host.stop(receipt.conversationId);
+  }
   await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
   const before = (await host.state(receipt.conversationId)).research!;
-  assert.equal(before.final!.status, 'STOPPED'); assert.equal((await host.submission(receipt.submissionId)).status, 'done');
+  assert.equal(before.final!.status, 'STOPPED'); const original = await host.submission(receipt.submissionId);
+  assert.equal(original.status, ownerAbort ? 'unanswered' : 'done'); if (ownerAbort) assert.equal(original.reason, 'aborted');
   return { directory, faux, receipt, input, before, get host() { return host; },
     async reopen() { await host.close(); host = await openResearch(options); },
     async close() { await host.close(); await rm(directory, { recursive: true, force: true }); } };
@@ -135,6 +144,44 @@ for (const kind of ['selected', 'assessed', 'failed-final', 'exhausted', 'wrong-
     } finally { await state.close(); }
   });
 }
+
+test('explicit maintenance stop resumes an actually aborted original submission, preserving identity, model and zero-trial budget', { timeout: 15_000 }, async () => {
+  const state = await stoppedStudy(3, true);
+  try {
+    state.faux.setResponses(responses());
+    const [next, replay] = await Promise.all([0, 1].map(() => state.host.resume(state.receipt.conversationId, state.receipt.submissionId)));
+    assert.deepEqual(replay, next); assert.equal(next.conversationId, state.receipt.conversationId); assert.equal(next.previousSubmissionId, state.receipt.submissionId);
+    await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
+    const facts = (await state.host.state(next.conversationId)).research!; assert.deepEqual(facts.input, state.input); assert.equal(facts.trials.length, 1);
+    assert.deepEqual(facts.previousStops, [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]); assert.equal(facts.previousStops![0]!.final.reason, 'owner_stop');
+    const original = await state.host.submission(state.receipt.submissionId); assert.equal(original.status, 'unanswered'); assert.equal(original.reason, 'aborted');
+    assert.deepEqual(await state.host.start('original-owner-key', state.input), state.receipt);
+    await state.reopen(); assert.deepEqual(await state.host.resume(next.conversationId, next.previousSubmissionId), next); assert.deepEqual((await state.host.state(next.conversationId)).research, facts);
+    assert.equal(state.faux.state.callCount, 3);
+  } finally { await state.close(); }
+});
+
+test('interrupted maintenance continuation repairs only the saved original native admission after restart', { timeout: 15_000 }, async () => {
+  const state = await stoppedStudy(3, true);
+  try {
+    interruptNextRecovery(state); await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /test_interruption_before_native_input/);
+    const interrupted = (await state.host.state(state.receipt.conversationId)).research!; assert.equal(interrupted.final, null);
+    state.faux.setResponses(responses()); await state.reopen(); const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId);
+    await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
+    const facts = (await state.host.state(next.conversationId)).research!; assert.deepEqual(facts.input, state.input); assert.equal(facts.trials.length, 1); assert.deepEqual(facts.previousStops, interrupted.previousStops); assert.equal(facts.previousStops!.length, 1);
+    assert.equal(state.faux.state.callCount, 3);
+  } finally { await state.close(); }
+});
+
+for (const kind of ['selected', 'assessed', 'unrelated-stop'] as const) test(`owner-aborted continuation refuses ${kind} without rewriting prior facts`, { timeout: 15_000 }, async () => {
+  const state = await stoppedStudy(3, true);
+  try {
+    await state.host.harness.commit(async tx => { const final = (await tx.doc(Study, state.receipt.conversationId)).final!; if (kind === 'selected') final.trialId = 999; else if (kind === 'assessed') { final.status = 'COMPUTED'; final.result = {}; } else final.reason = 'unrelated_failure'; }, context);
+    const before = (await state.host.state(state.receipt.conversationId)).research!;
+    await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId), /research_already_final/);
+    assert.deepEqual((await state.host.state(state.receipt.conversationId)).research, before); assert.equal(state.faux.state.callCount, 1);
+  } finally { await state.close(); }
+});
 
 test('native continuation instructions distinguish response boundaries from actual stop criteria', { timeout: 15_000 }, async () => {
   const state = await stoppedStudy();

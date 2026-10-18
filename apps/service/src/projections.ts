@@ -4,6 +4,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
 import { submissionView } from '../../research/src/recovery.ts';
+import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import type { ObservationFact, PortfolioFact, ResearchAdmissions } from './facts.ts';
 
 // Opaque public-code convention, as on the HTTP error boundary; raw diagnostics stay in Durable.
@@ -86,7 +87,7 @@ export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHos
   const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
   const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
   return {
-    id, title: input.goal, status: final ? String(final.status) : running || ['queued', 'placed'].includes(view.submission?.status ?? '') ? 'RUNNING' : 'IDLE',
+    id, title: input.specification?.name ?? input.goal, status: final ? String(final.status) : running || ['queued', 'placed'].includes(view.submission?.status ?? '') ? 'RUNNING' : 'IDLE',
     trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
     createdAt: null, updatedAt: null, dataset,
     datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
@@ -103,6 +104,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
+    ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
       status: String(trial.status), metrics: metrics(trial.result), error: publicExecutionError(trial.error, 'scientific_execution_failed'),
@@ -114,7 +116,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
 }
 
 export function portfolioView(fact: PortfolioFact): PortfolioView {
-  return { ...fact.view, error: publicExecutionError(fact.view.error, 'backtest_failed'), ...(fact.weights ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
+  return { ...fact.view, error: publicExecutionError(fact.view.error, 'backtest_failed'), ...(fact.weights && !fact.input.factors ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
     targetExpiresAt: typeof fact.target?.valid_until_ns === 'string' ? nsTime(fact.target.valid_until_ns) : null,
     ...(typeof fact.target?.valid_until_ns === 'string' ? { targetExpired: BigInt(counter(fact.target.valid_until_ns, 'expiry')) <= BigInt(nowNs()) } : {}) };
 }

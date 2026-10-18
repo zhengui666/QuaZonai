@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './capital-native.ts';
 import { test } from 'node:test';
 import { readFile, mkdtemp, mkdir, rm, cp, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -186,6 +187,20 @@ test('two original studies → native target blending → one fee-affected share
     assert.ok(fact.view.curve.length); assert.equal(fact.view.targets[0]!.weight, '0.0625');
     assert.ok(BigInt(String(simulation.orders)) > 0n); assert.ok(BigInt(String(simulation.positions)) > 0n);
     assert.ok(fact.view.curve.some((point) => point.value !== null && decimalUnits(point.value) !== decimalUnits('1000')), 'blended target must affect the native account, including original fees');
+    const factors = (await service.app.inject({ url: '/api/v3/factors', headers })).json();
+    const atomic = researchIds.map((researchId, index) => ({ factorId: factors.find((factor: { researchId: number; combinable: boolean }) => factor.researchId === researchId && factor.combinable).id, weight: index === 0 ? '0.25' : '0.75' }));
+    // This late-publication control has 1970 BAR events received in 2024: never relabel those observations fresh.
+    const capacityPolicy = { scenarios: ['1000', '10000'], participation: '0.01', maximumAgeSeconds: 3600 };
+    const original = (await service.app.inject({ url: `/api/v3/research/${researchIds[0]}`, headers })).json();
+    const missing = (await service.app.inject({ url: `/api/v3/factors/${atomic[0]!.factorId}/capacity`, headers })).json(); assert.equal(missing.reason, 'explicit_capacity_policy_missing');
+    const assessed = await service.app.inject({ method: 'POST', url: `/api/v3/factors/${atomic[0]!.factorId}/capacity`, headers, payload: capacityPolicy }); assert.equal(assessed.statusCode, 200, assessed.body); assert.equal(assessed.json().status, 'UNAVAILABLE', assessed.body); assert.equal(assessed.json().reason, 'liquidity_stale'); assert.equal(assessed.json().assumptions.participation, capacityPolicy.participation); assert.deepEqual(assessed.json().scenarios.map((row: { capital: string }) => row.capital), capacityPolicy.scenarios); assert.ok(assessed.json().scenarios.every((row: { status: string; usableCapital: string | null }) => row.status === 'UNAVAILABLE' && row.usableCapital === null));
+    assert.deepEqual((await service.app.inject({ url: `/api/v3/research/${researchIds[0]}`, headers })).json(), original, 'capacity assessment cannot rewrite admission, trials, independent evidence or original identities');
+    const atomicBuild = await service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers, payload: { requestId: 'native-atomic-portfolio', name: 'Same original native pool via atomic references', factors: atomic, datasetId: 'late-native-fixture', capital: '1000', capacityPolicy } });
+    assert.equal(atomicBuild.statusCode, 202, atomicBuild.body); await service.research.harness.waitForTask(atomicBuild.json().taskId as TaskId, context);
+    const atomicFact = await service.work.getPortfolio(atomicBuild.json().id); assert.equal(atomicFact.view.status, 'COMPUTED', atomicFact.view.error ?? '');
+    assert.equal(atomicFact.view.capacity?.status, 'UNAVAILABLE'); assert.equal(atomicFact.view.capacity?.reason, 'liquidity_stale'); assert.equal(atomicFact.view.capacity?.assumptions.participation, capacityPolicy.participation);
+    assert.deepEqual(atomicFact.view.factors, atomic); assert.deepEqual(atomicFact.view.curve, fact.view.curve); assert.deepEqual(object(atomicFact.native!.blend).target_points, combined);
+    assert.deepEqual(atomicFact.evidence.map(source => source.factorId), atomic.map(row => row.factorId));
     const observationInput = { requestId: 'native-observation', portfolioId: fact.view.id, mode: 'paper', connectionId: 'test-paper' };
     const observe = await service.app.inject({ method: 'POST', url: '/api/v3/observations', headers, payload: observationInput }); assert.equal(observe.statusCode, 202, observe.body);
     const observed = await settledObservation(service, observe.json().id); assert.equal(observed.receipt!.status, 'ACKNOWLEDGED', observed.error ?? ''); assert.equal(observed.equity, null); assert.equal(observed.cash, null);
@@ -194,9 +209,9 @@ test('two original studies → native target blending → one fee-affected share
   } finally { await service.close(); await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as const) test(`${variant} ensemble research trades validation then owner-only final in one native account and replays the original selection`, { timeout: 120_000 }, async () => {
+for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'single-member'] as const) test(`${variant} ensemble research trades validation then owner-only final in one native account and replays the original selection`, { timeout: 120_000 }, async () => {
   const crossMarket = variant === 'cross-market';
-  const universe = variant !== 'legacy'; const historical = variant === 'historical' || crossMarket;
+  const single = variant === 'single-member'; const universe = variant !== 'legacy' && !single; const historical = variant === 'historical' || crossMarket;
   const prefixCount = crossMarket ? 24 : 400; const finalCount = crossMarket ? 40 : 599;
   const allocations = [{ instrumentId: 'ETH-USD.COINBASE', weight: '0.4' }, { instrumentId: 'BTC-USD.COINBASE', weight: '0.6' }];
   const selectedBars = crossMarket ? ['ETH-USD.COINBASE-1-MINUTE-LAST-EXTERNAL', 'BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL'] : ['BTC-USD.COINBASE-1-MINUTE-LAST-EXTERNAL'];
@@ -231,7 +246,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
     const finalRequest = structuredClone(request);
     Object.assign(finalRequest.forecast.selection, { event_end_ns: '40000000000000', decision_cutoff_ns: '40000000000000' });
     if (crossMarket) Object.assign(finalRequest.forecast.selection, { event_end_ns: '2500000000000', decision_cutoff_ns: '2500000000000' });
-    const members = [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
+    const members = single ? [{ model: wat, weight: '1' }] : [{ model: wat, weight: '0.25' }, { model: wat.replace('f64.const 1', 'f64.const -1'), weight: '0.75' }];
     const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
     const simulationSettings = nativeTestSettings('3000');
     if (universe) simulationSettings.fee_rates = [{ instrument_id: 'ETH-USD.COINBASE', maker: '0.004000', taker: '0.006000' }, ...(simulationSettings.fee_rates as JsonObject[])];
@@ -355,9 +370,19 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
         assert.ok([0n, decimalUnits('0.025')].includes(decimalUnits(String((point.targets as JsonObject[])[0]!.weight))));
         assert.ok([0n, decimalUnits('0.0375')].includes(decimalUnits(String((point.targets as JsonObject[])[1]!.weight))));
         assert.equal((point.rebalance_instrument_ids as string[]).length, 1);
-      } else assert.equal(object((point.targets as JsonObject[])[0]).weight, '0.0625');
+      } else assert.equal(object((point.targets as JsonObject[])[0]).weight, single ? '0.25' : '0.0625');
       assert.ok(BigInt(String(point.asof_ns)) >= BigInt(request.validation_end_ns));
       assert.ok(BigInt(String(point.asof_ns)) < BigInt(finalRequest.forecast.selection.event_end_ns));
+    }
+    if (single) {
+      const owner = await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'native-capacity-test-only' } });
+      const headers = { cookie: owner.cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ') };
+      const original = (await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json();
+      const factors = (await service.app.inject({ url: '/api/v3/factors', headers })).json(); const factor = factors.find((row: { combinable: boolean }) => row.combinable); assert.ok(factor);
+      assert.equal((await service.app.inject({ url: `/api/v3/factors/${factor.id}/capacity`, headers })).json().reason, 'explicit_capacity_policy_missing');
+      const policy = { scenarios: ['1000', '10000'], participation: '0.01', maximumAgeSeconds: 300 };
+      const assessed = await service.app.inject({ method: 'POST', url: `/api/v3/factors/${factor.id}/capacity`, headers, payload: policy }); assert.equal(assessed.statusCode, 200, assessed.body); assert.equal(assessed.json().status, 'ESTIMATED', assessed.body); assert.equal(assessed.json().assumptions.participation, policy.participation); assert.ok(assessed.json().scenarios.some((row: { capital: string }) => decimalUnits(row.capital) === decimalUnits('1000')));
+      assert.deepEqual((await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json(), original, 'post-research capacity must not change legacy admission, trials, independent evidence or identities');
     }
     const exposures = (await service.research.harness.snapshot(Exposures, context))!.windows;
     assert.deepEqual(exposures.map((window) => window.kind), historical ? ['FINAL', 'HISTORICAL_ITERATION', 'HISTORICAL_FINAL'] : ['ITERATION', 'FINAL']);

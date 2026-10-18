@@ -4,6 +4,8 @@ import { computePortfolio } from './native.ts';
 import type { PortfolioTaskInput } from './native.ts';
 import { acceptReceipt, acceptSnapshot, downstream } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
+import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
+import { CapitalExitCommand } from './capital-exit.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
@@ -14,7 +16,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
-        fact.view.curve = result.curve; fact.view.metrics = result.metrics;
+        fact.view.curve = result.curve; fact.view.metrics = result.metrics; fact.view.capacity = result.capacity;
         fact.view.targets = (result.target.targets as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
         fact.view.status = 'COMPUTED'; fact.view.error = null;
         facts.portfolios[task.input.id] = json(fact);
@@ -38,8 +40,8 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
   },
 });
 
-export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boolean }, { phase: 'deliver' | 'reconcile' | 'observe' }, null>({
-  name: 'qz.observation', version: 1, initial: (input) => ({ phase: input.refresh ? 'reconcile' : 'deliver' }),
+export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boolean; accountOnly?: boolean }, { phase: 'deliver' | 'reconcile' | 'observe' }, null>({
+  name: 'qz.observation', version: 1, initial: (input) => ({ phase: input.accountOnly ? 'observe' : input.refresh ? 'reconcile' : 'deliver' }),
   phases: {
     async deliver(task, runtime, context) {
       // The durable checkpoint is moved BEFORE the unsafe POST. After a crash only GET reconciliation may run.
@@ -78,7 +80,8 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
         const receipt = await downstream(task.input, 'receipt', runtime.signal);
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
-          acceptReceipt(fact, receipt); fact.view.error = null; facts.observations[task.input.id] = json(fact);
+          if (task.input.allocation) acceptAllocationReceipt(fact, receipt); else acceptReceipt(fact, receipt);
+          fact.view.error = null; facts.observations[task.input.id] = json(fact);
           if (fact.view.status === 'STOPPED') return { status: 'terminal', outcome: { status: 'completed', result: null } };
           return { status: 'running', checkpoint: { phase: 'observe' } };
         }, context);
@@ -119,4 +122,4 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
     }, context);
   },
 });
-export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount] });
+export const science = defineExtension({ name: 'qz.science', tasks: [BuildPortfolio, ObserveAccount, AdjustAccount, CapitalExitCommand] });

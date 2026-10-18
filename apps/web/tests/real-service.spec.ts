@@ -30,7 +30,7 @@ async function owner(page: Page, url: string) {
   await page.getByLabel('密码', { exact: true }).fill('browser-owner-test-only'); await page.getByLabel('确认密码', { exact: true }).fill('browser-owner-test-only'); await page.getByRole('button', { name: '创建密码' }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
 }
 async function start(page: Page, url: string, goal: string) {
-  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByLabel('研究问题', { exact: true }).fill(goal);
+  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByLabel('研究名称', { exact: true }).fill(goal); await page.getByLabel('研究问题', { exact: true }).fill(goal); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled HTTP hypothesis; protocol coverage, not scientific qualification.');
   await page.getByLabel('数据集', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol dataset / USD', exact: true }).click();
   const catalog = await (await page.request.get(`${url}/api/v3/models`)).json() as ModelCatalog;
   const model = catalog.models.find(model => model.provider === 'faux')!; expect(model).toBeTruthy();
@@ -59,7 +59,7 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     await expect(page.locator('.metric-primary')).toContainText('分数恒定'); await expect(page.locator('.metric-primary')).toContainText('不可用');
     const studies = await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>; expect(studies.items).toHaveLength(1);
     const id = studies.items[0]!.id; const original = await (await page.request.get(`${url}/api/v3/research/${id}`)).json() as ResearchDetail;
-    expect(original.submission?.status).toBe('done'); expect(original.final?.status).toBe('COMPUTED'); expect(original.tasks.some(task => task.outcome === 'completed')).toBe(true); expect(await state.calls()).toBe(1);
+    expect(original.input.specification?.name).toBe('HTTP protocol study, not scientific qualification'); expect(original.input.specification?.rationale).toContain('Controlled HTTP hypothesis'); expect(original.criterion?.status).toBe('insufficient'); expect(original.submission?.status).toBe('done'); expect(original.final?.status).toBe('COMPUTED'); expect(original.tasks.some(task => task.outcome === 'completed')).toBe(true); expect(await state.calls()).toBe(1);
     await expect(page.locator('body')).not.toContainText(String(original.input.data.catalog)); await expect(page.locator('pre')).toHaveCount(0);
     await page.getByRole('button', { name: /所选试验/ }).click(); await expect(page.getByRole('button', { name: `收起试验 ${original.final!.trialId}` })).toHaveAttribute('aria-expanded', 'true'); await expect(page.locator('.trial-detail')).toContainText('Controlled protocol'); await page.getByRole('tab', { name: '证据', exact: true }).click(); await page.screenshot({ path: info.outputPath('actual-http-research.png'), fullPage: true });
     await page.getByRole('button', { name: '创建组合', exact: true }).click(); await page.getByLabel('组合名称', { exact: true }).fill('HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();

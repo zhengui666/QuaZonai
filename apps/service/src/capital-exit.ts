@@ -1,0 +1,147 @@
+import { defineTask } from '@earendil-works/pi-durable';
+import type { JsonObject } from '@earendil-works/pi-durable';
+import type { CapitalExitStatus } from '../../../packages/contracts/src/index.ts';
+import { canonical } from '../../research/src/documents.ts';
+import type { ConnectionConfig, ServiceConfig } from './config.ts';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { Application, counter, decimal, decimalUnits, json, object, Problem, text } from './facts.ts';
+import { connectionBase, downstreamRequest } from './downstream.ts';
+
+export async function validateCapitalDocument(config: Pick<ServiceConfig, 'dataDir' | 'jobBinary'>, kind: string, value: unknown) {
+  const directory = await mkdtemp(join(config.dataDir, 'capital-contract-'));
+  try { await executeNative(config.jobBinary, 'validate-capital-exit', json({ kind, value }), [], directory, BACKGROUND_CONTEXT); }
+  catch { throw new Problem('native_capital_exit_contract_invalid', 422); }
+  finally { await rm(directory, { recursive: true, force: true }); }
+}
+const connectionKey = (connection: ConnectionConfig) => `${connectionBase(connection).href}|${connection.mode}|${connection.accountId}`;
+export function accountKey(connection: ConnectionConfig, records?: Record<string, JsonObject>): string {
+  const key = connectionKey(connection);
+  return Object.entries(records ?? {}).find(([, value]) => control(value).bindings?.includes(key))?.[0] ?? key;
+}
+export interface CapitalCommand { original: JsonObject; body: JsonObject; path: string; reserved: string; state: string; result: JsonObject | null; error: string | null; taskId: number }
+export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[] }
+export function control(value: unknown): AccountControl { return value as AccountControl ?? { commands: {} }; }
+export function moneyString(units: bigint): string {
+  const sign = units < 0n ? '-' : ''; const value = units < 0n ? -units : units;
+  return `${sign}${value / 10n ** 18n}.${(value % 10n ** 18n).toString().padStart(18, '0')}`;
+}
+export function outstandingReserved(value: AccountControl): string | null {
+  if (value.status?.reserved == null) return null;
+  return moneyString(decimalUnits(value.status.reserved) + Object.values(value.commands).filter(command => ['UNCERTAIN', 'PENDING', 'ACCEPTED'].includes(command.state)).reduce((sum, command) => sum + decimalUnits(command.reserved), 0n));
+}
+export function capitalStatus(value: AccountControl): CapitalExitStatus {
+  return value.status ? { ...value.status, reserved: outstandingReserved(value) } : { capability: 'UNSUPPORTED', reason: 'downstream_capability_not_observed', accountSourceId: null, observationId: null, controlRevision: null, reserved: null, exits: [] };
+}
+export function assertEnvelope(connection: ConnectionConfig, value: JsonObject, currency: string) {
+  if (value.clientId !== connection.clientId || value.accountId !== connection.accountId || value.mode !== connection.mode || value.currency !== currency) throw new Problem('downstream_control_identity_mismatch', 409);
+}
+export async function readCapitalControl(connection: ConnectionConfig, currency: string, signal?: AbortSignal): Promise<{ status: CapitalExitStatus; native: JsonObject; capabilities: JsonObject }> {
+  const capabilities = await downstreamRequest(connection, 'capabilities', 'GET', undefined, signal);
+  assertEnvelope(connection, capabilities, currency);
+  const capability = capabilities.capitalExit ? object(capabilities.capitalExit) : null;
+  if (capability?.version !== 1 || capability.supported !== true && capability.readable !== true) return { capabilities, native: {}, status: { capability: 'UNSUPPORTED', reason: capability && capability.version !== 1 ? 'capital_exit_version_unsupported' : typeof capability?.reason === 'string' ? capability.reason : 'downstream_capital_exit_unsupported', accountSourceId: null, observationId: null, controlRevision: null, reserved: null, exits: [] } };
+  const native = await downstreamRequest(connection, 'capital-exits', 'GET', undefined, signal);
+  assertEnvelope(connection, native, currency);
+  const exits = Array.isArray(native.exits) ? native.exits.map(value => object(value)) : [];
+  const source = text(native.accountSourceId, 'account_source_id');
+  for (const exit of exits) {
+    if (exit.account_source_id !== source || exit.schema_version !== 1 || exit.environment !== (connection.mode === 'paper' ? 'PAPER' : 'LIVE')) throw new Problem('capital_exit_native_scope_mismatch', 409);
+    counter(exit.revision, 'capital_exit_revision'); const funds = object(exit.funds);
+    for (const key of ['requested_amount', 'reserved_amount', 'reconciled_withdrawal_amount']) {
+      const money = object(funds[key]); if (money.currency !== currency || decimalUnits(decimal(money.amount, 'capital_exit_amount')) < 0n) throw new Problem('capital_exit_money_mismatch');
+    }
+  }
+  const reserved = native.reserved == null ? null : decimal(native.reserved, 'outstanding_reservation'); if (reserved !== null && decimalUnits(reserved) < 0n) throw new Problem('capital_exit_reservation_invalid');
+  return { capabilities, native, status: { capability: native.blocked === true ? 'BLOCKED' : capability?.supported === true ? 'SUPPORTED' : 'UNSUPPORTED', reason: typeof native.reason === 'string' ? native.reason : capability?.supported === true ? null : 'capital_exit_initiation_unavailable',
+    accountSourceId: source, observationId: text(native.observationId, 'source_observation_id'), controlRevision: counter(native.controlRevision, 'account_control_revision'), reserved, exits: exits as unknown as CapitalExitStatus['exits'] } };
+}
+
+interface CommandInput { key: string; requestId: string; connection: ConnectionConfig; reconcile: boolean; binary: string; dataDir: string }
+export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number }, null>({
+  name: 'qz.capital-exit-command', version: 1, initial: input => ({ phase: input.reconcile ? 'reconcile' : 'deliver' }),
+  phases: {
+    async deliver(task, runtime, context) {
+      let command!: CapitalCommand;
+      await runtime.commit(async tx => {
+        const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); const current = state.commands[task.input.requestId]!;
+        current.state = 'UNCERTAIN'; command = json(current) as unknown as CapitalCommand; facts.accountControls![task.input.key] = json(state);
+        return { status: 'running', checkpoint: { phase: 'reconcile' } };
+      }, context);
+      try {
+        const value = await downstreamRequest(task.input.connection, command.path, 'POST', { requestId: task.input.requestId, clientId: task.input.connection.clientId, accountId: task.input.connection.accountId, command: command.body }, runtime.signal);
+        await settle(value);
+      } catch (error) {
+        if (runtime.signal.aborted) throw error;
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]);
+          state.commands[task.input.requestId]!.error = 'capital_exit_command_requires_reconciliation'; facts.accountControls![task.input.key] = json(state);
+          return { status: 'running', checkpoint: { phase: 'reconcile' } };
+        }, context);
+      }
+      async function settle(value: JsonObject) {
+        if (value.status === 'ACCEPTED') await validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result);
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); acceptCommand(task.input, state, value);
+          facts.accountControls![task.input.key] = json(state);
+          return { status: 'terminal', outcome: { status: 'completed', result: null } };
+        }, context);
+      }
+    },
+    async reconcile(task, runtime, context) {
+      try {
+        const value = await downstreamRequest(task.input.connection, `capital-exits/commands/${encodeURIComponent(task.input.requestId)}`, 'GET', undefined, runtime.signal);
+        if (value.status === 'ACCEPTED') await validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result);
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); acceptCommand(task.input, state, value);
+          facts.accountControls![task.input.key] = json(state);
+          return { status: 'terminal', outcome: { status: 'completed', result: null } };
+        }, context);
+      } catch (error) {
+        if (runtime.signal.aborted) throw error;
+        await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } }), context);
+      }
+    },
+    async wait(task, runtime, context) {
+      await runtime.sleep(task.state.checkpoint.wakeAt ?? runtime.now(), context);
+      await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'reconcile' } }), context);
+    },
+  },
+  async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
+});
+function acceptCommand(input: CommandInput, state: AccountControl, value: JsonObject) {
+  const command = state.commands[input.requestId]!;
+  if (value.requestId !== input.requestId || value.clientId !== input.connection.clientId || value.accountId !== input.connection.accountId || canonical(value.command!) !== canonical(command.body)) throw new Problem('capital_exit_command_identity_mismatch', 409);
+  if (!['ACCEPTED', 'REJECTED'].includes(String(value.status))) throw new Problem('capital_exit_command_unsettled');
+  command.state = String(value.status); command.result = value; command.error = null;
+  // Do not release a local reservation until an authoritative status includes this command.
+  // Its reservation remains part of the shared account control fact until status reconciliation.
+}
+export function reconcileControl(previous: AccountControl, fresh: Awaited<ReturnType<typeof readCapitalControl>>): AccountControl {
+  if (previous.status?.accountSourceId && fresh.status.accountSourceId && previous.status.accountSourceId !== fresh.status.accountSourceId) throw new Problem('capital_control_identity_mismatch', 409);
+  const oldRevision = previous.status?.controlRevision; const revision = fresh.status.controlRevision;
+  if (oldRevision && revision && BigInt(revision) < BigInt(oldRevision)) throw new Problem('capital_control_out_of_order', 409);
+  if (oldRevision && revision === oldRevision && previous.status && (previous.status.reserved !== null && fresh.status.reserved !== null && previous.status.reserved !== fresh.status.reserved || canonical(json(previous.status.exits)) !== canonical(json(fresh.status.exits)))) throw new Problem('capital_control_conflict', 409);
+  if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, status: { ...previous.status, capability: fresh.status.capability, reason: fresh.status.reason, reserved: null } };
+  const commands = previous.commands;
+  for (const command of Object.values(commands)) {
+    if (command.state === 'ACCEPTED' && command.reserved !== '0') {
+      const accepted = object(command.result); const original = object(accepted.result);
+      if (!fresh.status.exits.some(exit => exit.command_id === original.command_id || exit.id === original.id && BigInt(exit.revision) >= BigInt(counter(original.revision, 'exit_revision')))) throw new Problem('capital_exit_status_not_reconciled', 409);
+      command.reserved = '0';
+    }
+  }
+  return { ...previous, status: fresh.status, native: fresh.native, commands };
+}
+export function recordCapitalControl(records: Record<string, JsonObject>, connection: ConnectionConfig, fresh: Awaited<ReturnType<typeof readCapitalControl>>): string {
+  const original = accountKey(connection, records); const prior = control(records[original]);
+  if (prior.status?.accountSourceId && fresh.status.accountSourceId && prior.status.accountSourceId !== fresh.status.accountSourceId) throw new Problem('capital_control_identity_mismatch', 409);
+  const same = fresh.status.accountSourceId && Object.entries(records).find(([, value]) => { const record = control(value); return record.status?.accountSourceId === fresh.status.accountSourceId && record.native?.mode === connection.mode && record.native?.currency === fresh.native.currency; });
+  const key = same ? same[0] : original;
+  if (key !== original && Object.keys(prior.commands).length) throw new Problem('account_alias_requires_reconciliation', 409);
+  const next = reconcileControl(control(records[key]), fresh);
+  next.bindings = [...new Set([...(next.bindings ?? []), key, connectionKey(connection)])];
+  records[key] = json(next); return key;
+}

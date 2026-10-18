@@ -6,33 +6,35 @@ import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.
 import type { ObservationFact } from './facts.ts';
 
 export interface ObservationTaskInput {
-  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject;
+  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; allocation?: JsonObject;
 }
 export function connectionBase(connection: ConnectionConfig): URL {
   const url = new URL(connection.url); url.hash = '';
   if (!url.pathname.endsWith('/')) url.pathname += '/';
   return url;
 }
-export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
-  const { connection } = input;
-  const url = connectionBase(connection);
-  url.pathname += operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
+export async function downstreamRequest(connection: ConnectionConfig, path: string, method: 'GET' | 'POST', body?: unknown, signal?: AbortSignal): Promise<JsonObject> {
+  const url = connectionBase(connection); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-qz-client-id': connection.clientId };
   if (connection.tokenEnv) {
     const token = process.env[connection.tokenEnv]; if (!token) throw new Problem('downstream_credentials_missing');
     headers.authorization = `Bearer ${token}`;
   }
-  if (operation === 'deliver' && BigInt(counter(input.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired');
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 0 } });
   try {
-    const response = await fetch(url, { method: operation === 'deliver' ? 'POST' : 'GET', headers,
-      body: operation === 'deliver' ? JSON.stringify({ id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId,
-        expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target }) : undefined,
-      signal, dispatcher, redirect: 'error',
-    });
-    if (!response.ok) { await response.body?.cancel(); throw new Problem(`downstream_${operation}_${response.status}`); }
-    return object(await response.json(), `downstream_${operation}`);
+    const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal, dispatcher, redirect: 'error' });
+    if (!response.ok) { await response.body?.cancel(); throw new Problem(`downstream_${path === 'targets' ? 'deliver' : path.startsWith('targets/') ? 'receipt' : path === 'account' ? 'account' : 'control'}_${response.status}`); }
+    return object(await response.json(), 'downstream_response');
   } finally { await dispatcher.close(); }
+}
+
+export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
+  const { connection } = input;
+  if (operation === 'deliver' && BigInt(counter(input.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired');
+  const path = operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
+  return downstreamRequest(connection, path, operation === 'deliver' ? 'POST' : 'GET', operation === 'deliver' ? {
+    id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId, expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target, ...(input.allocation ? { allocation: input.allocation } : {}),
+  } : undefined, signal);
 }
 
 export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void {

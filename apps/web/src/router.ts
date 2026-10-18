@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-export type Workspace = 'research' | 'data' | 'portfolios' | 'observations' | 'settings' | 'extensions';
+export type Workspace = 'research' | 'data' | 'factors' | 'portfolios' | 'observations' | 'settings' | 'extensions';
 export interface Route { page: Workspace; id?: string; creating: boolean; params: URLSearchParams; unknown?: boolean }
-const pages = new Set<Workspace>(['research', 'data', 'portfolios', 'observations', 'settings', 'extensions']);
+const pages = new Set<Workspace>(['research', 'data', 'factors', 'portfolios', 'observations', 'settings', 'extensions']);
 export function currentRoute(): Route {
   const [path = '', query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, id, extra] = path.split('/');

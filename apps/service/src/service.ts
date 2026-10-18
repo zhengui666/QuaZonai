@@ -9,6 +9,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Cursor, Extension, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../../research/src/host.ts';
 import { API } from '../../../packages/contracts/src/index.ts';
+import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import type { ExtensionView, ResearchSummary, WorkspaceView, UsageView } from '../../../packages/contracts/src/index.ts';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import type { ServiceOptions } from './config.ts';
@@ -17,6 +18,11 @@ import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
+import { listFactors, readFactor } from './factors.ts';
+import { factorCapacity } from './capacity.ts';
+import { researchCapital } from '../../../packages/contracts/src/research.ts';
+import { capitalWorkbench } from './capital-workbench.ts';
+import { accountKey, capitalStatus, control } from './capital-exit.ts';
 
 const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
@@ -68,7 +74,7 @@ export async function createService(options: ServiceOptions) {
   try {
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
-    const status = error instanceof Problem ? error.statusCode : /conflict|already|trial_budget_exhausted/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable/.test(message) ? 400 : 500);
+    const status = error instanceof Problem ? error.statusCode : /conflict|already|trial_budget_exhausted/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable|unsupported|mismatch/.test(message) ? 400 : 500);
     const code = error instanceof Problem || /^[a-z][a-z0-9_]+$/.test(message) ? message : status < 500 ? 'invalid_request' : 'internal_error';
     reply.code(status).send({ error: code });
   });
@@ -79,10 +85,11 @@ export async function createService(options: ServiceOptions) {
     facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel });
   }, context);
   const work = workbench(research, config);
+  const capital = capitalWorkbench(research, config);
   await work.recoverResearch();
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
-  app.get(`${API}/datasets`, async () => config.datasets.map(({ data: _data, policy: _policy, strategy: _strategy, ...view }) => view));
+  app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => ({ ...view, researchSettings: datasetResearchSettings(data, strategy ? json(strategy) : undefined) })));
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
     const [page, facts, inspection] = await Promise.all([research.list(cursor), work.snapshot(), research.harness.inspect(context)]);
@@ -107,10 +114,18 @@ export async function createService(options: ServiceOptions) {
       outputTokens: sources.length ? sources.reduce((sum, value) => sum + value.output, 0) : null,
       cost: null, activeTasks: (await research.harness.inspect(context)).tasks.length };
   });
+  app.get(`${API}/factors`, async () => listFactors(research, (await work.snapshot())?.researchRequests));
+  app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
+  app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
+  app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
   app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
-  app.get(`${API}/observations`, async () => Object.values((await work.snapshot())!.observations).map((item) => observationView(observation(item))));
+  app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatus(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)])) } }); }); });
+  app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits`, request => capital.refreshCapital(request.params.id));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/preview`, request => capital.previewCapital(request.params.id, request.body));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits/commands`, async (request, reply) => reply.code(202).send(await capital.commandCapital(request.params.id, request.body)));
+  app.post<{ Params: { id: string } }>(`${API}/observations/:id/automatic`, async request => observationView({ ...(await work.getObservation(request.params.id)), view: await work.configureAutomatic(request.params.id, request.body) }));
   app.post(`${API}/observations`, async (request, reply) => { const view = await work.startObservation(request.body); return reply.code(202).send(observationView(await work.getObservation(view.id))); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/refresh`, async (request) => { await work.refreshObservation(request.params.id); return observationView(await work.getObservation(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/observations/:id/stop`, async (request) => {

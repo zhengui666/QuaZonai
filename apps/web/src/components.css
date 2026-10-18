@@ -1,4 +1,6 @@
 /* Live records, auth and result consumers share the workbench's visual roles. */
+.workbench .ant-empty-description, .workbench .ant-form-item-extra { color: var(--secondary); }
+.ant-table-content table:focus-visible { outline-offset: -2px; }
 .draft-notice { color: var(--warning); font-size: 12px; margin-top: 14px; }
 .form-actions .ant-btn-primary { min-width: 136px; }
 .observation-heading > .ant-btn { min-width: 124px; }
@@ -96,7 +98,19 @@ details[open] > summary { margin-bottom: 14px; }
 .origin-link { margin-top: 10px; }
 .provenance-disclosure { margin-top: 22px; }
 .provenance-disclosure .facts { margin-top: 20px; }
-.positions-section { padding: 26px 30px; border-top: 1px solid var(--line); }
+.positions-section, .account-control-section { padding: 26px 30px; border-top: 1px solid var(--line); }
+.account-control-section h3 { margin-bottom: 18px; }
+.account-control-section > .facts, .account-control-section form, .capital-intent, .capital-preview { margin-block: 24px; }
+.capital-preview, .capital-intent { padding-top: 24px; border-top: 1px solid var(--line); }
+.capital-preview .facts, .capital-intent .facts, .adjustment-receipt .facts { margin-block: 20px; }
+.capital-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.bounded-leg { border-left: 2px solid var(--line); padding-left: 18px; margin-block: 22px; }
+.submission-preview, .mandate-section { margin-block: 26px; }
+.submission-preview > summary { padding-block: 12px; }
+.submission-preview .facts { margin-top: 18px; }
+.model-source { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; padding-block: 15px; }
+.adjustment-receipt { margin-top: 22px; }
+.account-control-section .ant-input-affix-wrapper-disabled .ant-input-suffix { color: var(--secondary); }
 .observation-error, .observation-document > .error-notice { margin-inline: 30px; }
 .provider-search { margin-bottom: 17px; }
 .provider-list { display: grid; gap: 10px; }
@@ -150,7 +164,8 @@ details[open] > summary { margin-bottom: 14px; }
   .portfolio-result .study-heading { padding-inline: 0; }
   .portfolio-result .facts { margin-top: 16px; }
   .equity-chart { height: 260px; }
-  .positions-section { padding-inline: 20px; }
+  .positions-section, .account-control-section { padding-inline: 20px; }
+  .submission-preview > summary { min-height: 44px; }
   .dataset-drawer .facts { grid-template-columns: 1fr; }
   .observation-error, .observation-document > .error-notice { margin-inline: 20px; }
   .record-context { flex-wrap: wrap; }

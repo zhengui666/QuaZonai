@@ -14,6 +14,7 @@ export const Application = defineDoc<{
   researchRequests: ResearchAdmissions;
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
+  accountControls?: Record<string, JsonObject>;
 }>({
   kind: 'qz.application', version: 1, scope: 'session',
   initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
@@ -25,6 +26,10 @@ export interface PortfolioFact {
 export interface ObservationFact {
   input: ObservationStart; view: ObservationView; connection: ConnectionConfig;
   target: JsonObject; taskId: number; snapshot: JsonObject | null;
+  automaticTaskId?: number;
+  capitalPreviews?: Record<string, JsonObject>;
+  allocationTarget?: JsonObject;
+  allocationContext?: JsonObject;
 }
 export function json(value: unknown): JsonObject { return JSON.parse(JSON.stringify(value)) as JsonObject; }
 export function portfolio(value: unknown) { return value as PortfolioFact; }

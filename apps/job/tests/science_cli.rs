@@ -228,6 +228,90 @@ fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
     assert_eq!(result.consumed_target_points.get(), 2);
 }
 
+#[test]
+fn native_capacity_uses_original_catalog_before_decision_and_reports_conditional_bounds() {
+    use contracts::capacity::{NativeCapacityReportV1, NativeCapacityRequestV1};
+    use contracts::science::NativeRollingBarLiquidityPolicyV1;
+    let (directory, simulation) = market("0", 20);
+    let mut request = NativeCapacityRequestV1 {
+        schema_version: contracts::SchemaV1,
+        simulation,
+        policy: NativeRollingBarLiquidityPolicyV1 {
+            schema_version: contracts::SchemaV1,
+            maximum_age_seconds: 120,
+            participation_limit: "0.01".parse().unwrap(),
+        },
+        capitals: vec![
+            "1000.000000000000000001".parse().unwrap(),
+            "10000000".parse().unwrap(),
+        ],
+    };
+    let run = |request: &NativeCapacityRequestV1| {
+        let output = command(
+            &[
+                "assess-capacity".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+            ],
+            request,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<NativeCapacityReportV1>(&output.stdout).unwrap()
+    };
+    let report = run(&request);
+    assert_eq!(report.status, "ESTIMATED");
+    assert_eq!(
+        report.maximum_capital.unwrap().as_decimal(),
+        &"250500".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    assert_eq!(report.binding_instrument.as_deref(), Some("EUR/USD.SIM"));
+    assert_eq!(report.scenarios[0].status, "FEASIBLE");
+    assert_eq!(report.scenarios[1].status, "CONSTRAINED");
+    assert!(report.minimum_capital.unwrap().is_positive());
+    // The second BAR has occurred, but is not yet available: it cannot fund this decision.
+    request.simulation.target_points[0].asof_ns = market::count(2 * market::INTERVAL_NS);
+    assert_eq!(
+        run(&request).maximum_capital.unwrap().as_decimal(),
+        &"250250".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    request.simulation.target_points[0].asof_ns = market::count(market::INTERVAL_NS);
+    assert_eq!(
+        run(&request).reason.as_deref(),
+        Some("available_at_liquidity_missing")
+    );
+    request.simulation.target_points.remove(0);
+    request.simulation.target_points[0].asof_ns = market::count(100 * market::INTERVAL_NS);
+    request.simulation.target_points[0].valid_until_ns = market::count(101 * market::INTERVAL_NS);
+    let stale = run(&request);
+    assert_eq!(stale.reason.as_deref(), Some("liquidity_stale"));
+    assert_eq!(stale.scenarios.len(), request.capitals.len());
+    for (row, capital) in stale.scenarios.iter().zip(&request.capitals) {
+        assert_eq!(&row.capital, capital);
+        assert_eq!(row.status, "UNAVAILABLE");
+        assert_eq!(row.reason.as_deref(), Some("liquidity_stale"));
+        assert!(row.required_turnover.is_none() && row.maximum_participation.is_none());
+        assert!(row.usable_capital.is_none() && row.unallocated_cash.is_none());
+    }
+    request.simulation.target_points[0].asof_ns = market::instant(7);
+    request.simulation.settings.base_currency = "EUR".into();
+    assert_eq!(run(&request).reason.as_deref(), Some("currency_mismatch"));
+    request.capitals[0] = "-1".parse().unwrap();
+    let invalid = command(
+        &[
+            "assess-capacity".as_ref(),
+            "--catalog".as_ref(),
+            directory.path().as_os_str(),
+        ],
+        &request,
+    );
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("capacity_capital_invalid"));
+}
+
 fn target_blend_request() -> serde_json::Value {
     use serde_json::json;
     let row = |asof: u64| {
