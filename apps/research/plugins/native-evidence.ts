@@ -1,5 +1,5 @@
 import { defineDocFamily } from '@earendil-works/pi-durable';
-import type { DocumentReader, JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, DocumentReader, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
@@ -7,9 +7,9 @@ import { createGzip, createGunzip } from 'node:zlib';
 import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import { object } from '../src/trials.ts';
 
-// These are documents of the original native child in the same official store.
+// Persistent original-study facts, keyed by native child ID and part index in the same official store.
 export const NativeEvidencePart = defineDocFamily<{ data: string }, null>({
-  kind: 'qz.native-evidence-part', version: 1, scope: 'task', family: true, initial: () => ({ data: '' }),
+  kind: 'qz.native-evidence-part', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', family: true, initial: () => ({ data: '' }),
 });
 const format = 'qz.native-evidence/gzip-json/v1';
 const partSize = 1024 * 1024;
@@ -36,13 +36,13 @@ export async function retainNativeEvidence(evidence: JsonObject, save: (index: n
 }
 
 /** Owner-side read of the original native child; never model-facing final feedback. */
-export async function readNativeEvidence(reader: DocumentReader, taskId: TaskId, native: JsonObject, context: Context): Promise<JsonObject> {
+export async function readNativeEvidence(reader: DocumentReader, conversationId: ConversationId, taskId: TaskId, native: JsonObject, context: Context): Promise<JsonObject> {
   if (native.format !== format) return native;
   const count = native.parts;
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 1) throw new Error('native_evidence_parts_invalid');
   async function* parts(count: number) {
     for (let index = 0; index < count; index++) {
-      const part = await reader.snapshot(NativeEvidencePart, taskId, String(index), context);
+      const part = await reader.snapshot(NativeEvidencePart, conversationId, `${taskId}:${index}`, context);
       if (!part) throw new Error('native_evidence_part_missing');
       yield Buffer.from(part.data, 'base64');
     }

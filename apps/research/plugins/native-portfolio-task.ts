@@ -13,11 +13,11 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
       const result = await evaluatePortfolio(task.input, context);
       const native = await retainNativeEvidence(result.evidence, async (index, data) => {
         await runtime.commit(async (tx) => {
-          (await tx.doc(NativeEvidencePart, task.id, String(index), null)).data = data;
+          (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${index}`, null)).data = data;
           return undefined;
         }, context);
       });
-      // Complete raw evidence stays in this native child's outcome or task documents, never model-facing Study facts.
+      // Keep full evidence associated with this child in the original store, never model-facing Study facts.
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed',
         result: { summary: { ...result.summary, evidenceTaskId: task.id }, native } } }), context);
     } catch (error) {

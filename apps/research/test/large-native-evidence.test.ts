@@ -166,7 +166,7 @@ appendFileSync(config.log, JSON.stringify({ command, inputBytes, outputBytes, co
     assert.deepEqual(proposal, { hypothesis: 'Preserve the complete original 64-market account evidence.', members, allocations, request, strategy: originalPolicy });
     const reference = object(object(child.state.outcome.status === 'completed' ? child.state.outcome.result : null, 'native_result').native, 'native_evidence');
     assert.equal(reference.format, 'qz.native-evidence/gzip-json/v1');
-    const native = await readNativeEvidence(host.harness, child.id, reference, context);
+    const native = await readNativeEvidence(host.harness, receipt.conversationId, child.id, reference, context);
     assert.deepEqual(native.members, members);
     assert.deepEqual(object(native.policy, 'native_policy').allocations, allocations);
     const component = (native.components as JsonObject[])[0]!;
@@ -188,7 +188,7 @@ appendFileSync(config.log, JSON.stringify({ command, inputBytes, outputBytes, co
     assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION']);
     assert.equal(faux.state.callCount, 2);
     const modelFacing = JSON.stringify(view.entries);
-    for (const marker of ['RAW_FORECAST_LABELS_SYNTHETIC_ONLY', 'canonical_result', 'HELDOUT_OWNER_ONLY', 'target_points']) assert.equal(modelFacing.includes(marker), false, marker);
+    for (const marker of ['RAW_FORECAST_LABELS_SYNTHETIC_ONLY', 'canonical_result', 'HELDOUT_OWNER_ONLY', 'asof_ns']) assert.equal(modelFacing.includes(marker), false, marker);
     await host.close();
     host = await openResearch(options);
     assert.deepEqual((await host.view(receipt.conversationId)).research, facts);
@@ -196,7 +196,7 @@ appendFileSync(config.log, JSON.stringify({ command, inputBytes, outputBytes, co
     assert.equal(reopened.state.outcome.status, 'completed');
     const reopenedReference = object(object(reopened.state.outcome.status === 'completed' ? reopened.state.outcome.result : null, 'native_result').native, 'native_evidence');
     assert.deepEqual(reopenedReference, reference);
-    assert.deepEqual(await readNativeEvidence(host.harness, child.id, reopenedReference, context), native);
+    assert.deepEqual(await readNativeEvidence(host.harness, receipt.conversationId, child.id, reopenedReference, context), native);
     assert.equal(faux.state.callCount, 2, 'Reopening evidence must not recompute the candidate');
   } finally {
     try { await host?.close(); }
