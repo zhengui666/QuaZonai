@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { canonical } from '../../research/src/documents.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { Application, counter, json, nowNs, nsTime, object, observation, portfolio, Problem } from './facts.ts';
-import { acceptReceipt, acceptSnapshot, downstream } from './downstream.ts';
+import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } from './downstream.ts';
 import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
 import { factorId } from './factors.ts';
 import type { AutomaticAllocation, TargetReceipt } from '../../../packages/contracts/src/index.ts';
@@ -130,8 +130,20 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
             cashBuffer: policy.cashBuffer, budget: String(sized.budget), capital: String(sized.capital), capacity: capacity.maximumCapital, residualCash: sized.status === 'BLOCKED' ? null : String(sized.residualCash), controlRevision: status.controlRevision,
             members: (sized.members ?? []) as unknown as AutomaticAllocation['members'], targets: target && Array.isArray(target.targets) ? target.targets.map(value => { const row = object(value); return { instrumentId: String(row.instrument_id), weight: String(row.weight) }; }) : [], receipt, epoch };
           if (deliver) {
+            // Match the native sizing scope; unrelated quotes do not limit this allocation.
+            const instruments = new Set((fact.target.targets as JsonObject[]).filter(row =>
+              (!Array.isArray(fact.target.rebalance_instrument_ids) || fact.target.rebalance_instrument_ids.includes(row.instrument_id!))
+              && (/[1-9]/.test(String(row.weight)) || current.view.positions.some(position => position.instrumentId === row.instrument_id && /[1-9]/.test(position.value!))))
+              .map(row => row.instrument_id));
+            const liquidity = (execution!.liquidity as JsonObject[]).filter(row => instruments.has(row.instrumentId))
+              .map(row => ({ instrumentId: row.instrumentId!, eventNs: row.eventNs!, availableNs: row.availableNs! }));
+            const deadlines = [BigInt(counter(target!.valid_until_ns, 'target_expiry')), BigInt(counter(capacity.validUntilNs, 'capacity_expiry')),
+              clock + BigInt(policy.maximumSnapshotAgeSeconds) * 1_000_000_000n, BigInt(counter(execution!.validUntilNs, 'execution_expiry')),
+              ...liquidity.map(row => BigInt(counter(row.eventNs, 'liquidity_clock')) + BigInt(capacity.assumptions.maximumAgeSeconds!) * 1_000_000_000n)];
             latest.allocationTarget = target!;
             latest.allocationContext = json({ epoch, snapshotSequence: snapshot.sequence, nativeClockNs: snapshot.nativeClockNs,
+              validUntilNs: deadlines.reduce((earliest, deadline) => deadline < earliest ? deadline : earliest).toString(), maximumSnapshotAgeSeconds: policy.maximumSnapshotAgeSeconds,
+              execution: { validUntilNs: execution!.validUntilNs, maximumAgeSeconds: capacity.assumptions.maximumAgeSeconds, liquidity },
               accountSourceId: status.accountSourceId, observationId: status.observationId, controlRevision: status.controlRevision, reserved: status.reserved,
               equity: snapshot.equity, budget: sized.budget!, capital: sized.capital!, cashBuffer: policy.cashBuffer, members: sized.members!, factors: members, capacity: { maximumCapital: capacity.maximumCapital, decisionClockNs: capacity.decisionClockNs, validUntilNs: capacity.validUntilNs, assumptions: capacity.assumptions } });
           }
@@ -172,7 +184,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       try { await settle(await downstream(input, 'deliver', runtime.signal)); }
       catch (error) {
         if (runtime.signal.aborted) throw error;
-        const notOffered = error instanceof Problem && error.message === 'target_expired';
+        const notOffered = isPreTransportRejection(error);
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); const allocation = fact.view.allocation!;
           allocation.reason = error instanceof Problem ? error.message : 'automatic_delivery_requires_reconciliation';

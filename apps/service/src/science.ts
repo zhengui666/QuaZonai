@@ -2,7 +2,7 @@ import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import { computePortfolio } from './native.ts';
 import type { PortfolioTaskInput } from './native.ts';
-import { acceptReceipt, acceptSnapshot, downstream } from './downstream.ts';
+import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
 import { CapitalExitCommand } from './capital-exit.ts';
@@ -67,7 +67,7 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
-          if (error instanceof Problem && ['target_expired', 'downstream_credentials_missing'].includes(error.message)) {
+          if (isPreTransportRejection(error)) {
             fact.view.receipt!.status = 'NOT_OFFERED'; if (fact.view.status !== 'STOPPED') fact.view.status = 'FAILED';
           }
           fact.view.error = errorCode(error); facts.observations[task.input.id] = json(fact);

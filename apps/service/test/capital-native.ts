@@ -6,6 +6,7 @@ import { Application, decimalUnits, json, nowNs, observation, portfolio } from '
 import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl } from '../src/capital-exit.ts';
 import { built, context, setup } from './support.ts';
 import { AdjustAccount, unsettledAdjustment } from '../src/automatic.ts';
+import { ObserveAccount } from '../src/science.ts';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -242,34 +243,102 @@ for (const mode of ['paper', 'live'] as const) for (const variant of ['enable-or
   } finally { await state.cleanup(); await remote.close(); }
 });
 
-for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejected', 'disabled', 'abort-pending'] as const) test(`automatic pre-POST boundary retains ${variant} receipt truth`, { timeout: 15_000 }, async () => {
+test('prepared execution validity survives SQLite reopen and the official task resizes before any offer', { timeout: 30_000 }, async () => {
   assert.ok(process.env.QZ_JOB_BINARY);
-  const directory = await mkdtemp(join(tmpdir(), 'qz-automatic-boundary-')); const remote = Fastify(); let posts = 0; let sequence = 1; const queries: string[] = [];
-  const identity = { clientId: 'TEST_ONLY-boundary', accountId: 'TEST_ONLY-account', mode: 'paper', currency: 'USD' };
+  const state = await setup(); const remote = Fastify(); let accountReads = 0; let posts = 0; const queries: string[] = [];
+  let release!: () => void; const heldSnapshot = new Promise<void>(resolve => { release = resolve; });
+  const identity = { clientId: 'TEST_ONLY-reopen', accountId: 'TEST_ONLY-reopen', mode: 'paper' as const, currency: 'USD' };
   const source = { accountSourceId: id('1'), observationId: id('2'), controlRevision: '7' };
-  const clock = nowNs(); const expiry = String(BigInt(clock) + (variant === 'expiry' ? 2_000_000_000n : 120_000_000_000n)); const executionExpiry = String(BigInt(clock) + 120_000_000_000n);
-  const target = { schema_version: 1, asof_ns: String(BigInt(clock) - 1_000_000_000n), valid_until_ns: expiry, cash_weight: '0', targets: [{ instrument_id: 'TEST_ONLY.SIM', currency: 'USD', weight: '1' }] };
   remote.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, readable: true, supported: true }, automaticTargets: { supported: true, revisionBound: true } }));
   remote.get('/capital-exits', () => ({ ...identity, ...source, reserved: '0', exits: [] }));
-  remote.get('/account', () => ({ ...identity, ...source, sequence: String(sequence), nativeClockNs: clock, equity: '1000', cash: '1000', positions: [], execution: { currency: 'USD', validUntilNs: executionExpiry, liquidity: [{ instrumentId: 'TEST_ONLY.SIM', currency: 'USD', eventNs: clock, availableNs: clock, notional: '100000', lotNotional: '1', minimumNotional: '1', takerFee: '0' }] } }));
+  remote.get('/account', async () => {
+    const sequence = ++accountReads; if (sequence === 2) await heldSnapshot;
+    const clock = nowNs(); return { ...identity, ...source, sequence: String(sequence), nativeClockNs: clock, equity: '1000', cash: '1000', positions: [], execution: { currency: 'USD', validUntilNs: String(BigInt(clock) + (sequence === 1 ? 2_000_000_000n : 120_000_000_000n)), liquidity: [{ instrumentId: 'TEST.SIM', currency: 'USD', eventNs: clock, availableNs: clock, notional: '100000', lotNotional: '1', minimumNotional: '1', takerFee: '0' }] } };
+  });
+  remote.post('/targets', req => { posts++; return { ...req.body as any, status: 'ACKNOWLEDGED' }; });
+  remote.get<{ Params: { id: string } }>('/targets/:id', (req, reply) => { queries.push(req.params.id); return reply.code(404).send({ error: 'TEST_ONLY-never-received' }); });
+  const url = await remote.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const built_ = await built(state); const connection = { ...identity, id: 'TEST_ONLY-reopen', name: 'TEST_ONLY loopback', url };
+    state.options.config.jobBinary = process.env.QZ_JOB_BINARY!; state.options.config.connections.push(connection);
+    const deadline = String(BigInt(nowNs()) + 120_000_000_000n);
+    await state.service.research.harness.commit(async tx => {
+      const facts = await tx.doc(Application); const selected = portfolio(facts.portfolios[built_.view.id]);
+      selected.view.factors = [{ factorId: 'TEST_ONLY-reopen-factor', weight: '1' }]; selected.target!.valid_until_ns = deadline;
+      selected.view.capacity = { status: 'ESTIMATED', currency: 'USD', maximumCapital: '1000', minimumCapital: '1', validUntilNs: deadline, decisionClockNs: nowNs(), assumptions: { participation: '0.01', maximumAgeSeconds: 60 } } as any;
+      facts.portfolios[built_.view.id] = json(selected);
+      facts.observations.reopen = json({ input: { portfolioId: built_.view.id }, connection, target: selected.target!, taskId: selected.view.taskId, snapshot: null, view: { id: 'reopen', currency: 'USD', status: 'QUEUED', positions: [], curve: [], receipt: { id: 'original', status: 'NOT_OFFERED' }, automaticPolicy: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } } });
+    }, context);
+    const task = { input: { id: 'reopen', binary: process.env.QZ_JOB_BINARY!, dataDir: state.directory } } as any;
+    const runtime = { signal: new AbortController().signal, now: Date.now, commit: (operation: any) => state.service.research.harness.commit(operation, context) } as any;
+    const read = async () => observation((await state.service.research.harness.snapshot(Application, context))!.observations.reopen);
+    await AdjustAccount.definition.phases.snapshot(task, runtime, context);
+    const prepared = (await read()).allocationContext!; const originalId = (await read()).view.allocation!.receipt!.id;
+    assert.equal((await read()).view.allocation!.status, 'SIZED'); assert.ok(prepared.execution); assert.equal(posts, 0);
+    await state.restart(); assert.deepEqual((await read()).allocationContext, prepared);
+    await sleep(Math.max(0, Number(BigInt(String(prepared.validUntilNs)) / 1_000_000n) - Date.now() + 30));
+    await state.service.research.harness.commit(async tx => {
+      const facts = await tx.doc(Application); const fact = observation(facts.observations.reopen);
+      fact.taskId = await tx.createTask(AdjustAccount, task.input, { conversationId: built_.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true }); facts.observations.reopen = json(fact);
+    }, context);
+    await until(async () => accountReads, value => value >= 2);
+    const expired = await read(); assert.equal(expired.view.allocation!.receipt!.id, originalId); assert.equal(expired.view.allocation!.receipt!.status, 'NOT_OFFERED'); assert.equal(expired.view.allocation!.reason, 'allocation_evidence_expired');
+    assert.deepEqual(expired.allocationContext, prepared); assert.equal(expired.allocationTarget!.valid_until_ns, deadline); assert.equal(posts, 0); assert.deepEqual(queries, []);
+    release(); const fresh = await until(read, fact => fact.view.allocation?.receipt?.status === 'ACKNOWLEDGED');
+    assert.equal(posts, 1); assert.deepEqual(queries, []); assert.notEqual(fresh.view.allocation!.receipt!.id, originalId); assert.equal(fresh.view.allocation!.sequence, '2'); assert.notEqual(fresh.allocationContext!.validUntilNs, prepared.validUntilNs); assert.equal(fresh.allocationTarget!.valid_until_ns, deadline);
+  } finally { release(); await state.cleanup(); await remote.close(); }
+});
+
+for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejected', 'disabled', 'abort-pending', 'execution-expired', 'execution-commit-gap', 'liquidity-expired', 'capacity-expired', 'account-expired', 'credentials', 'legacy-prepared', 'irrelevant-liquidity', 'scoped-liquidity', 'exit-liquidity-expired'] as const) test(`automatic pre-POST boundary retains ${variant} receipt truth`, { timeout: 15_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY);
+  const directory = await mkdtemp(join(tmpdir(), 'qz-automatic-boundary-')); const remote = Fastify(); let posts = 0; let sequence = 1; let accountReads = 0; const queries: string[] = [];
+  const tokenEnv = 'QZ_R3_TEST_ONLY_TEMPORARY_TOKEN';
+  if (variant === 'credentials') { assert.equal(process.env[tokenEnv], undefined); process.env[tokenEnv] = 'TEST_ONLY-loopback'; }
+  const identity = { clientId: 'TEST_ONLY-boundary', accountId: 'TEST_ONLY-account', mode: 'paper', currency: 'USD' };
+  const source = { accountSourceId: id('1'), observationId: id('2'), controlRevision: '7' };
+  const clock = nowNs(); const shortExpiry = String(BigInt(clock) + 2_000_000_000n); const longExpiry = String(BigInt(clock) + 120_000_000_000n);
+  const expiry = variant === 'expiry' ? shortExpiry : longExpiry;
+  const executionExpiry = ['execution-expired', 'execution-commit-gap', 'transport'].includes(variant) ? shortExpiry : longExpiry;
+  const capacityExpiry = variant === 'capacity-expired' ? shortExpiry : longExpiry;
+  const target = { schema_version: 1, asof_ns: String(BigInt(clock) - 1_000_000_000n), valid_until_ns: expiry, cash_weight: variant === 'exit-liquidity-expired' ? '1' : '0', ...(variant === 'scoped-liquidity' ? { rebalance_instrument_ids: ['TEST_ONLY.SIM'] } : {}), targets: [{ instrument_id: 'TEST_ONLY.SIM', currency: 'USD', weight: variant === 'exit-liquidity-expired' ? '0' : variant === 'scoped-liquidity' ? '0.5' : '1' }, ...(variant === 'scoped-liquidity' ? [{ instrument_id: 'UNUSED.SIM', currency: 'USD', weight: '0.5' }] : [])] };
+  remote.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, readable: true, supported: true }, automaticTargets: { supported: true, revisionBound: true } }));
+  remote.get('/capital-exits', () => ({ ...identity, ...source, reserved: '0', exits: [] }));
+  remote.get('/account', () => { accountReads++; return { ...identity, ...source, sequence: String(sequence), nativeClockNs: clock, equity: '1000', cash: variant === 'exit-liquidity-expired' ? '0' : '1000', positions: variant === 'exit-liquidity-expired' ? [{ instrumentId: 'TEST_ONLY.SIM', quantity: '1', value: '1000', pnl: null }] : [], execution: { currency: 'USD', validUntilNs: executionExpiry, liquidity: [{ instrumentId: 'TEST_ONLY.SIM', currency: 'USD', eventNs: clock, availableNs: clock, notional: '100000', lotNotional: '1', minimumNotional: '1', takerFee: '0' }, ...(['irrelevant-liquidity', 'scoped-liquidity'].includes(variant) ? [{ instrumentId: 'UNUSED.SIM', currency: 'USD', eventNs: '0', availableNs: '0', notional: '0', lotNotional: '1', minimumNotional: '0', takerFee: '0' }] : [])] } }; });
   remote.post('/targets', (req, reply) => { posts++; if (variant === 'transport') { reply.hijack(); reply.raw.destroy(); return; } return { ...(req.body as object), status: variant === 'rejected' && posts === 1 ? 'REJECTED' : 'ACKNOWLEDGED' }; });
   remote.get<{ Params: { id: string } }>('/targets/:id', (req, reply) => { queries.push(req.params.id); return reply.code(404).send({ error: 'TEST_ONLY-no-observed-receipt' }); });
   const url = await remote.listen({ host: '127.0.0.1', port: 0 });
-  const facts: any = { observations: { o: { input: { portfolioId: 'p' }, connection: { ...identity, id: 'TEST_ONLY', name: 'TEST_ONLY loopback', url }, target, taskId: 1, snapshot: null, view: { id: 'o', currency: 'USD', status: 'QUEUED', positions: [], curve: [], receipt: { id: 'original', status: 'NOT_OFFERED' }, automaticPolicy: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } } } }, portfolios: { p: { view: { factors: [{ factorId: 'TEST_ONLY-factor', weight: '1' }], capacity: { status: 'ESTIMATED', currency: 'USD', maximumCapital: '1000', minimumCapital: '1', validUntilNs: executionExpiry, decisionClockNs: clock, assumptions: { participation: '1', maximumAgeSeconds: 60 } } }, evidence: [] } }, accountControls: {} };
+  const facts: any = { observations: { o: { input: { portfolioId: 'p' }, connection: { ...identity, id: 'TEST_ONLY', name: 'TEST_ONLY loopback', url, ...(variant === 'credentials' ? { tokenEnv } : {}) }, target, taskId: 1, snapshot: null, view: { id: 'o', currency: 'USD', status: 'QUEUED', positions: [], curve: [], receipt: { id: 'original', status: 'NOT_OFFERED' }, automaticPolicy: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: variant === 'account-expired' ? 2 : 60 } } } }, portfolios: { p: { view: { factors: [{ factorId: 'TEST_ONLY-factor', weight: '1' }], capacity: { status: 'ESTIMATED', currency: 'USD', maximumCapital: '1000', minimumCapital: '1', validUntilNs: capacityExpiry, decisionClockNs: clock, assumptions: { participation: '1', maximumAgeSeconds: ['liquidity-expired', 'exit-liquidity-expired'].includes(variant) ? 2 : 60 } } }, evidence: [] } }, accountControls: {} };
   let checkpoint: any;
-  const runtime: any = { signal: new AbortController().signal, now: Date.now, commit: async (operation: Function) => { const value = await operation({ doc: async (definition: unknown) => { assert.equal(definition, Application); return facts; } }); if (value?.checkpoint) checkpoint = value.checkpoint; return value; }, sleep: async () => {} };
+  const runtime: any = { signal: new AbortController().signal, now: Date.now, commit: async (operation: Function) => { const value = await operation({ doc: async (definition: unknown) => { assert.equal(definition, Application); return facts; } }); if (value?.checkpoint) checkpoint = value.checkpoint; if (variant === 'execution-commit-gap' && checkpoint?.phase === 'reconcile' && posts === 0) await sleep(Math.max(0, Number(BigInt(shortExpiry) / 1_000_000n) - Date.now() + 30)); return value; }, sleep: async () => {} };
   const task: any = { input: { id: 'o', binary: process.env.QZ_JOB_BINARY, dataDir: directory }, state: { checkpoint: { phase: 'snapshot' } } };
   try {
     await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(facts.observations.o.view.allocation.status, 'SIZED'); assert.equal(checkpoint.phase, 'deliver');
     const receiptId = facts.observations.o.view.allocation.receipt.id;
     assert.equal(unsettledAdjustment(facts.observations.o), true);
     if (variant === 'pending') { await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(checkpoint.phase, 'deliver'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.equal(posts, 0); assert.deepEqual(queries, []); }
-    if (variant === 'expiry') await sleep(Math.max(0, Number(BigInt(expiry) / 1_000_000n) - Date.now() + 30));
+    if (['expiry', 'execution-expired', 'liquidity-expired', 'capacity-expired', 'account-expired', 'exit-liquidity-expired'].includes(variant)) await sleep(Math.max(0, Number(BigInt(shortExpiry) / 1_000_000n) - Date.now() + 30));
+    if (variant === 'credentials') delete process.env[tokenEnv];
+    if (variant === 'account-expired') facts.observations.o.view.automaticPolicy.maximumSnapshotAgeSeconds = 60;
+    if (variant === 'legacy-prepared') { delete facts.observations.o.allocationContext.validUntilNs; delete facts.observations.o.allocationContext.execution; }
     if (variant === 'late-manual') facts.observations.manual = json({ ...facts.observations.o, view: { ...facts.observations.o.view, id: 'manual', allocation: undefined, automaticPolicy: undefined, receipt: { id: 'unresolved-manual', status: 'UNCERTAIN' } } });
     if (variant === 'disabled' || variant === 'abort-pending') facts.observations.o.view.automaticPolicy.enabled = false;
     if (variant === 'abort-pending') await AdjustAccount.definition.abort!(task, runtime, context); else await AdjustAccount.definition.phases.deliver(task, runtime, context);
     if (variant === 'disabled' || variant === 'abort-pending') { assert.equal(posts, 0); assert.equal(facts.observations.o.view.allocation.status, 'STOPPED'); assert.equal(facts.observations.o.view.allocation.receipt.status, 'NOT_OFFERED'); assert.equal(unsettledAdjustment(facts.observations.o), false); assert.deepEqual(queries, []); }
-    else if (variant === 'pending') { assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED'); assert.deepEqual(queries, []); }
+    else if (variant === 'pending' || variant === 'irrelevant-liquidity' || variant === 'scoped-liquidity') { assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED'); assert.deepEqual(queries, []); }
+    else if (variant === 'credentials') {
+      assert.equal(posts, 0); assert.equal(facts.observations.o.view.allocation.receipt.status, 'NOT_OFFERED'); assert.equal(facts.observations.o.view.allocation.reason, 'downstream_credentials_missing'); assert.equal(checkpoint.phase, 'snapshot');
+      facts.observations.manual = json({ ...facts.observations.o, view: { ...facts.observations.o.view, id: 'manual', allocation: undefined, automaticPolicy: undefined, receipt: { id: 'manual', status: 'PENDING' } } });
+      await ObserveAccount.definition.phases.deliver({ input: { id: 'manual', connection: facts.observations.manual.connection, target, receiptId: 'manual', refresh: false } } as any, runtime, context);
+      assert.equal(facts.observations.manual.view.receipt.status, 'NOT_OFFERED'); assert.equal(facts.observations.manual.view.error, 'downstream_credentials_missing'); assert.equal(posts, 0);
+      process.env[tokenEnv] = 'TEST_ONLY-loopback'; await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(accountReads, 2); assert.equal(checkpoint.phase, 'deliver'); assert.notEqual(facts.observations.o.view.allocation.receipt.id, receiptId);
+      await AdjustAccount.definition.phases.deliver(task, runtime, context); assert.equal(posts, 1); assert.deepEqual(queries, []); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED');
+    }
+    else if (['execution-expired', 'execution-commit-gap', 'liquidity-expired', 'capacity-expired', 'account-expired', 'legacy-prepared', 'exit-liquidity-expired'].includes(variant)) {
+      assert.equal(posts, 0); assert.deepEqual(queries, []); assert.equal(facts.observations.o.view.allocation.receipt.status, 'NOT_OFFERED'); assert.equal(checkpoint.phase, 'snapshot'); assert.equal(unsettledAdjustment(facts.observations.o), false);
+      assert.equal(facts.observations.o.view.allocation.reason, variant === 'legacy-prepared' ? 'allocation_evidence_unavailable' : 'allocation_evidence_expired'); assert.equal(facts.observations.o.allocationTarget.valid_until_ns, expiry);
+      if (variant !== 'legacy-prepared') { assert.equal(facts.observations.o.allocationContext.execution.validUntilNs, executionExpiry); assert.equal(facts.observations.o.allocationContext.validUntilNs, shortExpiry); }
+      await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(accountReads, 2); assert.equal(posts, 0); assert.deepEqual(queries, []); assert.equal(facts.observations.o.allocationTarget.valid_until_ns, expiry);
+    }
     else if (variant === 'rejected') {
       assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'REJECTED');
       for (let retry = 0; retry < 3; retry++) { await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(checkpoint.phase, 'wait'); assert.equal(facts.observations.o.view.allocation.status, 'REJECTED'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.equal(posts, 1); }
@@ -277,6 +346,7 @@ for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejecte
       await AdjustAccount.definition.phases.deliver(task, runtime, context); assert.equal(posts, 2); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED');
     } else if (variant === 'transport') {
       assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'UNCERTAIN'); assert.equal(checkpoint.phase, 'reconcile');
+      await sleep(Math.max(0, Number(BigInt(shortExpiry) / 1_000_000n) - Date.now() + 30));
       await AdjustAccount.definition.phases.reconcile(task, runtime, context); await AdjustAccount.definition.phases.snapshot(task, runtime, context);
       assert.equal(checkpoint.phase, 'reconcile'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.deepEqual(queries, [receiptId]); assert.equal(posts, 1);
     } else {
@@ -286,5 +356,5 @@ for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejecte
       assert.equal(facts.observations.o.view.allocation.reason, variant === 'expiry' ? 'target_expired' : 'target_delivery_requires_reconciliation');
       assert.equal(facts.observations.o.allocationTarget.valid_until_ns, expiry); assert.equal(unsettledAdjustment(facts.observations.o), false); assert.equal(posts, 0); assert.equal(queries.length, 0);
     }
-  } finally { await remote.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { if (variant === 'credentials') delete process.env[tokenEnv]; await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });

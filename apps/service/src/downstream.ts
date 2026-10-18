@@ -28,9 +28,21 @@ export async function downstreamRequest(connection: ConnectionConfig, path: stri
   } finally { await dispatcher.close(); }
 }
 
+export function isPreTransportRejection(error: unknown): boolean {
+  return error instanceof Problem && ['target_expired', 'downstream_credentials_missing', 'allocation_evidence_unavailable', 'allocation_evidence_expired'].includes(error.message);
+}
+
 export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
   const { connection } = input;
-  if (operation === 'deliver' && BigInt(counter(input.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired');
+  if (operation === 'deliver') {
+    const now = BigInt(nowNs());
+    if (BigInt(counter(input.target.valid_until_ns, 'expiry')) <= now) throw new Problem('target_expired');
+    if (input.allocation) {
+      const deadline = input.allocation.validUntilNs;
+      if (typeof deadline !== 'string' || !/^\d+$/.test(deadline)) throw new Problem('allocation_evidence_unavailable');
+      if (BigInt(deadline) <= now) throw new Problem('allocation_evidence_expired');
+    }
+  }
   const path = operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
   return downstreamRequest(connection, path, operation === 'deliver' ? 'POST' : 'GET', operation === 'deliver' ? {
     id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId, expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target, ...(input.allocation ? { allocation: input.allocation } : {}),
