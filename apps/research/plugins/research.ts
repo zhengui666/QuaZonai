@@ -2,11 +2,11 @@ import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, hook, section, ToolTask } from '@earendil-works/pi-durable';
 import { Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
-import { modelFeedback } from '../src/feedback.ts';
+import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
 
 export default defineExtension({
   name: 'qz.research',
-  sections: [section('research', () => `Research factors, not mandatory trading strategies. Read research_brief; follow nextAfterTrialId using afterTrialId to disclose every page. Use research_trial(trialId) to recover original validation feedback instead of reevaluating a proposal. Propose a falsifiable hypothesis, use the registered data/factor/evaluation tools, inspect validation feedback and iterate. Keep failed and compared trials. Never tune against final held-out results, look ahead, invent data or call computation qualification. Respect the original criteria, explicit trial budget and stop rule. The running native host supplies successor generations when an unfinished response yields; a response boundary, tool-call count or finite invocation is not a scientific stop rule and requires no separate background loop. Do not claim execution after the host closes. Use research_finish only for an actual original stop condition. Use the registered final evaluator for a selected factor if an unseen holdout is configured; otherwise research_finish. Finalize in a single-tool round, without reads or computations in that round. Portfolios and target delivery are optional.`)],
+  sections: [section('research', () => `Research factors or the owner's explicitly admitted strategy, not a mandatory downstream consumer. Read research_brief; follow nextAfterTrialId using afterTrialId for the trial ledger. For cross-market policy use research_markets(offset,limit) and nextOffset to read the complete original training-market universe and fee reserves; pages are response bounds, never market/trial caps. Use research_trial(trialId) to recover validation feedback instead of reevaluating. Propose falsifiable complete candidates and preserve failed/compared trials. Never tune against final results, look ahead, invent data or call computation qualification. Respect original criteria, budget and stop rule. The running native host supplies successor generations when an unfinished response yields; a response boundary, tool-call count or finite invocation is not a scientific stop rule and requires no separate loop. Do not claim execution after host closure. Use research_finish only at an actual original stop condition. Use the registered final evaluator when requested; finalize alone without other reads/computations in that round. Target delivery remains optional.`)],
   // Native terminate is unanimous per round, not an immediate global stop.
   // Mark subsequent read/error results terminal after a recorded final; never
   // return final metrics to the model or permit more scientific computation.
@@ -21,7 +21,7 @@ export default defineExtension({
       parameters: Type.Object({ afterTrialId: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }), replay: 'safe',
       async execute(args, api, context) {
         const input = await studyInput(api, context);
-        const { sealed: _sealed, ...data } = input.data;
+        const { data, policy } = modelBriefInput(input);
         const study = await api.snapshot(Study, api.conversationId, context);
         const trials = study?.trials ?? [];
         const available = trials.filter((trial) => (trial.taskId as number) > (args.afterTrialId ?? 0)).sort((a, b) => (a.taskId as number) - (b.taskId as number));
@@ -29,10 +29,19 @@ export default defineExtension({
         return { content: [{ type: 'text', text: JSON.stringify({
           trials: page.map((trial) => { const proposal = object(trial.proposal, 'trial_proposal'); return {
             taskId: trial.taskId, status: trial.status, error: trial.error ?? null, hypothesis: proposal.hypothesis ?? null,
-            instrumentId: proposal.instrumentId ?? null, memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
+            instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(proposal.allocations) ? proposal.allocations.length : null,
+            memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
-          goal: input.goal, data, policy: input.policy, stopped: study?.final !== null,
+          goal: input.goal, data, policy, stopped: study?.final !== null,
         }) }] };
+      },
+    }),
+    defineTool({
+      name: 'research_markets', description: 'Read a page of the original admitted cross-market universe in its original training order, with original training-only metadata and fee sizing reserves. Follow nextOffset to read all markets. No computation, attempt consumption, final-period performance, inferred event independence or external data.',
+      parameters: Type.Object({ offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }), replay: 'safe',
+      async execute(args, api, context) {
+        const input = await studyInput(api, context);
+        return { content: [{ type: 'text', text: JSON.stringify(marketPage(input, args.offset ?? 0, args.limit ?? 20)) }] };
       },
     }),
     defineTool({

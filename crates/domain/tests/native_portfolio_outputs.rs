@@ -342,6 +342,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         },
         target_points: vec![NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: count(start),
             valid_until_ns: count(end),
             targets: vec![AllocationTargetV1 {
@@ -358,6 +359,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         ("orders.inflight".into(), "0".into()),
     ]);
     let result = NativeSimulationResultV1 {
+        settled_replay_ns: None,
         spot_cash_report: None,
         recorded_fee_replay: None,
         schema_version: SchemaV1,
@@ -616,6 +618,35 @@ fn simulation_cannot_borrow_another_account_capital_currency_or_return_window() 
 }
 
 #[test]
+fn native_simulation_binding_validates_scoped_full_account_targets() {
+    let (mut parameters, result) = simulation();
+    let NativeTaskParametersV1::SimulatePortfolio { request, .. } = &mut parameters else {
+        unreachable!()
+    };
+    request.target_points[0].rebalance_instrument_ids = Some(vec!["A.SIM".into()]);
+    assert!(accepts(&parameters, "qz.native_simulation", &result));
+    for dimension in 0..6 {
+        let mut invalid = parameters.clone();
+        let NativeTaskParametersV1::SimulatePortfolio { request, .. } = &mut invalid else {
+            unreachable!()
+        };
+        let point = &mut request.target_points[0];
+        match dimension {
+            0 => point.rebalance_instrument_ids = Some(vec![]),
+            1 => point.rebalance_instrument_ids = Some(vec!["A.SIM".into(), "A.SIM".into()]),
+            2 => point.rebalance_instrument_ids = Some(vec!["OTHER.SIM".into()]),
+            3 => point.cash_weight = "0.9".parse().unwrap(),
+            4 => point.targets[0].weight = "-0.1".parse().unwrap(),
+            _ => point.cash_weight = "1.1".parse().unwrap(),
+        }
+        assert!(
+            !accepts(&invalid, "qz.native_simulation", &result),
+            "scope binding dimension {dimension}"
+        );
+    }
+}
+
+#[test]
 fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_accounts() {
     use contracts::research::{SplitKind, SplitPolicyV1};
     let (template_task, template_result) = simulation();
@@ -704,6 +735,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
                 .iter()
                 .map(|point| NativeTargetPointV1 {
                     schema_version: SchemaV1,
+                    rebalance_instrument_ids: None,
                     asof_ns: point.decision_ns,
                     valid_until_ns: count(point.decision_ns.get() + request.target_ttl_ns.get()),
                     targets: vec![AllocationTargetV1 {
@@ -769,7 +801,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
         contracts::execution::NativeJsonOutputV1::ExperimentEvaluation(_)
     ));
     assert!(accepts(&task, "qz.experiment_evaluation", &result));
-    for dimension in 0..17 {
+    for dimension in 0..18 {
         let mut invalid = result.clone();
         match dimension {
             0 => invalid.feature_artifact_ids.reverse(),
@@ -802,7 +834,11 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
             13 => invalid.folds[0].training_end_available_ns = count(0),
             14 => invalid.folds[1].training_end_available_ns = count(49),
             15 => invalid.dataset_revision_id = Id::new(),
-            _ => invalid.model_artifact_id = Id::new(),
+            16 => invalid.model_artifact_id = Id::new(),
+            _ => {
+                invalid.folds[0].simulation_request.target_points[0].rebalance_instrument_ids =
+                    Some(vec!["A.SIM".into()]);
+            }
         }
         assert!(
             !accepts(&task, "qz.experiment_evaluation", &invalid),

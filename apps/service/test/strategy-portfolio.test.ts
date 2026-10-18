@@ -160,3 +160,83 @@ test('legacy single-evidence replay cannot remove the original historical classi
       capital: '3000', currency: 'USD', evidence, policy: dataset.strategy! }, context), /strategy_policy_mismatch/);
   } finally { await state.cleanup(); }
 });
+
+test('cross-market selected replay binds original market allocations and trades their HELDOUT union in one total-capital account', async () => {
+  const state = await setup();
+  try {
+    const catalog = join(state.directory, 'cross-market-sealed'); await mkdir(catalog);
+    await writeFile(join(catalog, 'binding.json'), JSON.stringify({ name: 'SEALED', end: '30', cross_market: true }));
+    const log = join(state.directory, 'cross-market-calls.jsonl'); const binary = state.options.config.jobBinary;
+    await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('../../research/test/portfolio-protocol.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
+    const policy = { name: 'original-cross-market', kind: 'cross-market-threshold' as const, instrumentIds: ['BASE.SIM', 'TEST.SIM', 'UNSELECTED.SIM'],
+      threshold: 0, investedWeight: '0.75', targetTtlNs: '5', forecastMode: 'price-volume' as const, evaluationPartition: 'HELDOUT' as const,
+      simulationSettings: { base_currency: 'USD', starting_capital: '3000', fee_rates: ['BASE.SIM', 'TEST.SIM', 'UNSELECTED.SIM'].map((instrument_id) => ({ instrument_id, maker: '0.001', taker: '0.001' })) } };
+    const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
+      selection: { schema_version: 1, bar_types: policy.instrumentIds.map((id) => id + '-1-MINUTE-LAST-EXTERNAL'), event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 50 },
+      parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
+    const members = [{ model: wat, weight: '1' }];
+    const allocations = [{ instrumentId: 'BASE.SIM', weight: '0.4' }, { instrumentId: 'TEST.SIM', weight: '0.6' }];
+    const evidence = { input: { policy: { strategy: policy } }, selected: { proposal: { members, allocations, strategy: policy } }, final: { result: { request } } };
+    const input = { id: 'cross-market-replay', dataDir: state.directory, catalog, binary, capital: '3000', currency: 'USD', evidence, policy };
+    const result = await computePortfolio(input, context);
+    const simulation = object(result.native.simulationRequest);
+    assert.equal(object(simulation.settings).starting_capital, '3000');
+    assert.equal((object(simulation.settings).fee_rates as JsonObject[]).length, 2);
+    assert.deepEqual(object(simulation.selection).bar_types, request.forecast.selection.bar_types.slice(0, 2));
+    assert.equal(object(simulation.selection).event_start_ns, '20');
+    assert.deepEqual((simulation.target_points as JsonObject[]).map((point) => point.asof_ns), ['20', '21', '25', '26', '29']);
+    assert.deepEqual((simulation.target_points as JsonObject[]).map((point) => point.rebalance_instrument_ids), [['BASE.SIM'], ['TEST.SIM'], ['BASE.SIM'], ['TEST.SIM'], ['BASE.SIM', 'TEST.SIM']]);
+    assert.deepEqual(object((result.native.sources as JsonObject[])[0]!.policy).allocations, allocations);
+    assert.equal(result.curve[0]!.value, '3000');
+    const calls = (await readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as JsonObject);
+    assert.equal(calls.filter((call) => call.command === 'simulate').length, 1);
+    assert.deepEqual(object(object(calls.find((call) => call.command === 'forecast-factor')!.input).selection).bar_types, request.forecast.selection.bar_types.slice(0, 2));
+    await assert.rejects(computePortfolio({ ...input, policy: { ...policy, investedWeight: '1' } }, context), /strategy_policy_mismatch/);
+    assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, calls.length);
+  } finally { await state.cleanup(); }
+});
+
+test('cross-market owner portfolio command accepts the originally admitted policy after owner-isolated final evidence', async () => {
+  const state = await setup(); const previous = process.env.QZ_JOB_BINARY;
+  try {
+    await state.service.close();
+    const prefix = join(state.directory, 'multi-prefix'); const sealed = join(state.directory, 'multi-sealed');
+    await mkdir(prefix); await mkdir(sealed);
+    await writeFile(join(prefix, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', cross_market: true }));
+    await writeFile(join(sealed, 'binding.json'), JSON.stringify({ name: 'SEALED', end: '30', cross_market: true }));
+    const log = join(state.directory, 'multi-owner-calls.jsonl'); const binary = state.options.config.jobBinary;
+    await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('../../research/test/portfolio-protocol.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
+    process.env.QZ_JOB_BINARY = binary;
+    const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
+      selection: { schema_version: 1, bar_types: ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', maximum_rows: 50 },
+      parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
+    const finalRequest = structuredClone(request); finalRequest.forecast.selection.event_end_ns = '30'; finalRequest.forecast.selection.decision_cutoff_ns = '30';
+    const dataset = state.options.config.datasets[0]!;
+    dataset.data = { catalog: prefix, request, sealed: { catalog: sealed, request: finalRequest } };
+    dataset.strategy = { name: 'owner-many-markets', kind: 'cross-market-threshold', instrumentIds: ['BASE.SIM', 'TEST.SIM'], threshold: 0,
+      investedWeight: '0.75', targetTtlNs: '5', forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
+      simulationSettings: { base_currency: 'USD', starting_capital: '3000', fee_rates: ['BASE.SIM', 'TEST.SIM'].map((instrument_id) => ({ instrument_id, maker: '0.001', taker: '0.001' })) } };
+    (state.options as ServiceOptions).extensions = [research, strategy]; await state.restart();
+    const allocations = [{ instrumentId: 'BASE.SIM', weight: '0.4' }, { instrumentId: 'TEST.SIM', weight: '0.6' }];
+    state.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Multi-market owner-command protocol, not profitability.', members: [{ model: wat, weight: '1' }], allocations }), { stopReason: 'toolUse' }),
+      async () => {
+        const page = await state.service.research.list(); const view = await state.service.research.view(page.items[0]!.id);
+        return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Protocol-only original selection before independent assessment.' }), { stopReason: 'toolUse' });
+      },
+    ]);
+    const receipt = await state.service.work.startResearch({ requestId: 'multi-market-owner-original', goal: 'Owner multi-market shared-account protocol.', model: state.model, datasetId: dataset.id, maxTrials: 1 });
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    assert.equal((await state.service.research.view(receipt.conversationId)).research!.final!.status, 'COMPUTED');
+    const input = { requestId: 'multi-market-owner-portfolio', name: 'Original shared-account markets', datasetId: dataset.id, researchIds: [receipt.conversationId], capital: '3000' };
+    const admitted = await state.service.work.startPortfolio(input);
+    await state.service.research.harness.waitForTask(admitted.taskId as TaskId, context);
+    const result = await state.service.work.getPortfolio(admitted.id);
+    assert.equal(result.view.status, 'COMPUTED', result.view.error ?? '');
+    assert.deepEqual(object(object(result.evidence[0]!.selected).proposal).allocations, allocations);
+    assert.equal(object(object(result.native!.simulationRequest).settings).starting_capital, '3000');
+    assert.equal(((object(result.native!.simulationRequest).target_points as JsonObject[])[0]!.rebalance_instrument_ids as string[]).length, 1);
+    assert.equal((await state.service.work.startPortfolio(input)).id, admitted.id);
+    assert.equal(state.faux.state.callCount, 2);
+  } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await state.cleanup(); }
+});

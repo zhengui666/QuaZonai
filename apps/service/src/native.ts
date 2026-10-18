@@ -38,7 +38,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const request = structuredClone(object(result.request, 'independent_request'));
       const originalPolicy = (studyInput.policy as JsonObject | undefined)?.strategy;
       // Retain legacy consumer semantics only without original instrument/history bindings.
-      const bound = Array.isArray(input.evidence) || proposal.instrumentId !== undefined || input.policy.instrumentIds !== undefined
+      const bound = Array.isArray(input.evidence) || proposal.instrumentId !== undefined || proposal.allocations !== undefined || input.policy.instrumentIds !== undefined
         || (originalPolicy as JsonObject | undefined)?.instrumentIds !== undefined || input.policy.evidenceMode !== undefined
         || (originalPolicy as JsonObject | undefined)?.evidenceMode !== undefined;
       if (bound && canonical(originalPolicy ?? null) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');

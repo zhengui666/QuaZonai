@@ -55,6 +55,7 @@ fn target_source(
         || point.valid_until_ns != until
         || point.targets != target.targets
         || point.cash_weight != target.cash_weight
+        || point.rebalance_instrument_ids.is_some()
         || target.targets.is_empty()
         || target
             .targets

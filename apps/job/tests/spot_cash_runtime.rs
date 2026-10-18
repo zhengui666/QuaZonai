@@ -203,6 +203,7 @@ fn fixture_with_delay(
     };
     let point = |time, weight: &str, cash: &str| NativeTargetPointV1 {
         schema_version: SchemaV1,
+        rebalance_instrument_ids: None,
         asof_ns: count(time),
         valid_until_ns: count(time + 2 * MINUTE),
         targets: vec![AllocationTargetV1 {

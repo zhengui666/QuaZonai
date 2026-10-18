@@ -248,8 +248,18 @@ pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError>
         return Err(bad("native_output.simulation_returns_state"));
     }
     let canonical = &value.canonical_result;
+    let completed = match (
+        canonical.pointer("/run/outcome").and_then(Value::as_str),
+        value.settled_replay_ns,
+    ) {
+        (Some("completed"), None) => true,
+        (Some("stopped"), Some(time)) => {
+            time.get() == native_count(&canonical["run"]["backtest_end_ns"])?
+        }
+        _ => false,
+    };
     if canonical.get("schema").and_then(Value::as_str) != Some("nautilus-backtest-result/v1")
-        || canonical.pointer("/run/outcome").and_then(Value::as_str) != Some("completed")
+        || !completed
         || canonical.get("summary")
             != Some(
                 &serde_json::to_value(&value.summary).map_err(|_| bad("native_output.summary"))?,
@@ -300,6 +310,23 @@ pub(crate) fn binding(
         return Err(bad("native_output.account_currency"));
     }
     for point in &request.target_points {
+        crate::execution::strategy::target_scope(point)?;
+        if point.rebalance_instrument_ids.is_some()
+            && (!point.cash_weight.is_fraction()
+                || point
+                    .targets
+                    .iter()
+                    .any(|target| !target.weight.is_fraction())
+                || point
+                    .targets
+                    .iter()
+                    .fold(point.cash_weight.as_decimal().clone(), |sum, target| {
+                        sum + target.weight.as_decimal()
+                    })
+                    != BigDecimal::from(1))
+        {
+            return Err(bad("native_output.simulation_target_sum"));
+        }
         if point
             .targets
             .iter()
@@ -319,9 +346,21 @@ pub(crate) fn binding(
     let end = native_count(&canonical["run"]["backtest_end_ns"])?;
     if start < request.selection.event_start_ns.get()
         || start > end
-        || end > request.selection.decision_cutoff_ns.get()
+        || end
+            > crate::execution::strategy::scoped_replay_end(request)
+                .unwrap_or(request.selection.decision_cutoff_ns.get())
     {
         return Err(bad("native_output.simulation_interval"));
+    }
+    if value.settled_replay_ns.is_some()
+        && (request.settings.multi_currency_spot_cash.is_some()
+            || (crate::execution::strategy::scoped_replay_end(request).is_none()
+                && !matches!(
+                    request.settings.fill_model,
+                    contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedLiquidity { .. }
+                )))
+    {
+        return Err(bad("native_output.simulation_completion"));
     }
     let (variant, account_type) = match request.settings.account_kind {
         NativeAccountKind::Cash => ("Cash", "CASH"),

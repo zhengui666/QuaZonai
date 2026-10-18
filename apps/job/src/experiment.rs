@@ -381,6 +381,7 @@ pub fn evaluate(
             .map(|decision| {
                 Ok(NativeTargetPointV1 {
                     schema_version: SchemaV1,
+                    rebalance_instrument_ids: None,
                     asof_ns: decision.decision_ns,
                     valid_until_ns: count(
                         decision

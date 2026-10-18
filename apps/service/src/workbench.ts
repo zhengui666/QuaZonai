@@ -112,7 +112,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }
     // Exact admission validation only; all numerical blending belongs to job blend-targets.
     try { exactWeights(weights); } catch { throw new Problem('portfolio_weights_invalid', 422); }
-    if (!configured.strategy || configured.strategy.kind !== 'factor-threshold') throw new Problem('strategy_adapter_not_configured', 422);
+    if (!configured.strategy || !['factor-threshold', 'cross-market-threshold'].includes(configured.strategy.kind)) throw new Problem('strategy_adapter_not_configured', 422);
     const evidence = await host.harness.commit(async (tx) => {
       const records = [];
       let selection: string | undefined;

@@ -1600,6 +1600,7 @@ fn original_native_allocation_enters_one_shared_account_without_future_build_row
         settings: request.execution_settings.clone(),
         target_points: vec![NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: cutoff,
             valid_until_ns: until,
             targets: report.allocation.targets.unwrap(),

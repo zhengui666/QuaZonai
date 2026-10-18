@@ -322,6 +322,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         })
         .collect();
     let result = NativeSimulationResultV1 {
+        settled_replay_ns: None,
         spot_cash_report: Some(report),
         recorded_fee_replay: None,
         schema_version: SchemaV1,
@@ -364,6 +365,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         },
         target_points: vec![NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: count(DAY + 1),
             valid_until_ns: count(DAY + 100),
             targets: vec![AllocationTargetV1 {

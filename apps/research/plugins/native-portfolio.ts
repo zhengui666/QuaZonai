@@ -48,18 +48,22 @@ export async function forecastMembers(binary: string, catalog: string, members: 
   directory: string, context: Context, diagnostics = false, partition?: StrategyPartition, forceBlend = false) {
   const components: JsonObject[] = []; const memberRows: JsonObject[][] = [];
   const selection = simulationSelection(request, partition, policy);
+  // The registered request remains authoritative. This explicit multi-market
+  // projection computes only the registered choices, retaining their full causal prefix.
+  const computationRequest = policy.kind === 'cross-market-threshold'
+    ? { ...request, forecast: { ...object(request.forecast, 'forecast_request'), selection: simulationSelection(request, undefined, policy) } } : request;
   for (const [index, member] of members.entries()) {
     const modelPath = join(directory, `model-${index}.wasm`);
     const module = wabt.parseWat('selected-factor.wat', member.model);
     try { module.validate(); await writeFile(modelPath, module.toBinary({}).buffer); } finally { module.destroy(); }
     const args = ['--catalog', catalog, '--model', modelPath];
-    const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', request, ['--summary-only', ...args], directory, context) : null;
-    if (summary && (canonical(summary.request!) !== canonical(request) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
-    const forecastRequest = object(request.forecast, 'forecast_request');
+    const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context) : null;
+    if (summary && (canonical(summary.request!) !== canonical(computationRequest) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
+    const forecastRequest = object(computationRequest.forecast, 'forecast_request');
     const command = policy.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast';
     const forecasts = await executeNative(binary, command, forecastRequest, args, directory, context);
-    const original = thresholdTargets(forecasts, policy, currency);
-    const points = partition ? intervalTargets(original, selection) : original;
+    const original = thresholdTargets(forecasts, policy, currency, partition ? selection : undefined);
+    const points = partition && policy.kind !== 'cross-market-threshold' ? intervalTargets(original, selection) : original;
     memberRows.push(points);
     components.push({ index, member: { ...member }, command, forecastRequest, forecasts, target_points: points, summary });
   }
@@ -91,6 +95,7 @@ export async function evaluatePortfolio(input: PortfolioEvaluationInput, context
       partitions_component: { index: 0, meaning: 'COMPONENT_FACTOR_DIAGNOSTICS_NOT_ACCOUNT_METRICS' },
       components: targets.components.map((component) => ({ index: component.index!, weight: object(component.member, 'member').weight!, summary: component.summary! })),
       portfolio: { partition: input.partition, native_version: simulation.native_version ?? null,
+        ...(input.policy.kind === 'cross-market-threshold' ? { strategy_kind: input.policy.kind } : {}),
         ...(input.policy.evidenceMode ? { evidenceMode: input.policy.evidenceMode } : {}),
         statistics: simulation.statistics ?? [], summary: simulation.summary ?? {},
         iterations: simulation.iterations ?? null, events: simulation.events ?? null, orders: simulation.orders ?? null,

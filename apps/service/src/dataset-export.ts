@@ -243,8 +243,10 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     ready: options.ready === true, data };
   if (options.policy) { result.policy = (await jsonFile(options.policy)).value; safeNumbers(result.policy); }
   if (strategy) {
-    if (strategy.kind !== 'factor-threshold' || typeof strategy.instrumentId !== 'string' || !primary.instrumentIds.includes(strategy.instrumentId)
-      || !(object(object(primary.request.forecast).selection).bar_types as string[]).some((bar) => bar.startsWith(strategy.instrumentId + '-'))) throw new Error('original_strategy_mismatch');
+    const ids = strategy.kind === 'cross-market-threshold' ? strategy.instrumentIds as string[] : [strategy.instrumentId];
+    const bars = object(object(primary.request.forecast).selection).bar_types as string[];
+    if (ids.some((id) => typeof id !== 'string' || !primary.instrumentIds.includes(id)
+      || !bars.some((bar) => bar.split('-').slice(0, -4).join('-') === id))) throw new Error('original_strategy_mismatch');
     text(strategy.name, 'strategy_name');
     const weight = decimalUnits(decimal(strategy.investedWeight, 'strategy_weight'));
     const targetTtl = BigInt(counter(strategy.targetTtlNs, 'strategy_ttl'));
