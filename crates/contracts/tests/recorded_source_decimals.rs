@@ -1,4 +1,4 @@
-use contracts::recorded_fees::RecordedTradeFeeV1;
+use contracts::recorded_fees::{RecordedFeeFillV1, RecordedTradeFeeV1};
 use serde_json::{json, Value};
 
 fn record() -> Value {
@@ -23,17 +23,25 @@ fn original_source_price_and_notional_roundtrip_without_numeric_38_18_rounding()
 }
 
 #[test]
-fn native_quantities_and_commissions_keep_the_existing_numeric_contract() {
-    for field in ["source_quantity", "quantity", "fee_usdc"] {
+fn native_quantities_and_booked_commissions_keep_the_existing_numeric_contract() {
+    for field in ["source_quantity", "quantity"] {
         let mut original = record();
         original[field] = json!("0.0000000000000000001");
         assert!(serde_json::from_value::<RecordedTradeFeeV1>(original).is_err());
     }
+    let booked_fill = json!({
+        "client_order_id":"test-order", "instrument_id":"123.POLYMARKET",
+        "fill_ns":"60000000000", "bar_end_ns":"60000000000", "order_side":"BUY",
+        "fill_quantity":"4", "fill_price":"0.5", "commission":"0.0000000000000000001",
+        "allocations":[]
+    });
+    let error = serde_json::from_value::<RecordedFeeFillV1>(booked_fill).unwrap_err();
+    assert!(error.to_string().contains("NUMERIC(38,18)"));
 }
 
 #[test]
 fn source_audit_decimals_still_require_finite_plain_decimal_strings() {
-    for field in ["price", "usdc_amount"] {
+    for field in ["price", "usdc_amount", "fee_usdc"] {
         for invalid in [
             Value::Null,
             json!(0.003),

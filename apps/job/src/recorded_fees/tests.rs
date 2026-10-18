@@ -488,3 +488,56 @@ fn source_audit_decimals_still_reject_nonpositive_records() {
         }
     }
 }
+
+#[test]
+fn native_shared_account_retains_original_fee_precision_before_booking() {
+    let (directory, _, request) = native_scenario();
+    let baseline = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let before = baseline.recorded_fee_replay.as_ref().unwrap();
+    let consumed_id = &before.fills[0].allocations[0].original.id;
+    let path = directory.path().join(RECORDED_FEES_FILE);
+    let mut original: RecordedTradeFeesV1 =
+        serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
+    let record = original
+        .records
+        .iter_mut()
+        .find(|r| &r.id == consumed_id)
+        .unwrap();
+    let exact_fee = (record.fee_usdc.to_decimal()
+        + BigDecimal::from_str("0.00000000000000000001").unwrap())
+    .to_plain_string();
+    record.fee_usdc = exact_fee.parse().unwrap();
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.as_ref().unwrap();
+    assert_eq!(report.fills.len(), before.fills.len());
+    assert_eq!(
+        serde_json::to_value(&report.fills[0].allocations[0].original).unwrap()["fee_usdc"],
+        serde_json::json!(exact_fee)
+    );
+    for (actual, previous) in report.fills.iter().zip(&before.fills) {
+        assert_eq!(actual.commission, previous.commission);
+        assert_eq!(actual.fill_quantity, previous.fill_quantity);
+        for allocation in &actual.allocations {
+            let recorded = BigRational::new(
+                allocation.allocated_fee_numerator.parse().unwrap(),
+                allocation.allocated_fee_denominator.parse().unwrap(),
+            );
+            assert_eq!(
+                recorded,
+                ratio(&allocation.original.fee_usdc.to_decimal())
+                    * ratio(allocation.allocated_quantity.as_decimal())
+                    / ratio(allocation.original.quantity.as_decimal())
+            );
+        }
+    }
+    let balance = |summary: &std::collections::BTreeMap<String, String>| {
+        summary
+            .iter()
+            .find(|(key, _)| key.ends_with(".balance.pUSD.total"))
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(balance(&result.summary), balance(&baseline.summary));
+}

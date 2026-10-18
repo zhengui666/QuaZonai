@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 export function configure(root, origin) {
   const data = join(resolve(root), 'data');
+  mkdirSync(join(data, 'scratch'), { recursive: true, mode: 0o700 });
   const servicePath = join(data, 'service.json');
   if (existsSync(servicePath)) {
     const config = JSON.parse(readFileSync(servicePath, 'utf8'));
