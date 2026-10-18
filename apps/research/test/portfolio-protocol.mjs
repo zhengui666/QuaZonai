@@ -29,10 +29,14 @@ if (command === 'evaluate-factor') {
     })) })) }));
 } else if (command === 'forecast-factor' || command === 'forecast') {
   assert.equal(selection.event_start_ns, '0', 'forecast must retain its warmup prefix');
-  const clocks = ['1', '9', '10', '12', '15', '19', '20', '23', '29'];
+  const clocks = binding?.cross_market ? [
+    ...['1', '10', '15', '20', '25', '29'].map((at) => ({ instrument_id: 'BASE.SIM', at })),
+    ...['2', '11', '15', '21', '26', '29'].map((at) => ({ instrument_id: 'TEST.SIM', at })),
+  ] : ['1', '9', '10', '12', '15', '19', '20', '23', '29'].map((at) => ({ instrument_id: 'TEST.SIM', at }));
   console.log(JSON.stringify({ native_versions: { protocol: 'TEST_ONLY' }, points: clocks
-    .filter((at) => BigInt(at) < BigInt(selection.event_end_ns) && BigInt(at) <= BigInt(selection.decision_cutoff_ns))
-    .map((at) => ({ instrument_id: 'TEST.SIM', event_ns: at, available_ns: at,
+    .filter(({ at, instrument_id }) => selection.bar_types.some((bar) => bar.startsWith(instrument_id + '-'))
+      && BigInt(at) < BigInt(selection.event_end_ns) && BigInt(at) <= BigInt(selection.decision_cutoff_ns))
+    .map(({ at, instrument_id }) => ({ instrument_id, event_ns: at, available_ns: at,
       forecast: at === '15' ? null : prediction, label_return: 12345.6789, test_raw_marker: 'RAW_FORECAST_AND_LABELS_PROTOCOL_ONLY' })) }));
 } else if (command === 'blend-targets') {
   // Deliberately no alternative numerical blend engine: echo one row only to test orchestration/provenance.

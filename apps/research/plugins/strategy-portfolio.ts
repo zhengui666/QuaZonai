@@ -11,13 +11,15 @@ export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
   tools: [defineTool({
     name: 'strategy_portfolio_evaluate',
-    description: 'Propose one complete Wasm ensemble with exact positive decimal weights summing to 1. Optionally select instrumentId inside the original fixed instrumentIds universe; absence retains the admitted base instrument. Fixed threshold/fees/capital map each component to targets; native exact blending and ONE shared account trade VALIDATION only. Feedback is native account statistics and component IC/count summaries, never heldout or raw arrays. An original HISTORICAL_REASSESSMENT binding explicitly denotes exposed history, never unseen evidence; the agent cannot change that mode. Each proposal, including failure, consumes one original trial.',
-    parameters: Type.Object({ hypothesis: Type.String(), members: Type.Array(Type.Object({ model: Type.String(), weight: Type.String() })), instrumentId: Type.Optional(Type.String()) }),
+    description: 'Register one complete causal Wasm ensemble with exact positive member weights summing to 1. A cross-market-threshold policy requires allocations of at least two admitted instruments with exact positive market weights summing to 1: all markets share the original TOTAL account capital, never capital per market. Its real observation clocks update only fresh markets; residual positions/fees/partial fills stay native. A legacy factor-threshold policy optionally selects instrumentId inside its original pool. ONE native shared account trades VALIDATION; account feedback is not heldout evidence. Historical mode and all failures/controls retain the original counted budget.',
+    parameters: Type.Object({ hypothesis: Type.String(), members: Type.Array(Type.Object({ model: Type.String(), weight: Type.String() })), instrumentId: Type.Optional(Type.String()),
+      allocations: Type.Optional(Type.Array(Type.Object({ instrumentId: Type.String(), weight: Type.String() }))) }),
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       const proposal = { hypothesis: args.hypothesis, members: args.members, request: input.data.request ?? null, strategy: input.policy.strategy ?? null,
-        ...(args.instrumentId !== undefined ? { instrumentId: args.instrumentId } : {}) };
+        ...(args.instrumentId !== undefined ? { instrumentId: args.instrumentId } : {}),
+        ...(args.allocations !== undefined ? { allocations: args.allocations } : {}) };
       return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
         const members = strategyMembers(proposal);
         const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));

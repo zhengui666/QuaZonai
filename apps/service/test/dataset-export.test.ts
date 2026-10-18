@@ -358,3 +358,25 @@ test('the real Python registry exports a fragment consumed by current v3 without
     assert.equal(state.faux.state.callCount, 0);
   } finally { await state.cleanup(); await f.cleanup(); }
 });
+
+test('offline cross-market export preserves a declared multi-market universe rather than silently choosing a base instrument', async () => {
+  const f = await fixture('DISCOVERY', true);
+  try {
+    const otherToken = '7'; const other = `condition-${otherToken}.POLYMARKET`; const otherBar = other + '-1-MINUTE-LAST-EXTERNAL';
+    const definition = structuredClone(f.metadata.universe.instrument_definitions[0]!);
+    definition.BinaryOption.id = other; definition.BinaryOption.raw_symbol = otherToken;
+    f.metadata.universe.instrument_definitions.push(definition);
+    f.metadata.quality.datasets[0]!.instrument_ids.push(other);
+    f.metadata.quality.datasets[0]!.selection.bar_types.push(otherBar);
+    f.receipt.source_request.tokens.push(otherToken);
+    f.receipt.source_definitions_json = JSON.stringify(f.metadata.universe.instrument_definitions).replaceAll('"original-native-u64-not-a-research-input"', '1788220800000000001');
+    await f.saveMetadata(); await f.saveRequest();
+    const strategy = { name: 'many-markets-one-account', kind: 'cross-market-threshold', instrumentIds: [instrument, other],
+      threshold: 0, investedWeight: '0.75', targetTtlNs: '1000000000', forecastMode: 'price-volume', simulationSettings: { base_currency: 'pUSD', starting_capital: '3000' } };
+    const file = join(f.directory, 'cross-market-strategy.json'); await writeFile(file, JSON.stringify(strategy));
+    const result = await exportDataset({ ...f.options, strategy: file });
+    assert.deepEqual(result.strategy, strategy);
+    assert.equal(result.strategy!.instrumentId, undefined);
+    assert.deepEqual(result.data.request, f.request);
+  } finally { await f.cleanup(); }
+});

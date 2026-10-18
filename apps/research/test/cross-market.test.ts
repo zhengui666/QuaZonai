@@ -21,14 +21,14 @@ test('cross-market resolution binds every registered exact allocation and its or
   assert.equal(resolved.kind, 'cross-market-threshold');
   assert.deepEqual((resolved as unknown as JsonObject).allocations, allocations);
   assert.equal(resolved.simulationSettings.starting_capital, '3000');
-  assert.deepEqual(resolved.simulationSettings.fee_rates, (original.simulationSettings as JsonObject).fee_rates!.slice(0, 2));
+  assert.deepEqual(resolved.simulationSettings.fee_rates, ((original.simulationSettings as JsonObject).fee_rates as JsonObject[]).slice(0, 2));
   assert.deepEqual(original, before);
   const request: JsonObject = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30',
     bar_types: ['C.SIM-1-MINUTE-LAST-EXTERNAL', 'B-YES.SIM-1-MINUTE-LAST-EXTERNAL', 'A.SIM-1-MINUTE-LAST-EXTERNAL', 'B-YES.SIM-OTHER-1-MINUTE-LAST-EXTERNAL'] } } };
   const selected = simulationSelection(request, 'VALIDATION', resolved);
   assert.deepEqual(selected.bar_types, ['B-YES.SIM-1-MINUTE-LAST-EXTERNAL', 'A.SIM-1-MINUTE-LAST-EXTERNAL']);
   assert.equal(selected.event_start_ns, '10'); assert.equal(selected.event_end_ns, '20');
-  assert.equal((request.forecast as JsonObject).selection!.event_end_ns, '30');
+  assert.equal(((request.forecast as JsonObject).selection as JsonObject).event_end_ns, '30');
 });
 
 test('real asynchronous market observations share one exact risky budget and never add missing or expiry BARs', () => {

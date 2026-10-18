@@ -10,7 +10,7 @@ import { openResearch } from '../src/host.ts';
 import research from '../plugins/research.ts';
 import strategy from '../plugins/strategy-portfolio.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
-import { iterationRequest } from '../plugins/native-wasm.ts';
+import { iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
 import { exactWeights, intervalTargets, replayCatalog, resolveStrategyPolicy, simulationSelection, strategyMembers, thresholdPolicy, thresholdTargets } from '../src/strategy.ts';
 import { object } from '../src/trials.ts';
 
@@ -535,5 +535,57 @@ test('large historical ledger pages disclose every trial and read failures witho
     assert.deepEqual(facts.input, state.input);
     assert.equal((await state.calls()).filter((call) => call.command === 'simulate').length, 3);
     assert.ok((object((object(facts.trials[3]!.result, 'result').components as JsonObject[])[0]!.summary, 'summary').partitions as JsonObject[]).some((partition) => (partition.assets as JsonObject[]).length === 24));
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('cross-market Harness registers one shared-capital proposal, retains allocations and isolates the owner-only final', async () => {
+  const state = await setup(true);
+  const policy = state.input.policy.strategy as JsonObject;
+  policy.kind = 'cross-market-threshold'; delete policy.instrumentId;
+  await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', cross_market: true }));
+  await writeFile(join(state.input.data.sealed.catalog, 'binding.json'), JSON.stringify({ name: 'SEALED', end: '30', cross_market: true }));
+  const allocations = [{ instrumentId: 'BASE.SIM', weight: '0.4' }, { instrumentId: 'TEST.SIM', weight: '0.6' }];
+  const host = await openResearch(state.options);
+  state.faux.setResponses([
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Complete invalid market choices count, not a free market-selection probe.', members, allocations: [allocations[0]!] }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Two asynchronous markets share the original total capital.', members, allocations }),
+    (transcript) => {
+      const feedback = textResult(transcript, 'strategy_portfolio_evaluate');
+      assert.equal(object(feedback.portfolio, 'portfolio').partition, 'VALIDATION');
+      assert.equal(JSON.stringify(feedback).includes('RAW_FORECAST'), false);
+      assert.equal(JSON.stringify(feedback).includes('HELDOUT_OWNER_ONLY'), false);
+      return tool('strategy_portfolio_finalize', { trialId: feedback.trialId, reason: 'Original registered cross-market candidate; protocol-only isolation check.' });
+    },
+  ]);
+  try {
+    const receipt = await host.start('cross-market-original', state.input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const facts = (await host.view(receipt.conversationId)).research!;
+    assert.deepEqual(facts.input, state.input);
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'COMPUTED']);
+    assert.equal(facts.trials[0]!.error, 'strategy_market_allocations_required');
+    assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').allocations, allocations);
+    assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').strategy, policy);
+    assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
+    assert.deepEqual(facts.final!.comparedTrials, facts.trials.map((trial) => trial.taskId));
+    for (const result of [object(facts.trials[1]!.result, 'trial_result'), object(facts.final!.result, 'final_result')]) {
+      const finalPartition = object(result.portfolio, 'portfolio').partition === 'HELDOUT';
+      assert.deepEqual(result.request, finalPartition ? normalizedRequest(state.input.data.sealed) : iterationRequest(state.input.data, true));
+      const child = await host.harness.waitForTask(result.evidenceTaskId as TaskId<JsonObject>, context);
+      assert.equal(child.state.outcome.status, 'completed');
+      const evidence = object(child.state.outcome.status === 'completed' ? child.state.outcome.result.native : null, 'native');
+      assert.deepEqual(object(evidence.policy, 'policy').allocations, allocations);
+      assert.deepEqual(evidence.members, members);
+      const simulation = object(evidence.simulationRequest, 'simulation');
+      assert.equal(object(simulation.settings, 'settings').starting_capital, '3000');
+      assert.equal((object(simulation.selection, 'selection').bar_types as string[]).length, 2);
+      const points = simulation.target_points as JsonObject[];
+      assert.ok(points.every((point) => (point.targets as JsonObject[]).length === 2));
+      assert.ok(points.some((point) => (point.rebalance_instrument_ids as string[]).length === 1));
+      assert.ok(points.some((point) => (point.rebalance_instrument_ids as string[]).length === 2));
+    }
+    assert.equal((await state.calls()).filter((call) => call.command === 'simulate').length, 2);
+    assert.equal(state.faux.state.callCount, 3);
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
   } finally { await host.close(); await state.cleanup(); }
 });
