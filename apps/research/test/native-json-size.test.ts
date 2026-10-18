@@ -10,7 +10,7 @@ import { executeNative } from '../plugins/native-portfolio.ts';
 
 // Transport-only process: no catalog, Wasm inference, market simulation or owner trial.
 async function transportProcess(directory: string) {
-  const binary = join(directory, 'job');
+  const binary = join(directory, 'job.mjs');
   await writeFile(binary, `#!${process.execPath}
 const command = process.argv[2];
 if (command === 'simulate') {
