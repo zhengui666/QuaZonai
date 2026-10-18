@@ -775,7 +775,40 @@ fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_order
         request.selection.decision_cutoff_ns = cutoff;
         let observed = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();
         assert_eq!(observed.rows, 16);
-        let result = job::simulation::simulate(directory.path(), &request).unwrap();
+        let result = simulate(directory.path(), &request).unwrap();
+        let validate = |input: &contracts::science::NativeSimulationRequestV1,
+                        output: &NativeSimulationResultV1| {
+            domain::execution::portfolio_simulation_metrics(
+                contracts::Id::new(),
+                contracts::Id::new(),
+                input,
+                output,
+            )
+        };
+        validate(&request, &result).unwrap_or_else(|error| {
+            panic!(
+                "actual scoped result binding: {error:?}; schema={} outcome={} summary_equal={}",
+                result.canonical_result["schema"],
+                result.canonical_result["run"]["outcome"],
+                result.canonical_result["summary"]
+                    == serde_json::to_value(&result.summary).unwrap()
+            )
+        });
+        let mut outside = result.clone();
+        outside.canonical_result["run"]["backtest_end_ns"] =
+            serde_json::json!((instant(13).get() + 1).to_string());
+        assert!(matches!(validate(&request, &outside),
+            Err(domain::DomainError::Fields(issues))
+                if issues.iter().any(|issue| issue.field == "native_output.simulation_interval")));
+        if cutoff == instant(10) {
+            let mut legacy = request.clone();
+            for point in &mut legacy.target_points {
+                point.rebalance_instrument_ids = None;
+            }
+            assert!(matches!(validate(&legacy, &result),
+                Err(domain::DomainError::Fields(issues))
+                    if issues.iter().any(|issue| issue.field == "native_output.simulation_interval")));
+        }
         assert_eq!(result.consumed_target_points.get(), 2);
         assert_eq!(result.iterations.get(), 16);
         assert_eq!(
