@@ -10,7 +10,7 @@ import { evaluateTrial } from '../../research/src/trials.ts';
 import { configDefaults } from '../src/config.ts';
 import { createService } from '../src/service.ts';
 import type { Service } from '../src/service.ts';
-import type { Extension, TaskId } from '@earendil-works/pi-durable';
+import type { Extension, Storage, TaskId } from '@earendil-works/pi-durable';
 import type { JsonObject } from '../../../packages/contracts/src/index.ts';
 
 export const context = BACKGROUND_CONTEXT;
@@ -28,7 +28,7 @@ export const controlledResearch = defineExtension({ name: 'test.protocol-researc
   },
 })] });
 
-export async function setup(owner = true, staticDir?: string) {
+export async function setup(owner = true, staticDir?: string, storage?: Storage) {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-service-test-'));
   const catalog = join(directory, 'catalog'); await mkdir(catalog);
   const binary = join(directory, 'controlled-job');
@@ -40,7 +40,7 @@ export async function setup(owner = true, staticDir?: string) {
   const config = configDefaults({ dataDir: directory, staticDir, research: { database: join(directory, 'original-research.sqlite') }, jobBinary: binary,
     datasets: [{ id: 'controlled', name: 'Protocol dataset', assetClass: 'TEST', currency: 'USD', source: 'test only', start: null, end: null, ready: true,
       data: { catalog, request }, strategy: { name: 'fixed-before-trials', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0, investedWeight: '0.250000000000000001', targetTtlNs: '60000000000', simulationSettings: { base_currency: 'USD' } } }] });
-  const options = { config, models, extensions: [controlledResearch] as Extension[] };
+  const options = { config, models, extensions: [controlledResearch] as Extension[], storage };
   let service = await createService(options);
   const response = owner ? await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'local-owner-test' } }) : undefined;
   if (response) assert.equal(response.statusCode, 200, response.body);
