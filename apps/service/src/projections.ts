@@ -1,4 +1,5 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { ConversationId, Cursor, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
 import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
@@ -42,41 +43,65 @@ export function metrics(value: Json | undefined, prefix = ''): Metric[] {
     return [];
   });
 }
-async function researchBase(host: ResearchHost, id: number, admitted?: ResearchAdmissions) {
-  const view = await host.state(id);
+function taskView(record: TaskRecord<Json, Json, Json>): TaskView {
+  return { id: record.id, name: record.kind, status: record.state.status,
+    ...(record.state.status === 'terminal' ? { outcome: record.state.outcome.status } : {}),
+    error: record.state.status === 'terminal' && ['failed', 'faulted'].includes(record.state.outcome.status) ? 'task_failed' : null };
+}
+
+export function researchTaskViews(host: ResearchHost) {
+  const cache = new Map<number, TaskView[]>(); const loading = new Map<number, Promise<void>>();
+  host.harness.subscribeCommits(({ changes }) => {
+    for (const change of changes) {
+      if (change.type !== 'task') continue;
+      const record = change.value; const tasks = cache.get(record.conversationId);
+      if (tasks) cache.set(record.conversationId, [taskView(record), ...tasks.filter(task => task.id !== record.id)].sort((a, b) => b.id - a.id).slice(0, 100));
+    }
+  });
+  return async (id: number): Promise<TaskView[]> => {
+    if (cache.has(id)) return cache.get(id)!;
+    let pending = loading.get(id);
+    if (!pending) {
+      // shortcut: the official scan reads full receipts once per conversation after restart; replace when upstream offers metadata scans.
+      pending = host.harness.commit(async tx => {
+        const tasks: TaskView[] = []; let cursor: Cursor | undefined;
+        do {
+          const page = await tx.scanTasks({ conversationId: id as ConversationId, order: 'descending' }, 10, cursor);
+          tasks.push(...page.items.map(taskView)); cursor = page.next;
+        } while (cursor && tasks.length < 100);
+        cache.set(id, tasks);
+      }, BACKGROUND_CONTEXT);
+      loading.set(id, pending);
+    }
+    try { await pending; return cache.get(id)!; }
+    finally { if (loading.get(id) === pending) loading.delete(id); }
+  };
+}
+
+export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHost['state']>>, admissions: ResearchAdmissions | undefined, running: boolean) {
   const study = view.research;
   if (!study?.input) throw new Problem('research_not_found', 404);
-  const input = study.input as ResearchInput;
-  const admissions = admitted ?? (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
+  const input = study.input; const final = study.final;
   const admission = view.originalSubmission?.requestId ? admissions?.[`request:${view.originalSubmission.requestId}`] : undefined;
   const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
   const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
-  const running = !study.final && (['queued', 'placed'].includes(view.submission?.status ?? '')
-    || (await host.harness.inspect(BACKGROUND_CONTEXT)).tasks.some((task) => task.record.conversationId === id));
-  return { view, study, input, summary: {
-    id, title: input.goal, status: study.final ? String(study.final.status) : running ? 'RUNNING' : 'IDLE',
+  return {
+    id, title: input.goal, status: final ? String(final.status) : running || ['queued', 'placed'].includes(view.submission?.status ?? '') ? 'RUNNING' : 'IDLE',
     trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
     createdAt: null, updatedAt: null, dataset,
     datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
     originalSubmission: submissionView(view.originalSubmission),
-  } };
+  };
 }
 
-export async function researchSummary(host: ResearchHost, id: number, admitted?: ResearchAdmissions) {
-  return (await researchBase(host, id, admitted)).summary;
-}
-
-export async function researchDetail(host: ResearchHost, id: number, admitted?: ResearchAdmissions): Promise<ResearchDetail> {
-  const { view, study, input, summary } = await researchBase(host, id, admitted);
-  const records = await host.harness.commit((tx) => tx.scanTasks({ conversationId: id as import('@earendil-works/pi-durable').ConversationId, order: 'descending' }, 100), BACKGROUND_CONTEXT);
-  const tasks: TaskView[] = records.items.map((record) => ({
-    id: record.id, name: record.kind, status: record.state.status,
-    ...(record.state.status === 'terminal' ? { outcome: record.state.outcome.status } : {}),
-    error: record.state.status === 'terminal' && ['failed', 'faulted'].includes(record.state.outcome.status) ? 'task_failed' : null,
-  }));
-  const final = study.final;
+export async function researchDetail(host: ResearchHost, id: number, readTasks: ReturnType<typeof researchTaskViews>): Promise<ResearchDetail> {
+  const view = await host.state(id); const study = view.research;
+  if (!study?.input) throw new Problem('research_not_found', 404);
+  const tasks = await readTasks(id); const final = study.final;
+  const admissions = (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
   return {
-    ...summary, input, submission: submissionView(view.submission),
+    ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
+    input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
