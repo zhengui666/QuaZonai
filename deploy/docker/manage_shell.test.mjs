@@ -102,3 +102,50 @@ test('scientific scratch uses the writable data volume on fresh and existing con
   assert.match(compose, /QZ_SCRATCH_DIR: \$\{INSTALL_DIR:\?\}\/data\/scratch/);
   assert.match(compose, /TMPDIR: \$\{INSTALL_DIR:\?\}\/data\/scratch/);
 });
+
+test('official existing-install update creates scientific scratch at service start without configure', async (t) => {
+  const root = await directory(t);
+  for (const name of ['data/research', 'bundle', 'work', 'commands']) await mkdir(join(root, name), { recursive: true });
+  const image = `sha256:${'a'.repeat(64)}`;
+  const old = { schema_version: 4, version: 'v0.0.0-ci.1', revision: 'b'.repeat(40), root,
+    uid: process.getuid(), gid: process.getgid(), project: 'scratch-update-test', password: 'test-only',
+    port: 18081, database_port: 15433, image, runtime_image: image, database_image: image, bundle: join(root, 'bundle') };
+  const candidate = { ...old, version: 'v0.0.0-ci.2', revision: 'c'.repeat(40) };
+  await writeFile(join(root, 'installation.json'), JSON.stringify(old));
+  await writeFile(join(root, 'candidate.json'), JSON.stringify(candidate));
+  await writeFile(join(root, 'bundle/release.json'), JSON.stringify(candidate));
+  await writeFile(join(root, 'bundle/json.awk'), await readFile(new URL('./json.awk', import.meta.url)));
+  const config = '{"research":{"database":"original.sqlite"}}\n';
+  await writeFile(join(root, 'data/service.json'), config);
+  await writeFile(join(root, 'data/research/original.sqlite'), 'preserved original bytes');
+  await writeFile(join(root, 'data/research/provider.env'), '# test-only unchanged provider file\n');
+  await writeFile(join(root, 'commands/node'), '#!/bin/sh\n[ -d "$QZ_SCRATCH_DIR" ] || exit 23\nprintf started > "$QZ_SCRATCH_DIR/node-started"\n', { mode: 0o700 });
+  // Real update/backup/entrypoint handling; only image preparation, Docker,
+  // Node process and HTTP boundaries are controlled. Never pre-run configure.
+  const result = spawnSync('bash', ['-c', `source "$1"
+ROOT=$2; ENTRYPOINT=$3; QZ_WORK="$ROOT/work"; QZ_BUNDLE="$ROOT/bundle"
+qz_prepare() { QZ_PREPARED="$ROOT/candidate.json"; }
+qz_stop() { :; }
+qz_verify() { :; }
+qz_compose() {
+  case " $* " in
+    *" configure "*) printf 'configure must not run in this update regression' >&2; return 91;;
+    *" pg_dump "*) printf 'controlled PG dump';;
+    *" maintenance "*) :;;
+    *" up "*) PATH="$ROOT/commands:$PATH" QZ_CONFIG="$ROOT/data/service.json" \\
+      QZ_RESEARCH_PROVIDER_ENV="$ROOT/data/research/provider.env" \\
+      QZ_SCRATCH_DIR="$ROOT/data/scratch" TMPDIR="$ROOT/data/scratch" bash "$ENTRYPOINT" serve;;
+    *) return 1;;
+  esac
+}
+qz_apply_update "$ROOT"`, 'qz-scratch-update-test', fileURLToPath(new URL('./manage.sh', import.meta.url)), root,
+    fileURLToPath(new URL('./entrypoint.sh', import.meta.url))], { encoding: 'utf8', timeout: 20_000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(join(root, 'data/scratch/node-started'), 'utf8'), 'started');
+  assert.equal(JSON.parse(await readFile(join(root, 'installation.json'), 'utf8')).version, candidate.version);
+  assert.equal(await readFile(join(root, 'data/service.json'), 'utf8'), config);
+  assert.equal(await readFile(join(root, 'data/research/original.sqlite'), 'utf8'), 'preserved original bytes');
+  assert.equal(await readFile(join(root, 'data/research/provider.env'), 'utf8'), '# test-only unchanged provider file\n');
+  assert.equal((await readdir(join(root, 'backups'))).length, 1);
+  await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
+});
