@@ -51,3 +51,14 @@ fn source_audit_decimals_still_require_finite_plain_decimal_strings() {
         }
     }
 }
+
+#[test]
+fn original_source_fee_roundtrips_before_native_currency_rounding() {
+    for fee in ["0.00007000000000000001", "0.00000100000000000002"] {
+        let mut original = record();
+        original["fee_usdc"] = json!(fee);
+        let parsed: RecordedTradeFeeV1 = serde_json::from_value(original.clone())
+            .expect("original source fee is exact input, not a booked account commission");
+        assert_eq!(serde_json::to_value(parsed).unwrap(), original);
+    }
+}

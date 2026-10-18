@@ -218,6 +218,33 @@ fn proportional_fee_rounds_once_per_fill_at_native_currency_precision() {
     );
 }
 
+#[test]
+fn original_high_precision_fee_is_proportioned_exactly_before_the_only_fill_rounding() {
+    let (_, clock) = model();
+    let mut data = source();
+    let original_fee = "0.00000100000000000002";
+    data.records[0].fee_usdc = original_fee.parse().unwrap();
+    data.records[1].fee_usdc = "0".parse().unwrap();
+    let model = RecordedFeeModel::new(data, &market(), clock).unwrap();
+    // Half the source is strictly above half a native currency unit. Rounding
+    // the original fee to18dp first would incorrectly turn this into a tie.
+    assert_eq!(
+        charge(&model, "2.000000").unwrap().as_decimal(),
+        Decimal::from_str("0.000001").unwrap()
+    );
+    let report = model.report();
+    let allocation = &report.fills[0].allocations[0];
+    assert_eq!(allocation.allocated_fee_numerator, "50000000000001");
+    assert_eq!(
+        allocation.allocated_fee_denominator,
+        "100000000000000000000"
+    );
+    assert_eq!(
+        serde_json::to_value(&allocation.original).unwrap()["fee_usdc"],
+        serde_json::json!(original_fee)
+    );
+}
+
 pub(super) fn native_scenario() -> (
     tempfile::TempDir,
     NativeMarketData,

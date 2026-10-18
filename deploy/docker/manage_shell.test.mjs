@@ -87,3 +87,18 @@ ${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.ur
   assert.equal((await readdir(join(root, 'backups'))).length, 2, 'starting retry must not replace the pre-restore backup');
   await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
 });
+
+test('scientific scratch uses the writable data volume on fresh and existing configuration', async (t) => {
+  const root = await directory(t);
+  const path = configure(root, 'http://localhost:8081');
+  const scientificScratch = join(root, 'data/scratch');
+  assert.deepEqual(await readdir(scientificScratch), []);
+  const original = await readFile(path, 'utf8');
+  await rm(scientificScratch, { recursive: true });
+  configure(root, 'http://localhost:9999');
+  assert.deepEqual(await readdir(scientificScratch), []);
+  assert.equal(await readFile(path, 'utf8'), original);
+  const compose = await readFile(new URL('./compose.yaml', import.meta.url), 'utf8');
+  assert.match(compose, /QZ_SCRATCH_DIR: \$\{INSTALL_DIR:\?\}\/data\/scratch/);
+  assert.match(compose, /TMPDIR: \$\{INSTALL_DIR:\?\}\/data\/scratch/);
+});
