@@ -197,7 +197,7 @@ export function simulationSelection(request: JsonObject, partition?: StrategyPar
     if (!Array.isArray(selection.bar_types) || selection.bar_types.some((bar) => typeof bar !== 'string')) throw new Error('strategy_bar_types_invalid');
     // A BAR type ends in step/aggregation/price/source; symbols themselves can contain hyphens.
     const ids = policy.kind === 'cross-market-threshold' ? marketAllocations(policy.allocations, policy.instrumentIds).map((item) => item.instrumentId) : [policy.instrumentId!];
-    const bars = (selection.bar_types as string[]).filter((bar) => ids.includes(bar.split('-').slice(0, -4).join('-')));
+    const bars = ids.flatMap((id) => (selection.bar_types as string[]).filter((bar) => bar.split('-').slice(0, -4).join('-') === id));
     if (ids.some((id) => !bars.some((bar) => bar.split('-').slice(0, -4).join('-') === id))) throw new Error('strategy_instrument_bars_missing');
     selection.bar_types = bars;
   }

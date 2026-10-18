@@ -172,6 +172,7 @@ pub(crate) struct TargetReplay {
     venue: Venue,
     tolerance: Decimal,
     latency_ns: u64,
+    wake_order_arrivals: bool,
     reduction_ids: BTreeSet<ClientOrderId>,
     deferred_orders: Vec<OrderAny>,
     active_expiry_ns: u64,
@@ -428,7 +429,7 @@ impl TargetReplay {
         } else {
             None
         };
-        if self.paper.is_none() && recorded_liquidity(&self.settings) {
+        if self.paper.is_none() && self.wake_order_arrivals && self.latency_ns > 0 {
             let arrival = self
                 .clock()
                 .timestamp_ns()
@@ -1063,6 +1064,7 @@ pub(crate) fn paper_target_strategy(
         venue,
         tolerance,
         latency_ns: 0,
+        wake_order_arrivals: false,
         reduction_ids: BTreeSet::new(),
         deferred_orders: Vec::new(),
         active_expiry_ns: 0,
@@ -1489,7 +1491,20 @@ fn run_with_strategy_and_spot(
         "TARGET_SCOPE_BACKTEST_ONLY"
     );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
-    let market = load_catalog(root, &request.selection)?;
+    let wake_order_arrivals = recorded_liquidity(&request.settings)
+        || request
+            .target_points
+            .iter()
+            .any(|point| point.rebalance_instrument_ids.is_some());
+    let market = if request
+        .target_points
+        .iter()
+        .all(|point| point.rebalance_instrument_ids.is_some())
+    {
+        crate::catalog::load_scoped_catalog(root, &request.selection)?
+    } else {
+        load_catalog(root, &request.selection)?
+    };
     let is_spot = spot_inputs.is_some();
     let currency = if is_spot {
         domain::spot_cash::execution_settings(&request.settings)?;
@@ -1529,6 +1544,7 @@ fn run_with_strategy_and_spot(
         venue,
         tolerance: native_decimal(&request.settings.exposure_tolerance)?,
         latency_ns: latency.base_latency_ns.get() + latency.insert_latency_ns.get(),
+        wake_order_arrivals,
         reduction_ids: BTreeSet::new(),
         deferred_orders: Vec::new(),
         active_expiry_ns: 0,
@@ -1537,7 +1553,7 @@ fn run_with_strategy_and_spot(
         settlement_events,
         // Every selected series must deliver its own final real BAR before
         // shutdown, even when the markets' observation clocks differ.
-        recorded_bar_ends: recorded_liquidity(&request.settings).then(|| {
+        recorded_bar_ends: wake_order_arrivals.then(|| {
             market.series.iter().flat_map(|series| &series.bars).fold(
                 BTreeMap::<InstrumentId, u64>::new(),
                 |mut ends, bar| {
@@ -1702,7 +1718,7 @@ fn run_with_strategy_and_spot(
         // Native run(None) otherwise stops it at the final BAR timestamp before
         // draining positive-latency remainders. The selection end is exclusive.
         let replay_end =
-            recorded_liquidity(settings).then(|| (request.selection.event_end_ns.get() - 1).into());
+            wake_order_arrivals.then(|| (request.selection.event_end_ns.get() - 1).into());
         let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;

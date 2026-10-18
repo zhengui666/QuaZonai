@@ -756,7 +756,6 @@ fn cross_market_scenario() -> (
 
 #[test]
 fn native_cross_market_scopes_share_3000_preserve_ioc_sources_and_residual_marks() {
-    use nautilus_model::orders::Order;
     let (directory, request) = cross_market_scenario();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
     assert_eq!(result.consumed_target_points.get(), 5);
@@ -822,27 +821,66 @@ fn native_cross_market_scopes_share_3000_preserve_ioc_sources_and_residual_marks
     assert!(fills[1..]
         .iter()
         .all(|fill| fill.commission == "0.1".parse().unwrap()));
-    let orders: Vec<OrderAny> =
-        serde_json::from_value(result.canonical_result["orders"].clone()).unwrap();
+    let orders = result.canonical_result["orders"].as_array().unwrap();
     assert_eq!(orders.len(), 6);
-    assert!(orders
+    let cores: Vec<_> = orders
         .iter()
-        .all(|order| order.order_type() == OrderType::Market
-            && order.time_in_force() == TimeInForce::Ioc));
+        .map(|order| {
+            let core = &order.get("Market").expect("official MARKET order")["core"];
+            assert_eq!(core["time_in_force"], "IOC");
+            core
+        })
+        .collect();
     for (fill, quantity) in fills
         .iter()
         .zip(["600", "599.9678", "590.1476", "490.123", "20", "20"])
     {
-        let order = orders
+        // Canonical output normalizes IDs. Join its original fill event first,
+        // rather than deserializing normalized UUIDs into mutable native orders.
+        let native_fills: Vec<_> = result.canonical_result["fills"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|order| order.client_order_id().as_str() == fill.client_order_id)
+            .filter(|row| {
+                row["event"]["Filled"]["instrument_id"] == fill.instrument_id
+                    && row["event"]["Filled"]["ts_event"] == fill.fill_ns.get().to_string()
+            })
+            .collect();
+        assert_eq!(native_fills.len(), 1);
+        let native_fill = native_fills[0];
+        assert_eq!(
+            Quantity::from_str(native_fill["event"]["Filled"]["last_qty"].as_str().unwrap())
+                .unwrap()
+                .as_decimal(),
+            Decimal::from(10)
+        );
+        assert_eq!(
+            Money::from_str(
+                native_fill["event"]["Filled"]["commission"]
+                    .as_str()
+                    .unwrap()
+            )
+            .unwrap()
+            .as_decimal(),
+            Decimal::from_str(&fill.commission.as_decimal().to_plain_string()).unwrap()
+        );
+        let order = cores
+            .iter()
+            .find(|core| core["client_order_id"] == native_fill["client_order_id"])
             .unwrap();
         assert_eq!(
-            order.quantity().as_decimal(),
+            Quantity::from_str(order["quantity"].as_str().unwrap())
+                .unwrap()
+                .as_decimal(),
             Decimal::from_str(quantity).unwrap(),
             "shared native equity, including both same-clock marks, determines sizing"
         );
-        assert_eq!(order.filled_qty().as_decimal(), Decimal::from(10));
+        assert_eq!(
+            Quantity::from_str(order["filled_qty"].as_str().unwrap())
+                .unwrap()
+                .as_decimal(),
+            Decimal::from(10)
+        );
     }
     let snapshots = result.canonical_result["portfolio_snapshots"]
         .as_array()
@@ -898,11 +936,22 @@ fn native_cross_market_invalid_scope_missing_observation_sum_and_expiry_fail() {
         let mut invalid = request.clone();
         invalid.target_points[0].rebalance_instrument_ids =
             Some(scope.into_iter().map(str::to_owned).collect());
-        assert!(format!(
-            "{:#}",
-            crate::simulation::simulate(directory.path(), &invalid).unwrap_err()
-        )
-        .contains(cause));
+        let error = crate::simulation::simulate(directory.path(), &invalid).unwrap_err();
+        if cause == "strategy.target_scope" {
+            assert!(
+                matches!(error.downcast_ref::<domain::DomainError>(),
+                    Some(domain::DomainError::Fields(fields))
+                        if fields.len() == 1
+                            && fields[0].field == "strategy.target_scope"
+                            && fields[0].code == "NATIVE_TASK_BINDING_INVALID"),
+                "expected structured invalid scope, actual {error:#}"
+            );
+        } else {
+            assert!(
+                format!("{error:#}").contains(cause),
+                "expected {cause}, actual {error:#}"
+            );
+        }
     }
     let mut invalid = request.clone();
     invalid.target_points[0].cash_weight = "0.900001".parse().unwrap();
@@ -948,4 +997,46 @@ fn native_cross_market_legacy_omission_still_waits_for_synchronized_assets() {
     let fills = result.recorded_fee_replay.unwrap().fills;
     assert_eq!(fills.len(), 1);
     assert_eq!(fills[0].bar_end_ns.get(), 3 * MINUTE_NS);
+}
+
+#[test]
+fn native_cross_market_retains_zero_exposure_market_without_in_window_bars() {
+    let (directory, mut request) = cross_market_scenario();
+    request.selection.event_start_ns = DbCounter::new(5 * MINUTE_NS).unwrap();
+    request.selection.event_end_ns = DbCounter::new(6 * MINUTE_NS).unwrap();
+    request.selection.decision_cutoff_ns = request.selection.event_end_ns;
+    request.target_points = vec![request.target_points[4].clone()];
+    // B has original metadata/training data, but no real BAR in [5,6).
+    // Its expired desired signal is cash, not a manufactured mark or liquidation.
+    request.target_points[0].targets[0].weight = "0.1".parse().unwrap();
+    request.target_points[0].targets[1].weight = "0".parse().unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    assert_eq!(result.consumed_target_points.get(), 1);
+    assert_eq!(result.iterations.get(), 1);
+    assert_eq!(
+        result.canonical_result["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let fills = &result.recorded_fee_replay.as_ref().unwrap().fills;
+    assert_eq!(fills.len(), 1);
+    assert_eq!(fills[0].instrument_id, "123.POLYMARKET");
+    assert_eq!(fills[0].bar_end_ns.get(), 5 * MINUTE_NS);
+    assert_eq!(fills[0].fill_quantity, "10".parse().unwrap());
+    let mut legacy = request.clone();
+    legacy.target_points[0].rebalance_instrument_ids = None;
+    assert!(format!(
+        "{:#}",
+        crate::simulation::simulate(directory.path(), &legacy).unwrap_err()
+    )
+    .contains("CATALOG_EMPTY_SELECTION"));
+    let mut unobserved = request;
+    unobserved.target_points[0].rebalance_instrument_ids = Some(vec!["456.POLYMARKET".into()]);
+    assert!(format!(
+        "{:#}",
+        crate::simulation::simulate(directory.path(), &unobserved).unwrap_err()
+    )
+    .contains("NATIVE_TARGETS_NOT_CONSUMED"));
 }

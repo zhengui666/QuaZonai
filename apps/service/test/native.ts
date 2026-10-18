@@ -222,6 +222,8 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
       parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1 } },
       train_end_ns: '12000000000000', validation_end_ns: '24000000000000' };
     if (crossMarket) {
+      // Original request order deliberately differs from registered allocation order.
+      request.forecast.selection.bar_types.reverse();
       request.forecast.selection.maximum_rows = 2 * finalCount;
       request.train_end_ns = '720000000000'; request.validation_end_ns = '1440000000000';
       Object.assign(request.forecast.selection, { event_end_ns: request.validation_end_ns, decision_cutoff_ns: request.validation_end_ns });
@@ -303,7 +305,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
       assert.deepEqual(object(object(evidence.simulationRequest).selection).bar_types, selectedBars);
       assert.deepEqual(object(evidence.simulationRequest).settings, selectedSettings);
       for (const component of evidence.components as JsonObject[]) {
-        assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, request.forecast.selection.bar_types);
+        assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, crossMarket ? selectedBars : request.forecast.selection.bar_types);
       }
       assert.equal(object(evidence.simulation).native_version, '0.63.0');
       assert.ok(BigInt(String(object(evidence.simulation).orders)) > 0n);
@@ -312,7 +314,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
         const simulation = object(evidence.simulation);
         const canonical = object(simulation.canonical_result);
         assert.equal((canonical.accounts as JsonObject[]).length, 1);
-        assert.deepEqual(new Set((canonical.orders as JsonObject[]).map((order) => object(Object.values(order)[0]).instrument_id)), new Set(allocations.map((item) => item.instrumentId)));
+        assert.deepEqual(new Set((canonical.orders as JsonObject[]).map((order) => object(object(Object.values(order)[0]).core).instrument_id)), new Set(allocations.map((item) => item.instrumentId)));
         const targets = object(evidence.simulationRequest).target_points as JsonObject[];
         assert.ok(targets.some((point) => JSON.stringify(point.rebalance_instrument_ids) === JSON.stringify(['BTC-USD.COINBASE'])));
         assert.ok(targets.some((point) => JSON.stringify(point.rebalance_instrument_ids) === JSON.stringify(['ETH-USD.COINBASE'])));
@@ -350,8 +352,8 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market'] as 
       if (crossMarket) {
         assert.equal((point.targets as JsonObject[])[0]!.instrument_id, 'ETH-USD.COINBASE');
         assert.equal((point.targets as JsonObject[])[1]!.instrument_id, 'BTC-USD.COINBASE');
-        assert.ok(['0.000000000000000000', '0.025'].includes(String((point.targets as JsonObject[])[0]!.weight)));
-        assert.ok(['0.000000000000000000', '0.0375'].includes(String((point.targets as JsonObject[])[1]!.weight)));
+        assert.ok([0n, decimalUnits('0.025')].includes(decimalUnits(String((point.targets as JsonObject[])[0]!.weight))));
+        assert.ok([0n, decimalUnits('0.0375')].includes(decimalUnits(String((point.targets as JsonObject[])[1]!.weight))));
         assert.equal((point.rebalance_instrument_ids as string[]).length, 1);
       } else assert.equal(object((point.targets as JsonObject[])[0]).weight, '0.0625');
       assert.ok(BigInt(String(point.asof_ns)) >= BigInt(request.validation_end_ns));

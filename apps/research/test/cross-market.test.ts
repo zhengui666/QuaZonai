@@ -26,7 +26,9 @@ test('cross-market resolution binds every registered exact allocation and its or
   const request: JsonObject = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30',
     bar_types: ['C.SIM-1-MINUTE-LAST-EXTERNAL', 'B-YES.SIM-1-MINUTE-LAST-EXTERNAL', 'A.SIM-1-MINUTE-LAST-EXTERNAL', 'B-YES.SIM-OTHER-1-MINUTE-LAST-EXTERNAL'] } } };
   const selected = simulationSelection(request, 'VALIDATION', resolved);
-  assert.deepEqual(selected.bar_types, ['B-YES.SIM-1-MINUTE-LAST-EXTERNAL', 'A.SIM-1-MINUTE-LAST-EXTERNAL']);
+  assert.deepEqual(selected.bar_types, ['A.SIM-1-MINUTE-LAST-EXTERNAL', 'B-YES.SIM-1-MINUTE-LAST-EXTERNAL']);
+  const [frame] = thresholdTargets({ points: [point('A.SIM', '10', 1), point('B-YES.SIM', '10', 1)] }, resolved, 'pUSD');
+  assert.deepEqual((frame!.targets as JsonObject[]).map((target) => String(target.instrument_id) + '-1-MINUTE-LAST-EXTERNAL'), selected.bar_types);
   assert.equal(selected.event_start_ns, '10'); assert.equal(selected.event_end_ns, '20');
   assert.equal(((request.forecast as JsonObject).selection as JsonObject).event_end_ns, '30');
 });

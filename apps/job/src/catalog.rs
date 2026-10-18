@@ -261,6 +261,22 @@ fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
 
 /// Load executable market data with original instrument definitions.
 pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
+    load_catalog_mode(root, selection, false)
+}
+
+/// Scoped replay can retain an unobserved, untraded market's original metadata.
+pub(crate) fn load_scoped_catalog(
+    root: &Path,
+    selection: &NativeBarSelectionV1,
+) -> Result<NativeMarketData> {
+    load_catalog_mode(root, selection, true)
+}
+
+fn load_catalog_mode(
+    root: &Path,
+    selection: &NativeBarSelectionV1,
+    allow_empty_series: bool,
+) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
     let mut catalog = open_catalog(root)?;
     let ids = types
@@ -273,7 +289,7 @@ pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<Nat
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
     let bars = read_bars(&mut catalog, selection)?;
-    validate_native(instruments, bars, selection)
+    validate_native_mode(instruments, bars, selection, allow_empty_series)
 }
 
 fn read_bars(
@@ -383,6 +399,15 @@ pub fn validate_native(
     bars: Vec<Bar>,
     selection: &NativeBarSelectionV1,
 ) -> Result<NativeMarketData> {
+    validate_native_mode(instruments, bars, selection, false)
+}
+
+fn validate_native_mode(
+    instruments: Vec<InstrumentAny>,
+    bars: Vec<Bar>,
+    selection: &NativeBarSelectionV1,
+    allow_empty_series: bool,
+) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
     ensure!(
         bars.len() <= selection.maximum_rows as usize,
@@ -474,7 +499,7 @@ pub fn validate_native(
         rows += 1;
     }
     ensure!(
-        rows > 0 && series.iter().all(|series| !series.bars.is_empty()),
+        rows > 0 && (allow_empty_series || series.iter().all(|series| !series.bars.is_empty())),
         "CATALOG_EMPTY_SELECTION"
     );
     Ok(NativeMarketData { series, rows })
