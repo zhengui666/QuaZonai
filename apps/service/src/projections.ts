@@ -140,7 +140,9 @@ export function nativeCurve(simulation: JsonObject, currency: string): EquityPoi
     const snapshot = object(value, 'native_snapshot');
     const equities = snapshot.total_equity;
     if (!Array.isArray(equities) || equities.length !== 1) throw new Problem('native_single_currency_equity_required');
-    return { at: nsTime(counter(snapshot.ts_event, 'native_clock')), value: nativeMoney(equities[0], currency) };
+    const clock = counter(snapshot.ts_event, 'native_clock');
+    return { clock: BigInt(clock), at: nsTime(clock), value: nativeMoney(equities[0], currency) };
   });
-  return points;
+  // Native snapshot arrival order is not necessarily event-time order.
+  return points.sort((a, b) => a.clock < b.clock ? -1 : a.clock > b.clock ? 1 : 0).map(({ at, value }) => ({ at, value }));
 }
