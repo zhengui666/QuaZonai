@@ -235,6 +235,10 @@ pub enum NativeReturnsKind {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSimulationResultV1 {
+    /// QZ settled-replay completion clock, recorded only after every loaded final
+    /// BAR, all target points and native orders settle. Native outcome is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_replay_ns: Option<DbCounter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spot_cash_report: Option<crate::spot_cash_report::NativeSpotCashReportV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

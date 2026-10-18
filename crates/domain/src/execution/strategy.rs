@@ -279,6 +279,23 @@ pub fn target_scope(point: &NativeTargetPointV1) -> Result<(), DomainError> {
     Ok(())
 }
 
+/// Inclusive scoped execution endpoint; event bounds still select the real BARs.
+/// Omission retains the caller's original synchronized replay/result bounds.
+pub fn scoped_replay_end(request: &NativeSimulationRequestV1) -> Option<u64> {
+    request
+        .target_points
+        .iter()
+        .any(|point| point.rebalance_instrument_ids.is_some())
+        .then(|| {
+            request
+                .target_points
+                .iter()
+                .fold(request.selection.decision_cutoff_ns.get(), |end, point| {
+                    end.max(point.valid_until_ns.get())
+                })
+        })
+}
+
 /// Combine target weights and cash only; account equity is never an input.
 pub fn blend(
     members: &[NativeStrategyMemberV1],

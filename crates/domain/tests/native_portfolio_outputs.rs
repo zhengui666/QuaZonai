@@ -359,6 +359,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         ("orders.inflight".into(), "0".into()),
     ]);
     let result = NativeSimulationResultV1 {
+        settled_replay_ns: None,
         spot_cash_report: None,
         recorded_fee_replay: None,
         schema_version: SchemaV1,

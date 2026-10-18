@@ -62,8 +62,8 @@ export async function forecastMembers(binary: string, catalog: string, members: 
     const forecastRequest = object(computationRequest.forecast, 'forecast_request');
     const command = policy.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast';
     const forecasts = await executeNative(binary, command, forecastRequest, args, directory, context);
-    const original = thresholdTargets(forecasts, policy, currency);
-    const points = partition ? intervalTargets(original, selection) : original;
+    const original = thresholdTargets(forecasts, policy, currency, partition ? selection : undefined);
+    const points = partition && policy.kind !== 'cross-market-threshold' ? intervalTargets(original, selection) : original;
     memberRows.push(points);
     components.push({ index, member: { ...member }, command, forecastRequest, forecasts, target_points: points, summary });
   }

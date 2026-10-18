@@ -794,9 +794,35 @@ fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_order
                     == serde_json::to_value(&result.summary).unwrap()
             )
         });
+        assert_eq!(result.canonical_result["run"]["outcome"], "stopped");
+        let settled = result.settled_replay_ns.expect("actual settled completion");
+        assert_eq!(
+            settled.get().to_string(),
+            result.canonical_result["run"]["backtest_end_ns"]
+                .as_str()
+                .unwrap()
+        );
+        let mut missing = result.clone();
+        missing.settled_replay_ns = None;
+        assert!(matches!(validate(&request, &missing),
+            Err(domain::DomainError::Fields(issues))
+                if issues.iter().any(|issue| issue.field == "native_output.canonical_binding")));
+        let mut mismatched = result.clone();
+        mismatched.settled_replay_ns = Some(count(settled.get() + 1));
+        assert!(matches!(validate(&request, &mismatched),
+            Err(domain::DomainError::Fields(issues))
+                if issues.iter().any(|issue| issue.field == "native_output.canonical_binding")));
+        for outcome in ["failed", "incomplete", "completed"] {
+            let mut invalid = result.clone();
+            invalid.canonical_result["run"]["outcome"] = serde_json::json!(outcome);
+            assert!(matches!(validate(&request, &invalid),
+                Err(domain::DomainError::Fields(issues))
+                    if issues.iter().any(|issue| issue.field == "native_output.canonical_binding")));
+        }
         let mut outside = result.clone();
         outside.canonical_result["run"]["backtest_end_ns"] =
             serde_json::json!((instant(13).get() + 1).to_string());
+        outside.settled_replay_ns = Some(count(instant(13).get() + 1));
         assert!(matches!(validate(&request, &outside),
             Err(domain::DomainError::Fields(issues))
                 if issues.iter().any(|issue| issue.field == "native_output.simulation_interval")));

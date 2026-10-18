@@ -110,7 +110,7 @@ function counter(value: unknown, name: string): string {
 }
 
 // Extracted from the original portfolio consumer. Keep clocks and missing decisions intact.
-export function thresholdTargets(forecasts: JsonObject, policy: ThresholdPolicy, currency: string): JsonObject[] {
+export function thresholdTargets(forecasts: JsonObject, policy: ThresholdPolicy, currency: string, selection?: JsonObject): JsonObject[] {
   if (policy.kind !== 'factor-threshold' && policy.kind !== 'cross-market-threshold') throw new Error('strategy_adapter_unsupported');
   if (!Number.isFinite(policy.threshold)) throw new Error('strategy_threshold_invalid');
   const weight = policy.investedWeight;
@@ -122,7 +122,20 @@ export function thresholdTargets(forecasts: JsonObject, policy: ThresholdPolicy,
   const ttl = BigInt(counter(policy.targetTtlNs, 'target_ttl')); if (ttl <= 0n) throw new Error('target_ttl_invalid');
   if (policy.simulationSettings.base_currency !== currency) throw new Error('strategy_currency_mismatch');
   if (!Array.isArray(forecasts.points)) throw new Error('native_forecast_points_missing');
-  if (policy.kind === 'cross-market-threshold') return crossMarketTargets(forecasts.points, policy, currency, units, ttl);
+  if (policy.kind === 'cross-market-threshold') {
+    let rows = forecasts.points;
+    if (selection) {
+      const start = BigInt(counter(selection.event_start_ns, 'simulation_start')); const end = BigInt(counter(selection.event_end_ns, 'simulation_end'));
+      const cutoff = BigInt(counter(selection.decision_cutoff_ns, 'simulation_cutoff'));
+      // Partition source observations, not their later decision clocks. Preserve
+      // the full original forecasts and causal warmup in native evidence.
+      rows = rows.filter((entry) => {
+        const point = object(entry, 'forecast_point'); const event = BigInt(counter(point.event_ns, 'event'));
+        return start <= event && event < end && BigInt(counter(point.available_ns, 'available')) <= cutoff;
+      });
+    }
+    return crossMarketTargets(rows, policy, currency, units, ttl);
+  }
   const available = forecasts.points.map((point) => object(point, 'forecast_point')).filter((point) => point.instrument_id === policy.instrumentId && typeof point.forecast === 'number');
   if (!available.length) throw new Error('strategy_observations_missing');
   available.sort((a, b) => {

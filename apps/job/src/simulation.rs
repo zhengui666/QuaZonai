@@ -109,6 +109,7 @@ pub(crate) struct ReplayStatus {
     order_rejection: Option<String>,
     submitted_after_ns: u64,
     study_infeasible: bool,
+    settled_replay_ns: Option<u64>,
     frames: Vec<NativePortfolioStudyFrameV1>,
     spot_fills: Vec<OrderFilled>,
 }
@@ -539,12 +540,17 @@ impl TargetReplay {
         let Some(ends) = &self.recorded_bar_ends else {
             return;
         };
-        let status = self.status.borrow();
+        let mut status = self.status.borrow_mut();
         let data_complete = ends
             .iter()
             .all(|(id, end)| self.latest.get(id).map(|bar| bar.ts_init.as_u64()) == Some(*end));
         let finished = status.recorded_replay_terminal(data_complete, self.points.len())
             && self.orders_settled();
+        if finished && !status.study_infeasible {
+            status
+                .settled_replay_ns
+                .get_or_insert_with(|| self.clock().timestamp_ns().as_u64());
+        }
         drop(status);
         if finished {
             // The native engine stops at this settled timestamp, not after an
@@ -1491,10 +1497,8 @@ fn run_with_strategy_and_spot(
         "TARGET_SCOPE_BACKTEST_ONLY"
     );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
-    let scoped_replay = request
-        .target_points
-        .iter()
-        .any(|point| point.rebalance_instrument_ids.is_some());
+    let scoped_end = domain::execution::strategy::scoped_replay_end(request);
+    let scoped_replay = scoped_end.is_some();
     let wake_order_arrivals = recorded_liquidity(&request.settings) || scoped_replay;
     let market = if request
         .target_points
@@ -1718,19 +1722,12 @@ fn run_with_strategy_and_spot(
         // Scoped orders may also need arrival callbacks after the data cutoff;
         // their original expiry bounds execution, while settled-final-BAR
         // shutdown still prevents manufacturing an empty account-return tail.
-        let replay_end = wake_order_arrivals.then(|| {
-            let end = if scoped_replay {
-                request
-                    .target_points
-                    .iter()
-                    .fold(request.selection.decision_cutoff_ns.get(), |end, point| {
-                        end.max(point.valid_until_ns.get())
-                    })
-            } else {
-                request.selection.event_end_ns.get() - 1
-            };
-            end.into()
-        });
+        let replay_end = scoped_end
+            .or_else(|| {
+                recorded_liquidity(&request.settings)
+                    .then(|| request.selection.event_end_ns.get() - 1)
+            })
+            .map(Into::into);
         let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;
@@ -1856,6 +1853,11 @@ fn run_with_strategy_and_spot(
             (contracts::evidence::MetricStatus::Ok, None)
         };
         Ok(Some(NativeSimulationResultV1 {
+            settled_replay_ns: observed
+                .settled_replay_ns
+                .map(DbCounter::new)
+                .transpose()
+                .map_err(anyhow::Error::msg)?,
             spot_cash_report,
             recorded_fee_replay: recorded_fees
                 .as_ref()
