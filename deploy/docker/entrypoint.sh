@@ -4,6 +4,7 @@ case "${1:-serve}" in
   serve|console)
     : "${QZ_CONFIG:?Persistent service config path is required}"
     : "${QZ_RESEARCH_PROVIDER_ENV:?Private provider environment file is required}"
+    mkdir -p -- "$QZ_SCRATCH_DIR"
     # The service owns the only programmatic Pi Durable writer and scheduler.
     # tini forwards SIGTERM; the service drains HTTP and suspends the same DB.
     exec node --env-file="$QZ_RESEARCH_PROVIDER_ENV" --experimental-strip-types /opt/quazonai/apps/service/src/main.ts

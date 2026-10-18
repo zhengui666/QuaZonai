@@ -48,7 +48,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
       'qz-factor', process.env.QZ_JOB_BINARY ?? 'job', data.catalog,
       join(directory, 'model.wasm'), join(directory, 'request.json'),
     ], {
-      inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+      inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TMPDIR: directory },
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
     }, context));
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${result.exitCode}`);

@@ -218,6 +218,33 @@ fn proportional_fee_rounds_once_per_fill_at_native_currency_precision() {
     );
 }
 
+#[test]
+fn original_high_precision_fee_is_proportioned_exactly_before_the_only_fill_rounding() {
+    let (_, clock) = model();
+    let mut data = source();
+    let original_fee = "0.00000100000000000002";
+    data.records[0].fee_usdc = original_fee.parse().unwrap();
+    data.records[1].fee_usdc = "0".parse().unwrap();
+    let model = RecordedFeeModel::new(data, &market(), clock).unwrap();
+    // Half the source is strictly above half a native currency unit. Rounding
+    // the original fee to18dp first would incorrectly turn this into a tie.
+    assert_eq!(
+        charge(&model, "2.000000").unwrap().as_decimal(),
+        Decimal::from_str("0.000001").unwrap()
+    );
+    let report = model.report();
+    let allocation = &report.fills[0].allocations[0];
+    assert_eq!(allocation.allocated_fee_numerator, "50000000000001");
+    assert_eq!(
+        allocation.allocated_fee_denominator,
+        "100000000000000000000"
+    );
+    assert_eq!(
+        serde_json::to_value(&allocation.original).unwrap()["fee_usdc"],
+        serde_json::json!(original_fee)
+    );
+}
+
 pub(super) fn native_scenario() -> (
     tempfile::TempDir,
     NativeMarketData,
@@ -460,4 +487,57 @@ fn source_audit_decimals_still_reject_nonpositive_records() {
             assert!(error.to_string().contains("RECORDED_FEE_RECORD_INVALID"));
         }
     }
+}
+
+#[test]
+fn native_shared_account_retains_original_fee_precision_before_booking() {
+    let (directory, _, request) = native_scenario();
+    let baseline = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let before = baseline.recorded_fee_replay.as_ref().unwrap();
+    let consumed_id = &before.fills[0].allocations[0].original.id;
+    let path = directory.path().join(RECORDED_FEES_FILE);
+    let mut original: RecordedTradeFeesV1 =
+        serde_json::from_reader(std::fs::File::open(&path).unwrap()).unwrap();
+    let record = original
+        .records
+        .iter_mut()
+        .find(|r| &r.id == consumed_id)
+        .unwrap();
+    let exact_fee = (record.fee_usdc.to_decimal()
+        + BigDecimal::from_str("0.00000000000000000001").unwrap())
+    .to_plain_string();
+    record.fee_usdc = exact_fee.parse().unwrap();
+    std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+    let result = crate::simulation::simulate(directory.path(), &request).unwrap();
+    let report = result.recorded_fee_replay.as_ref().unwrap();
+    assert_eq!(report.fills.len(), before.fills.len());
+    assert_eq!(
+        serde_json::to_value(&report.fills[0].allocations[0].original).unwrap()["fee_usdc"],
+        serde_json::json!(exact_fee)
+    );
+    for (actual, previous) in report.fills.iter().zip(&before.fills) {
+        assert_eq!(actual.commission, previous.commission);
+        assert_eq!(actual.fill_quantity, previous.fill_quantity);
+        for allocation in &actual.allocations {
+            let recorded = BigRational::new(
+                allocation.allocated_fee_numerator.parse().unwrap(),
+                allocation.allocated_fee_denominator.parse().unwrap(),
+            );
+            assert_eq!(
+                recorded,
+                ratio(&allocation.original.fee_usdc.to_decimal())
+                    * ratio(allocation.allocated_quantity.as_decimal())
+                    / ratio(allocation.original.quantity.as_decimal())
+            );
+        }
+    }
+    let balance = |summary: &std::collections::BTreeMap<String, String>| {
+        summary
+            .iter()
+            .find(|(key, _)| key.ends_with(".balance.pUSD.total"))
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(balance(&result.summary), balance(&baseline.summary));
 }

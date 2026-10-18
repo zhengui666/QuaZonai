@@ -26,7 +26,7 @@ export async function executeNative(binary: string, command: string, input: Json
   try {
     const result = getOrThrow(await env.exec([
       'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
-    ], { inheritEnv: false, env: { PATH: '/usr/bin:/bin' },
+    ], { inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: directory },
       onOutput: (chunk, _ctx, info) => {
         if (info.stream === 'stderr') stderr += chunk;
         else if (parseError === undefined) { try { stdout.write(chunk); } catch (error) { parseError = error; } }

@@ -28,13 +28,14 @@ test('execution accepts the retained native serializer omitting null fuel withou
   const previous = process.env.QZ_JOB_BINARY;
   try {
     // Protocol-only child: mirrors NativeForecastParametersV1's skip_serializing_if.
-    await writeFile(script, `let input=''; for await (const chunk of process.stdin) input += chunk; const request=JSON.parse(input); if (request.forecast.parameters.total_fuel == null) delete request.forecast.parameters.total_fuel; console.log(JSON.stringify({request,consumed_fuel:null}));`);
+    await writeFile(script, `import { tmpdir } from 'node:os'; let input=''; for await (const chunk of process.stdin) input += chunk; const request=JSON.parse(input); if (request.forecast.parameters.total_fuel == null) delete request.forecast.parameters.total_fuel; console.log(JSON.stringify({request,consumed_fuel:null,temporaryRoot:tmpdir(),cwd:process.cwd()}));`);
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
     process.env.QZ_JOB_BINARY = binary;
     const data = { catalog: directory, request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: { total_fuel: null } } } };
     const original = structuredClone(data);
     const result = await evaluateWasm('(module)', data, BACKGROUND_CONTEXT);
     assert.equal(result.consumed_fuel, null);
+    assert.equal(result.temporaryRoot, result.cwd);
     assert.equal(Object.hasOwn(((result.request as JsonObject).forecast as JsonObject).parameters as JsonObject, 'total_fuel'), false);
     assert.deepEqual(data, original);
   } finally { if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }

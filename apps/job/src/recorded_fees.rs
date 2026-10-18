@@ -177,7 +177,7 @@ impl RecordedFeeModel {
                     && record.quantity.is_positive()
                     && record.usdc_amount.is_positive()
                     && record.price.is_positive()
-                    && record.fee_usdc.as_decimal() >= &BigDecimal::from(0)
+                    && record.fee_usdc.to_decimal() >= BigDecimal::from(0)
                     && !record.maker_direction.is_empty()
                     && !record.taker_direction.is_empty(),
                 "RECORDED_FEE_RECORD_INVALID"
@@ -279,7 +279,7 @@ impl FeeModel for RecordedFeeModel {
             if allocated == BigDecimal::from(0) {
                 continue;
             }
-            let fee = ratio(record.fee_usdc.as_decimal()) * ratio(&allocated)
+            let fee = ratio(&record.fee_usdc.to_decimal()) * ratio(&allocated)
                 / ratio(record.quantity.as_decimal());
             amount += &fee;
             remaining -= &allocated;

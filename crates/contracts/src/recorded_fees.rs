@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa::ToSchema;
 
-/// Exact original price/notional audit text, not a native account amount.
+/// Exact original price/notional/fee text, before native account rounding.
 /// Source decimals need not fit the accounting NUMERIC(38,18) contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(try_from = "String", into = "String")]
@@ -45,6 +45,10 @@ impl RecordedSourceDecimal {
     pub fn is_positive(&self) -> bool {
         BigDecimal::from_str(&self.0).expect("validated source decimal") > BigDecimal::from(0)
     }
+
+    pub fn to_decimal(&self) -> BigDecimal {
+        BigDecimal::from_str(&self.0).expect("validated source decimal")
+    }
 }
 
 pub const POLYMARKET_V2_SOURCE: &str = "TimeSeventeen/Polymarket-v2";
@@ -65,7 +69,8 @@ pub struct RecordedTradeFeeV1 {
     pub source_quantity: DecimalValue,
     /// Same-ID original native TradeTick quantity, not a newly fitted amount.
     pub quantity: DecimalValue,
-    pub fee_usdc: DecimalValue,
+    /// Exact original source fee, before proportional allocation and fill rounding.
+    pub fee_usdc: RecordedSourceDecimal,
     pub usdc_amount: RecordedSourceDecimal,
     pub price: RecordedSourceDecimal,
     /// Provider-derived columns retained verbatim, not asserted aggressor roles.
