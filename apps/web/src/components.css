@@ -81,6 +81,7 @@ details[open] > summary { margin-bottom: 14px; }
 .equity-summary dt > span { margin-left: 5px; }
 .equity-summary dd { margin: 0; font-size: clamp(18px, 2vw, 26px); font-weight: 500; letter-spacing: -.6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .equity-summary .exact-value { font-family: inherit; }
+.equity-summary dd.equity-long-value { font-size: 15px; line-height: 1.6; letter-spacing: 0; word-break: break-all; }
 .equity-gain { color: var(--accent); }
 .equity-loss { color: var(--error); }
 .equity-legend { display: flex; align-items: center; gap: 20px; color: var(--secondary); font-size: 11px; }

@@ -32,6 +32,13 @@ The owner requested deep investigation and a replacement for the tangled backtes
 - `git diff --check`: passed. `make check-links` could not run because `lychee` is not installed.
 - `cua.getState()` could not connect to native desktop (DISPLAY/XAUTHORITY absent); no browser/app surfaces were listed. The installed service at port 18080 requires authentication; the owner's original account data and live screenshot reproduction remain unchecked. No installed service, database, scientific calculation, credentials or original records were changed.
 
+<a id="review"></a>
+## Review and delivery
+
+[PR #214](https://github.com/zhengui666/QuaZonai/pull/214) targets `dev`. Initial head `e430056f` passed all hosted CI jobs, including science/core. Read-only GitHub Codex review found four concrete display-boundary issues; this follow-up aligns arbitrary decimal scales instead of importing the form's 18-digit limit, keeps the headline as an exact decimal string, exposes every co-located clock in the tooltip, and places invalid raw rows after sorted valid rows. Added unit/browser regressions cover each case. ECharts outer-bound auto adjustment is disabled on both grids so wide labels cannot shift their time axes independently. A failing long-scale regression was observed before this correction.
+
+After correction: `make check-web` passed (11 unit tests, types and build); both focused browser checks passed, including three sub-ms clocks, >18-place decimals, unsafe-integer headline precision, and invalid mixed histories. Updated test-data screenshots are linked above. Final-head hosted checks and explicit clean re-review remain required before merge; no deployment is performed by this task.
+
 <a id="handoff"></a>
 ## Workspace
 

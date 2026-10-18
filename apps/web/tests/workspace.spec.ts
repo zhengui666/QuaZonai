@@ -233,7 +233,7 @@ test('long native histories retain every exact table record without one SVG symb
 
 test('backtest performance orders old histories and links return, equity, drawdown and zoom across themes', async ({ page }, info) => {
   const state = await contract(page); state.portfolio.capital = '1000';
-  const chronological = Array.from({ length: 32 }, (_, i) => ({ at: new Date(Date.UTC(2026, 8, i + 1)).toISOString(), value: `${1000 + i * 2 - (i > 15 && i < 23 ? 20 : 0)}.000000000000000001` }));
+  const chronological = Array.from({ length: 32 }, (_, i) => ({ at: new Date(Date.UTC(2026, 8, i + 1)).toISOString(), value: `${1000 + i * 2 - (i > 15 && i < 23 ? 20 : 0)}.00` }));
   state.portfolio.curve = [...chronological.filter((_, i) => i % 2 === 0), ...chronological.filter((_, i) => i % 2 === 1)];
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/#/portfolios/p1'); await expect(page.getByRole('heading', { name: '回测表现', exact: true })).toBeVisible();
@@ -264,6 +264,27 @@ test('backtest performance orders old histories and links return, equity, drawdo
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
   await audit(page); expect(errors).toEqual([]);
+});
+
+test('exact precision and every co-located clock remain readable; invalid rows do not unsort valid rows', async ({ page }) => {
+  const state = await contract(page); state.portfolio.capital = '100';
+  const amount = '9007199254740993.000000000000000000001';
+  state.portfolio.curve = [
+    { at: '2026-01-02T00:00:00Z', value: amount },
+    { at: '2026-01-01T00:00:00.000000003Z', value: '102' },
+    { at: '2026-01-01T00:00:00.000000001Z', value: '100.123456789012345678901' },
+    { at: '2026-01-01T00:00:00.000000002Z', value: '101' },
+  ];
+  await page.goto('/#/portfolios/p1'); await expect(page.locator('.equity-summary')).toContainText('9,007,199,254,740,993.000000000000000000001');
+  await expect(page.getByTestId('equity-chart')).toHaveClass(/with-drawdown/);
+  await page.getByTestId('equity-chart').scrollIntoViewIfNeeded();
+  const bounds = (await page.getByTestId('equity-chart').boundingBox())!; await page.mouse.move(bounds.x + bounds.width * 0.25, bounds.y + 80);
+  for (const suffix of ['001', '002', '003']) await expect(page.getByTestId('equity-chart').locator('text').filter({ hasText: `2026-01-01 00:00:00.000000${suffix} UTC` })).toBeVisible();
+  state.portfolio.curve.unshift({ at: 'invalid-clock', value: '99' }); await page.reload();
+  await expect(page.getByText('1 个记录时间无效，未绘制；原始记录见下方数据。', { exact: true })).toBeVisible();
+  await page.locator('.curve-details > summary').click();
+  await expect(page.locator('.curve-details .ant-table-row').first()).toContainText('2026-01-01 00:00:00.000000001');
+  await expect(page.locator('.curve-details .ant-table-row').last()).toContainText('invalid-clock');
 });
 
 test('refresh clears a pristine default model when another client removes it', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { equityCoordinates, equityPerformance, orderedEquityPoints } from './equity-values';
+import { equityCoordinates, equityPerformance, formatEquity, orderedEquityPoints } from './equity-values';
 
 test('coordinates sort elapsed time without changing original precision or null gaps', () => {
   const points = [{ at: '2026-10-18T00:00:00.000000001Z', value: '1001.000000000000000001' }, { at: '2026-10-17T00:00:00.000000001Z', value: '1000.000000000000000001' }, { at: '2026-10-17T00:00:01.000000001Z', value: null }];
@@ -31,6 +31,17 @@ test('returns use explicit capital; drawdown includes initial capital and negati
 test('incomplete history never publishes a complete-history drawdown or a fake latest return', () => {
   const points = [{ at: '2026-01-01', value: '100' }, { at: '2026-01-02', value: null }, { at: '2026-01-03', value: '110' }];
   expect(equityPerformance(points, '100')).toMatchObject({ returns: [0, null, 10], drawdowns: [null, null, null], maxDrawdown: null });
+});
+
+test('all accepted decimal scales remain available, including tiny and large amounts', () => {
+  const capital = '0.' + '0'.repeat(350) + '1';
+  const value = '0.' + '0'.repeat(350) + '2';
+  expect(equityPerformance([{ at: '2026-01-01', value }], capital)).toMatchObject({ hasCapital: true, returns: [100], drawdowns: [0], maxDrawdown: 0 });
+  const precise = equityPerformance([{ at: '2026-01-01', value: '100.12345678901234567890123456789' }], '100');
+  expect(precise.returns[0]).toBeCloseTo(0.1234567890123456789, 14);
+  expect(precise.maxDrawdown).toBe(0);
+  expect(formatEquity('9007199254740993.000000000000000001')).toBe('9,007,199,254,740,993.000000000000000001');
+  expect(formatEquity('0.000000000000000001')).toBe('0.000000000000000001');
 });
 
 test('decimal subtraction happens before conversion to plotting numbers', () => {
