@@ -138,6 +138,7 @@ pub fn evaluate(
         // Schedule only. Actual weights are produced inside the native account before any order.
         points.push(NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: cutoff,
             valid_until_ns: count(cutoff.get() + ttl)?,
             cash_weight: "1".parse().unwrap(),
@@ -168,6 +169,7 @@ pub fn evaluate(
             .map(|frame| {
                 Ok(NativeTargetPointV1 {
                     schema_version: SchemaV1,
+                    rebalance_instrument_ids: None,
                     asof_ns: frame.input.forecasts.decision_asof_ns,
                     valid_until_ns: count(frame.cutoff_ns.get() + ttl)?,
                     targets: frame

@@ -274,6 +274,7 @@ pub(super) fn native_scenario() -> (
         .enumerate()
         .map(|(i, weight)| NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: DbCounter::new(if i == 0 { MINUTE_NS } else { 4 * MINUTE_NS }).unwrap(),
             valid_until_ns: end,
             targets: vec![AllocationTargetV1 {

@@ -173,6 +173,7 @@ pub fn report(
                 .iter()
                 .map(|point| NativeTargetPointV1 {
                     schema_version: SchemaV1,
+                    rebalance_instrument_ids: None,
                     asof_ns: point.decision_ns,
                     valid_until_ns: count(
                         point

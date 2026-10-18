@@ -365,6 +365,7 @@ mod streaming {
         };
         let point = NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: DbCounter::new(SECOND).unwrap(),
             valid_until_ns: DbCounter::new(20 * SECOND).unwrap(),
             cash_weight: "0.996".parse().unwrap(),

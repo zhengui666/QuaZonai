@@ -273,6 +273,7 @@ fn old_optional_context_wire_bytes_and_exact_native_lifetime_boundaries() {
     let expiry = 100 * prediction::STEP;
     let mut point = NativeTargetPointV1 {
         schema_version: SchemaV1,
+        rebalance_instrument_ids: None,
         asof_ns: experiment::count(expiry - 1),
         valid_until_ns: experiment::count(expiry),
         targets: vec![contracts::portfolio::AllocationTargetV1 {

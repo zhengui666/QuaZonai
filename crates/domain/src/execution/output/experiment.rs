@@ -253,6 +253,7 @@ pub fn binding(
             if target.asof_ns != point.decision_ns
                 || target.valid_until_ns.get() != expiry
                 || expiry <= target.asof_ns.get()
+                || target.rebalance_instrument_ids.is_some()
                 || target.targets.len() != 1
                 || target.targets[0].instrument_id != request.instrument_id
                 || target.targets[0].currency != request.settings.base_currency

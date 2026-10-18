@@ -82,11 +82,43 @@ impl RecordedFeeModel {
         market: &NativeMarketData,
         clock: Rc<RefCell<dyn Clock>>,
     ) -> Result<Self> {
-        let source: RecordedTradeFeesV1 = serde_json::from_reader(
-            std::fs::File::open(root.join(RECORDED_FEES_FILE))
-                .context("RECORDED_FEE_FILE_REQUIRED")?,
-        )
-        .context("RECORDED_FEE_INVALID_SOURCE")?;
+        let read = |path: &Path| -> Result<RecordedTradeFeesV1> {
+            serde_json::from_reader(
+                std::fs::File::open(path).context("RECORDED_FEE_FILE_REQUIRED")?,
+            )
+            .context("RECORDED_FEE_INVALID_SOURCE")
+        };
+        let legacy = root.join(RECORDED_FEES_FILE);
+        let source = if legacy.is_file() {
+            // Existing original catalogs retain their exact single-file behavior.
+            read(&legacy)?
+        } else {
+            let mut combined: Option<RecordedTradeFeesV1> = None;
+            let mut loaded = BTreeSet::new();
+            for series in &market.series {
+                let id = series.instrument.id().to_string();
+                if !loaded.insert(id.clone()) {
+                    continue;
+                }
+                let part = read(&root.join("recorded-fees").join(format!("{id}.json")))?;
+                ensure!(
+                    part.records.iter().all(|record| record.instrument_id == id),
+                    "RECORDED_FEE_PARTITION_INSTRUMENT_MISMATCH"
+                );
+                if let Some(source) = combined.as_mut() {
+                    ensure!(
+                        source.source == part.source
+                            && source.revision == part.revision
+                            && source.currency == part.currency,
+                        "RECORDED_FEE_PARTITION_SOURCE_MISMATCH"
+                    );
+                    source.records.extend(part.records);
+                } else {
+                    combined = Some(part);
+                }
+            }
+            combined.context("RECORDED_FEE_SOURCE_REQUIRED")?
+        };
         Self::new(source, market, clock)
     }
 
@@ -259,7 +291,15 @@ impl FeeModel for RecordedFeeModel {
             });
             updates.push((index, allocated));
         }
-        ensure!(remaining == BigDecimal::from(0), "RECORDED_FEE_QUANTITY_EXHAUSTED: instrument={} fill_ns={} bar_end_ns={} quantity={} unmatched={}", key.0, now, key.1, fill_quantity, remaining);
+        ensure!(
+            remaining == BigDecimal::from(0),
+            "RECORDED_FEE_QUANTITY_EXHAUSTED: instrument={} fill_ns={} bar_end_ns={} quantity={} unmatched={}",
+            key.0,
+            now,
+            key.1,
+            fill_quantity,
+            remaining
+        );
         let rounded = round_money(amount, self.currency);
         let money = Money::from_decimal(
             Decimal::from_str_exact(&rounded.to_plain_string())?,
@@ -291,3 +331,6 @@ impl FeeModel for RecordedFeeModel {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod partition_tests;

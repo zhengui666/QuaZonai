@@ -155,6 +155,7 @@ pub fn market_direction(
         target_points: vec![
             NativeTargetPointV1 {
                 schema_version: SchemaV1,
+                rebalance_instrument_ids: None,
                 asof_ns: instant(2),
                 valid_until_ns: end,
                 targets,
@@ -162,6 +163,7 @@ pub fn market_direction(
             },
             NativeTargetPointV1 {
                 schema_version: SchemaV1,
+                rebalance_instrument_ids: None,
                 asof_ns: instant(7),
                 valid_until_ns: end,
                 targets: later,

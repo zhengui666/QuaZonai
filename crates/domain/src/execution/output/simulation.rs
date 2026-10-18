@@ -300,6 +300,23 @@ pub(crate) fn binding(
         return Err(bad("native_output.account_currency"));
     }
     for point in &request.target_points {
+        crate::execution::strategy::target_scope(point)?;
+        if point.rebalance_instrument_ids.is_some()
+            && (!point.cash_weight.is_fraction()
+                || point
+                    .targets
+                    .iter()
+                    .any(|target| !target.weight.is_fraction())
+                || point
+                    .targets
+                    .iter()
+                    .fold(point.cash_weight.as_decimal().clone(), |sum, target| {
+                        sum + target.weight.as_decimal()
+                    })
+                    != BigDecimal::from(1))
+        {
+            return Err(bad("native_output.simulation_target_sum"));
+        }
         if point
             .targets
             .iter()

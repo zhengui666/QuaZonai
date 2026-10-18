@@ -647,23 +647,49 @@ impl TargetReplay {
         let Some(mut point) = self.points.get(next).cloned() else {
             return Ok(());
         };
-        // Every asset must have a completed price for the same event time. No
-        // forward fill, partial cross-section, or hidden look-ahead to later bars.
-        if self.latest.len() != self.instruments.len()
-            || self
-                .latest
+        let now = if let Some(scope) = &point.rebalance_instrument_ids {
+            // Only genuine observations at this decision's receive clock can
+            // authorize orders. Wait for the entire same-clock scope, not an
+            // unrelated instrument's first BAR or a synchronized cross-section.
+            let mut ready = true;
+            for id in scope {
+                let id = InstrumentId::from_str(id)?;
+                if let Some(observed) = self.latest.get(&id) {
+                    ensure!(
+                        observed.ts_init.as_u64() <= point.asof_ns.get(),
+                        "SIMULATION_SCOPE_BAR_MISSING"
+                    );
+                    ensure!(
+                        observed.ts_event <= observed.ts_init,
+                        "SIMULATION_SCOPE_BAR_FROM_FUTURE"
+                    );
+                    ready &= observed.ts_init.as_u64() == point.asof_ns.get();
+                } else {
+                    ready = false;
+                }
+            }
+            if !ready {
+                return Ok(());
+            }
+            receipt_ns.max(point.asof_ns.get())
+        } else {
+            // Legacy frames require every asset's completed price at the same
+            // event time. Keep their original synchronized semantics unchanged.
+            if self.latest.len() != self.instruments.len()
+                || self
+                    .latest
+                    .values()
+                    .any(|other| other.ts_event != bar.ts_event)
+            {
+                return Ok(());
+            }
+            self.latest
                 .values()
-                .any(|other| other.ts_event != bar.ts_event)
-        {
-            return Ok(());
-        }
-        let now = self
-            .latest
-            .values()
-            .map(|v| v.ts_init.as_u64())
-            .max()
-            .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?
-            .max(receipt_ns);
+                .map(|v| v.ts_init.as_u64())
+                .max()
+                .ok_or_else(|| anyhow::anyhow!("SIMULATION_MISSING_PRICE"))?
+                .max(receipt_ns)
+        };
         if now < point.asof_ns.get() {
             return Ok(());
         }
@@ -799,6 +825,15 @@ impl TargetReplay {
         let mut increases = Vec::<OrderAny>::new();
         for (instrument, target) in self.instruments.iter().zip(&point.targets) {
             let id = instrument.id();
+            if point
+                .rebalance_instrument_ids
+                .as_ref()
+                .is_some_and(|scope| !scope.contains(&target.instrument_id))
+            {
+                // Residual holdings remain in the native account at its last
+                // real marks. Never submit against another market's stale BAR.
+                continue;
+            }
             let current = crate::spot_cash_runtime::inventory_quantity(
                 spot_snapshot.as_ref(),
                 instrument,
@@ -973,6 +1008,10 @@ pub(crate) fn paper_target_strategy(
 ) -> Result<(TargetReplay, Rc<RefCell<ReplayStatus>>)> {
     domain::portfolio::simulation_settings(&settings)?;
     ensure!(
+        point.rebalance_instrument_ids.is_none(),
+        "TARGET_SCOPE_BACKTEST_ONLY"
+    );
+    ensure!(
         !matches!(
             settings.fee_model,
             contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedFees { .. }
@@ -1079,6 +1118,10 @@ fn validate_paper_instruments(
     bar_types: &[BarType],
     point: &NativeTargetPointV1,
 ) -> Result<()> {
+    ensure!(
+        point.rebalance_instrument_ids.is_none(),
+        "TARGET_SCOPE_BACKTEST_ONLY"
+    );
     validate_point(settings, point, instruments)?;
     // Reuse the historical metadata predicates without inventing market data.
     // Empty bars are validation input only and never enter the Paper data engine.
@@ -1221,6 +1264,7 @@ fn validate_point(
         point.targets.len() == instruments.len(),
         "SIMULATION_TARGET_IDENTITY"
     );
+    domain::execution::strategy::target_scope(point)?;
     crate::prediction::target_window(instruments, point.asof_ns.get(), point.valid_until_ns.get())?;
     let mut total = point.cash_weight.as_decimal().clone();
     let mut gross = BigDecimal::from(0);
@@ -1244,8 +1288,10 @@ fn validate_point(
         total += target.weight.as_decimal();
         gross += target.weight.as_decimal().abs();
     }
+    let exact_scope_sum = point.rebalance_instrument_ids.is_none() || total == BigDecimal::from(1);
     ensure!(
-        (total - BigDecimal::from(1)).abs() <= *settings.exposure_tolerance.as_decimal()
+        exact_scope_sum
+            && (total - BigDecimal::from(1)).abs() <= *settings.exposure_tolerance.as_decimal()
             && gross <= settings.leverage.as_decimal() + settings.exposure_tolerance.as_decimal(),
         "SIMULATION_CAPITAL_OR_LEVERAGE"
     );
@@ -1434,6 +1480,14 @@ fn run_with_strategy_and_spot(
         study_inputs.is_empty() || study_inputs.len() == request.target_points.len(),
         "STUDY_FRAME_COUNT"
     );
+    ensure!(
+        (study_inputs.is_empty() && strategy_constraints.is_none() && spot_inputs.is_none())
+            || request
+                .target_points
+                .iter()
+                .all(|point| point.rebalance_instrument_ids.is_none()),
+        "TARGET_SCOPE_BACKTEST_ONLY"
+    );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
     let market = load_catalog(root, &request.selection)?;
     let is_spot = spot_inputs.is_some();
@@ -1481,9 +1535,8 @@ fn run_with_strategy_and_spot(
         awaiting_settlement: false,
         outstanding_orders: BTreeSet::new(),
         settlement_events,
-        // Recorded fees require CurrencyPair series; native BinaryOption close
-        // events cannot enter this mode. Every selected series must deliver its
-        // own final BAR, including synchronized final timestamps.
+        // Every selected series must deliver its own final real BAR before
+        // shutdown, even when the markets' observation clocks differ.
         recorded_bar_ends: recorded_liquidity(&request.settings).then(|| {
             market.series.iter().flat_map(|series| &series.bars).fold(
                 BTreeMap::<InstrumentId, u64>::new(),

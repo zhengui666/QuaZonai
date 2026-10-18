@@ -135,6 +135,7 @@ pub fn binding(
             let point = &replay.target_points[index];
             if point.asof_ns != forecasts.decision_asof_ns
                 || point.valid_until_ns.get() != cutoff.get() + ttl
+                || point.rebalance_instrument_ids.is_some()
                 || Some(&point.targets) != frame.allocation.targets.as_ref()
                 || Some(&point.cash_weight) != frame.allocation.cash_weight.as_ref()
             {

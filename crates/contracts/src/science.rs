@@ -149,6 +149,9 @@ pub struct NativeTargetPointV1 {
     pub schema_version: SchemaV1,
     pub asof_ns: DbCounter,
     pub valid_until_ns: DbCounter,
+    /// Actual BAR observations to rebalance; absent preserves synchronized all-asset replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebalance_instrument_ids: Option<Vec<String>>,
     #[schema(min_items = 1)]
     pub targets: Vec<AllocationTargetV1>,
     pub cash_weight: DecimalValue,

@@ -194,6 +194,7 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
             account_start: Box::new(account),
             target: NativeTargetPointV1 {
                 schema_version: SchemaV1,
+                rebalance_instrument_ids: None,
                 asof_ns: count(43_000_000_001),
                 valid_until_ns: count(53_000_000_001),
                 targets: vec![contracts::portfolio::AllocationTargetV1 {

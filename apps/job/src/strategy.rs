@@ -233,6 +233,7 @@ pub fn compose(
                     .insert(member.alpha_version_id, count(decisions.len() as u64)?);
                 targets.push(NativeTargetPointV1 {
                     schema_version: SchemaV1,
+                    rebalance_instrument_ids: None,
                     asof_ns: last.decision_ns,
                     valid_until_ns: count(
                         last.decision_ns

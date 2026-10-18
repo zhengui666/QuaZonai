@@ -257,6 +257,28 @@ fn decimal(value: BigDecimal) -> Result<DecimalValue, DomainError> {
         .map_err(|_| bad("strategy.target_precision"))
 }
 
+/// A scoped frame still describes the whole account, not a sparse target vector.
+pub fn target_scope(point: &NativeTargetPointV1) -> Result<(), DomainError> {
+    let Some(scope) = &point.rebalance_instrument_ids else {
+        return Ok(());
+    };
+    let targets: BTreeSet<_> = point
+        .targets
+        .iter()
+        .map(|target| &target.instrument_id)
+        .collect();
+    let mut observed = BTreeSet::new();
+    if scope.is_empty()
+        || targets.len() != point.targets.len()
+        || scope
+            .iter()
+            .any(|id| !targets.contains(id) || !observed.insert(id))
+    {
+        return Err(bad("strategy.target_scope"));
+    }
+    Ok(())
+}
+
 /// Combine target weights and cash only; account equity is never an input.
 pub fn blend(
     members: &[NativeStrategyMemberV1],
@@ -313,8 +335,10 @@ fn blend_weighted(
     let mut assets = vec![BigDecimal::from(0); first.targets.len()];
     let mut cash = BigDecimal::from(0);
     for (weight, point) in member_weights.iter().zip(points) {
+        target_scope(point)?;
         if point.asof_ns != first.asof_ns
             || point.targets.len() != first.targets.len()
+            || point.rebalance_instrument_ids != first.rebalance_instrument_ids
             || point.valid_until_ns <= point.asof_ns
             || !point.cash_weight.is_fraction()
         {
@@ -344,6 +368,7 @@ fn blend_weighted(
         schema_version: SchemaV1,
         asof_ns: first.asof_ns,
         valid_until_ns: DbCounter::new(until).map_err(|_| bad("strategy.target_clock"))?,
+        rebalance_instrument_ids: first.rebalance_instrument_ids.clone(),
         targets: first
             .targets
             .iter()
@@ -385,6 +410,9 @@ pub fn target_bounds(
     point: &NativeTargetPointV1,
     current: &[DecimalValue],
 ) -> Result<(), DomainError> {
+    if point.rebalance_instrument_ids.is_some() {
+        return Err(DomainError::CapabilityUnavailable("strategy_target_scope"));
+    }
     crate::portfolio::portfolio_constraints(c)?;
     if c.max_ex_ante_risk.is_some()
         || c.max_participation.is_some()
@@ -497,6 +525,9 @@ pub fn result(
                 return Err(bad("strategy.replay_binding"));
             }
             for target in &simulation_request.target_points {
+                if target.rebalance_instrument_ids.is_some() {
+                    return Err(DomainError::CapabilityUnavailable("strategy_target_scope"));
+                }
                 crate::prediction::binary_option_target(request.binary_option.as_ref(), target)?;
             }
             super::output::check_simulation(simulation_request, simulation)?;
@@ -516,6 +547,7 @@ pub fn result(
             if value.consumed_fuel == Some(DbCounter::ZERO)
                 || account_start != actual.as_ref()
                 || target.asof_ns > request.selection.decision_cutoff_ns
+                || target.rebalance_instrument_ids.is_some()
                 || predictions_per_member.len() != request.members.len()
                 || request.members.iter().any(|m| {
                     predictions_per_member

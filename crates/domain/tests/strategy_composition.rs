@@ -109,3 +109,85 @@ fn current_strategy_unmetered_output_cannot_disguise_explicit_fuel_exhaustion() 
     report.consumed_fuel = Some(contracts::DbCounter::new(1).unwrap());
     assert!(strategy::result(&report.request, &report).is_err());
 }
+
+fn scoped_point(scope: serde_json::Value) -> contracts::science::NativeTargetPointV1 {
+    serde_json::from_value(serde_json::json!({
+        "schema_version": 1, "asof_ns": "60000000000", "valid_until_ns": "120000000000",
+        "targets": [
+            {"instrument_id": "123.POLYMARKET", "currency": "pUSD", "weight": "0.25"},
+            {"instrument_id": "456.POLYMARKET", "currency": "pUSD", "weight": "0.5"}
+        ],
+        "cash_weight": "0.25", "rebalance_instrument_ids": scope
+    }))
+    .unwrap()
+}
+
+#[test]
+fn scoped_blend_preserves_scope_and_exact_full_account_weights() {
+    use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
+    let point = scoped_point(serde_json::json!(["123.POLYMARKET"]));
+    let mut other = point.clone();
+    other.targets[0].weight = "0.5".parse().unwrap();
+    other.cash_weight = "0".parse().unwrap();
+    other.valid_until_ns = fixture::count(90_000_000_000);
+    let result = strategy::blend_targets(&NativeTargetBlendRequestV1 {
+        schema_version: SchemaV1,
+        weights: vec!["0.25".parse().unwrap(), "0.75".parse().unwrap()],
+        rows: vec![vec![point, other]],
+    })
+    .unwrap();
+    let value = serde_json::to_value(&result.target_points[0]).unwrap();
+    assert_eq!(
+        value["rebalance_instrument_ids"],
+        serde_json::json!(["123.POLYMARKET"])
+    );
+    assert_eq!(value["targets"][0]["weight"], "0.4375");
+    assert_eq!(value["targets"][1]["weight"], "0.5");
+    assert_eq!(value["cash_weight"], "0.0625");
+    assert_eq!(value["valid_until_ns"], "90000000000");
+}
+
+#[test]
+fn scoped_blend_rejects_empty_duplicate_outside_mismatched_and_legacy_scopes() {
+    use contracts::{science::NativeTargetBlendRequestV1, SchemaV1};
+    let point = scoped_point(serde_json::json!(["123.POLYMARKET"]));
+    for scope in [
+        serde_json::json!([]),
+        serde_json::json!(["123.POLYMARKET", "123.POLYMARKET"]),
+        serde_json::json!(["789.POLYMARKET"]),
+        serde_json::json!(["456.POLYMARKET"]),
+        serde_json::Value::Null,
+    ] {
+        let other = scoped_point(scope);
+        assert!(strategy::blend_targets(&NativeTargetBlendRequestV1 {
+            schema_version: SchemaV1,
+            weights: vec!["0.5".parse().unwrap(); 2],
+            rows: vec![vec![point.clone(), other]],
+        })
+        .is_err());
+    }
+    let mut invalid = point.clone();
+    invalid.cash_weight = "0.250001".parse().unwrap();
+    assert!(strategy::blend_targets(&NativeTargetBlendRequestV1 {
+        schema_version: SchemaV1,
+        weights: vec!["1".parse().unwrap()],
+        rows: vec![vec![invalid]],
+    })
+    .is_err());
+}
+
+#[test]
+fn legacy_target_wire_omits_scope_and_current_strategy_refuses_opt_in() {
+    let mut report = fixture::current_report();
+    let StrategyCompositionOutcomeV1::CurrentDecision { target, .. } = &mut report.outcome else {
+        unreachable!()
+    };
+    let mut value = serde_json::to_value(&target).unwrap();
+    assert!(value.get("rebalance_instrument_ids").is_none());
+    let roundtrip: contracts::science::NativeTargetPointV1 =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(roundtrip).unwrap(), value);
+    value["rebalance_instrument_ids"] = serde_json::json!([target.targets[0].instrument_id]);
+    *target = serde_json::from_value(value).unwrap();
+    assert!(strategy::result(&report.request, &report).is_err());
+}

@@ -364,6 +364,7 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
         },
         target_points: vec![NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: count(DAY + 1),
             valid_until_ns: count(DAY + 100),
             targets: vec![AllocationTargetV1 {

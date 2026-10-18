@@ -725,6 +725,7 @@ impl PaperNode {
         .build()?;
         let point = NativeTargetPointV1 {
             schema_version: SchemaV1,
+            rebalance_instrument_ids: None,
             asof_ns: nanos(package.valid_from)?,
             valid_until_ns: nanos(package.valid_until)?,
             targets: package
