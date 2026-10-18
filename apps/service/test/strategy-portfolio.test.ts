@@ -150,6 +150,20 @@ test('native account curve preserves the original mixed-case pUSD collateral and
   assert.throws(() => nativeCurve(native, 'USD'), /native_equity_currency_mismatch/);
 });
 
+test('native curve sorts exact clocks while retaining same-clock observations and original amounts', () => {
+  const snapshots = [
+    { ts_event: '1000000020', total_equity: ['3002.000000000000000001 pUSD'] },
+    { ts_event: '999999999', total_equity: ['3000 pUSD'] },
+    { ts_event: '1000000010', total_equity: [null] },
+    { ts_event: '1000000020', total_equity: ['3003 pUSD'] },
+  ];
+  const original = structuredClone(snapshots);
+  const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, 'pUSD');
+  assert.deepEqual(curve.map(point => point.value), ['3000', null, '3002.000000000000000001', '3003']);
+  assert.deepEqual(curve.map(point => point.at), ['1970-01-01T00:00:00.999999999Z', '1970-01-01T00:00:01.000000010Z', '1970-01-01T00:00:01.000000020Z', '1970-01-01T00:00:01.000000020Z']);
+  assert.deepEqual(snapshots, original);
+});
+
 test('legacy single-evidence replay cannot remove the original historical classification', async () => {
   const state = await setup();
   try {

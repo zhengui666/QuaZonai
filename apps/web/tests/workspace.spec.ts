@@ -231,6 +231,62 @@ test('long native histories retain every exact table record without one SVG symb
   const state = await contract(page); state.portfolio.curve = Array.from({ length: 201 }, (_, index) => ({ at: new Date(Date.UTC(2026, 9, 1) + index * 60_000).toISOString(), value: `${1000 + index}.000000000000000001` })); await page.goto('/#/portfolios/p1'); await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible(); expect(await page.getByTestId('equity-chart').locator('svg path').count()).toBeLessThan(200); await page.locator('.curve-details > summary').click(); await expect(page.locator('.curve-details .ant-table-row')).toHaveCount(20); await page.locator('.curve-details .ant-pagination-item-11').click(); await expect(page.locator('.curve-details .ant-table-row')).toHaveCount(1); await expect(page.locator('.curve-details')).toContainText('1200.000000000000000001');
 });
 
+test('backtest performance orders old histories and links return, equity, drawdown and zoom across themes', async ({ page }, info) => {
+  const state = await contract(page); state.portfolio.capital = '1000';
+  const chronological = Array.from({ length: 32 }, (_, i) => ({ at: new Date(Date.UTC(2026, 8, i + 1)).toISOString(), value: `${1000 + i * 2 - (i > 15 && i < 23 ? 20 : 0)}.00` }));
+  state.portfolio.curve = [...chronological.filter((_, i) => i % 2 === 0), ...chronological.filter((_, i) => i % 2 === 1)];
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/#/portfolios/p1'); await expect(page.getByRole('heading', { name: '回测表现', exact: true })).toBeVisible();
+  await expect(page.getByRole('radio', { name: '累计收益', exact: true })).toBeChecked(); await expect(page.locator('.equity-summary')).toContainText('+6.20%');
+  await expect(page.getByTestId('equity-chart')).toHaveClass(/with-drawdown/); await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible();
+  // A sorted time axis must never draw back toward an earlier x coordinate.
+  const linePath = page.getByTestId('equity-chart').locator('path[stroke-width="2"]').first();
+  const path = await linePath.getAttribute('d');
+  const xs = [...path!.matchAll(/[ML]\s*(-?[\d.]+)[,\s]/g)].map(match => Number(match[1]));
+  expect(xs.length).toBeGreaterThan(20); expect(xs.every((x, i) => i === 0 || x >= xs[i - 1]!)).toBe(true);
+  await page.locator('.equity-heading label').filter({ hasText: '账户权益' }).click(); await expect(page.getByRole('radio', { name: '账户权益', exact: true })).toBeChecked();
+  await page.getByRole('radio', { name: '账户权益', exact: true }).press('ArrowLeft'); await expect(page.getByRole('radio', { name: '累计收益', exact: true })).toBeChecked();
+  await page.locator('.curve-details > summary').click(); await expect(page.locator('.curve-details .ant-table-row').first()).toContainText('2026-09-01'); await page.locator('.curve-details > summary').click();
+  const bounds = (await page.getByTestId('equity-chart').boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 80);
+  await expect(page.getByTestId('equity-chart').locator('text').filter({ hasText: /账户权益  / })).toBeVisible();
+  await page.mouse.move(bounds.x + bounds.width - 16, bounds.y + bounds.height - 16); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width * 0.65, bounds.y + bounds.height - 16, { steps: 8 }); await page.mouse.up();
+  await expect.poll(() => linePath.getAttribute('d')).not.toBe(path);
+  await page.getByRole('button', { name: '重置区间', exact: true }).click();
+  await expect.poll(() => linePath.getAttribute('d')).toBe(path);
+  for (const dark of [false, true]) {
+    await page.getByRole('button', { name: '外观设置', exact: true }).click(); await page.getByRole('menuitem', { name: dark ? '深色' : '浅色', exact: true }).click();
+    await expect(page.getByRole('menu')).not.toBeVisible(); await page.getByRole('heading', { name: '回测表现', exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 }); await fits(page, width); await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible();
+      await page.locator('.equity-section').screenshot({ path: info.outputPath(`backtest-${dark ? 'dark' : 'light'}-${width}.png`) });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+  await audit(page); expect(errors).toEqual([]);
+});
+
+test('exact precision and every co-located clock remain readable; invalid rows do not unsort valid rows', async ({ page }) => {
+  const state = await contract(page); state.portfolio.capital = '100';
+  const amount = '9007199254740993.000000000000000000001';
+  state.portfolio.curve = [
+    { at: '2026-01-02T00:00:00Z', value: amount },
+    { at: '2026-01-01T00:00:00.000000003Z', value: '102' },
+    { at: '2026-01-01T00:00:00.000000001Z', value: '100.123456789012345678901' },
+    { at: '2026-01-01T00:00:00.000000002Z', value: '101' },
+  ];
+  await page.goto('/#/portfolios/p1'); await expect(page.locator('.equity-summary')).toContainText('9,007,199,254,740,993.000000000000000000001');
+  await expect(page.getByTestId('equity-chart')).toHaveClass(/with-drawdown/);
+  await page.getByTestId('equity-chart').scrollIntoViewIfNeeded();
+  const bounds = (await page.getByTestId('equity-chart').boundingBox())!; await page.mouse.move(bounds.x + bounds.width * 0.25, bounds.y + 80);
+  for (const suffix of ['001', '002', '003']) await expect(page.getByTestId('equity-chart').locator('text').filter({ hasText: `2026-01-01 00:00:00.000000${suffix} UTC` })).toBeVisible();
+  state.portfolio.curve.unshift({ at: 'invalid-clock', value: '99' }); await page.reload();
+  await expect(page.getByText('1 个记录时间无效，未绘制；原始记录见下方数据。', { exact: true })).toBeVisible();
+  await page.locator('.curve-details > summary').click();
+  await expect(page.locator('.curve-details .ant-table-row').first()).toContainText('2026-01-01 00:00:00.000000001');
+  await expect(page.locator('.curve-details .ant-table-row').last()).toContainText('invalid-clock');
+});
+
 test('refresh clears a pristine default model when another client removes it', async ({ page }) => {
   const state = await contract(page); let cleared = false;
   await page.route('**/api/v3/settings', route => route.fulfill({ json: { defaultModel: cleared ? null : { provider: 'test', modelId: 'test-model' }, thinkingLevel: cleared ? null : 'medium' } }));
