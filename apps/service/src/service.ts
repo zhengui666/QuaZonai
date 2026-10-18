@@ -15,7 +15,7 @@ import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
-import { observationView, portfolioView, researchDetail } from './projections.ts';
+import { observationView, portfolioView, researchDetail, researchSummary } from './projections.ts';
 import { workbench } from './workbench.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -84,10 +84,7 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
     const page = await research.list(cursor); const items: ResearchSummary[] = []; const admitted = (await work.snapshot())?.researchRequests;
-    for (const row of page.items) {
-      const detail = await researchDetail(research, row.id, admitted);
-      const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _previousStops, ...summary } = detail; items.push(summary);
-    }
+    for (const row of page.items) items.push(await researchSummary(research, row.id, admitted));
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => researchDetail(research, Number(request.params.id)));
@@ -105,7 +102,7 @@ export async function createService(options: ServiceOptions) {
     const usage = await research.usage(); const sources = [...Object.values(usage.models), ...Object.values(usage.tools)];
     return { inputTokens: sources.length ? sources.reduce((sum, value) => sum + value.input, 0) : null,
       outputTokens: sources.length ? sources.reduce((sum, value) => sum + value.output, 0) : null,
-      cost: null, activeTasks: (await research.tasks()).tasks.length };
+      cost: null, activeTasks: (await research.harness.inspect(context)).tasks.length };
   });
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));

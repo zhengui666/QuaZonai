@@ -1491,11 +1491,11 @@ fn run_with_strategy_and_spot(
         "TARGET_SCOPE_BACKTEST_ONLY"
     );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
-    let wake_order_arrivals = recorded_liquidity(&request.settings)
-        || request
-            .target_points
-            .iter()
-            .any(|point| point.rebalance_instrument_ids.is_some());
+    let scoped_replay = request
+        .target_points
+        .iter()
+        .any(|point| point.rebalance_instrument_ids.is_some());
+    let wake_order_arrivals = recorded_liquidity(&request.settings) || scoped_replay;
     let market = if request
         .target_points
         .iter()
@@ -1714,11 +1714,23 @@ fn run_with_strategy_and_spot(
         append_settlement_events(&mut events, closes);
         engine.add_strategy(strategy)?;
         engine.add_data(events, None, true, true)?;
-        // Keep the strategy running for in-window trailing arrival callbacks.
-        // Native run(None) otherwise stops it at the final BAR timestamp before
-        // draining positive-latency remainders. The selection end is exclusive.
-        let replay_end =
-            wake_order_arrivals.then(|| (request.selection.event_end_ns.get() - 1).into());
+        // Event bounds select BARs, not their later permitted receive clocks.
+        // Scoped orders may also need arrival callbacks after the data cutoff;
+        // their original expiry bounds execution, while settled-final-BAR
+        // shutdown still prevents manufacturing an empty account-return tail.
+        let replay_end = wake_order_arrivals.then(|| {
+            let end = if scoped_replay {
+                request
+                    .target_points
+                    .iter()
+                    .fold(request.selection.decision_cutoff_ns.get(), |end, point| {
+                        end.max(point.valid_until_ns.get())
+                    })
+            } else {
+                request.selection.event_end_ns.get() - 1
+            };
+            end.into()
+        });
         let native_result = engine.run(None, replay_end, None, false);
         // Original callback errors retain precedence over native fee failure.
         status.borrow_mut().check_callback_error()?;

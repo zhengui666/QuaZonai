@@ -42,11 +42,32 @@ export function metrics(value: Json | undefined, prefix = ''): Metric[] {
     return [];
   });
 }
-export async function researchDetail(host: ResearchHost, id: number, admitted?: ResearchAdmissions): Promise<ResearchDetail> {
+async function researchBase(host: ResearchHost, id: number, admitted?: ResearchAdmissions) {
   const view = await host.state(id);
   const study = view.research;
   if (!study?.input) throw new Problem('research_not_found', 404);
   const input = study.input as ResearchInput;
+  const admissions = admitted ?? (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
+  const admission = view.originalSubmission?.requestId ? admissions?.[`request:${view.originalSubmission.requestId}`] : undefined;
+  const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
+  const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
+  const running = !study.final && (['queued', 'placed'].includes(view.submission?.status ?? '')
+    || (await host.harness.inspect(BACKGROUND_CONTEXT)).tasks.some((task) => task.record.conversationId === id));
+  return { view, study, input, summary: {
+    id, title: input.goal, status: study.final ? String(study.final.status) : running ? 'RUNNING' : 'IDLE',
+    trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
+    createdAt: null, updatedAt: null, dataset,
+    datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
+    originalSubmission: submissionView(view.originalSubmission),
+  } };
+}
+
+export async function researchSummary(host: ResearchHost, id: number, admitted?: ResearchAdmissions) {
+  return (await researchBase(host, id, admitted)).summary;
+}
+
+export async function researchDetail(host: ResearchHost, id: number, admitted?: ResearchAdmissions): Promise<ResearchDetail> {
+  const { view, study, input, summary } = await researchBase(host, id, admitted);
   const records = await host.harness.commit((tx) => tx.scanTasks({ conversationId: id as import('@earendil-works/pi-durable').ConversationId, order: 'descending' }, 100), BACKGROUND_CONTEXT);
   const tasks: TaskView[] = records.items.map((record) => ({
     id: record.id, name: record.kind, status: record.state.status,
@@ -54,17 +75,8 @@ export async function researchDetail(host: ResearchHost, id: number, admitted?: 
     error: record.state.status === 'terminal' && ['failed', 'faulted'].includes(record.state.outcome.status) ? 'task_failed' : null,
   }));
   const final = study.final;
-  const admissions = admitted ?? (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
-  const admission = view.originalSubmission?.requestId ? admissions?.[`request:${view.originalSubmission.requestId}`] : undefined;
-  const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
-  const dataset = admission?.dataset ? admission.dataset as unknown as RecordedDataset : null;
-  const submission = view.submission;
   return {
-    id, title: input.goal, status: final ? String(final.status) : records.items.some((task) => task.state.status !== 'terminal') || ['queued', 'placed'].includes(submission?.status ?? '') ? 'RUNNING' : 'IDLE',
-    trials: study.trials.length, model: `${input.model.provider}/${input.model.modelId}`,
-    createdAt: null, updatedAt: null, input, dataset,
-    datasetId: dataset?.id ?? (original && !('input' in original) && typeof original.datasetId === 'string' ? original.datasetId : null),
-    submission: submissionView(submission), originalSubmission: submissionView(view.originalSubmission),
+    ...summary, input, submission: submissionView(view.submission),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
