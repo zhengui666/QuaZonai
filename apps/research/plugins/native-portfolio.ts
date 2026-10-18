@@ -9,6 +9,7 @@ import wabtFactory from 'wabt';
 import { canonical } from '../src/documents.ts';
 import { object } from '../src/trials.ts';
 import { intervalTargets, simulationSelection, thresholdTargets } from '../src/strategy.ts';
+import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import type { StrategyMember, StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
 import { normalizedRequest } from './native-wasm.ts';
 
@@ -19,17 +20,21 @@ const wabt = await wabtFactory();
 export async function executeNative(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
   if (!commands.has(command)) throw new Error('native_command_unsupported');
   const inputPath = join(directory, 'request.json');
-  await writeFile(inputPath, JSON.stringify(input));
+  await writeFile(inputPath, jsonChunks(input));
   const env = new NodeExecutionEnv({ cwd: directory });
-  let stdout = ''; let stderr = '';
+  const stdout = new JsonReader(); let parseError: unknown; let stderr = '';
   try {
     const result = getOrThrow(await env.exec([
       'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
     ], { inheritEnv: false, env: { PATH: '/usr/bin:/bin' },
-      onOutput: (chunk, _ctx, info) => { if (info.stream === 'stdout') stdout += chunk; else stderr += chunk; },
+      onOutput: (chunk, _ctx, info) => {
+        if (info.stream === 'stderr') stderr += chunk;
+        else if (parseError === undefined) { try { stdout.write(chunk); } catch (error) { parseError = error; } }
+      },
     }, context));
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
-    return object(JSON.parse(stdout), 'native_result');
+    if (parseError !== undefined) throw parseError;
+    return object(stdout.finish(), 'native_result');
   } finally { await env.cleanup(withoutAbortSignal(context)); }
 }
 

@@ -4,15 +4,22 @@ import type { Context } from '@earendil-works/chord';
 import { evaluatePortfolio } from './native-portfolio.ts';
 import type { PortfolioEvaluationInput } from './native-portfolio.ts';
 import { object } from '../src/trials.ts';
+import { NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
 
 export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { phase: 'compute' }, JsonObject>({
   name: 'qz.strategy-portfolio.evaluate', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     try {
       const result = await evaluatePortfolio(task.input, context);
-      // Keep raw evidence in the original native child outcome, not model-facing Study facts.
+      const native = await retainNativeEvidence(result.evidence, async (index, data) => {
+        await runtime.commit(async (tx) => {
+          (await tx.doc(NativeEvidencePart, task.id, String(index), null)).data = data;
+          return undefined;
+        }, context);
+      });
+      // Complete raw evidence stays in this native child's outcome or task documents, never model-facing Study facts.
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed',
-        result: { summary: { ...result.summary, evidenceTaskId: task.id }, native: result.evidence } } }), context);
+        result: { summary: { ...result.summary, evidenceTaskId: task.id }, native } } }), context);
     } catch (error) {
       if (runtime.signal.aborted) throw error;
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: error instanceof Error ? error.message : 'portfolio_evaluation_failed' } } }), context);

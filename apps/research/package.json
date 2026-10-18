@@ -13,6 +13,7 @@
     "@earendil-works/pi-durable": "1.1.0",
     "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/chord": "1.1.0",
+    "@streamparser/json": "0.0.26",
     "wabt": "1.0.39"
   },
   "devDependencies": { "@types/node": "22.18.0", "typescript": "5.9.3" }
