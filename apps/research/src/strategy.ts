@@ -93,6 +93,13 @@ function selectedSettings(original: JsonObject, ids: string[]): JsonObject {
 }
 
 function marketAllocations(value: unknown, universe: string[]): MarketAllocation[] {
+  if (value === 'ALL_EQUAL') {
+    const one = 10n ** 18n; const share = one / BigInt(universe.length);
+    value = universe.map((instrumentId, index) => {
+      const amount = index === universe.length - 1 ? one - share * BigInt(index) : share;
+      return { instrumentId, weight: `0.${amount.toString().padStart(18, '0')}` };
+    });
+  }
   if (!Array.isArray(value) || value.length < 2) throw new Error('strategy_market_allocations_required');
   const allocations = value.map((entry) => {
     const item = object(entry, 'market_allocation');
