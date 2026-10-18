@@ -94,12 +94,10 @@ fn finish(
         for demand in demands {
             let trade = capital.as_decimal() * &demand.change;
             turnover = turnover.max(trade.clone());
-            if !trade.is_zero() {
-                if demand.liquidity.is_zero() {
-                    missing = true;
-                } else {
-                    participation = participation.max(trade / &demand.liquidity);
-                }
+            if demand.liquidity.is_zero() {
+                missing |= !demand.change.is_zero() || !demand.exit.is_zero();
+            } else {
+                participation = participation.max(trade / &demand.liquidity);
             }
         }
         let feasible = upper
@@ -119,12 +117,13 @@ fn finish(
             unallocated_cash: usable
                 .map(|amount| decimal(capital.as_decimal() - amount))
                 .transpose()?,
-            status: if tiny {
+            status: if missing {
+                "CONSTRAINED"
+            } else if tiny {
                 "TOO_SMALL"
-            } else if missing
-                || upper
-                    .as_ref()
-                    .is_some_and(|bound| capital.as_decimal() > bound)
+            } else if upper
+                .as_ref()
+                .is_some_and(|bound| capital.as_decimal() > bound)
             {
                 "CONSTRAINED"
             } else if upper.is_none() {
@@ -133,10 +132,10 @@ fn finish(
                 "FEASIBLE"
             }
             .into(),
-            reason: if tiny {
-                Some("minimum_order_or_lot".into())
-            } else if missing {
+            reason: if missing {
                 Some("zero_observed_liquidity".into())
+            } else if tiny {
+                Some("minimum_order_or_lot".into())
             } else {
                 None
             },
@@ -608,6 +607,9 @@ pub fn size_account(request: &NativeAccountSizingRequestV1) -> Result<NativeAcco
         } else {
             trade
         };
+        if difference > BigDecimal::zero() && trade.is_zero() {
+            blocked!("minimum_order_or_lot");
+        }
         if difference < BigDecimal::zero() && (trade.is_zero() || trade > current) {
             blocked!("holding_reduction_not_feasible_with_lots");
         }
@@ -695,6 +697,20 @@ mod tests {
         );
         input.reserved = "2000".parse().unwrap();
         assert!(size_account(&input).unwrap().budget.as_decimal().is_zero());
+    }
+    #[test]
+    fn live_minimum_or_lot_cannot_erase_a_funded_buy() {
+        for (lot, minimum) in [("1000", "1"), ("0.01", "1000")] {
+            let mut input = sizing();
+            input.liquidity[0].lot_notional = lot.parse().unwrap();
+            input.liquidity[0].minimum_notional = minimum.parse().unwrap();
+            let result = size_account(&input).unwrap();
+            assert_eq!(result.status, "BLOCKED");
+            assert_eq!(result.reason.as_deref(), Some("minimum_order_or_lot"));
+            assert!(result.capital.as_decimal().is_zero());
+            assert!(result.members.is_empty());
+            assert!(result.target.is_none());
+        }
     }
     #[test]
     fn scoped_rebalance_keeps_actual_untraded_holdings_and_cannot_spend_their_proceeds() {
@@ -845,5 +861,25 @@ mod tests {
         let result = finish(envelope(&request), &request, &[]).unwrap();
         assert!(result.maximum_capital.is_none());
         assert_eq!(result.status, "NON_BINDING");
+        for change in ["0", "1"] {
+            let result = finish(
+                envelope(&request),
+                &request,
+                &[Demand {
+                    instrument: "A".into(),
+                    change: change.parse().unwrap(),
+                    exit: "1".parse().unwrap(),
+                    liquidity: BigDecimal::zero(),
+                    minimum: "1".parse().unwrap(),
+                }],
+            )
+            .unwrap();
+            assert!(result
+                .scenarios
+                .iter()
+                .all(|row| row.status == "CONSTRAINED"
+                    && row.reason.as_deref() == Some("zero_observed_liquidity")
+                    && row.usable_capital.as_ref().unwrap().as_decimal().is_zero()));
+        }
     }
 }

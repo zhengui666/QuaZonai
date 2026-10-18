@@ -76,6 +76,55 @@ test('structured budget-or-selection rejects an unselected model response bounda
   } finally { await state.cleanup(); }
 });
 
+test('structured native input accepts only the registered inherited policy and supported direction', async () => {
+  const state = await setup();
+  try {
+    const registered = state.options.config.datasets[0]!;
+    registered.strategy = { ...registered.strategy!, instrumentIds: ['TEST.SIM'], evaluationPartition: 'HELDOUT' };
+    await state.restart();
+    const policy = { ...registered.policy, max_trials: 0, strategy: registered.strategy };
+    const input = { goal: specification.question, specification, model: state.model, data: registered.data, policy };
+    const post = (requestId: string, value: unknown) => state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { requestId, input: value } });
+    assert.throws(() => researchSpecification({ ...specification, evaluation: { ...specification.evaluation, direction: 'minimize' } }), /research_evaluation_unsupported/);
+    for (const [name, strategy] of Object.entries({ instruments: { ...registered.strategy, instrumentIds: ['UNREGISTERED'] }, simulation: { ...registered.strategy, simulationSettings: { base_currency: 'OTHER' } }, partition: { ...registered.strategy, evaluationPartition: 'TRAIN' }, strategy: { replacement: true } })) {
+      const bad = await post(`native-override-${name}`, { ...input, policy: { ...policy, strategy } });
+      assert.equal(bad.statusCode, 400, bad.body); assert.equal(bad.json().error, 'research_policy_unregistered');
+    }
+    const extra = await post('native-extra-policy', { ...input, policy: { ...policy, partitionOverride: 'TRAIN' } }); assert.equal(extra.statusCode, 400); assert.equal(extra.json().error, 'research_policy_unregistered');
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    const accepted = await post('native-registered-policy', { ...input, policy: { ...policy, max_trials: 1 } }); assert.equal(accepted.statusCode, 202, accepted.body);
+    await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
+    const recorded = (await state.service.research.state(accepted.json().conversationId)).research!.input!;
+    assert.deepEqual(recorded.policy.strategy, registered.strategy);
+    await state.restart(); assert.equal((await post('native-registered-policy', { ...input, policy: { ...policy, max_trials: 1 } })).json().conversationId, accepted.json().conversationId);
+    const legacy = await post('native-legacy-policy', { ...input, specification: undefined, policy: { max_trials: 0, legacyOverride: true } }); assert.equal(legacy.statusCode, 202, legacy.body);
+    await (await state.service.research.harness.submission(legacy.json().submissionId, context))!.wait(context);
+  } finally { await state.cleanup(); }
+});
+
+test('identical scientific inputs retain their own original factor admission provenance after restart', async () => {
+  const state = await setup();
+  try {
+    const expected = new Map<number, { id: string; name: string; source: string; currency: string }>();
+    for (const [index, currency] of ['USD', 'CNY'].entries()) {
+      const registered = state.options.config.datasets[0]!;
+      registered.id = `provenance-${index}`; registered.name = `Original dataset ${index}`; registered.source = `TEST_ONLY source ${index}`; registered.currency = currency;
+      await state.restart();
+      state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+      const receipt = await state.service.work.startResearch({ requestId: `identical-input-${index}`, goal: specification.question, specification, model: state.model, datasetId: registered.id, maxTrials: 1 });
+      await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+      expected.set(receipt.conversationId, { id: registered.id, name: registered.name, source: registered.source, currency });
+    }
+    await state.restart();
+    const factors = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json(); assert.equal(factors.length, 2);
+    for (const factor of factors) {
+      const original = expected.get(factor.researchId)!; assert.equal(factor.datasetId, original.id); assert.equal(factor.currency, original.currency);
+      const detail = (await state.service.app.inject({ url: `/api/v3/factors/${factor.id}`, headers: state.headers })).json(); assert.equal(detail.datasetId, original.id); assert.equal(detail.currency, original.currency);
+      const research = (await state.service.app.inject({ url: `/api/v3/research/${factor.researchId}`, headers: state.headers })).json(); assert.equal(research.dataset.name, original.name); assert.equal(research.dataset.source, original.source);
+    }
+  } finally { await state.cleanup(); }
+});
+
 test('deterministic criterion never substitutes component diagnostics or missing metrics for a pass', () => {
   const spec = { ...specification, evaluation: { ...specification.evaluation, target: 0.1 } };
   const metric = { key: 'HELDOUT.pearson_ic', label: 'Pearson IC', partition: 'HELDOUT', value: 0.2 };

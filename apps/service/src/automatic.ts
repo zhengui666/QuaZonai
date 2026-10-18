@@ -19,7 +19,7 @@ function emptyAllocation(fact: ObservationFact): AutomaticAllocation {
     controlRevision: null, members: [], targets: [], receipt: null, epoch: '0' };
 }
 export function unsettledAdjustment(fact: ObservationFact) {
-  return fact.view.allocation?.receipt?.status === 'UNCERTAIN' || ['UNCERTAIN', 'PENDING'].includes(fact.view.allocation?.status ?? '');
+  return ['PENDING', 'UNCERTAIN'].includes(fact.view.allocation?.receipt?.status ?? '') || ['UNCERTAIN', 'PENDING'].includes(fact.view.allocation?.status ?? '');
 }
 export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
   name: 'qz.account-adjustment', version: 1, initial: () => ({ phase: 'snapshot' }),
@@ -28,7 +28,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       let read!: JsonObject;
       await runtime.commit(async tx => { const facts = await tx.doc(Application); read = json({ fact: facts.observations[task.input.id], portfolio: facts.portfolios[observation(facts.observations[task.input.id]).input.portfolioId], controls: facts.accountControls ?? {} }); return undefined; }, context);
       const fact = observation(read.fact); const source = portfolio(read.portfolio); const policy = fact.view.automaticPolicy;
-      if (unsettledAdjustment(fact)) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'reconcile' } }), context); return; }
+      if (unsettledAdjustment(fact)) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: fact.view.allocation?.status === 'SIZED' ? 'deliver' : 'reconcile' } }), context); return; }
       if (!policy?.enabled || fact.view.status === 'STOPPED') {
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context); return;
       }
@@ -61,7 +61,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
             facts.observations[duplicate.view.id] = json(duplicate);
           }
           if (owner && owner.view.id !== current.view.id) return;
-          if (bindings.some(item => item.view.id !== current.view.id && unsettledAdjustment(item))) throw new Problem('target_delivery_requires_reconciliation', 409);
+          if (bindings.some(item => ['PENDING', 'UNCERTAIN'].includes(item.view.receipt?.status ?? '') || item.view.id !== current.view.id && unsettledAdjustment(item))) throw new Problem('target_delivery_requires_reconciliation', 409);
           // Snapshot order is physical-account wide, not merely per browser binding.
           for (const item of bindings) {
             if (item.snapshot && (BigInt(counter(item.snapshot.sequence, 'account_sequence')) > BigInt(counter(snapshot.sequence, 'account_sequence')) || BigInt(counter(item.snapshot.nativeClockNs, 'account_clock')) > clock)) throw new Problem('account_snapshot_out_of_order');
@@ -119,12 +119,13 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           const unchanged = previous.receipt?.status === 'ACKNOWLEDGED' && accepted.controlRevision === status.controlRevision && accepted.reserved === status.reserved
             && accepted.equity === String(snapshot.equity) && accepted.cashBuffer === policy.cashBuffer && accepted.capital === String(sized.capital)
             && canonical(accepted.members ?? []) === canonical(sized.members ?? []) && !!target && !!latest.allocationTarget && canonical(target) === canonical(latest.allocationTarget);
-          const deliver = executable && sized.status === 'SIZED' && target !== null && !unchanged;
+          const repeatedRejection = sized.status === 'SIZED' && previous.receipt?.status === 'REJECTED' && accepted.snapshotSequence === snapshot.sequence && accepted.nativeClockNs === snapshot.nativeClockNs && accepted.controlRevision === status.controlRevision;
+          const deliver = executable && sized.status === 'SIZED' && target !== null && !unchanged && !repeatedRejection;
           const epoch = deliver ? (BigInt(previous.epoch) + 1n).toString() : previous.epoch;
           const receipt: TargetReceipt | null = deliver ? { id: `${latest.view.id}:allocation:${epoch}`, status: 'PENDING', externalId: null,
             expiresAt: nsTime(counter(target!.valid_until_ns, 'target_expiry')), acknowledgedAt: null } : previous.receipt;
-          latest.view.allocation = { status: deliver ? 'SIZED' : unchanged && executable ? 'UNCHANGED' : String(sized.status),
-            reason: fenced ? 'capital_exit_fenced_pending_target' : !capacityFresh ? 'capacity_evidence_expired' : !matching ? 'account_control_observation_mismatch' : typeof sized.reason === 'string' ? sized.reason : null,
+          latest.view.allocation = { status: deliver ? 'SIZED' : repeatedRejection && executable ? 'REJECTED' : unchanged && executable ? 'UNCHANGED' : String(sized.status),
+            reason: repeatedRejection && executable ? 'awaiting_newer_account_snapshot' : fenced ? 'capital_exit_fenced_pending_target' : expired ? 'target_expired' : !capacityFresh ? 'capacity_evidence_expired' : !matching ? 'account_control_observation_mismatch' : typeof sized.reason === 'string' ? sized.reason : null,
             updatedAt: new Date().toISOString(), sequence: String(snapshot.sequence), nativeClockNs: String(snapshot.nativeClockNs), equity: String(snapshot.equity), reserved: status.reserved,
             cashBuffer: policy.cashBuffer, budget: String(sized.budget), capital: String(sized.capital), capacity: capacity.maximumCapital, residualCash: sized.status === 'BLOCKED' ? null : String(sized.residualCash), controlRevision: status.controlRevision,
             members: (sized.members ?? []) as unknown as AutomaticAllocation['members'], targets: target && Array.isArray(target.targets) ? target.targets.map(value => { const row = object(value); return { instrumentId: String(row.instrument_id), weight: String(row.weight) }; }) : [], receipt, epoch };
@@ -153,9 +154,15 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       let input!: import('./downstream.ts').ObservationTaskInput;
       await runtime.commit(async tx => {
         const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); const allocation = fact.view.allocation!;
-        if (!fact.view.automaticPolicy?.enabled || fact.view.status === 'STOPPED') return { status: 'terminal', outcome: { status: 'completed', result: null } };
-        const status = capitalStatus(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]));
-        if (status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.reason = 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
+        if (!fact.view.automaticPolicy?.enabled || fact.view.status === 'STOPPED') {
+          if (allocation.status === 'SIZED' && allocation.receipt?.status === 'PENDING') { allocation.receipt.status = 'NOT_OFFERED'; allocation.status = 'STOPPED'; facts.observations[task.input.id] = json(fact); }
+          return { status: 'terminal', outcome: { status: 'completed', result: null } };
+        }
+        const key = accountKey(fact.connection, facts.accountControls);
+        const unsettled = Object.values(facts.observations).map(observation).some(other => accountKey(other.connection, facts.accountControls) === key
+          && (['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== fact.view.id && unsettledAdjustment(other)));
+        const status = capitalStatus(control(facts.accountControls?.[key]));
+        if (unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
         allocation.status = 'UNCERTAIN'; allocation.receipt!.status = 'UNCERTAIN';
         input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext }) as unknown as import('./downstream.ts').ObservationTaskInput;
         facts.observations[task.input.id] = json(fact);
@@ -165,7 +172,14 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       try { await settle(await downstream(input, 'deliver', runtime.signal)); }
       catch (error) {
         if (runtime.signal.aborted) throw error;
-        await runtime.commit(async tx => { const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); fact.view.allocation!.reason = error instanceof Problem ? error.message : 'automatic_delivery_requires_reconciliation'; facts.observations[task.input.id] = json(fact); return undefined; }, context);
+        const notOffered = error instanceof Problem && error.message === 'target_expired';
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); const allocation = fact.view.allocation!;
+          allocation.reason = error instanceof Problem ? error.message : 'automatic_delivery_requires_reconciliation';
+          if (notOffered) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; }
+          facts.observations[task.input.id] = json(fact);
+          return notOffered ? { status: 'running', checkpoint: { phase: 'snapshot' } } : undefined;
+        }, context);
       }
       async function settle(value: JsonObject) { await settleAllocation(task.input.id, value, runtime, context); }
     },
@@ -190,6 +204,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
   async abort(task, runtime, context) {
     await runtime.commit(async tx => {
       const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
+      if (fact.view.allocation?.status === 'SIZED' && fact.view.allocation.receipt?.status === 'PENDING') fact.view.allocation.receipt.status = 'NOT_OFFERED';
       const reconcile = unsettledAdjustment(fact);
       if (fact.view.allocation) { fact.view.allocation.status = reconcile ? 'UNCERTAIN' : 'STOPPED'; fact.view.allocation.reason = 'local_adjustment_stopped_not_remote_revocation'; }
       if (reconcile) fact.taskId = await tx.createTask(AdjustAccount, task.input, { conversationId: portfolio(facts.portfolios[fact.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true });

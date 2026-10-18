@@ -24,7 +24,7 @@ export interface SessionView { setupRequired: boolean; authenticated: boolean }
 export interface CapitalAssumptions { scenarios: string[]; participation: string; maximumAgeSeconds: number }
 export interface ResearchSpecification {
   version: 1; name: string; question: string; rationale: string; exclusions?: string;
-  evaluation: { metric: 'pearson_ic' | 'Sharpe Ratio (252 days)'; direction: 'maximize' | 'minimize'; target?: number; scheme: 'registered-partitions' };
+  evaluation: { metric: 'pearson_ic' | 'Sharpe Ratio (252 days)'; direction: 'maximize'; target?: number; scheme: 'registered-partitions' };
   search: { scope: 'single-factor' | 'ensemble'; maxMembers: number; stop: 'budget-or-selection' };
   capital?: CapitalAssumptions;
 }

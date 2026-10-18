@@ -121,7 +121,7 @@ Product ambiguities are resolved by the conditional-capacity, deterministic-appr
 
 Initial inventory: Luna confirmed exact model, clean new branch from `e936abf3`, healthy installed revision `e936abf3` at `/home/zzy/.local/share/quazonai-ts` with persistent original data. Subsequent supported CLI inspection confirmed study 3427 has a running generation, zero trials and a placed submission. Deployment must preserve and explicitly continue that original work. Merge and deployment of this task have not run.
 
-### Local author implementation and verification
+### Initial local author implementation and verification (`4240ca50`)
 
 Sol implemented the approved structured mandate, deterministic criteria/search/stop enforcement, derived atomic library and native shared-account combinations, conditional native capacity/sizing, optional original-V1 capital bridge, explicit Durable automatic adjustment, and narrow owner-aborted continuation. The later usability clarification is included: eligible legacy factors accept read-only post-research assumptions, new combinations have independent policies, and member names/hypotheses/source links and Chinese preview labels are readable. Original research admissions are not rewritten.
 
@@ -132,7 +132,7 @@ Local commands and observed results:
 - `make check-deploy`: source Python 227/227, deploy Node 17 passing and one existing skipped optional-environment case, package Python 2/2, release Python 3/3. No container publication or installed-service action is implied.
 - Whitespace and limited changed-Markdown relative-target checks passed. `lychee` is absent, so full `make check-links`, fragments and remote URLs remain unverified locally.
 
-The current task-owned logs are `/tmp/qz-structured-native-final5.log`, `/tmp/qz-structured-web-final9.log`, `/tmp/qz-structured-ts-deploy-final7.log`, `/tmp/qz-structured-cli-package-final.log` and the final transaction-replay rerun `/tmp/qz-structured-tx-replay-final.log`. Earlier failing/moving-source logs are superseded, not acceptance evidence. The final transaction-return detachment also passed a fresh complete TypeScript chain and connected bridge case (1/1).
+The initial candidate logs are `/tmp/qz-structured-native-final5.log`, `/tmp/qz-structured-web-final9.log`, `/tmp/qz-structured-ts-deploy-final7.log`, `/tmp/qz-structured-cli-package-final.log` and the final transaction-replay rerun `/tmp/qz-structured-tx-replay-final.log`. Earlier failing/moving-source logs are superseded, not acceptance evidence. The final transaction-return detachment also passed a fresh complete TypeScript chain and connected bridge case (1/1).
 
 Cua inventory had no DISPLAY/XAUTHORITY and browser APIs were unavailable; Astra accepted actual Playwright continuation and owns providing a configured desktop to the fresh reviewer. No manual cua or installed compatible capital/automatic adapter verification is claimed. Controlled tests do not prove live depth, profit, paid-model quality or long-duration operation.
 
@@ -149,15 +149,49 @@ A separate exact `openai/gpt-6.1-sol` / `max` context reviewed the moving worktr
 
 The approved owner-stop/resume maintenance addition and final native/browser checks were still pending at review time. Author corrections and exact final-Head re-review are required before Luna delivery.
 
+### Final-candidate review and remote feedback — remediation required
+
+Exact `4240ca501c9dd496f423dd73269df00dc38a1f83` independent Sol-max review found two remaining receipt defects: enabling automatic mode or resolving a late alias bypasses an unresolved original/manual receipt; deterministic expiry before any POST leaves a nonexistent remote receipt permanently uncertain. Evidence: `/tmp/qz-structured-sol-final-review-result.md` and its reproduction helpers.
+
+Luna opened [PR #218](https://github.com/zhengui666/QuaZonai/pull/218). Exact-head GitHub Codex reported nine unresolved findings, and hosted Web CI had one mobile navigation failure (35/36). Full details are retained in `/tmp/qz-structured-codex-findings.md`; summary is `/tmp/qz-structured-luna-delivery-result.md`. **Sol must read `/tmp/qz-structured-sol-remediation-extra.md` for the complete correction assignment and Astra's business decisions**, including rejecting unsupported structured optimization directions, binding inherited registered policy, resolving authoritative reservations before new manual delivery, snapshot-bound retry, truthful rounded allocation amounts, zero-liquidity diagnosis, request-identity provenance and disabled-mode manual refresh. Do not merge this candidate.
+
+Remote `dev` advanced to `2a75b297324e7d6b58751b09490bbc5b5ef88ef8` with scanner-scope changes; Sol must integrate those changes and preserve both tasks before final checks. No installed maintenance or external financial action has occurred. Final exact-Head independent/Codex review and CI must cover the corrected commit.
+
 ### Author remediation (not independent acceptance)
 
 All six findings now have connected corrections/regressions: retain actual scoped holdings; reconcile original uncertain allocation receipts through disable/stop/restart and read-only refresh; reject missing positions/valuations; deduplicate only against ACKed accepted economics/control/member context; capture the complete native preview before POST; and enforce the original structured stop rule. Further regressions corrected same-phase failed-GET journal replay and projection-versus-actual receipt confusion. Transaction outputs are detached before the Chord overlay settles. The verified official owner abort is `unanswered/aborted`; only the original unselected/unassessed `STOPPED/owner_stop` with remaining budget and its exact saved recovery intent can continue, preserving previous-stop history.
 
 Astra must obtain fresh exact-commit independent review and product acceptance. These author checks do not relabel the preliminary moving-worktree review as final approval.
 
+### Follow-up author corrections and current-dev integration
+
+Sol's development-only follow-up addresses both exact-candidate independent findings: unresolved original/manual receipts now block automatic enablement and new offers across known physical aliases even when local tasks are terminal; original-receipt refresh remains available. Deterministic expiry before the first POST settles `NOT_OFFERED` and returns to expired projection, while actual transport uncertainty retains original-ID GET-only reconciliation. Prepared allocations cancelled/disabled before POST also settle `NOT_OFFERED`, and manual refresh never GETs a known never-offered allocation.
+
+The [old-candidate Codex summary](https://github.com/zhengui666/QuaZonai/pull/218#issuecomment-6255238754) and original independent reports remain unchanged. Specific author resolutions:
+
+| Finding | Correction and regression |
+| --- | --- |
+| [1 — pending allocation](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832616) | `SIZED`/`PENDING` receipts count as unsettled for admission; prepared work continues through delivery rather than fictional receipt GETs. Native-connected paper/live manual admission and phase replay/disable/abort cases cover the durable gap. |
+| [2 — repeated rejection](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832621) | Identical authoritative snapshot/control context cannot create another epoch after rejection. Repeated phase reads retain the rejected ID; an advanced snapshot permits a new attempt. |
+| [3 — minimize](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832624) | The shared structured contract and authoring UI support only `maximize`; unsupported minimizing is rejected. No replacement optimizer or legacy prose behavior change. |
+| [4 — inherited policy](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832628) | New structured native-input admissions must match registered strategy/universe/simulation/partition policy, except their explicit trial budget. HTTP tests reject each override and retain legitimate replay/legacy input. |
+| [5 — new manual targets](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832630) | Fresh authoritative capability/capital reads precede admission and alias joining; unknown or outstanding reserves block new delivery. Paper/live tests cover first contact, cached zero, newly discovered aliases, unreadable status, and competing prepared allocation. Original reads/reconciliation remain. |
+| [6 — erased buys](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832634) | Native sizing blocks buys erased by current minimum/lot rules, with zero effective capital, no member allocation and no executable target; both rounding causes have regressions. |
+| [7 — zero liquidity](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832636) | `zero_observed_liquidity` takes precedence over minimum-order suitability, including exit demand; scenarios remain constrained with zero usable capital. |
+| [8 — provenance](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832640) | Factors resolve captured admission through the original submission request ID. Identical scientific inputs with changed captured dataset metadata retain their own list/detail provenance after restart. |
+| [9 — disabled refresh](https://github.com/zhengui666/QuaZonai/pull/218#discussion_r4308832642) | Disabling automatic mode restores usable manual snapshot refresh. Uncertain original/allocation receipts remain separately reconcilable; known `NOT_OFFERED` identities are not queried as remote effects. Browser and native-connected regressions cover both. |
+
+The [old-head hosted Web failure](https://github.com/zhengui666/QuaZonai/actions/runs/39167033688/job/117792016477) exposed route-focus/drawer-close effects that could run after the next menu was opened. These effects now finish in `useLayoutEffect` before paint. The original seven-link keyboard-navigation assertion remains intact; no sleeps, retries or reduced coverage were added. That case and the disabled-refresh case passed three repetitions (6/6).
+
+Current `origin/dev` at `2a75b297324e7d6b58751b09490bbc5b5ef88ef8` is integrated by a local merge preserving both parents and PR #217 scanner-scope behavior. Research scanner tests run alongside the structured mandate/stopping tests.
+
+Final observed follow-up checks: `make check-ts` passed service **85**, research **90**, CLI **5** and typechecks; `make check-web` passed typecheck, **11** unit tests and production build; full Chromium **37/37** passed without retries. Matching serial native build/science passed **217** job-library tests and retained contract/domain/integration suites; final connected core **20/20** and the explicit native capital-owner suite **8/8** passed. The packaged CLI was installed in a disposable directory: its schema advertises only maximizing, and the shared validator rejects minimizing before connection. Source/deploy-script checks passed Python **227**, Node **17** with the existing optional distribution-install skip, package **2**, release **3**. Whitespace and **23** changed-Markdown relative-file targets passed; full links remain unavailable without `lychee`.
+
+Current evidence is `/tmp/qz-structured-remediation-ts-final2.log`, `/tmp/qz-structured-remediation-web-final2.log`, `/tmp/qz-structured-remediation-web-focused.log`, `/tmp/qz-structured-remediation-native.log`, `/tmp/qz-structured-remediation-core-final2.log`, `/tmp/qz-structured-remediation-native-owner.log`, `/tmp/qz-structured-remediation-cli-package-final.log` and `/tmp/qz-structured-remediation-deploy.log`. Exact merge-commit identity and remaining acceptance/delivery steps are recorded in `/tmp/qz-structured-sol-remediation-result.md`; author checks are not independent approval or new remote CI evidence. Manual configured-desktop acceptance, installed adapter capability and formal-release `check-native-full` remain outside this local development verification.
+
 <a id="handoff"></a>
 ## Local implementation handoff
 
-The implementation is confined to `feat/structured-research-capacity` in the approved worktree. The local commit and precise current evidence are recorded in the accompanying `/tmp/qz-structured-sol-result.md`; Git retains the task/source history. No push, merge, publication, installed-service restart, installed-study operation, brokerage order, real capital reservation or withdrawal was performed by Sol.
+The implementation is confined to `feat/structured-research-capacity` in the approved worktree. The initial commit/evidence remain in `/tmp/qz-structured-sol-result.md`; the corrected exact Head and follow-up checks are in `/tmp/qz-structured-sol-remediation-result.md`. Git retains both task histories and the local integration with current dev. No push, remote merge, publication, installed-service restart, installed-study operation, brokerage order, real capital reservation or withdrawal was performed by Sol.
 
 Next: Astra reviews the exact implementation commit and resolves any final findings with Sol. Luna then owns the required exact-Head remote CI/additional GitHub read-only evidence, merge into `dev` and approved installed maintenance under the original-data/study-3427 preservation plan above. Required unavailable checks and actual adapter capability must remain explicit; no empty replacement database, manufactured idle state or fictional financial success.

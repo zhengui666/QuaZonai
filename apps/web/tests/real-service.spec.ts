@@ -46,6 +46,8 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     response.setHeader('content-type', 'application/json');
     if (request.method === 'POST' && request.url === '/targets') { let body = ''; for await (const chunk of request) body += chunk; receipt = JSON.parse(body); offers++; request.socket.destroy(); return; }
     if (request.url?.startsWith('/targets/')) response.end(JSON.stringify({ ...receipt, status: 'ACKNOWLEDGED', externalId: 'browser-protocol-receipt', acknowledgedAt: '2026-10-01T00:00:00.000000001Z' }));
+    else if (request.url === '/capabilities') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', mode: 'paper', currency: 'USD', capitalExit: { version: 1, supported: false, readable: true } }));
+    else if (request.url === '/capital-exits') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', mode: 'paper', currency: 'USD', accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] }));
     else if (request.url === '/account') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', sequence: '9007199254740997', nativeClockNs: clock, currency: 'USD', equity: null, cash: null, positions: [] }));
     else { response.statusCode = 404; response.end('{}'); }
   });

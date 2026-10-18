@@ -14,7 +14,7 @@ export function researchSpecification(value: unknown): ResearchSpecification {
   if ((spec.name as string).length > 120 || (spec.name as string).includes('\n')) throw new Error('research_short_name_required');
   if (spec.exclusions !== undefined && typeof spec.exclusions !== 'string') throw new Error('research_exclusions_invalid');
   const evaluation = object(spec.evaluation); fields(evaluation, ['metric', 'direction', 'target', 'scheme']);
-  if (!['pearson_ic', 'Sharpe Ratio (252 days)'].includes(String(evaluation.metric)) || !['maximize', 'minimize'].includes(String(evaluation.direction)) || evaluation.scheme !== 'registered-partitions') throw new Error('research_evaluation_unsupported');
+  if (!['pearson_ic', 'Sharpe Ratio (252 days)'].includes(String(evaluation.metric)) || evaluation.direction !== 'maximize' || evaluation.scheme !== 'registered-partitions') throw new Error('research_evaluation_unsupported');
   if (evaluation.target !== undefined && (typeof evaluation.target !== 'number' || !Number.isFinite(evaluation.target))) throw new Error('research_target_invalid');
   const search = object(spec.search); fields(search, ['scope', 'maxMembers', 'stop']);
   if (!['single-factor', 'ensemble'].includes(String(search.scope)) || !Number.isSafeInteger(search.maxMembers) || Number(search.maxMembers) < 1 || search.scope === 'single-factor' && search.maxMembers !== 1 || search.stop !== 'budget-or-selection') throw new Error('research_search_unsupported');

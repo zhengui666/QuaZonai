@@ -1,9 +1,7 @@
-import type { ConversationId, Cursor } from '@earendil-works/pi-durable';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { Cursor } from '@earendil-works/pi-durable';
 import type { FactorView, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
-import { canonical, Study } from '../../research/src/documents.ts';
 import { strategyMembers } from '../../research/src/strategy.ts';
 import { metrics } from './projections.ts';
 import { object, Problem } from './facts.ts';
@@ -15,9 +13,9 @@ export function factorReference(id: string) {
   if (!match || match.slice(1).some(value => !Number.isSafeInteger(Number(value)))) throw new Problem('factor_id_invalid');
   return { researchId: Number(match[1]), trialId: Number(match[2]), memberIndex: Number(match[3]) };
 }
-export function factorViews(id: number, study: { input: import('../../research/src/documents.ts').ResearchInput | null; trials: import('@earendil-works/pi-durable').JsonObject[]; final: import('@earendil-works/pi-durable').JsonObject | null }, admissions?: ResearchAdmissions): FactorView[] {
+export function factorViews(id: number, study: { input: import('../../research/src/documents.ts').ResearchInput | null; trials: import('@earendil-works/pi-durable').JsonObject[]; final: import('@earendil-works/pi-durable').JsonObject | null }, admissions?: ResearchAdmissions, requestId?: string): FactorView[] {
   const input = study.input; if (!input) return [];
-  const admission = Object.values(admissions ?? {}).find(item => canonical(item.input) === canonical(input));
+  const admission = requestId ? admissions?.[`request:${requestId}`] : undefined;
   const dataset = admission?.dataset;
   const strategy = input.policy.strategy ? object(input.policy.strategy) : null;
   return study.trials.flatMap(trial => {
@@ -51,8 +49,8 @@ export async function listFactors(host: ResearchHost, admissions?: ResearchAdmis
   do {
     const page = await host.list(cursor);
     for (const row of page.items) {
-      const study = await host.harness.snapshot(Study, row.id, BACKGROUND_CONTEXT);
-      if (study) factors.push(...factorViews(row.id, study, admissions));
+      const state = await host.state(row.id);
+      if (state.research) factors.push(...factorViews(row.id, state.research, admissions, state.originalSubmission?.requestId));
     }
     cursor = page.next;
   } while (cursor);
@@ -60,8 +58,8 @@ export async function listFactors(host: ResearchHost, admissions?: ResearchAdmis
 }
 export async function readFactor(host: ResearchHost, id: string, admissions?: ResearchAdmissions) {
   const reference = factorReference(id);
-  const study = await host.harness.snapshot(Study, reference.researchId as ConversationId, BACKGROUND_CONTEXT);
-  const view = study && factorViews(reference.researchId, study, admissions).find(item => item.id === id);
+  const state = await host.state(reference.researchId); const study = state.research;
+  const view = study && factorViews(reference.researchId, study, admissions, state.originalSubmission?.requestId).find(item => item.id === id);
   if (!view || !study?.input) throw new Problem('factor_not_found', 404);
   return { view, study, specification: study.input.specification as ResearchSpecification | undefined };
 }

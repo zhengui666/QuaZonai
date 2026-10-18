@@ -214,6 +214,15 @@ test('dataset facts and explicit preselection return to the originating workspac
   const state = await contract(page); await page.goto('/#/data'); await page.getByRole('button', { name: '测试数据', exact: true }).click(); const facts = page.getByRole('dialog'); await expect(facts).toContainText('test-data'); await expect(facts).toContainText('CNY'); await audit(page); await facts.getByRole('button', { name: '用于研究' }).click(); await expect(page.getByRole('heading', { name: '新建研究' })).toBeVisible(); await expect(page.locator('.dataset-context')).toContainText('test-data'); await page.getByRole('button', { name: '取消', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); expect(state.writes).toEqual([]);
 });
 
+test('disabling automatic mode restores manual snapshot refresh without losing uncertain allocation reconciliation', async ({ page }) => {
+  const state = await contract(page); state.observation.receipt!.status = 'NOT_OFFERED'; state.observation.automaticPolicy = { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 };
+  await page.route('**/api/v3/observations/o1/automatic', route => { state.observation.automaticPolicy = route.request().postDataJSON(); return route.fulfill({ json: state.observation }); });
+  await page.goto('/#/observations/o1'); await expect(page.getByRole('checkbox', { name: '启用自动调整', exact: true })).toBeChecked(); await expect(page.getByRole('button', { name: '更新快照', exact: true })).toHaveCount(0);
+  await page.getByRole('checkbox', { name: '启用自动调整', exact: true }).uncheck(); await page.getByRole('button', { name: '保存自动调整设置', exact: true }).click(); await page.getByRole('button', { name: '更新快照', exact: true }).click(); await expect.poll(() => state.writes.filter(write => write.path === '/observations/o1/refresh').length).toBe(1);
+  Object.assign(state.observation, { status: 'STOPPED', receipt: { ...state.observation.receipt, status: 'NOT_OFFERED' }, allocation: { status: 'UNCERTAIN', epoch: '1', members: [], receipt: { id: 'original-allocation', status: 'UNCERTAIN' } } });
+  await page.reload(); await expect(page.getByRole('button', { name: '停止观测', exact: true })).toBeDisabled(); await page.getByRole('button', { name: '核对回执', exact: true }).click(); await expect.poll(() => state.writes.filter(write => write.path === '/observations/o1/refresh').length).toBe(2);
+});
+
 test('a held account refresh remains stoppable and cannot revive a stopped observation', async ({ page }) => {
   const state = await contract(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let finished = false;
   await page.route('**/api/v3/observations/o1/refresh', async route => { const old = structuredClone(state.observation); await held; await route.fulfill({ json: old }).catch(() => undefined); finished = true; });

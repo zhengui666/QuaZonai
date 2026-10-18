@@ -39,8 +39,8 @@ function ObservationDetail({ id }: { id: string }) {
     } catch (failure) { if (!observer?.signal.aborted) setError(failure); }
     finally { if (observer) { if (refreshObserver.current === observer) { refreshObserver.current = undefined; setRefreshing(false); } } else { stopInFlight.current = false; setStopping(false); } }
   };
-  const reconcile = ['PENDING', 'UNCERTAIN'].includes(value?.receipt?.status ?? '');
-  const canRefresh = reconcile || value?.status !== 'STOPPED' && value?.receipt?.status === 'ACKNOWLEDGED';
+  const reconcile = ['PENDING', 'UNCERTAIN'].includes(value?.receipt?.status ?? '') || value?.allocation?.status !== 'SIZED' && ['PENDING', 'UNCERTAIN'].includes(value?.allocation?.receipt?.status ?? '');
+  const canRefresh = reconcile || value?.status !== 'STOPPED' && (value?.receipt?.status === 'ACKNOWLEDGED' || value?.automaticPolicy?.enabled === false);
   const hasSnapshot = value?.updatedAt != null;
   return <div className="observation-page"><a className="text-link back-link" href={href('/observations')}><ArrowLeftIcon size={14} />目标与观测</a><header className="page-heading"><h1>目标与观测</h1></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !value ? !query.error && <Empty title="未找到观测记录" /> : <article className="observation-document">
     <header className="observation-heading"><div><div className="record-context"><span className="mode-label">{value.mode === 'live' ? '实盘' : '模拟'}</span><span>{value.connectionName ?? value.connectionId ?? '连接名称未记录'}</span><Status plain value={value.status} /></div><h2>{value.name}</h2><a className="text-link origin-link" href={href(`/portfolios/${encodeURIComponent(value.portfolioId)}`)}>原始组合 <ArrowUpRightIcon size={13} /></a></div>{canRefresh && <Button type="primary" loading={refreshing} disabled={stopping} icon={<ArrowClockwiseIcon size={15} />} onClick={() => { void update('refresh'); }}>{refreshing ? (reconcile ? '核对中' : '更新中') : reconcile ? '核对回执' : '更新快照'}</Button>}</header>

@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import zhCN from 'antd/locale/zh_CN';
 import { App as AntApp, Button, ConfigProvider, Drawer, Dropdown, theme } from 'antd';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
@@ -33,7 +33,7 @@ function WorkspaceApp() {
   const changeSession = (value: SessionView | undefined) => { cache.removeQueries({ predicate: query => query.queryKey[0] !== '/session' }); cache.setQueryData(['/session'], value ?? { setupRequired: false, authenticated: false }); };
   const refreshModels = useCallback(async () => { await cache.invalidateQueries({ queryKey: ['/models'] }); }, [cache]);
   useEffect(() => { const expired = () => { setAuthRequest(old => old ? { ...old, resume: true } : undefined); cache.setQueryData<SessionView>(['/session'], { setupRequired: false, authenticated: false }); }; authenticationEvents.addEventListener('required', expired); return () => authenticationEvents.removeEventListener('required', expired); }, [cache]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousRoute.current; previousRoute.current = route; setDrawer(false);
     if (!route.creating) {
       document.getElementById('main-content')?.focus({ preventScroll: true });

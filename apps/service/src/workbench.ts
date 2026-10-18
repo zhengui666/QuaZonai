@@ -17,7 +17,7 @@ import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
-import { accountKey, capitalStatus, control } from './capital-exit.ts';
+import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
 import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy } from '../../../packages/contracts/src/index.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -69,7 +69,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const data = object(input.data, 'dataset');
       const registered = config.datasets.find((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data));
       if (!registered) throw new Problem('dataset_input_unregistered');
-      if (input.specification) capturedDataset = captureDataset(registered);
+      if (input.specification) {
+        const inherited = { ...registered.policy, max_trials: object(input.policy, 'policy').max_trials, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
+        if (canonical(json(input.policy)) !== canonical(json(inherited))) throw new Problem('research_policy_unregistered');
+        capturedDataset = captureDataset(registered);
+      }
     } else {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       capturedDataset = captureDataset(configured);
@@ -198,15 +202,21 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (input.automatic) validateAutomatic(input.automatic);
     const connection = config.connections.find((connection) => connection.id === input.connectionId && connection.mode === input.mode);
     if (!connection) throw new Problem('connection_not_configured', 422);
+    if (!input.automatic?.enabled) {
+      const fresh = await readCapitalControl(connection, selected.view.currency);
+      for (const exit of fresh.status.exits) await validateCapitalDocument(config, 'VIEW', exit);
+      await host.harness.commit(async tx => { const facts = await tx.doc(Application); facts.accountControls ??= {}; recordCapitalControl(facts.accountControls, connection, fresh); }, context);
+    }
     const id = randomUUID(); const receiptId = randomUUID();
     return host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application);
       const existing = Object.values(facts.observations).map(observation).find((item) => item.input.requestId === input.requestId);
       if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
       const accountControl = facts.accountControls?.[accountKey(connection, facts.accountControls)];
-      if (!input.automatic?.enabled && accountControl) {
-        const record = control(accountControl); const state = capitalStatus(record);
-        if ((Object.keys(record.commands).length > 0 || state.exits.length > 0) && (state.reserved === null || decimalUnits(state.reserved) > 0n || state.exits.some(exit => exit.remaining_trading !== 'BUDGET_AWARE'))) throw new Problem('account_capital_exit_requires_budget_aware_target', 409);
+      if (!input.automatic?.enabled) {
+        const state = capitalStatus(control(accountControl));
+        if (state.reserved === null) throw new Problem('account_reservation_unknown', 409);
+        if (decimalUnits(state.reserved) > 0n || state.exits.some(exit => exit.remaining_trading !== 'BUDGET_AWARE')) throw new Problem('account_capital_exit_requires_budget_aware_target', 409);
       }
       const unsettled = Object.values(facts.observations).map(observation).some((fact) => accountKey(fact.connection, facts.accountControls) === accountKey(connection, facts.accountControls)
         && (['PENDING', 'UNCERTAIN'].includes(fact.view.receipt?.status ?? '') || unsettledAdjustment(fact)));
@@ -226,15 +236,16 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function refreshObservation(id: string) {
     const original = await getObservation(id);
-    if (original.view.automaticPolicy?.enabled && original.view.status !== 'STOPPED' && !unsettledAdjustment(original)) return original.view;
+    if (original.view.automaticPolicy?.enabled && original.view.status !== 'STOPPED' && !['PENDING', 'UNCERTAIN'].includes(original.view.receipt?.status ?? '') && !unsettledAdjustment(original)) return original.view;
     const taskId = await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) throw new Problem('observation_not_found', 404);
       const fact = observation(value);
       const previous = await tx.task(fact.taskId as TaskId);
       if (!fact.view.automaticPolicy && previous && previous.state.status !== 'terminal') return fact.taskId;
-      const allocated = !!fact.view.automaticPolicy && !!fact.view.allocation?.receipt && (fact.view.allocation.receipt.status !== 'PENDING' || unsettledAdjustment(fact));
+      const originalUnsettled = ['PENDING', 'UNCERTAIN'].includes(fact.view.receipt?.status ?? '');
+      const allocated = !originalUnsettled && !!fact.view.automaticPolicy && !!fact.view.allocation?.receipt && fact.view.allocation.receipt.status !== 'NOT_OFFERED' && (fact.view.allocation.receipt.status !== 'PENDING' || fact.view.allocation.status !== 'SIZED' && unsettledAdjustment(fact));
       const refreshId = await tx.createTask(ObserveAccount, { id, connection: fact.connection, target: allocated ? fact.allocationTarget! : fact.target, receiptId: allocated ? fact.view.allocation!.receipt!.id : fact.view.receipt!.id, refresh: true,
-        ...(fact.view.automaticPolicy ? { accountOnly: !allocated, ...(allocated ? { allocation: fact.allocationContext } : {}) } : {}) },
+        ...(fact.view.automaticPolicy ? { accountOnly: !allocated && !originalUnsettled, ...(allocated ? { allocation: fact.allocationContext } : {}) } : {}) },
         { conversationId: portfolio(facts.portfolios[fact.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, ...(fact.view.automaticPolicy ? { background: true } : {}) });
       if (!previous || previous.state.status === 'terminal') fact.taskId = refreshId;
       facts.observations[id] = json(fact); return refreshId;
@@ -252,6 +263,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const fact = observation(found);
       if (input.enabled && fact.view.status === 'STOPPED') throw new Problem('observation_stopped', 409);
       if (input.enabled && Object.values(facts.observations).map(observation).some(other => other.view.id !== id && accountKey(other.connection, facts.accountControls) === accountKey(fact.connection, facts.accountControls) && other.view.automaticPolicy?.enabled && other.view.status !== 'STOPPED')) throw new Problem('account_automatic_binding_already_enabled', 409);
+      if (input.enabled && Object.values(facts.observations).map(observation).some(other => accountKey(other.connection, facts.accountControls) === accountKey(fact.connection, facts.accountControls)
+        && (['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== id && unsettledAdjustment(other)))) throw new Problem('target_delivery_requires_reconciliation', 409);
       const prior = await tx.task(fact.taskId as TaskId);
       if (input.enabled && !fact.view.automaticPolicy?.enabled && prior && prior.state.status !== 'terminal') throw new Problem('original_observation_requires_reconciliation', 409);
       fact.view.automaticPolicy = structuredClone(input);

@@ -116,6 +116,8 @@ test('two original studies → native target blending → one fee-affected share
   const remote = Fastify(); let posts = 0; let offered: Record<string, unknown> = {};
   const received = () => ({ ...offered, status: 'ACKNOWLEDGED', externalId: 'native-test-receipt', acknowledgedAt: '2026-09-30T00:00:00.000000001Z' });
   remote.post('/targets', async (req) => { posts++; offered = req.body as Record<string, unknown>; return received(); });
+  remote.get('/capabilities', () => ({ clientId: 'native-test-client', accountId: 'native-test-account', mode: 'paper', currency: 'USD', capitalExit: { version: 1, supported: false, readable: true } }));
+  remote.get('/capital-exits', () => ({ clientId: 'native-test-client', accountId: 'native-test-account', mode: 'paper', currency: 'USD', accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] }));
   remote.get('/targets/:id', received);
   remote.get('/account', async () => ({ clientId: 'native-test-client', accountId: 'native-test-account', sequence: '9007199254740997', nativeClockNs: nowNs(), currency: 'USD', equity: null, cash: null, positions: [] }));
   const url = await remote.listen({ host: '127.0.0.1', port: 0 });

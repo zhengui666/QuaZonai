@@ -3,8 +3,13 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import { Application, decimalUnits, json, nowNs, observation, portfolio } from '../src/facts.ts';
-import { accountKey, capitalStatus, control } from '../src/capital-exit.ts';
+import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl } from '../src/capital-exit.ts';
 import { built, context, setup } from './support.ts';
+import { AdjustAccount, unsettledAdjustment } from '../src/automatic.ts';
+import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const id = (value: string) => `01900000-0000-7000-8000-${value.padStart(12, '0')}`;
 async function until<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
@@ -146,4 +151,140 @@ test('native V1 bridge and durable automatic allocation retain account-wide rese
     await until(read, value => value.allocation?.reason === 'account_reservation_unknown'); assert.equal(targetPosts, beforeExpiry);
     await state.service.work.configureAutomatic(started.id, { enabled: false, cashBuffer: '50', maximumSnapshotAgeSeconds: 120 });
   } finally { await state.cleanup(); await remote.close(); }
+});
+
+for (const mode of ['paper', 'live'] as const) test(`new manual targets require fresh authoritative reservations and respect prepared allocations in ${mode}`, { timeout: 30_000 }, async () => {
+  const state = await setup(); const remote = Fastify(); let reserved: string | null = '100'; let readable = true; let posts = 0; let revision = 7; let sequence = 0; const queries: string[] = [];
+  const identity = { clientId: 'TEST_ONLY-fresh-manual', accountId: 'TEST_ONLY-fresh-account', mode, currency: 'USD' };
+  remote.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, supported: readable, readable } }));
+  remote.get('/capital-exits', () => ({ ...identity, accountSourceId: id('1'), observationId: id('2'), controlRevision: String(revision), reserved, exits: [] }));
+  remote.post('/targets', req => { posts++; return { ...(req.body as object), status: 'ACKNOWLEDGED' }; });
+  remote.get('/account', () => ({ ...identity, sequence: String(++sequence), nativeClockNs: nowNs(), equity: '1000', cash: '1000', positions: [] }));
+  remote.get<{ Params: { id: string } }>('/targets/:id', (request, reply) => { queries.push(request.params.id); return reply.code(404).send({ error: 'TEST_ONLY-never-offered' }); });
+  const url = await remote.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const source = await built(state); const connection = { ...identity, id: 'fresh-manual', name: 'TEST_ONLY', url }; const alias = { ...connection, id: 'fresh-alias', url: `${url}?alias=1` };
+    state.options.config.connections.push(connection, alias); await state.restart();
+    const start = (requestId: string, connectionId = connection.id) => state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers, payload: { requestId, portfolioId: source.view.id, mode, connectionId } });
+    const blocked = await start('first-contact-reserved'); assert.equal(blocked.statusCode, 409, blocked.body); assert.equal(blocked.json().error, 'account_capital_exit_requires_budget_aware_target'); assert.equal(posts, 0);
+    reserved = '0'; revision++; const zero = await readCapitalControl(connection, 'USD'); await state.service.research.harness.commit(async tx => { const facts = await tx.doc(Application); recordCapitalControl(facts.accountControls!, connection, zero); }, context);
+    reserved = '100'; revision++; assert.equal((await start('cached-zero-is-not-authoritative')).statusCode, 409); assert.equal(posts, 0);
+    const beforeAlias = (await state.service.research.harness.snapshot(Application, context))!.accountControls!; assert.notEqual(accountKey(alias, beforeAlias), accountKey(connection, beforeAlias));
+    assert.equal((await start('new-alias-reserved', alias.id)).statusCode, 409); assert.equal(posts, 0);
+    const joined = (await state.service.research.harness.snapshot(Application, context))!.accountControls!; assert.equal(accountKey(alias, joined), accountKey(connection, joined));
+    readable = false; const unknown = await start('unreadable-reservations'); assert.equal(unknown.statusCode, 409, unknown.body); assert.equal(unknown.json().error, 'account_reservation_unknown'); assert.equal(posts, 0);
+    readable = true; reserved = '0'; revision++;
+    await state.service.research.harness.commit(async tx => { const facts = await tx.doc(Application); facts.observations.prepared = json({ input: { portfolioId: source.view.id }, connection, taskId: 0, snapshot: null, view: { id: 'prepared', status: 'QUEUED', receipt: { status: 'NOT_OFFERED' }, allocation: { status: 'SIZED', receipt: { id: 'never-offered-allocation', status: 'PENDING' } } } }); }, context);
+    const prepared = await start('manual-must-wait-for-prepared-allocation', alias.id); assert.equal(prepared.statusCode, 409, prepared.body); assert.equal(prepared.json().error, 'target_delivery_requires_reconciliation'); assert.equal(posts, 0);
+    await state.service.research.harness.commit(async tx => { delete (await tx.doc(Application)).observations.prepared; }, context);
+    const accepted = await start('verified-zero-reservation'); assert.equal(accepted.statusCode, 202, accepted.body); await state.service.research.harness.waitForTask((await state.service.work.getObservation(accepted.json().id)).taskId as TaskId, context); assert.equal(posts, 1);
+    await state.service.research.harness.commit(async tx => { const facts = await tx.doc(Application); const stopped = observation(json(facts.observations[accepted.json().id])); stopped.view.id = 'never-offered'; stopped.view.receipt!.status = 'NOT_OFFERED'; stopped.view.automaticPolicy = { enabled: false, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 }; stopped.view.allocation = { status: 'STOPPED', receipt: { id: 'never-offered-allocation', status: 'NOT_OFFERED' } } as any; facts.observations['never-offered'] = json(stopped); }, context);
+    const refreshed = await state.service.work.refreshObservation('never-offered'); assert.equal(refreshed.error, null); assert.equal(refreshed.receipt!.status, 'NOT_OFFERED'); assert.equal(refreshed.allocation!.receipt!.status, 'NOT_OFFERED'); assert.equal(sequence, 2); assert.deepEqual(queries, []); assert.equal(posts, 1);
+  } finally { await state.cleanup(); await remote.close(); }
+});
+
+for (const mode of ['paper', 'live'] as const) for (const variant of ['enable-original', 'late-alias'] as const) test(`manual receipt reconciliation precedes ${variant} automatic offers in ${mode}`, { timeout: 30_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY);
+  const state = await setup(); const remote = Fastify(); const offered: any[] = []; const queries: string[] = [];
+  let sequence = 0; let allowOriginalReceipt = false; let originalId = '';
+  const identity = { clientId: 'TEST_ONLY-manual-client', accountId: 'TEST_ONLY-manual-account', mode, currency: 'USD' };
+  const expiry = String(BigInt(nowNs()) + 300_000_000_000n);
+  remote.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, readable: true, supported: true }, automaticTargets: { supported: true, revisionBound: true } }));
+  remote.get('/capital-exits', () => ({ ...identity, accountSourceId: id('1'), observationId: id('2'), controlRevision: '7', reserved: '0', exits: [] }));
+  remote.get('/account', () => { const clock = nowNs(); return { ...identity, sequence: String(++sequence), nativeClockNs: clock, accountSourceId: id('1'), observationId: id('2'), controlRevision: '7', equity: '1000', cash: '1000', positions: [], execution: { currency: 'USD', validUntilNs: expiry, liquidity: [{ instrumentId: 'TEST.SIM', currency: 'USD', eventNs: clock, availableNs: clock, notional: '100000', lotNotional: '1', minimumNotional: '1', takerFee: '0' }] } }; });
+  remote.post('/targets', async (req, reply) => {
+    offered.push(req.body);
+    if (offered.length === 1) { reply.hijack(); reply.raw.destroy(); return; }
+    assert.equal((await state.service.work.getObservation(originalId)).view.receipt!.status, 'ACKNOWLEDGED', 'new offers require actual original-receipt settlement, not local task termination');
+    return { ...(req.body as object), status: 'ACKNOWLEDGED' };
+  });
+  remote.get<{ Params: { id: string } }>('/targets/:id', (req, reply) => { queries.push(req.params.id); return allowOriginalReceipt && req.params.id === offered[0]?.id ? { ...offered[0], status: 'ACKNOWLEDGED' } : reply.code(404).send({ error: 'TEST_ONLY-original-outcome-unknown' }); });
+  const url = await remote.listen({ host: '127.0.0.1', port: 0 });
+  try {
+    const source = await built(state);
+    await state.service.research.harness.commit(async tx => {
+      const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[source.view.id]);
+      fact.target!.valid_until_ns = expiry;
+      fact.view.capacity = { status: 'ESTIMATED', reason: null, scope: 'TEST_ONLY', currency: 'USD', basis: 'protocol control, not market evidence', maximumCapital: '1000', minimumCapital: '1', bindingInstrument: null, observationStartNs: null, observationEndNs: null, decisionClockNs: nowNs(), validUntilNs: expiry, assumptions: { participation: '1', maximumAgeSeconds: 60, executionWindow: 'TEST_ONLY', exit: 'TEST_ONLY', fees: 'TEST_ONLY', depth: 'TEST_ONLY' }, scenarios: [] };
+      facts.portfolios[source.view.id] = json(fact);
+    }, context);
+    state.options.config.jobBinary = process.env.QZ_JOB_BINARY!;
+    state.options.config.connections.push({ ...identity, id: 'manual-original', name: 'TEST_ONLY original', url }); await state.restart();
+    const first = await state.service.work.startObservation({ requestId: 'manual-original', portfolioId: source.view.id, mode, connectionId: 'manual-original' }); originalId = first.id;
+    const task = await state.service.research.harness.waitForTask((await state.service.work.getObservation(first.id)).taskId as TaskId, context);
+    assert.equal(task.state.status, 'terminal'); assert.equal((await state.service.work.getObservation(first.id)).view.receipt!.status, 'UNCERTAIN');
+    const policy = { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 }; let automaticId: string;
+    if (variant === 'enable-original') {
+      const response = await state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${first.id}/automatic`, headers: state.headers, payload: policy });
+      assert.equal(response.statusCode, 409, response.body); assert.equal(response.json().error, 'target_delivery_requires_reconciliation');
+      // A restored old-Head binding can already have automatic policy with its original receipt unresolved.
+      await state.service.research.harness.commit(async tx => {
+        const facts = await tx.doc(Application); const fact = observation(facts.observations[first.id]); fact.view.automaticPolicy = policy;
+        fact.taskId = await tx.createTask(AdjustAccount, { id: first.id, binary: process.env.QZ_JOB_BINARY!, dataDir: state.directory }, { conversationId: source.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true }); facts.observations[first.id] = json(fact);
+      }, context); automaticId = first.id;
+    } else {
+      await state.service.app.inject({ url: `/api/v3/observations/${first.id}/capital-exits`, headers: state.headers });
+      state.options.config.connections.push({ ...identity, id: 'manual-alias', name: 'TEST_ONLY same physical source', url: `${url}?alias=1` }); await state.restart();
+      const next = await state.service.work.startObservation({ requestId: 'manual-alias', portfolioId: source.view.id, mode, connectionId: 'manual-alias', automatic: policy }); automaticId = next.id;
+    }
+    const blocked = await until(() => state.service.work.getObservation(automaticId), fact => fact.view.allocation?.reason === 'target_delivery_requires_reconciliation' || offered.length > 1);
+    assert.equal(blocked.view.allocation!.status, 'BLOCKED'); assert.equal(blocked.view.allocation!.reason, 'target_delivery_requires_reconciliation'); assert.equal(offered.length, 1);
+    const primary = (await state.service.work.getObservation(automaticId)).taskId; const beforeRefresh = queries.length;
+    await state.service.work.refreshObservation(first.id); assert.ok(queries.length > beforeRefresh); assert.equal(queries.at(-1), offered[0].id); assert.equal(offered.length, 1);
+    assert.equal((await state.service.work.getObservation(automaticId)).taskId, primary);
+    allowOriginalReceipt = true; await state.service.work.refreshObservation(first.id);
+    assert.equal((await state.service.work.getObservation(first.id)).view.receipt!.status, 'ACKNOWLEDGED');
+    const delivered = await until(() => state.service.work.getObservation(automaticId), fact => fact.view.allocation?.status === 'DELIVERED');
+    assert.equal(delivered.view.allocation!.receipt!.status, 'ACKNOWLEDGED'); assert.equal(offered.length, 2); assert.notEqual(offered[0].id, offered[1].id);
+    const controls = (await state.service.research.harness.snapshot(Application, context))!.accountControls!;
+    assert.equal(accountKey((await state.service.work.getObservation(first.id)).connection, controls), accountKey(delivered.connection, controls));
+    await state.service.work.configureAutomatic(automaticId, { ...policy, enabled: false });
+  } finally { await state.cleanup(); await remote.close(); }
+});
+
+for (const variant of ['expiry', 'late-manual', 'transport', 'pending', 'rejected', 'disabled', 'abort-pending'] as const) test(`automatic pre-POST boundary retains ${variant} receipt truth`, { timeout: 15_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY);
+  const directory = await mkdtemp(join(tmpdir(), 'qz-automatic-boundary-')); const remote = Fastify(); let posts = 0; let sequence = 1; const queries: string[] = [];
+  const identity = { clientId: 'TEST_ONLY-boundary', accountId: 'TEST_ONLY-account', mode: 'paper', currency: 'USD' };
+  const source = { accountSourceId: id('1'), observationId: id('2'), controlRevision: '7' };
+  const clock = nowNs(); const expiry = String(BigInt(clock) + (variant === 'expiry' ? 2_000_000_000n : 120_000_000_000n)); const executionExpiry = String(BigInt(clock) + 120_000_000_000n);
+  const target = { schema_version: 1, asof_ns: String(BigInt(clock) - 1_000_000_000n), valid_until_ns: expiry, cash_weight: '0', targets: [{ instrument_id: 'TEST_ONLY.SIM', currency: 'USD', weight: '1' }] };
+  remote.get('/capabilities', () => ({ ...identity, capitalExit: { version: 1, readable: true, supported: true }, automaticTargets: { supported: true, revisionBound: true } }));
+  remote.get('/capital-exits', () => ({ ...identity, ...source, reserved: '0', exits: [] }));
+  remote.get('/account', () => ({ ...identity, ...source, sequence: String(sequence), nativeClockNs: clock, equity: '1000', cash: '1000', positions: [], execution: { currency: 'USD', validUntilNs: executionExpiry, liquidity: [{ instrumentId: 'TEST_ONLY.SIM', currency: 'USD', eventNs: clock, availableNs: clock, notional: '100000', lotNotional: '1', minimumNotional: '1', takerFee: '0' }] } }));
+  remote.post('/targets', (req, reply) => { posts++; if (variant === 'transport') { reply.hijack(); reply.raw.destroy(); return; } return { ...(req.body as object), status: variant === 'rejected' && posts === 1 ? 'REJECTED' : 'ACKNOWLEDGED' }; });
+  remote.get<{ Params: { id: string } }>('/targets/:id', (req, reply) => { queries.push(req.params.id); return reply.code(404).send({ error: 'TEST_ONLY-no-observed-receipt' }); });
+  const url = await remote.listen({ host: '127.0.0.1', port: 0 });
+  const facts: any = { observations: { o: { input: { portfolioId: 'p' }, connection: { ...identity, id: 'TEST_ONLY', name: 'TEST_ONLY loopback', url }, target, taskId: 1, snapshot: null, view: { id: 'o', currency: 'USD', status: 'QUEUED', positions: [], curve: [], receipt: { id: 'original', status: 'NOT_OFFERED' }, automaticPolicy: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } } } }, portfolios: { p: { view: { factors: [{ factorId: 'TEST_ONLY-factor', weight: '1' }], capacity: { status: 'ESTIMATED', currency: 'USD', maximumCapital: '1000', minimumCapital: '1', validUntilNs: executionExpiry, decisionClockNs: clock, assumptions: { participation: '1', maximumAgeSeconds: 60 } } }, evidence: [] } }, accountControls: {} };
+  let checkpoint: any;
+  const runtime: any = { signal: new AbortController().signal, now: Date.now, commit: async (operation: Function) => { const value = await operation({ doc: async (definition: unknown) => { assert.equal(definition, Application); return facts; } }); if (value?.checkpoint) checkpoint = value.checkpoint; return value; }, sleep: async () => {} };
+  const task: any = { input: { id: 'o', binary: process.env.QZ_JOB_BINARY, dataDir: directory }, state: { checkpoint: { phase: 'snapshot' } } };
+  try {
+    await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(facts.observations.o.view.allocation.status, 'SIZED'); assert.equal(checkpoint.phase, 'deliver');
+    const receiptId = facts.observations.o.view.allocation.receipt.id;
+    assert.equal(unsettledAdjustment(facts.observations.o), true);
+    if (variant === 'pending') { await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(checkpoint.phase, 'deliver'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.equal(posts, 0); assert.deepEqual(queries, []); }
+    if (variant === 'expiry') await sleep(Math.max(0, Number(BigInt(expiry) / 1_000_000n) - Date.now() + 30));
+    if (variant === 'late-manual') facts.observations.manual = json({ ...facts.observations.o, view: { ...facts.observations.o.view, id: 'manual', allocation: undefined, automaticPolicy: undefined, receipt: { id: 'unresolved-manual', status: 'UNCERTAIN' } } });
+    if (variant === 'disabled' || variant === 'abort-pending') facts.observations.o.view.automaticPolicy.enabled = false;
+    if (variant === 'abort-pending') await AdjustAccount.definition.abort!(task, runtime, context); else await AdjustAccount.definition.phases.deliver(task, runtime, context);
+    if (variant === 'disabled' || variant === 'abort-pending') { assert.equal(posts, 0); assert.equal(facts.observations.o.view.allocation.status, 'STOPPED'); assert.equal(facts.observations.o.view.allocation.receipt.status, 'NOT_OFFERED'); assert.equal(unsettledAdjustment(facts.observations.o), false); assert.deepEqual(queries, []); }
+    else if (variant === 'pending') { assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED'); assert.deepEqual(queries, []); }
+    else if (variant === 'rejected') {
+      assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'REJECTED');
+      for (let retry = 0; retry < 3; retry++) { await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(checkpoint.phase, 'wait'); assert.equal(facts.observations.o.view.allocation.status, 'REJECTED'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.equal(posts, 1); }
+      sequence++; await AdjustAccount.definition.phases.snapshot(task, runtime, context); assert.equal(checkpoint.phase, 'deliver'); assert.notEqual(facts.observations.o.view.allocation.receipt.id, receiptId);
+      await AdjustAccount.definition.phases.deliver(task, runtime, context); assert.equal(posts, 2); assert.equal(facts.observations.o.view.allocation.receipt.status, 'ACKNOWLEDGED');
+    } else if (variant === 'transport') {
+      assert.equal(posts, 1); assert.equal(facts.observations.o.view.allocation.receipt.status, 'UNCERTAIN'); assert.equal(checkpoint.phase, 'reconcile');
+      await AdjustAccount.definition.phases.reconcile(task, runtime, context); await AdjustAccount.definition.phases.snapshot(task, runtime, context);
+      assert.equal(checkpoint.phase, 'reconcile'); assert.equal(facts.observations.o.view.allocation.receipt.id, receiptId); assert.deepEqual(queries, [receiptId]); assert.equal(posts, 1);
+    } else {
+      assert.equal(posts, 0); assert.equal(facts.observations.o.view.allocation.receipt.status, 'NOT_OFFERED'); assert.equal(checkpoint.phase, 'snapshot');
+      await AdjustAccount.definition.phases.snapshot(task, runtime, context);
+      assert.equal(facts.observations.o.view.allocation.status, variant === 'expiry' ? 'PROJECTED' : 'BLOCKED');
+      assert.equal(facts.observations.o.view.allocation.reason, variant === 'expiry' ? 'target_expired' : 'target_delivery_requires_reconciliation');
+      assert.equal(facts.observations.o.allocationTarget.valid_until_ns, expiry); assert.equal(unsettledAdjustment(facts.observations.o), false); assert.equal(posts, 0); assert.equal(queries.length, 0);
+    }
+  } finally { await remote.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -538,23 +538,29 @@ test('large historical ledger pages disclose every trial and read failures witho
   } finally { await host.close(); await state.cleanup(); }
 });
 
-test('cross-market Harness registers one shared-capital proposal, retains allocations and isolates the owner-only final', async () => {
+for (const compact of [false, true]) test(`cross-market Harness retains ${compact ? 'ALL_EQUAL' : 'explicit'} allocations and isolates the owner-only final`, async () => {
   const state = await setup(true);
   const policy = state.input.policy.strategy as JsonObject;
   policy.kind = 'cross-market-threshold'; delete policy.instrumentId;
   await writeFile(join(state.input.data.catalog, 'binding.json'), JSON.stringify({ name: 'PRIMARY', end: '20', cross_market: true }));
   await writeFile(join(state.input.data.sealed.catalog, 'binding.json'), JSON.stringify({ name: 'SEALED', end: '30', cross_market: true }));
-  const allocations = [{ instrumentId: 'BASE.SIM', weight: '0.4' }, { instrumentId: 'TEST.SIM', weight: '0.6' }];
+  const allocations = [{ instrumentId: 'BASE.SIM', weight: compact ? '0.500000000000000000' : '0.4' }, { instrumentId: 'TEST.SIM', weight: compact ? '0.500000000000000000' : '0.6' }];
   const host = await openResearch(state.options);
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Complete invalid market choices count, not a free market-selection probe.', members, allocations: [allocations[0]!] }),
-    tool('strategy_portfolio_evaluate', { hypothesis: 'Two asynchronous markets share the original total capital.', members, allocations }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Two asynchronous markets share the original total capital.', members, allocations: compact ? 'ALL_EQUAL' : allocations }),
     (transcript) => {
       const feedback = textResult(transcript, 'strategy_portfolio_evaluate');
       assert.equal(object(feedback.portfolio, 'portfolio').partition, 'VALIDATION');
       assert.equal(JSON.stringify(feedback).includes('RAW_FORECAST'), false);
       assert.equal(JSON.stringify(feedback).includes('HELDOUT_OWNER_ONLY'), false);
-      return tool('strategy_portfolio_finalize', { trialId: feedback.trialId, reason: 'Original registered cross-market candidate; protocol-only isolation check.' });
+      return tool('research_brief', {});
+    },
+    (transcript) => {
+      const brief = textResult(transcript, 'research_brief');
+      const trials = brief.trials as JsonObject[];
+      assert.equal(trials.length, 2); assert.equal(trials[1]!.marketCount, 2);
+      return tool('strategy_portfolio_finalize', { trialId: trials[1]!.taskId, reason: 'Original registered cross-market candidate; protocol-only isolation check.' });
     },
   ]);
   try {
@@ -564,7 +570,7 @@ test('cross-market Harness registers one shared-capital proposal, retains alloca
     assert.deepEqual(facts.input, state.input);
     assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'COMPUTED']);
     assert.equal(facts.trials[0]!.error, 'strategy_market_allocations_required');
-    assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').allocations, allocations);
+    assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').allocations, compact ? 'ALL_EQUAL' : allocations);
     assert.deepEqual(object(facts.trials[1]!.proposal, 'proposal').strategy, policy);
     assert.equal(facts.final!.status, 'COMPUTED', JSON.stringify(facts.final));
     assert.deepEqual(facts.final!.comparedTrials, facts.trials.map((trial) => trial.taskId));
@@ -585,7 +591,7 @@ test('cross-market Harness registers one shared-capital proposal, retains alloca
       assert.ok(points.some((point) => (point.rebalance_instrument_ids as string[]).length === 2));
     }
     assert.equal((await state.calls()).filter((call) => call.command === 'simulate').length, 2);
-    assert.equal(state.faux.state.callCount, 3);
+    assert.equal(state.faux.state.callCount, 4);
     assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);
   } finally { await host.close(); await state.cleanup(); }
 });

@@ -33,6 +33,24 @@ test('cross-market resolution binds every registered exact allocation and its or
   assert.equal(((request.forecast as JsonObject).selection as JsonObject).event_end_ns, '30');
 });
 
+test('ALL_EQUAL resolves the complete 2253-market original universe with exact 18dp remainder and unchanged scientific inputs', () => {
+  const ids = Array.from({ length: 2253 }, (_, index) => `ORIGINAL-${index}.SIM`);
+  const policy: JsonObject = { ...original, instrumentIds: ids, simulationSettings: { starting_capital: '3000', base_currency: 'pUSD',
+    fee_rates: ids.map((instrument_id) => ({ instrument_id, maker: '0.001234567890123456', taker: '0.009876543210987654' })) } };
+  const before = structuredClone(policy);
+  const proposal = { allocations: 'ALL_EQUAL' };
+  const resolved = resolveStrategyPolicy(proposal, policy);
+  assert.deepEqual(resolved.allocations!.map((item) => item.instrumentId), ids);
+  assert.ok(resolved.allocations!.slice(0, -1).every((item) => item.weight === '0.000443852640923213'));
+  assert.equal(resolved.allocations!.at(-1)!.weight, '0.000443852640924324');
+  assert.equal(resolved.allocations!.reduce((sum, item) => sum + units(item.weight), 0n), 10n ** 18n);
+  assert.deepEqual(resolved, resolveStrategyPolicy({ allocations: resolved.allocations! }, policy));
+  assert.deepEqual(resolved.simulationSettings, policy.simulationSettings);
+  assert.deepEqual(policy, before); assert.deepEqual(proposal, { allocations: 'ALL_EQUAL' });
+  assert.throws(() => resolveStrategyPolicy({ allocations: 'ALL_EQUAL', instrumentId: ids[0] }, policy), /strategy_market_single_choice_invalid/);
+  assert.throws(() => resolveStrategyPolicy({ allocations: 'ALL_EQUAL' }, { ...policy, kind: 'factor-threshold', instrumentId: ids[0] }), /strategy_market_policy_required/);
+});
+
 test('real asynchronous market observations share one exact risky budget and never add missing or expiry BARs', () => {
   const policy = resolveStrategyPolicy({ allocations }, original);
   const forecasts = { points: [point('B-YES.SIM', '18', -1), point('A.SIM', '10', 1), point('B-YES.SIM', '11', 1),

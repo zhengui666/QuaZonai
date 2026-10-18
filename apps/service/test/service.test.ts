@@ -79,6 +79,9 @@ async function connection(state: Awaited<ReturnType<typeof setup>>, uncertain = 
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (uncertain) return reply.code(503).send({ error: 'unknown_remote_result' }); return receipt();
   });
+  // TEST_ONLY readable native-owner facts; no capital-exit initiation capability.
+  downstream.get('/capabilities', () => ({ clientId: 'client-original', accountId: 'account-original', mode: 'paper', currency: 'USD', capitalExit: { version: 1, supported: false, readable: true } }));
+  downstream.get('/capital-exits', () => ({ clientId: 'client-original', accountId: 'account-original', mode: 'paper', currency: 'USD', accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] }));
   downstream.get('/targets/:id', async () => receipt());
   downstream.get('/account', async () => ({ clientId: 'client-original', accountId: 'account-original', sequence: '9007199254740995', nativeClockNs: '1800000000123456789', currency: 'USD', equity: '1234.123456789012345678', cash: null, positions: [{ instrumentId: 'TEST.SIM', quantity: '0.000000000000000001', value: null, pnl: null }] }));
   const url = await downstream.listen({ host: '127.0.0.1', port: 0 });
