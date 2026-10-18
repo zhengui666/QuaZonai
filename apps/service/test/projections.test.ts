@@ -1,10 +1,63 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ConversationId } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask } from '@earendil-works/pi-durable';
+import type { ConversationId, TaskQuery } from '@earendil-works/pi-durable';
+import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { awaitWithContext } from '@earendil-works/chord/context';
 import { Study } from '../../research/src/documents.ts';
 import { built, context, setup, studied } from './support.ts';
 import { Application } from '../src/facts.ts';
-import { metrics } from '../src/projections.ts';
+import { metrics, researchTaskViews } from '../src/projections.ts';
+
+test('list and usage do not load historical task results; list retains its existing summary fields', { timeout: 20_000 }, async t => {
+  const storage = await openNodeSqliteStorage(':memory:'); const state = await setup(true, undefined, storage);
+  try {
+    const { receipt } = await studied(state);
+    const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
+    const detail = (await get(`research/${receipt.conversationId}`)).json();
+    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, ...expected } = detail;
+    const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
+    t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
+    const list = await get('research'); const usage = await get('usage');
+    assert.equal(list.statusCode, 200); assert.deepEqual(list.json().items, [expected]);
+    assert.equal(usage.statusCode, 200); assert.equal(usage.json().activeTasks, 0);
+    assert.ok(scans.every(query => query.status && query.status !== 'terminal'), 'summary reads must not scan full historical task receipts');
+  } finally { await state.cleanup(); }
+});
+
+test('detail hydrates task metadata once, shares concurrent reads and follows committed newest-100 updates', { timeout: 20_000 }, async t => {
+  const storage = await openNodeSqliteStorage(':memory:'); const state = await setup(true, undefined, storage);
+  try {
+    const { receipt } = await studied(state); const host = state.service.research;
+    const scan = storage.scanTasks.bind(storage); let scans = 0;
+    t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { if (args[0].conversationId === receipt.conversationId && !args[0].status) scans++; return scan(...args); });
+    const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+    const [first, concurrent] = await Promise.all([get(), get()]);
+    assert.equal(first.statusCode, 200); assert.deepEqual(first.json(), concurrent.json()); assert.equal(scans, 1);
+    let finishFailure!: () => void; const failure = new Promise<void>(resolve => { finishFailure = resolve; });
+    const task = defineTask<{ fail: boolean; result: string | null }, { phase: 'compute' }, string | null>({ name: 'test.metadata-only', version: 1, initial: () => ({ phase: 'compute' }),
+      phases: { async compute(task, runtime, ctx) { if (task.input.fail) await awaitWithContext(failure, ctx); await runtime.commit(() => ({ status: 'terminal', outcome: task.input.fail ? { status: 'failed', error: { message: 'test_failure' } } : { status: 'completed', result: task.input.result } }), ctx); } },
+      async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); } });
+    host.registry.install(defineExtension({ name: 'test.task-metadata', tasks: [task] }));
+    const ids = await host.harness.commit(async tx => {
+      const ids = [];
+      for (let i = 0; i < 101; i++) ids.push(await tx.createTask(task, { fail: false, result: i === 0 ? 'large protocol result '.repeat(100_000) : null }, { conversationId: receipt.conversationId as ConversationId, ownership: { kind: 'conversation' } }));
+      return ids;
+    }, context);
+    await Promise.all(ids.map(id => host.harness.waitForTask(id, context)));
+    const updated = (await get()).json(); assert.equal(updated.tasks.length, 100);
+    assert.deepEqual(updated.tasks.map((task: { id: number }) => task.id), ids.slice(-100).reverse());
+    assert.ok(updated.tasks.every((task: { outcome: string }) => task.outcome === 'completed'));
+    const pending = await host.harness.commit(tx => tx.createTask(task, { fail: true, result: null }, { conversationId: receipt.conversationId as ConversationId, ownership: { kind: 'conversation' } }), context);
+    const running = (await get()).json().tasks[0]; assert.equal(running.id, pending); assert.notEqual(running.status, 'terminal');
+    const usage = await state.service.app.inject({ url: '/api/v3/usage', headers: state.headers }); assert.ok(usage.json().activeTasks > 0);
+    finishFailure(); await host.harness.waitForTask(pending, context);
+    const final = (await get()).json(); const failed = final.tasks[0]; assert.equal(failed.id, pending); assert.equal(failed.status, 'terminal'); assert.equal(failed.outcome, 'failed'); assert.equal(failed.error, 'task_failed');
+    assert.equal(scans, 1, 'committed changes must update metadata without reloading evidence');
+    const cold = await researchTaskViews(host)(receipt.conversationId); assert.deepEqual(cold, final.tasks); assert.equal(scans, 11, 'cold history is read in ten small pages, not one huge allocation');
+    assert.equal((await storage.task(ids[0]!, context))!.state.outcome!.status, 'completed');
+  } finally { await state.cleanup(); }
+});
 
 test('read projections retain partition/component availability and native scalar precision', () => {
   const result = metrics({ partitions_component: { index: 2 }, partitions: [{ partition: 'HELDOUT', metric: {
