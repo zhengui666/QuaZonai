@@ -27,9 +27,12 @@ export default defineExtension({
         const available = trials.filter((trial) => (trial.taskId as number) > (args.afterTrialId ?? 0)).sort((a, b) => (a.taskId as number) - (b.taskId as number));
         const page = available.slice(0, args.limit ?? 10);
         return { content: [{ type: 'text', text: JSON.stringify({
-          trials: page.map((trial) => { const proposal = object(trial.proposal, 'trial_proposal'); return {
+          trials: page.map((trial) => { const proposal = object(trial.proposal, 'trial_proposal');
+            const scope = proposal.allocations === 'ALL_EQUAL' ? proposal.strategy : null;
+            const selected = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope.instrumentIds : proposal.allocations;
+            return {
             taskId: trial.taskId, status: trial.status, error: trial.error ?? null, hypothesis: proposal.hypothesis ?? null,
-            instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(proposal.allocations) ? proposal.allocations.length : null,
+            instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(selected) ? selected.length : null,
             memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
           goal: input.goal, data, policy, stopped: study?.final !== null,

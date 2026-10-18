@@ -36,7 +36,7 @@ The tool description explains the shorthand and that pages need not be copied me
 <a id="verification"></a>
 ## Verification
 
-Source/call-chain inspection and installed-CLI zero-trial observations completed. Production edits, tests, review, merge and installation have not yet run. Original study remains RUNNING; no admission/resume/reset performed in this repair.
+Source/call-chain inspection and installed-CLI zero-trial observations completed. Test-only`e4cac110` genuinely failed the2253-market regression with`strategy_market_allocations_required` (5pass/1fail) before production changes. Minimal7-line shared resolver expansion, tool union/description and brief count are implemented. Actual official Node22.19 targeted run passes28tests including unchanged explicit-array lifecycle and addedALL_EQUAL lifecycle, both retaining failed-attempt accounting, original input/proposal, exact expanded native child evidence and once-only owner final. These are protocol/scientific input checks, not billed-model quality or profitability evidence. Actual official Node22.19`make check`passes79service/85research/4CLI/11Web plus Web build,227source helper tests,17deployment helpers with1distribution-dependent local skip,2package and3release tests; no failed checks. Connected`make check-core`passes all5real-native tests using the existing scientific binary whose Rust source is unchanged from this base. Independent/hosted exact-head review, merge and installation remain pending; applicable hosted CI must establish its own exact-head evidence. Original study remains RUNNING; no admission/resume/reset performed in this repair.
 
 <a id="handoff"></a>
 ## Handoff
