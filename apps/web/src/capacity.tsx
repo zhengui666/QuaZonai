@@ -5,7 +5,7 @@ import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { api } from './api';
 import { readDraft, saveDraft } from './commands';
 import { DraftNotice, ErrorNotice, Exact, Facts, MetricLabel, TableSurface, Timestamp } from './ui';
-import { Reason } from './diagnostics';
+import { ExecutionFailure, Reason } from './diagnostics';
 import { Disclosure } from './disclosure';
 import { nanosecondTimestamp } from './capacity-values';
 export type CapitalFormFields = { scenarios?: string; participation?: string; maximumAgeSeconds?: string };
@@ -48,7 +48,7 @@ export function Capacity({ report }: { report?: CapacityReport }) {
         { title: <MetricLabel metricKey="maximumCapital" label="约束资金上限" />, render: (_value, row) => <Exact value={row.maximumCapital} unit={report.currency} /> },
         { title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="decisionNs" label="限制决策时刻" />, render: (_value, row) => <CapacityClock value={row.decisionNs} /> },
       ]} /></section>}
-      <section className="capacity-scenarios"><h4>资本情景</h4><ScenarioTable scenarios={report.scenarios} currency={report.currency} /></section></> : <div className="capacity-unavailable" role="status"><strong>容量不可用</strong><Reason value={report?.reason} fallback={report ? '原报告未提供已分类的具体原因，请按原始身份核对执行。' : '尚无容量报告，不据此推断可用资金。请查看原执行状态，并明确资金与策略映射假设。'} />{report?.assumptions.participation && <Facts items={[["所用成交量参与率", report.assumptions.participation], ["流动性数据最大时差", `${report.assumptions.maximumAgeSeconds} 秒`], ["资本情景", report.scenarios.map(row => row.capital).join(' / ')]]} />}</div>}
+      <section className="capacity-scenarios"><h4>资本情景</h4><ScenarioTable scenarios={report.scenarios} currency={report.currency} /></section></> : <div className="capacity-unavailable" role="status"><strong>容量不可用</strong>{report?.errorDetail ? <ExecutionFailure error={report.reason} detail={report.errorDetail} identity={`容量范围 ${report.scope}`} title="容量计算未完成" /> : <Reason value={report?.reason} fallback={report ? '原报告未提供已分类的具体原因，请按原始身份核对执行。' : '尚无容量报告，不据此推断可用资金。请查看原执行状态，并明确资金与策略映射假设。'} />}{report?.assumptions.participation && <Facts items={[["所用成交量参与率", report.assumptions.participation], ["流动性数据最大时差", `${report.assumptions.maximumAgeSeconds} 秒`], ["资本情景", report.scenarios.map(row => row.capital).join(' / ')]]} />}</div>}
     {report?.coverage && <section className="capacity-coverage"><h4>观测覆盖</h4><Facts items={[
       [<MetricLabel metricKey="decisionCount" />, <Exact value={report.coverage.decisionCount} />], [<MetricLabel metricKey="assessedDecisionCount" />, <Exact value={report.coverage.assessedDecisionCount} />],
       [<MetricLabel metricKey="requiredObservations" />, <Exact value={report.coverage.requiredObservations} />], [<MetricLabel metricKey="coveredObservations" />, <Exact value={report.coverage.coveredObservations} />],
