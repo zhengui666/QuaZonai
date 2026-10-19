@@ -7,7 +7,7 @@ import { portfolioCapacity, unavailableCapacity } from '../src/capacity.ts';
 import { Application, json } from '../src/facts.ts';
 import { built, context, setup } from './support.ts';
 
-const policy = { participation: '0.01', maximumAgeSeconds: 120, scenarios: ['1000.000000000000000001'] };
+const policy = { participation: '0.0100', maximumAgeSeconds: 120, scenarios: ['10000.000000000000000001', '01000.00', '10000.000000000000000001'] };
 
 test('portfolio capacity uses only the exact saved native request/catalog and leaves original facts and tasks unchanged', async () => {
   const state = await setup();
@@ -15,6 +15,7 @@ test('portfolio capacity uses only the exact saved native request/catalog and le
     const { view } = await built(state);
     const original = await state.service.work.getPortfolio(view.id);
     assert.equal(original.view.capacity?.reason, 'explicit_capacity_policy_missing_or_incompatible');
+    assert.equal(original.view.capacity?.requestedAssumptions, undefined);
     const before = await state.service.work.snapshot();
     const tasks = (await state.service.research.tasks()).records;
     const calls = state.faux.state.callCount;
@@ -22,6 +23,8 @@ test('portfolio capacity uses only the exact saved native request/catalog and le
     const script = join(state.directory, 'capacity-protocol.mjs');
     // Only a protocol response; the real-native test separately checks measured capacity.
     const wire = unavailableCapacity('USD', 'TEST_ONLY_REASSESSMENT', 'TEST_ONLY_NATIVE', policy);
+    delete wire.requestedAssumptions; // Native output has no service-owned request metadata.
+    wire.scenarios.push({ ...wire.scenarios[0]!, capital: '100' }); // Extra diagnostic row is not an explicit requested scenario.
     await writeFile(script, `import {appendFileSync, readFileSync} from 'node:fs';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 appendFileSync(${JSON.stringify(capture)}, JSON.stringify({command:process.argv[2], args:process.argv.slice(3), input, cwd:process.cwd()}) + '\\n');
@@ -29,14 +32,14 @@ console.log(${JSON.stringify(JSON.stringify(wire))});\n`);
     await writeFile(state.options.config.jobBinary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
     const response = await state.service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${view.id}/capacity`, headers: state.headers, payload: policy });
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(response.json(), { ...wire, scope: view.id });
+    assert.deepEqual(response.json(), { ...wire, scope: view.id, requestedAssumptions: policy });
     const recorded = (await readFile(capture, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(recorded.length, 1, 'no forecasts, reselection, evaluation or backtest may execute');
     assert.equal(recorded[0].command, 'assess-capacity');
     assert.deepEqual(recorded[0].args, ['--catalog', original.native!.catalog]);
     assert.notEqual(original.native!.catalog, state.options.config.datasets[0]!.data.catalog, 'use the saved captured catalog, not current dataset configuration');
     assert.deepEqual(recorded[0].input, { schema_version: 1, simulation: original.native!.simulationRequest,
-      policy: { schema_version: 1, maximum_age_seconds: 120, participation_limit: '0.01' }, capitals: policy.scenarios });
+      policy: { schema_version: 1, maximum_age_seconds: 120, participation_limit: policy.participation }, capitals: policy.scenarios });
     await assert.rejects(stat(recorded[0].cwd), (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT');
     assert.deepEqual(await state.service.work.snapshot(), before, 'no portfolio, target, account or source facts may be written');
     assert.deepEqual((await state.service.research.tasks()).records, tasks, 'read-only capacity must not create a durable task');
@@ -69,6 +72,7 @@ test('old or uncomputed portfolio capacity is explicitly unavailable without rec
       const report = response.json();
       assert.equal(report.status, 'UNAVAILABLE'); assert.equal(report.reason, variant.reason); assert.equal(report.scope, view.id);
       assert.equal(report.maximumCapital, null); assert.equal(report.scenarios[0].capital, policy.scenarios[0]);
+      assert.deepEqual(report.requestedAssumptions, policy);
       assert.equal(report.scenarios[0].usableCapital, null);
       assert.deepEqual(await state.service.work.snapshot(), before);
     }

@@ -17,7 +17,8 @@ type Assumptions = NonNullable<ResearchSpecification['capital']>;
 export function unavailableCapacity(currency: string, reason: string, scope = 'portfolio', policy?: Assumptions): CapacityReport {
   const scenarios = policy?.scenarios.map(capital => ({ capital, requiredTurnover: null, maximumParticipation: null, usableCapital: null, unallocatedCash: null, status: 'UNAVAILABLE', reason,
     entryRebalanceTurnover: null, exitTurnover: null, entryRebalanceParticipation: null, exitParticipation: null })) ?? [];
-  return { status: 'UNAVAILABLE', reason, scope, currency, basis: 'HISTORICAL_BAR_ESTIMATE', maximumCapital: null, minimumCapital: null, bindingInstrument: null,
+  return { status: 'UNAVAILABLE', reason, scope, currency, basis: 'HISTORICAL_BAR_ESTIMATE',
+    ...(policy ? { requestedAssumptions: structuredClone(policy) } : {}), maximumCapital: null, minimumCapital: null, bindingInstrument: null,
     observationStartNs: null, observationEndNs: null, decisionClockNs: null, validUntilNs: null,
     assumptions: { participation: policy?.participation ?? null, maximumAgeSeconds: policy?.maximumAgeSeconds ?? null, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios,
     volumeStress: ['1', '0.5'].map(volumeMultiplier => ({ volumeMultiplier, maximumCapital: null, status: 'UNAVAILABLE', reason, scenarios })),
@@ -40,8 +41,9 @@ export async function assessCapacity(binary: string, catalog: string, simulation
   const currency = String(object(simulation.settings).base_currency);
   if (!assumptions) return unavailableCapacity(currency, 'explicit_capacity_policy_missing_or_incompatible');
   try {
-    return await executeNative(binary, 'assess-capacity', { schema_version: 1, simulation, policy: { schema_version: 1,
+    const report = await executeNative(binary, 'assess-capacity', { schema_version: 1, simulation, policy: { schema_version: 1,
       maximum_age_seconds: assumptions.maximumAgeSeconds, participation_limit: assumptions.participation }, capitals: assumptions.scenarios }, ['--catalog', catalog], directory, context) as unknown as CapacityReport;
+    return { ...report, requestedAssumptions: structuredClone(assumptions) };
   } catch (error) {
     return capacityFailure(error, currency, 'portfolio', assumptions);
   }

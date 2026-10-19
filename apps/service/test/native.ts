@@ -201,6 +201,9 @@ test('two original studies → native target blending → one fee-affected share
     assert.equal(atomicBuild.statusCode, 202, atomicBuild.body); await service.research.harness.waitForTask(atomicBuild.json().taskId as TaskId, context);
     const atomicFact = await service.work.getPortfolio(atomicBuild.json().id); assert.equal(atomicFact.view.status, 'COMPUTED', atomicFact.view.error ?? '');
     assert.equal(atomicFact.view.capacity?.status, 'UNAVAILABLE'); assert.equal(atomicFact.view.capacity?.reason, 'liquidity_stale'); assert.equal(atomicFact.view.capacity?.assumptions.participation, capacityPolicy.participation);
+    assert.equal(missing.requestedAssumptions, undefined);
+    assert.deepEqual(assessed.json().requestedAssumptions, capacityPolicy);
+    assert.deepEqual(atomicFact.view.capacity?.requestedAssumptions, capacityPolicy);
     assert.deepEqual(atomicFact.view.factors, atomic); assert.deepEqual(atomicFact.view.curve, fact.view.curve); assert.deepEqual(object(atomicFact.native!.blend).target_points, combined);
     assert.deepEqual(atomicFact.evidence.map(source => source.factorId), atomic.map(row => row.factorId));
     const observationInput = { requestId: 'native-observation', portfolioId: fact.view.id, mode: 'paper', connectionId: 'test-paper' };
@@ -384,15 +387,31 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
       assert.equal((await service.app.inject({ url: `/api/v3/factors/${factor.id}/capacity`, headers })).json().reason, 'explicit_capacity_policy_missing');
       const policy = { scenarios: ['1000', '10000'], participation: '0.01', maximumAgeSeconds: 300 };
       const assessed = await service.app.inject({ method: 'POST', url: `/api/v3/factors/${factor.id}/capacity`, headers, payload: policy }); assert.equal(assessed.statusCode, 200, assessed.body); assert.equal(assessed.json().status, 'ESTIMATED', assessed.body); assert.equal(assessed.json().assumptions.participation, policy.participation); assert.ok(assessed.json().scenarios.some((row: { capital: string }) => decimalUnits(row.capital) === decimalUnits('1000')));
+      assert.deepEqual(assessed.json().requestedAssumptions, policy);
+      assert.ok(assessed.json().scenarios.length > policy.scenarios.length, 'native diagnostic rows remain visible, separate from the original request');
       const originalPortfolio = await service.work.getPortfolio(built.id);
       assert.equal(originalPortfolio.view.capacity?.reason, 'explicit_capacity_policy_missing_or_incompatible');
-      const portfolioPolicy = { ...policy, scenarios: ['1000.000000000000000001'] };
+      assert.equal(originalPortfolio.view.capacity?.requestedAssumptions, undefined);
+      const portfolioPolicy = { ...policy, participation: '0.0100', scenarios: ['10000.000000000000000001', '01000.00', '10000.000000000000000001'] };
       const reassessed = await service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${built.id}/capacity`, headers, payload: portfolioPolicy });
       assert.equal(reassessed.statusCode, 200, reassessed.body); assert.equal(reassessed.json().status, 'ESTIMATED', reassessed.body);
       assert.equal(reassessed.json().scope, built.id); assert.equal(reassessed.json().scenarios[0].capital, portfolioPolicy.scenarios[0]);
+      assert.deepEqual(reassessed.json().requestedAssumptions, portfolioPolicy, 'keep explicit order, duplicates, decimal strings and participation spelling');
+      assert.equal(reassessed.json().scenarios[1].capital, '1000', 'native canonical decimals are not a lossless copy of the request');
+      assert.equal(reassessed.json().scenarios.length, portfolioPolicy.scenarios.length + 3);
       assert.ok(reassessed.json().scenarios.some((row: { capital: string }) => decimalUnits(row.capital) === decimalUnits('3000')), 'use the original portfolio starting capital, not a regenerated factor mapping');
       assert.deepEqual(await service.work.getPortfolio(built.id), originalPortfolio, 'read-only capacity must retain the original native request, sources, target, status and old report');
       assert.deepEqual((await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json(), original, 'post-research capacity must not change legacy admission, trials, independent evidence or identities');
+      const explicitBuild = await service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers, payload: { requestId: 'native-explicit-capacity', name: 'Original native pool with explicit capacity assumptions',
+        researchIds: [receipt.conversationId], datasetId: 'ensemble-native-fixture', capital: '3000', capacityPolicy: portfolioPolicy } });
+      assert.equal(explicitBuild.statusCode, 202, explicitBuild.body);
+      await service.research.harness.waitForTask(explicitBuild.json().taskId as TaskId, context);
+      const saved = await service.work.getPortfolio(explicitBuild.json().id);
+      assert.equal(saved.view.status, 'COMPUTED', saved.view.error ?? '');
+      assert.deepEqual(saved.view.capacity?.requestedAssumptions, portfolioPolicy);
+      assert.equal(saved.view.capacity?.scenarios.length, portfolioPolicy.scenarios.length + 3);
+      assert.deepEqual((await service.app.inject({ url: `/api/v3/portfolios/${saved.view.id}`, headers })).json().capacity, saved.view.capacity, 'existing portfolio storage/HTTP preserve the enriched report');
+      assert.deepEqual(await service.work.getPortfolio(built.id), originalPortfolio);
     }
     const exposures = (await service.research.harness.snapshot(Exposures, context))!.windows;
     assert.deepEqual(exposures.map((window) => window.kind), historical ? ['FINAL', 'HISTORICAL_ITERATION', 'HISTORICAL_FINAL'] : ['ITERATION', 'FINAL']);

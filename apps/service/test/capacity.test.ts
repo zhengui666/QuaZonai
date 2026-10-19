@@ -18,8 +18,16 @@ test('capacity retains a concrete native failure and original exact scenario inp
     assert.equal(report.status, 'UNAVAILABLE');
     assert.equal(report.reason, 'CATALOG_INSTRUMENT_MISSING');
     assert.equal(report.scenarios[0]!.capital, policy.scenarios[0]);
+    assert.deepEqual(report.requestedAssumptions, policy);
     assert.equal(report.maximumCapital, null);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('capacity without an explicit compatible policy neither invents assumptions nor starts native execution', async () => {
+  const report = await assessCapacity('/absent-native-program', '/absent-original-catalog', { settings: { base_currency: 'USD' } }, undefined, tmpdir(), BACKGROUND_CONTEXT);
+  assert.equal(report.reason, 'explicit_capacity_policy_missing_or_incompatible');
+  assert.equal('requestedAssumptions' in report, false);
+  assert.deepEqual(report.scenarios, []);
 });
 
 test('unknown capacity exceptions retain their original diagnostic instead of a catch-all result', async () => {
@@ -52,6 +60,7 @@ test('factor and stored-portfolio capacity expose known data and executable fail
         const report = response.json();
         assert.equal(report.status, 'UNAVAILABLE'); assert.equal(report.reason, failure.code); assert.equal(report.scope, resource.scope);
         assert.equal(report.maximumCapital, null); assert.equal(report.minimumCapital, null);
+        assert.deepEqual(report.requestedAssumptions, policy);
         assert.equal(report.scenarios[0].capital, policy.scenarios[0]); assert.equal(report.scenarios[0].reason, failure.code);
         assert.equal(report.scenarios[0].usableCapital, null);
         assert.equal(report.errorDetail.code, failure.code); assert.equal(report.errorDetail.category, failure.category);
@@ -93,10 +102,12 @@ test('an unavailable report does not invent liquidity or economic capacity', () 
   assert.equal(report.maximumCapital, null);
   assert.deepEqual(report.scenarios, []);
   assert.equal(report.errorDetail, undefined);
+  assert.equal('requestedAssumptions' in report, false);
   assert.equal(report.economicCapacity?.status, 'UNAVAILABLE');
   assert.equal(report.economicCapacity?.maximumCapital, null);
   assert.deepEqual(report.economicCapacity?.missingInputs, ['matched_out_of_sample_returns_at_capital_scales', 'venue_calibrated_market_impact', 'matched_spread_fees_and_execution_timing', 'validated_exit_execution']);
   const assumed = unavailableCapacity('USD', 'liquidity_stale', 'original-factor', policy);
+  assert.deepEqual(assumed.requestedAssumptions, policy);
   assert.deepEqual(assumed.volumeStress?.map(row => row.volumeMultiplier), ['1', '0.5']);
   assert.ok(assumed.volumeStress?.every(row => row.maximumCapital === null && row.scenarios[0]!.capital === policy.scenarios[0] && row.scenarios[0]!.usableCapital === null));
 });
