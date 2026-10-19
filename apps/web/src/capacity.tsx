@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Form, Input, Table } from 'antd';
-import type { CapitalAssumptions, CapacityConstraint, CapacityReport, CapacityScenario, FactorView } from '../../../packages/contracts/src/index.ts';
+import type { CapitalAssumptions, CapacityConstraint, CapacityReport, CapacityScenario, FactorView, PortfolioView } from '../../../packages/contracts/src/index.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { api } from './api';
 import { readDraft, saveDraft } from './commands';
@@ -16,7 +16,7 @@ export function capitalInput(fields: CapitalFormFields, fallbackCapital?: string
   return researchCapital({ scenarios: (fields.scenarios?.trim() || fallbackCapital || '').split(/[,，]/).map(value => value.trim()), participation: fields.participation, maximumAgeSeconds: Number(fields.maximumAgeSeconds) });
 }
 export function CapitalFields({ required = false }: { required?: boolean }) {
-  return <><Form.Item label="资本情景" name="scenarios" extra={<><MetricLabel metricKey="scenarioCapital" label="情景口径" /> · 逗号分隔的精确金额。组合留空时使用本次本金。</>} rules={[{ required, message: '请输入资本情景' }]}><Input inputMode="decimal" placeholder="1000, 10000" /></Form.Item><div className="form-columns"><Form.Item label="成交量参与率" name="participation" extra={<><MetricLabel metricKey="participation" label="参与率口径" /> · 0.01 = 成交量的 1%</>} rules={[{ required, message: '请输入成交量参与率' }]}><Input inputMode="decimal" placeholder="0.01" /></Form.Item><Form.Item label="流动性数据最大时差（秒）" name="maximumAgeSeconds" extra={<MetricLabel metricKey="maximumAgeSeconds" label="数据时差口径" />} rules={[{ required, message: '请输入正整数时差' }]}><Input inputMode="numeric" /></Form.Item></div></>;
+  return <><Form.Item label="资本情景" name="scenarios" extra={<><MetricLabel metricKey="scenarioCapital" label="情景口径" /> · {required ? '逗号分隔的精确金额，须明确填写。' : '逗号分隔的精确金额。组合留空时使用本次本金。'}</>} rules={[{ required, message: '请输入资本情景' }]}><Input inputMode="decimal" placeholder="1000, 10000" /></Form.Item><div className="form-columns"><Form.Item label="成交量参与率" name="participation" extra={<><MetricLabel metricKey="participation" label="参与率口径" /> · 0.01 = 成交量的 1%</>} rules={[{ required, message: '请输入成交量参与率' }]}><Input inputMode="decimal" placeholder="0.01" /></Form.Item><Form.Item label="流动性数据最大时差（秒）" name="maximumAgeSeconds" extra={<MetricLabel metricKey="maximumAgeSeconds" label="数据时差口径" />} rules={[{ required, message: '请输入正整数时差' }]}><Input inputMode="numeric" /></Form.Item></div></>;
 }
 export function FactorCapacity({ factor, report }: { factor: FactorView; report?: CapacityReport }) {
   const key = `factor-capacity:${factor.id}`; const [form] = Form.useForm<CapitalFormFields>();
@@ -26,6 +26,18 @@ export function FactorCapacity({ factor, report }: { factor: FactorView; report?
     setError(undefined); setBusy(true);
     try { const policy = capitalInput(values); setSaved(saveDraft(key, capitalFields(policy))); setResult(await api<CapacityReport>(`/factors/${encodeURIComponent(factor.id)}/capacity`, { method: 'POST', body: policy })); } catch (value) { setError(value); } finally { setBusy(false); }
   }}><CapitalFields required /><ErrorNotice error={error} /><DraftNotice saved={saved} /><Button htmlType="submit" loading={busy}>评估容量</Button></Form></details></>;
+}
+export function PortfolioCapacity({ portfolio }: { portfolio: PortfolioView }) {
+  const key = `portfolio-capacity:${portfolio.id}`; const [form] = Form.useForm<CapitalFormFields>();
+  const [initial] = useState(() => readDraft<CapitalFormFields>(key) ?? { scenarios: portfolio.capacity?.scenarios.map(row => row.capital).join(', '), participation: portfolio.capacity?.assumptions.participation ?? undefined, maximumAgeSeconds: portfolio.capacity?.assumptions.maximumAgeSeconds?.toString() });
+  const [result, setResult] = useState<CapacityReport>(); const [error, setError] = useState<unknown>(); const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false);
+  return <div className="portfolio-capacity"><Capacity report={result ?? portfolio.capacity} /><p className="quiet capacity-assessment-source" role={result ? 'status' : undefined}>原组合 <code>{portfolio.id}</code> · {result ? '本次重评结果，仅在本页显示；原保存报告、回测结果与目标均未改写。' : '原保存报告；尚无报告时不推断容量或资金。'}</p>
+    {result && <Disclosure title="原组合容量状态（未改写）" className="capacity-original"><Capacity report={portfolio.capacity} /></Disclosure>}
+    {portfolio.status === 'COMPUTED' && <details className="provenance-disclosure capacity-settings"><summary>按原组合重评容量</summary><p className="quiet">仅使用原组合已保存的原始模拟请求与数据目录，按本次明确假设重评。不会生成新预测、重跑回测或修改账户。表单沿用原报告中已记录的情景与假设；未记录的项须明确填写，缺失原始输入仍不可用。</p><Form className="portfolio-capacity-form" form={form} initialValues={initial} layout="vertical" disabled={busy} onValuesChange={(_change, values) => setSaved(saveDraft(key, values))} onFinish={async values => {
+      setError(undefined); setBusy(true);
+      try { const policy = capitalInput(values); setSaved(saveDraft(key, capitalFields(policy))); setResult(await api<CapacityReport>(`/portfolios/${encodeURIComponent(portfolio.id)}/capacity`, { method: 'POST', body: policy })); } catch (value) { setError(value); } finally { setBusy(false); }
+    }}><CapitalFields required /><ErrorNotice error={error} /><DraftNotice saved={saved} /><Button htmlType="submit" loading={busy}>重评原组合容量</Button></Form></details>}
+  </div>;
 }
 export function Capacity({ report }: { report?: CapacityReport }) {
   const available = report && report.status !== 'UNAVAILABLE';

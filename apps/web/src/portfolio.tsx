@@ -10,7 +10,7 @@ import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, MetricLabel, Me
 import { RecordTitle, TextDisclosure } from './disclosure';
 import { shortTitle } from './titles';
 import { ExecutionFailure } from './diagnostics';
-import { Capacity, CapitalFields, capitalFields, capitalInput, type CapitalFormFields } from './capacity';
+import { PortfolioCapacity, CapitalFields, capitalFields, capitalInput, type CapitalFormFields } from './capacity';
 import { AtomicPortfolioBuilder } from './portfolio-builder';
 import { FactorIdentity } from './factors';
 const EquityPlot = lazy(() => import('./equity-plot'));
@@ -29,7 +29,7 @@ function PortfolioDetail({ id }: { id: string }) {
     <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
     {value.factors && <section className="result-section"><h3>原子因子与权重</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: '因子来源', render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}
     {!value.factors && <section className="result-section"><h3>研究与权重（历史方式）</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: '原始研究', render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>研究 #{row.researchId}</a> }, { title: <MetricLabel metricKey="weight" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} missing="未记录" /> }]} /></section>}
-    <Capacity report={value.capacity} />
+    <PortfolioCapacity key={value.id} portfolio={value} />
     <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} initialCapital={value.capital} /></Suspense></section>
     <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>
     <section className="result-section"><div className="section-heading"><h3>目标权重</h3>{value.status === 'COMPUTED' && value.targets.length > 0 && (value.targetExpired ? <span className="quiet">目标已过期</span> : <Button onClick={() => navigate(`/observations/new?portfolio=${encodeURIComponent(value.id)}`)}>交付目标 <ArrowUpRightIcon size={14} /></Button>)}</div>{value.targetExpiresAt && <p className="quiet expiry-fact">到期时间 <Timestamp value={value.targetExpiresAt} /></p>}{value.targets.length ? <Table rowKey="instrumentId" pagination={false} size="small" dataSource={value.targets} columns={[{ title: '标的', dataIndex: 'instrumentId' }, { title: <MetricLabel metricKey="weight" label="目标权重" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} /> }]} /> : <p className="quiet">尚无目标</p>}</section>

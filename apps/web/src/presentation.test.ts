@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Facts, metricLabel, Metrics } from './ui';
+import { EvidenceMetrics, Facts, metricLabel, Metrics } from './ui';
 import { factMetricKey, metricDefinition } from './metric-glossary';
 import { shortTitle, shouldCollapse } from './titles';
 import { RecordTitle, TextDisclosure } from './disclosure';
@@ -10,6 +10,10 @@ describe('Chinese metric presentation', () => {
   it('translates native names without rewriting their values or annualization period', () => {
     expect(metricLabel({ key: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', label: 'raw native key', value: 1.2345 })).toBe('夏普比率（365 天年化）');
     expect(metricLabel({ key: 'HELDOUT.pearson_ic', label: 'Pearson IC', value: null })).toBe('皮尔逊信息系数（IC）');
+    expect(metricDefinition('uniqueBars').label).toBe('独立行情柱数');
+    expect(metricDefinition('reusedBarObservations').label).toBe('重复使用行情柱次数');
+    const headline = renderToStaticMarkup(createElement(EvidenceMetrics, { metrics: [{ key: 'HELDOUT.pearson_ic', label: 'Pearson IC', value: null, partition: 'HELDOUT' }] }));
+    expect(headline).toContain('独立样本信息系数（IC）');
   });
   it('covers every default Nautilus and calendar statistic without guessing an annualization period', () => {
     for (const key of ['PnL (total)', 'PnL% (total)', 'Max Winner', 'Avg Winner', 'Min Winner', 'Max Loser', 'Avg Loser', 'Min Loser', 'Expectancy', 'Win Rate', 'Returns Skewness', 'Returns Kurtosis', 'Average (Return)', 'Average Loss (Return)', 'Average Win (Return)', 'Tail Ratio', 'Profit Factor', 'Risk Return Ratio', 'Long Ratio', 'Max Drawdown', 'Calendar Expected Days', 'Calendar Observed Return Days', 'Calendar Coverage Ratio', 'Calendar Geometric Daily Return', 'Calendar Minimum Daily Return', 'Calendar Maximum Daily Return', 'Calendar Maximum Absolute Deviation', 'Calendar Negative Days', 'Calendar Zero Days', 'counts.observations', 'counts.included', 'counts.excluded', 'counts.indicator_warmup', 'counts.incomplete_labels', 'counts.cross_boundary_labels', 'counts.prediction_outside_partition']) {

@@ -54,7 +54,7 @@ export function EvidenceMetrics({ metrics }: { metrics: Metric[] }) {
   const longCounts = counters.some(metric => String(metric.value).length > 9);
   if (!ic && !included && !excluded) return <Metrics metrics={metrics} />;
   return <><div className={`metric-grid${longCounts ? ' long-counts' : ''}`} data-columns={counters.length + Number(!!ic)}>
-    {ic && <div className="metric-primary"><span className="metric-label"><MetricLabel metricKey={ic.key} label={independent.length ? '独立样本 IC' : undefined} /></span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
+    {ic && <div className="metric-primary"><span className="metric-label"><MetricLabel metricKey={ic.key} label={independent.length ? '独立样本信息系数（IC）' : undefined} /></span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
     {counters.map(metric => <div className="metric-count" key={metric.key}><span className="metric-label"><MetricLabel metricKey={metric.key} /></span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
   </div>{independent.length > 0 && <div className="partition-row"><span className="partition-label">独立样本</span>{ic?.component !== undefined && <span>分量 <code>{ic.component}</code></span>}</div>}<details className="metrics-disclosure"><summary>全部指标</summary><Metrics metrics={metrics} /></details></>;
 }

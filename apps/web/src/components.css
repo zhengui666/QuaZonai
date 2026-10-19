@@ -204,6 +204,7 @@ details[open] > summary { margin-bottom: 14px; }
 .economic-capacity > strong { font-size: 13px; font-weight: 550; }
 .economic-capacity p { margin-top: 7px; max-width: 65ch; color: var(--secondary); font-size: 12px; line-height: 1.8; }
 .capacity-provenance > .quiet { margin-bottom: 18px; }
+.capacity-assessment-source { margin-top: 14px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .capacity-settings { padding-bottom: 20px; }
 .capacity-settings .ant-form { margin-top: 20px; }
 .equity-summary dt > .explained-metric { margin-left: 0; }
