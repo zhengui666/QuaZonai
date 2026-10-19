@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, TaskQuery } from '@earendil-works/pi-durable';
@@ -7,6 +8,7 @@ import { awaitWithContext } from '@earendil-works/chord/context';
 import { Study } from '../../research/src/documents.ts';
 import { built, context, setup, studied } from './support.ts';
 import { Application } from '../src/facts.ts';
+import { BuildPortfolio } from '../src/science.ts';
 import { metrics, researchTaskViews } from '../src/projections.ts';
 
 test('list and usage do not load historical task results; list retains its existing summary fields', { timeout: 20_000 }, async t => {
@@ -81,13 +83,78 @@ test('public research failures retain codes but do not expose native stderr', { 
   } finally { await state.cleanup(); }
 });
 
+test('historical native codes and WAT failures keep specific safe public causes', { timeout: 20_000 }, async () => {
+  const state = await setup();
+  try {
+    const { receipt } = await studied(state, 'historic-native-causes');
+    for (const [diagnostic, code, category] of [
+      ['QZ_NATIVE_JOB_MEMORY_LIMIT\nprivate /private/test-only/model.wasm token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT', 'resource'],
+      ['QZ_NATIVE_JOB_FAILED\nFORECAST_INSUFFICIENT_WARMUP: /private/test-only/catalog', 'FORECAST_INSUFFICIENT_WARMUP', 'data'],
+      ['parseWat failed:\nfactor.wat:1:2: error: unexpected token\n(module private-source-marker)', 'wasm_compile_failed', 'model'],
+      ['synthetic_secret_value', 'scientific_execution_failed', 'unknown'],
+    ]) {
+      await state.service.research.harness.commit(async tx => {
+        const study = await tx.doc(Study, receipt.conversationId as ConversationId);
+        study.final!.error = diagnostic!; study.final!.status = 'FAILED'; study.trials[0]!.error = diagnostic!;
+      }, context);
+      const response = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+      const view = response.json();
+      assert.equal(view.trialRecords[0].error, code); assert.equal(view.final.error, code);
+      assert.equal(view.trialRecords[0].errorDetail.category, category);
+      assert.ok(view.final.errorDetail.message); assert.ok(view.final.errorDetail.action);
+      assert.doesNotMatch(response.body, /private-source-marker|\/private\/test-only|synthetic-secret|synthetic_secret_value/);
+      assert.equal((await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context))!.final!.error, diagnostic);
+    }
+  } finally { await state.cleanup(); }
+});
+
 test('portfolio reads and original admission replay share public failure projection', { timeout: 20_000 }, async () => {
-  const state = await setup(); const diagnostic = 'Native backtest failed at /private/test-only/catalog';
+  const state = await setup();
   try {
     const { input, view } = await built(state);
-    await state.service.research.harness.commit(async tx => { const facts = await tx.doc(Application); const fact = facts.portfolios[view.id]!; (fact.view as Record<string, unknown>).error = diagnostic; }, context);
-    const get = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers }); assert.equal(get.json().error, 'backtest_failed'); assert.ok(!get.body.includes('/private/test-only'));
-    const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input }); assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().error, 'backtest_failed'); assert.equal((await state.service.work.getPortfolio(view.id)).view.error, diagnostic);
+    for (const [diagnostic, code] of [
+      ['Native backtest failed at /private/test-only/catalog', 'backtest_failed'],
+      ['QZ_NATIVE_JOB_MEMORY_LIMIT\n/private/test-only/catalog token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT'],
+      ['parseWat failed:\nselected-factor.wat:1:2: error: private-source-marker', 'wasm_compile_failed'],
+    ]) {
+      await state.service.research.harness.commit(async tx => {
+        const facts = await tx.doc(Application); const fact = facts.portfolios[view.id]!;
+        const stored = fact.view as Record<string, unknown>; stored.error = diagnostic;
+        stored.errorDetail = { code: 'synthetic-secret', message: 'private-source-marker', action: 'synthetic-secret' };
+      }, context);
+      const get = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
+      assert.equal(get.json().error, code); assert.equal(get.json().errorDetail.code, code);
+      assert.doesNotMatch(get.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
+      const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input });
+      assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().taskId, view.taskId);
+      assert.equal(replay.json().error, code); assert.equal((await state.service.work.getPortfolio(view.id)).view.error, diagnostic);
+      assert.doesNotMatch(replay.body, /\/private\/test-only|private-source-marker|synthetic-secret/);
+    }
+  } finally { await state.cleanup(); }
+});
+
+test('pre-kernel filesystem failure is retained privately rather than laundered to operation_failed', { timeout: 20_000 }, async () => {
+  const state = await setup();
+  try {
+    const missing = join(state.directory, 'missing-private-scratch');
+    const { receipt } = await studied(state, 'missing-environment'); const id = 'missing-scratch';
+    const taskId = await state.service.research.harness.commit(async tx => {
+      const taskId = await tx.createTask(BuildPortfolio, { id, dataDir: missing, catalog: state.directory, binary: state.options.config.jobBinary,
+        evidence: {}, policy: state.options.config.datasets[0]!.strategy!, capital: '1000', currency: 'USD' },
+        { conversationId: receipt.conversationId as ConversationId, ownership: { kind: 'conversation' } });
+      (await tx.doc(Application)).portfolios[id] = { input: { requestId: id }, evidence: [], policy: {}, native: null, target: null,
+        view: { id, name: id, researchIds: [receipt.conversationId], datasetId: 'controlled', status: 'QUEUED', capital: '1000', currency: 'USD',
+          createdAt: '2026-10-19T00:00:00.000Z', taskId, metrics: [], curve: [], targets: [], error: null } };
+      return taskId;
+    }, context);
+    const task = await state.service.research.harness.waitForTask(taskId, context);
+    const { view } = await state.service.work.getPortfolio(id);
+    assert.equal(view.status, 'FAILED'); assert.match(view.error!, /ENOENT/); assert.ok(view.error!.includes(missing));
+    assert.equal(task.state.outcome.status, 'failed');
+    if (task.state.outcome.status === 'failed') assert.equal(task.state.outcome.error.message, view.error);
+    const response = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
+    assert.equal(response.json().error, 'ENOENT'); assert.equal(response.json().errorDetail.category, 'runtime');
+    assert.doesNotMatch(response.body, /missing-private-scratch/);
   } finally { await state.cleanup(); }
 });
 
@@ -104,11 +171,12 @@ test('captured dataset identity survives registry changes and identical inputs i
     assert.equal((await get(second.receipt.conversationId)).dataset.name, 'Changed current registry');
     await state.service.research.harness.commit(async tx => {
       const study = await tx.doc(Study, first.receipt.conversationId as ConversationId);
-      study.final!.reason = 'Original selection rationale'; study.final!.error = 'independent_test_failure'; study.final!.status = 'FAILED';
+      study.final!.reason = 'Original selection rationale'; study.final!.error = 'native_result_request_mismatch'; study.final!.status = 'FAILED';
     }, context);
     const detail = await get(first.receipt.conversationId);
     assert.equal(detail.final.reason, 'Original selection rationale');
-    assert.equal(detail.final.error, 'independent_test_failure');
+    assert.equal(detail.final.error, 'native_result_request_mismatch');
+    assert.equal(detail.final.errorDetail.category, 'runtime');
     assert.equal(detail.createdAt, null);
     assert.equal(detail.datasetId, 'controlled');
     assert.ok(detail.tasks.some((task: { status: string; outcome?: string }) => task.status === 'terminal' && task.outcome === 'completed'));

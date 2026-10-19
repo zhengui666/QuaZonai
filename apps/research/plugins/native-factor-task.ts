@@ -2,6 +2,7 @@ import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { evaluateWasm } from './native-wasm.ts';
+import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 export const FactorTask = defineTask<{ model: string; data: JsonObject }, { phase: 'compute' }, JsonObject>({
   name: 'qz.factor.wasm', version: 1, initial: () => ({ phase: 'compute' }),
@@ -11,7 +12,10 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject }, { phas
         const result = await evaluateWasm(task.input.model, task.input.data, context);
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
       } catch (error) {
-        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: error instanceof Error ? error.message : 'factor_failed' } } }), context);
+        if (runtime.signal.aborted) throw error;
+        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
+          message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'evaluate-factor' }) },
+        } } }), context);
       }
     },
   },
@@ -37,7 +41,9 @@ export async function runFactor(api: ToolExecutionApi, context: Context, model: 
   const settled = await api.waitForTask(id, context);
   if (settled.state.outcome.status !== 'completed') {
     const outcome = settled.state.outcome;
-    throw new Error('error' in outcome && outcome.error ? outcome.error.message : outcome.status);
+    const detail = 'error' in outcome ? outcome.error?.detail : undefined;
+    throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
+      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: 'evaluate-factor' });
   }
   return settled.state.outcome.result;
 }

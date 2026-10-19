@@ -6,6 +6,7 @@ import { resolveStrategyPolicy, strategyMembers } from '../src/strategy.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
 import { PortfolioEvaluationTask, runPortfolio } from './native-portfolio-task.ts';
+import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 
 export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
@@ -55,7 +56,10 @@ export default defineExtension({
           const result = await runPortfolio(api, context, { members: selected.members, policy: selected.policy, data, partition: 'HELDOUT', binary: process.env.QZ_JOB_BINARY ?? 'job' });
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
-          await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.status = 'FAILED'; final.error = error instanceof Error ? error.message : 'heldout_failed'; }, context);
+          if (context.abortSignal?.aborted) throw error;
+          await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!;
+            final.status = 'FAILED'; final.error = executionDiagnostic(error, 'heldout_failed'); final.errorDetail = { ...classifyExecutionError(error) };
+          }, context);
         }
       }
       return { content: [{ type: 'text', text: 'Research ended. Original ensemble selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };

@@ -3,6 +3,7 @@ import { defineExtension, defineTool, hook, section, ToolTask } from '@earendil-
 import { Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
+import { classifyExecutionError } from '../src/execution-errors.ts';
 
 export default defineExtension({
   name: 'qz.research',
@@ -31,7 +32,7 @@ export default defineExtension({
             const scope = proposal.allocations === 'ALL_EQUAL' ? proposal.strategy : null;
             const selected = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope.instrumentIds : proposal.allocations;
             return {
-            taskId: trial.taskId, status: trial.status, error: trial.error ?? null, hypothesis: proposal.hypothesis ?? null,
+            taskId: trial.taskId, status: trial.status, error: classifyExecutionError(trial.error)?.code ?? null, hypothesis: proposal.hypothesis ?? null,
             instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(selected) ? selected.length : null,
             memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
@@ -55,7 +56,7 @@ export default defineExtension({
         const trial = study?.trials.find((item) => item.taskId === args.trialId);
         if (!trial) throw new Error('research_trial_not_found');
         const proposal = object(trial.proposal, 'trial_proposal');
-        return { content: [{ type: 'text', text: JSON.stringify({ trialId: trial.taskId, status: trial.status, error: trial.error ?? null,
+        return { content: [{ type: 'text', text: JSON.stringify({ trialId: trial.taskId, status: trial.status, error: classifyExecutionError(trial.error)?.code ?? null,
           hypothesis: proposal.hypothesis ?? null, instrumentId: proposal.instrumentId ?? null,
           result: trial.result === null || trial.result === undefined ? null : modelFeedback(object(trial.result, 'trial_result')),
         }) }] };

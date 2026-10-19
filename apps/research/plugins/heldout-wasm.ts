@@ -6,6 +6,7 @@ import { runFactor } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
 import { finalizeGroup } from './heldout-group.ts';
+import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 
 export default defineExtension({
   name: 'qz.heldout-wasm',
@@ -34,7 +35,10 @@ export default defineExtension({
           const result = await runFactor(api, context, selected.model, data);
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
-          await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.status = 'FAILED'; final.error = error instanceof Error ? error.message : 'heldout_failed'; }, context);
+          if (context.abortSignal?.aborted) throw error;
+          await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!;
+            final.status = 'FAILED'; final.error = executionDiagnostic(error, 'heldout_failed'); final.errorDetail = { ...classifyExecutionError(error) };
+          }, context);
         }
       }
       return { content: [{ type: 'text', text: 'Research ended. Selection, exposure and final outcome are recorded for the owner; no final tuning feedback is returned.' }], control: { terminate: true } };

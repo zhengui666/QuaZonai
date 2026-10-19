@@ -6,9 +6,16 @@ import { Application, counter, decimal, nowNs, nsTime, object, Problem } from '.
 import { submissionView } from '../../research/src/recovery.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import type { ObservationFact, PortfolioFact, ResearchAdmissions } from './facts.ts';
+import { classifyExecutionError } from '../../research/src/execution-errors.ts';
 
-// Opaque public-code convention, as on the HTTP error boundary; raw diagnostics stay in Durable.
-function publicExecutionError(value: unknown, fallback: string): string | null {
+function publicExecutionError(value: unknown, fallback: 'scientific_execution_failed' | 'backtest_failed', operation: string, stored?: unknown) {
+  const context = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+  const detail = classifyExecutionError(value, fallback, { operation: context.operation ?? operation, stage: context.stage });
+  return { error: detail?.code ?? null, errorDetail: detail };
+}
+
+// Observation errors retain their existing code-only boundary.
+function publicObservationError(value: unknown, fallback: string): string | null {
   if (typeof value !== 'string' || !value) return null;
   return /^[a-z][a-z0-9_]{0,127}$/.test(value) ? value : fallback;
 }
@@ -107,22 +114,25 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
-      status: String(trial.status), metrics: metrics(trial.result), error: publicExecutionError(trial.error, 'scientific_execution_failed'),
+      status: String(trial.status), metrics: metrics(trial.result),
+      ...publicExecutionError(trial.error, 'scientific_execution_failed', Array.isArray((trial.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', trial.errorDetail),
     })), tasks,
     final: final ? { status: String(final.status), trialId: typeof final.trialId === 'number' ? final.trialId : null,
       reason: typeof final.reason === 'string' ? final.reason : null,
-      error: publicExecutionError(final.error, 'scientific_execution_failed'), metrics: metrics(final.result) } : null,
+      ...publicExecutionError(final.error, 'scientific_execution_failed',
+        Array.isArray((study.trials.find(trial => trial.taskId === final.trialId)?.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', final.errorDetail),
+      metrics: metrics(final.result) } : null,
   };
 }
 
 export function portfolioView(fact: PortfolioFact): PortfolioView {
-  return { ...fact.view, error: publicExecutionError(fact.view.error, 'backtest_failed'), ...(fact.weights && !fact.input.factors ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
+  return { ...fact.view, ...publicExecutionError(fact.view.error, 'backtest_failed', 'portfolio-backtest', fact.view.errorDetail), ...(fact.weights && !fact.input.factors ? { weights: fact.view.researchIds.map((researchId, index) => ({ researchId, weight: fact.weights![index]! })) } : {}),
     targetExpiresAt: typeof fact.target?.valid_until_ns === 'string' ? nsTime(fact.target.valid_until_ns) : null,
     ...(typeof fact.target?.valid_until_ns === 'string' ? { targetExpired: BigInt(counter(fact.target.valid_until_ns, 'expiry')) <= BigInt(nowNs()) } : {}) };
 }
 export function observationView(fact: ObservationFact): ObservationView {
   const snapshot = fact.snapshot;
-  return { ...fact.view, error: publicExecutionError(fact.view.error, 'observation_operation_failed'), connectionId: fact.connection.id, connectionName: fact.connection.name,
+  return { ...fact.view, error: publicObservationError(fact.view.error, 'observation_operation_failed'), connectionId: fact.connection.id, connectionName: fact.connection.name,
     provenance: snapshot ? { clientId: String(snapshot.clientId), accountId: String(snapshot.accountId),
       sequence: counter(snapshot.sequence, 'account_sequence'), nativeClockNs: counter(snapshot.nativeClockNs, 'account_clock') } : null };
 }
