@@ -174,23 +174,26 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         const key = accountKey(fact.connection, facts.accountControls);
         const bindings = Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key);
         const unsettled = bindings.some(other => ['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== fact.view.id && unsettledAdjustment(other));
-        let snapshotError: string | undefined;
-        try {
-          if (!fact.snapshot || fact.snapshot.sequence !== allocation.sequence || fact.snapshot.nativeClockNs !== allocation.nativeClockNs) throw new Problem('account_snapshot_out_of_order');
-          acceptSnapshot(fact, fact.snapshot, bindings);
-        } catch (error) { if (!(error instanceof Problem)) throw error; snapshotError = error.message; }
         const status = capitalStatus(control(facts.accountControls?.[key]));
-        if (snapshotError || unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = snapshotError ?? (unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'); facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
+        if (unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
         allocation.status = 'UNCERTAIN'; allocation.receipt!.status = 'UNCERTAIN';
         input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext }) as unknown as import('./downstream.ts').ObservationTaskInput;
         facts.observations[task.input.id] = json(fact);
         return { status: 'running', checkpoint: { phase: 'reconcile' } };
       }, context);
       if (!input) return;
-      try { await settle(await downstream(input, 'deliver', runtime.signal)); }
-      catch (error) {
+      let checkingAccount = true;
+      try {
+        // A manual alias refresh can commit while the uncertainty checkpoint is awaited.
+        const facts = (await runtime.snapshot(Application, context))!; const fact = observation(facts.observations[input.id]);
+        if (!fact.snapshot || fact.snapshot.sequence !== input.allocation!.snapshotSequence || fact.snapshot.nativeClockNs !== input.allocation!.nativeClockNs) throw new Problem('account_snapshot_out_of_order');
+        const key = accountKey(fact.connection, facts.accountControls);
+        acceptSnapshot(fact, fact.snapshot, Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key));
+        checkingAccount = false;
+        await settle(await downstream(input, 'deliver', runtime.signal));
+      } catch (error) {
         if (runtime.signal.aborted) throw error;
-        const notOffered = isPreTransportRejection(error);
+        const notOffered = checkingAccount || isPreTransportRejection(error);
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); const allocation = fact.view.allocation!;
           allocation.reason = error instanceof Problem ? error.message : 'automatic_delivery_requires_reconciliation';
