@@ -384,6 +384,14 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
       assert.equal((await service.app.inject({ url: `/api/v3/factors/${factor.id}/capacity`, headers })).json().reason, 'explicit_capacity_policy_missing');
       const policy = { scenarios: ['1000', '10000'], participation: '0.01', maximumAgeSeconds: 300 };
       const assessed = await service.app.inject({ method: 'POST', url: `/api/v3/factors/${factor.id}/capacity`, headers, payload: policy }); assert.equal(assessed.statusCode, 200, assessed.body); assert.equal(assessed.json().status, 'ESTIMATED', assessed.body); assert.equal(assessed.json().assumptions.participation, policy.participation); assert.ok(assessed.json().scenarios.some((row: { capital: string }) => decimalUnits(row.capital) === decimalUnits('1000')));
+      const originalPortfolio = await service.work.getPortfolio(built.id);
+      assert.equal(originalPortfolio.view.capacity?.reason, 'explicit_capacity_policy_missing_or_incompatible');
+      const portfolioPolicy = { ...policy, scenarios: ['1000.000000000000000001'] };
+      const reassessed = await service.app.inject({ method: 'POST', url: `/api/v3/portfolios/${built.id}/capacity`, headers, payload: portfolioPolicy });
+      assert.equal(reassessed.statusCode, 200, reassessed.body); assert.equal(reassessed.json().status, 'ESTIMATED', reassessed.body);
+      assert.equal(reassessed.json().scope, built.id); assert.equal(reassessed.json().scenarios[0].capital, portfolioPolicy.scenarios[0]);
+      assert.ok(reassessed.json().scenarios.some((row: { capital: string }) => decimalUnits(row.capital) === decimalUnits('3000')), 'use the original portfolio starting capital, not a regenerated factor mapping');
+      assert.deepEqual(await service.work.getPortfolio(built.id), originalPortfolio, 'read-only capacity must retain the original native request, sources, target, status and old report');
       assert.deepEqual((await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json(), original, 'post-research capacity must not change legacy admission, trials, independent evidence or identities');
     }
     const exposures = (await service.research.harness.snapshot(Exposures, context))!.windows;

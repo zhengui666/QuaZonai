@@ -20,6 +20,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
   factor list | get ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID
+  portfolio capacity ID --file ASSUMPTIONS.json
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
   capital status OBSERVATION_ID | preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
@@ -141,7 +142,11 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       body = file.bytes; method = 'POST'; path = '/portfolios';
     } else if (action === 'list') path = '/portfolios';
     else if (action === 'get') path = `/portfolios/${resourceId(id)}`;
-    else throw new CliError('unknown_portfolio_command');
+    else if (action === 'capacity') {
+      const file = await fileBody(values.file);
+      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
+      method = 'POST'; path = `/portfolios/${resourceId(id)}/capacity`; body = file.bytes;
+    } else throw new CliError('unknown_portfolio_command');
   } else if (group === 'observation') {
     if (action === 'start') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);

@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CapacityReport, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -9,6 +9,7 @@ import { replayCatalog, resolveStrategyPolicy, strategyMembers } from '../../res
 import { executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import type { ServiceConfig } from './config.ts';
 import { json, object } from './facts.ts';
+import type { PortfolioFact } from './facts.ts';
 import { readFactor } from './factors.ts';
 
 type Assumptions = NonNullable<ResearchSpecification['capital']>;
@@ -57,6 +58,24 @@ export async function assessCapacity(binary: string, catalog: string, simulation
     if (!reason) throw error;
     return unavailableCapacity(currency, reason, 'portfolio', assumptions);
   }
+}
+export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConfig, context: Context, assumptions: Assumptions): Promise<CapacityReport> {
+  const { id, currency, status } = fact.view;
+  if (status !== 'COMPUTED') return unavailableCapacity(currency, 'portfolio_not_computed', id, assumptions);
+  const simulation = fact.native?.simulationRequest;
+  if (!simulation || typeof simulation !== 'object' || Array.isArray(simulation)) return unavailableCapacity(currency, 'portfolio_simulation_request_missing', id, assumptions);
+  const catalog = fact.native?.catalog;
+  if (typeof catalog !== 'string' || !catalog.trim()) return unavailableCapacity(currency, 'portfolio_catalog_missing', id, assumptions);
+  try { await access(catalog); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return unavailableCapacity(currency, 'portfolio_catalog_missing', id, assumptions);
+  }
+  const directory = await mkdtemp(join(config.dataDir, 'capacity-'));
+  try {
+    const report = await assessCapacity(config.jobBinary, catalog, simulation, assumptions, directory, context);
+    return { ...report, scope: id };
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }
 export async function factorCapacity(host: ResearchHost, config: ServiceConfig, id: string, context: Context, assumptions?: Assumptions): Promise<CapacityReport> {
   const { view, study, specification } = await readFactor(host, id);

@@ -153,6 +153,27 @@ test('diagnostics and resume use the original numeric identities without implici
   } finally { await config.close(); await api.close(); }
 });
 
+test('portfolio capacity posts exact assumptions to the original ID without a new request key', async () => {
+  const sent: { method: string; url: string; bytes: string }[] = [];
+  const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { status: 'UNAVAILABLE', reason: 'TEST_ONLY_PROTOCOL' }); });
+  const config = await configuration(api.origin); const file = join(config.directory, 'portfolio-capital.json');
+  try {
+    await assert.rejects(run(['portfolio', 'capacity', 'p-original']), /file_required/);
+    await writeFile(file, JSON.stringify({ scenarios: ['0.0000000000000000001'], participation: '0.01', maximumAgeSeconds: 60 }));
+    await assert.rejects(run(['portfolio', 'capacity', 'p-original', '--file', file]), /research_capital_scenarios_invalid/);
+    assert.equal(sent.length, 0);
+    const bytes = '{\n "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60\n}\n';
+    await writeFile(file, bytes); const output: unknown[] = [];
+    await run(['portfolio', 'capacity', 'p/original', '--file', file], value => { output.push(value); });
+    assert.deepEqual(sent, [{ method: 'POST', url: '/api/v3/portfolios/p%2Foriginal/capacity', bytes }]);
+    assert.deepEqual(output, [{ status: 'UNAVAILABLE', reason: 'TEST_ONLY_PROTOCOL' }]);
+    assert.equal((await schemas('CapitalAssumptions') as { entry: string }).entry, 'CapitalAssumptions');
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
+    assert.equal(code, 0); assert.match(help, /portfolio capacity ID --file ASSUMPTIONS.json/);
+  } finally { await config.close(); await api.close(); }
+});
+
 test('factor capacity validates native decimal limits locally and preserves accepted exact file bytes', async () => {
   const sent: string[] = [];
   const api = await server((_request, response, bytes) => { sent.push(bytes); json(response, { received: true }); });
