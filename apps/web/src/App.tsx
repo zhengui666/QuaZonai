@@ -29,13 +29,18 @@ const destinations: { page: Workspace; label: string; icon: ReactNode; secondary
 ];
 function WorkspaceApp() {
   const route = useRoute(); const previousRoute = useRef<Route | undefined>(undefined); const cache = useQueryClient(); const session = useResource<SessionView>('/session');
-  const [drawer, setDrawer] = useState(false); const [logoutError, setLogoutError] = useState<unknown>();
+  const [drawer, setDrawerOpen] = useState(false); const [logoutError, setLogoutError] = useState<unknown>();
+  const drawerLocation = useRef<string | undefined>(undefined);
+  const setDrawer = (open: boolean) => { drawerLocation.current = open ? location.hash : undefined; setDrawerOpen(open); };
   const [authRequest, setAuthRequest] = useState<{ id: string; provider: ProviderView; type: ModelAuthType; resume: boolean }>();
   const changeSession = (value: SessionView | undefined) => { cache.removeQueries({ predicate: query => query.queryKey[0] !== '/session' }); cache.setQueryData(['/session'], value ?? { setupRequired: false, authenticated: false }); };
   const refreshModels = useCallback(async () => { await cache.invalidateQueries({ queryKey: ['/models'] }); }, [cache]);
   useEffect(() => { const expired = () => { setAuthRequest(old => old ? { ...old, resume: true } : undefined); cache.setQueryData<SessionView>(['/session'], { setupRequired: false, authenticated: false }); }; authenticationEvents.addEventListener('required', expired); return () => authenticationEvents.removeEventListener('required', expired); }, [cache]);
   useLayoutEffect(() => {
-    const previous = previousRoute.current; previousRoute.current = route; setDrawer(false);
+    const previous = previousRoute.current; previousRoute.current = route;
+    // A menu may open for the new URL before useRoute receives its queued hashchange.
+    if (session.data?.authenticated && drawerLocation.current === location.hash) return;
+    setDrawer(false);
     if (!route.creating) {
       document.getElementById('main-content')?.focus({ preventScroll: true });
       if (route.page === 'research' && !route.id && previous?.page === 'research' && previous.id) requestAnimationFrame(() => document.querySelector<HTMLAnchorElement>(`a[data-study-id="${CSS.escape(previous.id!)}"]`)?.focus({ preventScroll: true }));
