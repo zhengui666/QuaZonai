@@ -7,7 +7,7 @@ import { SVGRenderer } from 'echarts/renderers';
 import { Button, Radio, Table, theme } from 'antd';
 import type { EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { equityCoordinates, equityPerformance, formatEquity, orderedEquityPoints } from './equity-values';
-import { Empty, Exact, Timestamp } from './ui';
+import { Empty, Exact, MetricLabel, Timestamp } from './ui';
 
 echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, MarkLineComponent, AriaComponent, SVGRenderer]);
 const percent = (value: number | null | undefined) => value == null ? '未提供' : `${value > 0 ? '+' : ''}${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
@@ -45,7 +45,7 @@ export default function EquityPlot({ points, currency, initialCapital }: { point
     const timeAxis = (gridIndex: number, visible: boolean) => ({ type: 'time' as const, gridIndex, boundaryGap: false,
       axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false }, splitNumber: 4,
       axisLabel: { show: visible, color: secondary, hideOverlap: true, fontSize: 10, formatter: (value: number) => { const at = new Date(value).toISOString(); return intraday ? at.slice(11, 19) : at.slice(0, 10); } } });
-    chart.current?.setOption({ animation: false, useUTC: true, textStyle: { fontFamily: '"Geist Variable", system-ui, sans-serif' }, aria: { enabled: true, label: { description } },
+    chart.current?.setOption({ animation: false, useUTC: true, textStyle: { fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif' }, aria: { enabled: true, label: { description } },
       grid: [{ top: 18, right: 16, bottom: drawdownAvailable ? '43%' : 80, left: 64, outerBoundsMode: 'none' }, ...(drawdownAvailable ? [{ top: '70%', right: 16, bottom: 80, left: 64, outerBoundsMode: 'none' }] : [])],
       axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: secondary, type: 'dashed' } },
       tooltip: { trigger: 'axis', confine: true, renderMode: 'richText', backgroundColor: surface, borderColor: line, textStyle: { color: text, fontSize: 12 },
@@ -69,18 +69,18 @@ export default function EquityPlot({ points, currency, initialCapital }: { point
   }, [coordinates, ordered, clockGroups, currency, performance, showReturn, drawdownAvailable, accent, secondary, line, loss, surface, text, description, intraday, drawable]);
   if (!points.length) return <Empty title="尚无权益曲线" />;
   return <section className="equity-section">
-    <div className="section-heading equity-heading"><div><h3>{initialCapital === undefined ? '账户权益' : '回测表现'}</h3><span className="quiet">{currency} · UTC · {ordered.length.toLocaleString('zh-CN')} 个记录点</span></div>
+    <div className="section-heading equity-heading"><div><h3>{initialCapital === undefined ? '账户权益' : '回测表现'}</h3><span className="quiet">{currency} · UTC · <MetricLabel metricKey="records" label={`${ordered.length.toLocaleString('zh-CN')} 个记录点`} /></span></div>
       {performance.hasCapital && <Radio.Group size="small" optionType="button" aria-label="曲线显示口径" value={view} onChange={event => setView(event.target.value)} options={[{ label: '累计收益', value: 'return' }, { label: '账户权益', value: 'equity' }]} />}</div>
     {performance.hasCapital && <dl className="equity-summary" aria-label="全区间表现">
-      <div><dt>期末权益 <span>{currency}</span></dt><dd className={(latest?.value?.length ?? 0) > 16 ? 'equity-long-value' : undefined}><Exact value={formatEquity(latest?.value)} /></dd></div>
-      <div><dt>累计收益</dt><dd className={latestReturn != null && latestReturn < 0 ? 'equity-loss' : 'equity-gain'}>{percent(latestReturn)}</dd></div>
-      <div><dt>最大回撤</dt><dd>{drawdownAvailable ? percent(performance.maxDrawdown) : '未提供'}</dd></div>
+      <div><dt><MetricLabel metricKey="endingEquity" /> <span>{currency}</span></dt><dd className={(latest?.value?.length ?? 0) > 16 ? 'equity-long-value' : undefined}><Exact value={formatEquity(latest?.value)} /></dd></div>
+      <div><dt><MetricLabel metricKey="cumulativeReturn" /></dt><dd className={latestReturn != null && latestReturn < 0 ? 'equity-loss' : 'equity-gain'}>{percent(latestReturn)}</dd></div>
+      <div><dt><MetricLabel metricKey="maxDrawdown" /></dt><dd>{drawdownAvailable ? percent(performance.maxDrawdown) : '未提供'}</dd></div>
     </dl>}
     {invalidTimes > 0 && <p className="error-text" role="status">{invalidTimes} 个记录时间无效，未绘制；原始记录见下方数据。</p>}
     {performance.hasCapital && !drawdownAvailable && <p className="quiet">记录不完整，回撤不可用；缺失权益保留断线。</p>}
-    {drawable ? <><div className="equity-legend"><span><i />{showReturn ? '累计收益' : `账户权益 / ${currency}`}</span>{drawdownAvailable && <span className="equity-loss"><i />回撤</span>}<Button size="small" type="text" onClick={() => chart.current?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 })}>重置区间</Button></div>
+    {drawable ? <><div className="equity-legend"><span><i /><MetricLabel metricKey={showReturn ? 'cumulativeReturn' : 'equity'} label={showReturn ? '累计收益' : `账户权益 / ${currency}`} /></span>{drawdownAvailable && <span className="equity-loss"><i /><MetricLabel metricKey="drawdown" /></span>}<Button size="small" type="text" onClick={() => chart.current?.dispatchAction({ type: 'dataZoom', start: 0, end: 100 })}>重置区间</Button></div>
       <div ref={element} className={`equity-chart${drawdownAvailable ? ' with-drawdown' : ''}`} data-testid="equity-chart" role="img" aria-label={description} />
       <p className="equity-caption quiet">{ordered[0]?.at.slice(0, 10)} — {ordered.at(-1)?.at.slice(0, 10)}<span>拖动底部选择区间 · 摘要为全区间{performance.hasCapital && ' · 收益相对初始本金'}</span></p></> : <Empty title={points.every(point => point.value === null) ? '权益数值未提供' : '数值无法绘制'} />}
-    <details className="curve-details"><summary>查看数据</summary><Table<EquityPoint> rowKey={(point, index) => `${point.at}/${index}`} size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={tablePoints} scroll={{ x: 450 }} columns={[{ title: '时间', render: (_value, point) => <Timestamp value={point.at} /> }, { title: `权益 / ${currency}`, align: 'right', render: (_value, point) => <Exact value={point.value} /> }]} /></details>
+    <details className="curve-details"><summary>查看数据</summary><Table<EquityPoint> rowKey={(point, index) => `${point.at}/${index}`} size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} dataSource={tablePoints} scroll={{ x: 450 }} columns={[{ title: '时间', render: (_value, point) => <Timestamp value={point.at} /> }, { title: <MetricLabel metricKey="equity" label={`权益 / ${currency}`} />, align: 'right', render: (_value, point) => <Exact value={point.value} /> }]} /></details>
   </section>;
 }

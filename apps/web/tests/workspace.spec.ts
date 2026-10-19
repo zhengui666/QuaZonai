@@ -1,6 +1,7 @@
 import { expect, test, type Page as BrowserPage, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
+import { shortTitle } from '../src/titles';
 import type { CapacityReport, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 
 // Controlled transport only. Real HTTP/durable integration is in real-service.spec.ts.
@@ -326,7 +327,7 @@ test('light/dark and 320–1024 layouts retain exact long facts without page ove
     for (const width of [320, 390, 768, 1024]) {
       await page.setViewportSize({ width, height: 844 });
       for (const route of ['research/8', 'research/9?tab=inputs', 'data', 'portfolios/p1', 'observations/o1', 'settings', 'extensions']) {
-        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : route === 'settings' ? '模型设置' : '扩展'; await expect(page.getByRole('heading', { name: title, exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
+        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : route === 'settings' ? '模型设置' : '扩展'; await expect(page.getByRole('heading', { name: shortTitle(title), exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 }); await page.goto('/#/research/8'); await expect(page.locator('.metric-grid')).toBeVisible(); await audit(page); await page.screenshot({ path: info.outputPath(`research-${dark ? 'dark' : 'light'}-1440.png`), fullPage: true });
@@ -380,9 +381,9 @@ test('atomic library separates component evidence and carries exact selected fac
   await page.goto('/#/factors'); await expect(page.getByRole('heading', { name: '因子库', exact: true })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: component.name }).getByRole('button', { name: '加入组合' })).toBeDisabled();
   await page.getByLabel('搜索因子').fill('单模型'); await expect(page.getByRole('link', { name: component.name })).toHaveCount(0); await page.getByRole('link', { name: factor.name }).click();
-  await expect(page.locator('.capacity-section')).toContainText('explicit_capacity_policy_missing'); const form = page.locator('.factor-capacity-form'); await form.getByLabel('资本情景', { exact: true }).fill('1000.000000000000000001'); await form.getByLabel('成交量参与率', { exact: true }).fill('0.01'); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill('120'); await form.getByRole('button', { name: '评估容量', exact: true }).click();
+  await expect(page.locator('.capacity-section')).toContainText('explicit_capacity_policy_missing'); await page.locator('.capacity-settings > summary').click(); const form = page.locator('.factor-capacity-form'); await form.getByLabel('资本情景', { exact: true }).fill('1000.000000000000000001'); await form.getByLabel('成交量参与率', { exact: true }).fill('0.01'); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill('120'); await form.getByRole('button', { name: '评估容量', exact: true }).click();
   await expect(page.locator('.capacity-section')).toContainText('不是收益承诺'); expect(assessments).toEqual([{ scenarios: ['1000.000000000000000001'], participation: '0.01', maximumAgeSeconds: 120 }]); for (const width of [320, 1024]) { await page.setViewportSize({ width, height: 844 }); await fits(page, width); await audit(page); if (width === 320) await page.screenshot({ path: info.outputPath('factor-capacity-320.png'), fullPage: true }); } await expect(page.locator('.capacity-section')).toContainText('受容量约束');
-  await page.locator('.capacity-section summary').click(); await expect(page.locator('.capacity-section')).toContainText('1800000000000000003'); await page.screenshot({ path: info.outputPath('factor-capacity-desktop.png'), fullPage: true });
+  await page.locator('.capacity-provenance > summary').click(); await expect(page.locator('.capacity-section')).toContainText('1800000000000000003'); await page.screenshot({ path: info.outputPath('factor-capacity-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: '加入组合' }).click(); await expect(page.getByLabel(`因子 ${factor.id} 权重`, { exact: true })).toHaveValue('1'); await page.getByLabel('组合名称', { exact: true }).fill('原子引用单因子配置'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001');
   await page.getByRole('button', { name: '运行回测' }).click(); await expect(page.getByText('研究证据不支持', { exact: true })).toBeVisible();
   const request = JSON.parse(state.writes.find(write => write.path === '/portfolios')!.raw!); expect(request.factors).toEqual([{ factorId: factor.id, weight: '1' }]); expect(request.researchIds).toBeUndefined(); expect(request.capital).toBe('1000.000000000000000001'); expect(request.capacityPolicy).toEqual(assessments[0]);
@@ -415,4 +416,86 @@ test('capital preview/initiation and paused reservations stay distinct from tran
   }
   expect(errors).toEqual([]); await page.screenshot({ path: info.outputPath('capital-controls-1024.png'), fullPage: true });
   await page.goto('/#/settings'); await page.getByText('深色', { exact: true }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto('/#/observations/o1'); await expect(page.locator('.capital-exit-section')).toContainText('不可发起'); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('capital-controls-dark-1024.png'), fullPage: true });
+});
+
+test('Chinese metric glossary preserves exact values and supports hover, focus, Escape and click', async ({ page }, info) => {
+  const state = await contract(page);
+  state.portfolio.metrics = [
+    { key: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', label: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', value: '1.234567890123456789', partition: 'HELDOUT' },
+    { key: 'unfamiliar.scientific_field', label: 'unfamiliar.scientific_field', value: '9007199254740995.000000000000000001' },
+  ];
+  await page.goto('/#/portfolios/p1');
+  const metrics = page.locator('.metric-table');
+  await expect(metrics.locator('.explained-metric > span')).toHaveText(['夏普比率（365 天年化）', '未识别指标']);
+  await expect(metrics).toContainText('1.234567890123456789'); await expect(metrics).toContainText('9007199254740995.000000000000000001');
+  await expect(metrics.getByText('unfamiliar.scientific_field', { exact: true })).toBeHidden();
+  const native = metrics.getByRole('button', { name: '解释：夏普比率（365 天年化）', exact: true });
+  await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible(); await native.scrollIntoViewIfNeeded(); await native.hover(); await expect(page.getByRole('tooltip')).toContainText('365 天'); await page.mouse.move(0, 0); await expect(page.getByRole('tooltip')).toBeHidden();
+  await native.focus(); await expect(page.getByRole('tooltip')).toContainText('无风险利率为零'); await expect(native).toHaveCSS('outline-style', 'solid');
+  await page.keyboard.press('Escape'); await expect(page.getByRole('tooltip')).toBeHidden(); await native.press('Enter'); await expect(page.getByRole('tooltip')).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(page.getByRole('tooltip')).toHaveCount(0); await metrics.locator('.metric-technical > summary').last().click(); await expect(metrics.getByText('unfamiliar.scientific_field', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '解释：未识别指标', exact: true }).click(); await expect(page.getByRole('tooltip')).toContainText('定义暂未确认'); await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('metric-glossary-390.png'), fullPage: true }); expect(state.writes).toEqual([]);
+});
+
+test('long factor and portfolio names stay short while complete descriptions and provenance remain recoverable', async ({ page }, info) => {
+  const state = await contract(page); const name = '成交量变化与跨市场收益解释'.repeat(8); const hypothesis = '原始假设必须完整保留，不代表研究资格。\n'.repeat(16);
+  const factor: FactorView = { id: 'r8.t11.m0', researchId: 8, trialId: 11, memberIndex: 0, name, hypothesis, modelSource: '(module ;; original-model-source)', datasetId: 'test-data', currency: 'CNY', market: ['TEST.CN'], status: 'COMPUTED', evidence: 'independent', metrics: [], criterion: null, combinable: true, reason: null };
+  state.portfolio.name = name;
+  await page.route('**/api/v3/factors/r8.t11.m0', route => route.fulfill({ json: factor }));
+  await page.route('**/api/v3/factors/r8.t11.m0/capacity', route => route.fulfill({ status: 204 }));
+  await page.goto('/#/factors/r8.t11.m0'); await expect(page.getByRole('heading', { level: 1, name: shortTitle(name), exact: true })).toBeVisible();
+  const fullName = page.locator('.study-heading .text-disclosure'); await expect(fullName).not.toHaveAttribute('open', ''); await expect(fullName.locator('p')).toBeHidden(); await fullName.locator('summary').click(); await expect(fullName.locator('p')).toHaveText(name);
+  const description = page.locator('.result-content > .text-disclosure'); await expect(description.locator('p')).toBeHidden(); await description.locator('summary').click(); await expect(description.locator('p')).toHaveText(hypothesis);
+  await page.getByText('原始模型来源', { exact: true }).click(); await expect(page.locator('.model-source')).toHaveText(factor.modelSource);
+  await page.setViewportSize({ width: 320, height: 844 }); await fits(page, 320); await audit(page); await page.screenshot({ path: info.outputPath('factor-disclosures-320.png'), fullPage: true });
+  await page.goto('/#/portfolios/p1'); await expect(page.getByRole('heading', { name: shortTitle(name), level: 1, exact: true })).toBeVisible(); await expect(page.locator('.study-heading .text-disclosure p')).toBeHidden(); await page.locator('.study-heading .text-disclosure > summary').click(); await expect(page.locator('.study-heading .text-disclosure p')).toHaveText(name);
+  await expect(page.locator('.brand img').first()).toHaveAttribute('src', '/icon.svg'); await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/icon.svg'); await fits(page, 320); expect(state.writes).toEqual([]);
+});
+
+test('touch opens and dismisses a metric explanation without changing the account or issuing commands', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } }); const page = await context.newPage();
+  try {
+    const state = await contract(page); await page.goto('/#/observations/o1');
+    const info = page.locator('.snapshot-values').getByRole('button', { name: '解释：账户权益', exact: true });
+    await info.tap(); await expect(page.getByRole('tooltip')).toContainText('不是可提取现金');
+    await info.tap(); await expect(page.getByRole('tooltip')).toHaveCount(0); await expect(page.locator('.snapshot-values')).toContainText('103250.26'); expect(state.writes).toEqual([]);
+  } finally { await context.close(); }
+});
+
+test('public execution causes and remedies stay visible with original trial and portfolio task identities', async ({ page }, info) => {
+  const state = await contract(page); const errorDetail = { code: 'WASM_MEMORY_LIMIT', category: 'resource', message: '科学模型超过明确的内存预算。', action: '检查原模型与原预算，修正后再明确发起研究；不自动重试原试验。', operation: 'evaluate-factor', stage: 'execute' };
+  Object.assign(state.portfolio, { status: 'FAILED', error: errorDetail.code, errorDetail: { ...errorDetail, operation: 'portfolio-backtest' }, curve: [], metrics: [], targets: [] });
+  await page.route('**/api/v3/research/8', route => route.fulfill({ json: {
+    id: 8, title: '保留原研究身份', status: 'FAILED', trials: 1, model: 'test/test-model', createdAt: null, updatedAt: null,
+    input: { goal: '保留原研究身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 1 } },
+    trialRecords: [{ id: 12, hypothesis: '原试验', status: 'FAILED', metrics: [], error: errorDetail.code, errorDetail }], tasks: [], final: { status: 'FAILED', trialId: 12, reason: null, metrics: [], error: errorDetail.code, errorDetail },
+  } }));
+  await page.goto('/#/research/8'); const failure = page.locator('.recorded-error');
+  await expect(failure).toContainText(errorDetail.message); await expect(failure).toContainText(errorDetail.action); await expect(failure.locator('.failure-identity')).toHaveText('研究 #8 / 试验 #12'); await expect(failure.getByText(errorDetail.code, { exact: true })).toBeHidden();
+  await page.getByRole('button', { name: '所选试验 #12', exact: true }).click(); await expect(page.locator('.trial-detail .recorded-error')).toContainText(errorDetail.action); await expect(page.locator('.trial-detail .failure-identity')).toHaveText('试验 #12');
+  await page.goto('/#/portfolios/p1'); await expect(failure).toContainText(errorDetail.message); await expect(failure.locator('.failure-identity')).toHaveText('组合 p1 / 计算任务 #12'); await failure.locator('summary').click(); await expect(failure).toContainText(errorDetail.code); await expect(failure).toContainText('portfolio-backtest');
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('execution-cause-390.png'), fullPage: true }); expect(state.writes).toEqual([]);
+});
+
+test('capacity exposes native entry and exit limits, coverage, assumed volume stress and unavailable economic inputs', async ({ page }, info) => {
+  const state = await contract(page);
+  const scenario = { capital: '1000.000000000000000001', requiredTurnover: '250.000000000000000001', maximumParticipation: '0.010000000000000001', usableCapital: '1000', unallocatedCash: '0.000000000000000001', status: 'CONSTRAINED', reason: null, entryRebalanceTurnover: '50.000000000000000001', exitTurnover: '250.000000000000000001', entryRebalanceParticipation: '0.002000000000000001', exitParticipation: '0.010000000000000001' };
+  const report: CapacityReport = { status: 'ESTIMATED', reason: null, scope: 'portfolio', currency: 'CNY', basis: 'HISTORICAL_BAR_ESTIMATE', maximumCapital: '1000.000000000000000001', minimumCapital: '0.333333333333333334', bindingInstrument: 'TEST.CN', observationStartNs: '1800000000000000001', observationEndNs: '1800000000000000002', decisionClockNs: '1800000000000000003', validUntilNs: '1800000000000000004', assumptions: { participation: '0.01', maximumAgeSeconds: 120, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios: [scenario],
+    methodology: { id: 'HISTORICAL_BAR_PARTICIPATION_V2', formula: 'C_max = original-native-decimal-formula', notes: ['Original native method note, display protocol only'] },
+    constraints: [{ kind: 'ENTRY_REBALANCE', maximumCapital: '1000.000000000000000001', instrumentId: 'TEST.CN', decisionNs: '1800000000000000003', barEventNs: '1800000000000000001', barAvailableNs: '1800000000000000002', observedNotional: '100000.000000000000000001', requiredWeight: '0.999999999999999999' }, { kind: 'FULL_EXIT', maximumCapital: '2000.000000000000000001', instrumentId: 'SECOND.CN', decisionNs: '1800000000000000004', barEventNs: '1800000000000000001', barAvailableNs: '1800000000000000002', observedNotional: '200000.000000000000000001', requiredWeight: '0.999999999999999999' }],
+    coverage: { decisionCount: 5, assessedDecisionCount: 5, requiredObservations: 6, coveredObservations: 6, uniqueBars: 2, reusedBarObservations: 4 },
+    volumeStress: [{ volumeMultiplier: '1', maximumCapital: '1000.000000000000000001', status: 'ESTIMATED', reason: null, scenarios: [scenario] }, { volumeMultiplier: '0.5', maximumCapital: '500.000000000000000000', status: 'ESTIMATED', reason: null, scenarios: [{ ...scenario, usableCapital: '500.000000000000000000', unallocatedCash: '500.000000000000000001' }] }],
+    economicCapacity: { status: 'UNAVAILABLE', maximumCapital: null, reason: 'required_economic_inputs_missing', missingInputs: ['matched_out_of_sample_returns_at_capital_scales', 'venue_calibrated_market_impact', 'matched_spread_fees_and_execution_timing', 'validated_exit_execution'] },
+  };
+  state.portfolio.capacity = report; await page.goto('/#/portfolios/p1');
+  const panel = page.locator('.capacity-section'); await expect(panel.locator('.capacity-headline')).toContainText(report.maximumCapital!); await expect(panel.locator('.capacity-headline')).not.toContainText('最优');
+  const limits = panel.locator('.capacity-constraints'); await expect(limits).toContainText('建仓／再平衡'); await expect(limits).toContainText('独立全量退出'); await expect(limits).toContainText('SECOND.CN'); await expect(limits).toContainText('1800000000000000003 ns'); await expect(limits).toContainText('2027-01-15 08:00:00.000000003 UTC');
+  await expect(panel.locator('.capacity-coverage .facts dd')).toHaveText(['5', '5', '6', '6', '2', '4']);
+  await expect(panel.locator('.capacity-stress')).toContainText('500.000000000000000000'); await expect(panel.locator('.capacity-stress')).toContainText('假设减半'); await expect(panel.locator('.capacity-stress')).toContainText('不是概率');
+  await expect(panel.locator('.economic-capacity')).toContainText('经济容量不可用'); await expect(panel.locator('.economic-capacity')).toContainText('匹配各资金规模的样本外净收益'); await expect(panel.getByText('required_economic_inputs_missing', { exact: true })).toBeHidden();
+  await panel.locator('.capacity-scenarios .scenario-breakdown > summary').click(); await expect(panel.locator('.capacity-scenarios')).toContainText('50.000000000000000001'); await expect(panel.locator('.capacity-scenarios')).toContainText('250.000000000000000001');
+  await panel.locator('.capacity-provenance > summary').click(); await expect(panel.locator('.capacity-method')).toContainText('重复 BAR 共享同一预算'); await panel.getByText('原生方法字段', { exact: true }).click(); await expect(panel).toContainText(report.methodology!.formula);
+  for (const width of [320, 1440]) { await page.setViewportSize({ width, height: 1000 }); await fits(page, width); await audit(page); await panel.screenshot({ path: info.outputPath(`capacity-diagnostics-${width}.png`) }); }
+  const unavailable: CapacityReport = { ...report, status: 'UNAVAILABLE', reason: 'capacity_target_identity_mismatch', maximumCapital: null, minimumCapital: null, constraints: [], coverage: { ...report.coverage!, assessedDecisionCount: 2, coveredObservations: 3 } }; state.portfolio.capacity = unavailable; await page.reload(); await expect(panel.locator('.capacity-unavailable')).toContainText('原目标向量缺少或错配标的身份'); await expect(panel.locator('.capacity-headline')).toHaveCount(0); await expect(panel.locator('.capacity-coverage .facts dd')).toHaveText(['5', '2', '6', '3', '2', '4']); expect(state.writes).toEqual([]);
 });

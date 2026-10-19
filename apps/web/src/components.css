@@ -5,6 +5,7 @@
 .form-actions .ant-btn-primary { min-width: 136px; }
 .observation-heading > .ant-btn { min-width: 124px; }
 .study-heading h1, .trial-detail h4 { white-space: pre-wrap; }
+.study-entry-link { display: block; color: inherit; text-decoration: none; }
 .model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 145px; }
 .collection-bottom a { display: inline-flex; margin-left: auto; padding: 8px; margin-block: -8px; }
 .load-more.ant-btn { margin-top: 20px; }
@@ -22,8 +23,8 @@ details[open] > summary { margin-bottom: 14px; }
 .metric-name small { display: block; color: var(--secondary); font-size: 10px; margin-top: 4px; }
 .metric-table .ant-table-cell { overflow-wrap: anywhere; }
 .metric-table .ant-table-thead > tr > th { font-size: 11px; font-weight: 450; }
-.exact-value { font-family: 'Geist Mono Variable', ui-monospace, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; font-size: .94em; }
-.value-unit { font-family: 'Geist Variable', sans-serif; color: var(--secondary); font-size: 11px; }
+.exact-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; font-size: .94em; }
+.value-unit { font-family: var(--font-body); color: var(--secondary); font-size: 11px; }
 .status.neutral:not(.plain) { color: var(--text); }
 .metric-primary .value-unit, .metric-count .value-unit { display: block; }
 .metric-grid[data-columns='1'] { grid-template-columns: 1fr; }
@@ -39,7 +40,6 @@ details[open] > summary { margin-bottom: 14px; }
 .copy-control .ant-btn { width: 30px; height: 30px; padding: 0; color: var(--secondary); }
 .copy-control > span { color: var(--secondary); font-size: 10px; }
 .study-document > .error-notice { margin-inline: 30px; }
-.clamp-goal { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .study-heading h1, .study-context > span { overflow-wrap: anywhere; }
 .document-identity { flex-wrap: wrap; }
 .prerequisite, .pending-command { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin-bottom: 22px; font-size: 12px; }
@@ -146,12 +146,84 @@ details[open] > summary { margin-bottom: 14px; }
 .model-auth-body > p { margin: 16px 0; font-size: 13px; }
 .device-code { font-size: 20px; letter-spacing: 1px; margin-right: 8px; }
 .option-description { display: block; color: var(--secondary); font-size: 11px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; line-height: 1; }
+.brand img { display: block; flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; }
+.auth-wordmark .brand img { width: 40px; height: 40px; border-radius: 10px; }
+.explained-metric { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; line-height: 1.5; }
+.explained-metric > span { min-width: 0; }
+.metric-info { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; padding: 3px; margin-block: -3px; border: 0; border-radius: 50%; background: transparent; color: var(--secondary, #6c665c); }
+.metric-info:hover, .metric-info[aria-describedby] { color: var(--accent, #446d5d); background: var(--selected, #e9eee6); }
+.metric-info:focus-visible { outline-offset: 1px; }
+/* AntD measures cloned column titles in an aria-hidden row; keep their width, not their controls. */
+.ant-table-measure-row .metric-info { visibility: hidden; }
+.metric-tooltip { max-width: min(340px, calc(100vw - 24px)); }
+.metric-explanation { display: grid; gap: 6px; font-size: 12px; line-height: 1.75; }
+.metric-explanation strong { font-weight: 600; }
+.metric-technical { margin-top: 5px; }
+.metric-technical > summary { font-size: 10px; line-height: 20px; }
+.metric-technical code, .metric-technical > span { display: block; color: var(--secondary); margin-top: 5px; font-size: 11px; }
+.record-description, .text-disclosure p, .text-disclosure .facts dd { max-width: 65ch; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.record-description { margin-top: 12px; font-size: 13px; }
+.text-disclosure > p { margin-top: 12px; font-size: 13px; }
+.study-heading .text-disclosure { margin-top: 10px; }
+.trial-name .text-disclosure { margin-top: 0; }
+.record-reason { font-size: 12px; line-height: 1.75; }
+.record-reason p { max-width: 65ch; }
+.reason-technical { margin-top: 5px; }
+.reason-technical code { display: block; margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.recorded-error > strong { display: block; margin-bottom: 7px; font-weight: 600; }
+.recorded-error > p { max-width: 65ch; line-height: 1.8; }
+.failure-action { display: grid; gap: 3px; margin-top: 10px; }
+.failure-action > span { font-weight: 550; }
+.recorded-error .failure-identity { margin-top: 10px; font-size: 11px; }
+.mandate-section > h3 { font-size: 14px; margin-bottom: 18px; }
+.capacity-section.result-section { padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--selected) 32%, var(--surface)); }
+.capacity-section .section-heading { margin-bottom: 16px; }
+.capacity-kind { color: var(--accent); font-size: 11px; }
+.capacity-headline { display: grid; gap: 8px; margin-bottom: 12px; }
+.capacity-headline > .explained-metric { color: var(--secondary); font-size: 12px; }
+.capacity-headline strong { font-size: 28px; line-height: 1.45; font-weight: 550; overflow-wrap: anywhere; }
+.capacity-caveat { max-width: 65ch; line-height: 1.8; margin-bottom: 22px; }
+.capacity-unavailable > strong { display: block; margin-bottom: 9px; font-size: 15px; font-weight: 550; }
+.capacity-unavailable .facts { margin-top: 20px; }
+.capacity-scenarios, .capacity-constraints, .capacity-coverage, .capacity-stress { margin-top: 26px; }
+.capacity-scenarios h4, .capacity-constraints h4, .capacity-coverage h4, .capacity-stress h4 { font-size: 13px; font-weight: 550; margin-bottom: 14px; }
+.capacity-stress > .quiet { margin-bottom: 14px; line-height: 1.8; }
+.capacity-clock { font-size: 11px; line-height: 1.8; }
+.capacity-clock code { display: block; margin-top: 4px; font-size: 10px; color: var(--secondary); overflow-wrap: anywhere; }
+.scenario-breakdown .facts { grid-template-columns: 1fr; gap: 15px; min-width: 150px; }
+.scenario-breakdown summary { white-space: nowrap; }
+.stress-scenario, .constraint-source { margin-top: 20px; }
+.stress-scenario h5, .constraint-source h5 { margin-bottom: 14px; font-size: 12px; font-weight: 550; }
+.economic-capacity ul { margin-block: 12px; padding-left: 20px; font-size: 12px; color: var(--secondary); line-height: 1.9; }
+.economic-capacity code { display: block; font-size: 11px; margin-top: 6px; overflow-wrap: anywhere; }
+.capacity-method { font-size: 12px; line-height: 1.9; max-width: 65ch; margin-bottom: 20px; }
+.capacity-method p + p { margin-top: 8px; }
+.capacity-provenance > .provenance-disclosure { margin-bottom: 24px; }
+.economic-capacity { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 22px; }
+.economic-capacity > strong { font-size: 13px; font-weight: 550; }
+.economic-capacity p { margin-top: 7px; max-width: 65ch; color: var(--secondary); font-size: 12px; line-height: 1.8; }
+.capacity-provenance > .quiet { margin-bottom: 18px; }
+.capacity-settings { padding-bottom: 20px; }
+.capacity-settings .ant-form { margin-top: 20px; }
+.equity-summary dt > .explained-metric { margin-left: 0; }
+.equity-legend { flex-wrap: wrap; }
+.record-link { max-width: 38ch; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: no-preference) {
+  .metric-info { transition: background-color 160ms ease, color 160ms ease; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .ant-btn-loading .busy-glyph { animation: workbench-busy 1.2s linear infinite; }
   @keyframes workbench-busy { to { transform: rotate(360deg); } }
 }
 @media (max-width: 767px) {
   .workbench .ant-btn { min-height: 44px; }
+  .metric-info { width: 28px; height: 28px; }
+  .metric-label { white-space: normal; }
+  .capacity-section.result-section { padding: 20px 16px; }
+  .capacity-headline strong { font-size: 24px; }
+  .metric-technical > summary, .reason-technical > summary, .text-disclosure > summary { min-height: 32px; }
+  .index-page, .observation-document { box-shadow: none; }
   .workbench .ant-input-affix-wrapper, .workbench .ant-select-single, .workbench .ant-input { font-size: 16px; }
   .provider-actions { flex-basis: 100%; margin-left: 0; }
   .provider-actions .ant-btn { flex: 1; margin-left: 0; }

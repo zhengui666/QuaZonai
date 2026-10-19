@@ -3,10 +3,11 @@ import { useState } from 'react';
 import type { SessionView } from '../../../packages/contracts/src/index.ts';
 import { api } from './api';
 import { ErrorNotice } from './ui';
+import { Brand } from './brand';
 export function Auth({ session, changed }: { session: SessionView; changed: (value: SessionView) => void }) {
   const [busy, setBusy] = useState(false); const [error, setError] = useState<unknown>();
   const setup = session.setupRequired;
-  return <main className="auth-page"><section className="auth-document"><a className="wordmark auth-wordmark" href="#/research">QuaZonai</a><h1>{setup ? '设置工作台密码' : '登录工作台'}</h1><Form layout="vertical" requiredMark={false} validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onFinish={async (values: { password: string; remember?: boolean }) => {
+  return <main className="auth-page"><section className="auth-document"><a className="wordmark auth-wordmark" href="#/research"><Brand /></a><h1>{setup ? '设置工作台密码' : '登录工作台'}</h1><Form layout="vertical" requiredMark={false} validateTrigger="onBlur" scrollToFirstError={{ focus: true }} onFinish={async (values: { password: string; remember?: boolean }) => {
     if (busy) return; setBusy(true); setError(undefined);
     try { changed(await api<SessionView>(setup ? '/session/setup' : '/session/login', { method: 'POST', body: { password: values.password, ...(setup ? {} : { remember: values.remember ?? false }) } })); }
     catch (failure) { setError(failure); } finally { setBusy(false); }
