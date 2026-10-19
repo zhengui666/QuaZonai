@@ -9,6 +9,9 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { evaluateTrial, trialFeedback } from '../src/trials.ts';
+import { Study } from '../src/documents.ts';
+import { iterationRequest } from '../plugins/native-wasm.ts';
+import { finalizeGroup } from '../plugins/heldout-group.ts';
 import { FactorTask, runFactor } from '../plugins/native-factor-task.ts';
 import research from '../plugins/research.ts';
 
@@ -118,6 +121,62 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
     assert.equal(restored.items.length, 1); assert.equal(restored.items[0]!.id, children.items[0]!.id); assert.equal(restored.items[0]!.state.outcome!.status, 'completed');
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2, 'safe replay runs only the interrupted native computation, not a new trial');
     assert.deepEqual(await host.start('original-interrupted-factor', input), receipt); assert.equal(faux.state.callCount, 1);
+  } finally {
+    await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('group finalization retains its failed child decoding metadata and original selections', { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-group-decode-')); const binary = join(directory, 'job');
+  const previous = process.env.QZ_JOB_BINARY;
+  await writeFile(binary, `#!/bin/sh\nprintf '%s' '{"broken":'\n`, { mode: 0o700 });
+  process.env.QZ_JOB_BINARY = binary;
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  const data = { catalog: directory, request: { ...request, forecast: { ...request.forecast,
+    selection: { ...request.forecast.selection, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] } } } };
+  const prepare = defineTool({ name: 'prepare', description: 'Counted test-only selection protocol', parameters: Type.Object({}), replay: 'safe',
+    async execute(_args, api, ctx) {
+      await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original controlled selection' }, async () => ({ request: iterationRequest(data) }));
+      return { content: [{ type: 'text', text: 'Original test-only selection recorded.' }], control: { terminate: true } };
+    },
+  });
+  const options = { database: join(directory, 'original.sqlite'), models,
+    extensions: [defineExtension({ name: 'test.group-decode', tasks: [FactorTask], tools: [prepare, finalizeGroup] })] };
+  let host = await openResearch(options);
+  try {
+    const input = { goal: 'Protocol-only grouped final', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
+    const originals = [];
+    for (const id of ['group-first', 'group-second']) {
+      faux.setResponses([tool('prepare')]);
+      const receipt = await host.start(id, input);
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      const study = (await host.state(receipt.conversationId)).research!;
+      originals.push({ receipt, study, selection: { researchId: receipt.conversationId, trialId: Number(study.trials[0]!.taskId) } });
+    }
+    faux.setResponses([tool('factor_finalize_group', { reason: 'Original selections precede the final protocol failure.', selections: originals.map(item => item.selection) })]);
+    const conversation = (await host.harness.conversation(originals[0]!.receipt.conversationId, context))!;
+    const submission = await conversation.submit({ type: 'input', requestId: 'original-group-final', content: 'Assess the original selected group.' }, context);
+    await submission.wait(context);
+    const first = (await host.harness.snapshot(Study, conversation.id, context))!;
+    const child = await host.harness.waitForTask(first.final!.nativeTaskId as TaskId, context);
+    assert.equal(child.state.outcome.status, 'failed');
+    if (child.state.outcome.status === 'failed') {
+      const detail = child.state.outcome.error.detail as JsonObject;
+      assert.equal(detail.code, 'native_result_invalid'); assert.equal(detail.operation, 'evaluate-factor'); assert.equal(detail.stage, 'decode');
+      for (const original of originals) {
+        const study = (await host.state(original.receipt.conversationId)).research!;
+        assert.deepEqual(study.trials, original.study.trials); assert.equal(study.final!.status, 'FAILED');
+        assert.equal(study.final!.trialId, original.selection.trialId); assert.equal(study.final!.error, child.state.outcome.error.message);
+        assert.deepEqual(study.final!.errorDetail, detail);
+      }
+    }
+    const children = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context);
+    assert.equal(children.items.length, 2);
+    await host.close(); host = await openResearch(options);
+    const restored = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context);
+    assert.deepEqual(restored.items, children.items);
+    assert.equal((await host.harness.waitForTask(child.id, context)).state.outcome.status, 'failed');
   } finally {
     await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
     await rm(directory, { recursive: true, force: true });

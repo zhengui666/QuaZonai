@@ -55,7 +55,9 @@ export const finalizeGroup = defineTool({
           const settled = await api.waitForTask(child.taskId, context);
           if (settled.state.outcome.status !== 'completed') {
             const outcome = settled.state.outcome;
-            throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status, { operation: 'evaluate-factor' });
+            const detail = 'error' in outcome ? outcome.error?.detail : undefined;
+            throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
+              detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: 'evaluate-factor' });
           }
           const result = settled.state.outcome.result;
           await api.commit(async (tx) => { const final = (await tx.doc(Study, child.id)).final!; final.result = result; final.status = 'COMPUTED'; }, context);

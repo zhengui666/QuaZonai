@@ -4,7 +4,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
-import { nativeJob } from '../src/native.ts';
+import type { TaskId } from '@earendil-works/pi-durable';
+import { computePortfolio, nativeJob } from '../src/native.ts';
+import { Problem } from '../src/facts.ts';
+import { classifyExecutionError, ExecutionFailure } from '../../research/src/execution-errors.ts';
+import { built, setup, wat } from './support.ts';
 
 test('native execution has no application deadline and owner abort joins the real child', { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-execution-test-')); const binary = join(directory, 'controlled-child'); const script = join(directory, 'child.mjs');
@@ -23,4 +27,44 @@ test('native execution has no application deadline and owner abort joins the rea
     controller.abort(); await rejected;
     assert.throws(() => process.kill(pid, 0), (error: unknown) => (error as NodeJS.ErrnoException).code === 'ESRCH');
   } finally { delete process.env.QZ_TEST_PROVIDER_SECRET; await rm(directory, { recursive: true, force: true }); }
+});
+
+test('simulate decoding metadata survives both service wrappers and the original failed portfolio', { timeout: 15_000 }, async () => {
+  const state = await setup();
+  try {
+    const binary = state.options.config.jobBinary;
+    await writeFile(binary, `#!/bin/sh\nif [ "$1" = simulate ]; then printf '%s' '{"broken":'; else exec '${process.execPath}' '${new URL('./controlled-job.mjs', import.meta.url).pathname}' "$@"; fi\n`, { mode: 0o700 });
+    const dataset = state.options.config.datasets[0]!;
+    const evidence = { input: { data: dataset.data }, selected: { proposal: { model: wat } }, final: { result: { request: dataset.data.request! } } };
+    const original = { id: 'decode-protocol', dataDir: state.directory, catalog: String(dataset.data.catalog), binary,
+      capital: '1000', currency: 'USD', evidence, policy: dataset.strategy! };
+    for (const compute of [
+      () => nativeJob(binary, 'simulate', {}, [], state.directory, BACKGROUND_CONTEXT),
+      () => computePortfolio(original, BACKGROUND_CONTEXT),
+    ]) await assert.rejects(compute(), (error: unknown) => {
+      assert.ok(error instanceof ExecutionFailure); assert.ok(error.cause instanceof Error);
+      const detail = classifyExecutionError(error, 'backtest_failed', { operation: 'portfolio-backtest' })!;
+      assert.equal(detail.code, 'native_result_invalid'); assert.equal(detail.operation, 'simulate'); assert.equal(detail.stage, 'decode');
+      return true;
+    });
+    await assert.rejects(nativeJob(binary, 'unregistered-command', {}, [], state.directory, BACKGROUND_CONTEXT),
+      (error: unknown) => error instanceof Problem && error.message === 'native_command_unsupported' && error.statusCode === 400);
+    await assert.rejects(computePortfolio({ ...original, evidence: { ...evidence, selected: { proposal: { model: null } } } }, BACKGROUND_CONTEXT),
+      (error: unknown) => error instanceof Problem && error.message === 'selected_factor_model_required' && error.statusCode === 400);
+    const { input, view } = await built(state);
+    assert.equal(view.status, 'FAILED');
+    const task = await state.service.research.harness.waitForTask(view.taskId as TaskId, BACKGROUND_CONTEXT);
+    assert.equal(task.state.outcome.status, 'failed');
+    if (task.state.outcome.status === 'failed') {
+      assert.equal(task.state.outcome.error.message, view.error);
+      assert.deepEqual(task.state.outcome.error.detail, view.errorDetail);
+    }
+    const response = await state.service.app.inject({ url: `/api/v3/portfolios/${view.id}`, headers: state.headers });
+    const projected = response.json();
+    assert.equal(projected.status, 'FAILED'); assert.equal(projected.error, 'native_result_invalid');
+    assert.equal(projected.errorDetail.operation, 'simulate'); assert.equal(projected.errorDetail.stage, 'decode');
+    const replay = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: input });
+    assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().taskId, view.taskId);
+    assert.deepEqual(replay.json().errorDetail, projected.errorDetail); assert.equal(replay.json().status, 'FAILED');
+  } finally { await state.cleanup(); }
 });
