@@ -3,6 +3,9 @@ import { CheckCircleIcon, ClockIcon, CopyIcon, FlaskIcon, InfoIcon, WarningCircl
 import { useEffect, useState, type ReactNode, type TableHTMLAttributes } from 'react';
 import type { Metric } from '../../../packages/contracts/src/index.ts';
 import { ApiError, shortError } from './api';
+import { metricDefinition, partitionLabel } from './metric-glossary';
+import { FactLabel, MetricLabel } from './metric-label';
+export { MetricLabel } from './metric-label';
 
 const labels: Record<string, string> = {
   RUNNING: '研究中', IDLE: '当前无执行', STARTED: '计算中', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', REJECTED: '已拒绝',
@@ -23,23 +26,20 @@ export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => vo
   return <div className="error-notice" role="alert"><div className="error-heading"><WarningCircleIcon size={17} /><span>{shortError(error)}</span>{retry && <Button size="small" onClick={retry}>重试</Button>}</div>{error instanceof ApiError && error.code && <details><summary>技术详情</summary><code>{error.code}</code></details>}</div>;
 }
 export function Empty({ title, action, children }: { title: string; action?: ReactNode; children?: ReactNode }) { return <div className="empty"><div className="empty-icon"><FlaskIcon size={24} weight="duotone" /></div><h3>{title}</h3>{children}{action}</div>; }
-export function Facts({ items }: { items: [string, ReactNode][] }) { return <dl className="facts">{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? '未提供'}</dd></div>)}</dl>; }
+export function Facts({ items }: { items: [ReactNode, ReactNode][] }) { return <dl className="facts">{items.map(([label, value], index) => <div key={typeof label === 'string' ? label : index}><dt>{typeof label === 'string' ? <FactLabel label={label} /> : label}</dt><dd>{value ?? '未提供'}</dd></div>)}</dl>; }
 export function Timestamp({ value }: { value: string | null | undefined }) { return value ? <time dateTime={value}>{value.replace('T', ' ').replace(/Z$/, ' UTC')}</time> : <span className="quiet">未记录</span>; }
 export function exact(value: number | string | null | undefined, missing = '未提供') { return value == null ? missing : String(value); }
 export function Exact({ value, unit, missing }: { value: number | string | null | undefined; unit?: string; missing?: string }) { return <span className="exact-value">{exact(value, missing)}{value != null && unit && <span className="value-unit"> {unit}</span>}</span>; }
 const availability: Record<string, string> = { INSUFFICIENT_SAMPLES: '样本不足', CONSTANT_SCORE: '分数恒定', CONSTANT_LABEL: '标签恒定', NONFINITE_DATA: '数据非有限', NONFINITE_RESULT: '结果非有限', AVAILABLE: '可用' };
-export function metricStatus(metric: Metric) { return metric.status ? availability[metric.status] ?? metric.status : metric.value == null ? '未提供' : ''; }
-export function metricLabel(metric: Metric) {
-  const key = metric.key;
-  if (/pearson_ic$/.test(key)) return 'Pearson IC';
-  const counts: Record<string, string> = { observations: '总观测', included: '有效观测', excluded: '排除观测', indicator_warmup: '预热观测', incomplete_labels: '标签不完整', cross_boundary_labels: '跨区间标签', prediction_outside_partition: '区间外预测' };
-  if (key.includes('counts.')) return counts[key.split('.').at(-1)!] ?? metric.label;
-  return metric.label;
+export function metricStatus(metric: Metric) { return metric.status ? availability[metric.status] ?? '未识别可用性' : metric.value == null ? '未提供' : ''; }
+export function metricLabel(metric: Metric) { return metricDefinition(metric.key).label; }
+export function MetricField({ metric }: { metric: Metric }) {
+  return <div className="metric-name"><MetricLabel metricKey={metric.key} />{metric.partition && <small>{partitionLabel(metric.partition)}{metric.component !== undefined && ` / 分量 ${metric.component}`}</small>}<details className="metric-technical"><summary>原始字段</summary><code>{metric.key}</code>{metric.label !== metric.key && <span>{metric.label}</span>}{metric.partition && <code>{metric.partition}</code>}{metric.status && <code>{metric.status}</code>}</details></div>;
 }
 export function Metrics({ metrics }: { metrics: Metric[] }) {
   if (!metrics.length) return <p className="quiet">未提供指标</p>;
   return <Table<Metric> className="metric-table" rowKey="key" size="small" pagination={false} dataSource={metrics} columns={[
-    { title: '指标', render: (_value, metric) => <div className="metric-name">{metricLabel(metric)}{metric.partition && <small>{({ TRAIN: '训练', VALIDATION: '验证', HELDOUT: '独立样本' } as Record<string, string>)[metric.partition] ?? metric.partition}{metric.component !== undefined && ` / 分量 ${metric.component}`}</small>}</div> },
+    { title: '指标', render: (_value, metric) => <MetricField metric={metric} /> },
     { title: '数值', align: 'right', render: (_value, metric) => <Exact value={metric.value} unit={metric.unit} missing="不可用" /> },
     { title: '可用性', render: (_value, metric) => <span className="quiet">{metricStatus(metric)}</span> },
   ]} />;
@@ -54,8 +54,8 @@ export function EvidenceMetrics({ metrics }: { metrics: Metric[] }) {
   const longCounts = counters.some(metric => String(metric.value).length > 9);
   if (!ic && !included && !excluded) return <Metrics metrics={metrics} />;
   return <><div className={`metric-grid${longCounts ? ' long-counts' : ''}`} data-columns={counters.length + Number(!!ic)}>
-    {ic && <div className="metric-primary"><span className="metric-label">{independent.length ? '独立样本 IC' : metricLabel(ic)}</span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
-    {counters.map(metric => <div className="metric-count" key={metric.key}><span className="metric-label">{metricLabel(metric)}</span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
+    {ic && <div className="metric-primary"><span className="metric-label"><MetricLabel metricKey={ic.key} label={independent.length ? '独立样本信息系数（IC）' : undefined} /></span><strong><Exact value={ic.value} unit={ic.unit} missing="不可用" /></strong>{metricStatus(ic) && <span className="metric-reason"><InfoIcon size={13} />{metricStatus(ic)}</span>}</div>}
+    {counters.map(metric => <div className="metric-count" key={metric.key}><span className="metric-label"><MetricLabel metricKey={metric.key} /></span><strong><Exact value={metric.value} missing="不可用" /></strong></div>)}
   </div>{independent.length > 0 && <div className="partition-row"><span className="partition-label">独立样本</span>{ic?.component !== undefined && <span>分量 <code>{ic.component}</code></span>}</div>}<details className="metrics-disclosure"><summary>全部指标</summary><Metrics metrics={metrics} /></details></>;
 }
 export function Copy({ value, label = '复制身份' }: { value: string; label?: string }) {

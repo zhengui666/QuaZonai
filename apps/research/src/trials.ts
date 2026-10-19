@@ -2,6 +2,7 @@ import type { Context, JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolExecutionResult } from '@earendil-works/pi-durable';
 import { canonical, Study } from './documents.ts';
 import { modelFeedback } from './feedback.ts';
+import { classifyExecutionError, executionDiagnostic } from './execution-errors.ts';
 
 // Scientific facts committed on the upstream transaction line. No task scheduler.
 export async function evaluateTrial(
@@ -46,15 +47,17 @@ export async function evaluateTrial(
     const result = await compute();
     await api.commit(async (tx) => {
       const trial = (await tx.doc(Study, api.conversationId)).trials.find((item) => item.taskId === api.taskId)!;
-      trial.status = 'COMPUTED'; trial.result = result; trial.error = null;
+      trial.status = 'COMPUTED'; trial.result = result; trial.error = null; trial.errorDetail = null;
     }, context);
     return result;
   } catch (error) {
+    if (context.abortSignal?.aborted) throw error;
     // If close/abort prevents this commit, STARTED can resume on native replay.
     // Once FAILED commits, replay must disclose the same error without retrying.
     await api.commit(async (tx) => {
       const trial = (await tx.doc(Study, api.conversationId)).trials.find((item) => item.taskId === api.taskId)!;
-      trial.status = 'FAILED'; trial.error = error instanceof Error ? error.message : 'factor_failed';
+      trial.status = 'FAILED'; trial.error = executionDiagnostic(error, 'factor_failed');
+      trial.errorDetail = { ...classifyExecutionError(error) };
     }, context).catch(() => {});
     throw error;
   }
@@ -76,6 +79,7 @@ export async function trialFeedback(api: ToolExecutionApi, context: Context, eva
     const result = await evaluate();
     return { content: [{ type: 'text', text: JSON.stringify({ trialId: api.taskId, ...modelFeedback(result) }) }] };
   } catch (error) {
+    if (context.abortSignal?.aborted) throw error;
     if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
     if (!(error instanceof Error) || error.message !== 'trial_budget_exhausted') throw error;
     await api.commit(async (tx) => {

@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="48" fill="#293740"/><path d="M131 121a49 49 0 1 1 9-28c0 11-3 21-9 28l18 17-10 11-19-18a48 48 0 0 1-24 6" fill="none" stroke="#fcfdfe" stroke-width="12" stroke-linecap="round"/><path d="M61 103 83 78l22 24 26-31" fill="none" stroke="#fcfdfe" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>QuaZonai — stepped circuit and market candles</title>
+  <rect width="64" height="64" rx="14" fill="#365548"/>
+  <g shape-rendering="crispEdges">
+    <path fill="#eee7d5" fill-rule="evenodd" d="M20 8h24v4h8v8h4v24h-4v8h-8v4H20v-4h-8v-8H8V20h4v-8h8zm0 8v4h-4v24h4v4h24v-4h4V20h-4v-4z"/>
+    <path fill="#eee7d5" d="M40 40h8v8h4v4h4v4h-8v-4h-4v-4h-4zM8 28h8v4H8zM28 8h4v8h-4z"/>
+    <path fill="#a9c4a0" d="M23 24h2v18h-2zm8-5h2v24h-2zm8 4h2v17h-2z"/>
+    <path fill="#eee7d5" d="M21 28h6v9h-6zM29 23h6v13h-6zM37 27h6v7h-6z"/>
+    <path fill="#a9c4a0" d="M4 44h4v4H4zm52-32h4v4h-4z"/>
+  </g>
+</svg>

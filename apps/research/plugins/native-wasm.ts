@@ -9,8 +9,19 @@ import wabtFactory from 'wabt';
 import { object } from '../src/trials.ts';
 import { canonical } from '../src/documents.ts';
 import { partitionBoundaries } from './native-exposure.ts';
+import { ExecutionFailure } from '../src/execution-errors.ts';
 
 const wabt = await wabtFactory();
+
+export function compileWasm(model: string, filename = 'factor.wat', operation = 'evaluate-factor'): Uint8Array {
+  let module: ReturnType<typeof wabt.parseWat> | undefined;
+  try {
+    module = wabt.parseWat(filename, model);
+    module.validate();
+    return module.toBinary({}).buffer;
+  } catch (error) { throw new ExecutionFailure(error, { operation, stage: 'compile' }); }
+  finally { module?.destroy(); }
+}
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
@@ -36,11 +47,9 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
   const request = normalizedRequest(data);
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
   const env = new NodeExecutionEnv({ cwd: directory });
+  let stage: 'execute' | 'decode' | 'validate' = 'execute';
   try {
-    const module = wabt.parseWat('factor.wat', model);
-    let binary: Uint8Array;
-    try { module.validate(); binary = module.toBinary({}).buffer; } finally { module.destroy(); }
-    await writeFile(join(directory, 'model.wasm'), binary);
+    await writeFile(join(directory, 'model.wasm'), compileWasm(model));
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
     let stdout = ''; let stderr = '';
     const result = getOrThrow(await env.exec([
@@ -52,10 +61,15 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
     }, context));
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${result.exitCode}`);
+    stage = 'decode';
     const output = object(JSON.parse(stdout), 'native_result');
+    stage = 'validate';
     if (canonical(output.request!) !== canonical(request)) throw new Error('native_result_request_mismatch');
     if ('points' in output) throw new Error('native_summary_required');
     return output;
+  } catch (error) {
+    if (error instanceof ExecutionFailure) throw error;
+    throw new ExecutionFailure(error, { operation: 'evaluate-factor', stage });
   } finally {
     await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });

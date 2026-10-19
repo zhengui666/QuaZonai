@@ -1,4 +1,6 @@
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
+import type { ExecutionErrorDetail } from './execution.ts';
+export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
 export interface ModelRef { provider: string; modelId: string }
@@ -46,7 +48,7 @@ export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
   createdAt: string | null; updatedAt: string | null;
 }
-export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; error: string | null }
+export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; error: string | null; errorDetail?: ExecutionErrorDetail | null }
 export interface TaskView { id: number; name: string; status: string; error: string | null; outcome?: string }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null }
 export interface ResearchDetail extends ResearchSummary {
@@ -55,7 +57,7 @@ export interface ResearchDetail extends ResearchSummary {
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   criterion?: CriterionView; factors?: string[];
-  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; metrics: Metric[] } | null;
+  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[] } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;
@@ -78,18 +80,32 @@ export interface PortfolioStart {
 export interface CapacityScenario {
   capital: string; requiredTurnover: string | null; maximumParticipation: string | null; usableCapital: string | null;
   unallocatedCash: string | null; status: string; reason: string | null;
+  entryRebalanceTurnover?: string | null; exitTurnover?: string | null;
+  entryRebalanceParticipation?: string | null; exitParticipation?: string | null;
+}
+export interface CapacityConstraint {
+  kind: 'ENTRY_REBALANCE' | 'FULL_EXIT'; maximumCapital: string; instrumentId: string;
+  decisionNs: string; barEventNs: string; barAvailableNs: string; observedNotional: string; requiredWeight: string;
 }
 export interface CapacityReport {
   status: string; reason: string | null; scope: string; currency: string; basis: string;
+  errorDetail?: ExecutionErrorDetail;
+  /** Original explicit policy; scenarios also contains native-generated diagnostic rows. */
+  requestedAssumptions?: CapitalAssumptions;
   maximumCapital: string | null; minimumCapital: string | null; bindingInstrument: string | null;
   observationStartNs: string | null; observationEndNs: string | null; decisionClockNs: string | null; validUntilNs: string | null;
   assumptions: { participation: string | null; maximumAgeSeconds: number | null; executionWindow: string; exit: string; fees: string; depth: string };
   scenarios: CapacityScenario[];
+  methodology?: { id: string; formula: string; notes: string[] };
+  constraints?: CapacityConstraint[];
+  coverage?: { decisionCount: number; assessedDecisionCount: number; requiredObservations: number; coveredObservations: number; uniqueBars: number; reusedBarObservations: number };
+  volumeStress?: { volumeMultiplier: string; maximumCapital: string | null; status: string; reason: string | null; scenarios: CapacityScenario[] }[];
+  economicCapacity?: { status: 'UNAVAILABLE'; maximumCapital: null; reason: string; missingInputs: string[] };
 }
 export interface PortfolioView {
   id: string; name: string; researchIds: number[]; datasetId: string; status: string;
   capital: string; currency: string; createdAt: string; taskId: number | null;
-  metrics: Metric[]; curve: EquityPoint[]; targets: TargetWeight[]; error: string | null;
+  metrics: Metric[]; curve: EquityPoint[]; targets: TargetWeight[]; error: string | null; errorDetail?: ExecutionErrorDetail | null;
   weights?: { researchId: number; weight: string }[]; factors?: FactorAllocation[]; capacity?: CapacityReport; targetExpiresAt?: string | null; targetExpired?: boolean;
 }
 export type ObservationMode = 'paper' | 'live';

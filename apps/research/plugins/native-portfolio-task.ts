@@ -5,6 +5,7 @@ import { evaluatePortfolio } from './native-portfolio.ts';
 import type { PortfolioEvaluationInput } from './native-portfolio.ts';
 import { object } from '../src/trials.ts';
 import { NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
+import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { phase: 'compute' }, JsonObject>({
   name: 'qz.strategy-portfolio.evaluate', version: 1, initial: () => ({ phase: 'compute' }),
@@ -22,7 +23,9 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
         result: { summary: { ...result.summary, evidenceTaskId: task.id }, native } } }), context);
     } catch (error) {
       if (runtime.signal.aborted) throw error;
-      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: error instanceof Error ? error.message : 'portfolio_evaluation_failed' } } }), context);
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
+        message: executionDiagnostic(error, 'portfolio_evaluation_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'portfolio-evaluation' }) },
+      } } }), context);
     }
   } },
   async abort(_task, runtime, context) {
@@ -47,7 +50,9 @@ export async function runPortfolio(api: ToolExecutionApi, context: Context, inpu
   const settled = await api.waitForTask(id, context);
   if (settled.state.outcome.status !== 'completed') {
     const outcome = settled.state.outcome;
-    throw new Error('error' in outcome && outcome.error ? outcome.error.message : outcome.status);
+    const detail = 'error' in outcome ? outcome.error?.detail : undefined;
+    throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
+      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: 'portfolio-evaluation' });
   }
   return object(settled.state.outcome.result.summary, 'portfolio_summary');
 }

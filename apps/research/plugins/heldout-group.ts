@@ -6,6 +6,7 @@ import { object } from '../src/trials.ts';
 import { FactorTask } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
+import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 /** Assess preselected original studies together; never reopen an exposed window. */
 export const finalizeGroup = defineTool({
@@ -52,15 +53,23 @@ export const finalizeGroup = defineTool({
         }, context);
         for (const child of children) {
           const settled = await api.waitForTask(child.taskId, context);
-          if (settled.state.outcome.status !== 'completed') throw new Error('heldout_group_native_failed');
+          if (settled.state.outcome.status !== 'completed') {
+            const outcome = settled.state.outcome;
+            const detail = 'error' in outcome ? outcome.error?.detail : undefined;
+            throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
+              detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: 'evaluate-factor' });
+          }
           const result = settled.state.outcome.result;
           await api.commit(async (tx) => { const final = (await tx.doc(Study, child.id)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         }
       } catch (error) {
+        if (context.abortSignal?.aborted) throw error;
         await api.commit(async (tx) => {
           for (const source of sources) {
             const final = (await tx.doc(Study, source.id)).final!;
-            if (final.status === 'STARTED') { final.status = 'FAILED'; final.error = error instanceof Error ? error.message : 'heldout_group_failed'; }
+            if (final.status === 'STARTED') {
+              final.status = 'FAILED'; final.error = executionDiagnostic(error, 'heldout_group_failed'); final.errorDetail = { ...classifyExecutionError(error) };
+            }
           }
         }, context);
       }

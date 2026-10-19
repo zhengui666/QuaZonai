@@ -3,6 +3,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../../research/src/documents.ts';
+import { ExecutionFailure } from '../../research/src/execution-errors.ts';
 import { resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
 import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import type { ThresholdPolicy } from './config.ts';
@@ -19,7 +20,7 @@ export interface PortfolioTaskInput {
 
 export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
   try { return await executeNative(binary, command, input, args, directory, context); }
-  catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_job_failed'); }
+  catch (error) { throw error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'native_job_failed'); }
 }
 
 /** Original ensembles → native exact member blending → optional study blending → ONE shared account. */
@@ -69,6 +70,6 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
     if (sources.length === 1) native.forecasts = sources[0]!.forecasts!;
     const capacity: CapacityReport = await assessCapacity(input.binary, input.catalog, simulationRequest, input.capacityPolicy ?? capacityPolicy(evidence), directory, context);
     return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: statistics, capacity };
-  } catch (error) { throw error instanceof Problem ? error : new Problem(error instanceof Error ? error.message : 'portfolio_failed'); }
+  } catch (error) { throw error instanceof Problem || error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'portfolio_failed'); }
   finally { await rm(directory, { recursive: true, force: true }); }
 }

@@ -1,7 +1,8 @@
 import { expect, test, type Page as BrowserPage, type Route } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
-import type { CapacityReport, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
+import { shortTitle } from '../src/titles';
+import type { CapacityReport, ExecutionErrorDetail, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 
 // Controlled transport only. Real HTTP/durable integration is in real-service.spec.ts.
 async function contract(page: BrowserPage, setup = false) {
@@ -177,7 +178,7 @@ test('portfolio exact inputs, native curve data, target-only observation, explic
   const state = await contract(page); await page.goto('/#portfolios'); await page.getByRole('link', { name: '测试 · 多因子组合', exact: true }).click(); await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '100000.250000000000000001', exact: true })).toBeVisible(); await expect(page.getByRole('cell', { name: '未提供', exact: true })).toBeVisible(); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('portfolio-result-1440.png'), fullPage: true });
   await page.goto('/#/portfolios/new?research=8'); await page.getByLabel('组合名称', { exact: true }).fill('测试新组合'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('本金', { exact: true }).fill('100000.250000000000000001'); await expect(page.getByLabel('研究 8 权重', { exact: true })).toHaveValue('1'); await page.getByRole('button', { name: '运行回测' }).click(); await expect(page.getByText('研究证据不支持', { exact: true })).toBeVisible(); await page.getByRole('button', { name: '运行回测' }).click(); await expect(page.getByRole('heading', { name: '测试新组合' })).toBeVisible(); await expect(page.locator('.document-toolbar')).toContainText('待执行'); await expect(page.locator('[data-testid="equity-chart"]')).toHaveCount(0);
   const commands = state.writes.filter(value => value.path === '/portfolios'); expect(JSON.parse(commands[0]!.raw!)).toMatchObject({ researchIds: [8], weights: [{ researchId: 8, weight: '1' }], datasetId: 'test-data', capital: '100000.250000000000000001', name: '测试新组合' }); expect(JSON.parse(commands[0]!.raw!).requestId).not.toBe(JSON.parse(commands[1]!.raw!).requestId);
-  await page.getByRole('link', { name: '目标与观测', exact: true }).click(); await page.getByRole('button', { name: '新建观测' }).click(); await choose(page, '组合', '测试 · 多因子组合'); await page.getByLabel('连接', { exact: true }).click(); await expect(page.getByRole('option', { name: '测试实盘连接' })).toHaveCount(0); await page.getByRole('option', { name: '测试模拟连接' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待接收'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(JSON.parse(state.writes.find(value => value.path === '/observations')!.raw!)).toMatchObject({ portfolioId: 'p1', mode: 'paper', connectionId: 'paper-test' });
+  await page.getByRole('link', { name: '目标与观测', exact: true }).click(); await page.getByRole('button', { name: '新建观测' }).click(); await choose(page, '组合', 'p1 / 测试 · 多因子组合'); await page.getByLabel('连接', { exact: true }).click(); await expect(page.getByRole('option', { name: '测试实盘连接' })).toHaveCount(0); await page.getByRole('option', { name: '测试模拟连接' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待接收'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(JSON.parse(state.writes.find(value => value.path === '/observations')!.raw!)).toMatchObject({ portfolioId: 'p1', mode: 'paper', connectionId: 'paper-test' });
   await page.getByRole('button', { name: '核对回执' }).click(); await expect(page.locator('.snapshot-values')).toContainText('1000.250000000000000001'); await expect(page.locator('.receipt-section')).toContainText('已接收'); await page.getByRole('button', { name: '停止观测', exact: true }).click(); const stop = page.getByRole('dialog'); await expect(stop).toContainText('仅停止本地观测，不撤回下游目标'); await stop.getByRole('button', { name: '停止观测', exact: true }).click(); await expect(page.getByRole('button', { name: '停止观测', exact: true })).toBeDisabled(); await expect(page.locator('.receipt-section')).toContainText('已接收'); expect(state.writes.filter(value => value.path === '/observations')).toHaveLength(1); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('observation-1440.png'), fullPage: true });
   await page.goto('/#/observations?mode=live'); await expect(page.getByRole('heading', { name: '尚无实盘观测' })).toBeVisible(); await expect(page.getByRole('button', { name: /下单|买入|卖出/ })).toHaveCount(0);
   await page.getByRole('link', { name: '模型设置', exact: true }).click(); await expect(page.getByLabel(/超时|最大试验|内存|应用名称/)).toHaveCount(0); await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '刷新目录' }).click(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('高'); expect(state.writes.filter(value => value.path === '/settings')).toHaveLength(0); await page.getByRole('button', { name: '保存设置' }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled(); expect(JSON.parse(state.writes.find(value => value.method === 'PATCH' && value.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'high' }); await audit(page); await page.screenshot({ path: info.outputPath('settings-1440.png'), fullPage: true });
@@ -208,6 +209,43 @@ test('390px keyboard navigation, reduced motion and distinct loading/empty/missi
   for (const [label, image] of [['数据', 'data'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['模型设置', 'settings'], ['扩展', 'extensions']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(7); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
   state.empty(); for (const [path, text] of [['research', '尚无研究'], ['portfolios', '尚无策略组合'], ['observations', '尚无观测'], ['extensions', '没有已发现扩展']]) { await page.goto('/#/' + path); await page.reload(); await expect(page.getByRole('heading', { name: text!, exact: true })).toBeVisible(); await fits(page, 390); }
   state.missing(); await page.getByRole('button', { name: '刷新目录', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('记录不存在'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.locator('pre')).toHaveCount(0); expect(state.writes).toEqual([]);
+});
+
+test('navigation opened after cancel survives publication of the pending route and retains keyboard focus', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ reducedMotion: 'reduce' }); const state = await contract(page);
+  // Register before useRoute's listener so the next native notification can be published explicitly.
+  await page.addInitScript(() => window.addEventListener('hashchange', event => {
+    const browser = window as Window & { holdNavigation?: boolean; publishNavigation?: () => void };
+    if (!browser.holdNavigation) return;
+    browser.holdNavigation = false; event.stopImmediatePropagation(); const { oldURL, newURL } = event;
+    browser.publishNavigation = () => window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL }));
+  }));
+  await page.goto('/#/research/new'); await expect(page.getByLabel('研究名称', { exact: true })).toBeFocused();
+  await page.evaluate(() => { (window as Window & { holdNavigation?: boolean }).holdNavigation = true; });
+  await page.getByRole('button', { name: '取消', exact: true }).click(); await expect(page).toHaveURL(/#\/research$/); await expect(page.getByRole('heading', { name: '新建研究', exact: true })).toBeVisible();
+  const trigger = page.getByRole('button', { name: '打开导航', exact: true }); const menu = page.getByRole('dialog'); const data = menu.getByRole('link', { name: '数据', exact: true });
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.focus(); await expect(data).toBeFocused();
+  await page.evaluate(() => { const browser = window as Window & { publishNavigation?: () => void }; browser.publishNavigation!(); delete browser.publishNavigation; });
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(menu.getByRole('link')).toHaveCount(7); await expect(data).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('#main-content')).toBeFocused();
+  await fits(page, 390); await audit(page); expect(state.writes).toEqual([]);
+});
+
+test('portfolio picker distinguishes full original names and searches suffixes before submitting the original identity', async ({ page }, info) => {
+  const state = await contract(page); const common = '同一市场原始来源的共享账户策略与目标交付'.repeat(4);
+  const names = [`${common}保守低权重版本`, `${common}激进高权重版本`]; expect(shortTitle(names[0])).toBe(shortTitle(names[1]));
+  const portfolios: PortfolioView[] = names.map((name, index) => ({ ...state.portfolio, id: index ? 'portfolio-aggressive' : 'portfolio-conservative', name, targets: [{ instrumentId: 'TEST.CN', weight: index ? '0.9' : '0.1' }] }));
+  const requests: Record<string, unknown>[] = [];
+  await page.route('**/api/v3/portfolios', route => route.fulfill({ json: portfolios }));
+  await page.route('**/api/v3/observations', route => { requests.push(route.request().postDataJSON()); return route.fulfill({ status: 422, json: { error: 'unsupported_evidence' } }); });
+  await page.goto('/#/observations/new'); const select = page.getByLabel('组合', { exact: true }); await select.click();
+  await expect(page.getByRole('option')).toHaveCount(2); await expect(page.getByRole('option').first()).toHaveAttribute('title', names[0]!); await expect(page.getByRole('option').last()).toHaveAttribute('title', names[1]!);
+  await expect(page.getByRole('option')).toHaveText(portfolios.map(item => `${item.id} / ${item.name}`));
+  await select.fill('激进高权重版本'); await expect(page.getByRole('option')).toHaveCount(1); await page.getByRole('option', { name: `portfolio-aggressive / ${names[1]}`, exact: true }).click();
+  const selected = page.locator('.ant-form-item').filter({ has: select }); await expect(selected).toContainText(`portfolio-aggressive / ${names[1]}`); await expect(selected.getByTitle(names[1]!, { exact: true })).toBeVisible();
+  await choose(page, '连接', '测试模拟连接'); await page.getByRole('button', { name: '交付并观测', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('研究证据不支持'); expect(requests).toHaveLength(1); expect(requests[0]).toMatchObject({ portfolioId: 'portfolio-aggressive', mode: 'paper', connectionId: 'paper-test' }); expect(portfolios.map(item => item.targets[0]!.weight)).toEqual(['0.1', '0.9']); expect(state.writes).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('portfolio-picker-390.png'), fullPage: true });
 });
 
 test('dataset facts and explicit preselection return to the originating workspace', async ({ page }) => {
@@ -326,7 +364,7 @@ test('light/dark and 320–1024 layouts retain exact long facts without page ove
     for (const width of [320, 390, 768, 1024]) {
       await page.setViewportSize({ width, height: 844 });
       for (const route of ['research/8', 'research/9?tab=inputs', 'data', 'portfolios/p1', 'observations/o1', 'settings', 'extensions']) {
-        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : route === 'settings' ? '模型设置' : '扩展'; await expect(page.getByRole('heading', { name: title, exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
+        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : route === 'settings' ? '模型设置' : '扩展'; await expect(page.getByRole('heading', { name: shortTitle(title), exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 }); await page.goto('/#/research/8'); await expect(page.locator('.metric-grid')).toBeVisible(); await audit(page); await page.screenshot({ path: info.outputPath(`research-${dark ? 'dark' : 'light'}-1440.png`), fullPage: true });
@@ -376,13 +414,13 @@ test('atomic library separates component evidence and carries exact selected fac
   await page.route('**/api/v3/factors', route => route.fulfill({ json: [factor, component] }));
   await page.route('**/api/v3/factors/*', route => route.fulfill({ json: route.request().url().endsWith(component.id) ? component : factor }));
   const assessments: unknown[] = [];
-  await page.route('**/api/v3/factors/*/capacity', route => { if (route.request().method() === 'POST') { assessments.push(route.request().postDataJSON()); return route.fulfill({ json: capacity }); } return route.fulfill({ json: { ...capacity, status: 'UNAVAILABLE', reason: 'explicit_capacity_policy_missing', maximumCapital: null, minimumCapital: null, scenarios: [], assumptions: { ...capacity.assumptions, participation: null, maximumAgeSeconds: null } } }); });
+  await page.route('**/api/v3/factors/*/capacity', route => { if (route.request().method() === 'POST') { const policy = route.request().postDataJSON(); assessments.push(policy); return route.fulfill({ json: { ...capacity, requestedAssumptions: policy } }); } return route.fulfill({ json: { ...capacity, status: 'UNAVAILABLE', reason: 'explicit_capacity_policy_missing', maximumCapital: null, minimumCapital: null, scenarios: [], assumptions: { ...capacity.assumptions, participation: null, maximumAgeSeconds: null } } }); });
   await page.goto('/#/factors'); await expect(page.getByRole('heading', { name: '因子库', exact: true })).toBeVisible();
   await expect(page.getByRole('row').filter({ hasText: component.name }).getByRole('button', { name: '加入组合' })).toBeDisabled();
   await page.getByLabel('搜索因子').fill('单模型'); await expect(page.getByRole('link', { name: component.name })).toHaveCount(0); await page.getByRole('link', { name: factor.name }).click();
-  await expect(page.locator('.capacity-section')).toContainText('explicit_capacity_policy_missing'); const form = page.locator('.factor-capacity-form'); await form.getByLabel('资本情景', { exact: true }).fill('1000.000000000000000001'); await form.getByLabel('成交量参与率', { exact: true }).fill('0.01'); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill('120'); await form.getByRole('button', { name: '评估容量', exact: true }).click();
+  await expect(page.locator('.capacity-section')).toContainText('explicit_capacity_policy_missing'); await page.locator('.capacity-settings > summary').click(); const form = page.locator('.factor-capacity-form'); await form.getByLabel('资本情景', { exact: true }).fill('1000.000000000000000001'); await form.getByLabel('成交量参与率', { exact: true }).fill('0.01'); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill('120'); await form.getByRole('button', { name: '评估容量', exact: true }).click();
   await expect(page.locator('.capacity-section')).toContainText('不是收益承诺'); expect(assessments).toEqual([{ scenarios: ['1000.000000000000000001'], participation: '0.01', maximumAgeSeconds: 120 }]); for (const width of [320, 1024]) { await page.setViewportSize({ width, height: 844 }); await fits(page, width); await audit(page); if (width === 320) await page.screenshot({ path: info.outputPath('factor-capacity-320.png'), fullPage: true }); } await expect(page.locator('.capacity-section')).toContainText('受容量约束');
-  await page.locator('.capacity-section summary').click(); await expect(page.locator('.capacity-section')).toContainText('1800000000000000003'); await page.screenshot({ path: info.outputPath('factor-capacity-desktop.png'), fullPage: true });
+  await page.locator('.capacity-provenance > summary').click(); await expect(page.locator('.capacity-section')).toContainText('1800000000000000003'); await page.screenshot({ path: info.outputPath('factor-capacity-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: '加入组合' }).click(); await expect(page.getByLabel(`因子 ${factor.id} 权重`, { exact: true })).toHaveValue('1'); await page.getByLabel('组合名称', { exact: true }).fill('原子引用单因子配置'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001');
   await page.getByRole('button', { name: '运行回测' }).click(); await expect(page.getByText('研究证据不支持', { exact: true })).toBeVisible();
   const request = JSON.parse(state.writes.find(write => write.path === '/portfolios')!.raw!); expect(request.factors).toEqual([{ factorId: factor.id, weight: '1' }]); expect(request.researchIds).toBeUndefined(); expect(request.capital).toBe('1000.000000000000000001'); expect(request.capacityPolicy).toEqual(assessments[0]);
@@ -415,4 +453,175 @@ test('capital preview/initiation and paused reservations stay distinct from tran
   }
   expect(errors).toEqual([]); await page.screenshot({ path: info.outputPath('capital-controls-1024.png'), fullPage: true });
   await page.goto('/#/settings'); await page.getByText('深色', { exact: true }).click(); await expect(page.getByRole('radio', { name: '深色', exact: true })).toBeChecked(); await page.goto('/#/observations/o1'); await expect(page.locator('.capital-exit-section')).toContainText('不可发起'); await fits(page, 1024); await audit(page); await page.screenshot({ path: info.outputPath('capital-controls-dark-1024.png'), fullPage: true });
+});
+
+test('Chinese metric glossary preserves exact values and supports hover, focus, Escape and click', async ({ page }, info) => {
+  const state = await contract(page);
+  state.portfolio.metrics = [
+    { key: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', label: 'HELDOUT.portfolio.Sharpe Ratio (365 days)', value: '1.234567890123456789', partition: 'HELDOUT' },
+    { key: 'unfamiliar.scientific_field', label: 'unfamiliar.scientific_field', value: '9007199254740995.000000000000000001' },
+  ];
+  await page.goto('/#/portfolios/p1');
+  const metrics = page.locator('.metric-table');
+  await expect(metrics.locator('.explained-metric > span')).toHaveText(['夏普比率（365 天年化）', '未识别指标']);
+  await expect(metrics).toContainText('1.234567890123456789'); await expect(metrics).toContainText('9007199254740995.000000000000000001');
+  await expect(metrics.getByText('unfamiliar.scientific_field', { exact: true })).toBeHidden();
+  const native = metrics.getByRole('button', { name: '解释：夏普比率（365 天年化）', exact: true });
+  await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible(); await native.scrollIntoViewIfNeeded(); await native.hover(); await expect(page.getByRole('tooltip')).toContainText('365 天'); await page.mouse.move(0, 0); await expect(page.getByRole('tooltip')).toBeHidden();
+  await native.focus(); await expect(page.getByRole('tooltip')).toContainText('无风险利率为零'); await expect(native).toHaveCSS('outline-style', 'solid');
+  await page.keyboard.press('Escape'); await expect(page.getByRole('tooltip')).toBeHidden(); await native.press('Enter'); await expect(page.getByRole('tooltip')).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(page.getByRole('tooltip')).toHaveCount(0); await metrics.locator('.metric-technical > summary').last().click(); await expect(metrics.getByText('unfamiliar.scientific_field', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '解释：未识别指标', exact: true }).click(); await expect(page.getByRole('tooltip')).toContainText('定义暂未确认'); await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('metric-glossary-390.png'), fullPage: true }); expect(state.writes).toEqual([]);
+});
+
+test('long factor and portfolio names stay short while complete descriptions and provenance remain recoverable', async ({ page }, info) => {
+  const state = await contract(page); const name = '成交量变化与跨市场收益解释'.repeat(8); const hypothesis = '原始假设必须完整保留，不代表研究资格。\n'.repeat(16);
+  const factor: FactorView = { id: 'r8.t11.m0', researchId: 8, trialId: 11, memberIndex: 0, name, hypothesis, modelSource: '(module ;; original-model-source)', datasetId: 'test-data', currency: 'CNY', market: ['TEST.CN'], status: 'COMPUTED', evidence: 'independent', metrics: [], criterion: null, combinable: true, reason: null };
+  state.portfolio.name = name;
+  await page.route('**/api/v3/factors/r8.t11.m0', route => route.fulfill({ json: factor }));
+  await page.route('**/api/v3/factors/r8.t11.m0/capacity', route => route.fulfill({ status: 204 }));
+  await page.goto('/#/factors/r8.t11.m0'); await expect(page.getByRole('heading', { level: 1, name: shortTitle(name), exact: true })).toBeVisible();
+  const fullName = page.locator('.study-heading .text-disclosure'); await expect(fullName).not.toHaveAttribute('open', ''); await expect(fullName.locator('p')).toBeHidden(); await fullName.locator('summary').click(); await expect(fullName.locator('p')).toHaveText(name);
+  const description = page.locator('.result-content > .text-disclosure'); await expect(description.locator('p')).toBeHidden(); await description.locator('summary').click(); await expect(description.locator('p')).toHaveText(hypothesis);
+  await page.getByText('原始模型来源', { exact: true }).click(); await expect(page.locator('.model-source')).toHaveText(factor.modelSource);
+  await page.setViewportSize({ width: 320, height: 844 }); await fits(page, 320); await audit(page); await page.screenshot({ path: info.outputPath('factor-disclosures-320.png'), fullPage: true });
+  await page.goto('/#/portfolios/p1'); await expect(page.getByRole('heading', { name: shortTitle(name), level: 1, exact: true })).toBeVisible(); await expect(page.locator('.study-heading .text-disclosure p')).toBeHidden(); await page.locator('.study-heading .text-disclosure > summary').click(); await expect(page.locator('.study-heading .text-disclosure p')).toHaveText(name);
+  await expect(page.locator('.brand img').first()).toHaveAttribute('src', '/icon.svg'); await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/icon.svg'); await fits(page, 320); expect(state.writes).toEqual([]);
+});
+
+test('touch opens and dismisses a metric explanation without changing the account or issuing commands', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } }); const page = await context.newPage();
+  try {
+    const state = await contract(page); await page.goto('/#/observations/o1');
+    const info = page.locator('.snapshot-values').getByRole('button', { name: '解释：账户权益', exact: true });
+    await info.tap(); await expect(page.getByRole('tooltip')).toContainText('不是可提取现金');
+    await info.tap(); await expect(page.getByRole('tooltip')).toHaveCount(0); await expect(page.locator('.snapshot-values')).toContainText('103250.26'); expect(state.writes).toEqual([]);
+  } finally { await context.close(); }
+});
+
+test('public execution causes and remedies stay visible with original trial and portfolio task identities', async ({ page }, info) => {
+  const state = await contract(page); const errorDetail = { code: 'WASM_MEMORY_LIMIT', category: 'resource', message: '科学模型超过明确的内存预算。', action: '检查原模型与原预算，修正后再明确发起研究；不自动重试原试验。', operation: 'evaluate-factor', stage: 'execute' };
+  Object.assign(state.portfolio, { status: 'FAILED', error: errorDetail.code, errorDetail: { ...errorDetail, operation: 'portfolio-backtest' }, curve: [], metrics: [], targets: [] });
+  await page.route('**/api/v3/research/8', route => route.fulfill({ json: {
+    id: 8, title: '保留原研究身份', status: 'FAILED', trials: 1, model: 'test/test-model', createdAt: null, updatedAt: null,
+    input: { goal: '保留原研究身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 1 } },
+    trialRecords: [{ id: 12, hypothesis: '原试验', status: 'FAILED', metrics: [], error: errorDetail.code, errorDetail }], tasks: [], final: { status: 'FAILED', trialId: 12, reason: null, metrics: [], error: errorDetail.code, errorDetail },
+  } }));
+  await page.goto('/#/research/8'); const failure = page.locator('.recorded-error');
+  await expect(failure).toContainText(errorDetail.message); await expect(failure).toContainText(errorDetail.action); await expect(failure.locator('.failure-identity')).toHaveText('研究 #8 / 试验 #12'); await expect(failure.getByText(errorDetail.code, { exact: true })).toBeHidden();
+  await page.getByRole('button', { name: '所选试验 #12', exact: true }).click(); await expect(page.locator('.trial-detail .recorded-error')).toContainText(errorDetail.action); await expect(page.locator('.trial-detail .failure-identity')).toHaveText('试验 #12');
+  await page.goto('/#/portfolios/p1'); await expect(failure).toContainText(errorDetail.message); await expect(failure.locator('.failure-identity')).toHaveText('组合 p1 / 计算任务 #12'); await failure.locator('summary').click(); await expect(failure).toContainText(errorDetail.code); await expect(failure).toContainText('portfolio-backtest');
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('execution-cause-390.png'), fullPage: true }); expect(state.writes).toEqual([]);
+});
+
+test('capacity exposes native entry and exit limits, coverage, assumed volume stress and unavailable economic inputs', async ({ page }, info) => {
+  const state = await contract(page);
+  const scenario = { capital: '1000.000000000000000001', requiredTurnover: '250.000000000000000001', maximumParticipation: '0.010000000000000001', usableCapital: '1000', unallocatedCash: '0.000000000000000001', status: 'CONSTRAINED', reason: null, entryRebalanceTurnover: '50.000000000000000001', exitTurnover: '250.000000000000000001', entryRebalanceParticipation: '0.002000000000000001', exitParticipation: '0.010000000000000001' };
+  const report: CapacityReport = { status: 'ESTIMATED', reason: null, scope: 'portfolio', currency: 'CNY', basis: 'HISTORICAL_BAR_ESTIMATE', maximumCapital: '1000.000000000000000001', minimumCapital: '0.333333333333333334', bindingInstrument: 'TEST.CN', observationStartNs: '1800000000000000001', observationEndNs: '1800000000000000002', decisionClockNs: '1800000000000000003', validUntilNs: '1800000000000000004', assumptions: { participation: '0.01', maximumAgeSeconds: 120, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios: [scenario],
+    methodology: { id: 'HISTORICAL_BAR_PARTICIPATION_V2', formula: 'C_max = original-native-decimal-formula', notes: ['Original native method note, display protocol only'] },
+    constraints: [{ kind: 'ENTRY_REBALANCE', maximumCapital: '1000.000000000000000001', instrumentId: 'TEST.CN', decisionNs: '1800000000000000003', barEventNs: '1800000000000000001', barAvailableNs: '1800000000000000002', observedNotional: '100000.000000000000000001', requiredWeight: '0.999999999999999999' }, { kind: 'FULL_EXIT', maximumCapital: '2000.000000000000000001', instrumentId: 'SECOND.CN', decisionNs: '1800000000000000004', barEventNs: '1800000000000000001', barAvailableNs: '1800000000000000002', observedNotional: '200000.000000000000000001', requiredWeight: '0.999999999999999999' }],
+    coverage: { decisionCount: 5, assessedDecisionCount: 5, requiredObservations: 6, coveredObservations: 6, uniqueBars: 2, reusedBarObservations: 4 },
+    volumeStress: [{ volumeMultiplier: '1', maximumCapital: '1000.000000000000000001', status: 'ESTIMATED', reason: null, scenarios: [scenario] }, { volumeMultiplier: '0.5', maximumCapital: '500.000000000000000000', status: 'ESTIMATED', reason: null, scenarios: [{ ...scenario, usableCapital: '500.000000000000000000', unallocatedCash: '500.000000000000000001' }] }],
+    economicCapacity: { status: 'UNAVAILABLE', maximumCapital: null, reason: 'required_economic_inputs_missing', missingInputs: ['matched_out_of_sample_returns_at_capital_scales', 'venue_calibrated_market_impact', 'matched_spread_fees_and_execution_timing', 'validated_exit_execution'] },
+  };
+  state.portfolio.capacity = report; await page.goto('/#/portfolios/p1');
+  const panel = page.locator('.capacity-section'); await expect(panel.locator('.capacity-headline')).toContainText(report.maximumCapital!); await expect(panel.locator('.capacity-headline')).not.toContainText('最优');
+  const limits = panel.locator('.capacity-constraints'); await expect(limits).toContainText('建仓／再平衡'); await expect(limits).toContainText('独立全量退出'); await expect(limits).toContainText('SECOND.CN'); await expect(limits).toContainText('1800000000000000003 ns'); await expect(limits).toContainText('2027-01-15 08:00:00.000000003 UTC');
+  await expect(panel.locator('.capacity-coverage .facts dd')).toHaveText(['5', '5', '6', '6', '2', '4']);
+  await expect(panel.locator('.capacity-stress')).toContainText('500.000000000000000000'); await expect(panel.locator('.capacity-stress')).toContainText('假设减半'); await expect(panel.locator('.capacity-stress')).toContainText('不是概率');
+  await expect(panel.locator('.economic-capacity')).toContainText('经济容量不可用'); await expect(panel.locator('.economic-capacity')).toContainText('匹配各资金规模的样本外净收益'); await expect(panel.getByText('required_economic_inputs_missing', { exact: true })).toBeHidden();
+  await panel.locator('.capacity-scenarios .scenario-breakdown > summary').click(); await expect(panel.locator('.capacity-scenarios')).toContainText('50.000000000000000001'); await expect(panel.locator('.capacity-scenarios')).toContainText('250.000000000000000001');
+  await panel.locator('.capacity-provenance > summary').click(); await expect(panel.locator('.capacity-method')).toContainText('重复 BAR 共享同一预算'); await panel.getByText('原生方法字段', { exact: true }).click(); await expect(panel).toContainText(report.methodology!.formula);
+  for (const width of [320, 1440]) { await page.setViewportSize({ width, height: 1000 }); await fits(page, width); await audit(page); await panel.screenshot({ path: info.outputPath(`capacity-diagnostics-${width}.png`) }); }
+  const unavailable: CapacityReport = { ...report, status: 'UNAVAILABLE', reason: 'capacity_target_identity_mismatch', maximumCapital: null, minimumCapital: null, constraints: [], coverage: { ...report.coverage!, assessedDecisionCount: 2, coveredObservations: 3 } }; state.portfolio.capacity = unavailable; await page.reload(); await expect(panel.locator('.capacity-unavailable')).toContainText('原目标向量缺少或错配标的身份'); await expect(panel.locator('.capacity-headline')).toHaveCount(0); await expect(panel.locator('.capacity-coverage .facts dd')).toHaveText(['5', '2', '6', '3', '2', '4']); expect(state.writes).toEqual([]);
+});
+
+// Native adds 0.1×/1×/10× starting-capital diagnostics to requested rows. Controlled transport, not native-math qualification.
+function savedPortfolioCapacity(scope: string): CapacityReport {
+  return { status: 'ESTIMATED', reason: null, scope, currency: 'CNY', basis: 'HISTORICAL_BAR_ESTIMATE', maximumCapital: '2000', minimumCapital: '100', bindingInstrument: 'TEST.CN', observationStartNs: null, observationEndNs: null, decisionClockNs: null, validUntilNs: null,
+    requestedAssumptions: { scenarios: ['1500.000000000000000000', '250.000000000000000000'], participation: '0.010000000000000000', maximumAgeSeconds: 120 },
+    assumptions: { participation: '0.01', maximumAgeSeconds: 120, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios: [
+      { capital: '1500', requiredTurnover: '375', maximumParticipation: '0.0075', usableCapital: '1500', unallocatedCash: '0', status: 'FEASIBLE', reason: null },
+      { capital: '250', requiredTurnover: '62.5', maximumParticipation: '0.00125', usableCapital: '250', unallocatedCash: '0', status: 'FEASIBLE', reason: null },
+      { capital: '10000.025', requiredTurnover: '2500.00625', maximumParticipation: '0.050000125', usableCapital: '2000', unallocatedCash: '8000.025', status: 'CONSTRAINED', reason: null },
+      { capital: '100000.25', requiredTurnover: '25000.0625', maximumParticipation: '0.50000125', usableCapital: '2000', unallocatedCash: '98000.25', status: 'CONSTRAINED', reason: null },
+      { capital: '1000002.5', requiredTurnover: '250000.625', maximumParticipation: '5.0000125', usableCapital: '2000', unallocatedCash: '998002.5', status: 'CONSTRAINED', reason: null },
+    ] };
+}
+
+test('original portfolio capacity reassessment sends only explicit assumptions and preserves saved results and targets', async ({ page }, info) => {
+  const state = await contract(page); await page.clock.install(); const stored = savedPortfolioCapacity(state.portfolio.id); const requested = stored.requestedAssumptions!;
+  state.portfolio.capacity = stored; const original = structuredClone(state.portfolio);
+  const assumptions = { scenarios: ['1000.000000000000000001', '10000'], participation: '0.007500000000000001', maximumAgeSeconds: 300 };
+  let response = stored; const requests: { path: string; method: string; body: unknown }[] = [];
+  await page.route('**/api/v3/portfolios/p1/capacity', route => { requests.push({ path: new URL(route.request().url()).pathname, method: route.request().method(), body: route.request().postDataJSON() }); return route.fulfill({ json: response }); });
+  await page.setViewportSize({ width: 1440, height: 1200 }); await page.goto('/#/portfolios/p1');
+  await expect(page.getByTestId('equity-chart').locator('svg')).toBeVisible();
+  const current = page.locator('.portfolio-capacity > .capacity-section'); const settings = page.locator('.portfolio-capacity > .capacity-settings'); const form = page.locator('.portfolio-capacity-form');
+  await expect(current.locator('.capacity-headline')).toContainText('2000'); await expect(settings).not.toHaveAttribute('open', ''); await expect(current.locator('.capacity-provenance')).not.toHaveAttribute('open', '');
+  await page.evaluate(() => window.scrollTo(0, 0)); await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0); await expect(current.locator('.capacity-headline')).toBeInViewport(); await fits(page, 1440); await audit(page);
+  await page.screenshot({ path: info.outputPath('portfolio-capacity-default-top-1440.png'), fullPage: false });
+  const rows = current.locator('.capacity-scenarios').getByRole('row').filter({ has: page.getByRole('cell') }); await expect(rows).toHaveCount(stored.scenarios.length); for (let index = 0; index < stored.scenarios.length; index++) await expect(rows.nth(index).getByRole('cell').first()).toContainText(stored.scenarios[index]!.capital);
+  await settings.locator('summary').first().click(); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(requested.scenarios.join(', ')); await expect(form.getByLabel('成交量参与率', { exact: true })).toHaveValue(requested.participation); await expect(form.getByLabel('流动性数据最大时差（秒）', { exact: true })).toHaveValue(String(requested.maximumAgeSeconds));
+  await form.getByRole('button', { name: '重评原组合容量', exact: true }).click(); await expect(page.locator('.capacity-assessment-source')).toContainText('本次重评结果'); expect(requests).toEqual([{ path: '/api/v3/portfolios/p1/capacity', method: 'POST', body: requested }]);
+  response = { ...stored, requestedAssumptions: assumptions, maximumCapital: '5000.000000000000000001', assumptions: { ...stored.assumptions, participation: assumptions.participation, maximumAgeSeconds: assumptions.maximumAgeSeconds }, scenarios: [{ ...stored.scenarios[0]!, capital: assumptions.scenarios[0]! }] };
+  await form.getByLabel('资本情景', { exact: true }).fill(assumptions.scenarios.join(', ')); await form.getByLabel('成交量参与率', { exact: true }).fill(assumptions.participation); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill(String(assumptions.maximumAgeSeconds)); await form.getByRole('button', { name: '重评原组合容量', exact: true }).click();
+  await expect(current.locator('.capacity-headline')).toContainText('5000.000000000000000001'); await expect(page.locator('.capacity-assessment-source')).toContainText('本次重评结果'); await expect(page.locator('.capacity-assessment-source')).toContainText('p1'); await expect(current).toContainText(assumptions.participation);
+  const polled = page.waitForResponse('**/api/v3/portfolios/p1'); await page.clock.runFor(3000); await polled; await expect(current.locator('.capacity-headline')).toContainText('5000.000000000000000001'); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(assumptions.scenarios.join(', '));
+  expect(requests).toEqual([{ path: '/api/v3/portfolios/p1/capacity', method: 'POST', body: requested }, { path: '/api/v3/portfolios/p1/capacity', method: 'POST', body: assumptions }]); expect(state.writes).toEqual([]); expect(state.portfolio).toEqual(original);
+  await expect(page.getByRole('heading', { name: original.name, level: 1, exact: true })).toBeVisible(); await expect(page.locator('.result-section').filter({ has: page.getByRole('heading', { name: '目标权重', exact: true }) })).toContainText(original.targets[0]!.weight);
+  const saved = page.locator('.capacity-original'); await expect(saved.locator('.capacity-headline')).toBeHidden(); await saved.locator('summary').first().click(); await expect(saved.locator('.capacity-headline')).toContainText('2000');
+  await page.reload(); await expect(current.locator('.capacity-headline')).toContainText('2000'); await expect(page.locator('.capacity-assessment-source')).toContainText('原保存报告');
+  response = { ...response, status: 'UNAVAILABLE', reason: 'portfolio_simulation_request_missing', maximumCapital: null, minimumCapital: null, scenarios: [] };
+  await settings.locator('summary').first().click(); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(assumptions.scenarios.join(', ')); await form.getByRole('button', { name: '重评原组合容量', exact: true }).click();
+  await expect(current.locator('.capacity-unavailable')).toContainText('原组合未保存原始模拟请求'); await expect(current.locator('.capacity-headline')).toHaveCount(0); expect(requests).toHaveLength(3); expect(state.portfolio).toEqual(original); expect(state.writes).toEqual([]);
+  state.portfolio.status = 'FAILED'; await page.reload(); await expect(page.locator('.study-heading .status')).toHaveText('失败'); await expect(settings).toHaveCount(0); expect(requests).toHaveLength(3);
+});
+
+test('queued portfolio initializes pristine capacity inputs when the saved computed report first arrives', async ({ page }) => {
+  const state = await contract(page); await page.clock.install(); state.portfolio.status = 'QUEUED'; const stored = savedPortfolioCapacity(state.portfolio.id); const requested = stored.requestedAssumptions!;
+  await page.goto('/#/portfolios/p1'); await expect(page.locator('.portfolio-capacity .capacity-unavailable')).toBeVisible(); const settings = page.locator('.portfolio-capacity > .capacity-settings'); await expect(settings).toHaveCount(0);
+  Object.assign(state.portfolio, { status: 'COMPUTED', capacity: stored }); await page.clock.runFor(3000); await settings.locator('summary').first().click(); const form = page.locator('.portfolio-capacity-form');
+  await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(requested.scenarios.join(', ')); await expect(form.getByLabel('成交量参与率', { exact: true })).toHaveValue(requested.participation); await expect(form.getByLabel('流动性数据最大时差（秒）', { exact: true })).toHaveValue(String(requested.maximumAgeSeconds));
+  state.portfolio.capacity = { ...stored, coverage: { decisionCount: 1, assessedDecisionCount: 1, requiredObservations: 1, coveredObservations: 1, uniqueBars: 1, reusedBarObservations: 0 } }; await page.clock.runFor(3000); await expect(page.locator('.capacity-coverage')).toBeVisible(); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(requested.scenarios.join(', ')); expect(state.writes).toEqual([]);
+});
+
+for (const source of ['saved draft', 'owner edits'] as const) test(`late capacity report and subsequent polls preserve ${source}`, async ({ page }) => {
+  const state = await contract(page); await page.clock.install(); const draft = { scenarios: '900.000000000000000001', participation: '0.02', maximumAgeSeconds: '45' }; const stored = savedPortfolioCapacity(state.portfolio.id);
+  if (source === 'saved draft') { state.portfolio.status = 'QUEUED'; await page.addInitScript(value => sessionStorage.setItem('quazonai.draft.portfolio-capacity:p1', JSON.stringify(value)), draft); }
+  await page.goto('/#/portfolios/p1'); await expect(page.locator('.portfolio-capacity .capacity-unavailable')).toBeVisible(); const settings = page.locator('.portfolio-capacity > .capacity-settings'); const form = page.locator('.portfolio-capacity-form');
+  if (source === 'owner edits') { await settings.locator('summary').first().click(); await form.getByLabel('资本情景', { exact: true }).fill(draft.scenarios); await form.getByLabel('成交量参与率', { exact: true }).fill(draft.participation); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill(draft.maximumAgeSeconds); }
+  Object.assign(state.portfolio, { status: 'COMPUTED', capacity: stored }); await page.clock.runFor(3000); await expect(page.locator('.capacity-headline')).toContainText('2000'); if (source === 'saved draft') await settings.locator('summary').first().click();
+  await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(draft.scenarios); await expect(form.getByLabel('成交量参与率', { exact: true })).toHaveValue(draft.participation); await expect(form.getByLabel('流动性数据最大时差（秒）', { exact: true })).toHaveValue(draft.maximumAgeSeconds);
+  state.portfolio.capacity = { ...stored, coverage: { decisionCount: 1, assessedDecisionCount: 1, requiredObservations: 1, coveredObservations: 1, uniqueBars: 1, reusedBarObservations: 0 } }; await page.clock.runFor(3000); await expect(page.locator('.capacity-coverage')).toBeVisible();
+  await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(draft.scenarios); await expect(form.getByLabel('成交量参与率', { exact: true })).toHaveValue(draft.participation); await expect(form.getByLabel('流动性数据最大时差（秒）', { exact: true })).toHaveValue(draft.maximumAgeSeconds); expect(state.writes).toEqual([]);
+});
+
+test('historical capacity without request metadata requires explicit scenarios instead of guessing diagnostic rows', async ({ page }) => {
+  const state = await contract(page); const stored = savedPortfolioCapacity(state.portfolio.id); delete stored.requestedAssumptions; state.portfolio.capacity = stored; const original = structuredClone(state.portfolio); const requests: unknown[] = [];
+  await page.route('**/api/v3/portfolios/p1/capacity', route => { requests.push(route.request().postDataJSON()); return route.fulfill({ status: 422, json: { error: 'unsupported_evidence' } }); });
+  await page.goto('/#/portfolios/p1'); const settings = page.locator('.portfolio-capacity > .capacity-settings'); await settings.locator('summary').first().click(); const form = page.locator('.portfolio-capacity-form');
+  await expect(form.getByLabel('资本情景', { exact: true })).toBeEmpty(); await expect(form.getByLabel('成交量参与率', { exact: true })).toHaveValue(stored.assumptions.participation!); await expect(form.getByLabel('流动性数据最大时差（秒）', { exact: true })).toHaveValue(String(stored.assumptions.maximumAgeSeconds)); await expect(settings.locator('.capacity-missing-request')).toContainText('原报告未记录原始请求假设');
+  await expect(page.locator('.capacity-scenarios').getByRole('row').filter({ has: page.getByRole('cell') })).toHaveCount(stored.scenarios.length); await form.getByRole('button', { name: '重评原组合容量', exact: true }).click(); await expect(form.getByText('请输入资本情景', { exact: true })).toBeVisible(); expect(requests).toEqual([]); expect(state.writes).toEqual([]); expect(state.portfolio).toEqual(original); await audit(page);
+});
+
+test('capacity execution diagnostics retain source cause and remedy without inventing money or changing original identity', async ({ page }) => {
+  const state = await contract(page); const original = structuredClone(state.portfolio);
+  const policy = { scenarios: ['1000.000000000000000001'], participation: '0.01', maximumAgeSeconds: 300 };
+  const warmup: ExecutionErrorDetail = { code: 'FORECAST_INSUFFICIENT_WARMUP', category: 'data', message: '原预测缺少足够的预热观测。', action: '检查原模型预热窗口与原数据区间，明确修正后再发起评估。', operation: 'evaluate-factor', stage: 'validate' };
+  const executable: ExecutionErrorDetail = { code: 'native_executable_unavailable', category: 'runtime', message: '原生科学执行程序当前不可用。', action: '恢复原生科学执行程序后，用相同原组合与明确假设重新评估容量。', operation: 'portfolio-capacity', stage: 'execute' };
+  const unavailable = (scope: string, errorDetail: ExecutionErrorDetail): CapacityReport => ({ status: 'UNAVAILABLE', reason: errorDetail.code, errorDetail, scope, requestedAssumptions: policy, currency: 'CNY', basis: 'HISTORICAL_BAR_ESTIMATE', maximumCapital: null, minimumCapital: null, bindingInstrument: null, observationStartNs: null, observationEndNs: null, decisionClockNs: null, validUntilNs: null, assumptions: { participation: policy.participation, maximumAgeSeconds: policy.maximumAgeSeconds, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios: policy.scenarios.map(capital => ({ capital, requiredTurnover: null, maximumParticipation: null, usableCapital: null, unallocatedCash: null, status: 'UNAVAILABLE', reason: errorDetail.code })) });
+  const factor: FactorView = { id: 'r8.t11.m0', researchId: 8, trialId: 11, memberIndex: 0, name: '原单因子', hypothesis: '原假设', modelSource: '(module)', datasetId: 'test-data', currency: 'CNY', market: ['TEST.CN'], status: 'COMPUTED', evidence: 'independent', metrics: [], criterion: null, combinable: true, reason: null, capacityAssumptions: policy };
+  await page.route('**/api/v3/factors/r8.t11.m0', route => route.fulfill({ json: factor })); await page.route('**/api/v3/factors/r8.t11.m0/capacity', route => route.fulfill({ json: unavailable(factor.id, warmup) }));
+  await page.goto('/#/factors/r8.t11.m0'); let panel = page.locator('.capacity-section');
+  await expect(panel.locator('.recorded-error')).toContainText(warmup.message); await expect(panel.locator('.failure-action')).toContainText(warmup.action); await expect(panel.locator('.failure-identity')).toHaveText(`容量范围 ${factor.id}`); await expect(panel.locator('.capacity-headline')).toHaveCount(0); await expect(panel.locator('.capacity-scenarios')).toHaveCount(0);
+  await expect(panel.getByText(warmup.code, { exact: true })).toBeHidden(); await panel.locator('.recorded-error summary').click(); await expect(panel.locator('.recorded-error')).toContainText(warmup.operation!); await expect(panel.locator('.recorded-error')).toContainText('阶段：验证输出');
+  const requests: unknown[] = []; await page.route('**/api/v3/portfolios/p1/capacity', route => { requests.push(route.request().postDataJSON()); return route.fulfill({ json: unavailable(original.id, executable) }); });
+  await page.goto('/#/portfolios/p1'); await page.locator('.portfolio-capacity > .capacity-settings > summary').click(); const form = page.locator('.portfolio-capacity-form');
+  await expect(form.getByLabel('资本情景', { exact: true })).toBeEmpty(); await form.getByLabel('资本情景', { exact: true }).fill(policy.scenarios.join(', ')); await form.getByLabel('成交量参与率', { exact: true }).fill(policy.participation); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill(String(policy.maximumAgeSeconds)); await form.getByRole('button', { name: '重评原组合容量', exact: true }).click();
+  panel = page.locator('.portfolio-capacity > .capacity-section'); await expect(panel.locator('.recorded-error')).toContainText(executable.message); await expect(panel.locator('.failure-action')).toContainText(executable.action); await expect(panel.locator('.failure-identity')).toHaveText(`容量范围 ${original.id}`); await expect(panel.locator('.capacity-headline')).toHaveCount(0); await expect(panel.locator('.capacity-scenarios')).toHaveCount(0); await expect(panel.locator('.capacity-unavailable .facts')).toContainText(policy.scenarios[0]!);
+  await panel.locator('.recorded-error summary').click(); await expect(panel.locator('.recorded-error')).toContainText(executable.code); await expect(panel.locator('.recorded-error')).toContainText(executable.operation!); await expect(panel.locator('.recorded-error')).toContainText('阶段：执行');
+  await expect(page.getByRole('heading', { name: original.name, level: 1, exact: true })).toBeVisible(); await expect(page.locator('.result-section').filter({ has: page.getByRole('heading', { name: '目标权重', exact: true }) })).toContainText(original.targets[0]!.weight); expect(requests).toEqual([policy]); expect(state.portfolio).toEqual(original); expect(state.writes).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page);
 });

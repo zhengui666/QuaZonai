@@ -22,6 +22,7 @@ Run `quazonai identity`. Without a login, have the user run `quazonai login --or
 | Observe or stop the original study | [Bounded observation](references/runs.md) |
 | Inspect original atomic factors and conditional capacity | `factor list`, `factor get ID`, `factor capacity ID` |
 | Build a requested shared-account portfolio/backtest | `portfolio build --file FILE`, `portfolio list`, `portfolio get ID` |
+| Reassess original portfolio capacity without rebuilding | `portfolio capacity ID --file FILE`; [assumptions and limits](references/results.md) |
 | Bind Paper/Live account observation and target receipts | [Observations](references/account-transport.md) |
 | Requested account sizing or capital reservation | `observation automatic ID --file FILE`, `capital status/preview/command ID`; [account transport](references/account-transport.md) |
 | Inspect/update requested settings or installed extensions | `settings get`, `settings set --file FILE`, `extensions list`, `extensions enable NAME`, `extensions disable NAME` |

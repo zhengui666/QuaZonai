@@ -269,6 +269,70 @@ fn native_capacity_uses_original_catalog_before_decision_and_reports_conditional
         &"250500".parse::<bigdecimal::BigDecimal>().unwrap()
     );
     assert_eq!(report.binding_instrument.as_deref(), Some("EUR/USD.SIM"));
+    let constraints = report.constraints.as_ref().unwrap();
+    assert_eq!(constraints.len(), 2);
+    for constraint in constraints {
+        assert_eq!(constraint.instrument_id, "EUR/USD.SIM");
+        assert_eq!(constraint.decision_ns, market::instant(2));
+        assert_eq!(
+            constraint.bar_event_ns,
+            market::count(2 * market::INTERVAL_NS)
+        );
+        assert_eq!(constraint.bar_available_ns, market::instant(2));
+        assert_eq!(
+            constraint.observed_notional.as_decimal(),
+            &"10020000".parse::<bigdecimal::BigDecimal>().unwrap()
+        );
+        assert_eq!(
+            constraint.required_weight.as_decimal(),
+            &"0.4".parse::<bigdecimal::BigDecimal>().unwrap()
+        );
+    }
+    let coverage = report.coverage.as_ref().unwrap();
+    assert_eq!(
+        (coverage.decision_count, coverage.assessed_decision_count),
+        (2, 2)
+    );
+    assert_eq!(
+        (
+            coverage.required_observations,
+            coverage.covered_observations,
+            coverage.unique_bars,
+            coverage.reused_bar_observations
+        ),
+        (4, 4, 4, 0)
+    );
+    let stress = report.volume_stress.as_ref().unwrap();
+    assert_eq!(
+        stress[0].volume_multiplier.as_decimal(),
+        &bigdecimal::BigDecimal::from(1)
+    );
+    assert_eq!(
+        serde_json::to_value(&stress[0].scenarios).unwrap(),
+        serde_json::to_value(&report.scenarios).unwrap()
+    );
+    assert_eq!(
+        stress[1].maximum_capital.as_ref().unwrap().as_decimal(),
+        &"125250".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    assert_eq!(
+        stress[1].scenarios[0]
+            .maximum_participation
+            .as_ref()
+            .unwrap()
+            .as_decimal(),
+        &(report.scenarios[0]
+            .maximum_participation
+            .as_ref()
+            .unwrap()
+            .as_decimal()
+            * 2)
+    );
+    let economic = report.economic_capacity.as_ref().unwrap();
+    assert_eq!(economic.status, "UNAVAILABLE");
+    assert!(economic.maximum_capital.is_none());
+    assert_eq!(economic.missing_inputs.len(), 4);
+    assert_eq!(report.scenarios[0].capital, request.capitals[0]);
     assert_eq!(report.scenarios[0].status, "FEASIBLE");
     assert_eq!(report.scenarios[1].status, "CONSTRAINED");
     assert!(report.minimum_capital.unwrap().is_positive());
@@ -288,6 +352,14 @@ fn native_capacity_uses_original_catalog_before_decision_and_reports_conditional
     request.simulation.target_points[0].valid_until_ns = market::count(101 * market::INTERVAL_NS);
     let stale = run(&request);
     assert_eq!(stale.reason.as_deref(), Some("liquidity_stale"));
+    assert_eq!(stale.coverage.as_ref().unwrap().required_observations, 2);
+    assert_eq!(stale.coverage.as_ref().unwrap().covered_observations, 0);
+    assert!(stale
+        .volume_stress
+        .as_ref()
+        .unwrap()
+        .iter()
+        .all(|row| row.status == "UNAVAILABLE" && row.maximum_capital.is_none()));
     assert_eq!(stale.scenarios.len(), request.capitals.len());
     for (row, capital) in stale.scenarios.iter().zip(&request.capitals) {
         assert_eq!(&row.capital, capital);
@@ -310,6 +382,141 @@ fn native_capacity_uses_original_catalog_before_decision_and_reports_conditional
     );
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("capacity_capital_invalid"));
+}
+
+#[test]
+fn native_capacity_reused_bar_does_not_replenish_the_turnover_budget() {
+    use contracts::capacity::NativeCapacityRequestV1;
+    let (directory, mut simulation) = market("0", 20);
+    let mut exit = simulation.target_points[0].clone();
+    exit.asof_ns = market::count(exit.asof_ns.get() + 1);
+    for target in &mut exit.targets {
+        target.weight = "0".parse().unwrap();
+    }
+    exit.cash_weight = "1".parse().unwrap();
+    simulation.target_points = vec![simulation.target_points[0].clone(), exit];
+    let request = NativeCapacityRequestV1 {
+        schema_version: contracts::SchemaV1,
+        simulation,
+        policy: serde_json::from_value(serde_json::json!({"schema_version":1,"maximum_age_seconds":120,"participation_limit":"0.01"})).unwrap(),
+        capitals: vec!["200000".parse().unwrap()],
+    };
+    let report = job::capacity::assess(directory.path(), &request).unwrap();
+    // Establishment 0.4 plus liquidation 0.4 share the original 10,020,000 BAR.
+    assert_eq!(
+        report.maximum_capital.unwrap().as_decimal(),
+        &"125250".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    assert_eq!(report.scenarios[0].status, "CONSTRAINED");
+    let coverage = report.coverage.as_ref().unwrap();
+    assert_eq!(
+        (
+            coverage.required_observations,
+            coverage.covered_observations,
+            coverage.unique_bars,
+            coverage.reused_bar_observations
+        ),
+        (4, 4, 2, 2)
+    );
+    let entry = &report.constraints.as_ref().unwrap()[0];
+    assert_eq!(
+        entry.required_weight.as_decimal(),
+        &"0.8".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    assert_eq!(
+        entry.decision_ns,
+        request.simulation.target_points[1].asof_ns
+    );
+    assert_eq!(
+        report.scenarios[0]
+            .required_turnover
+            .as_ref()
+            .unwrap()
+            .as_decimal(),
+        &"160000".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+}
+
+#[test]
+fn native_capacity_scoped_zero_does_not_sell_a_retained_out_of_scope_holding() {
+    use contracts::capacity::NativeCapacityRequestV1;
+    let (directory, mut simulation) = market("0", 20);
+    simulation.target_points[0].rebalance_instrument_ids = Some(vec!["EUR/USD.SIM".into()]);
+    simulation.target_points[1].rebalance_instrument_ids = Some(vec!["GBP/USD.SIM".into()]);
+    simulation.target_points[1].targets[0].weight = "0".parse().unwrap();
+    simulation.target_points[1].targets[1].weight = "0.5".parse().unwrap();
+    simulation.target_points[1].cash_weight = "0.5".parse().unwrap();
+    let request = NativeCapacityRequestV1 {
+        schema_version: contracts::SchemaV1,
+        simulation,
+        policy: serde_json::from_value(serde_json::json!({"schema_version":1,"maximum_age_seconds":120,"participation_limit":"0.01"})).unwrap(),
+        capitals: vec!["1000".parse().unwrap()],
+    };
+    let report = job::capacity::assess(directory.path(), &request).unwrap();
+    assert_eq!(report.status, "ESTIMATED");
+    // First only EUR is established; second establishes GBP and still assesses EUR's exit.
+    let coverage = report.coverage.as_ref().unwrap();
+    assert_eq!(
+        (
+            coverage.required_observations,
+            coverage.covered_observations,
+            coverage.unique_bars
+        ),
+        (3, 3, 3)
+    );
+    assert_eq!(
+        report.scenarios[0]
+            .entry_rebalance_turnover
+            .as_ref()
+            .unwrap()
+            .as_decimal(),
+        &bigdecimal::BigDecimal::from(500)
+    );
+    assert_eq!(
+        report.scenarios[0]
+            .exit_turnover
+            .as_ref()
+            .unwrap()
+            .as_decimal(),
+        &bigdecimal::BigDecimal::from(500)
+    );
+}
+
+#[test]
+fn native_capacity_missing_targets_are_not_silent_liquidation_or_optimistic_capacity() {
+    use contracts::capacity::NativeCapacityRequestV1;
+    for scoped in [false, true] {
+        let (directory, mut simulation) = market("0", 20);
+        simulation.target_points[1].targets.remove(0);
+        simulation.target_points[1].cash_weight = "0.4".parse().unwrap();
+        if scoped {
+            simulation.target_points[1].rebalance_instrument_ids = Some(vec!["GBP/USD.SIM".into()]);
+        }
+        // Inspect the actual native replay contract, not assumed sparse-vector semantics.
+        let output = command(
+            &[
+                "simulate".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+            ],
+            &simulation,
+        );
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("SIMULATION_TARGET_INVALID"));
+        let request = NativeCapacityRequestV1 {
+            schema_version: contracts::SchemaV1,
+            simulation,
+            policy: serde_json::from_value(serde_json::json!({"schema_version":1,"maximum_age_seconds":120,"participation_limit":"0.01"})).unwrap(),
+            capitals: vec!["1000".parse().unwrap()],
+        };
+        let report = job::capacity::assess(directory.path(), &request).unwrap();
+        assert_eq!(report.status, "UNAVAILABLE");
+        assert_eq!(
+            report.reason.as_deref(),
+            Some("capacity_target_identity_mismatch")
+        );
+        assert!(report.maximum_capital.is_none());
+    }
 }
 
 fn target_blend_request() -> serde_json::Value {

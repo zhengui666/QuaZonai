@@ -5,16 +5,15 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import wabtFactory from 'wabt';
 import { canonical } from '../src/documents.ts';
 import { object } from '../src/trials.ts';
 import { intervalTargets, simulationSelection, thresholdTargets } from '../src/strategy.ts';
 import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import type { StrategyMember, StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
-import { normalizedRequest } from './native-wasm.ts';
+import { compileWasm, normalizedRequest } from './native-wasm.ts';
+import { ExecutionFailure } from '../src/execution-errors.ts';
 
 const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit']);
-const wabt = await wabtFactory();
 
 /** Original JSON stdin and official process cleanup/cancellation; no provider environment or deadline. */
 export async function executeNative(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
@@ -23,6 +22,7 @@ export async function executeNative(binary: string, command: string, input: Json
   await writeFile(inputPath, jsonChunks(input));
   const env = new NodeExecutionEnv({ cwd: directory });
   const stdout = new JsonReader(); let parseError: unknown; let stderr = '';
+  let stage: 'execute' | 'decode' = 'execute';
   try {
     const result = getOrThrow(await env.exec([
       'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
@@ -33,9 +33,11 @@ export async function executeNative(binary: string, command: string, input: Json
       },
     }, context));
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
+    stage = 'decode';
     if (parseError !== undefined) throw parseError;
     return object(stdout.finish(), 'native_result');
-  } finally { await env.cleanup(withoutAbortSignal(context)); }
+  } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
+  finally { await env.cleanup(withoutAbortSignal(context)); }
 }
 
 export async function blendTargets(binary: string, memberRows: JsonObject[][], weights: string[], directory: string, context: Context, force = false) {
@@ -59,8 +61,7 @@ export async function forecastMembers(binary: string, catalog: string, members: 
     ? { ...request, forecast: { ...object(request.forecast, 'forecast_request'), selection: simulationSelection(request, undefined, policy) } } : request;
   for (const [index, member] of members.entries()) {
     const modelPath = join(directory, `model-${index}.wasm`);
-    const module = wabt.parseWat('selected-factor.wat', member.model);
-    try { module.validate(); await writeFile(modelPath, module.toBinary({}).buffer); } finally { module.destroy(); }
+    await writeFile(modelPath, compileWasm(member.model, 'selected-factor.wat', 'portfolio-evaluation'));
     const args = ['--catalog', catalog, '--model', modelPath];
     const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context) : null;
     if (summary && (canonical(summary.request!) !== canonical(computationRequest) || 'points' in summary)) throw new Error('native_summary_request_mismatch');

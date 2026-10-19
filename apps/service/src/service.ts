@@ -19,7 +19,7 @@ import { registerModels } from './models.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { listFactors, readFactor } from './factors.ts';
-import { factorCapacity } from './capacity.ts';
+import { factorCapacity, portfolioCapacity } from './capacity.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
 import { accountKey, capitalStatus, control } from './capital-exit.ts';
@@ -120,6 +120,10 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
+  app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
+    const assumptions = researchCapital(request.body);
+    return portfolioCapacity(await work.getPortfolio(request.params.id), config, context, assumptions);
+  });
   app.post(`${API}/portfolios`, async (request, reply) => { const view = await work.startPortfolio(request.body); return reply.code(202).send(portfolioView(await work.getPortfolio(view.id))); });
   app.get(`${API}/observations`, async () => { const facts = (await work.snapshot())!; return Object.values(facts.observations).map(item => { const fact = observation(item); return observationView({ ...fact, view: { ...fact.view, capitalExit: capitalStatus(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)])) } }); }); });
   app.get<{ Params: { id: string } }>(`${API}/observations/:id/capital-exits`, request => capital.refreshCapital(request.params.id));

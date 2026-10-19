@@ -6,6 +6,7 @@ import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } fr
 import type { ObservationTaskInput } from './downstream.ts';
 import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
 import { accountKey, CapitalExitCommand } from './capital-exit.ts';
+import { classifyExecutionError, executionDiagnostic } from '../../research/src/execution-errors.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
@@ -18,16 +19,18 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         fact.native = result.native; fact.target = result.target;
         fact.view.curve = result.curve; fact.view.metrics = result.metrics; fact.view.capacity = result.capacity;
         fact.view.targets = (result.target.targets as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
-        fact.view.status = 'COMPUTED'; fact.view.error = null;
+        fact.view.status = 'COMPUTED'; fact.view.error = null; fact.view.errorDetail = null;
         facts.portfolios[task.input.id] = json(fact);
         return { status: 'terminal', outcome: { status: 'completed', result: null } };
       }, context);
     } catch (error) {
       if (runtime.signal.aborted) throw error; // suspend preserves the same admitted native input
+      const diagnostic = executionDiagnostic(error, 'operation_failed');
+      const detail = classifyExecutionError(error, 'backtest_failed', { operation: 'portfolio-backtest' });
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
-        fact.view.status = 'FAILED'; fact.view.error = errorCode(error); facts.portfolios[task.input.id] = json(fact);
-        return { status: 'terminal', outcome: { status: 'failed', error: { message: errorCode(error) } } };
+        fact.view.status = 'FAILED'; fact.view.error = diagnostic; fact.view.errorDetail = detail; facts.portfolios[task.input.id] = json(fact);
+        return { status: 'terminal', outcome: { status: 'failed', error: { message: diagnostic, detail: { ...detail } } } };
       }, context);
     }
   } },
