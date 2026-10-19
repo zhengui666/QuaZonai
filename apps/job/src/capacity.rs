@@ -22,13 +22,17 @@ fn ceil(value: BigDecimal) -> Result<DecimalValue> {
         .parse()
         .map_err(anyhow::Error::msg)
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Demand {
     instrument: String,
     change: BigDecimal,
     exit: BigDecimal,
     liquidity: BigDecimal,
     minimum: BigDecimal,
+    decision_ns: u64,
+    exit_decision_ns: u64,
+    bar_event_ns: u64,
+    bar_available_ns: u64,
 }
 fn envelope(request: &NativeCapacityRequestV1) -> NativeCapacityReportV1 {
     NativeCapacityReportV1 {
@@ -39,31 +43,211 @@ fn envelope(request: &NativeCapacityRequestV1) -> NativeCapacityReportV1 {
         decision_clock_ns: request.simulation.target_points.last().map(|point| point.asof_ns),
         valid_until_ns: request.simulation.target_points.last().map(|point| point.valid_until_ns),
         assumptions: NativeCapacityAssumptionsV1 { participation: request.policy.participation_limit.clone(), maximum_age_seconds: request.policy.maximum_age_seconds,
-            execution_window: "ONE_LAST_AVAILABLE_BAR; target-weight deltas, initial cash establishment; no future volume".into(),
-            exit: "Full liquidation at each observed BAR budget; future exit depth is unknown".into(),
-            fees: "Original native simulation fee/fill/latency settings; no estimated after-cost profitability".into(),
-            depth: "BAR_NOTIONAL_ONLY; no orderbook depth, impact model or confidence interval".into() }, scenarios: Vec::new(),
+            execution_window: "LAST_AVAILABLE_BAR; cumulative absolute net-target changes share each original BAR budget; initial cash establishment".into(),
+            exit: "Standalone full liquidation of retained target exposure at each decision; alternative to, not added to, strategy turnover; future depth unknown".into(),
+            fees: "Original native simulation settings retained, but this liquidity ceiling does not estimate execution costs or after-cost profitability".into(),
+            depth: "BAR_NOTIONAL_ONLY; no orderbook depth, impact calibration or confidence interval".into() }, scenarios: Vec::new(),
+        methodology: Some(NativeCapacityMethodologyV1 {
+            id: "HISTORICAL_BAR_PARTICIPATION_V2".into(),
+            formula: "C_max = min_(instrument,BAR) participation * observedNotional / max(sum(abs(netTargetChange)), max(retainedTargetWeight))".into(),
+            notes: vec![
+                "Static capital and target-weight approximation, not native fill/P&L/holding-drift reconstruction".into(),
+                "Only original event/available clocks at or before the decision; no future volume or replenishment of reused BARs".into(),
+                "Scoped decisions retain out-of-scope holdings; native replay requires complete target vectors, including explicit zero targets for liquidation".into(),
+                "Turnover is peak per instrument/BAR; full exit is a separate alternative path, not a simultaneous round trip".into(),
+                "Volume multiplier 1 is baseline; 0.5 is assumed reduced-liquidity sensitivity, not an estimated probability".into(),
+            ],
+        }),
+        constraints: Some(Vec::new()),
+        coverage: Some(NativeCapacityCoverageV1 { decision_count: request.simulation.target_points.len(), ..Default::default() }),
+        volume_stress: Some(Vec::new()),
+        economic_capacity: Some(NativeCapacityEconomicV1 {
+            status: "UNAVAILABLE".into(), maximum_capital: None, reason: "required_economic_inputs_missing".into(),
+            missing_inputs: ["matched_out_of_sample_returns_at_capital_scales", "venue_calibrated_market_impact", "matched_spread_fees_and_execution_timing", "validated_exit_execution"].map(String::from).to_vec(),
+        }),
     }
+}
+fn unavailable(
+    mut report: NativeCapacityReportV1,
+    capitals: &[DecimalValue],
+    reason: &str,
+) -> NativeCapacityReportV1 {
+    report.reason = Some(reason.into());
+    report.scenarios = capitals
+        .iter()
+        .map(|capital| NativeCapacityScenarioV1 {
+            capital: capital.clone(),
+            required_turnover: None,
+            maximum_participation: None,
+            usable_capital: None,
+            unallocated_cash: None,
+            status: "UNAVAILABLE".into(),
+            reason: Some(reason.into()),
+            entry_rebalance_turnover: None,
+            exit_turnover: None,
+            entry_rebalance_participation: None,
+            exit_participation: None,
+        })
+        .collect();
+    report.volume_stress = Some(
+        ["1", "0.5"]
+            .map(|multiplier| NativeCapacityVolumeStressV1 {
+                volume_multiplier: multiplier.parse().expect("constant decimal"),
+                maximum_capital: None,
+                status: report.status.clone(),
+                reason: report.reason.clone(),
+                scenarios: report.scenarios.clone(),
+            })
+            .to_vec(),
+    );
+    report
+}
+fn scenarios(
+    capitals: &[DecimalValue],
+    budgets: &[Demand],
+    upper: Option<&BigDecimal>,
+    lower: &BigDecimal,
+    volume_multiplier: &BigDecimal,
+) -> Result<Vec<NativeCapacityScenarioV1>> {
+    capitals
+        .iter()
+        .map(|capital| {
+            let mut turnover = [BigDecimal::zero(), BigDecimal::zero()];
+            let mut participation = turnover.clone();
+            let mut zero_liquidity = [false, false];
+            for demand in budgets {
+                let liquidity = &demand.liquidity * volume_multiplier;
+                for (index, weight) in [&demand.change, &demand.exit].into_iter().enumerate() {
+                    let trade = capital.as_decimal() * weight;
+                    turnover[index] = turnover[index].clone().max(trade.clone());
+                    if liquidity.is_zero() {
+                        zero_liquidity[index] |= !weight.is_zero();
+                    } else {
+                        participation[index] = participation[index].clone().max(trade / &liquidity);
+                    }
+                }
+            }
+            let feasible = upper.map(|bound| capital.as_decimal().clone().min(bound.clone()));
+            let tiny = feasible.as_ref().is_some_and(|amount| amount < lower);
+            let usable = feasible
+                .map(|amount| decimal(if tiny { BigDecimal::zero() } else { amount }))
+                .transpose()?;
+            let missing = zero_liquidity.iter().any(|value| *value);
+            Ok(NativeCapacityScenarioV1 {
+                capital: capital.clone(),
+                required_turnover: Some(decimal(turnover[0].clone().max(turnover[1].clone()))?),
+                maximum_participation: (!missing)
+                    .then(|| ceil(participation[0].clone().max(participation[1].clone())))
+                    .transpose()?,
+                unallocated_cash: usable
+                    .as_ref()
+                    .map(|amount| decimal(capital.as_decimal() - amount.as_decimal()))
+                    .transpose()?,
+                usable_capital: usable,
+                status: if missing {
+                    "CONSTRAINED"
+                } else if tiny {
+                    "TOO_SMALL"
+                } else if upper.is_some_and(|bound| capital.as_decimal() > bound) {
+                    "CONSTRAINED"
+                } else if upper.is_none() {
+                    "NON_BINDING"
+                } else {
+                    "FEASIBLE"
+                }
+                .into(),
+                reason: if missing {
+                    Some("zero_observed_liquidity".into())
+                } else if tiny {
+                    Some("minimum_order_or_lot".into())
+                } else {
+                    None
+                },
+                entry_rebalance_turnover: Some(decimal(turnover[0].clone())?),
+                exit_turnover: Some(decimal(turnover[1].clone())?),
+                entry_rebalance_participation: (!zero_liquidity[0])
+                    .then(|| ceil(participation[0].clone()))
+                    .transpose()?,
+                exit_participation: (!zero_liquidity[1])
+                    .then(|| ceil(participation[1].clone()))
+                    .transpose()?,
+            })
+        })
+        .collect()
 }
 fn finish(
     mut report: NativeCapacityReportV1,
     request: &NativeCapacityRequestV1,
     demands: &[Demand],
 ) -> Result<NativeCapacityReportV1> {
-    let mut upper: Option<BigDecimal> = None;
+    let mut buckets = BTreeMap::new();
     let mut lower = BigDecimal::zero();
     for demand in demands {
-        let weight = demand.change.clone().max(demand.exit.clone());
-        if weight.is_zero() {
-            continue;
+        for weight in [&demand.change, &demand.exit] {
+            if !weight.is_zero() {
+                lower = lower.max(&demand.minimum / weight);
+            }
         }
-        let cap = &demand.liquidity * request.policy.participation_limit.as_decimal() / &weight;
-        if upper.as_ref().is_none_or(|value| cap < *value) {
-            upper = Some(cap);
-            report.binding_instrument = Some(demand.instrument.clone());
-        }
+        let bucket = buckets
+            .entry((
+                demand.instrument.clone(),
+                demand.bar_event_ns,
+                demand.bar_available_ns,
+            ))
+            .or_insert_with(|| Demand {
+                change: BigDecimal::zero(),
+                exit: BigDecimal::zero(),
+                ..demand.clone()
+            });
+        bucket.change += &demand.change;
         if !demand.change.is_zero() {
-            lower = lower.max(&demand.minimum / &demand.change);
+            bucket.decision_ns = demand.decision_ns;
+        }
+        if demand.exit > bucket.exit {
+            bucket.exit = demand.exit.clone();
+            bucket.exit_decision_ns = demand.exit_decision_ns;
+        }
+        bucket.liquidity = bucket.liquidity.clone().min(demand.liquidity.clone());
+    }
+    let budgets: Vec<_> = buckets.into_values().collect();
+    let mut constraints = Vec::new();
+    let mut upper: Option<BigDecimal> = None;
+    for kind in [
+        NativeCapacityConstraintKindV1::EntryRebalance,
+        NativeCapacityConstraintKindV1::FullExit,
+    ] {
+        let mut binding: Option<(&Demand, BigDecimal, &BigDecimal, u64)> = None;
+        for demand in &budgets {
+            let (weight, clock) = match kind {
+                NativeCapacityConstraintKindV1::EntryRebalance => {
+                    (&demand.change, demand.decision_ns)
+                }
+                NativeCapacityConstraintKindV1::FullExit => (&demand.exit, demand.exit_decision_ns),
+            };
+            if weight.is_zero() {
+                continue;
+            }
+            let cap = &demand.liquidity * request.policy.participation_limit.as_decimal() / weight;
+            if binding.as_ref().is_none_or(|(_, bound, _, _)| cap < *bound) {
+                binding = Some((demand, cap, weight, clock));
+            }
+        }
+        if let Some((demand, cap, weight, clock)) = binding {
+            if upper.as_ref().is_none_or(|bound| cap < *bound) {
+                upper = Some(cap.clone());
+                report.binding_instrument = Some(demand.instrument.clone());
+            }
+            constraints.push(NativeCapacityConstraintV1 {
+                kind,
+                maximum_capital: decimal(cap)?,
+                instrument_id: demand.instrument.clone(),
+                decision_ns: DbCounter::new(clock).map_err(anyhow::Error::msg)?,
+                bar_event_ns: DbCounter::new(demand.bar_event_ns).map_err(anyhow::Error::msg)?,
+                bar_available_ns: DbCounter::new(demand.bar_available_ns)
+                    .map_err(anyhow::Error::msg)?,
+                observed_notional: decimal(demand.liquidity.clone())?,
+                required_weight: decimal(weight.clone())?,
+            });
         }
     }
     report.status = if upper.is_some() {
@@ -74,9 +258,10 @@ fn finish(
     .into();
     report.reason = upper.is_none().then(|| "no_nonzero_trade_demand".into());
     report.maximum_capital = upper.clone().map(decimal).transpose()?;
-    report.minimum_capital = (!demands.is_empty())
-        .then(|| ceil(lower.clone()))
-        .transpose()?;
+    let minimum = ceil(lower)?;
+    let lower = minimum.as_decimal();
+    report.minimum_capital = (!demands.is_empty()).then_some(minimum.clone());
+    report.constraints = Some(constraints);
     let mut capitals = request.capitals.clone();
     for multiplier in ["0.1", "1", "10"] {
         let value = decimal(
@@ -87,60 +272,38 @@ fn finish(
             capitals.push(value);
         }
     }
-    for capital in &capitals {
-        let mut turnover = BigDecimal::zero();
-        let mut participation = BigDecimal::zero();
-        let mut missing = false;
-        for demand in demands {
-            let trade = capital.as_decimal() * &demand.change;
-            turnover = turnover.max(trade.clone());
-            if demand.liquidity.is_zero() {
-                missing |= !demand.change.is_zero() || !demand.exit.is_zero();
-            } else {
-                participation = participation.max(trade / &demand.liquidity);
-            }
-        }
-        let feasible = upper
+    report.scenarios = scenarios(
+        &capitals,
+        &budgets,
+        report
+            .maximum_capital
             .as_ref()
-            .map(|bound| capital.as_decimal().clone().min(bound.clone()));
-        let tiny = feasible.as_ref().is_some_and(|amount| *amount < lower);
-        let usable = feasible.map(|amount| if tiny { BigDecimal::zero() } else { amount });
-        report.scenarios.push(NativeCapacityScenarioV1 {
-            capital: capital.clone(),
-            required_turnover: Some(decimal(turnover)?),
-            maximum_participation: if missing {
-                None
-            } else {
-                Some(ceil(participation)?)
-            },
-            usable_capital: usable.clone().map(decimal).transpose()?,
-            unallocated_cash: usable
-                .map(|amount| decimal(capital.as_decimal() - amount))
-                .transpose()?,
-            status: if missing {
-                "CONSTRAINED"
-            } else if tiny {
-                "TOO_SMALL"
-            } else if upper
-                .as_ref()
-                .is_some_and(|bound| capital.as_decimal() > bound)
-            {
-                "CONSTRAINED"
-            } else if upper.is_none() {
-                "NON_BINDING"
-            } else {
-                "FEASIBLE"
-            }
-            .into(),
-            reason: if missing {
-                Some("zero_observed_liquidity".into())
-            } else if tiny {
-                Some("minimum_order_or_lot".into())
-            } else {
-                None
-            },
+            .map(DecimalValue::as_decimal),
+        lower,
+        &BigDecimal::from(1),
+    )?;
+    let mut stress = Vec::new();
+    for multiplier in ["1", "0.5"] {
+        let multiplier = multiplier.parse::<BigDecimal>()?;
+        let bound = upper
+            .as_ref()
+            .map(|value| decimal(value * &multiplier))
+            .transpose()?;
+        stress.push(NativeCapacityVolumeStressV1 {
+            volume_multiplier: decimal(multiplier.clone())?,
+            maximum_capital: bound.clone(),
+            status: report.status.clone(),
+            reason: report.reason.clone(),
+            scenarios: scenarios(
+                &capitals,
+                &budgets,
+                bound.as_ref().map(DecimalValue::as_decimal),
+                lower,
+                &multiplier,
+            )?,
         });
     }
+    report.volume_stress = Some(stress);
     Ok(report)
 }
 
@@ -162,74 +325,82 @@ pub fn assess(catalog: &Path, request: &NativeCapacityRequestV1) -> Result<Nativ
         "capacity_decisions_invalid"
     );
     let mut previous = BTreeMap::<String, BigDecimal>::new();
-    let mut demands = Vec::new();
-    let age = u64::from(request.policy.maximum_age_seconds) * 1_000_000_000;
-    fn unavailable(
-        mut report: NativeCapacityReportV1,
-        capitals: &[DecimalValue],
-        reason: &str,
-    ) -> NativeCapacityReportV1 {
-        report.reason = Some(reason.into());
-        report.scenarios = capitals
-            .iter()
-            .map(|capital| NativeCapacityScenarioV1 {
-                capital: capital.clone(),
-                required_turnover: None,
-                maximum_participation: None,
-                usable_capital: None,
-                unallocated_cash: None,
-                status: "UNAVAILABLE".into(),
-                reason: Some(reason.into()),
-            })
-            .collect();
-        report
-    }
+    let mut schedule = Vec::new();
     for point in points {
         ensure!(
             point.asof_ns < point.valid_until_ns && point.cash_weight.is_fraction(),
             "capacity_target_invalid"
         );
-        let mut ids = BTreeSet::new();
+        // Native replay requires the complete ordered universe, even for scoped points.
+        // A dropped row is not an executable zero target or a liquidation instruction.
+        if point.targets.len() != data.series.len()
+            || point
+                .targets
+                .iter()
+                .zip(&data.series)
+                .any(|(target, series)| target.instrument_id != series.instrument.id().to_string())
+        {
+            return Ok(unavailable(
+                report,
+                &request.capitals,
+                "capacity_target_identity_mismatch",
+            ));
+        }
+        if domain::execution::strategy::target_scope(point).is_err() {
+            return Ok(unavailable(
+                report,
+                &request.capitals,
+                "capacity_target_scope_invalid",
+            ));
+        }
         let mut total = point.cash_weight.as_decimal().clone();
-        for target in &point.targets {
-            ensure!(
-                ids.insert(&target.instrument_id) && target.weight.is_fraction(),
-                "capacity_target_invalid"
-            );
+        let mut observations = Vec::new();
+        for (index, target) in point.targets.iter().enumerate() {
+            ensure!(target.weight.is_fraction(), "capacity_target_invalid");
             total += target.weight.as_decimal();
             if target.currency != report.currency {
                 return Ok(unavailable(report, &request.capitals, "currency_mismatch"));
-            }
-            if point
-                .rebalance_instrument_ids
-                .as_ref()
-                .is_some_and(|ids| !ids.contains(&target.instrument_id))
-            {
-                continue;
             }
             let old = previous
                 .get(&target.instrument_id)
                 .cloned()
                 .unwrap_or_default();
-            let change = (target.weight.as_decimal() - old).abs();
-            previous.insert(
-                target.instrument_id.clone(),
-                target.weight.as_decimal().clone(),
-            );
-            if change.is_zero() && !target.weight.is_positive() {
+            let weight = if point
+                .rebalance_instrument_ids
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&target.instrument_id))
+            {
+                target.weight.as_decimal().clone()
+            } else {
+                old.clone()
+            };
+            let change = (&weight - old).abs();
+            previous.insert(target.instrument_id.clone(), weight.clone());
+            if change.is_zero() && weight.is_zero() {
                 continue;
             }
-            let Some(series) = data
-                .series
-                .iter()
-                .find(|series| series.instrument.id().to_string() == target.instrument_id)
-            else {
-                return Ok(unavailable(
-                    report,
-                    &request.capitals,
-                    "instrument_liquidity_missing",
-                ));
-            };
+            observations.push((
+                index,
+                Demand {
+                    instrument: target.instrument_id.clone(),
+                    change,
+                    exit: weight,
+                    decision_ns: point.asof_ns.get(),
+                    exit_decision_ns: point.asof_ns.get(),
+                    ..Default::default()
+                },
+            ));
+        }
+        ensure!(total == BigDecimal::from(1), "capacity_target_sum_invalid");
+        schedule.push(observations);
+    }
+    report.coverage.as_mut().unwrap().required_observations = schedule.iter().map(Vec::len).sum();
+    let mut demands = Vec::new();
+    let mut observed_bars = BTreeSet::new();
+    let age = u64::from(request.policy.maximum_age_seconds) * 1_000_000_000;
+    for (point, observations) in points.iter().zip(schedule) {
+        for (index, mut demand) in observations {
+            let series = &data.series[index];
             let Some(bar) = series
                 .bars
                 .iter()
@@ -290,15 +461,22 @@ pub fn assess(catalog: &Path, request: &NativeCapacityRequestV1) -> Result<Nativ
                     .observation_end_ns
                     .map_or(observed, |old| old.max(observed)),
             );
-            demands.push(Demand {
-                instrument: target.instrument_id.clone(),
-                change,
-                exit: target.weight.as_decimal().clone(),
-                liquidity: notional.as_decimal().to_string().parse()?,
-                minimum,
-            });
+            demand.liquidity = notional.as_decimal().to_string().parse()?;
+            demand.minimum = minimum;
+            demand.bar_event_ns = bar.ts_event.as_u64();
+            demand.bar_available_ns = bar.ts_init.as_u64();
+            observed_bars.insert((
+                demand.instrument.clone(),
+                demand.bar_event_ns,
+                demand.bar_available_ns,
+            ));
+            demands.push(demand);
+            let coverage = report.coverage.as_mut().unwrap();
+            coverage.covered_observations += 1;
+            coverage.unique_bars = observed_bars.len();
+            coverage.reused_bar_observations = coverage.covered_observations - coverage.unique_bars;
         }
-        ensure!(total == BigDecimal::from(1), "capacity_target_sum_invalid");
+        report.coverage.as_mut().unwrap().assessed_decision_count += 1;
     }
     finish(report, request, &demands)
 }
@@ -867,6 +1045,7 @@ mod tests {
                 exit: "0.75".parse().unwrap(),
                 liquidity: "300".parse().unwrap(),
                 minimum: "1".parse().unwrap(),
+                ..Default::default()
             },
             Demand {
                 instrument: "B".into(),
@@ -874,6 +1053,7 @@ mod tests {
                 exit: "0.25".parse().unwrap(),
                 liquidity: "1000".parse().unwrap(),
                 minimum: "1".parse().unwrap(),
+                ..Default::default()
             },
         ];
         let result = finish(envelope(&request), &request, &demands).unwrap();
@@ -892,6 +1072,58 @@ mod tests {
         let result = finish(envelope(&request), &request, &[]).unwrap();
         assert!(result.maximum_capital.is_none());
         assert_eq!(result.status, "NON_BINDING");
+        let exit_only = finish(
+            envelope(&request),
+            &request,
+            &[Demand {
+                instrument: "A".into(),
+                change: BigDecimal::zero(),
+                exit: BigDecimal::from(1),
+                liquidity: BigDecimal::from(1000),
+                minimum: BigDecimal::from(1),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            exit_only.scenarios[0]
+                .required_turnover
+                .as_ref()
+                .unwrap()
+                .as_decimal(),
+            &BigDecimal::from(10)
+        );
+        assert_eq!(
+            exit_only.scenarios[0]
+                .maximum_participation
+                .as_ref()
+                .unwrap()
+                .as_decimal(),
+            &"0.01".parse::<BigDecimal>().unwrap()
+        );
+        let mut fractional = Demand {
+            instrument: "A".into(),
+            change: "0.3".parse().unwrap(),
+            exit: "0.3".parse().unwrap(),
+            liquidity: BigDecimal::from(1),
+            ..Default::default()
+        };
+        let result = finish(envelope(&request), &request, &[fractional.clone()]).unwrap();
+        let row = &result.scenarios[0];
+        assert_eq!(
+            row.usable_capital.as_ref().unwrap().as_decimal()
+                + row.unallocated_cash.as_ref().unwrap().as_decimal(),
+            *row.capital.as_decimal()
+        );
+        fractional.minimum = "0.1".parse().unwrap();
+        let result = finish(envelope(&request), &request, &[fractional]).unwrap();
+        assert_eq!(result.scenarios[0].status, "TOO_SMALL");
+        assert!(result.scenarios[0]
+            .usable_capital
+            .as_ref()
+            .unwrap()
+            .as_decimal()
+            .is_zero());
         for change in ["0", "1"] {
             let result = finish(
                 envelope(&request),
@@ -902,6 +1134,7 @@ mod tests {
                     exit: "1".parse().unwrap(),
                     liquidity: BigDecimal::zero(),
                     minimum: "1".parse().unwrap(),
+                    ..Default::default()
                 }],
             )
             .unwrap();

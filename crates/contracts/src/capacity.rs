@@ -21,6 +21,66 @@ pub struct NativeCapacityScenarioV1 {
     pub unallocated_cash: Option<DecimalValue>,
     pub status: String,
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_rebalance_turnover: Option<DecimalValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_turnover: Option<DecimalValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_rebalance_participation: Option<DecimalValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_participation: Option<DecimalValue>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCapacityMethodologyV1 {
+    pub id: String,
+    pub formula: String,
+    pub notes: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCapacityConstraintKindV1 {
+    EntryRebalance,
+    FullExit,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCapacityConstraintV1 {
+    pub kind: NativeCapacityConstraintKindV1,
+    pub maximum_capital: DecimalValue,
+    pub instrument_id: String,
+    pub decision_ns: DbCounter,
+    pub bar_event_ns: DbCounter,
+    pub bar_available_ns: DbCounter,
+    pub observed_notional: DecimalValue,
+    pub required_weight: DecimalValue,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCapacityCoverageV1 {
+    pub decision_count: usize,
+    pub assessed_decision_count: usize,
+    pub required_observations: usize,
+    pub covered_observations: usize,
+    pub unique_bars: usize,
+    pub reused_bar_observations: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCapacityVolumeStressV1 {
+    pub volume_multiplier: DecimalValue,
+    pub maximum_capital: Option<DecimalValue>,
+    pub status: String,
+    pub reason: Option<String>,
+    pub scenarios: Vec<NativeCapacityScenarioV1>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCapacityEconomicV1 {
+    pub status: String,
+    pub maximum_capital: Option<DecimalValue>,
+    pub reason: String,
+    pub missing_inputs: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +109,16 @@ pub struct NativeCapacityReportV1 {
     pub valid_until_ns: Option<DbCounter>,
     pub assumptions: NativeCapacityAssumptionsV1,
     pub scenarios: Vec<NativeCapacityScenarioV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub methodology: Option<NativeCapacityMethodologyV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<Vec<NativeCapacityConstraintV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<NativeCapacityCoverageV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_stress: Option<Vec<NativeCapacityVolumeStressV1>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economic_capacity: Option<NativeCapacityEconomicV1>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -114,4 +184,29 @@ pub struct NativeAccountSizingResultV1 {
     pub residual_cash: DecimalValue,
     pub target: Option<NativeTargetPointV1>,
     pub members: Vec<NativeSizedMemberV1>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn historical_capacity_reports_without_diagnostics_remain_readable() {
+        let original = json!({
+            "status":"ESTIMATED", "reason":null, "scope":"original-factor", "currency":"USD", "basis":"HISTORICAL_BAR_ESTIMATE",
+            "maximumCapital":"1000.000000000000000001", "minimumCapital":"1", "bindingInstrument":"A",
+            "observationStartNs":"9007199254740993", "observationEndNs":"9007199254740993", "decisionClockNs":null, "validUntilNs":null,
+            "assumptions":{"participation":"0.01", "maximumAgeSeconds":120, "executionWindow":"original", "exit":"original", "fees":"original", "depth":"BAR_NOTIONAL_ONLY"},
+            "scenarios":[{"capital":"1000.000000000000000001", "requiredTurnover":"100", "maximumParticipation":"0.01", "usableCapital":"1000.000000000000000001", "unallocatedCash":"0", "status":"FEASIBLE", "reason":null}]
+        });
+        let report: NativeCapacityReportV1 = serde_json::from_value(original.clone()).unwrap();
+        assert!(
+            report.methodology.is_none()
+                && report.coverage.is_none()
+                && report.constraints.is_none()
+        );
+        assert!(report.volume_stress.is_none() && report.economic_capacity.is_none());
+        assert_eq!(serde_json::to_value(report).unwrap(), original);
+    }
 }
