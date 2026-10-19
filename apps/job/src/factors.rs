@@ -9,6 +9,9 @@ use ndarray::Array2;
 use ndarray_stats::CorrelationExt;
 use std::{collections::BTreeMap, path::Path};
 
+mod catalog_scan;
+pub use catalog_scan::scan_factor_catalog;
+
 /// Native raw Pearson calculation, without calibration or score restrictions.
 /// Bad numerical evidence is unavailable, never repaired or reported as zero.
 pub fn pearson_ic(scores: &[f64], labels: &[f64]) -> Result<NativeFactorIcV1> {
@@ -48,23 +51,30 @@ fn count(value: usize) -> Result<DbCounter> {
     DbCounter::new(u64::try_from(value)?).map_err(anyhow::Error::msg)
 }
 
-fn metric<'a>(
-    points: impl Iterator<Item = &'a NativeFactorPointV1>,
-) -> Result<NativeFactorMetricV1> {
-    use NativeFactorExclusionReasonV1::*;
-    let (mut observations, mut warmup, mut incomplete, mut crossing, mut unavailable) =
-        (0, 0, 0, 0, 0);
-    let (mut scores, mut labels) = (Vec::new(), Vec::new());
-    for point in points {
-        observations += 1;
+#[derive(Default)]
+struct MetricPairs {
+    observations: usize,
+    warmup: usize,
+    incomplete: usize,
+    crossing: usize,
+    unavailable: usize,
+    scores: Vec<f64>,
+    labels: Vec<f64>,
+}
+
+impl MetricPairs {
+    fn push(&mut self, point: &NativeFactorPointV1) {
+        use NativeFactorExclusionReasonV1::*;
+        self.observations += 1;
         match point.exclusion_reason {
-            Some(IndicatorWarmup) => warmup += 1,
-            Some(LabelNotComplete) => incomplete += 1,
-            Some(LabelCrossesPartition) => crossing += 1,
-            Some(PredictionOutsidePartition) => unavailable += 1,
+            Some(IndicatorWarmup) => self.warmup += 1,
+            Some(LabelNotComplete) => self.incomplete += 1,
+            Some(LabelCrossesPartition) => self.crossing += 1,
+            Some(PredictionOutsidePartition) => self.unavailable += 1,
             None => {
-                scores.push(point.observation.forecast.expect("included native score"));
-                labels.push(
+                self.scores
+                    .push(point.observation.forecast.expect("included native score"));
+                self.labels.push(
                     point
                         .observation
                         .label_return
@@ -73,18 +83,31 @@ fn metric<'a>(
             }
         }
     }
-    Ok(NativeFactorMetricV1 {
-        counts: NativeFactorCountsV1 {
-            observations: count(observations)?,
-            included: count(scores.len())?,
-            excluded: count(observations - scores.len())?,
-            indicator_warmup: count(warmup)?,
-            incomplete_labels: count(incomplete)?,
-            cross_boundary_labels: count(crossing)?,
-            prediction_outside_partition: count(unavailable)?,
-        },
-        pearson_ic: pearson_ic(&scores, &labels)?,
-    })
+
+    fn finish(self) -> Result<NativeFactorMetricV1> {
+        Ok(NativeFactorMetricV1 {
+            counts: NativeFactorCountsV1 {
+                observations: count(self.observations)?,
+                included: count(self.scores.len())?,
+                excluded: count(self.observations - self.scores.len())?,
+                indicator_warmup: count(self.warmup)?,
+                incomplete_labels: count(self.incomplete)?,
+                cross_boundary_labels: count(self.crossing)?,
+                prediction_outside_partition: count(self.unavailable)?,
+            },
+            pearson_ic: pearson_ic(&self.scores, &self.labels)?,
+        })
+    }
+}
+
+fn metric<'a>(
+    points: impl Iterator<Item = &'a NativeFactorPointV1>,
+) -> Result<NativeFactorMetricV1> {
+    let mut pairs = MetricPairs::default();
+    for point in points {
+        pairs.push(point);
+    }
+    pairs.finish()
 }
 
 /// Reuses native BAR decoding, official Nautilus EMA and the same SignalModule.

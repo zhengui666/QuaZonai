@@ -19,6 +19,46 @@ pub struct NativeFactorEvaluationRequestV1 {
     pub validation_end_ns: DbCounter,
 }
 
+/// Complete registered catalog scope, without a fixed instrument shortlist.
+/// Catalog paths remain trusted local CLI arguments, never scientific input fields.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCatalogFactorScanRequestV1 {
+    pub schema_version: SchemaV1,
+    pub event_start_ns: DbCounter,
+    pub train_end_ns: DbCounter,
+    pub validation_end_ns: DbCounter,
+    pub event_end_ns: DbCounter,
+    pub decision_cutoff_ns: DbCounter,
+    #[schema(minimum = 1)]
+    pub maximum_rows: u32,
+    pub parameters: crate::science::NativeForecastParametersV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCatalogFactorCoverageV1 {
+    pub catalog_series: DbCounter,
+    pub observed_series: DbCounter,
+    pub empty_series: DbCounter,
+    pub warmup_only_series: DbCounter,
+    pub observations: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCatalogFactorScanSummaryV1 {
+    pub schema_version: SchemaV1,
+    pub request: NativeCatalogFactorScanRequestV1,
+    pub native_versions: BTreeMap<String, String>,
+    pub methods: BTreeMap<String, String>,
+    #[serde(deserialize_with = "crate::science::deserialize_consumed_fuel")]
+    #[schema(required = true)]
+    pub consumed_fuel: Option<DbCounter>,
+    pub partitions: Vec<NativeFactorPartitionReportV1>,
+    pub coverage: NativeCatalogFactorCoverageV1,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NativeFactorPartitionV1 {

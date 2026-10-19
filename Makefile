@@ -27,7 +27,7 @@ check-web:
 check-science:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p contracts -p domain --lib --tests
-	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test factors --test science_cli --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test native_paper_target --test source_tools --test catalog_prepare --test polymarket_v2_source -- --test-threads=1
+	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test factors --test catalog_factor_scan --test science_cli --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test native_paper_target --test source_tools --test catalog_prepare --test polymarket_v2_source --test polymarket_execution_preflight -- --test-threads=1
 
 # Must use the matching built kernel. The service's integrated native test owns
 # the real idea -> trials -> shared-account backtest -> portfolio -> receipt flow.

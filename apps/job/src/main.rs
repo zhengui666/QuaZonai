@@ -76,6 +76,14 @@ enum Operation {
         #[arg(long)]
         summary_only: bool,
     },
+    /// Scan every registered BAR series for pooled factor IC, without a market shortlist.
+    /// No targets, account simulation or qualification are produced.
+    ScanFactorCatalog {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+    },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
         #[arg(long)]
@@ -226,6 +234,9 @@ fn run(operation: Operation) -> Result<()> {
                 output(&result)
             }
         }
+        Operation::ScanFactorCatalog { catalog, model } => output(
+            &job::factors::scan_factor_catalog(&catalog, &input()?, &model_bytes(&model)?)?,
+        ),
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,
