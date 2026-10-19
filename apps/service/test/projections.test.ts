@@ -91,7 +91,7 @@ test('historical native codes and WAT failures keep specific safe public causes'
       ['QZ_NATIVE_JOB_MEMORY_LIMIT\nprivate /private/test-only/model.wasm token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT', 'resource'],
       ['QZ_NATIVE_JOB_FAILED\nFORECAST_INSUFFICIENT_WARMUP: /private/test-only/catalog', 'FORECAST_INSUFFICIENT_WARMUP', 'data'],
       ['parseWat failed:\nfactor.wat:1:2: error: unexpected token\n(module private-source-marker)', 'wasm_compile_failed', 'model'],
-      ['synthetic_secret_value', 'scientific_execution_failed', 'unknown'],
+      ['custom_evaluator_failed', 'custom_evaluator_failed', 'unknown'],
       ['strategy_market_not_allowed', 'strategy_market_not_allowed', 'request'],
       ['strategy_instrument_not_allowed', 'strategy_instrument_not_allowed', 'request'],
     ]) {
@@ -104,8 +104,9 @@ test('historical native codes and WAT failures keep specific safe public causes'
       assert.equal(view.trialRecords[0].error, code); assert.equal(view.final.error, code);
       assert.equal(view.trialRecords[0].errorDetail.category, category);
       assert.ok(view.final.errorDetail.message); assert.ok(view.final.errorDetail.action);
+      if (category === 'unknown') assert.match(view.final.errorDetail.message, /无法确定具体原因/);
       if (code?.endsWith('_not_allowed')) assert.match(view.final.errorDetail.message, /原研究.*范围/);
-      assert.doesNotMatch(response.body, /private-source-marker|\/private\/test-only|synthetic-secret|synthetic_secret_value/);
+      assert.doesNotMatch(response.body, /private-source-marker|\/private\/test-only|synthetic-secret/);
       assert.equal((await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context))!.final!.error, diagnostic);
     }
   } finally { await state.cleanup(); }
@@ -117,6 +118,7 @@ test('portfolio reads and original admission replay share public failure project
     const { input, view } = await built(state);
     for (const [diagnostic, code] of [
       ['Native backtest failed at /private/test-only/catalog', 'backtest_failed'],
+      ['custom_evaluator_failed', 'custom_evaluator_failed'],
       ['QZ_NATIVE_JOB_MEMORY_LIMIT\n/private/test-only/catalog token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT'],
       ['parseWat failed:\nselected-factor.wat:1:2: error: private-source-marker', 'wasm_compile_failed'],
     ]) {

@@ -79,10 +79,11 @@ const knownReasons = reasons.flatMap(reason => reason.codes.map(code => ({ ...re
   pattern: new RegExp(`(?:^|\\n|:\\s*|;\\s*)${code}(?=$|[\\s:;])`),
 })));
 
-/** Only fixed known reasons are public. Also classify old stderr/WABT strings without rewriting stored facts. */
+/** Classify known reasons and historic diagnostics; retain unknown codes under the original public-code convention. */
 export function classifyExecutionError(value: unknown, fallback: Fallback = 'scientific_execution_failed', context: ExecutionContext = {}): ExecutionErrorDetail | null {
   if (!(value instanceof Error) && typeof value !== 'string' || !executionDiagnostic(value, '')) return null;
   const raw = executionDiagnostic(value);
+  const publicCode = /^[a-z][a-z0-9_]{0,127}$/.test(raw) ? raw : undefined;
   const metadata = value instanceof ExecutionFailure ? { operation: value.operation ?? context.operation, stage: value.stage ?? context.stage } : context;
   const operation = typeof metadata.operation === 'string' && operations.has(metadata.operation) ? metadata.operation : undefined;
   let stage = typeof metadata.stage === 'string' && stages.has(metadata.stage) ? metadata.stage as ExecutionErrorDetail['stage'] : undefined;
@@ -92,16 +93,16 @@ export function classifyExecutionError(value: unknown, fallback: Fallback = 'sci
     stage = 'compile'; detail = { code: 'wasm_compile_failed', category: 'model', message: '模型 WAT 编译或类型校验未通过。', action: '检查括号、指令、参数／返回类型和内存声明；原失败保留并计数，修正后另行提交新试验。' };
   } else if (found) {
     detail = { code: found.code, category: found.category, message: found.message, action: found.action };
-  } else if (stage === 'compile') {
+  } else if (!publicCode && stage === 'compile') {
     detail = { code: 'wasm_compile_failed', category: 'unknown', message: '模型 WAT 编译未完成，现有记录无法确定具体原因。', action: '检查模型输入、编译环境和原任务诊断；不自动重算本次失败试验。' };
-  } else if (stage === 'decode') {
+  } else if (!publicCode && stage === 'decode') {
     detail = { code: 'native_result_invalid', category: 'runtime', message: '原生程序输出不是完整有效的科学结果。', action: '检查科学程序版本与原任务诊断；不要使用截断或格式错误的结果。' };
   } else if (/research contract fields are invalid/.test(raw)) {
     stage ??= 'validate'; detail = { code: 'native_request_invalid', category: 'request', message: '原生科学请求中的字段不满足合同要求。', action: '核对原请求字段、数值范围和分区设置；详细字段诊断保留在原任务中。' };
   } else if (/^qz-(?:native|factor):.*(?:No such file or directory|not found|Permission denied)/m.test(raw)) {
     detail = { code: 'native_executable_unavailable', category: 'runtime', message: '配置的原生科学程序无法启动。', action: '检查科学程序是否已安装、配置正确且可执行；不要以替代输出伪造成功。' };
   } else {
-    detail = { code: /^QZ_NATIVE_JOB_FAILED(?:\s|$)/.test(raw) ? 'QZ_NATIVE_JOB_FAILED' : fallback, category: 'unknown',
+    detail = { code: publicCode ?? (/^QZ_NATIVE_JOB_FAILED(?:\s|$)/.test(raw) ? 'QZ_NATIVE_JOB_FAILED' : fallback), category: 'unknown',
       message: '科学执行失败，现有记录无法确定具体原因。', action: '请凭原研究、试验或任务编号检查私有诊断；不要另建身份自动重算。' };
   }
   if (!stage && (found || detail.code === 'QZ_NATIVE_JOB_FAILED') && /^(?:QZ_|[A-Z][A-Z_]+(?:\s|:|$))/.test(raw)) stage = 'execute';

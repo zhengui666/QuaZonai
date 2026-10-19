@@ -28,8 +28,19 @@ for (const code of ['strategy_market_not_allowed', 'strategy_instrument_not_allo
   assert.match(detail.message, /原研究.*范围/); assert.match(detail.action, /已登记.*市场.*标的/);
 });
 
-test('unknown private diagnostics and unrecognized code-like strings are never public text', () => {
-  for (const raw of ['synthetic_secret_value', 'QZ_NEW_PRIVATE_DETAIL', '/private/path token=synthetic-secret\n(module private-source)', 'Error source: secret']) {
+test('unrecognized lowercase public codes keep their exact value and an honest unknown explanation', () => {
+  const code = 'custom_evaluator_failed';
+  for (const context of [{}, { stage: 'compile' }, { stage: 'decode' }]) {
+    const detail = classifyExecutionError(code, 'backtest_failed', context)!;
+    assert.equal(detail.code, code); assert.equal(detail.category, 'unknown');
+    assert.match(detail.message, /无法确定具体原因/); assert.match(detail.action, /原研究、试验或任务编号/);
+  }
+  assert.equal(classifyExecutionError('x'.repeat(128))!.code, 'x'.repeat(128));
+});
+
+test('unknown freeform diagnostics and uppercase codes are not echoed as public text', () => {
+  for (const raw of ['QZ_NEW_PRIVATE_DETAIL', '/private/path token=synthetic-secret\n(module private-source)', 'Error source: secret',
+    'custom_evaluator_failed: /private/path', ' custom_evaluator_failed', 'custom_evaluator_failed\n', 'x'.repeat(129)]) {
     const detail = classifyExecutionError(raw, 'backtest_failed', { operation: '/private/operation', stage: 'private-source' })!;
     assert.equal(detail.code, 'backtest_failed'); assert.equal(detail.category, 'unknown');
     assert.doesNotMatch(JSON.stringify(detail), /synthetic|private|secret/);
