@@ -81,11 +81,7 @@ export async function trialFeedback(api: ToolExecutionApi, context: Context, eva
   } catch (error) {
     if (context.abortSignal?.aborted) throw error;
     if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
-    if (!(error instanceof Error) || error.message !== 'trial_budget_exhausted') {
-      const detail = classifyExecutionError(error) ?? classifyExecutionError('scientific_execution_failed')!;
-      // Throw safe feedback so the official tool task remains FAILED too.
-      throw new Error(`${detail.code}: ${detail.message} ${detail.action}`);
-    }
+    if (!(error instanceof Error) || error.message !== 'trial_budget_exhausted') throw error;
     await api.commit(async (tx) => {
       const study = await tx.doc(Study, api.conversationId);
       study.final ??= { taskId: api.taskId, trialId: null, comparedTrials: study.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'trial_budget_exhausted', result: null };

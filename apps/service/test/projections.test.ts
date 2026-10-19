@@ -92,6 +92,8 @@ test('historical native codes and WAT failures keep specific safe public causes'
       ['QZ_NATIVE_JOB_FAILED\nFORECAST_INSUFFICIENT_WARMUP: /private/test-only/catalog', 'FORECAST_INSUFFICIENT_WARMUP', 'data'],
       ['parseWat failed:\nfactor.wat:1:2: error: unexpected token\n(module private-source-marker)', 'wasm_compile_failed', 'model'],
       ['synthetic_secret_value', 'scientific_execution_failed', 'unknown'],
+      ['strategy_market_not_allowed', 'strategy_market_not_allowed', 'request'],
+      ['strategy_instrument_not_allowed', 'strategy_instrument_not_allowed', 'request'],
     ]) {
       await state.service.research.harness.commit(async tx => {
         const study = await tx.doc(Study, receipt.conversationId as ConversationId);
@@ -102,6 +104,7 @@ test('historical native codes and WAT failures keep specific safe public causes'
       assert.equal(view.trialRecords[0].error, code); assert.equal(view.final.error, code);
       assert.equal(view.trialRecords[0].errorDetail.category, category);
       assert.ok(view.final.errorDetail.message); assert.ok(view.final.errorDetail.action);
+      if (code?.endsWith('_not_allowed')) assert.match(view.final.errorDetail.message, /原研究.*范围/);
       assert.doesNotMatch(response.body, /private-source-marker|\/private\/test-only|synthetic-secret|synthetic_secret_value/);
       assert.equal((await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context))!.final!.error, diagnostic);
     }

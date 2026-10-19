@@ -22,6 +22,12 @@ for (const [raw, code, category] of [
   assert.doesNotMatch(JSON.stringify(detail), /\/private|split_policy|factor\.wat/);
 });
 
+for (const code of ['strategy_market_not_allowed', 'strategy_instrument_not_allowed']) test(`${code} explains the original research universe`, () => {
+  const detail = classifyExecutionError(code)!;
+  assert.equal(detail.code, code); assert.equal(detail.category, 'request');
+  assert.match(detail.message, /原研究.*范围/); assert.match(detail.action, /已登记.*市场.*标的/);
+});
+
 test('unknown private diagnostics and unrecognized code-like strings are never public text', () => {
   for (const raw of ['synthetic_secret_value', 'QZ_NEW_PRIVATE_DETAIL', '/private/path token=synthetic-secret\n(module private-source)', 'Error source: secret']) {
     const detail = classifyExecutionError(raw, 'backtest_failed', { operation: '/private/operation', stage: 'private-source' })!;

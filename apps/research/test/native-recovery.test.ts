@@ -17,30 +17,31 @@ const tool = (name: string, args: JsonObject = {}) => fauxAssistantMessage(fauxT
 const request = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: {} } };
 function toolText(transcript: { messages: readonly unknown[] }, name: string): string {
   const result = transcript.messages.filter(item => (item as { role: string; toolName?: string }).role === 'toolResult' && (item as { toolName?: string }).toolName === name).at(-1) as { content: { text?: string }[] };
-  const text = result.content.map(item => item.text ?? '').join('');
-  assert.doesNotMatch(text, /private_source_marker|factor\.wat/);
-  return text;
+  return result.content.map(item => item.text ?? '').join('');
 }
 function textResult(transcript: { messages: readonly unknown[] }, name: string): JsonObject {
   return JSON.parse(toolText(transcript, name)) as JsonObject;
 }
 
-test('WAT diagnostics remain in the original child and trial, not model-facing failure/read feedback', { timeout: 15_000 }, async () => {
+test('actual WABT parser detail reaches model failure feedback and original-trial reads without another attempt', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-wat-diagnostic-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
-  const model = '(module (func (export "predict") (result f64) private_source_marker))';
+  const model = '(module\n  (func (export "predict") (result f64)\n    unknown_instruction))';
   const data = { catalog: directory, request };
   const compute = defineExtension({ name: 'test.wat-failure', tasks: [FactorTask], tools: [defineTool({
     name: 'compute', description: 'Controlled invalid WAT protocol', parameters: Type.Object({}), replay: 'safe',
     execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model, hypothesis: 'Invalid original model' }, () => runFactor(api, ctx, model, data))); },
   })] });
   const options = { database: join(directory, 'original.sqlite'), models, extensions: [research, compute] };
-  let trialId: number;
+  let trialId: number; let diagnostic: string; let failureFeedback: string; let readDiagnostic: JsonObject[string] | undefined;
   faux.setResponses([
     tool('compute'),
-    transcript => { assert.match(toolText(transcript, 'compute'), /wasm_compile_failed/); return tool('research_brief'); },
-    transcript => { const trial = (textResult(transcript, 'research_brief').trials as JsonObject[])[0]!; assert.equal(trial.error, 'wasm_compile_failed'); trialId = trial.taskId as number; return tool('research_trial', { trialId }); },
-    transcript => { assert.equal(textResult(transcript, 'research_trial').error, 'wasm_compile_failed'); return tool('research_finish', { reason: 'Stop with the original failed attempt retained.' }); },
+    transcript => { failureFeedback = toolText(transcript, 'compute'); return tool('research_brief'); },
+    transcript => {
+      const trial = (textResult(transcript, 'research_brief').trials as JsonObject[])[0]!;
+      diagnostic = String(trial.error); trialId = trial.taskId as number; return tool('research_trial', { trialId });
+    },
+    transcript => { readDiagnostic = textResult(transcript, 'research_trial').error; return tool('research_finish', { reason: 'Stop with the original failed attempt retained.' }); },
   ]);
   let host = await openResearch(options);
   try {
@@ -48,8 +49,11 @@ test('WAT diagnostics remain in the original child and trial, not model-facing f
     const receipt = await host.start('original-wat-failure', input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(receipt.conversationId)).research!;
+    assert.match(failureFeedback!, /parseWat failed:/); assert.match(failureFeedback!, /factor\.wat:3:\d+: error:/);
+    assert.match(diagnostic!, /unknown_instruction/); assert.ok(failureFeedback!.includes(diagnostic!));
+    assert.equal(readDiagnostic, diagnostic!);
     assert.equal(study.trials.length, 1); assert.equal(study.trials[0]!.taskId, trialId!); assert.equal(study.trials[0]!.status, 'FAILED');
-    assert.match(String(study.trials[0]!.error), /private_source_marker/);
+    assert.equal(study.trials[0]!.error, diagnostic!);
     assert.equal((study.trials[0]!.errorDetail as JsonObject).stage, 'compile');
     assert.equal((await host.harness.waitForTask(trialId! as TaskId, context)).state.outcome.status, 'failed');
     const children = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context);
