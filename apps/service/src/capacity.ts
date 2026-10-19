@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { CapacityReport, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
+import { classifyExecutionError } from '../../research/src/execution-errors.ts';
 import { replayCatalog, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
 import { executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import type { ServiceConfig } from './config.ts';
@@ -24,24 +25,12 @@ export function unavailableCapacity(currency: string, reason: string, scope = 'p
       'matched_out_of_sample_returns_at_capital_scales', 'venue_calibrated_market_impact', 'matched_spread_fees_and_execution_timing', 'validated_exit_execution'] } };
 }
 
-// Preserve known scientific causes without exposing arbitrary native text. Unknown errors,
-// including cancellation, retain the original exception for the owning execution boundary.
-const capacityFailures = new Set([
-  'capacity_scenarios_required', 'capacity_capital_invalid', 'capacity_decisions_invalid', 'capacity_target_invalid', 'capacity_target_sum_invalid',
-  'CATALOG_EMPTY_SELECTION', 'CATALOG_SELECTION_INVALID', 'CATALOG_ROOT_INVALID', 'CATALOG_INSTRUMENT_MISSING', 'CATALOG_EXTRA_INSTRUMENT',
-  'CATALOG_PARQUET_FOOTER_INVALID', 'CATALOG_NATIVE_TYPE_MISMATCH', 'CATALOG_VOLUME_UNDEFINED', 'CATALOG_PRICE_UNDEFINED', 'INSTRUMENT_DEFINITION_FROM_FUTURE',
-  'CATALOG_TIME_INVALID', 'CATALOG_NONUNIQUE_OR_REVISED_BAR', 'CATALOG_ROW_LIMIT', 'CATALOG_PRICE_PRECISION_MISMATCH', 'CATALOG_OHLC_INVALID',
-  'SIGNAL_REQUIRES_WASM_BINARY', 'SIGNAL_MODULE_INVALID', 'SIGNAL_IMPORTS_FORBIDDEN', 'SIGNAL_ABI_MISMATCH', 'SIGNAL_INSTANTIATION_REJECTED',
-  'SIGNAL_EXECUTION_FAILED', 'SIGNAL_BUDGET_EXHAUSTED', 'NATIVE_DECIMAL_RANGE', 'rolling_liquidity_policy',
-  'strategy_adapter_unsupported', 'strategy_forecast_mode_invalid', 'strategy_evaluation_partition_invalid', 'strategy_evidence_mode_invalid',
-  'strategy_instrument_universe_invalid', 'strategy_base_instrument_not_allowed', 'strategy_instrument_not_allowed', 'strategy_instrument_invalid',
-  'strategy_instrument_fee_missing', 'strategy_instrument_fee_duplicate', 'strategy_request_binding_mismatch', 'strategy_observations_missing',
-  'strategy_market_observations_missing', 'strategy_instrument_bars_missing', 'strategy_target_alignment_mismatch', 'strategy_clock_invalid',
-  'selected_factor_model_required', 'strategy_members_required', 'portfolio_weights_invalid', 'catalog_required',
-]);
-function capacityFailure(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  return error.message.split(/\s+/).find(code => capacityFailures.has(code));
+// Known execution failures share the public cause/remedy contract. Unknown errors
+// and cancellation retain the original exception for the owning execution boundary.
+function capacityFailure(error: unknown, currency: string, scope: string, policy?: Assumptions): CapacityReport {
+  const errorDetail = classifyExecutionError(error, 'operation_failed');
+  if (!errorDetail || errorDetail.category === 'unknown' || errorDetail.category === 'cancelled') throw error;
+  return { ...unavailableCapacity(currency, errorDetail.code, scope, policy), errorDetail };
 }
 export function capacityPolicy(evidence: JsonObject[]): Assumptions | undefined {
   const assumptions = evidence.map(source => (object(source.input).specification as unknown as ResearchSpecification | undefined)?.capital);
@@ -54,9 +43,7 @@ export async function assessCapacity(binary: string, catalog: string, simulation
     return await executeNative(binary, 'assess-capacity', { schema_version: 1, simulation, policy: { schema_version: 1,
       maximum_age_seconds: assumptions.maximumAgeSeconds, participation_limit: assumptions.participation }, capitals: assumptions.scenarios }, ['--catalog', catalog], directory, context) as unknown as CapacityReport;
   } catch (error) {
-    const reason = capacityFailure(error);
-    if (!reason) throw error;
-    return unavailableCapacity(currency, reason, 'portfolio', assumptions);
+    return capacityFailure(error, currency, 'portfolio', assumptions);
   }
 }
 export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConfig, context: Context, assumptions: Assumptions): Promise<CapacityReport> {
@@ -94,9 +81,7 @@ export async function factorCapacity(host: ResearchHost, config: ServiceConfig, 
     const report = await assessCapacity(config.jobBinary, catalog, simulation, capital, directory, context);
     return { ...report, scope: id };
   } catch (error) {
-    const reason = capacityFailure(error);
-    if (!reason) throw error;
-    return unavailableCapacity(view.currency ?? '', reason, id, capital);
+    return capacityFailure(error, view.currency ?? '', id, capital);
   }
   finally { await rm(directory, { recursive: true, force: true }); }
 }
