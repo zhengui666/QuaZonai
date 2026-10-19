@@ -137,10 +137,7 @@ pub fn scan_factor_catalog(
             );
         }
         let (kind, bars) = read_series(&directory.join(name), request)?;
-        ensure!(
-            identities.insert(kind.instrument_id()),
-            "DUPLICATE_CATALOG_INSTRUMENT"
-        );
+        ensure!(identities.insert(kind), "DUPLICATE_CATALOG_BAR_TYPE");
         let original = evaluation(request, kind);
         template.get_or_insert_with(|| original.clone());
         observations += bars.len();

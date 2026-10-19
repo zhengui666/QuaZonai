@@ -133,6 +133,45 @@ fn complete_catalog_reports_short_and_unobserved_series_without_filling_metrics(
 }
 
 #[test]
+fn catalog_scan_accepts_multiple_timeframes_for_the_same_instrument() {
+    let (root, request) = mixed_catalog(0.0, false);
+    let market = job::catalog::load_catalog(root.path(), &request.forecast.selection).unwrap();
+    let mut bars = market.series[0].bars.clone();
+    let hour = 60 * INTERVAL_NS;
+    let kind = format!("{}-1-HOUR-LAST-EXTERNAL", bars[0].bar_type.instrument_id())
+        .parse()
+        .unwrap();
+    for (index, bar) in bars.iter_mut().enumerate() {
+        bar.bar_type = kind;
+        bar.ts_event = ((index as u64 + 1) * hour).into();
+        bar.ts_init = (bar.ts_event.as_u64() + 1).into();
+    }
+    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+        root.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    let mut input = scan_request(&request);
+    input.train_end_ns = count(12 * hour);
+    input.validation_end_ns = count(22 * hour);
+    input.event_end_ns = count(28 * hour);
+    input.decision_cutoff_ns = input.event_end_ns;
+    input.maximum_rows = 81;
+    input.parameters.total_fuel = None;
+    let result = scan_factor_catalog(root.path(), &input, &module("local.get 4")).unwrap();
+    assert_eq!(result.coverage.catalog_series.get(), 3);
+    assert_eq!(result.coverage.observed_series.get(), 3);
+    assert_eq!(result.coverage.observations.get(), 81);
+    assert_eq!(result.partitions[0].metric.counts.observations.get(), 65);
+    assert_eq!(result.partitions[1].metric.counts.observations.get(), 10);
+    assert_eq!(result.partitions[2].metric.counts.observations.get(), 6);
+}
+
+#[test]
 fn catalog_scan_retains_native_root_and_positive_price_validation() {
     let (root, request) = mixed_catalog(0.0, false);
     let input = scan_request(&request);
