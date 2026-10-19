@@ -35,7 +35,7 @@ export default defineExtension({
             instrumentId: proposal.instrumentId ?? null, marketCount: Array.isArray(selected) ? selected.length : null,
             memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
-          goal: input.goal, data, policy, stopped: study?.final !== null,
+          goal: input.goal, specification: input.specification ?? null, data, policy, stopped: study?.final !== null,
         }) }] };
       },
     }),
@@ -72,6 +72,8 @@ export default defineExtension({
             if (study.final.taskId !== api.taskId) throw new Error('research_already_final');
             return;
           }
+          const maximum = study.input?.policy.max_trials;
+          if (study.input?.specification && args.trialId === undefined && (typeof maximum !== 'number' || study.trials.filter(item => item.status !== 'REJECTED').length < maximum)) throw new Error('research_stop_condition_not_met');
           const selected = study.trials.find((item) => item.taskId === args.trialId);
           if (args.trialId !== undefined && selected?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');
           if (args.trialId !== undefined && study.input?.data.sealed) throw new Error('registered_final_evaluator_required');

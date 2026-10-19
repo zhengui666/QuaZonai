@@ -7,14 +7,19 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  research_capital_scenarios_invalid: '资本情景须为精确正金额：小于 10²⁰、小数至多 18 位、原文至多 64 字符', research_participation_invalid: '成交量参与率须大于 0 且不超过 1（0.01 = 1%）',
+  research_liquidity_age_invalid: '请填写正整数流动性数据时差', research_override_unsupported: '存在不支持的研究或容量设置',
+  research_evaluation_unsupported: '当前原生评估仅支持最大化已注册指标', research_policy_unregistered: '结构化研究必须继承注册数据集的原始科学策略',
+  account_reservation_unknown: '账户预留未知，不能交付新目标',
   unsupported_evidence: '研究证据不支持', evidence_unavailable: '研究证据不可用',
   authentication_required: '登录已过期', request_id_conflict: '原提交内容不一致',
   dataset_not_ready: '数据集尚未就绪', dataset_not_found: '数据集不存在',
   independent_evidence_missing: '缺少独立评估结果', heldout_observations_missing: '独立样本无有效观测',
+  research_criterion_insufficient: '研究请求的独立指标不可用，不能用于组合', research_criterion_not_met: '独立评估未达到研究标准',
   strategy_adapter_not_configured: '数据集未配置组合策略', research_dataset_mismatch: '所选研究的数据不一致',
   strategy_selection_mismatch: '研究评估区间不一致', portfolio_weights_invalid: '权重须为正且合计为 1',
   strategy_policy_not_admitted_with_research: '研究未采用此组合策略', target_expired: '目标已过期',
-  target_delivery_requires_reconciliation: '已有目标待核对', account_snapshot_out_of_order: '账户快照顺序异常',
+  target_delivery_requires_reconciliation: '已有目标待核对', account_snapshot_out_of_order: '账户快照顺序异常', account_snapshot_conflict: '同一账户序列的快照事实冲突',
   service_extension_required: '此扩展为必需组件', extension_not_found: '扩展不存在',
   unauthorized: '请重新登录', invalid_password: '密码不正确',
   conflict: '操作冲突', not_found: '记录不存在', unavailable: '服务不可用',

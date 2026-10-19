@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { fork } from 'node:child_process';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { ModelCatalog, ObservationView, Page as RecordPage, PortfolioView, ResearchDetail, ResearchSummary } from '../../../packages/contracts/src/index.ts';
+import type { FactorView, ModelCatalog, ObservationView, Page as RecordPage, PortfolioView, ResearchDetail, ResearchSummary } from '../../../packages/contracts/src/index.ts';
 
 // Real HTTP + official Faux Provider + actual Durable SQLite. The reused scientific
 // subprocess is explicitly TEST_ONLY protocol; retained native/core CI owns real science.
@@ -30,7 +30,7 @@ async function owner(page: Page, url: string) {
   await page.getByLabel('密码', { exact: true }).fill('browser-owner-test-only'); await page.getByLabel('确认密码', { exact: true }).fill('browser-owner-test-only'); await page.getByRole('button', { name: '创建密码' }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
 }
 async function start(page: Page, url: string, goal: string) {
-  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByLabel('研究问题', { exact: true }).fill(goal);
+  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await page.getByLabel('研究名称', { exact: true }).fill(goal); await page.getByLabel('研究问题', { exact: true }).fill(goal); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled HTTP hypothesis; protocol coverage, not scientific qualification.');
   await page.getByLabel('数据集', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol dataset / USD', exact: true }).click();
   const catalog = await (await page.request.get(`${url}/api/v3/models`)).json() as ModelCatalog;
   const model = catalog.models.find(model => model.provider === 'faux')!; expect(model).toBeTruthy();
@@ -46,6 +46,8 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     response.setHeader('content-type', 'application/json');
     if (request.method === 'POST' && request.url === '/targets') { let body = ''; for await (const chunk of request) body += chunk; receipt = JSON.parse(body); offers++; request.socket.destroy(); return; }
     if (request.url?.startsWith('/targets/')) response.end(JSON.stringify({ ...receipt, status: 'ACKNOWLEDGED', externalId: 'browser-protocol-receipt', acknowledgedAt: '2026-10-01T00:00:00.000000001Z' }));
+    else if (request.url === '/capabilities') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', mode: 'paper', currency: 'USD', capitalExit: { version: 1, supported: false, readable: true } }));
+    else if (request.url === '/capital-exits') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', mode: 'paper', currency: 'USD', accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] }));
     else if (request.url === '/account') response.end(JSON.stringify({ clientId: 'browser-client', accountId: 'browser-account', sequence: '9007199254740997', nativeClockNs: clock, currency: 'USD', equity: null, cash: null, positions: [] }));
     else { response.statusCode = 404; response.end('{}'); }
   });
@@ -59,16 +61,24 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     await expect(page.locator('.metric-primary')).toContainText('分数恒定'); await expect(page.locator('.metric-primary')).toContainText('不可用');
     const studies = await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>; expect(studies.items).toHaveLength(1);
     const id = studies.items[0]!.id; const original = await (await page.request.get(`${url}/api/v3/research/${id}`)).json() as ResearchDetail;
-    expect(original.submission?.status).toBe('done'); expect(original.final?.status).toBe('COMPUTED'); expect(original.tasks.some(task => task.outcome === 'completed')).toBe(true); expect(await state.calls()).toBe(1);
+    expect(original.input.specification?.name).toBe('HTTP protocol study, not scientific qualification'); expect(original.input.specification?.rationale).toContain('Controlled HTTP hypothesis'); expect(original.criterion?.status).toBe('insufficient'); expect(original.submission?.status).toBe('done'); expect(original.final?.status).toBe('COMPUTED'); expect(original.tasks.some(task => task.outcome === 'completed')).toBe(true); expect(await state.calls()).toBe(1);
     await expect(page.locator('body')).not.toContainText(String(original.input.data.catalog)); await expect(page.locator('pre')).toHaveCount(0);
     await page.getByRole('button', { name: /所选试验/ }).click(); await expect(page.getByRole('button', { name: `收起试验 ${original.final!.trialId}` })).toHaveAttribute('aria-expanded', 'true'); await expect(page.locator('.trial-detail')).toContainText('Controlled protocol'); await page.getByRole('tab', { name: '证据', exact: true }).click(); await page.screenshot({ path: info.outputPath('actual-http-research.png'), fullPage: true });
     await page.getByRole('button', { name: '创建组合', exact: true }).click(); await page.getByLabel('组合名称', { exact: true }).fill('HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();
-    await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '1000.000000000000000001', exact: true })).toBeVisible(); const portfolios = await (await page.request.get(`${url}/api/v3/portfolios`)).json() as PortfolioView[]; expect(portfolios).toHaveLength(1); expect(portfolios[0]!.weights).toEqual([{ researchId: id, weight: '1' }]);
+    await expect(page.locator('.error-notice')).toContainText('研究请求的独立指标不可用'); expect(await (await page.request.get(`${url}/api/v3/portfolios`)).json()).toEqual([]); expect(offers).toBe(0);
+    const factor = (await (await page.request.get(`${url}/api/v3/factors`)).json() as FactorView[])[0]!; expect(factor.combinable).toBe(false); expect(factor.reason).toBe('research_criterion_insufficient');
+    await page.goto(`${url}/#/factors/${factor.id}`); await expect(page.getByRole('button', { name: '加入组合', exact: true })).toBeDisabled(); await expect(page.locator('.capacity-section')).toContainText('research_criterion_insufficient');
+    // Keep the target/receipt protocol coverage on the intentional legacy path, not fabricated structured evidence.
+    const legacy = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-legacy-transport', goal: 'Legacy HTTP transport protocol, not scientific qualification', model: original.input.model, datasetId: original.datasetId, maxTrials: 1 } }); expect(legacy.status()).toBe(202); const legacyId = (await legacy.json()).conversationId as number;
+    await page.goto(`${url}/#/research/${legacyId}`); await page.getByRole('button', { name: '创建组合', exact: true }).click();
+    await page.locator('.ant-select-selection-item').filter({ hasText: `#${id} / ${original.title}` }).locator('.ant-select-selection-item-remove').click();
+    await page.getByLabel(`研究 ${legacyId} 权重`, { exact: true }).fill('1'); await page.getByLabel('组合名称', { exact: true }).fill('Legacy HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();
+    await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '1000.000000000000000001', exact: true })).toBeVisible(); const portfolios = await (await page.request.get(`${url}/api/v3/portfolios`)).json() as PortfolioView[]; expect(portfolios).toHaveLength(1); expect(portfolios[0]!.weights).toEqual([{ researchId: legacyId, weight: '1' }]);
     await page.getByRole('button', { name: '交付目标', exact: true }).click(); await page.getByLabel('连接', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol-only paper connection' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待核对'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(offers).toBe(1);
     const before = (await (await page.request.get(`${url}/api/v3/observations`)).json() as ObservationView[])[0]!; expect(before.receipt?.status).toBe('UNCERTAIN'); await state.restart(); await page.reload(); await expect(page.locator('.receipt-section')).toContainText('待核对'); await page.getByRole('button', { name: '核对回执' }).click(); await expect(page.locator('.receipt-section')).toContainText('已接收'); await expect(page.getByRole('heading', { name: '权益数值未提供' })).toBeVisible(); await expect(page.locator('[data-testid="equity-chart"]')).toHaveCount(0); await expect(page.locator('.positions-section')).toContainText('无持仓');
     await page.getByText('来源与身份', { exact: true }).click(); await expect(page.locator('.provenance-disclosure')).toContainText('9007199254740997'); await expect(page.locator('.provenance-disclosure')).toContainText(clock);
     const after = (await (await page.request.get(`${url}/api/v3/observations`)).json() as ObservationView[])[0]!;
-    expect(after.receipt?.id).toBe(before.receipt?.id); expect(after.receipt?.expiresAt).toBe(before.receipt?.expiresAt); expect(after.equity).toBeNull(); expect(after.cash).toBeNull(); expect(after.provenance?.sequence).toBe('9007199254740997'); expect(offers).toBe(1); expect(await state.calls()).toBe(1);
+    expect(after.receipt?.id).toBe(before.receipt?.id); expect(after.receipt?.expiresAt).toBe(before.receipt?.expiresAt); expect(after.equity).toBeNull(); expect(after.cash).toBeNull(); expect(after.provenance?.sequence).toBe('9007199254740997'); expect(offers).toBe(1); expect(await state.calls()).toBe(2);
     await page.getByRole('button', { name: '停止观测', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '停止观测', exact: true }).click(); await expect(page.getByRole('button', { name: '停止观测', exact: true })).toBeDisabled(); await expect(page.locator('.receipt-section')).toContainText('已接收'); expect(offers).toBe(1); expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]); expect(errors).toEqual([]); await page.screenshot({ path: info.outputPath('actual-http-observation.png'), fullPage: true });
   } finally { await state.close(); await new Promise<void>(resolve => remote.close(() => resolve())); }
 });

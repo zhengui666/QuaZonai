@@ -2,6 +2,7 @@
 pub mod account_observation_cli;
 pub mod account_observer;
 pub mod bounded;
+pub mod capacity;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod experiment;

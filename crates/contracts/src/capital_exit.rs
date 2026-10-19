@@ -427,6 +427,17 @@ pub struct CapitalExitAssessmentReceiptV1 {
     pub received_at: DateTime<Utc>,
 }
 
+/// Original owner DTO validation at the compact downstream transport boundary.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCapitalExitDocumentV1 {
+    Preview(CapitalExitPreviewV1),
+    Start(CapitalExitStartV1),
+    Action(CapitalExitActionV1),
+    View(CapitalExitViewV1),
+    Request(CapitalExitPreviewRequestV1),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

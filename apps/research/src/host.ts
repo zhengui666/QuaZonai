@@ -10,6 +10,7 @@ import { resolve, dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { canonical, Requests, Study } from './documents.ts';
 import { researchInput } from './input.ts';
+import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import type { ResearchInput } from './documents.ts';
 import { configuredModels } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
@@ -80,7 +81,7 @@ export async function openResearch(options: {
       if (!missing) continue;
       if (request.recovery) {
         if ((await latestSubmission(request.conversationId))?.id === request.recovery.previousSubmissionId) await resume(request.conversationId, request.recovery.previousSubmissionId);
-      } else await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInput(request.input).goal, requestId }, context);
+      } else await (await conversation(request.conversationId)).submit({ type: 'input', content: researchInstructions(researchInput(request.input)), requestId }, context);
     }
     harness.resume();
   } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
@@ -108,7 +109,7 @@ export async function openResearch(options: {
       if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
       const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
-      await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: input.goal });
+      await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
       (await tx.doc(Study, created.id)).input = input;
       requests.requests[key] = { input, conversationId: created.id };
       return created.id;
@@ -116,7 +117,7 @@ export async function openResearch(options: {
     const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
     if (previous) return { conversationId: id, submissionId: previous.id };
     if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
-    const submission = await (await conversation(id)).submit({ type: 'input', content: input.goal, requestId }, context);
+    const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
     return { conversationId: id, submissionId: submission.id };
   }
   async function submissionFor(id: number) {
@@ -167,11 +168,14 @@ export async function openResearch(options: {
       const intent = requests.requests[key];
       if (!study.input) throw new Error('research_not_found');
       if (intent && (!intent.recovery || intent.conversationId !== handle.id || intent.recovery.previousSubmissionId !== previousId || canonical(intent.input) !== canonical(study.input))) throw new Error('recovery_request_conflict');
-      const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null && current.submission?.status === 'done';
+      const ownerAborted = current.submission?.status === 'unanswered' && current.submission.reason === 'aborted';
+      const stopped = study.final?.status === 'STOPPED' && study.final.trialId === null && study.final.result === null
+        && (current.submission?.status === 'done' || ownerAborted && study.final.reason === 'owner_stop');
       if (study.final && (intent || !stopped)) throw new Error('research_already_final');
       if (current.submission?.id !== previousId) throw new Error('research_not_recoverable_conflict');
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
-      if (!stopped && !failed && !(intent?.recovery?.mode === 'stopped' && current.submission.status === 'done')) throw new Error('research_not_recoverable_conflict');
+      const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
+      if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
       const maximum = study.input.policy.max_trials;
       if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
       const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');

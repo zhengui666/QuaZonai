@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import zhCN from 'antd/locale/zh_CN';
 import { App as AntApp, Button, ConfigProvider, Drawer, Dropdown, theme } from 'antd';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import AppErrorBoundary from './AppErrorBoundary';
 const Research = lazy(() => import('./research'));
 const Data = lazy(() => import('./data'));
 const Portfolios = lazy(() => import('./portfolio'));
+const Factors = lazy(() => import('./factors'));
 const Observations = lazy(() => import('./observations'));
 const Settings = lazy(() => import('./settings'));
 const Extensions = lazy(() => import('./extensions'));
@@ -21,6 +22,7 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false, stal
 type Appearance = 'system' | 'light' | 'dark';
 const destinations: { page: Workspace; label: string; icon: ReactNode; secondary?: boolean }[] = [
   { page: 'research', label: '研究', icon: <FlaskIcon /> }, { page: 'data', label: '数据', icon: <DatabaseIcon /> },
+  { page: 'factors', label: '因子库', icon: <SquaresFourIcon /> },
   { page: 'portfolios', label: '组合回测', icon: <ChartLineUpIcon /> }, { page: 'observations', label: '目标与观测', icon: <ArrowsLeftRightIcon /> },
   { page: 'settings', label: '模型设置', icon: <PlugsIcon />, secondary: true }, { page: 'extensions', label: '扩展', icon: <SquaresFourIcon />, secondary: true },
 ];
@@ -31,7 +33,7 @@ function WorkspaceApp() {
   const changeSession = (value: SessionView | undefined) => { cache.removeQueries({ predicate: query => query.queryKey[0] !== '/session' }); cache.setQueryData(['/session'], value ?? { setupRequired: false, authenticated: false }); };
   const refreshModels = useCallback(async () => { await cache.invalidateQueries({ queryKey: ['/models'] }); }, [cache]);
   useEffect(() => { const expired = () => { setAuthRequest(old => old ? { ...old, resume: true } : undefined); cache.setQueryData<SessionView>(['/session'], { setupRequired: false, authenticated: false }); }; authenticationEvents.addEventListener('required', expired); return () => authenticationEvents.removeEventListener('required', expired); }, [cache]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = previousRoute.current; previousRoute.current = route; setDrawer(false);
     if (!route.creating) {
       document.getElementById('main-content')?.focus({ preventScroll: true });
@@ -46,7 +48,7 @@ function WorkspaceApp() {
     <header className="app-topbar"><div className="topbar-inner"><a className="wordmark" href={href('/research')}>QuaZonai</a><nav className="primary-nav" aria-label="主要工作区">{links(false)}</nav><div className="topbar-right"><nav className="secondary-nav" aria-label="工作台设置">{links(true)}</nav><div className="topbar-divider" /><AppearanceControl /><Button className="icon-button logout-button" type="text" aria-label="退出登录" icon={<SignOutIcon size={19} />} onClick={() => { setLogoutError(undefined); void api<SessionView>('/session', { method: 'DELETE' }).then(changeSession, setLogoutError); }} /></div><Button className="mobile-menu icon-button" type="text" icon={<ListIcon size={21} />} aria-label="打开导航" onClick={() => setDrawer(true)} /></div></header>
     <Drawer title="QuaZonai" placement="left" getContainer={false} open={drawer} onClose={() => setDrawer(false)} width={288}><nav className="drawer-nav" aria-label="工作区">{links(false)}<div className="drawer-divider" />{links(true)}</nav><div className="drawer-appearance"><AppearanceControl /><span>外观设置</span><Button type="text" onClick={() => { void api<SessionView>('/session', { method: 'DELETE' }).then(value => { setDrawer(false); changeSession(value); }, setLogoutError); }}>退出登录</Button></div></Drawer>
     <main id="main-content" tabIndex={-1} className={route.page === 'research' && !route.creating ? 'research-main' : ''}><ErrorNotice error={logoutError} /><AppErrorBoundary key={`${route.page}/${route.creating}/${route.id ?? ''}/${route.creating ? route.params.toString() : ''}`}><Suspense fallback={<Loading />}>
-      {route.unknown ? <Empty title="未找到页面" action={<a className="text-link" href={href('/research')}>返回研究</a>} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'data' ? <Data /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : route.page === 'settings' ? <Settings connect={setAuthRequest} /> : <Extensions />}
+      {route.unknown ? <Empty title="未找到页面" action={<a className="text-link" href={href('/research')}>返回研究</a>} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'data' ? <Data /> : route.page === 'factors' ? <Factors route={route} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : route.page === 'settings' ? <Settings connect={setAuthRequest} /> : <Extensions />}
     </Suspense></AppErrorBoundary></main>
     {authRequest && <Suspense fallback={<Loading />}><ModelLogin key={authRequest.id} request={authRequest} changed={refreshModels} close={() => setAuthRequest(undefined)} /></Suspense>}
   </>;

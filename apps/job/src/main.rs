@@ -42,6 +42,15 @@ enum Operation {
     Allocate,
     /// Blend explicit aligned native target rows using exact decimal member weights.
     BlendTargets,
+    /// Conditional historical capacity from original causal BAR liquidity and targets.
+    AssessCapacity {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Exact, reserve-aware sizing inside an approved pool; target-only, no orders.
+    SizeAccount,
+    /// Validate an original capital-exit V1 document; does not control an owner.
+    ValidateCapitalExit,
     /// Predict using one immutable native catalog and a bounded Wasm artifact.
     Forecast {
         #[arg(long)]
@@ -186,6 +195,13 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
         Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
+        Operation::AssessCapacity { catalog } => {
+            output(&job::capacity::assess(&catalog, &input()?)?)
+        }
+        Operation::SizeAccount => output(&job::capacity::size_account(&input()?)?),
+        Operation::ValidateCapitalExit => output(&input::<
+            contracts::capital_exit::NativeCapitalExitDocumentV1,
+        >()?),
         Operation::Forecast { catalog, model } => output(&job::forecast::forecast(
             &catalog,
             &input()?,

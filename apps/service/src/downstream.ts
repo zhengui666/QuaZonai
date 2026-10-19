@@ -6,33 +6,47 @@ import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.
 import type { ObservationFact } from './facts.ts';
 
 export interface ObservationTaskInput {
-  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject;
+  id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; allocation?: JsonObject;
 }
 export function connectionBase(connection: ConnectionConfig): URL {
   const url = new URL(connection.url); url.hash = '';
   if (!url.pathname.endsWith('/')) url.pathname += '/';
   return url;
 }
-export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
-  const { connection } = input;
-  const url = connectionBase(connection);
-  url.pathname += operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
+export async function downstreamRequest(connection: ConnectionConfig, path: string, method: 'GET' | 'POST', body?: unknown, signal?: AbortSignal): Promise<JsonObject> {
+  const url = connectionBase(connection); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-qz-client-id': connection.clientId };
   if (connection.tokenEnv) {
     const token = process.env[connection.tokenEnv]; if (!token) throw new Problem('downstream_credentials_missing');
     headers.authorization = `Bearer ${token}`;
   }
-  if (operation === 'deliver' && BigInt(counter(input.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired');
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 0 } });
   try {
-    const response = await fetch(url, { method: operation === 'deliver' ? 'POST' : 'GET', headers,
-      body: operation === 'deliver' ? JSON.stringify({ id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId,
-        expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target }) : undefined,
-      signal, dispatcher, redirect: 'error',
-    });
-    if (!response.ok) { await response.body?.cancel(); throw new Problem(`downstream_${operation}_${response.status}`); }
-    return object(await response.json(), `downstream_${operation}`);
+    const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal, dispatcher, redirect: 'error' });
+    if (!response.ok) { await response.body?.cancel(); throw new Problem(`downstream_${path === 'targets' ? 'deliver' : path.startsWith('targets/') ? 'receipt' : path === 'account' ? 'account' : 'control'}_${response.status}`); }
+    return object(await response.json(), 'downstream_response');
   } finally { await dispatcher.close(); }
+}
+
+export function isPreTransportRejection(error: unknown): boolean {
+  return error instanceof Problem && ['target_expired', 'downstream_credentials_missing', 'allocation_evidence_unavailable', 'allocation_evidence_expired'].includes(error.message);
+}
+
+export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
+  const { connection } = input;
+  if (operation === 'deliver') {
+    const now = BigInt(nowNs());
+    if (BigInt(counter(input.target.valid_until_ns, 'expiry')) <= now) throw new Problem('target_expired');
+    if (input.allocation) {
+      const deadline = input.allocation.validUntilNs;
+      if (typeof deadline !== 'string' || !/^\d+$/.test(deadline)) throw new Problem('allocation_evidence_unavailable');
+      if (BigInt(deadline) <= now) throw new Problem('allocation_evidence_expired');
+    }
+  }
+  const path = operation === 'deliver' ? 'targets' : operation === 'receipt' ? `targets/${encodeURIComponent(input.receiptId)}` : 'account';
+  return downstreamRequest(connection, path, operation === 'deliver' ? 'POST' : 'GET', operation === 'deliver' ? {
+    id: input.receiptId, clientId: connection.clientId, accountId: connection.accountId, expiresAt: nsTime(String(input.target.valid_until_ns)), target: input.target, ...(input.allocation ? { allocation: input.allocation } : {}),
+  } : undefined, signal);
 }
 
 export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void {
@@ -46,16 +60,23 @@ export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void 
   original.acknowledgedAt ??= typeof receipt.acknowledgedAt === 'string' ? receipt.acknowledgedAt : null;
   if (fact.view.status !== 'STOPPED') fact.view.status = status === 'ACKNOWLEDGED' ? 'OBSERVING' : status;
 }
-export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject): void {
-  if (snapshot.clientId !== fact.connection.clientId || snapshot.accountId !== fact.connection.accountId || snapshot.currency !== fact.view.currency) throw new Problem('account_identity_mismatch');
+export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bindings: ObservationFact[] = []): void {
+  if (snapshot.clientId !== fact.connection.clientId || snapshot.accountId !== fact.connection.accountId || snapshot.currency !== fact.view.currency || snapshot.mode !== undefined && snapshot.mode !== fact.connection.mode) throw new Problem('account_identity_mismatch');
   const sequence = BigInt(counter(snapshot.sequence, 'account_sequence'));
   const clock = BigInt(counter(snapshot.nativeClockNs, 'account_clock'));
-  if (fact.snapshot) {
-    const oldSequence = BigInt(counter(fact.snapshot.sequence, 'old_sequence'));
-    const oldClock = BigInt(counter(fact.snapshot.nativeClockNs, 'old_clock'));
+  // Joined transport aliases may rename client/account IDs, not native or economic facts.
+  const physical = (value: JsonObject) => canonical({ ...value, clientId: null, accountId: null });
+  let repeated = false;
+  for (const binding of [fact, ...bindings]) {
+    const previous = binding.snapshot; if (!previous) continue;
+    const oldSequence = BigInt(counter(previous.sequence, 'old_sequence'));
+    const oldClock = BigInt(counter(previous.nativeClockNs, 'old_clock'));
     if (sequence < oldSequence || clock < oldClock) throw new Problem('account_snapshot_out_of_order');
-    if (sequence === oldSequence) { if (canonical(snapshot) !== canonical(fact.snapshot)) throw new Problem('account_snapshot_conflict'); return; }
+    if (sequence === oldSequence && physical(snapshot) !== physical(previous)) throw new Problem('account_snapshot_conflict');
+    if (typeof previous.accountSourceId === 'string' && snapshot.accountSourceId !== previous.accountSourceId) throw new Problem('account_identity_mismatch');
+    if (binding === fact && sequence === oldSequence) repeated = true;
   }
+  if (repeated) return;
   const optionalMoney = (value: unknown, name: string) => value == null ? null : decimal(value, name);
   const positions = Array.isArray(snapshot.positions) ? snapshot.positions.map((item) => {
     const position = object(item, 'position');

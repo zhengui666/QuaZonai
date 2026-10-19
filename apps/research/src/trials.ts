@@ -26,11 +26,20 @@ export async function evaluateTrial(
       study.trials.push({ taskId: api.taskId, proposal, status: 'REJECTED', error: 'trial_budget_exhausted', result: null });
       return { rejected: true };
     }
+    const scope = study.input?.specification?.search;
+    if (scope) {
+      const members = Array.isArray(proposal.members) ? proposal.members.length : 1;
+      if (members > scope.maxMembers || scope.scope === 'single-factor' && (proposal.members !== undefined || typeof proposal.model !== 'string') || scope.scope === 'ensemble' && !Array.isArray(proposal.members)) {
+        study.trials.push({ taskId: api.taskId, proposal, status: 'FAILED', result: null, error: 'research_search_scope_exceeded' });
+        return { scopeRejected: true };
+      }
+    }
     study.trials.push({ taskId: api.taskId, proposal, status: 'STARTED', result: null, error: null });
     return null;
   }, context);
   if (previous && typeof previous === 'object' && !Array.isArray(previous)) {
     if (previous.rejected) throw new Error('trial_budget_exhausted');
+    if (previous.scopeRejected) throw new Error('research_search_scope_exceeded');
     return previous;
   }
   try {

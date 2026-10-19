@@ -3,6 +3,7 @@
 
 pub mod account_observation;
 pub mod brief;
+pub mod capacity;
 pub mod capital_exit;
 pub mod catalogs;
 pub mod data;
@@ -62,6 +63,10 @@ use utoipa::OpenApi;
     science::NativeAlphaSealedRequestV1,
     science::NativeAlphaSealedResultV1,
     science::NativeFrozenCalibrationV1,
+    capacity::NativeCapacityRequestV1,
+    capacity::NativeCapacityReportV1,
+    capacity::NativeAccountSizingRequestV1,
+    capacity::NativeAccountSizingResultV1,
     science::NativeTargetBlendRequestV1,
     science::NativeTargetBlendResultV1,
     science::NativeSimulationRequestV1,

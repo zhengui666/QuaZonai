@@ -5,6 +5,7 @@ import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
 import { observe } from './watch.ts';
 import { schemas } from './schema.ts';
+import { researchCapital, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import type { ObservationStart, PortfolioStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
 
 const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
@@ -17,8 +18,11 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
+  factor list | get ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
+  observation automatic ID --file POLICY.json
+  capital status OBSERVATION_ID | preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
   settings get | set --file SETTINGS.json
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
@@ -89,6 +93,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (values.goal || values.dataset || values.model || values['max-trials']) throw new CliError('file_or_goal_required');
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       submission = file.body as unknown as ResearchStart; body = file.bytes;
+      const input = object('input' in submission ? submission.input : submission); const specification = input.specification;
+      if (specification !== undefined) {
+        try { const spec = researchSpecification(specification); if (input.goal !== spec.question) throw new Error('research_question_mismatch'); }
+        catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_research_specification'); }
+        const maximum = 'input' in submission ? object(input.policy).max_trials : input.maxTrials;
+        if (!Number.isSafeInteger(maximum) || Number(maximum) < 0) throw new CliError('research_trial_budget_required');
+      }
     } else {
       const match = /^([^:]+):(.+)$/.exec(values.model ?? '');
       const maximum = Number(values['max-trials']);
@@ -113,6 +124,15 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
         method = 'POST'; path += '/resume'; body = JSON.stringify({ submissionId });
       }
     } else throw new CliError('unknown_research_command');
+  } else if (group === 'factor') {
+    if (action === 'list') path = '/factors';
+    else if (action === 'get' || action === 'capacity') path = `/factors/${resourceId(id)}${action === 'capacity' ? '/capacity' : ''}`;
+    else throw new CliError('unknown_factor_command');
+    if (action === 'capacity' && values.file) {
+      const file = await fileBody(values.file);
+      try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
+      method = 'POST'; body = file.bytes;
+    }
   } else if (group === 'portfolio' || group === 'backtest') {
     if (action === 'build') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
@@ -132,8 +152,14 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (action === 'get') resourceId(id);
       path = '/observations'; // Get is optional server-side; select from the actual list.
     }
+    else if (action === 'automatic') { method = 'POST'; path = `/observations/${resourceId(id)}/automatic`; body = (await fileBody(values.file)).bytes; }
     else if (action === 'refresh' || action === 'stop') { method = 'POST'; path = `/observations/${resourceId(id)}/${action}`; }
     else throw new CliError('unknown_observation_command');
+  } else if (group === 'capital') {
+    path = `/observations/${resourceId(id)}/capital-exits`;
+    if (action === 'preview' || action === 'command') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']); body = file.bytes; method = 'POST'; path += action === 'preview' ? '/preview' : '/commands';
+    } else if (action !== 'status') throw new CliError('unknown_capital_command');
   } else if (group === 'settings') {
     path = '/settings';
     if (action === 'set') { body = (await fileBody(values.file)).bytes; method = 'PATCH'; }

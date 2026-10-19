@@ -6,8 +6,24 @@ import { setup, studied, built, settledObservation, context } from './support.ts
 import type { TaskId } from '@earendil-works/pi-durable';
 import { Application, json } from '../src/facts.ts';
 import { Requests } from '../../research/src/documents.ts';
+import { acceptSnapshot } from '../src/downstream.ts';
 
 const api = '/api/v3';
+test('shared-source snapshot equality normalizes only known transport aliases, keeps native facts and validates every binding', () => {
+  const connection = { id: 'TEST_ONLY', name: 'TEST_ONLY', url: 'http://127.0.0.1:1', mode: 'paper', clientId: 'current-client', accountId: 'current-account' };
+  const fresh = () => ({ connection, snapshot: null, view: { currency: 'USD', positions: [], curve: [] } } as any);
+  const snapshot = { clientId: connection.clientId, accountId: connection.accountId, mode: 'paper', currency: 'USD', accountSourceId: 'TEST_ONLY-source', observationId: 'TEST_ONLY-observation', controlRevision: '7', sequence: '9007199254740995', nativeClockNs: '1000000000', equity: '1000', cash: '1000', positions: [], execution: { currency: 'USD', validUntilNs: '2000000000', liquidity: [] } };
+  const peer = { ...fresh(), connection: { ...connection, clientId: 'alias-client', accountId: 'alias-account' }, snapshot: { ...snapshot, clientId: 'alias-client', accountId: 'alias-account' } };
+  const current = fresh(); acceptSnapshot(current, snapshot, [peer]); assert.deepEqual(current.snapshot, snapshot); assert.equal(current.view.curve.length, 1);
+  acceptSnapshot(current, snapshot, [peer]); assert.equal(current.view.curve.length, 1); assert.equal(peer.snapshot.clientId, 'alias-client');
+  for (const change of [{ nativeClockNs: '1000000001' }, { equity: '900' }, { cash: null }, { positions: [{ instrumentId: 'A', quantity: '1', value: '1', pnl: null }] }, { execution: { ...snapshot.execution, validUntilNs: '3000000000' } }, { accountSourceId: 'OTHER-source' }, { observationId: 'OTHER-observation' }, { controlRevision: '8' }]) {
+    const untouched = fresh(); assert.throws(() => acceptSnapshot(untouched, json({ ...snapshot, ...change }), [peer]), /account_snapshot_conflict/); assert.equal(untouched.snapshot, null); assert.equal(untouched.view.curve.length, 0);
+  }
+  for (const change of [{ sequence: '9007199254740994' }, { nativeClockNs: '999999999' }]) assert.throws(() => acceptSnapshot(fresh(), { ...snapshot, ...change }, [peer]), /account_snapshot_out_of_order/);
+  assert.throws(() => acceptSnapshot(current, snapshot, [{ ...peer, snapshot: { ...peer.snapshot, cash: '999' } }]), /account_snapshot_conflict/, 'a local same-sequence replay must still check every joined alias');
+  assert.throws(() => acceptSnapshot(fresh(), { ...snapshot, sequence: '9007199254740996', accountSourceId: 'OTHER-source' }, [peer]), /account_identity_mismatch/);
+  assert.throws(() => acceptSnapshot(fresh(), { ...snapshot, mode: 'live' }, [peer]), /account_identity_mismatch/);
+});
 test('owner cookie/device auth, read-only GET, original research identity/replay/conflict and restart', { timeout: 20_000 }, async () => {
   const state = await setup();
   try {
@@ -79,6 +95,9 @@ async function connection(state: Awaited<ReturnType<typeof setup>>, uncertain = 
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     if (uncertain) return reply.code(503).send({ error: 'unknown_remote_result' }); return receipt();
   });
+  // TEST_ONLY readable native-owner facts; no capital-exit initiation capability.
+  downstream.get('/capabilities', () => ({ clientId: 'client-original', accountId: 'account-original', mode: 'paper', currency: 'USD', capitalExit: { version: 1, supported: false, readable: true } }));
+  downstream.get('/capital-exits', () => ({ clientId: 'client-original', accountId: 'account-original', mode: 'paper', currency: 'USD', accountSourceId: '01900000-0000-7000-8000-000000000001', observationId: '01900000-0000-7000-8000-000000000002', controlRevision: '1', reserved: '0', exits: [] }));
   downstream.get('/targets/:id', async () => receipt());
   downstream.get('/account', async () => ({ clientId: 'client-original', accountId: 'account-original', sequence: '9007199254740995', nativeClockNs: '1800000000123456789', currency: 'USD', equity: '1234.123456789012345678', cash: null, positions: [{ instrumentId: 'TEST.SIM', quantity: '0.000000000000000001', value: null, pnl: null }] }));
   const url = await downstream.listen({ host: '127.0.0.1', port: 0 });
