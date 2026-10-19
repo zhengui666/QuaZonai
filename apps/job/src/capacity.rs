@@ -522,6 +522,7 @@ pub fn size_account(request: &NativeAccountSizingRequestV1) -> Result<NativeAcco
             blocked!("liquidity_duplicate");
         }
         if liquidity.currency != request.currency
+            || liquidity.available_ns < liquidity.event_ns
             || liquidity.available_ns > request.clock_ns
             || liquidity.event_ns > request.clock_ns
             || request
@@ -697,6 +698,36 @@ mod tests {
         );
         input.reserved = "2000".parse().unwrap();
         assert!(size_account(&input).unwrap().budget.as_decimal().is_zero());
+    }
+    #[test]
+    fn used_liquidity_requires_event_before_availability_before_decision() {
+        let mut input = sizing();
+        for available in [1_000_000_000, 1_500_000_000] {
+            input.liquidity[0].available_ns = DbCounter::new(available).unwrap();
+            assert_eq!(size_account(&input).unwrap().status, "SIZED");
+        }
+        input.liquidity[0].available_ns = DbCounter::new(999_999_999).unwrap();
+        let result = size_account(&input).unwrap();
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("current_liquidity_stale_or_mismatched")
+        );
+        assert!(result.target.is_none());
+        assert!(result.members.is_empty());
+        assert!(result.capital.as_decimal().is_zero());
+
+        let mut unused = input.liquidity[0].clone();
+        unused.instrument_id = "B".into();
+        input.liquidity[0].available_ns = input.liquidity[0].event_ns;
+        input.liquidity.push(unused);
+        input.target.rebalance_instrument_ids = Some(vec!["A".into()]);
+        let mut other = input.target.targets[0].clone();
+        other.instrument_id = "B".into();
+        other.weight = "0.5".parse().unwrap();
+        input.target.targets[0].weight = "0.5".parse().unwrap();
+        input.target.targets.push(other);
+        assert_eq!(size_account(&input).unwrap().status, "SIZED");
     }
     #[test]
     fn live_minimum_or_lot_cannot_erase_a_funded_buy() {

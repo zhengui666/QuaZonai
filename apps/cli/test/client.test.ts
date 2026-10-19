@@ -153,6 +153,22 @@ test('diagnostics and resume use the original numeric identities without implici
   } finally { await config.close(); await api.close(); }
 });
 
+test('factor capacity validates native decimal limits locally and preserves accepted exact file bytes', async () => {
+  const sent: string[] = [];
+  const api = await server((_request, response, bytes) => { sent.push(bytes); json(response, { received: true }); });
+  const config = await configuration(api.origin); const file = join(config.directory, 'capital.json');
+  try {
+    for (const scenario of ['100000000000000000000', '0'.repeat(64) + '1', '0.0000000000000000001', '1\n']) {
+      await writeFile(file, JSON.stringify({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }));
+      await assert.rejects(run(['factor', 'capacity', 'r2.t3.m0', '--file', file]), /research_capital_scenarios_invalid/); assert.equal(sent.length, 0);
+    }
+    for (const scenario of ['99999999999999999999.999999999999999999', '0.000000000000000001', '0'.repeat(63) + '1', '1.' + '0'.repeat(62)]) {
+      const bytes = JSON.stringify({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }, null, 2) + '\n'; await writeFile(file, bytes);
+      await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1), bytes);
+    }
+  } finally { await config.close(); await api.close(); }
+});
+
 test('structured validation and factor/account-control commands preserve original file bytes and concrete routes', async () => {
   const sent: { method: string; url: string; bytes: string }[] = [];
   const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { received: true }); });

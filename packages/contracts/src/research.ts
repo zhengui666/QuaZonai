@@ -26,7 +26,7 @@ export function researchSpecification(value: unknown): ResearchSpecification {
 
 export function researchCapital(value: unknown): CapitalAssumptions {
   const capital = object(value); fields(capital, ['scenarios', 'participation', 'maximumAgeSeconds']);
-  if (!Array.isArray(capital.scenarios) || !capital.scenarios.length || capital.scenarios.some(item => typeof item !== 'string' || !/^\d+(?:\.\d{1,18})?$/.test(item) || !/[1-9]/.test(item))) throw new Error('research_capital_scenarios_invalid');
+  if (!Array.isArray(capital.scenarios) || !capital.scenarios.length || capital.scenarios.some(item => typeof item !== 'string' || item.length > 64 || !/^\+?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(item) || !/[1-9]/.test(item))) throw new Error('research_capital_scenarios_invalid');
   if (typeof capital.participation !== 'string' || !/^(?:0\.\d{1,18}|1(?:\.0{1,18})?)$/.test(capital.participation) || !/[1-9]/.test(capital.participation)) throw new Error('research_participation_invalid');
   if (!Number.isSafeInteger(capital.maximumAgeSeconds) || Number(capital.maximumAgeSeconds) < 1 || Number(capital.maximumAgeSeconds) > 4294967295) throw new Error('research_liquidity_age_invalid');
   return structuredClone(capital) as unknown as CapitalAssumptions;

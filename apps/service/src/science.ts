@@ -5,7 +5,7 @@ import type { PortfolioTaskInput } from './native.ts';
 import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } from './downstream.ts';
 import type { ObservationTaskInput } from './downstream.ts';
 import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
-import { CapitalExitCommand } from './capital-exit.ts';
+import { accountKey, CapitalExitCommand } from './capital-exit.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
@@ -99,7 +99,9 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
         const snapshot = await downstream(task.input, 'account', runtime.signal);
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
-          acceptSnapshot(fact, snapshot); fact.view.error = null; facts.observations[task.input.id] = json(fact);
+          const key = accountKey(fact.connection, facts.accountControls);
+          const bindings = Object.values(facts.observations).map(observation).filter(item => accountKey(item.connection, facts.accountControls) === key);
+          acceptSnapshot(fact, snapshot, bindings); fact.view.error = null; facts.observations[task.input.id] = json(fact);
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, context);
       } catch (error) {

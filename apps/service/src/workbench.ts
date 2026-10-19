@@ -151,7 +151,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const counts = heldout ? object(object(heldout.metric).counts) : null;
         if (!counts || BigInt(counter(counts.included, 'heldout_included')) === 0n) throw new Problem('heldout_observations_missing', 422);
         const criterion = researchCriterion(study.input.specification, 'COMPUTED', metrics(final.result));
-        if (criterion && criterion.target !== null && !['computed', 'met'].includes(criterion.status)) throw new Problem('research_criterion_not_met', 422);
+        if (criterion && !['computed', 'met'].includes(criterion.status)) throw new Problem(criterion.status === 'insufficient' ? 'research_criterion_insufficient' : 'research_criterion_not_met', 422);
         strategyMembers(object(selected.proposal));
         if (input.factors) {
           const factor = factorViews(id, study).find(item => item.id === input.factors![index]!.factorId);

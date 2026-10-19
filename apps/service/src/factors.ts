@@ -35,7 +35,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
       const evidence = independentlyComputed ? strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' ? 'historical' : 'independent' : members.length > 1 ? 'component_only' : trial.status === 'COMPUTED' ? 'validation_only' : 'unavailable';
       const reason = !independentlyComputed ? evidence === 'component_only' ? 'component_not_independently_assessed' : 'independent_evidence_missing'
         : typeof included !== 'string' || !/^\d+$/.test(included) || BigInt(included) === 0n ? 'heldout_observations_missing'
-          : criterion && criterion.target !== null && !['computed', 'met'].includes(criterion.status) ? 'research_criterion_not_met' : !strategy ? 'strategy_policy_missing' : null;
+          : criterion && !['computed', 'met'].includes(criterion.status) ? criterion.status === 'insufficient' ? 'research_criterion_insufficient' : 'research_criterion_not_met' : !strategy ? 'strategy_policy_missing' : null;
       return { id: factorId(id, Number(trial.taskId), memberIndex), researchId: id, trialId: Number(trial.taskId), memberIndex,
         name: input.specification?.name ?? input.goal, hypothesis: String(proposal.hypothesis ?? ''), modelSource: member.model,
         datasetId: typeof dataset?.id === 'string' ? dataset.id : null, currency: typeof dataset?.currency === 'string' ? dataset.currency : typeof (strategy?.simulationSettings as Record<string, unknown> | undefined)?.base_currency === 'string' ? String((strategy!.simulationSettings as Record<string, unknown>).base_currency) : null,

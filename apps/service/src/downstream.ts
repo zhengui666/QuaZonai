@@ -60,16 +60,23 @@ export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void 
   original.acknowledgedAt ??= typeof receipt.acknowledgedAt === 'string' ? receipt.acknowledgedAt : null;
   if (fact.view.status !== 'STOPPED') fact.view.status = status === 'ACKNOWLEDGED' ? 'OBSERVING' : status;
 }
-export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject): void {
-  if (snapshot.clientId !== fact.connection.clientId || snapshot.accountId !== fact.connection.accountId || snapshot.currency !== fact.view.currency) throw new Problem('account_identity_mismatch');
+export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bindings: ObservationFact[] = []): void {
+  if (snapshot.clientId !== fact.connection.clientId || snapshot.accountId !== fact.connection.accountId || snapshot.currency !== fact.view.currency || snapshot.mode !== undefined && snapshot.mode !== fact.connection.mode) throw new Problem('account_identity_mismatch');
   const sequence = BigInt(counter(snapshot.sequence, 'account_sequence'));
   const clock = BigInt(counter(snapshot.nativeClockNs, 'account_clock'));
-  if (fact.snapshot) {
-    const oldSequence = BigInt(counter(fact.snapshot.sequence, 'old_sequence'));
-    const oldClock = BigInt(counter(fact.snapshot.nativeClockNs, 'old_clock'));
+  // Joined transport aliases may rename client/account IDs, not native or economic facts.
+  const physical = (value: JsonObject) => canonical({ ...value, clientId: null, accountId: null });
+  let repeated = false;
+  for (const binding of [fact, ...bindings]) {
+    const previous = binding.snapshot; if (!previous) continue;
+    const oldSequence = BigInt(counter(previous.sequence, 'old_sequence'));
+    const oldClock = BigInt(counter(previous.nativeClockNs, 'old_clock'));
     if (sequence < oldSequence || clock < oldClock) throw new Problem('account_snapshot_out_of_order');
-    if (sequence === oldSequence) { if (canonical(snapshot) !== canonical(fact.snapshot)) throw new Problem('account_snapshot_conflict'); return; }
+    if (sequence === oldSequence && physical(snapshot) !== physical(previous)) throw new Problem('account_snapshot_conflict');
+    if (typeof previous.accountSourceId === 'string' && snapshot.accountSourceId !== previous.accountSourceId) throw new Problem('account_identity_mismatch');
+    if (binding === fact && sequence === oldSequence) repeated = true;
   }
+  if (repeated) return;
   const optionalMoney = (value: unknown, name: string) => value == null ? null : decimal(value, name);
   const positions = Array.isArray(snapshot.positions) ? snapshot.positions.map((item) => {
     const position = object(item, 'position');

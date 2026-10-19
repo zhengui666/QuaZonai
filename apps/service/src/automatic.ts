@@ -62,11 +62,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           }
           if (owner && owner.view.id !== current.view.id) return;
           if (bindings.some(item => ['PENDING', 'UNCERTAIN'].includes(item.view.receipt?.status ?? '') || item.view.id !== current.view.id && unsettledAdjustment(item))) throw new Problem('target_delivery_requires_reconciliation', 409);
-          // Snapshot order is physical-account wide, not merely per browser binding.
-          for (const item of bindings) {
-            if (item.snapshot && (BigInt(counter(item.snapshot.sequence, 'account_sequence')) > BigInt(counter(snapshot.sequence, 'account_sequence')) || BigInt(counter(item.snapshot.nativeClockNs, 'account_clock')) > clock)) throw new Problem('account_snapshot_out_of_order');
-          }
-          acceptSnapshot(current, snapshot); current.view.status = 'OBSERVING'; current.view.error = null;
+          acceptSnapshot(current, snapshot, bindings); current.view.status = 'OBSERVING'; current.view.error = null;
           const status = capitalStatus(control(facts.accountControls?.[key]));
           current.view.capitalExit = status;
           current.view.allocation ??= emptyAllocation(current);
@@ -116,10 +112,15 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           const previous = latest.view.allocation ?? emptyAllocation(latest);
           const target = sized.target ? object(sized.target) : null;
           const accepted = object(latest.allocationContext ?? {});
-          const unchanged = previous.receipt?.status === 'ACKNOWLEDGED' && accepted.controlRevision === status.controlRevision && accepted.reserved === status.reserved
+          const sameEconomics = accepted.controlRevision === status.controlRevision && accepted.reserved === status.reserved
             && accepted.equity === String(snapshot.equity) && accepted.cashBuffer === policy.cashBuffer && accepted.capital === String(sized.capital)
             && canonical(accepted.members ?? []) === canonical(sized.members ?? []) && !!target && !!latest.allocationTarget && canonical(target) === canonical(latest.allocationTarget);
-          const repeatedRejection = sized.status === 'SIZED' && previous.receipt?.status === 'REJECTED' && accepted.snapshotSequence === snapshot.sequence && accepted.nativeClockNs === snapshot.nativeClockNs && accepted.controlRevision === status.controlRevision;
+          const unchanged = previous.receipt?.status === 'ACKNOWLEDGED' && sameEconomics;
+          const acceptedCapacity = object(accepted.capacity ?? {});
+          const repeatedRejection = sized.status === 'SIZED' && previous.receipt?.status === 'REJECTED' && sameEconomics
+            && accepted.snapshotSequence === snapshot.sequence && accepted.nativeClockNs === snapshot.nativeClockNs && accepted.budget === String(sized.budget)
+            && accepted.maximumSnapshotAgeSeconds === policy.maximumSnapshotAgeSeconds && canonical(accepted.factors ?? []) === canonical(json(members))
+            && acceptedCapacity.maximumCapital === capacity.maximumCapital && canonical(acceptedCapacity.assumptions ?? {}) === canonical(json(capacity.assumptions));
           const deliver = executable && sized.status === 'SIZED' && target !== null && !unchanged && !repeatedRejection;
           const epoch = deliver ? (BigInt(previous.epoch) + 1n).toString() : previous.epoch;
           const receipt: TargetReceipt | null = deliver ? { id: `${latest.view.id}:allocation:${epoch}`, status: 'PENDING', externalId: null,
@@ -171,10 +172,15 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }
         const key = accountKey(fact.connection, facts.accountControls);
-        const unsettled = Object.values(facts.observations).map(observation).some(other => accountKey(other.connection, facts.accountControls) === key
-          && (['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== fact.view.id && unsettledAdjustment(other)));
+        const bindings = Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key);
+        const unsettled = bindings.some(other => ['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== fact.view.id && unsettledAdjustment(other));
+        let snapshotError: string | undefined;
+        try {
+          if (!fact.snapshot || fact.snapshot.sequence !== allocation.sequence || fact.snapshot.nativeClockNs !== allocation.nativeClockNs) throw new Problem('account_snapshot_out_of_order');
+          acceptSnapshot(fact, fact.snapshot, bindings);
+        } catch (error) { if (!(error instanceof Problem)) throw error; snapshotError = error.message; }
         const status = capitalStatus(control(facts.accountControls?.[key]));
-        if (unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
+        if (snapshotError || unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = snapshotError ?? (unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'); facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
         allocation.status = 'UNCERTAIN'; allocation.receipt!.status = 'UNCERTAIN';
         input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext }) as unknown as import('./downstream.ts').ObservationTaskInput;
         facts.observations[task.input.id] = json(fact);

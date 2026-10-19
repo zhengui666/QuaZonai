@@ -24,6 +24,7 @@ test('structured admission captures the mandate, rejects unsupported overrides a
     assert.match(researchInstructions(detail.input), /Original structured research mandate/); assert.match(researchInstructions(detail.input), /Volume hypothesis/);
     const factors = (await state.service.app.inject({ url: '/api/v3/factors', headers: state.headers })).json();
     assert.equal(factors.length, 1); assert.equal(factors[0].id, factorId(receipt.conversationId, detail.final.trialId, 0)); assert.equal(factors[0].evidence, 'independent');
+    assert.equal(factors[0].combinable, false); assert.equal(factors[0].reason, 'research_criterion_insufficient');
     const assumptions = { scenarios: ['20.000000000000000001'], participation: '0.02', maximumAgeSeconds: 60 };
     assert.deepEqual(researchCapital(assumptions), assumptions); assert.throws(() => researchCapital({ ...assumptions, horizon: 9 }), /research_override_unsupported/);
     const assessed = await state.service.app.inject({ method: 'POST', url: `/api/v3/factors/${factors[0].id}/capacity`, headers: state.headers, payload: assumptions }); assert.equal(assessed.statusCode, 200, assessed.body);
@@ -31,10 +32,11 @@ test('structured admission captures the mandate, rejects unsupported overrides a
     assert.equal((await state.service.app.inject({ method: 'POST', url: `/api/v3/factors/${factors[0].id}/capacity`, headers: state.headers, payload: { ...assumptions, maximumAgeSeconds: 0 } })).statusCode, 400);
     assert.deepEqual((await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json().input, detail.input);
     const body = { requestId: 'atomic-original', name: 'Atomic shared-account configuration', factors: [{ factorId: factors[0].id, weight: '1' }], datasetId: 'controlled', capital: '1000' };
-    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: body }); assert.equal(admitted.statusCode, 202, admitted.body);
-    await state.service.research.harness.waitForTask(admitted.json().taskId, context);
-    const portfolio = (await state.service.work.getPortfolio(admitted.json().id)); assert.deepEqual(portfolio.view.factors, body.factors); assert.equal(portfolio.evidence[0].factorId, factors[0].id);
-    assert.equal(portfolio.view.capacity?.status, 'UNAVAILABLE'); // Existing test-only protocol cannot measure BAR capacity.
+    for (const members of [{ factors: body.factors }, { researchIds: [receipt.conversationId] }]) {
+      const rejected = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: { ...body, factors: undefined, ...members } });
+      assert.equal(rejected.statusCode, 422, rejected.body); assert.equal(rejected.json().error, 'research_criterion_insufficient');
+    }
+    assert.equal(assessed.json().reason, 'research_criterion_insufficient');
     assert.equal((await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...input, specification: { ...specification, name: 'changed' } } })).statusCode, 409);
     await state.restart();
     assert.deepEqual((await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: input })).json(), receipt);
@@ -123,6 +125,44 @@ test('identical scientific inputs retain their own original factor admission pro
       const research = (await state.service.app.inject({ url: `/api/v3/research/${factor.researchId}`, headers: state.headers })).json(); assert.equal(research.dataset.name, original.name); assert.equal(research.dataset.source, original.source);
     }
   } finally { await state.cleanup(); }
+});
+
+test('capital scenarios match positive native NUMERIC(38,18) and raw length bounds without changing original strings', () => {
+  const accepted = ['99999999999999999999.999999999999999999', '0.000000000000000001', '0'.repeat(63) + '1', '1.' + '0'.repeat(62), '+.1', '1.', '000000000000000000001.2300000000000000000000'];
+  for (const scenario of accepted) assert.deepEqual(researchCapital({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }).scenarios, [scenario]);
+  for (const scenario of ['100000000000000000000', '0'.repeat(64) + '1', '1.' + '0'.repeat(63), '0.0000000000000000001', '1.0000000000000000001', '1\n', '1e2', '-1', '0']) {
+    assert.throws(() => researchCapital({ scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 }), /research_capital_scenarios_invalid/, scenario);
+  }
+});
+
+test('HTTP rejects out-of-native-range capacity scenarios before research, factor lookup or native execution', async () => {
+  const state = await setup();
+  try {
+    for (const scenario of ['100000000000000000000', '0'.repeat(64) + '1', '0.0000000000000000001']) {
+      const capital = { scenarios: [scenario], participation: '0.01', maximumAgeSeconds: 60 };
+      for (const [url, payload] of [
+        ['/api/v3/factors/r999.t1.m0/capacity', capital],
+        ['/api/v3/research', { requestId: `invalid-${scenario}`, goal: specification.question, specification: { ...specification, capital }, model: state.model, datasetId: 'controlled', maxTrials: 1 }],
+        ['/api/v3/portfolios', { requestId: `invalid-${scenario}`, name: 'Invalid native range', researchIds: [999], datasetId: 'controlled', capital: '1000', capacityPolicy: capital }],
+      ] as const) {
+        const response = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload });
+        assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, 'research_capital_scenarios_invalid');
+      }
+    }
+    assert.equal(state.faux.state.callCount, 0);
+  } finally { await state.cleanup(); }
+});
+
+test('structured factor qualification requires an actual requested heldout metric with or without a threshold; legacy remains readable', () => {
+  for (const target of [undefined, 0.1]) for (const value of [null, 0.2]) {
+    const spec = { ...specification, evaluation: { ...specification.evaluation, ...(target === undefined ? {} : { target }) } };
+    const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value, status: value === null ? 'CONSTANT_SCORE' : 'DEFINED' } } }] };
+    const trial = { taskId: 17, status: 'COMPUTED', proposal: { hypothesis: 'TEST_ONLY qualification protocol, not science', model: wat }, result };
+    const study = { input: { goal: spec.question, specification: spec, model: { provider: 'test', modelId: 'test' }, data: {}, policy: { max_trials: 1, strategy: { simulationSettings: { base_currency: 'USD' } } } }, trials: [trial], final: { status: 'COMPUTED', trialId: 17, result } };
+    const input = researchInput(study.input); const factor = factorViews(3, { ...study, input })[0]!; assert.equal(factor.combinable, value !== null); assert.equal(factor.reason, value === null ? 'research_criterion_insufficient' : null);
+    const legacy = { ...input }; delete legacy.specification;
+    assert.equal(factorViews(3, { ...study, input: legacy })[0]!.combinable, true);
+  }
 });
 
 test('deterministic criterion never substitutes component diagnostics or missing metrics for a pass', () => {
