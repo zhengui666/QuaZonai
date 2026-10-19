@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { shortTitle } from '../src/titles';
 import { fork } from 'node:child_process';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +71,7 @@ test('production Web talks to a disposable real HTTP service through setup, evid
     // Keep the target/receipt protocol coverage on the intentional legacy path, not fabricated structured evidence.
     const legacy = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-legacy-transport', goal: 'Legacy HTTP transport protocol, not scientific qualification', model: original.input.model, datasetId: original.datasetId, maxTrials: 1 } }); expect(legacy.status()).toBe(202); const legacyId = (await legacy.json()).conversationId as number;
     await page.goto(`${url}/#/research/${legacyId}`); await page.getByRole('button', { name: '创建组合', exact: true }).click();
-    await page.locator('.ant-select-selection-item').filter({ hasText: `#${id} / ${shortTitle(original.title)}` }).locator('.ant-select-selection-item-remove').click();
+    await page.locator('.ant-select-selection-item').filter({ hasText: `#${id} / ${original.title}` }).locator('.ant-select-selection-item-remove').click();
     await page.getByLabel(`研究 ${legacyId} 权重`, { exact: true }).fill('1'); await page.getByLabel('组合名称', { exact: true }).fill('Legacy HTTP protocol account; not native evidence'); await page.getByLabel('本金', { exact: true }).fill('1000.000000000000000001'); await page.getByRole('button', { name: '运行回测' }).click();
     await expect(page.locator('[data-testid="equity-chart"] svg')).toBeVisible(); await page.getByText('查看数据', { exact: true }).click(); await expect(page.getByRole('cell', { name: '1000.000000000000000001', exact: true })).toBeVisible(); const portfolios = await (await page.request.get(`${url}/api/v3/portfolios`)).json() as PortfolioView[]; expect(portfolios).toHaveLength(1); expect(portfolios[0]!.weights).toEqual([{ researchId: legacyId, weight: '1' }]);
     await page.getByRole('button', { name: '交付目标', exact: true }).click(); await page.getByLabel('连接', { exact: true }).click(); await page.getByRole('option', { name: 'Protocol-only paper connection' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待核对'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(offers).toBe(1);
