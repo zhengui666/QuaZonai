@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Form, Input, Table } from 'antd';
 import type { CapitalAssumptions, CapacityConstraint, CapacityReport, CapacityScenario, FactorView, PortfolioView } from '../../../packages/contracts/src/index.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
@@ -29,11 +29,16 @@ export function FactorCapacity({ factor, report }: { factor: FactorView; report?
 }
 export function PortfolioCapacity({ portfolio }: { portfolio: PortfolioView }) {
   const key = `portfolio-capacity:${portfolio.id}`; const [form] = Form.useForm<CapitalFormFields>();
-  const [initial] = useState(() => readDraft<CapitalFormFields>(key) ?? { scenarios: portfolio.capacity?.scenarios.map(row => row.capital).join(', '), participation: portfolio.capacity?.assumptions.participation ?? undefined, maximumAgeSeconds: portfolio.capacity?.assumptions.maximumAgeSeconds?.toString() });
+  const [draft] = useState(() => readDraft<CapitalFormFields>(key)); const initialized = useRef(draft !== undefined);
   const [result, setResult] = useState<CapacityReport>(); const [error, setError] = useState<unknown>(); const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (initialized.current || portfolio.status !== 'COMPUTED' || !portfolio.capacity) return;
+    initialized.current = true; const report = portfolio.capacity;
+    form.setFieldsValue(report.requestedAssumptions ? capitalFields(report.requestedAssumptions) : { scenarios: undefined, participation: report.assumptions.participation ?? undefined, maximumAgeSeconds: report.assumptions.maximumAgeSeconds?.toString() });
+  }, [portfolio.status, portfolio.capacity, form]);
   return <div className="portfolio-capacity"><Capacity report={result ?? portfolio.capacity} /><p className="quiet capacity-assessment-source" role={result ? 'status' : undefined}>原组合 <code>{portfolio.id}</code> · {result ? '本次重评结果，仅在本页显示；原保存报告、回测结果与目标均未改写。' : '原保存报告；尚无报告时不推断容量或资金。'}</p>
     {result && <Disclosure title="原组合容量状态（未改写）" className="capacity-original"><Capacity report={portfolio.capacity} /></Disclosure>}
-    {portfolio.status === 'COMPUTED' && <details className="provenance-disclosure capacity-settings"><summary>按原组合重评容量</summary><p className="quiet">仅使用原组合已保存的原始模拟请求与数据目录，按本次明确假设重评。不会生成新预测、重跑回测或修改账户。表单沿用原报告中已记录的情景与假设；未记录的项须明确填写，缺失原始输入仍不可用。</p><Form className="portfolio-capacity-form" form={form} initialValues={initial} layout="vertical" disabled={busy} onValuesChange={(_change, values) => setSaved(saveDraft(key, values))} onFinish={async values => {
+    {portfolio.status === 'COMPUTED' && <details className="provenance-disclosure capacity-settings"><summary>按原组合重评容量</summary><p className="quiet">仅使用原组合已保存的原始模拟请求与数据目录，按本次明确假设重评。不会生成新预测、重跑回测或修改账户。表单仅沿用已记录的原始请求假设，不把自动诊断情景当作原始请求；未记录的项须明确填写，缺失原始输入仍不可用。</p>{portfolio.capacity && !portfolio.capacity.requestedAssumptions && <p className="quiet capacity-missing-request">原报告未记录原始请求假设；资本情景须明确填写，不从报告中的诊断行反推。仅预填已记录的参与率和数据时差。</p>}<Form className="portfolio-capacity-form" form={form} initialValues={draft} layout="vertical" disabled={busy} onValuesChange={(_change, values) => { initialized.current = true; setSaved(saveDraft(key, values)); }} onFinish={async values => {
       setError(undefined); setBusy(true);
       try { const policy = capitalInput(values); setSaved(saveDraft(key, capitalFields(policy))); setResult(await api<CapacityReport>(`/portfolios/${encodeURIComponent(portfolio.id)}/capacity`, { method: 'POST', body: policy })); } catch (value) { setError(value); } finally { setBusy(false); }
     }}><CapitalFields required /><ErrorNotice error={error} /><DraftNotice saved={saved} /><Button htmlType="submit" loading={busy}>重评原组合容量</Button></Form></details>}
