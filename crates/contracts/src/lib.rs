@@ -55,6 +55,8 @@ use utoipa::OpenApi;
     factors::NativeFactorEvaluationRequestV1,
     factors::NativeFactorEvaluationResultV1,
     factors::NativeFactorEvaluationSummaryV1,
+    factors::NativeCatalogFactorScanRequestV1,
+    factors::NativeCatalogFactorScanSummaryV1,
     science::ExperimentEvaluationParametersV1,
     science::NativeExperimentEvaluationRequestV1,
     science::NativeExperimentEvaluationResultV1,

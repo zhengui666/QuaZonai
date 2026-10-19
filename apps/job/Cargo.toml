@@ -15,10 +15,10 @@ native-sandbox-test = ["native-node-observer", "dep:nautilus-sandbox"]
 native-paper = ["native-node-observer", "dep:nautilus-sandbox", "dep:nautilus-binance", "tokio/sync", "tokio/signal"]
 native-paper-test = ["native-paper"]
 # Operator data preparation only; default scientific job images remain offline.
-polymarket-history = ["dep:tokio", "dep:parquet", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
+polymarket-history = ["dep:tokio", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
-market-history = ["dep:tokio", "dep:parquet", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+market-history = ["dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
 
@@ -62,7 +62,8 @@ nautilus-persistence = { version = "=0.63.0", default-features = false }
 nautilus-indicators = { version = "=0.63.0", default-features = false }
 nautilus-polymarket = { version = "=0.63.0", default-features = false }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
-parquet = { version = "=59.3.0", default-features = false, features = ["zstd"], optional = true }
+parquet = { version = "=59.3.0", default-features = false, features = ["arrow", "zstd"] }
+nautilus-serialization = { version = "=0.63.0", default-features = false, features = ["arrow"] }
 sha2 = { version = "=0.10.9", optional = true }
 # Public typed classic-ZIP parsing; winnow 0.5.40 supplies rc-zip's literal API.
 rc-zip = { version = "=5.4.1", default-features = false, optional = true }

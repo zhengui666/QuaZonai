@@ -4322,6 +4322,7 @@ dependencies = [
  "nautilus-polymarket",
  "nautilus-portfolio",
  "nautilus-sandbox",
+ "nautilus-serialization",
  "nautilus-trading",
  "ndarray 0.17.1",
  "ndarray-stats",

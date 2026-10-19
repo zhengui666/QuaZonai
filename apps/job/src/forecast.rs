@@ -13,7 +13,7 @@ use nautilus_indicators::{
 use nautilus_model::{data::Bar, instruments::Instrument};
 use std::{collections::BTreeMap, path::Path};
 
-fn counter(value: u64) -> Result<DbCounter> {
+pub(crate) fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
 }
 
@@ -26,7 +26,7 @@ pub(crate) fn features<'a>(
     bar_features(&series.bars, parameters)
 }
 
-fn bar_features<'a>(
+pub(crate) fn bar_features<'a>(
     bars: &'a [Bar],
     parameters: &NativeForecastParametersV1,
 ) -> impl Iterator<Item = Option<[f64; 8]>> + 'a {

@@ -226,13 +226,17 @@ pub(crate) fn bar_types(values: &[String]) -> Result<Vec<BarType>> {
     Ok(types)
 }
 
-fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
+pub(crate) fn catalog_root(root: &Path) -> Result<std::path::PathBuf> {
     let metadata = std::fs::symlink_metadata(root)?;
     ensure!(
         metadata.is_dir() && !metadata.file_type().is_symlink(),
         "CATALOG_ROOT_INVALID"
     );
-    let root = root.canonicalize()?;
+    Ok(root.canonicalize()?)
+}
+
+fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
+    let root = catalog_root(root)?;
     currencies::load(&root)?;
     let text = root
         .to_str()
@@ -361,28 +365,7 @@ pub(crate) fn load_price_bars(
             continue;
         }
         let bars = &mut series[*index].1;
-        if let Some(previous) = bars.last() {
-            ensure!(
-                previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
-                "CATALOG_NONUNIQUE_OR_REVISED_BAR"
-            );
-        }
-        ensure!(!bar.volume.is_undefined(), "CATALOG_VOLUME_UNDEFINED");
-        for price in [bar.open, bar.high, bar.low, bar.close] {
-            ensure!(!price.is_undefined(), "CATALOG_PRICE_UNDEFINED");
-            ensure!(
-                price.as_f64().is_finite() && price.as_f64() > 0.0,
-                "UNSUPPORTED_NONPOSITIVE_PRICE"
-            );
-        }
-        ensure!(
-            bar.high >= bar.open
-                && bar.high >= bar.close
-                && bar.high >= bar.low
-                && bar.low <= bar.open
-                && bar.low <= bar.close,
-            "CATALOG_OHLC_INVALID"
-        );
+        validate_price_bar(&bar, bars.last())?;
         bars.push(bar);
     }
     ensure!(
@@ -390,6 +373,32 @@ pub(crate) fn load_price_bars(
         "CATALOG_EMPTY_SELECTION"
     );
     Ok(series)
+}
+
+pub(crate) fn validate_price_bar(bar: &Bar, previous: Option<&Bar>) -> Result<()> {
+    if let Some(previous) = previous {
+        ensure!(
+            previous.ts_event < bar.ts_event && previous.ts_init <= bar.ts_init,
+            "CATALOG_NONUNIQUE_OR_REVISED_BAR"
+        );
+    }
+    ensure!(!bar.volume.is_undefined(), "CATALOG_VOLUME_UNDEFINED");
+    for price in [bar.open, bar.high, bar.low, bar.close] {
+        ensure!(!price.is_undefined(), "CATALOG_PRICE_UNDEFINED");
+        ensure!(
+            price.as_f64().is_finite() && price.as_f64() > 0.0,
+            "UNSUPPORTED_NONPOSITIVE_PRICE"
+        );
+    }
+    ensure!(
+        bar.high >= bar.open
+            && bar.high >= bar.close
+            && bar.high >= bar.low
+            && bar.low <= bar.open
+            && bar.low <= bar.close,
+        "CATALOG_OHLC_INVALID"
+    );
+    Ok(())
 }
 
 /// Revalidate exact identities after native directory discovery, which can match substrings.
