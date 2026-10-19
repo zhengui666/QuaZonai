@@ -89,6 +89,7 @@ export interface CapacityConstraint {
 }
 export interface CapacityReport {
   status: string; reason: string | null; scope: string; currency: string; basis: string;
+  errorDetail?: ExecutionErrorDetail;
   maximumCapital: string | null; minimumCapital: string | null; bindingInstrument: string | null;
   observationStartNs: string | null; observationEndNs: string | null; decisionClockNs: string | null; validUntilNs: string | null;
   assumptions: { participation: string | null; maximumAgeSeconds: number | null; executionWindow: string; exit: string; fees: string; depth: string };
