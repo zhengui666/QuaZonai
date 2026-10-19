@@ -422,6 +422,9 @@ fn generated_schema_contains_the_exact_native_contract_export() {
     );
     let schemas = &actual["components"]["schemas"];
     for name in [
+        "NativeCatalogFactorScanRequestV1",
+        "NativeCatalogFactorScanSummaryV1",
+        "NativeCatalogFactorCoverageV1",
         "ExecutionPreflightScopeV1",
         "PolymarketPreflightSideV1",
         "PolymarketPreflightQuantityV1",

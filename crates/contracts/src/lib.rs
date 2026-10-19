@@ -46,6 +46,7 @@ use utoipa::OpenApi;
     execution::NativeTaskParametersV1,
     execution::NativeJobOutputIndexV1,
     execution::NativeDataQualityReportV1,
+    execution_preflight::PolymarketExecutionPreflightReportV1,
     runtime_jobs::JobSpecV1,
     catalogs::RuntimeCatalogMetadataV1,
     portfolio::AllocationInputV1,

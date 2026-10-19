@@ -54,6 +54,7 @@ fn generated_schema_expresses_optional_budget_and_required_nullable_measurement(
     }
     for name in [
         "NativeForecastResultV1",
+        "NativeCatalogFactorScanSummaryV1",
         "NativeAlphaValidationResultV1",
         "NativeExperimentEvaluationResultV1",
         "NativeStrategyCompositionResultV1",
