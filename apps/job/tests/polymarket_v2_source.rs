@@ -93,6 +93,7 @@ fn write_parquet(path: &Path, damaged: bool) {
                         "token_amount" => 2.0,
                         "usdc_amount" => f64::from(80 + minute) / 100.0,
                         "price" => 0.12345, // Derived price is intentionally not the authoritative cash/share ratio.
+                        "fee_usdc" if damaged => 0.12345600000000001,
                         "fee_usdc" => 0.0,
                         _ => unreachable!(),
                     })
@@ -403,6 +404,176 @@ fn public_v2_schema_runs_through_real_dispatch_preparation_export_and_factor_eva
         .points
         .iter()
         .any(|point| point.partition == contracts::factors::NativeFactorPartitionV1::Heldout));
+}
+
+#[test]
+fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fills() {
+    use nautilus_model::{
+        data::{BarType, TradeTick},
+        enums::AggressorSide,
+        identifiers::{InstrumentId, TradeId},
+        types::{Price, Quantity},
+    };
+    let fixture = Fixture::new(true);
+    let source_root = fixture
+        .root
+        .join("cache/datasets")
+        .join(REPOSITORY)
+        .join(COMMIT);
+    let plan: Value = serde_json::from_slice(&fs::read(&fixture.plan).unwrap()).unwrap();
+    let mut file = plan["files"][0].clone();
+    file["local_path"] = json!(source_root.join("files").join(FILE));
+    file["cached"] = true.into();
+    file["resumed_bytes"] = 0.into();
+    file["validation"] = "PARQUET_ENVELOPE".into();
+    let source_selection = fixture.root.join("source-selection.json");
+    fs::write(&source_selection, serde_json::to_vec(&json!({
+        "schema":"qz.hf_selection/1", "plan":plan, "cache_root":source_root,
+        "files":[file], "retrieved_at":"2026-09-01T01:00:00Z", "downloaded_bytes":0,"cached_files":1
+    })).unwrap()).unwrap();
+    let native_selection = fixture.root.join("cost-bar-selection.json");
+    fs::write(&native_selection, serde_json::to_vec(&json!({
+        "schema_version":1,"bar_types":["101.POLYMARKET-1-MINUTE-LAST-EXTERNAL"],
+        "event_start_ns":((START+60)*NS).to_string(),"event_end_ns":((START+120)*NS).to_string(),
+        "decision_cutoff_ns":((START+120)*NS).to_string(),"maximum_rows":1
+    })).unwrap()).unwrap();
+    let make_native = |name: &str, event_id: &str, volume: &str, available: u64| {
+        let path = fixture.root.join(name);
+        fs::create_dir(&path).unwrap();
+        let catalog =
+            ParquetDataCatalog::from_uri(path.to_str().unwrap(), None, Some(4096), None, None)
+                .unwrap();
+        let id: InstrumentId = "101.POLYMARKET".parse().unwrap();
+        let kind: BarType = "101.POLYMARKET-1-MINUTE-LAST-EXTERNAL".parse().unwrap();
+        let price = Price::from("0.800000000");
+        catalog
+            .write_to_parquet(
+                &[Bar::new(
+                    kind,
+                    price,
+                    price,
+                    price,
+                    price,
+                    Quantity::from(volume),
+                    ((START + 60) * NS).into(),
+                    ((START + 60) * NS).into(),
+                )],
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        catalog
+            .write_to_parquet(
+                &[TradeTick::new(
+                    id,
+                    price,
+                    Quantity::from("1.000000"),
+                    AggressorSide::NoAggressor,
+                    TradeId::new(event_id),
+                    ((START + 10) * NS).into(),
+                    (available * NS).into(),
+                )],
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        path
+    };
+    let command = |catalog: &Path, output: &Path| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_source-tools"));
+        cmd.args(["polymarket-history", "recorded-fees"])
+            .arg("--selection")
+            .arg(&source_selection)
+            .arg("--catalog")
+            .arg(catalog)
+            .arg("--bar-selection")
+            .arg(&native_selection)
+            .arg("--output")
+            .arg(output);
+        cmd
+    };
+    let catalog = make_native("cost-native", "137_90000000_1", "1.000000", START + 10);
+    let output = fixture.root.join("cost-output");
+    let report = accepted(&mut command(&catalog, &output));
+    assert_eq!(report["records"], 1); // Identical source duplicates do not double charge.
+    let path = output.join("101.POLYMARKET.json");
+    let original = fs::read(&path).unwrap();
+    let costs: Value = serde_json::from_slice(&original).unwrap();
+    let record = &costs["records"][0];
+    assert_eq!(record["source_quantity"], "1.0000000000000002");
+    assert_eq!(record["quantity"], "1");
+    assert_eq!(record["fee_usdc"], "0.12345600000000001");
+    assert_eq!(record["usdc_amount"], "0.8");
+    assert_eq!(record["price"], "0.12345");
+    assert_eq!(record["maker_direction"], "SELL");
+    assert_eq!(costs["currency"], "pUSD");
+    let overwrite = command(&catalog, &output).output().unwrap();
+    assert!(!overwrite.status.success());
+    assert_eq!(fs::read(path).unwrap(), original);
+    #[cfg(unix)]
+    {
+        let output = fixture.root.join("interrupted-output");
+        let cmd = command(&catalog, &output);
+        let result = Command::new("sh")
+            .args([
+                "-c",
+                "ulimit -c 0; ulimit -f 0; exec \"$@\"",
+                "fee-write-failure",
+            ])
+            .arg(cmd.get_program())
+            .args(cmd.get_args())
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(
+            !output.exists(),
+            "a failed write exposed a canonical cost directory"
+        );
+        assert_eq!(accepted(&mut command(&catalog, &output))["records"], 1);
+    }
+    for (name, id, volume, available, reason) in [
+        (
+            "missing",
+            "137_99999999_1",
+            "1.000000",
+            START + 10,
+            "RECORDED_FEE_SOURCE_RECORD_MISSING",
+        ),
+        (
+            "volume",
+            "137_90000000_1",
+            "2.000000",
+            START + 10,
+            "RECORDED_FEE_BAR_QUANTITY_MISMATCH",
+        ),
+        (
+            "reversed-clock",
+            "137_90000000_1",
+            "1.000000",
+            START + 9,
+            "RECORDED_FEE_NATIVE_CLOCK_MISMATCH",
+        ),
+        (
+            "late-clock",
+            "137_90000000_1",
+            "1.000000",
+            START + 61,
+            "RECORDED_FEE_NATIVE_CLOCK_MISMATCH",
+        ),
+    ] {
+        let catalog = make_native(name, id, volume, available);
+        let output = fixture.root.join(format!("{name}-output"));
+        let result = command(&catalog, &output).output().unwrap();
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(reason),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!output.exists());
+    }
 }
 
 #[test]

@@ -49,6 +49,8 @@ enum Command {
     Capture(archive::capture::Arguments),
     /// Convert an original snapshot or already-cached HF selection with an explicit native format.
     Archive(archive::Arguments),
+    /// Join original V2 costs to same-ID data-only native quantities and selected BARs.
+    RecordedFees(archive::recorded_fees::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
     Fetch {
         #[arg(long)]
@@ -553,6 +555,7 @@ pub async fn run(argv: Vec<std::ffi::OsString>) {
             archive::capture::prepare(&args).and_then(|a| import(a, &args.output))
         }
         Command::Archive(args) => archive::prepare(&args).and_then(|a| import(a, &args.output)),
+        Command::RecordedFees(args) => return print_result(archive::recorded_fees::prepare(&args)),
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
         Command::Fetch {
             market_slug,
@@ -565,6 +568,10 @@ pub async fn run(argv: Vec<std::ffi::OsString>) {
             Err(error) => Err(error),
         },
     };
+    print_result(result);
+}
+
+fn print_result<T: Serialize>(result: Result<T>) {
     match result {
         Ok(report) => {
             println!(

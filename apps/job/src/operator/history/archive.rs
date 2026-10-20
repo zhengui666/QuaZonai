@@ -45,6 +45,9 @@ pub mod chain;
 #[path = "hf_selection.rs"]
 mod hf_selection;
 
+#[path = "recorded_fees.rs"]
+pub(super) mod recorded_fees;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
@@ -792,12 +795,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     // A later file's scan can overlap a change to an earlier cached source.
     // Recheck the complete selected set before constructing a publication.
     if let Some(states) = &file_states {
-        for (file, state) in states {
-            ensure!(
-                state == &hf_selection::file_state(file)?,
-                "SELECTION_FILE_CHANGED"
-            );
-        }
+        hf_selection::unchanged(states)?;
     }
     ensure!(quality.selected_rows > 0, "EMPTY_ARCHIVE_SELECTION");
     if let Some(evidence) = &chain {

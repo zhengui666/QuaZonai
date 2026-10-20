@@ -179,7 +179,7 @@ pub(crate) fn last_bar_notionals(
         .collect()
 }
 
-fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
+pub(crate) fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
     ensure!(
         !selection.bar_types.is_empty()
             && selection.maximum_rows >= 1
