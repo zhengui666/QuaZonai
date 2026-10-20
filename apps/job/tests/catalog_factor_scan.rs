@@ -8,7 +8,9 @@ mod native;
 
 use contracts::factors::NativeCatalogFactorScanRequestV1;
 use factors_catalog::mixed_catalog;
-use job::factors::{evaluate_factor, scan_factor_catalog};
+use job::factors::{
+    catalog_factor_scope, evaluate_factor, scan_factor_catalog, scan_factor_catalog_with_scope,
+};
 use market::{count, module, INTERVAL_NS};
 
 fn scan_request(
@@ -163,6 +165,15 @@ fn catalog_scan_accepts_multiple_timeframes_for_the_same_instrument() {
     input.maximum_rows = 81;
     input.parameters.total_fuel = None;
     let result = scan_factor_catalog(root.path(), &input, &module("local.get 4")).unwrap();
+    let scope = catalog_factor_scope(root.path()).unwrap();
+    assert_eq!(scope.len(), 3);
+    let scoped =
+        scan_factor_catalog_with_scope(root.path(), &input, &module("local.get 4"), Some(&scope))
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(&scoped).unwrap(),
+        serde_json::to_value(&result).unwrap()
+    );
     assert_eq!(result.coverage.catalog_series.get(), 3);
     assert_eq!(result.coverage.observed_series.get(), 3);
     assert_eq!(result.coverage.observations.get(), 81);
@@ -231,4 +242,71 @@ fn iterative_scan_clips_labels_and_preserves_unmetered_fuel() {
     input.parameters.total_fuel = None;
     input.validation_end_ns = count(10 * INTERVAL_NS);
     assert!(scan_factor_catalog(root.path(), &input, &wasm).is_err());
+}
+
+#[test]
+fn private_catalog_scope_matches_metadata_and_binds_the_actual_scan() {
+    let (root, request) = mixed_catalog(0.0, false);
+    let input = scan_request(&request);
+    let wasm = module("local.get 4");
+    let scope = catalog_factor_scope(root.path()).unwrap();
+    let mut expected = request.forecast.selection.bar_types.clone();
+    expected.sort();
+    let mut actual = scope.clone();
+    actual.sort();
+    assert_eq!(actual, expected);
+    let discovered = native::command(
+        &[
+            "catalog-factor-scope".as_ref(),
+            "--catalog".as_ref(),
+            root.path().as_os_str(),
+        ],
+        &serde_json::json!({}),
+    );
+    assert!(discovered.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Vec<String>>(&discovered.stdout).unwrap(),
+        scope
+    );
+    let original = scan_factor_catalog(root.path(), &input, &wasm).unwrap();
+    let scoped = scan_factor_catalog_with_scope(root.path(), &input, &wasm, Some(&scope)).unwrap();
+    assert_eq!(
+        serde_json::to_value(&scoped).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+    let model = root.path().join("model.wasm");
+    let scope_file = root.path().join("scope.json");
+    std::fs::write(&model, &wasm).unwrap();
+    std::fs::write(&scope_file, serde_json::to_vec(&scope).unwrap()).unwrap();
+    let run = || {
+        native::command(
+            &[
+                "scan-factor-catalog".as_ref(),
+                "--catalog".as_ref(),
+                root.path().as_os_str(),
+                "--model".as_ref(),
+                model.as_os_str(),
+                "--scope".as_ref(),
+                scope_file.as_os_str(),
+            ],
+            &input,
+        )
+    };
+    assert!(run().status.success());
+    let mut changed = scope.clone();
+    changed[0] = "OTHER.SIM-1-MINUTE-LAST-EXTERNAL".into();
+    std::fs::write(&scope_file, serde_json::to_vec(&changed).unwrap()).unwrap();
+    let rejected = run();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("CATALOG_SCOPE_CHANGED"));
+    for invalid in [
+        Vec::new(),
+        vec![scope[0].clone()],
+        vec![scope[0].clone(); scope.len()],
+    ] {
+        assert!(
+            scan_factor_catalog_with_scope(root.path(), &input, &wasm, Some(&invalid)).is_err()
+        );
+    }
 }

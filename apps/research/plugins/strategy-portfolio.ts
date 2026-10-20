@@ -18,10 +18,11 @@ export default defineExtension({
     replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
-      const proposal = { hypothesis: args.hypothesis, members: args.members, request: input.data.request ?? null, strategy: input.policy.strategy ?? null,
+      const proposal = { hypothesis: args.hypothesis, members: args.members, request: input.data.catalog_scan_request ?? input.data.request ?? null, strategy: input.policy.strategy ?? null,
         ...(args.instrumentId !== undefined ? { instrumentId: args.instrumentId } : {}),
         ...(args.allocations !== undefined ? { allocations: args.allocations } : {}) };
       return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
+        if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
         const members = strategyMembers(proposal);
         const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));
         const request = iterationRequest(input.data, true);
@@ -35,6 +36,7 @@ export default defineExtension({
     parameters: Type.Object({ trialId: Type.Integer(), reason: Type.String() }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
+      if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
       const data = object(input.data.sealed, 'heldout_data');
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);

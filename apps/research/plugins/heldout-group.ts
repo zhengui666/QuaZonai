@@ -6,6 +6,7 @@ import { object } from '../src/trials.ts';
 import { FactorTask } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
+import { catalogScope } from './native-catalog-scope.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 /** Assess preselected original studies together; never reopen an exposed window. */
@@ -40,13 +41,15 @@ export const finalizeGroup = defineTool({
     }, context);
     if (sources.some((source) => !source.settled)) {
       try {
-        await checkExposure(api, context, sources[0]!.data, true);
+        const original = sources[0]!.data;
+        const scoped = original.catalog_scan_request !== undefined ? await catalogScope(api, context, original) : original;
+        await checkExposure(api, context, scoped, true);
         const children = await api.commit(async (tx) => {
           const result = [];
           for (const source of sources) {
             const final = (await tx.doc(Study, source.id)).final!;
             if (final.status !== 'STARTED') continue;
-            final.nativeTaskId ??= await tx.createTask(FactorTask, { model: source.model, data: source.data }, { ownership: { kind: 'task', taskId: api.taskId } });
+            final.nativeTaskId ??= await tx.createTask(FactorTask, { model: source.model, data: scoped }, { ownership: { kind: 'task', taskId: api.taskId } });
             result.push({ id: source.id, taskId: final.nativeTaskId as TaskId<JsonObject> });
           }
           return result;

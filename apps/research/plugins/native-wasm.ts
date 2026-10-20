@@ -10,6 +10,7 @@ import { object } from '../src/trials.ts';
 import { canonical } from '../src/documents.ts';
 import { partitionBoundaries } from './native-exposure.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
+import { jsonChunks } from '../src/native-json.ts';
 
 const wabt = await wabtFactory();
 
@@ -25,9 +26,11 @@ export function compileWasm(model: string, filename = 'factor.wat', operation = 
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
-  const request = JSON.parse(JSON.stringify(object(data.request, 'native_request'))) as JsonObject;
-  partitionBoundaries(request);
-  const parameters = object(object(request.forecast, 'forecast').parameters, 'parameters');
+  const catalog = data.catalog_scan_request !== undefined;
+  if (catalog && data.request !== undefined) throw new Error('ambiguous_factor_request');
+  const request = JSON.parse(JSON.stringify(object(catalog ? data.catalog_scan_request : data.request, 'native_request'))) as JsonObject;
+  partitionBoundaries(request, catalog);
+  const parameters = object(catalog ? request.parameters : object(request.forecast, 'forecast').parameters, 'parameters');
   // The native optional-fuel contract serializes both null and absence as omitted.
   if (parameters.total_fuel === null) delete parameters.total_fuel;
   return request;
@@ -35,27 +38,32 @@ export function normalizedRequest(data: JsonObject): JsonObject {
 
 export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): JsonObject {
   const request = normalizedRequest(data);
-  const forecast = object(request.forecast, 'forecast_request');
-  const selection = object(forecast.selection, 'catalog_selection');
+  const selection = data.catalog_scan_request !== undefined ? request : object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   selection.event_end_ns = request.validation_end_ns!;
   if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;
   return request;
 }
 
-export async function evaluateWasm(model: string, data: JsonObject, context: Context): Promise<JsonObject> {
+export async function evaluateWasm(model: string, data: JsonObject, context: Context, scope?: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(data);
+  const catalog = data.catalog_scan_request !== undefined;
+  const operation = catalog ? 'scan-factor-catalog' : 'evaluate-factor';
+  if (catalog && (!Array.isArray(scope?.barTypes) || !scope.barTypes.every((type) => typeof type === 'string'))) throw new Error('catalog_scope_required');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
   const env = new NodeExecutionEnv({ cwd: directory });
   let stage: 'execute' | 'decode' | 'validate' = 'execute';
   try {
-    await writeFile(join(directory, 'model.wasm'), compileWasm(model));
+    await writeFile(join(directory, 'model.wasm'), compileWasm(model, 'factor.wat', operation));
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
+    if (catalog) await writeFile(join(directory, 'scope.json'), jsonChunks(scope!.barTypes!));
     let stdout = ''; let stderr = '';
     const result = getOrThrow(await env.exec([
-      'bash', '-c', 'exec "$1" evaluate-factor --summary-only --catalog "$2" --model "$3" < "$4"',
+      'bash', '-c', catalog
+        ? 'exec "$1" scan-factor-catalog --catalog "$2" --model "$3" --scope "$5" < "$4"'
+        : 'exec "$1" evaluate-factor --summary-only --catalog "$2" --model "$3" < "$4"',
       'qz-factor', process.env.QZ_JOB_BINARY ?? 'job', data.catalog,
-      join(directory, 'model.wasm'), join(directory, 'request.json'),
+      join(directory, 'model.wasm'), join(directory, 'request.json'), join(directory, 'scope.json'),
     ], {
       inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TMPDIR: directory },
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
@@ -69,7 +77,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     return output;
   } catch (error) {
     if (error instanceof ExecutionFailure) throw error;
-    throw new ExecutionFailure(error, { operation: 'evaluate-factor', stage });
+    throw new ExecutionFailure(error, { operation, stage });
   } finally {
     await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });

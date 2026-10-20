@@ -10,7 +10,7 @@ use ndarray_stats::CorrelationExt;
 use std::{collections::BTreeMap, path::Path};
 
 mod catalog_scan;
-pub use catalog_scan::scan_factor_catalog;
+pub use catalog_scan::{catalog_factor_scope, scan_factor_catalog, scan_factor_catalog_with_scope};
 
 /// Native raw Pearson calculation, without calibration or score restrictions.
 /// Bad numerical evidence is unavailable, never repaired or reported as zero.
