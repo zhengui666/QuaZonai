@@ -30,7 +30,7 @@ const FILE: &str = "OrderFilled/2026_09_01.parquet";
 fn instant(seconds: u64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp_nanos((seconds * NS) as i64)
 }
-fn write_parquet(path: &Path, damaged: bool) {
+fn write_parquet(path: &Path, damaged: bool, duplicate: bool, minute_offset: u32) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let fields = [
         ("id", "BINARY"),
@@ -68,7 +68,9 @@ fn write_parquet(path: &Path, damaged: bool) {
         .filter(|minute| *minute != 7)
         .map(|minute| (minute, false, "101"))
         .collect::<Vec<_>>();
-    rows.push((0, false, "101"));
+    if duplicate {
+        rows.push((0, false, "101"));
+    }
     rows.push((0, true, "101"));
     rows.push((0, false, "102"));
     let mut group = writer.next_row_group().unwrap();
@@ -78,7 +80,9 @@ fn write_parquet(path: &Path, damaged: bool) {
             "INT64" => {
                 let values = rows
                     .iter()
-                    .map(|(minute, _, _)| (START + u64::from(*minute) * 60 + 10) as i64)
+                    .map(|(minute, _, _)| {
+                        (START + u64::from(*minute + minute_offset) * 60 + 10) as i64
+                    })
                     .collect::<Vec<_>>();
                 column
                     .typed::<Int64Type>()
@@ -110,8 +114,14 @@ fn write_parquet(path: &Path, damaged: bool) {
                         let value = match name {
                             "id" => format!(
                                 "137_{}_{}",
-                                90_000_000 + minute,
-                                if *summary { 2 } else { 1 }
+                                90_000_000 + minute + minute_offset,
+                                if *summary {
+                                    2
+                                } else if *token == "102" {
+                                    3
+                                } else {
+                                    1
+                                }
                             ),
                             "token_asset_id" => token.to_string(),
                             "taker" if *summary => {
@@ -168,7 +178,7 @@ impl Fixture {
             .join(COMMIT)
             .join("files")
             .join(FILE);
-        write_parquet(&cached, damaged);
+        write_parquet(&cached, damaged, true, 0);
         let size = fs::metadata(&cached).unwrap().len();
         let plan = root.join("original-plan.json");
         fs::write(&plan, serde_json::to_vec(&json!({
@@ -209,6 +219,29 @@ impl Fixture {
             plan,
             instruments,
         }
+    }
+    fn cached_selection(&self) -> PathBuf {
+        let source_root = self
+            .root
+            .join("cache/datasets")
+            .join(REPOSITORY)
+            .join(COMMIT);
+        let mut plan: Value = serde_json::from_slice(&fs::read(&self.plan).unwrap()).unwrap();
+        let source_file = source_root.join("files").join(FILE);
+        let size = fs::metadata(&source_file).unwrap().len();
+        plan["files"][0]["size"] = size.into();
+        plan["total_bytes"] = size.into();
+        let mut file = plan["files"][0].clone();
+        file["local_path"] = json!(source_file);
+        file["cached"] = true.into();
+        file["resumed_bytes"] = 0.into();
+        file["validation"] = "PARQUET_ENVELOPE".into();
+        let path = self.root.join("source-selection.json");
+        fs::write(&path, serde_json::to_vec(&json!({
+            "schema":"qz.hf_selection/1", "plan":plan, "cache_root":source_root,
+            "files":[file], "retrieved_at":"2026-09-01T01:00:00Z", "downloaded_bytes":0,"cached_files":1
+        })).unwrap()).unwrap();
+        path
     }
     fn source(&self, operation: &str) -> Command {
         let mut command = Command::new("python3");
@@ -415,22 +448,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
         types::{Price, Quantity},
     };
     let fixture = Fixture::new(true);
-    let source_root = fixture
-        .root
-        .join("cache/datasets")
-        .join(REPOSITORY)
-        .join(COMMIT);
-    let plan: Value = serde_json::from_slice(&fs::read(&fixture.plan).unwrap()).unwrap();
-    let mut file = plan["files"][0].clone();
-    file["local_path"] = json!(source_root.join("files").join(FILE));
-    file["cached"] = true.into();
-    file["resumed_bytes"] = 0.into();
-    file["validation"] = "PARQUET_ENVELOPE".into();
-    let source_selection = fixture.root.join("source-selection.json");
-    fs::write(&source_selection, serde_json::to_vec(&json!({
-        "schema":"qz.hf_selection/1", "plan":plan, "cache_root":source_root,
-        "files":[file], "retrieved_at":"2026-09-01T01:00:00Z", "downloaded_bytes":0,"cached_files":1
-    })).unwrap()).unwrap();
+    let source_selection = fixture.cached_selection();
     let native_selection = fixture.root.join("cost-bar-selection.json");
     fs::write(&native_selection, serde_json::to_vec(&json!({
         "schema_version":1,"bar_types":["101.POLYMARKET-1-MINUTE-LAST-EXTERNAL"],
@@ -574,6 +592,135 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
         );
         assert!(!output.exists());
     }
+}
+
+#[test]
+fn model_bars_keep_all_source_tokens_native_quantities_and_unverified_status() {
+    let fixture = Fixture::new(true);
+    let source_file = fixture
+        .root
+        .join("cache/datasets")
+        .join(REPOSITORY)
+        .join(COMMIT)
+        .join("files")
+        .join(FILE);
+    write_parquet(&source_file, true, false, 0);
+    let selection = fixture.cached_selection();
+    let output = fixture.root.join("model-output");
+    let command = |output: &Path| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_source-tools"));
+        cmd.args(["polymarket-history", "model-bars"])
+            .arg("--selection")
+            .arg(&selection)
+            .arg("--start-seconds")
+            .arg(START.to_string())
+            .arg("--end-seconds")
+            .arg((START + 3600).to_string())
+            .arg("--output")
+            .arg(output);
+        cmd
+    };
+    let report = accepted(&mut command(&output));
+    assert_eq!(report["trades"], 30);
+    assert_eq!(report["bars"], 30);
+    assert_eq!(report["instrument_identities"], 2);
+    assert_eq!(report["instrument_definitions"], 0);
+    assert_eq!(report["quantized_quantity_rows"], 2);
+    assert_eq!(report["registered_in_quazonai"], false);
+    assert_eq!(
+        report["historical_availability"],
+        "UNVERIFIED_EVENT_TIME_PROXY"
+    );
+    assert_eq!(
+        report["amount_model"],
+        "HF_FLOAT64_SHORTEST_DECIMAL_ROUND_HALF_UP_6DP"
+    );
+    assert!(!output.join("catalog/data/instruments").exists());
+    let mut catalog = ParquetDataCatalog::from_uri(
+        output.join("catalog").to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        None,
+    )
+    .unwrap();
+    let trades = catalog.trade_ticks(None, None, None).unwrap();
+    let bars = catalog.bars(None, None, None).unwrap();
+    assert_eq!(trades.len(), 30);
+    assert_eq!(bars.len(), 30);
+    let first = trades
+        .iter()
+        .find(|trade| trade.trade_id.as_str() == "137_90000000_1")
+        .unwrap();
+    assert_eq!(first.size.as_decimal().to_string(), "1.000000");
+    assert_eq!(first.price.as_decimal().to_string(), "0.800000000");
+    assert!(bars.iter().all(|bar| bar.ts_event == bar.ts_init));
+    assert!(!bars
+        .iter()
+        .any(|bar| bar.ts_event.as_u64() == (START + 8 * 60) * NS));
+    assert!(!command(&output).output().unwrap().status.success());
+
+    let second_relative = "OrderFilled/2026_09_01_part2.parquet";
+    let second_file = source_file
+        .parent()
+        .unwrap()
+        .join("2026_09_01_part2.parquet");
+    write_parquet(&second_file, true, false, 30);
+    let mut combined: Value = serde_json::from_slice(&fs::read(&selection).unwrap()).unwrap();
+    let mut file = combined["files"][0].clone();
+    file["path"] = second_relative.into();
+    file["local_path"] = json!(second_file);
+    file["size"] = fs::metadata(&second_file).unwrap().len().into();
+    file["url"] =
+        format!("https://huggingface.co/datasets/{REPOSITORY}/resolve/{COMMIT}/{second_relative}")
+            .into();
+    combined["files"].as_array_mut().unwrap().push(file.clone());
+    combined["plan"]["files"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "path":file["path"],"size":file["size"],"url":file["url"],"format":"parquet"
+        }));
+    combined["plan"]["request"]["includes"] = json!([FILE, second_relative]);
+    combined["cached_files"] = 2.into();
+    combined["plan"]["total_bytes"] =
+        (combined["files"][0]["size"].as_u64().unwrap() + file["size"].as_u64().unwrap()).into();
+    fs::write(&selection, serde_json::to_vec(&combined).unwrap()).unwrap();
+    let two = fixture.root.join("two-model-partitions");
+    let both = accepted(&mut command(&two));
+    assert_eq!(both["trades"], 60);
+    assert_eq!(both["bars"], 60);
+    assert_eq!(both["instrument_identities"], 2);
+    let mut both_catalog = ParquetDataCatalog::from_uri(
+        two.join("catalog").to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        both_catalog.trade_ticks(None, None, None).unwrap().len(),
+        60
+    );
+    assert_eq!(both_catalog.bars(None, None, None).unwrap().len(), 60);
+    fs::copy(&source_file, &second_file).unwrap();
+    let size = fs::metadata(&second_file).unwrap().len();
+    combined["files"][1]["size"] = size.into();
+    combined["plan"]["files"][1]["size"] = size.into();
+    combined["plan"]["total_bytes"] =
+        (combined["files"][0]["size"].as_u64().unwrap() + size).into();
+    fs::write(&selection, serde_json::to_vec(&combined).unwrap()).unwrap();
+    let overlap = fixture.root.join("overlapping-model-partitions");
+    let failure = command(&overlap).output().unwrap();
+    assert!(!failure.status.success());
+    assert!(String::from_utf8_lossy(&failure.stderr).contains("trades=30 bars=30"));
+    assert!(!overlap.exists());
+    write_parquet(&source_file, true, true, 0);
+    fixture.cached_selection();
+    let bad = fixture.root.join("duplicate-model-output");
+    assert!(!command(&bad).output().unwrap().status.success());
+    assert!(!bad.exists());
 }
 
 #[test]

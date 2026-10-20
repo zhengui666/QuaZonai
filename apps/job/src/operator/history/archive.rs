@@ -48,6 +48,9 @@ mod hf_selection;
 #[path = "recorded_fees.rs"]
 pub(super) mod recorded_fees;
 
+#[path = "model_bars.rs"]
+pub(super) mod model_bars;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
@@ -524,6 +527,34 @@ fn book(
 }
 
 fn aggregate(archive: &mut NativeArchive, interval: u32) -> Result<()> {
+    for trades in archive
+        .trades
+        .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+    {
+        let instrument = archive
+            .instruments
+            .iter()
+            .find(|i| i.id() == trades[0].instrument_id)
+            .context("UNMAPPED_TRADE")?;
+        archive.bars.extend(aggregate_series(
+            trades,
+            interval,
+            instrument.price_precision(),
+            instrument.size_precision(),
+        )?);
+    }
+    Ok(())
+}
+
+fn aggregate_series(
+    trades: &[TradeTick],
+    interval: u32,
+    price_precision: u8,
+    size_precision: u8,
+) -> Result<Vec<Bar>> {
+    if trades.is_empty() {
+        return Ok(Vec::new());
+    }
     let (divisor, unit) = [
         (86400, "DAY"),
         (3600, "HOUR"),
@@ -534,51 +565,37 @@ fn aggregate(archive: &mut NativeArchive, interval: u32) -> Result<()> {
     .find(|(divisor, _)| interval.is_multiple_of(*divisor))
     .context("BAR_INTERVAL")?;
     let step = interval / divisor;
-    for trades in archive
-        .trades
-        .chunk_by(|a, b| a.instrument_id == b.instrument_id)
+    let id = trades[0].instrument_id;
+    let internal = BarType::from_str(&format!("{id}-{step}-{unit}-LAST-INTERNAL"))?;
+    let external = BarType::from_str(&format!("{id}-{step}-{unit}-LAST-EXTERNAL"))?;
+    let mut builder = BarBuilder::new(internal, price_precision, size_precision);
+    let interval_ns = u64::from(interval) * 1_000_000_000;
+    let mut bars = Vec::new();
+    // Iterate only nonempty buckets. No native carry-forward/zero-volume bars.
+    for bucket in trades
+        .chunk_by(|a, b| a.ts_event.as_u64() / interval_ns == b.ts_event.as_u64() / interval_ns)
     {
-        let instrument = archive
-            .instruments
-            .iter()
-            .find(|i| i.id() == trades[0].instrument_id)
-            .context("UNMAPPED_TRADE")?;
-        let internal =
-            BarType::from_str(&format!("{}-{step}-{unit}-LAST-INTERNAL", instrument.id()))?;
-        let external =
-            BarType::from_str(&format!("{}-{step}-{unit}-LAST-EXTERNAL", instrument.id()))?;
-        let mut builder = BarBuilder::new(
-            internal,
-            instrument.price_precision(),
-            instrument.size_precision(),
-        );
-        let interval_ns = u64::from(interval) * 1_000_000_000;
-        // Iterate only nonempty buckets. No native carry-forward/zero-volume bars.
-        for bucket in trades
-            .chunk_by(|a, b| a.ts_event.as_u64() / interval_ns == b.ts_event.as_u64() / interval_ns)
-        {
-            let mut volume = Quantity::zero(instrument.size_precision());
-            for trade in bucket {
-                volume = volume.checked_add(trade.size).context("BAR_VOLUME_RANGE")?;
-                builder.update(trade.price, trade.size, trade.ts_event);
-            }
-            let end = (bucket[0].ts_event.as_u64() / interval_ns + 1)
-                .checked_mul(interval_ns)
-                .context("BAR_TIMESTAMP_RANGE")?;
-            let available = bucket
-                .iter()
-                .map(|t| t.ts_init.as_u64())
-                .max()
-                .unwrap()
-                .max(end);
-            let bar = builder.build(end.into(), available.into());
-            archive.bars.push(Bar {
-                bar_type: external,
-                ..bar
-            });
+        let mut volume = Quantity::zero(size_precision);
+        for trade in bucket {
+            volume = volume.checked_add(trade.size).context("BAR_VOLUME_RANGE")?;
+            builder.update(trade.price, trade.size, trade.ts_event);
         }
+        let end = (bucket[0].ts_event.as_u64() / interval_ns + 1)
+            .checked_mul(interval_ns)
+            .context("BAR_TIMESTAMP_RANGE")?;
+        let available = bucket
+            .iter()
+            .map(|t| t.ts_init.as_u64())
+            .max()
+            .unwrap()
+            .max(end);
+        let bar = builder.build(end.into(), available.into());
+        bars.push(Bar {
+            bar_type: external,
+            ..bar
+        });
     }
-    Ok(())
+    Ok(bars)
 }
 
 pub fn prepare(args: &Arguments) -> Result<NativeArchive> {

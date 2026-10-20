@@ -51,6 +51,8 @@ enum Command {
     Archive(archive::Arguments),
     /// Join original V2 costs to same-ID data-only native quantities and selected BARs.
     RecordedFees(archive::recorded_fees::Arguments),
+    /// Data-only model trades/BARs with explicitly declared legacy 6DP normalization.
+    ModelBars(archive::model_bars::Arguments),
     /// Read public history through the pinned Nautilus Rust clients. Coverage remains unproven.
     Fetch {
         #[arg(long)]
@@ -556,6 +558,7 @@ pub async fn run(argv: Vec<std::ffi::OsString>) {
         }
         Command::Archive(args) => archive::prepare(&args).and_then(|a| import(a, &args.output)),
         Command::RecordedFees(args) => return print_result(archive::recorded_fees::prepare(&args)),
+        Command::ModelBars(args) => return print_result(archive::model_bars::prepare(&args)),
         Command::Import { input, output } => read_archive(&input).and_then(|a| import(a, &output)),
         Command::Fetch {
             market_slug,
