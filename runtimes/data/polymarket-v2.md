@@ -178,6 +178,18 @@ catalogs unchanged/read-only for every replay and independent evaluation; an
 exported path is not a global physical freeze. Permission, PIT, coverage,
 independent evaluation and economic evidence remain separate from computation.
 
+### Data-only model BAR import
+
+```sh
+source-tools polymarket-history model-bars --selection /absolute/hf-selection.json --start-seconds 1791849600 --end-seconds 1791936000 --output /absolute/new-model-output
+```
+
+This distinct operator imports every eligible token in the selected cached V2 files, without constructing InstrumentAny or inventing historical execution definitions. It explicitly uses `HF_FLOAT64_SHORTEST_DECIMAL_ROUND_HALF_UP_6DP`, the old price/volume model convention: shortest source FLOAT64 decimal rounded half-up to six places, model price = modeled cash / modeled quantity at native nine-place price precision. This is a declared model representation, **not original ABI recovery**. It does not weaken the existing strict `archive` parser. Original bytes and quantities remain in the cache; same-ID recorded-fee preparation retains original source quantities separately from native model quantities.
+
+The source window must comprise complete UTC minutes. Source files must form ordered, disjoint minute/block partitions (the publisher's daily layout); overlapping shards and repeated eligible event IDs fail, not silently deduplicate. Official Nautilus BarBuilder creates only observed one-minute LAST BARs. Row storage is one source file at a time; identity sets and the official string interner remain process-wide, so overall memory is not constant. Source files are checked with existing ordinary metadata checks. Complete output is atomically published without replacing an existing destination. The output parent must exist.
+
+`catalog/` contains only native trades/BARs; `import-report.json` explicitly retains UNVERIFIED event-time-proxy availability, UNPROVEN coverage, zero instrument definitions and `registered_in_quazonai=false`. Fees, execution rules, book depth, settlement, source reception clocks, research registration and independent qualification are not supplied by this command. Do not admit these model inputs as venue-qualified data or relabel event time as measured reception.
+
 ### Conditional recorded-cost research
 
 Prepare original costs for a caller-selected native BAR window with the operator command:
