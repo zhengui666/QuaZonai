@@ -16,7 +16,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::{
     collections::{BTreeMap, HashSet},
     fs::{self, File},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 fn evaluation(
@@ -42,10 +42,7 @@ fn evaluation(
     }
 }
 
-fn read_series(
-    directory: &Path,
-    request: &NativeCatalogFactorScanRequestV1,
-) -> Result<(BarType, Vec<Bar>)> {
+fn series_paths(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
@@ -58,15 +55,62 @@ fn read_series(
     }
     paths.sort();
     ensure!(!paths.is_empty(), "CATALOG_EMPTY_SERIES");
+    Ok(paths)
+}
+
+fn series_directories(root: &Path) -> Result<Vec<PathBuf>> {
+    let root = crate::catalog::catalog_root(root)?;
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(root.join("data/bars"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    ensure!(!paths.is_empty(), "CATALOG_EMPTY_SELECTION");
+    Ok(paths)
+}
+
+fn metadata_kind(metadata: &std::collections::HashMap<String, String>) -> Result<BarType> {
+    let name = metadata
+        .get("bar_type")
+        .ok_or_else(|| anyhow::anyhow!("CATALOG_BAR_TYPE_MISSING"))?;
+    Ok(crate::catalog::bar_types(std::slice::from_ref(name))?[0])
+}
+
+/// Machine-private identities for scientific exposure; no BAR values or labels.
+pub fn catalog_factor_scope(root: &Path) -> Result<Vec<String>> {
+    let mut identities = HashSet::new();
+    let mut types = Vec::new();
+    for directory in series_directories(root)? {
+        let mut identity = None;
+        for path in series_paths(&directory)? {
+            let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)?;
+            let kind = metadata_kind(builder.schema().metadata())?;
+            ensure!(
+                identity.is_none_or(|original| original == kind),
+                "CATALOG_SERIES_IDENTITY_MISMATCH"
+            );
+            identity = Some(kind);
+        }
+        let kind = identity.expect("nonempty native file list");
+        ensure!(identities.insert(kind), "DUPLICATE_CATALOG_BAR_TYPE");
+        types.push(kind.to_string());
+    }
+    Ok(types)
+}
+
+fn read_series(
+    directory: &Path,
+    request: &NativeCatalogFactorScanRequestV1,
+) -> Result<(BarType, Vec<Bar>)> {
     let mut identity = None;
     let mut bars = Vec::new();
-    for path in paths {
+    for path in series_paths(directory)? {
         let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)?;
         let metadata = builder.schema().metadata().clone();
-        let name = metadata
-            .get("bar_type")
-            .ok_or_else(|| anyhow::anyhow!("CATALOG_BAR_TYPE_MISSING"))?;
-        let kind = crate::catalog::bar_types(std::slice::from_ref(name))?[0];
+        let kind = metadata_kind(&metadata)?;
         ensure!(
             identity.is_none_or(|original| original == kind),
             "CATALOG_SERIES_IDENTITY_MISMATCH"
@@ -111,17 +155,31 @@ pub fn scan_factor_catalog(
     request: &NativeCatalogFactorScanRequestV1,
     wasm: &[u8],
 ) -> Result<NativeCatalogFactorScanSummaryV1> {
-    let root = crate::catalog::catalog_root(root)?;
-    let directory = root.join("data/bars");
-    let mut names = Vec::new();
-    for entry in fs::read_dir(&directory)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            names.push(entry.file_name());
-        }
-    }
-    names.sort();
-    ensure!(!names.is_empty(), "CATALOG_EMPTY_SELECTION");
+    scan_factor_catalog_with_scope(root, request, wasm, None)
+}
+
+/// An optional exact machine scope binds computation to the recorded identities.
+pub fn scan_factor_catalog_with_scope(
+    root: &Path,
+    request: &NativeCatalogFactorScanRequestV1,
+    wasm: &[u8],
+    scope: Option<&[String]>,
+) -> Result<NativeCatalogFactorScanSummaryV1> {
+    let names = series_directories(root)?;
+    let mut expected = scope
+        .map(|types| {
+            types
+                .iter()
+                .map(|kind| Ok(crate::catalog::bar_types(std::slice::from_ref(kind))?[0]))
+                .collect::<Result<HashSet<_>>>()
+        })
+        .transpose()?;
+    ensure!(
+        expected.as_ref().is_none_or(|kinds| {
+            kinds.len() == names.len() && scope.is_some_and(|types| types.len() == kinds.len())
+        }),
+        "CATALOG_SCOPE_CHANGED"
+    );
     eprintln!("catalog_factor_scan: catalog_series={}", names.len());
     let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some())?;
     let mut remaining = request.parameters.total_fuel.map(|fuel| fuel.get());
@@ -136,8 +194,12 @@ pub fn scan_factor_catalog(
                 names.len()
             );
         }
-        let (kind, bars) = read_series(&directory.join(name), request)?;
+        let (kind, bars) = read_series(name, request)?;
         ensure!(identities.insert(kind), "DUPLICATE_CATALOG_BAR_TYPE");
+        ensure!(
+            expected.as_mut().is_none_or(|kinds| kinds.remove(&kind)),
+            "CATALOG_SCOPE_CHANGED"
+        );
         let original = evaluation(request, kind);
         template.get_or_insert_with(|| original.clone());
         observations += bars.len();
@@ -208,6 +270,10 @@ pub fn scan_factor_catalog(
         warmup_only += usize::from(predictions == 0);
         remaining = model.remaining_fuel();
     }
+    ensure!(
+        expected.as_ref().is_none_or(HashSet::is_empty),
+        "CATALOG_SCOPE_CHANGED"
+    );
     let template = template.expect("nonempty catalog");
     let partitions = [
         NativeFactorPartitionV1::Train,

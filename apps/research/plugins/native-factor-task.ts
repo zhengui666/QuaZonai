@@ -2,6 +2,8 @@ import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { evaluateWasm } from './native-wasm.ts';
+import { readNativeEvidence } from './native-evidence.ts';
+import { object } from '../src/trials.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 export const FactorTask = defineTask<{ model: string; data: JsonObject }, { phase: 'compute' }, JsonObject>({
@@ -9,12 +11,19 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject }, { phas
   phases: {
     async compute(task, runtime, context) {
       try {
-        const result = await evaluateWasm(task.input.model, task.input.data, context);
+        const reference = task.input.data.catalog_scan_request !== undefined ? object(task.input.data.catalog_scope, 'catalog_scope') : null;
+        let scope: JsonObject | undefined;
+        if (reference) {
+          const original = await runtime.getTask(reference.taskId as TaskId<JsonObject>, context);
+          if (original?.state.status !== 'terminal' || original.state.outcome.status !== 'completed') throw new Error('native_catalog_scope_missing');
+          scope = await readNativeEvidence(runtime, original.conversationId, original.id, object(original.state.outcome.result.native, 'scope_native'), context);
+        }
+        const result = await evaluateWasm(task.input.model, task.input.data, context, scope);
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result } }), context);
       } catch (error) {
         if (runtime.signal.aborted) throw error;
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
-          message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'evaluate-factor' }) },
+          message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: task.input.data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor' }) },
         } } }), context);
       }
     },
@@ -43,7 +52,7 @@ export async function runFactor(api: ToolExecutionApi, context: Context, model: 
     const outcome = settled.state.outcome;
     const detail = 'error' in outcome ? outcome.error?.detail : undefined;
     throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
-      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: 'evaluate-factor' });
+      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor' });
   }
   return settled.state.outcome.result;
 }

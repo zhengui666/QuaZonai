@@ -37,14 +37,23 @@ export async function retainNativeEvidence(evidence: JsonObject, save: (index: n
 
 /** Owner-side read of the original native child; never model-facing final feedback. */
 export async function readNativeEvidence(reader: DocumentReader, conversationId: ConversationId, taskId: TaskId, native: JsonObject, context: Context): Promise<JsonObject> {
+  return readNativeEvidenceParts(native, async (index) => {
+    const part = await reader.snapshot(NativeEvidencePart, conversationId, `${taskId}:${index}`, context);
+    if (!part) throw new Error('native_evidence_part_missing');
+    return part.data;
+  });
+}
+
+/** The same decoder for an existing owner transaction's document reads. */
+export async function readNativeEvidenceParts(native: JsonObject, load: (index: number) => Promise<string>): Promise<JsonObject> {
   if (native.format !== format) return native;
   const count = native.parts;
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 1) throw new Error('native_evidence_parts_invalid');
   async function* parts(count: number) {
     for (let index = 0; index < count; index++) {
-      const part = await reader.snapshot(NativeEvidencePart, conversationId, `${taskId}:${index}`, context);
-      if (!part) throw new Error('native_evidence_part_missing');
-      yield Buffer.from(part.data, 'base64');
+      const data = await load(index);
+      if (!data) throw new Error('native_evidence_part_missing');
+      yield Buffer.from(data, 'base64');
     }
   }
   const decoded = Readable.from(parts(count)).compose(createGunzip());

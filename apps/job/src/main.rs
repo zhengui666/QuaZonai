@@ -76,6 +76,11 @@ enum Operation {
         #[arg(long)]
         summary_only: bool,
     },
+    /// Exact native BAR identities for private exposure tracking; no observations.
+    CatalogFactorScope {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
     /// Scan every registered BAR series for pooled factor IC, without a market shortlist.
     /// No targets, account simulation or qualification are produced.
     ScanFactorCatalog {
@@ -83,6 +88,9 @@ enum Operation {
         catalog: PathBuf,
         #[arg(long)]
         model: PathBuf,
+        /// Machine-private JSON array of the identities recorded before execution.
+        #[arg(long)]
+        scope: Option<PathBuf>,
     },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
@@ -234,9 +242,24 @@ fn run(operation: Operation) -> Result<()> {
                 output(&result)
             }
         }
-        Operation::ScanFactorCatalog { catalog, model } => output(
-            &job::factors::scan_factor_catalog(&catalog, &input()?, &model_bytes(&model)?)?,
-        ),
+        Operation::CatalogFactorScope { catalog } => {
+            output(&job::factors::catalog_factor_scope(&catalog)?)
+        }
+        Operation::ScanFactorCatalog {
+            catalog,
+            model,
+            scope,
+        } => {
+            let scope: Option<Vec<String>> = scope
+                .map(|path| Ok::<_, anyhow::Error>(serde_json::from_reader(fs::File::open(path)?)?))
+                .transpose()?;
+            output(&job::factors::scan_factor_catalog_with_scope(
+                &catalog,
+                &input()?,
+                &model_bytes(&model)?,
+                scope.as_deref(),
+            )?)
+        }
         Operation::ValidateAlpha { catalog, model } => output(&job::validation::validate_alpha(
             &catalog,
             &input()?,

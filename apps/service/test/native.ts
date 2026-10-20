@@ -5,8 +5,9 @@ import { readFile, mkdtemp, mkdir, rm, cp, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import Fastify from 'fastify';
-import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import type { JsonObject, SettledTask, TaskId } from '@earendil-works/pi-durable';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { configDefaults } from '../src/config.ts';
@@ -15,6 +16,9 @@ import { decimalUnits, json, nowNs, object } from '../src/facts.ts';
 import { nativeCurve } from '../src/projections.ts';
 import { context, settledObservation, wat } from './support.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
+import { CatalogScopes } from '../../research/plugins/native-catalog-scope.ts';
+import { openResearch } from '../../research/src/host.ts';
+import { factorViews } from '../src/factors.ts';
 
 
 async function expandedCatalog(directory: string, fixturePath: string, prepare: string, causal = false, count = 599, symbol = 'BTC-USD', interleaved = false) {
@@ -98,6 +102,78 @@ function nativeTestSettings(capital: string) {
     latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '0', insert_latency_ns: '1000000', update_latency_ns: '0', cancel_latency_ns: '0' }),
     fee_rates: [{ instrument_id: 'BTC-USD.COINBASE', maker: '0.004', taker: '0.006' }] });
 }
+
+for (const grouped of [false, true]) test(`full-catalog factor input reaches the real native kernel and ${grouped ? 'group' : 'single'} final without claiming an account`, { timeout: 60_000 }, async () => {
+  const fixture = JSON.parse(await readFile(process.env.QZ_BROWSER_FIXTURE!, 'utf8'));
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-catalog-native-'));
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  const request = { schema_version: 1, event_start_ns: '0', train_end_ns: '120000000000', validation_end_ns: '180000000000',
+    event_end_ns: (BigInt(fixture.original_receipt_ns) + 1_000_000_000n).toString(), decision_cutoff_ns: (BigInt(fixture.original_receipt_ns) + 1_000_000_000n).toString(), maximum_rows: 3,
+    parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } };
+  const data = { catalog: fixture.catalog_root, catalog_scan_request: request };
+  const hold = defineExtension({ name: 'test.native-selection-hold', tools: [defineTool({
+    name: 'hold_original_selection', description: 'End this test invocation, leaving the original selection available for joint final.', parameters: Type.Object({}),
+    async execute() { return { content: [{ type: 'text', text: 'Original selection held; no final result read.' }], control: { terminate: true } }; },
+  })] });
+  const options = { database: join(directory, 'research.sqlite'), models, extensions: [hold], modules: ['research', 'catalog-input', 'factor-wasm', 'heldout-wasm'].map(name => resolve('../research/plugins', `${name}.ts`)) };
+  const host = await openResearch(options);
+  try {
+    let id: number;
+    let peer: { researchId: number; trialId: number } | undefined;
+    if (grouped) {
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'First frozen kernel control', model: wat }), { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxToolCall('hold_original_selection', {}), { stopReason: 'toolUse' }),
+      ]);
+      const receipt = await host.start('catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
+      await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+      const study = (await host.state(receipt.conversationId)).research!;
+      assert.equal(study.trials[0]!.status, 'COMPUTED');
+      assert.equal(study.final, null, JSON.stringify(study.final));
+      peer = { researchId: receipt.conversationId, trialId: Number(study.trials[0]!.taskId) };
+    }
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('catalog_input', {}), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'Constant kernel/control only, not alpha', model: wat }), { stopReason: 'toolUse' }),
+      async () => {
+        const trial = (await host.state(id)).research!.trials[0]!;
+        assert.equal(trial.status, 'COMPUTED', JSON.stringify(trial));
+        const result = object(trial.result);
+        assert.equal(object(result.coverage).catalog_series, '1');
+        assert.equal(object(result.request).event_end_ns, request.validation_end_ns);
+        const heldout = object((result.partitions as JsonObject[])[2]);
+        assert.equal(object(object(heldout.metric).counts).observations, '0');
+        return fauxAssistantMessage(fauxToolCall(peer ? 'factor_finalize_group' : 'factor_finalize', {
+          ...(peer ? { selections: [peer, { researchId: id, trialId: trial.taskId }] } : { trialId: trial.taskId }),
+          reason: 'Freeze before final; original late clocks remain unqualified.',
+        }), { stopReason: 'toolUse' });
+      },
+    ]);
+    const original = { goal: 'Full-catalog native control; no market/PIT/model-quality claim', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
+    const receipt = await host.start('catalog-kernel-control', original); id = receipt.conversationId;
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const study = (await host.state(id)).research!;
+    assert.deepEqual(study.input, original); assert.equal(study.trials.length, 1);
+    assert.ok(study.final, JSON.stringify((await host.view(id)).entries));
+    assert.equal(study.final.status, 'COMPUTED', JSON.stringify(study.final));
+    const result = object(study.final.result);
+    assert.equal(object(result.native_versions)['nautilus-model'], '0.63.0');
+    assert.equal(object(result.coverage).observations, '3');
+    assert.equal(object(result.request).event_end_ns, request.event_end_ns);
+    assert.equal('points' in result || 'portfolio' in result || 'simulation' in result, false);
+    for (const partition of result.partitions as JsonObject[]) {
+      assert.deepEqual(partition.assets, []);
+      assert.equal(object(object(partition.metric).pearson_ic).value, null, 'unavailable evidence is not zero or success');
+    }
+    const scopes = (await host.harness.snapshot(CatalogScopes, context))!;
+    assert.equal(scopes.roots.length, 1);
+    const windows = (await host.harness.snapshot(Exposures, context))!.windows;
+    assert.deepEqual(windows.map(window => window.kind), grouped ? ['ITERATION', 'ITERATION', 'FINAL'] : ['ITERATION', 'FINAL']);
+    assert.deepEqual(windows[0]!.barTypesRef, windows[1]!.barTypesRef);
+    assert.equal(factorViews(id, study)[0]!.combinable, false);
+    assert.deepEqual(await host.start('catalog-kernel-control', original), receipt);
+  } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 /** Real job and native BAR catalog; controlled provider/downstream, fixture data, no PIT/quality/account-performance claim. */
 test('two original studies → native target blending → one fee-affected shared account → original target receipt/account nulls', { timeout: 90_000 }, async () => {

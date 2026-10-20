@@ -5,6 +5,7 @@ import { object, studyInput } from '../src/trials.ts';
 import { runFactor } from './native-factor-task.ts';
 import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
+import { catalogScope } from './native-catalog-scope.ts';
 import { finalizeGroup } from './heldout-group.ts';
 import { classifyExecutionError, executionDiagnostic } from '../src/execution-errors.ts';
 
@@ -31,8 +32,9 @@ export default defineExtension({
       }, context);
       if (!selected.settled) {
         try {
-          await checkExposure(api, context, data, true);
-          const result = await runFactor(api, context, selected.model, data);
+          const scoped = data.catalog_scan_request !== undefined ? await catalogScope(api, context, data) : data;
+          await checkExposure(api, context, scoped, true);
+          const result = await runFactor(api, context, selected.model, scoped);
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
           if (context.abortSignal?.aborted) throw error;
