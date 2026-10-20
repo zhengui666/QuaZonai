@@ -180,6 +180,16 @@ independent evaluation and economic evidence remain separate from computation.
 
 ### Conditional recorded-cost research
 
+Prepare original costs for a caller-selected native BAR window with the operator command:
+
+```sh
+source-tools polymarket-history recorded-fees --selection /absolute/original-hf-selection.json --catalog /absolute/original-data-only/catalog --bar-selection /absolute/original-native-bar-selection.json --output /absolute/new-prepared/catalog/recorded-fees
+```
+
+`--bar-selection` is the existing `NativeBarSelectionV1`, not an HF selection or a market shortlist supplied by this command. It selects one-minute LAST BARs with bare outcome-token instrument IDs (`TOKEN.POLYMARKET`) from the original data-only catalog. The output parent must exist; the output directory must be new. The command does not change either source, fabricate definitions, register data, restart research or select a fixed universe. The output is the existing per-instrument `RecordedTradeFeesV1` layout, not a new fee model. The consuming prepared catalog must retain the same original quantities and BARs.
+
+Official Arrow/Nautilus decoding reads only selected native series. Every selected BAR's volume must equal its original native TradeTick quantities. Original HF costs are then joined by canonical transaction/log ID, token and timestamp; the native quantity is copied, never reconstructed from rounded source amounts. Original source quantity, fee, cash, provider price and directions are retained. Equal repeated cost records are consumed once; conflicting records, missing costs/records and volume mismatch fail before output creation. Source zeros remain zeros. Raw source files remain detached from researcher mounts; prepare prefix and independent-evaluation inputs separately. This prepares explicitly conditional cost replay, not a historical fee schedule, actual book depth, measured reception latency or PIT qualification.
+
 `POLYMARKET_V2_RECORDED_FEES` reads `recorded-fees.json` from each original catalog.
 It is a QZ adapter through the official native `FeeModel`, not a venue fee formula.
 Keep the original source revision, transaction ID, timestamp, `fee_usdc`, cash

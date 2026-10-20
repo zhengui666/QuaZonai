@@ -45,6 +45,9 @@ pub mod chain;
 #[path = "hf_selection.rs"]
 mod hf_selection;
 
+#[path = "recorded_fees.rs"]
+pub(super) mod recorded_fees;
+
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Format {
