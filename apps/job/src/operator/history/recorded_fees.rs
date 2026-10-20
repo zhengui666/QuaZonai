@@ -166,8 +166,8 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
                 return Ok(());
             };
             ensure!(
-                tick.ts_init.as_u64() <= selected.decision_cutoff_ns.get(),
-                "RECORDED_FEE_NATIVE_FROM_FUTURE"
+                event <= tick.ts_init.as_u64() && tick.ts_init.as_u64() <= end,
+                SourceRowContext::new("RECORDED_FEE_NATIVE_CLOCK_MISMATCH", "native", 0)
             );
             ensure!(
                 !tick.size.is_undefined(),
@@ -316,7 +316,14 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
         parts.entry(native.instrument_id).or_default().push(record);
     }
     // No output is created until every original native trade has a matching source cost record.
-    fs::create_dir(&args.output)?;
+    let parent = args
+        .output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let staging = tempfile::Builder::new()
+        .prefix(".recorded-fees-")
+        .tempdir_in(parent)?;
     for (id, records) in &mut parts {
         records.sort_by(|a, b| (a.ts_event_ns, &a.id).cmp(&(b.ts_event_ns, &b.id)));
         let source = RecordedTradeFeesV1 {
@@ -327,10 +334,19 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
             records: std::mem::take(records),
         };
         fs::write(
-            args.output.join(format!("{id}.json")),
+            staging.path().join(format!("{id}.json")),
             serde_json::to_vec(&source)?,
         )?;
     }
+    hf_selection::unchanged(&selection.file_states)?;
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        staging.path(),
+        rustix::fs::CWD,
+        &args.output,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)?;
     Ok(
         json!({"source": selection.repository, "revision": selection.revision, "records": count,
         "instruments": parts.len(), "bars": rows, "output": args.output,

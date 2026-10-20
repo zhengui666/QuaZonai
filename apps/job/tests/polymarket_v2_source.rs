@@ -437,7 +437,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
         "event_start_ns":((START+60)*NS).to_string(),"event_end_ns":((START+120)*NS).to_string(),
         "decision_cutoff_ns":((START+120)*NS).to_string(),"maximum_rows":1
     })).unwrap()).unwrap();
-    let make_native = |name: &str, event_id: &str, volume: &str| {
+    let make_native = |name: &str, event_id: &str, volume: &str, available: u64| {
         let path = fixture.root.join(name);
         fs::create_dir(&path).unwrap();
         let catalog =
@@ -472,7 +472,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
                     AggressorSide::NoAggressor,
                     TradeId::new(event_id),
                     ((START + 10) * NS).into(),
-                    ((START + 10) * NS).into(),
+                    (available * NS).into(),
                 )],
                 None,
                 None,
@@ -494,7 +494,7 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
             .arg(output);
         cmd
     };
-    let catalog = make_native("cost-native", "137_90000000_1", "1.000000");
+    let catalog = make_native("cost-native", "137_90000000_1", "1.000000", START + 10);
     let output = fixture.root.join("cost-output");
     let report = accepted(&mut command(&catalog, &output));
     assert_eq!(report["records"], 1); // Identical source duplicates do not double charge.
@@ -512,21 +512,58 @@ fn recorded_cost_preparation_joins_original_native_quantities_and_never_zero_fil
     let overwrite = command(&catalog, &output).output().unwrap();
     assert!(!overwrite.status.success());
     assert_eq!(fs::read(path).unwrap(), original);
-    for (name, id, volume, reason) in [
+    #[cfg(unix)]
+    {
+        let output = fixture.root.join("interrupted-output");
+        let cmd = command(&catalog, &output);
+        let result = Command::new("sh")
+            .args([
+                "-c",
+                "ulimit -c 0; ulimit -f 0; exec \"$@\"",
+                "fee-write-failure",
+            ])
+            .arg(cmd.get_program())
+            .args(cmd.get_args())
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(
+            !output.exists(),
+            "a failed write exposed a canonical cost directory"
+        );
+        assert_eq!(accepted(&mut command(&catalog, &output))["records"], 1);
+    }
+    for (name, id, volume, available, reason) in [
         (
             "missing",
             "137_99999999_1",
             "1.000000",
+            START + 10,
             "RECORDED_FEE_SOURCE_RECORD_MISSING",
         ),
         (
             "volume",
             "137_90000000_1",
             "2.000000",
+            START + 10,
             "RECORDED_FEE_BAR_QUANTITY_MISMATCH",
         ),
+        (
+            "reversed-clock",
+            "137_90000000_1",
+            "1.000000",
+            START + 9,
+            "RECORDED_FEE_NATIVE_CLOCK_MISMATCH",
+        ),
+        (
+            "late-clock",
+            "137_90000000_1",
+            "1.000000",
+            START + 61,
+            "RECORDED_FEE_NATIVE_CLOCK_MISMATCH",
+        ),
     ] {
-        let catalog = make_native(name, id, volume);
+        let catalog = make_native(name, id, volume, available);
         let output = fixture.root.join(format!("{name}-output"));
         let result = command(&catalog, &output).output().unwrap();
         assert!(!result.status.success());

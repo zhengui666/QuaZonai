@@ -63,6 +63,13 @@ pub(super) fn file_state(path: &Path) -> Result<FileState> {
     })
 }
 
+pub(super) fn unchanged(states: &BTreeMap<PathBuf, FileState>) -> Result<()> {
+    for (file, state) in states {
+        ensure!(state == &file_state(file)?, "SELECTION_FILE_CHANGED");
+    }
+    Ok(())
+}
+
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value
         .get(key)
@@ -436,6 +443,29 @@ mod tests {
     fn partition() -> Value {
         json!({"markets": [], "market_mapping": "UNKNOWN", "format": "parquet",
                "start_date": "1970-01-01", "end_date": "1970-01-02"})
+    }
+
+    #[test]
+    fn complete_source_recheck_detects_earlier_change_while_last_file_is_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = handoff(directory.path(), partition(), json!([]));
+        let mut selection = load(&path, 0, 60).unwrap();
+        let first = selection.files[0].clone();
+        let second = first.with_file_name("second.parquet");
+        fs::copy(&first, &second).unwrap();
+        selection
+            .file_states
+            .insert(second.clone(), file_state(&second).unwrap());
+        unchanged(&selection.file_states).unwrap();
+        fs::write(&first, b"PAR1changed-originalPAR1").unwrap();
+        assert_eq!(
+            selection.file_states.get(&second),
+            Some(&file_state(&second).unwrap())
+        );
+        assert!(unchanged(&selection.file_states)
+            .unwrap_err()
+            .to_string()
+            .contains("SELECTION_FILE_CHANGED"));
     }
 
     #[test]

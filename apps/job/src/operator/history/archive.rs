@@ -795,12 +795,7 @@ pub fn prepare(args: &Arguments) -> Result<NativeArchive> {
     // A later file's scan can overlap a change to an earlier cached source.
     // Recheck the complete selected set before constructing a publication.
     if let Some(states) = &file_states {
-        for (file, state) in states {
-            ensure!(
-                state == &hf_selection::file_state(file)?,
-                "SELECTION_FILE_CHANGED"
-            );
-        }
+        hf_selection::unchanged(states)?;
     }
     ensure!(quality.selected_rows > 0, "EMPTY_ARCHIVE_SELECTION");
     if let Some(evidence) = &chain {
