@@ -8,6 +8,7 @@ import research from '../../research/plugins/research.ts';
 import factorWasm from '../../research/plugins/factor-wasm.ts';
 import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 import strategyPortfolio from '../../research/plugins/strategy-portfolio.ts';
+import { maxDbCounter } from '../../research/src/strategy.ts';
 import { Application } from '../src/facts.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup, wat } from './support.ts';
 
@@ -30,7 +31,7 @@ test('new structured native studies reject missing bindings and unsupported runn
     const original = structuredClone(dataset.data);
     const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
       selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100 },
-      parameters: { fast_period: 2, slow_period: 3, label_horizon_observations: 1 } } };
+      parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1 } } };
     const ensemble = researchSpecification({ ...specification, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 8, stop: 'budget-or-selection' } });
     const scan = { schema_version: 1, event_start_ns: '0', train_end_ns: '10', validation_end_ns: '20', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, parameters: request.forecast.parameters };
     const failures: { data: typeof original; spec: typeof specification; error: string; missingStrategy?: boolean; missingPortfolio?: boolean; missingFactor?: boolean }[] = [
@@ -61,21 +62,29 @@ test('new structured native studies reject missing bindings and unsupported runn
     }
     const strategy = dataset.strategy!;
     dataset.data = { catalog: original.catalog!, request };
-    for (const [index, invalid] of [{ kind: 'factor-threshold' }, { ...strategy, simulationSettings: { base_currency: 'USD' } }].entries()) {
-      dataset.strategy = invalid as typeof strategy; state.options.extensions = extensions;
+    const invalidPolicies = [
+      { policy: { kind: 'factor-threshold' }, error: 'strategy_instrument_invalid' },
+      { policy: { ...strategy, simulationSettings: { base_currency: 'USD' } }, error: 'strategy_starting_capital_required' },
+      { policy: { ...strategy, instrumentIds: ['TEST.SIM', 'MISSING.SIM'] }, error: 'strategy_instrument_fee_missing' },
+      { policy: { ...strategy, simulationSettings: { ...strategy.simulationSettings, typo: true } }, error: 'strategy_simulation_settings_invalid' },
+      { policy: { ...strategy, targetTtlNs: (maxDbCounter + 1n).toString() }, error: 'target_ttl_invalid' },
+      { policy: { ...strategy, targetTtlNs: (maxDbCounter - 20n).toString() }, error: 'target_ttl_invalid' },
+    ];
+    for (const [index, invalid] of invalidPolicies.entries()) {
+      dataset.strategy = invalid.policy as typeof strategy; state.options.extensions = extensions;
       await state.restart();
       const requestId = `invalid-native-policy-${index}`;
       const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
         payload: { requestId, goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
       assert.equal(response.statusCode, 400, response.body);
-      assert.equal(response.json().error, index ? 'strategy_starting_capital_required' : 'strategy_instrument_invalid');
+      assert.equal(response.json().error, invalid.error);
       assert.equal(state.faux.state.callCount, 0);
       assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
       assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
     }
     dataset.strategy = strategy;
     state.options.extensions = [...extensions, heldoutWasm];
-    const changed = structuredClone(request); changed.forecast.parameters.fast_period = 3;
+    const changed = structuredClone(request); changed.forecast.parameters.fast_period = 1;
     const sealedFailures: { sealed: typeof original; error: string }[] = [
       { sealed: { request }, error: 'heldout_catalog_required' },
       { sealed: { catalog: original.catalog! }, error: 'native_request_required' },
@@ -118,7 +127,7 @@ test('custom structured data remains opaque and an admitted request replays afte
   const state = await setup();
   try {
     const datasets = state.options.config.datasets;
-    datasets[0]!.data = { catalog: 'custom protocol catalog', request: { protocol: 'opaque' }, catalog_scan_request: { protocol: 'opaque' } };
+    datasets[0]!.data = { catalog: 'custom protocol catalog', request: { schema_version: 2, forecast: { protocol: 'opaque' } }, catalog_scan_request: { schema_version: 2, protocol: 'opaque' } };
     await state.restart();
     state.faux.setResponses([fauxAssistantMessage('Custom research input retained; no native result claimed.')]);
     const body = { requestId: 'opaque-original', goal: specification.question, specification, model: state.model, datasetId: 'controlled', maxTrials: 1 };
