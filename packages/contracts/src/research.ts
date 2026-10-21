@@ -49,10 +49,12 @@ export function researchCriterion(spec: ResearchSpecification | undefined, statu
 }
 
 export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject) {
-  const request = data.request as JsonObject | undefined;
-  const forecast = request?.forecast as JsonObject | undefined;
+  const catalog = data.catalog_scan_request !== undefined;
+  const request = (catalog ? data.catalog_scan_request : data.request) as JsonObject | undefined;
+  const forecast = (catalog ? request : request?.forecast) as JsonObject | undefined;
   const parameters = forecast?.parameters as JsonObject | undefined;
-  const selection = forecast?.selection as JsonObject | undefined;
+  const selection = (catalog ? request : forecast?.selection) as JsonObject | undefined;
+  if (catalog) strategy = undefined;
   return { instruments: Array.isArray(strategy?.instrumentIds) ? strategy.instrumentIds as string[] : typeof strategy?.instrumentId === 'string' ? [strategy.instrumentId] : [],
     inputFamily: 'price-volume', horizon: typeof parameters?.label_horizon_observations === 'number' ? parameters.label_horizon_observations : null,
     partitions: request ? { trainEndNs: request.train_end_ns ?? null, validationEndNs: request.validation_end_ns ?? null, endNs: selection?.event_end_ns ?? null, historical: strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' } : null,

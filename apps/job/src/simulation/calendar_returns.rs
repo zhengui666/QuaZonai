@@ -31,16 +31,30 @@ pub(super) fn statistics(
     fully_priced: bool,
     returns: impl IntoIterator<Item = (u64, f64)>,
 ) -> Vec<NativeStatisticV1> {
-    let values: Vec<_> = returns.into_iter().collect();
-    let expected =
-        (start_ns < end_ns && start_ns.is_multiple_of(DAY_NS) && end_ns.is_multiple_of(DAY_NS))
-            .then(|| (end_ns - start_ns) / DAY_NS);
+    let first_day = start_ns.div_ceil(DAY_NS);
+    let last_day = end_ns / DAY_NS;
+    let expected = (start_ns < end_ns && first_day < last_day).then(|| last_day - first_day);
+    let partial_days = (start_ns < end_ns)
+        .then(|| end_ns.div_ceil(DAY_NS) - start_ns / DAY_NS - expected.unwrap_or(0));
+    let mut values: Vec<_> = returns.into_iter().collect();
+    let valid = values.iter().all(|(time, value)| {
+        time.is_multiple_of(DAY_NS)
+            && *time / DAY_NS >= start_ns / DAY_NS
+            && *time < end_ns
+            && value.is_finite()
+            && *value >= -1.0
+    }) && values.windows(2).all(|pair| pair[0].0 < pair[1].0);
+    let observed = values.len();
+    // Keep original native returns intact; only complete UTC days enter these summaries.
+    values.retain(|(time, _)| first_day <= *time / DAY_NS && *time / DAY_NS < last_day);
     let complete = fully_priced
+        && valid
         && expected.is_some_and(|days| {
             values.len() as u64 == days
-                && values.iter().enumerate().all(|(index, (time, value))| {
-                    *time == start_ns + index as u64 * DAY_NS && value.is_finite() && *value >= -1.0
-                })
+                && values
+                    .iter()
+                    .enumerate()
+                    .all(|(index, (time, _))| *time == (first_day + index as u64) * DAY_NS)
         });
     let mut rows = vec![
         metric("Calendar Expected Days", expected.map(|days| days as f64)),
@@ -48,6 +62,14 @@ pub(super) fn statistics(
         metric(
             "Calendar Coverage Ratio",
             expected.map(|days| values.len() as f64 / days as f64),
+        ),
+        metric(
+            "Calendar Partial Days",
+            partial_days.map(|days| days as f64),
+        ),
+        metric(
+            "Calendar Partial Return Days",
+            Some((observed - values.len()) as f64),
         ),
     ];
     let performance = complete.then(|| {
@@ -183,9 +205,96 @@ mod tests {
 
     #[test]
     fn intraday_window_does_not_become_a_calendar_day() {
-        let rows = statistics(DAY_NS + 1, 2 * DAY_NS, true, [(DAY_NS, 0.02)]);
-        assert_eq!(value(&rows, "Calendar Expected Days"), None);
+        for end in [DAY_NS + 2, 2 * DAY_NS] {
+            let rows = statistics(DAY_NS + 1, end, true, [(DAY_NS, 0.02)]);
+            assert_eq!(value(&rows, "Calendar Expected Days"), None);
+            assert_eq!(value(&rows, "Calendar Observed Return Days"), Some(0.0));
+            assert_eq!(value(&rows, "Calendar Partial Days"), Some(1.0));
+            assert_eq!(value(&rows, "Calendar Partial Return Days"), Some(1.0));
+            unavailable(&rows);
+        }
+    }
+
+    #[test]
+    fn closing_bar_plus_one_nanosecond_preserves_every_complete_utc_day() {
+        let rows = statistics(
+            DAY_NS,
+            4 * DAY_NS + 1,
+            true,
+            [(DAY_NS, 0.019), (2 * DAY_NS, 0.02), (3 * DAY_NS, 0.021)],
+        );
+        assert_eq!(value(&rows, "Calendar Expected Days"), Some(3.0));
+        assert_eq!(value(&rows, "Calendar Observed Return Days"), Some(3.0));
+        assert_eq!(value(&rows, "Calendar Coverage Ratio"), Some(1.0));
+        assert_eq!(value(&rows, "Calendar Partial Days"), Some(1.0));
+        assert_eq!(value(&rows, "Calendar Partial Return Days"), Some(0.0));
+        let expected = (1.019_f64 * 1.02 * 1.021).powf(1.0 / 3.0) - 1.0;
+        assert!(
+            (value(&rows, "Calendar Geometric Daily Return").unwrap() - expected).abs() < 1e-14
+        );
+    }
+
+    #[test]
+    fn partial_endpoint_returns_do_not_change_complete_day_performance() {
+        let rows = statistics(
+            DAY_NS + 1,
+            5 * DAY_NS + 1,
+            true,
+            [
+                (DAY_NS, -0.8),
+                (2 * DAY_NS, 0.02),
+                (3 * DAY_NS, 0.0),
+                (4 * DAY_NS, -0.01),
+                (5 * DAY_NS, 0.9),
+            ],
+        );
+        assert_eq!(value(&rows, "Calendar Expected Days"), Some(3.0));
+        assert_eq!(value(&rows, "Calendar Observed Return Days"), Some(3.0));
+        assert_eq!(value(&rows, "Calendar Coverage Ratio"), Some(1.0));
+        assert_eq!(value(&rows, "Calendar Partial Days"), Some(2.0));
+        assert_eq!(value(&rows, "Calendar Partial Return Days"), Some(2.0));
+        assert_eq!(value(&rows, "Calendar Minimum Daily Return"), Some(-0.01));
+        assert_eq!(value(&rows, "Calendar Maximum Daily Return"), Some(0.02));
+        assert_eq!(value(&rows, "Calendar Negative Days"), Some(1.0));
+        assert_eq!(value(&rows, "Calendar Zero Days"), Some(1.0));
+    }
+
+    #[test]
+    fn partial_days_cannot_fill_a_missing_complete_day() {
+        let rows = statistics(
+            DAY_NS + 1,
+            5 * DAY_NS + 1,
+            true,
+            [
+                (DAY_NS, 0.2),
+                (2 * DAY_NS, 0.02),
+                (4 * DAY_NS, 0.02),
+                (5 * DAY_NS, 0.2),
+            ],
+        );
+        assert_eq!(value(&rows, "Calendar Expected Days"), Some(3.0));
+        assert_eq!(value(&rows, "Calendar Observed Return Days"), Some(2.0));
+        assert_eq!(value(&rows, "Calendar Coverage Ratio"), Some(2.0 / 3.0));
         unavailable(&rows);
+    }
+
+    #[test]
+    fn invalid_extra_rows_cannot_hide_in_partial_day_counts() {
+        for extra in [
+            (0, 0.0),
+            (5 * DAY_NS, 0.0),
+            (3 * DAY_NS + 1, 0.0),
+            (4 * DAY_NS, f64::NAN),
+        ] {
+            let mut values = vec![
+                (DAY_NS, 0.02),
+                (2 * DAY_NS, 0.02),
+                (3 * DAY_NS, 0.02),
+                extra,
+            ];
+            values.sort_by_key(|(time, _)| *time);
+            unavailable(&statistics(DAY_NS, 4 * DAY_NS + 1, true, values));
+        }
     }
 
     #[test]

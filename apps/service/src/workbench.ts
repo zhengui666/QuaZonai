@@ -8,7 +8,8 @@ import type { ResearchInput as NativeResearchInput } from '../../research/src/do
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import { isRecoveryRequestId } from '../../research/src/recovery.ts';
-import { exactWeights, replayCatalog, strategyMembers } from '../../research/src/strategy.ts';
+import { exactWeights, replayCatalog, strategyMembers, thresholdPolicy } from '../../research/src/strategy.ts';
+import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
@@ -91,6 +92,19 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const policy = object(input.policy, 'policy');
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
+    const registry = host.registry.snapshot();
+    if (validated.specification && ['catalog', 'request', 'catalog_scan_request'].some(key => validated.data[key] !== undefined)
+      && ['qz.factor-wasm', 'qz.factor-volume', 'qz.heldout-wasm', 'qz.strategy-portfolio', 'qz.data-catalog'].some(name => registry.extension(name))) {
+      try {
+        text(validated.data.catalog, 'catalog');
+        normalizedRequest(validated.data);
+        if (validated.specification.search.scope === 'ensemble') {
+          if (validated.data.catalog_scan_request !== undefined) throw new Problem('catalog_factor_only_account_binding_required');
+          if (!registry.extension('qz.strategy-portfolio')) throw new Problem('strategy_adapter_not_configured');
+          thresholdPolicy(object(validated.policy.strategy, 'strategy_policy'));
+        } else if (!registry.task('qz.factor.wasm') || !registry.extension('qz.factor-wasm') && !registry.extension('qz.factor-volume')) throw new Problem('selected_factor_evaluator_unavailable');
+      } catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_request_invalid'); }
+    }
     await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);

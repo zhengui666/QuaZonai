@@ -9,6 +9,20 @@
 
 **Endpoint:** working real-data execution, applicable checks and required final-Head review/dev merge for source changes, matching installation, then actual research outcomes. Engineering recovery alone is not the financial endpoint.
 
+### Owner-authorized continuation — 2026-10-22
+
+The owner explicitly authorized the required development and deployment, then continuation of the complete research goal. Use `openai/gpt-6-astra` with `max`, the complete currently registered April–October catalog and history, dynamic market selection, one approximately 3000 pUSD account and factor ensembles. Trading frequency has no imposed limit. Retain the 100000-trial allowance; daily return above 2%, no losing days and stable daily growth remain hypotheses to assess, not assumed outcomes or substitutes for Sharpe/IC. Only the original TimeSeventeen/Polymarket-v2 source is admitted; unregistered October extensions and unrelated sources are not silently included.
+
+Research1173/submission1181 was admitted with that goal and zero scientific trials. The owner subsequently stopped it; native state is `unanswered/aborted`. Preserve its request, history and stopped state. A repaired successor must disclose its linkage and original remaining allowance. Main checkout `feat/hyperliquid-data` has unrelated changes and remains untouched. Implementation uses the clean dev-based worktree `/home/zzy/.codex/worktrees/astra-ensemble-recovery/QuaZonai`, branch `codex/astra-ensemble-recovery`.
+
+Current dev already contains PR220–223; reuse their complete catalog scanner, original fee preparations and input binding. The installed application remains older than PR223. Full-catalog factor IC does not provide dynamic shared-account ensemble execution. Existing source data contains actual fills/directions/fees, but no original orderbook, reception clock or historical execution definitions; retain these limitations rather than manufacture them. Existing all-source recorded-cost preparation is reusable without expanding roughly 189 GB of JSON or repeating the original join.
+
+Immediate fixes cover two observed failures: reject a newly submitted structured native study with missing or unsupported execution bindings before billed model work, while retaining original replay/custom extensions; and preserve the complete replay when the exclusive end is UTC midnight plus one nanosecond, reporting complete daily intervals and partial intervals separately. Continue through a compact dynamic ensemble/account path using official Nautilus streaming and original causal inputs. A fixed shortlist, equal static market budgets, separately funded factor curves or renamed BAR features do not satisfy the requested market selection, account or microstructure behavior.
+
+Deployment must retain the original database/authentication/providers/data and idle stopped studies. Current disk availability is approximately 3.9 GB; the ordinary complete-data recovery archive previously required 13 GB. Inspect reusable unused application images and existing release assets before adding backup machinery or duplicating the datasets. No new release, deployment, scientific result or target attainment is claimed by this continuation entry.
+
+The first repair batch now rejects incomplete new native admissions before model work, retains both historical replay paths and opaque custom extensions, and exposes compact catalog horizon/partitions without pretending they support account combinations. The UTC-day fix retains all original account returns and reports partial intervals separately. Each new defect regression was observed failing before its fix. Local `make check-ts` and `make check-web` pass, as do all11 native calendar unit tests. Native account endpoint integration remains for the existing standard CI; its local combined build was stopped to avoid exhausting the installation disk. Independent read-only review of this batch found no actionable issues; final hosted CI and GitHub Codex review are still pending. The complete dynamic ensemble/account runner and actual research remain unfinished.
+
 <a id="intent"></a>
 ## Intent
 

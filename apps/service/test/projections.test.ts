@@ -11,6 +11,34 @@ import { Application } from '../src/facts.ts';
 import { BuildPortfolio } from '../src/science.ts';
 import { metrics, researchTaskViews } from '../src/projections.ts';
 
+test('dataset projection retains compact catalog horizons and partitions without advertising account strategy', async () => {
+  const state = await setup();
+  try {
+    const dataset = state.options.config.datasets[0]!;
+    const parameters = { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 7 };
+    const selection = { schema_version: 1, event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] };
+    dataset.data.request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1, selection, parameters } };
+    state.options.config.datasets.push({ ...dataset, id: 'catalog-scan', data: { catalog: dataset.data.catalog!, catalog_scan_request: {
+      schema_version: 1, event_start_ns: '0', train_end_ns: '10', validation_end_ns: '20', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, parameters } } });
+    const original = structuredClone(state.options.config.datasets);
+    await state.restart();
+    const response = await state.service.app.inject({ url: '/api/v3/datasets', headers: state.headers });
+    assert.equal(response.statusCode, 200, response.body);
+    const [legacy, compact] = response.json();
+    assert.equal(compact.researchSettings.horizon, 7);
+    assert.deepEqual(compact.researchSettings.partitions, { trainEndNs: '10', validationEndNs: '20', endNs: '30', historical: false });
+    assert.deepEqual(legacy.researchSettings.partitions, compact.researchSettings.partitions);
+    assert.equal(legacy.researchSettings.horizon, compact.researchSettings.horizon);
+    assert.equal(legacy.researchSettings.strategy.kind, 'factor-threshold');
+    assert.deepEqual(legacy.researchSettings.instruments, ['TEST.SIM']);
+    assert.equal(compact.researchSettings.strategy, null);
+    assert.deepEqual(compact.researchSettings.instruments, []);
+    assert.equal('data' in compact, false);
+    assert.deepEqual(state.options.config.datasets, original);
+    assert.equal(state.faux.state.callCount, 0);
+  } finally { await state.cleanup(); }
+});
+
 test('list and usage do not load historical task results; list retains its existing summary fields', { timeout: 20_000 }, async t => {
   const storage = await openNodeSqliteStorage(':memory:'); const state = await setup(true, undefined, storage);
   try {
