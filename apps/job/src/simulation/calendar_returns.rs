@@ -69,7 +69,7 @@ pub(super) fn statistics(
         ),
         metric(
             "Calendar Partial Return Days",
-            Some((observed - values.len()) as f64),
+            valid.then_some((observed - values.len()) as f64),
         ),
     ];
     let performance = complete.then(|| {
@@ -293,7 +293,9 @@ mod tests {
                 extra,
             ];
             values.sort_by_key(|(time, _)| *time);
-            unavailable(&statistics(DAY_NS, 4 * DAY_NS + 1, true, values));
+            let rows = statistics(DAY_NS, 4 * DAY_NS + 1, true, values);
+            assert_eq!(value(&rows, "Calendar Partial Return Days"), None);
+            unavailable(&rows);
         }
     }
 
