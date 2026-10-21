@@ -168,6 +168,7 @@ test('structured native input accepts only the registered inherited policy and s
   const state = await setup();
   try {
     const registered = state.options.config.datasets[0]!;
+    assert.ok(registered.strategy && registered.strategy.kind !== 'catalog-ensemble');
     registered.strategy = { ...registered.strategy!, instrumentIds: ['TEST.SIM'], evaluationPartition: 'HELDOUT' };
     await state.restart();
     const policy = { ...registered.policy, max_trials: 0, strategy: registered.strategy };

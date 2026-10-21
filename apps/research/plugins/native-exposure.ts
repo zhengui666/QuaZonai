@@ -23,32 +23,35 @@ export function partitionBoundaries(request: JsonObject, catalog = false): void 
 
 export async function footprint(data: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
-  const catalog = data.catalog_scan_request !== undefined;
-  if (catalog && data.request !== undefined) throw new Error('ambiguous_factor_request');
-  const request = object(catalog ? data.catalog_scan_request : data.request, 'native_request');
-  partitionBoundaries(request, catalog);
+  const ensemble = data.catalog_ensemble_request !== undefined;
+  const catalog = ensemble || data.catalog_scan_request !== undefined;
+  if ([data.catalog_ensemble_request, data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  const request = object(ensemble ? data.catalog_ensemble_request : catalog ? data.catalog_scan_request : data.request, 'native_request');
+  partitionBoundaries(ensemble ? { ...request, train_end_ns: data.train_end_ns!, validation_end_ns: data.validation_end_ns! } : request, catalog);
   const selection = catalog ? request : object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   if (!catalog && (!Array.isArray(selection.bar_types) || !selection.bar_types.every((id) => typeof id === 'string'))) throw new Error('bar_types_required');
   // Paths and owner labels are provenance, not freshness. The same native BAR
   // identity and event interval stay exposed across labels, copies and revisions.
   return { catalog: await realpath(data.catalog),
     ...(catalog ? { barTypesRef: object(data.catalog_scope, 'catalog_scope') } : { barTypes: [...selection.bar_types as string[]].sort() }),
-    start: request.validation_end_ns!, end: selection.event_end_ns! };
+    start: ensemble ? data.validation_end_ns! : request.validation_end_ns!, end: selection.event_end_ns! };
 }
 
 export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT'): Promise<void> {
   const window = await footprint(data);
   const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
   const kind = historical ? (reserve ? 'HISTORICAL_FINAL' : 'HISTORICAL_ITERATION') : (reserve ? 'FINAL' : 'ITERATION');
-  const request = object(data.catalog_scan_request ?? data.request, 'request');
-  const selection = data.catalog_scan_request !== undefined ? request : object(object(request.forecast, 'forecast').selection, 'selection');
+  const ensemble = data.catalog_ensemble_request !== undefined;
+  const request = object(data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request, 'request');
+  const selection = ensemble || data.catalog_scan_request !== undefined ? request : object(object(request.forecast, 'forecast').selection, 'selection');
   if (!reserve) {
     window.start = selection.event_start_ns!;
-    window.end = request.validation_end_ns!;
+    window.end = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
   // against final exposures so a new root cannot reset an exposed study.
-  const end = finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
+  const end = finalData?.catalog_ensemble_request !== undefined ? object(finalData.catalog_ensemble_request, 'native_request').event_end_ns!
+    : finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
   const checked = reserve ? window : { ...window, end };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);

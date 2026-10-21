@@ -92,6 +92,15 @@ enum Operation {
         #[arg(long)]
         scope: Option<PathBuf>,
     },
+    /// Conditional dynamic ensemble research across every registered catalog market.
+    ReplayCatalogEnsemble {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        partitions: PathBuf,
+        #[arg(long, required = true)]
+        model: Vec<PathBuf>,
+    },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
         #[arg(long)]
@@ -265,6 +274,22 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
+        Operation::ReplayCatalogEnsemble {
+            catalog,
+            partitions,
+            model,
+        } => {
+            let models = model
+                .iter()
+                .map(|path| model_bytes(path))
+                .collect::<Result<Vec<_>>>()?;
+            output(&job::catalog_ensemble::replay(
+                &catalog,
+                &partitions,
+                &input()?,
+                &models,
+            )?)
+        }
         Operation::EvaluateExperiment {
             catalog,
             model,

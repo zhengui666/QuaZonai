@@ -18,6 +18,13 @@ export interface ThresholdPolicy {
   evaluationPartition?: 'HELDOUT';
   evidenceMode?: 'HISTORICAL_REASSESSMENT';
 }
+export interface CatalogEnsemblePolicy {
+  name: string;
+  kind: 'catalog-ensemble';
+  evaluationPartition?: 'HELDOUT';
+  evidenceMode?: 'HISTORICAL_REASSESSMENT';
+}
+export type StrategyPolicy = ThresholdPolicy | CatalogEnsemblePolicy;
 export type MarketAllocation = { instrumentId: string; weight: string };
 export interface StrategyMember { model: string; weight: string }
 export type StrategyPartition = 'VALIDATION' | 'HELDOUT';
@@ -77,6 +84,15 @@ export function resolveStrategyPolicy(proposal: JsonObject, original: JsonObject
   if (!(policy.instrumentIds ?? [policy.instrumentId]).includes(selected)) throw new Error('strategy_instrument_not_allowed');
   if (policy.instrumentIds === undefined) return { ...policy, instrumentId: selected };
   return { ...policy, instrumentId: selected, simulationSettings: selectedSettings(policy.simulationSettings, [selected]) };
+}
+
+export function resolvePortfolioPolicy(proposal: JsonObject, original: JsonObject): StrategyPolicy {
+  if (original.kind !== 'catalog-ensemble') return resolveStrategyPolicy(proposal, original);
+  if (proposal.instrumentId !== undefined) throw new Error('strategy_market_single_choice_invalid');
+  if (proposal.allocations !== undefined) throw new Error('strategy_market_policy_required');
+  if (original.evaluationPartition !== undefined && original.evaluationPartition !== 'HELDOUT') throw new Error('strategy_evaluation_partition_invalid');
+  if (original.evidenceMode !== undefined && original.evidenceMode !== 'HISTORICAL_REASSESSMENT') throw new Error('strategy_evidence_mode_invalid');
+  return original as unknown as CatalogEnsemblePolicy;
 }
 
 function selectedSettings(original: JsonObject, ids: string[]): JsonObject {
@@ -232,9 +248,12 @@ export function intervalTargets(points: JsonObject[], selection: JsonObject): Js
 /** Match the original final request, never substitute the research-visible prefix. */
 export function replayCatalog(data: JsonObject, request: JsonObject): string {
   const sealed = data.sealed ? object(data.sealed, 'heldout_data') : null;
-  const original = normalizedRequest({ request });
+  const ensemble = data.catalog_ensemble_request !== undefined;
+  const original = ensemble ? object(request, 'native_request') : normalizedRequest({ request });
   for (const binding of sealed ? [sealed, data] : [data]) {
-    if (canonical(normalizedRequest(binding)) === canonical(original)) {
+    const expected = normalizedRequest(binding);
+    if (ensemble) expected.evaluation_start_ns = binding.validation_end_ns!;
+    if (canonical(expected) === canonical(original)) {
       if (typeof binding.catalog !== 'string') throw new Error('catalog_required');
       return binding.catalog;
     }

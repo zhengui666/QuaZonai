@@ -3,7 +3,7 @@ import type { ExecutionErrorCategory, ExecutionErrorDetail } from '../../../pack
 type ExecutionContext = { operation?: unknown; stage?: unknown };
 type Fallback = 'scientific_execution_failed' | 'backtest_failed' | 'operation_failed';
 const operations = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
-  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest']);
+  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest', 'replay-catalog-ensemble']);
 const stages = new Set(['compile', 'execute', 'decode', 'validate']);
 
 export function executionDiagnostic(error: unknown, fallback = 'scientific_execution_failed'): string {
@@ -40,7 +40,7 @@ const reasons: Reason[] = [
   { codes: ['FORECAST_NO_PREDICTIONS', 'strategy_no_forecasts', 'strategy_no_targets'], category: 'data', message: '所选区间没有产生可用预测或策略目标。', action: '检查观测覆盖、预热周期和策略决策区间；不把无预测当作零收益。' },
   { codes: ['strategy_observations_missing', 'strategy_market_observations_missing', 'strategy_instrument_bars_missing'], category: 'data',
     message: '策略所需的原始市场观测不完整。', action: '核对每个原标的的行情覆盖与可得时间；不要补造观测或沿用过期行情成交。' },
-  { codes: ['SIGNAL_ABI_MISMATCH', 'FEATURE_MODEL_ABI_MISMATCH'], category: 'model', message: '模型导出接口与原生科学计算合同不匹配。', action: '因子模型须导出 predict(f64 × 8) → f64；核对所用模型类型的原生接口，修正后作为新的计数试验提交。' },
+  { codes: ['SIGNAL_ABI_MISMATCH', 'FEATURE_MODEL_ABI_MISMATCH'], category: 'model', message: '模型导出接口与原生科学计算合同不匹配。', action: '价格量因子须导出 predict(f64 × 8) → f64；特征 v2 须导出 qz_set_feature_v2 和 qz_predict_v2。按原输入的 ABI 修正后作为新的计数试验提交。' },
   { codes: ['SIGNAL_MODULE_INVALID', 'SIGNAL_REQUIRES_WASM_BINARY', 'SIGNAL_IMPORTS_FORBIDDEN', 'SIGNAL_INSTANTIATION_REJECTED'], category: 'model',
     message: 'Wasm 模型无法由原生引擎加载或实例化。', action: '检查模型结构、内存声明和禁用的导入／启动函数；修正模型后明确提交新试验。' },
   { codes: ['SIGNAL_BUDGET_EXHAUSTED', 'FEATURE_MODEL_BUDGET_EXHAUSTED', 'SIGNAL_PREDICTION_LIMIT', 'SIGNAL_FUEL_LIMIT'], category: 'resource',

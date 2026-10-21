@@ -139,7 +139,8 @@ pub struct NativeSimulationSettingsV1 {
     #[schema(minimum = 1, maximum = 86400000)]
     pub snapshot_interval_ms: u32,
     pub exposure_tolerance: DecimalValue,
-    #[schema(min_items = 1)]
+    /// Explicit replay requires matching fee hints. Catalog recorded-fee replay
+    /// uses original source pools and needs no complete-universe rate list.
     pub fee_rates: Vec<NativeFeeRateV1>,
 }
 

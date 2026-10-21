@@ -376,6 +376,7 @@ test('offline cross-market export preserves a declared multi-market universe rat
     const file = join(f.directory, 'cross-market-strategy.json'); await writeFile(file, JSON.stringify(strategy));
     const result = await exportDataset({ ...f.options, strategy: file });
     assert.deepEqual(result.strategy, strategy);
+    assert.ok(result.strategy?.kind === 'cross-market-threshold');
     assert.equal(result.strategy!.instrumentId, undefined);
     assert.deepEqual(result.data.request, f.request);
   } finally { await f.cleanup(); }

@@ -6,8 +6,9 @@ use wasmi::{Store, TypedFunc};
 
 pub use contracts::science::FEATURE_MODEL_ABI_V2 as ABI;
 
-/// Dictionary indices are frozen by the request. Target index zero identifies its
-/// sole traded instrument. No labels, clock, files, imports or training calls.
+/// Experiment dictionaries are request-owned, with target index zero for their
+/// sole traded instrument. Catalog policies assign causal first-arrival indices.
+/// No labels, host clock, files, imports or training calls.
 pub struct FeatureModel {
     store: Store<()>,
     set_feature: TypedFunc<(i32, f64, i32, i64, i64), ()>,
@@ -52,6 +53,19 @@ impl FeatureModel {
         ordinal: u32,
         features: &[FeatureValueV1],
     ) -> Result<f64> {
+        self.predict_for_target(decision_ns, event_ns, 0, ordinal, features)
+    }
+
+    /// A catalog policy assigns a stable index when an instrument first arrives.
+    /// Existing one-instrument experiments retain target index zero.
+    pub fn predict_for_target(
+        &mut self,
+        decision_ns: u64,
+        event_ns: u64,
+        target_index: u32,
+        ordinal: u32,
+        features: &[FeatureValueV1],
+    ) -> Result<f64> {
         ensure!(!self.failed, "FEATURE_MODEL_INSTANCE_FAILED");
         self.failed = true;
         ensure!(
@@ -91,7 +105,7 @@ impl FeatureModel {
                 (
                     i64::try_from(decision_ns)?,
                     i64::try_from(event_ns)?,
-                    0,
+                    i32::try_from(target_index)?,
                     i32::try_from(ordinal)?,
                     i32::try_from(features.len())?,
                 ),

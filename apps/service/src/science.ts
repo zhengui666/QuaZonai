@@ -18,7 +18,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
         fact.view.curve = result.curve; fact.view.metrics = result.metrics; fact.view.capacity = result.capacity;
-        fact.view.targets = (result.target.targets as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
+        fact.view.targets = ((result.target?.targets ?? []) as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
         fact.view.status = 'COMPUTED'; fact.view.error = null; fact.view.errorDetail = null;
         facts.portfolios[task.input.id] = json(fact);
         return { status: 'terminal', outcome: { status: 'completed', result: null } };

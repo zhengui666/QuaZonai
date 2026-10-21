@@ -26,9 +26,20 @@ export function compileWasm(model: string, filename = 'factor.wat', operation = 
 
 export function normalizedRequest(data: JsonObject): JsonObject {
   // Native transaction drafts are JSON proxies, which structuredClone cannot copy.
+  const ensemble = data.catalog_ensemble_request !== undefined;
   const catalog = data.catalog_scan_request !== undefined;
-  if (catalog && data.request !== undefined) throw new Error('ambiguous_factor_request');
-  const request = JSON.parse(JSON.stringify(object(catalog ? data.catalog_scan_request : data.request, 'native_request'))) as JsonObject;
+  if ([data.catalog_ensemble_request, data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  const request = JSON.parse(JSON.stringify(object(ensemble ? data.catalog_ensemble_request : catalog ? data.catalog_scan_request : data.request, 'native_request'))) as JsonObject;
+  if (ensemble) {
+    partitionBoundaries({ ...request, train_end_ns: data.train_end_ns!, validation_end_ns: data.validation_end_ns! }, true);
+    object(request.settings, 'simulation_settings');
+    if (request.score_max_age_ns === null) delete request.score_max_age_ns;
+    if (Array.isArray(request.members)) for (const value of request.members) {
+      const member = object(value, 'member_template');
+      if (member.total_fuel === null) delete member.total_fuel;
+    }
+    return request;
+  }
   partitionBoundaries(request, catalog);
   const parameters = object(catalog ? request.parameters : object(request.forecast, 'forecast').parameters, 'parameters');
   // The native optional-fuel contract serializes both null and absence as omitted.
@@ -38,6 +49,12 @@ export function normalizedRequest(data: JsonObject): JsonObject {
 
 export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): JsonObject {
   const request = normalizedRequest(data);
+  if (data.catalog_ensemble_request !== undefined) {
+    request.event_end_ns = data.validation_end_ns!;
+    request.evaluation_start_ns = data.train_end_ns!;
+    if (clipDecisionCutoff) request.decision_cutoff_ns = data.validation_end_ns!;
+    return request;
+  }
   const selection = data.catalog_scan_request !== undefined ? request : object(object(request.forecast, 'forecast_request').selection, 'catalog_selection');
   selection.event_end_ns = request.validation_end_ns!;
   if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;

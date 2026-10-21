@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, TaskQuery } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { Study } from '../../research/src/documents.ts';
-import { built, context, setup, studied } from './support.ts';
-import { Application } from '../src/facts.ts';
+import { built, context, fauxAssistantMessage, fauxToolCall, setup, studied } from './support.ts';
+import { Application, object } from '../src/facts.ts';
 import { BuildPortfolio } from '../src/science.ts';
 import { metrics, researchTaskViews } from '../src/projections.ts';
+import { evaluatePortfolio } from '../../research/plugins/native-portfolio.ts';
+import { modelFeedback } from '../../research/src/feedback.ts';
+import research from '../../research/plugins/research.ts';
 
 test('dataset projection retains compact catalog horizons and partitions without advertising account strategy', async () => {
   const state = await setup();
@@ -36,6 +40,59 @@ test('dataset projection retains compact catalog horizons and partitions without
     assert.equal('data' in compact, false);
     assert.deepEqual(state.options.config.datasets, original);
     assert.equal(state.faux.state.callCount, 0);
+  } finally { await state.cleanup(); }
+});
+
+test('research detail exposes original catalog final daily returns and assumptions without private account data', async () => {
+  const state = await setup();
+  try {
+    const { receipt } = await studied(state);
+    const get = () => state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+    const legacy = (await get()).json();
+    assert.equal('assumptions' in legacy.final, false);
+    assert.equal('assumptions' in legacy.trialRecords[0], false);
+    assert.equal('dailyReturns' in legacy.final, false);
+    const assumptions = ['CONDITIONAL_RESEARCH_NOT_VERIFIED_HISTORICAL_EXECUTION', 'Original receive clock is modeled; pUSD uses a margin proxy.'];
+    const dailyReturns = [{ timestamp_ns: '86400000000000000', value: 0.021, reason_code: null },
+      { timestamp_ns: '86486400000000000', value: null, reason_code: 'ORIGINAL_NATIVE_RETURN_UNAVAILABLE' },
+      { timestamp_ns: '86572800000000000', value: -0.01, reason_code: null }];
+    const binary = join(state.directory, 'catalog-daily-protocol.mjs');
+    await writeFile(binary, `#!${process.execPath}\n// TEST ONLY: retain original wire values; no scientific calculation.\nlet raw = ''; for await (const chunk of process.stdin) raw += chunk; const request = JSON.parse(raw);\nprocess.stdout.write(JSON.stringify({ source: request.source, revision: request.revision, assumptions: ${JSON.stringify(assumptions)}, simulation: { statistics: [], returns: ${JSON.stringify(dailyReturns)}, canonical_result: { private: 'OWNER_ONLY_ACCOUNT' }, fills: [987654.321] } }));\n`, { mode: 0o700 });
+    const model = '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))';
+    const members = [{ model, weight: '0.5' }, { model, weight: '0.5' }];
+    const data = { catalog: state.options.config.datasets[0]!.data.catalog!, catalog_partitions: '/private/test-only-manifest', train_end_ns: '10', validation_end_ns: '20',
+      catalog_ensemble_request: { schema_version: 1, event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', evaluation_start_ns: '10', source: 'TEST_ONLY', revision: 'protocol',
+        modeled_lag_ns: '0', score_threshold: 0, members: members.map(member => ({ weight: member.weight })), gross_exposure: '1', target_ttl_ns: '5', settings: { base_currency: 'pUSD', starting_capital: '3000' } } };
+    const input = { data, members, policy: { name: 'TEST_ONLY', kind: 'catalog-ensemble' as const }, binary };
+    const validation = await evaluatePortfolio({ ...input, partition: 'VALIDATION' }, context);
+    const final = await evaluatePortfolio({ ...input, partition: 'HELDOUT' }, context);
+    const validationPortfolio = object(validation.summary.portfolio);
+    assert.equal('daily_returns' in validationPortfolio, false);
+    assert.deepEqual(object(final.summary.portfolio).daily_returns, dailyReturns);
+    assert.equal(JSON.stringify(modelFeedback({ ...validation.summary, portfolio: { ...validationPortfolio, daily_returns: dailyReturns } })).includes('86400000000000000'), false);
+    assert.throws(() => modelFeedback(final.summary), /validation_feedback_required/);
+    await state.service.research.harness.commit(async tx => {
+      const study = await tx.doc(Study, receipt.conversationId);
+      study.trials[0]!.result = { ...validation.summary, portfolio: { ...validationPortfolio, daily_returns: dailyReturns } };
+      study.final!.result = final.summary;
+    }, context);
+    const response = await get(); assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().trialRecords[0].assumptions, assumptions);
+    assert.deepEqual(response.json().final.assumptions, assumptions);
+    assert.deepEqual(response.json().final.dailyReturns, dailyReturns);
+    assert.equal('dailyReturns' in response.json().trialRecords[0], false);
+    assert.equal(response.body.includes('OWNER_ONLY_ACCOUNT'), false);
+    assert.equal(response.body.includes('987654.321'), false);
+    state.service.research.registry.install(research);
+    const trialId = response.json().trialRecords[0].id;
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_trial', { trialId }), { stopReason: 'toolUse' })]);
+    const conversation = await state.service.research.harness.conversation(receipt.conversationId, context);
+    const read = await conversation!.submit({ type: 'input', content: 'Read the original validation feedback only.', requestId: 'catalog-daily-read' }, context);
+    await read.wait(context);
+    const entries = JSON.stringify((await state.service.research.view(receipt.conversationId)).entries);
+    assert.ok(entries.includes('research_trial'));
+    assert.equal(entries.includes('86400000000000000'), false);
+    assert.equal(entries.includes('ORIGINAL_NATIVE_RETURN_UNAVAILABLE'), false);
   } finally { await state.cleanup(); }
 });
 

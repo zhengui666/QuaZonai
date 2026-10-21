@@ -26,6 +26,18 @@ test('native preparation preserves absent/null fuel and explicit scientific budg
   }
 });
 
+test('catalog ensemble bindings normalize only absent optional settings and retain explicit member fuel', () => {
+  const request = { event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', evaluation_start_ns: '10', settings: {},
+    score_max_age_ns: null, members: [{ weight: '0.5', total_fuel: null }, { weight: '0.5', total_fuel: '23' }] };
+  const primary = { train_end_ns: '10', validation_end_ns: '20', catalog_ensemble_request: request };
+  const sealed: JsonObject = { ...primary, catalog_ensemble_request: { event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', evaluation_start_ns: '10', settings: {},
+    members: [{ weight: '0.5' }, { weight: '0.5', total_fuel: '23' }] } };
+  const original = structuredClone(primary);
+  assert.deepEqual(iterationRequest(primary, true), iterationRequest(sealed, true));
+  assert.deepEqual(primary, original);
+  assert.deepEqual(iterationRequest(primary, true).members, [{ weight: '0.5' }, { weight: '0.5', total_fuel: '23' }]);
+});
+
 test('factor cancellation propagates without attempting to commit a scientific failure', async () => {
   const controller = new AbortController(); controller.abort();
   const compute = FactorTask.definition.phases.compute;

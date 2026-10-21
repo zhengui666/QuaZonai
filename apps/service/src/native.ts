@@ -4,18 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../../research/src/documents.ts';
 import { ExecutionFailure } from '../../research/src/execution-errors.ts';
-import { resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
-import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
-import type { ThresholdPolicy } from './config.ts';
+import { exactWeights, replayCatalog, resolvePortfolioPolicy, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
+import { blendTargets, evaluatePortfolio, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
+import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
+import type { StrategyPolicy } from './config.ts';
 import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
 import type { CapacityReport, Metric, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
-import { assessCapacity, capacityPolicy } from './capacity.ts';
+import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
 
 export interface PortfolioTaskInput {
   id: string; dataDir: string; catalog: string; binary: string;
   // Original v1 single-evidence inputs keep their kernel, whole interval and default weight 1.
-  capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: ThresholdPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
+  capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: StrategyPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }
 
 export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
@@ -30,6 +31,30 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
   if (!weights || !evidence.length || weights.length !== evidence.length) throw new Problem('portfolio_weights_required');
   const directory = await mkdtemp(join(input.dataDir, 'native-'));
   try {
+    if (input.policy.kind === 'catalog-ensemble') {
+      if (evidence.length !== 1 || evidence[0]!.factorId !== undefined) throw new Problem('catalog_ensemble_single_selection_required');
+      exactWeights(weights);
+      const source = evidence[0]!;
+      const studyInput = object(source.input, 'study_input');
+      const data = object(studyInput.data, 'study_data');
+      const proposal = object(object(source.selected, 'selected_trial').proposal, 'selected_proposal');
+      const originalPolicy = object(object(studyInput.policy, 'study_policy').strategy, 'strategy_policy');
+      if (canonical(originalPolicy) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
+      const request = object(object(object(source.final, 'independent_final').result, 'independent_result').request, 'independent_request');
+      if (replayCatalog(data, request) !== input.catalog) throw new Problem('strategy_request_binding_mismatch');
+      const binding = data.sealed ? object(data.sealed, 'heldout_data') : data;
+      const admitted = normalizedRequest(binding);
+      const settings = object(admitted.settings, 'simulation_settings');
+      if (settings.base_currency !== input.currency) throw new Problem('strategy_currency_mismatch');
+      const policy = resolvePortfolioPolicy(proposal, originalPolicy);
+      const result = await evaluatePortfolio({ data: { ...binding, catalog: input.catalog,
+        catalog_ensemble_request: { ...admitted, settings: { ...settings, starting_capital: input.capital } } },
+        members: strategyMembers(proposal), policy, partition: 'HELDOUT', binary: input.binary }, context);
+      const simulation = object(result.evidence.simulation, 'native_simulation');
+      const native: JsonObject = { ...result.evidence, summary: result.summary };
+      return { native, target: null, curve: nativeCurve(simulation, input.currency), metrics: simulationMetrics(simulation),
+        capacity: unavailableCapacity(input.currency, 'catalog_ensemble_capacity_unavailable', 'portfolio', input.capacityPolicy ?? capacityPolicy(evidence)) };
+    }
     const sources: JsonObject[] = []; const memberRows: JsonObject[][] = [];
     let selection: JsonObject | undefined;
     for (const source of evidence) {
@@ -62,14 +87,17 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       settings: { ...object(object(sources[0]!.policy).simulationSettings), starting_capital: input.capital }, target_points: combined.points };
     const simulation = await nativeJob(input.binary, 'simulate', simulationRequest, ['--catalog', input.catalog], directory, context);
     const curve = nativeCurve(simulation, input.currency);
-    const statistics: Metric[] = Array.isArray(simulation.statistics) ? simulation.statistics.map((item) => {
-      const statistic = object(item, 'native_statistic'); const key = String(statistic.native_key);
-      return { key, label: key, value: typeof statistic.value === 'number' ? statistic.value : null };
-    }) : [];
     const native: JsonObject = { catalog: input.catalog, sources, rows: combined.rows, weights, blend: combined.blend, simulationRequest, simulation };
     if (sources.length === 1) native.forecasts = sources[0]!.forecasts!;
     const capacity: CapacityReport = await assessCapacity(input.binary, input.catalog, simulationRequest, input.capacityPolicy ?? capacityPolicy(evidence), directory, context);
-    return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: statistics, capacity };
+    return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: simulationMetrics(simulation), capacity };
   } catch (error) { throw error instanceof Problem || error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'portfolio_failed'); }
   finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+function simulationMetrics(simulation: JsonObject): Metric[] {
+  return Array.isArray(simulation.statistics) ? simulation.statistics.map(item => {
+    const statistic = object(item, 'native_statistic'); const key = String(statistic.native_key);
+    return { key, label: key, value: typeof statistic.value === 'number' ? statistic.value : null };
+  }) : [];
 }

@@ -5,6 +5,7 @@ pub mod account_observation;
 pub mod brief;
 pub mod capacity;
 pub mod capital_exit;
+pub mod catalog_ensemble;
 pub mod catalogs;
 pub mod data;
 pub mod delivery;
@@ -58,6 +59,8 @@ use utoipa::OpenApi;
     factors::NativeFactorEvaluationSummaryV1,
     factors::NativeCatalogFactorScanRequestV1,
     factors::NativeCatalogFactorScanSummaryV1,
+    catalog_ensemble::NativeCatalogEnsembleRequestV1,
+    catalog_ensemble::NativeCatalogEnsembleResultV1,
     science::ExperimentEvaluationParametersV1,
     science::NativeExperimentEvaluationRequestV1,
     science::NativeExperimentEvaluationResultV1,

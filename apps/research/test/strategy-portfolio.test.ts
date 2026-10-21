@@ -6,13 +6,17 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ResearchInput } from '../src/documents.ts';
 import { openResearch } from '../src/host.ts';
 import research from '../plugins/research.ts';
 import strategy from '../plugins/strategy-portfolio.ts';
+import factorWasm from '../plugins/factor-wasm.ts';
+import catalogInput from '../plugins/catalog-input.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import { iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
 import { exactWeights, intervalTargets, replayCatalog, resolveStrategyPolicy, simulationSelection, strategyMembers, thresholdPolicy, thresholdTargets } from '../src/strategy.ts';
 import { object } from '../src/trials.ts';
+import { evaluatePortfolio } from '../plugins/native-portfolio.ts';
 
 const context = BACKGROUND_CONTEXT;
 const positive = '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))';
@@ -135,6 +139,85 @@ test('invalid ensemble weights consume the existing budget and rejected proposal
     assert.equal(facts.final!.reason, 'trial_budget_exhausted');
     assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('compact catalog ensemble keeps the complete dynamic account proposal, prefix warmup and once-only private final', async () => {
+  const state = await setup();
+  state.options.extensions.push(factorWasm, catalogInput);
+  const model = '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))';
+  const originalRequest = { schema_version: 1, event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', evaluation_start_ns: '10',
+    source: 'TEST_ONLY', revision: 'original-test-source', modeled_lag_ns: '0', score_threshold: 0,
+    members: [{ weight: '0.5' }, { weight: '0.5' }], gross_exposure: '1', target_ttl_ns: '5', settings: { base_currency: 'pUSD', starting_capital: '3000' } };
+  const input: ResearchInput = { ...state.input, data: { catalog: state.input.data.catalog, catalog_partitions: join(state.directory, 'private-original-manifest.json'),
+    train_end_ns: '10', validation_end_ns: '20', catalog_ensemble_request: originalRequest,
+    sealed: { catalog: state.input.data.sealed.catalog, catalog_partitions: join(state.directory, 'private-final-manifest.json'), train_end_ns: '10', validation_end_ns: '20',
+      catalog_ensemble_request: { ...originalRequest, event_end_ns: '30', decision_cutoff_ns: '30' } } },
+    policy: { max_trials: 2, strategy: { name: 'all-catalog-causal-ensemble', kind: 'catalog-ensemble', evaluationPartition: 'HELDOUT' } } };
+  const proposed = [{ model, weight: '0.25' }, { model, weight: '0.25' }, { model, weight: '0.5' }];
+  await assert.rejects(evaluatePortfolio({ data: { ...input.data, catalog_ensemble_request: { ...originalRequest,
+    members: [{ weight: '0.5', total_fuel: '100' }, { weight: '0.5' }] } },
+    members: proposed, policy: { name: 'metered-original', kind: 'catalog-ensemble' }, partition: 'VALIDATION', binary: state.options.database }, context), /catalog_ensemble_member_count_mismatch/);
+  state.faux.setResponses([
+    tool('catalog_input', {}),
+    transcript => {
+      const selection = object(textResult(transcript, 'catalog_input').selection, 'selection');
+      assert.equal(selection.scope, 'ALL_CATALOG_BAR_SERIES');
+      assert.equal(selection.event_end_ns, '20'); assert.equal(selection.decision_cutoff_ns, '20');
+      assert.equal(selection.evaluation_start_ns, '10');
+      return tool('research_brief', {});
+    },
+    transcript => {
+      const brief = textResult(transcript, 'research_brief'); const text = JSON.stringify(brief);
+      assert.equal(text.includes('private-original-manifest'), false); assert.equal(text.includes('private-final-manifest'), false);
+      assert.equal('sealed' in object(brief.data, 'brief_data'), false);
+      assert.match(text, /qz_predict_v2/); assert.match(text, /source_taker_quantity_imbalance/);
+      return tool('strategy_portfolio_evaluate', { hypothesis: 'A fixed market choice is invalid for the catalog policy.', members: proposed, instrumentId: 'TEST.SIM' });
+    },
+    () => tool('strategy_portfolio_evaluate', { hypothesis: 'Entire catalog, dynamic score opportunities and one total account.', members: proposed }),
+    transcript => {
+      const result = textResult(transcript, 'strategy_portfolio_evaluate'); const portfolio = object(result.portfolio, 'portfolio');
+      assert.equal(portfolio.partition, 'VALIDATION'); assert.equal(portfolio.strategy_kind, 'catalog-ensemble');
+      assert.deepEqual(portfolio.assumptions, ['TEST_ONLY_CONDITIONAL_PROXY_NOT_VERIFIED_PIT']);
+      assert.equal(JSON.stringify(result).includes('CATALOG_RAW_ACCOUNT_OWNER_ONLY'), false);
+      assert.equal(JSON.stringify(result).includes('12345.6789'), false);
+      return tool('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Select the complete proposal before the private conditional final.' });
+    },
+  ]);
+  const host = await openResearch(state.options);
+  try {
+    const receipt = await host.start('compact-catalog-ensemble', input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const study = (await host.state(receipt.conversationId)).research!;
+    assert.deepEqual(study.input, input);
+    assert.deepEqual(study.trials.map(trial => trial.status), ['FAILED', 'COMPUTED']);
+    assert.equal(study.trials[0]!.error, 'strategy_market_single_choice_invalid');
+    assert.deepEqual(object(study.trials[1]!.proposal, 'proposal').members, proposed);
+    assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
+    const calls = (await state.calls()).filter(call => call.command === 'replay-catalog-ensemble');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map(call => object(call.input, 'native').evaluation_start_ns), ['10', '20']);
+    assert.deepEqual(calls.map(call => object(call.input, 'native').event_end_ns), ['20', '30']);
+    assert.deepEqual(calls.map(call => object(call.input, 'native').event_start_ns), ['0', '0']);
+    assert.deepEqual(calls.map(call => object(call.input, 'native').members), [proposed.map(member => ({ weight: member.weight })), proposed.map(member => ({ weight: member.weight }))]);
+    assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map(window => window.kind), ['ITERATION', 'FINAL']);
+    assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('HELDOUT_OWNER_ONLY_PROTOCOL'), false);
+    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'A new conversation cannot reset final exposure.', members: proposed }),
+      tool('research_finish', { reason: 'The original window is already exposed.' })]);
+    const exposed = await host.start('compact-catalog-exposed-again', input);
+    await (await host.harness.submission(exposed.submissionId, context))!.wait(context);
+    assert.equal((await host.state(exposed.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
+    assert.equal((await state.calls()).filter(call => call.command === 'replay-catalog-ensemble').length, 2);
+    state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Explicit historical reassessment remains disclosed.', members: proposed }),
+      tool('research_finish', { reason: 'Protocol reassessment recorded; no independent claim.' })]);
+    const historicalInput = structuredClone(input);
+    historicalInput.policy.strategy = { ...object(input.policy.strategy, 'policy'), evidenceMode: 'HISTORICAL_REASSESSMENT' };
+    const historical = await host.start('compact-catalog-historical', historicalInput);
+    await (await host.harness.submission(historical.submissionId, context))!.wait(context);
+    const trial = (await host.state(historical.conversationId)).research!.trials[0]!;
+    assert.equal(trial.status, 'COMPUTED', JSON.stringify(trial));
+    assert.equal(object(object(trial.result, 'result').portfolio, 'portfolio').evidenceMode, 'HISTORICAL_REASSESSMENT');
+    assert.equal((await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.kind, 'HISTORICAL_ITERATION');
   } finally { await host.close(); await state.cleanup(); }
 });
 
