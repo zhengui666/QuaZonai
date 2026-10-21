@@ -72,3 +72,59 @@ test('native admission validates the original supported adapter parameters befor
   assert.throws(() => validateNativeSimulationSettings({ ...settings,
     fee_model: { schema_version: 1, adapter_kind: 'FROZEN_SPOT_FEE_SCENARIO', native_version: '0.63.0', parameters: {} } }), /strategy_simulation_model_invalid/);
 });
+
+test('native admission binds exact linked model identities and all supported static combinations', () => {
+  for (const field of ['fee_model', 'fill_model', 'latency_model']) {
+    const model = settings[field] as JsonObject;
+    for (const change of [{ upstream_version: '0.64.0' }, { upstream_class: 'another::Model' }]) {
+      assert.throws(() => validateNativeSimulationSettings({ ...settings, [field]: { ...model, ...change } }), /strategy_simulation_model_invalid/);
+    }
+  }
+  const fill = settings.fill_model as JsonObject;
+  const recordedFill = { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.63.0', parameters: fill.parameters! };
+  const fees: JsonObject[] = [settings.fee_model as JsonObject,
+    { schema_version: 1, adapter_kind: 'NAUTILUS_POLYMARKET', upstream_class: 'nautilus_polymarket::models::PolymarketFeeModel', upstream_version: '0.63.0', parameters: {} },
+    { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.63.0', parameters: {} }];
+  for (const fee of fees) {
+    const original = { ...settings, fee_model: fee };
+    assert.equal(validateNativeSimulationSettings(original), original);
+    if (fee.adapter_kind !== 'POLYMARKET_V2_RECORDED_FEES') {
+      assert.throws(() => validateNativeSimulationSettings({ ...original, fill_model: recordedFill }), /strategy_simulation_model_invalid/);
+    }
+  }
+  const recorded = { ...settings, fee_model: fees[2]!, fill_model: recordedFill };
+  assert.equal(validateNativeSimulationSettings(recorded), recorded);
+  for (const field of ['fee_model', 'fill_model']) {
+    assert.throws(() => validateNativeSimulationSettings({ ...recorded, [field]: { ...(recorded[field as 'fee_model' | 'fill_model']), native_version: '0.64.0' } }), /strategy_simulation_model_invalid/);
+  }
+  for (const change of [{ account_kind: 'CASH' }, { leverage: '2' }, { base_currency: 'USD' }]) {
+    assert.throws(() => validateNativeSimulationSettings({ ...recorded, ...change }), /strategy_simulation_model_invalid/);
+  }
+});
+
+test('native admission rejects static account and model bounds using exact decimals and original currencies', () => {
+  for (const change of [{ starting_capital: '0' }, { starting_capital: '-1' }, { leverage: '0' }, { leverage: '100.000000000000000001' },
+    { exposure_tolerance: '0' }, { exposure_tolerance: '0.001000000000000001' }, { account_kind: 'CASH', leverage: '1.000000000000000001' }]) {
+    assert.throws(() => validateNativeSimulationSettings({ ...settings, ...change }), /strategy_simulation_settings_invalid/);
+  }
+  for (const currency of ['USD', 'EUR', 'CNY', 'USDC', 'USDC.e', 'pUSD', 'USDT']) {
+    const original = { ...settings, base_currency: currency, multi_currency_spot_cash: null };
+    assert.equal(validateNativeSimulationSettings(original), original);
+  }
+  for (const currency of ['BTC', 'PUSD', 'usd', 'FAKE']) assert.throws(() => validateNativeSimulationSettings({ ...settings, base_currency: currency }), /strategy_currency_unsupported/);
+  for (const multi_currency_spot_cash of [{}, false]) assert.throws(() => validateNativeSimulationSettings({ ...settings, multi_currency_spot_cash }), /multi_currency_spot_cash_not_integrated/);
+  const fill = settings.fill_model as JsonObject;
+  for (const key of ['prob_fill_on_limit', 'prob_slippage']) {
+    for (const invalid of ['-0.000000000000000001', '1.000000000000000001']) {
+      assert.throws(() => validateNativeSimulationSettings({ ...settings, fill_model: { ...fill, parameters: { ...(fill.parameters as JsonObject), [key]: invalid } } }), /strategy_simulation_model_parameters_invalid/);
+    }
+  }
+  const latency = settings.latency_model as JsonObject;
+  assert.throws(() => validateNativeSimulationSettings({ ...settings, latency_model: { ...latency,
+    parameters: { base_latency_ns: '0', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } } }), /strategy_simulation_model_parameters_invalid/);
+  assert.throws(() => validateNativeSimulationSettings({ ...settings, fee_rates: [...settings.fee_rates as JsonObject[], ...settings.fee_rates as JsonObject[]] }), /strategy_instrument_fee_duplicate/);
+  for (const instrument_id of ['A\n.SIM', 'A'.repeat(201)]) assert.throws(() => validateNativeSimulationSettings({ ...settings, fee_rates: [{ instrument_id, maker: '0', taker: '0' }] }), /strategy_instrument_invalid/);
+  const exact = { ...settings, starting_capital: '+.000000000000000001', leverage: '+0001.00000000000000000000', exposure_tolerance: '.0010000000000000000000' };
+  assert.equal(validateNativeSimulationSettings(exact), exact);
+  assert.throws(() => validateNativeSimulationSettings({ ...settings, starting_capital: '0'.repeat(64) + '1' }), /strategy_simulation_decimal_required/);
+});

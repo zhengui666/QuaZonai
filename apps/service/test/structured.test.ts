@@ -25,7 +25,7 @@ test('new structured native studies reject missing bindings and unsupported runn
     dataset.strategy!.simulationSettings = { schema_version: 1, base_currency: 'USD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60000,
       fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
       fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel'),
-      latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '0', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' }),
+      latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' }),
       fee_rates: [{ instrument_id: 'TEST.SIM', maker: '0', taker: '0' }] };
     const original = structuredClone(dataset.data);
     const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
@@ -74,6 +74,25 @@ test('new structured native studies reject missing bindings and unsupported runn
       assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
     }
     dataset.strategy = strategy;
+    state.options.extensions = [...extensions, heldoutWasm];
+    const changed = structuredClone(request); changed.forecast.parameters.fast_period = 3;
+    const sealedFailures: { sealed: typeof original; error: string }[] = [
+      { sealed: { request }, error: 'heldout_catalog_required' },
+      { sealed: { catalog: original.catalog! }, error: 'native_request_required' },
+      { sealed: { catalog: original.catalog!, request: { ...request, train_end_ns: '0' } }, error: 'native_partition_boundaries' },
+      { sealed: { catalog: original.catalog!, request: changed }, error: 'heldout_criteria_mismatch' },
+    ];
+    for (const [index, failure] of sealedFailures.entries()) {
+      dataset.data = { catalog: original.catalog!, request, sealed: failure.sealed };
+      await state.restart();
+      const requestId = `invalid-native-sealed-${index}`;
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+        payload: { requestId, goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
+      assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, failure.error);
+      assert.equal(state.faux.state.callCount, 0);
+      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+    }
     state.options.extensions = extensions;
     dataset.data = { catalog: original.catalog!, request };
     await state.restart();

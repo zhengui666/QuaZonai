@@ -9,7 +9,7 @@ import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import { isRecoveryRequestId } from '../../research/src/recovery.ts';
 import { exactWeights, replayCatalog, strategyMembers, thresholdPolicy, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
-import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
+import { iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
@@ -101,6 +101,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       try {
         text(validated.data.catalog, 'catalog');
         normalizedRequest(validated.data);
+        if (validated.data.sealed !== undefined) {
+          const sealed = object(validated.data.sealed, 'heldout_data');
+          text(sealed.catalog, 'heldout_catalog');
+          normalizedRequest(sealed);
+          const clip = validated.specification.search.scope === 'ensemble';
+          if (canonical(iterationRequest(validated.data, clip)) !== canonical(iterationRequest(sealed, clip))) throw new Problem('heldout_criteria_mismatch');
+        }
         if (validated.specification.search.scope === 'ensemble') {
           if (validated.data.catalog_scan_request !== undefined) throw new Problem('catalog_factor_only_account_binding_required');
           if (!registry.extension('qz.strategy-portfolio')) throw new Problem('strategy_adapter_not_configured');
