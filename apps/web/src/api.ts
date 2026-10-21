@@ -23,7 +23,7 @@ const errors: Record<string, string> = {
   service_extension_required: '此扩展为必需组件', extension_not_found: '扩展不存在',
   unauthorized: '请重新登录', invalid_password: '密码不正确',
   conflict: '操作冲突', not_found: '记录不存在', unavailable: '服务不可用',
-  model_unavailable: '模型不可用，请连接服务并刷新目录', thinking_level_unsupported: '该模型不支持所选推理强度',
+  model_unavailable: '模型不可用，请连接服务并刷新目录', thinking_level_unsupported: '该模型不支持所选推理强度', service_tier_unsupported: '该模型不支持所选速度',
   model_login_in_progress: '此服务已有连接操作，请刷新后继续', model_login_not_found: '连接操作已结束，请重新连接',
   model_login_cancelled: '连接已取消', model_prompt_changed: '授权步骤已更新，请重试',
   model_login_failed: '模型服务连接失败', model_logout_failed: '退出未确认，请重试',

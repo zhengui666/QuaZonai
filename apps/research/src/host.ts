@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
-import { configure, createRegistry, GenerationTask, Harness } from '@earendil-works/pi-durable';
+import { configure, createRegistry, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
 import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { pathToFileURL } from 'node:url';
@@ -12,7 +12,7 @@ import { canonical, Requests, Study } from './documents.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import type { ResearchInput } from './documents.ts';
-import { configuredModels } from './models.ts';
+import { configuredModels, subscriptionSpeed, supportsServiceTier } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
 import { researchContinuation } from './continuation.ts';
@@ -35,11 +35,14 @@ export async function openResearch(options: {
   if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(requestedThinking)) throw new Error('invalid_thinking_level');
   const credentials = options.models ? undefined : await ModelCredentials.open(`${resolve(options.database)}.auth`);
   let models: Models;
+  let speed!: ReturnType<typeof subscriptionSpeed>;
   let harness!: Harness;
   let storage!: Storage;
   const registry = createRegistry();
   try {
     models = options.models ?? await configuredModels(options.providerModules, credentials);
+    speed = subscriptionSpeed(models);
+    models = speed.models;
     for (const extension of options.extensions ?? []) registry.install(extension);
     for (const path of options.modules ?? []) {
       const module = await import(pathToFileURL(resolve(path)).href);
@@ -68,10 +71,19 @@ export async function openResearch(options: {
     return value;
   }
 
+  async function rememberTier(id: ConversationId, value: unknown) {
+    const tier = (value as ResearchInput).serviceTier;
+    if (tier === undefined) return;
+    const provider = await harness.snapshot(ProviderDoc, id, context);
+    if (!provider) throw new Error('provider_session_required');
+    speed.tiers.set(provider.sessionId, tier);
+  }
+
   // Repair recorded admission→submit gaps only, never repeat a native input.
   // A later final/owner stop takes precedence over a pending recovery intent.
   try {
     const requests = await harness.snapshot(Requests, context);
+    await Promise.all(Object.values(requests?.requests ?? {}).map(request => rememberTier(request.conversationId, request.input)));
     for (const [key, request] of Object.entries(requests?.requests ?? {})) {
       const requestId = key.slice('request:'.length);
       const missing = await harness.commit(async (tx) => {
@@ -107,6 +119,7 @@ export async function openResearch(options: {
       const model = models.getModel(input.model.provider, input.model.modelId);
       if (!model) throw new Error('model_unavailable');
       if (input.thinkingLevel !== undefined && !getSupportedThinkingLevels(model).includes(input.thinkingLevel)) throw new Error('thinking_level_unsupported');
+      if (input.serviceTier !== undefined && !supportsServiceTier(model)) throw new Error('service_tier_unsupported');
       const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
@@ -114,6 +127,7 @@ export async function openResearch(options: {
       requests.requests[key] = { input, conversationId: created.id };
       return created.id;
     }, context);
+    await rememberTier(id, input);
     const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
     if (previous) return { conversationId: id, submissionId: previous.id };
     if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
@@ -243,7 +257,7 @@ export async function openResearch(options: {
     submissionFor,
     async usage() { return harness.usage(context); },
     async availableModels(providerId?: string) {
-      try { return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], effectiveThinkingLevel: clampThinkingLevel(model, requestedThinking) })); }
+      try { return (await models.getAvailable(providerId)).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], effectiveThinkingLevel: clampThinkingLevel(model, requestedThinking), serviceTiers: supportsServiceTier(model) ? ['default' as const, 'priority' as const] : [] })); }
       catch { throw new Error('provider_status_unavailable'); }
     },
     close() {

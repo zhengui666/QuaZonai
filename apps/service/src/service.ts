@@ -82,7 +82,7 @@ export async function createService(options: ServiceOptions) {
   registerAuth(app, research, config);
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
-    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel });
+    facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
   }, context);
   const work = workbench(research, config);
   const capital = capitalWorkbench(research, config);

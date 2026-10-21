@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
-import { createModels, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import type { ProviderAuth } from '@earendil-works/pi-ai';
 import type { ModelLoginView } from '../../../packages/contracts/src/index.ts';
 import { ModelCredentials } from '../../research/src/credentials.ts';
@@ -90,25 +92,47 @@ test('official provider login prompts, original retries, cancellation, persisten
   } finally { await state.cleanup(); await credentials.close(); }
 });
 
-test('settings project only models, reject retired fields and freeze supported reasoning before admission/replay', { timeout: 20_000 }, async () => {
+test('official OpenAI subscription catalog supports max reasoning', () => {
+  const model = openaiCodexProvider().getModels().find(model => model.id === 'gpt-6.1-sol')!;
+  assert.ok(model);
+  assert.ok(getSupportedThinkingLevels(model).includes('max'));
+});
+
+test('settings retain supported reasoning and service tier before admission/replay', { timeout: 20_000 }, async () => {
   const state = await setup(); const model = state.faux.getModel(); model.reasoning = true;
   const patch = (payload: object) => state.service.app.inject({ method: 'PATCH', url: `${api}/settings`, headers: state.headers, payload });
   try {
     await state.service.research.harness.commit(async tx => { (await tx.doc(Application)).settings = json({ name: 'Historical', defaultModel: state.model, maxTrials: 77, taskTimeoutSeconds: 0.001, nativeTimeoutSeconds: 0.001 }); }, context);
-    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: state.model, thinkingLevel: null });
+    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: state.model, thinkingLevel: null, serviceTier: null });
     for (const field of ['name', 'maxTrials', 'taskTimeoutSeconds', 'nativeTimeoutSeconds']) assert.equal((await patch({ [field]: 1 })).json().error, 'settings_field_not_mutable');
     assert.equal((await patch({ defaultModel: state.model, thinkingLevel: 'unsupported' })).json().error, 'thinking_level_unsupported');
+    assert.equal((await patch({ serviceTier: 'fast' })).json().error, 'invalid_service_tier');
+    assert.equal((await patch({ serviceTier: 'priority' })).json().error, 'service_tier_unsupported');
+    const unsupported = { requestId: 'unsupported-tier', goal: 'Controlled model protocol', model: state.model, datasetId: 'controlled', maxTrials: 1, serviceTier: 'priority' };
+    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: unsupported })).json().error, 'service_tier_unsupported');
+    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...unsupported, serviceTier: 'fast' } })).json().error, 'invalid_service_tier');
+    assert.equal((await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...unsupported, serviceTier: null } })).json().error, 'invalid_service_tier');
     assert.equal((await patch({ defaultModel: { provider: 'missing', modelId: 'missing' } })).statusCode, 409);
-    assert.equal((await patch({ defaultModel: state.model, thinkingLevel: 'high' })).statusCode, 200);
+    model.api = 'openai-codex-responses';
+    assert.deepEqual((await state.service.app.inject({ url: `${api}/models`, headers: state.headers })).json().models[0].serviceTiers, ['default', 'priority']);
+    assert.equal((await patch({ defaultModel: state.model, thinkingLevel: 'high', serviceTier: 'priority' })).statusCode, 200);
     const { input, receipt } = await studied(state, 'reasoning-frozen');
     const before = await state.service.research.view(receipt.conversationId); assert.equal(before.research!.input!.thinkingLevel, 'high');
+    assert.equal(before.research!.input!.serviceTier, 'priority');
     assert.equal((await (await state.service.research.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'high');
-    await patch({ thinkingLevel: 'low' }); await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('done')]);
+    const explicit = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { ...input, requestId: 'explicit-tier', serviceTier: 'default' } });
+    assert.equal(explicit.statusCode, 202, explicit.body);
+    await (await state.service.research.harness.submission(explicit.json().submissionId, context))!.wait(context);
+    assert.equal((await state.service.research.view(explicit.json().conversationId)).research!.input!.serviceTier, 'default');
+    await patch({ thinkingLevel: 'low', serviceTier: 'default' }); await state.restart();
     const replay = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: input }); assert.deepEqual(replay.json(), receipt);
     assert.equal((await state.service.research.view(receipt.conversationId)).research!.input!.thinkingLevel, 'high');
+    assert.equal((await state.service.research.view(receipt.conversationId)).research!.input!.serviceTier, 'priority');
     assert.equal((await state.service.research.harness.snapshot(Application, context))!.settings!.nativeTimeoutSeconds, 0.001);
     const { view } = await import('./support.ts').then(module => module.built(state)); assert.equal(view.status, 'COMPUTED', view.error ?? '');
-    assert.equal((await patch({ defaultModel: null, thinkingLevel: null })).statusCode, 200);
-    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: null, thinkingLevel: null });
+    assert.equal((await patch({ defaultModel: null, thinkingLevel: null })).json().error, 'model_required');
+    assert.equal((await patch({ defaultModel: null, thinkingLevel: null, serviceTier: null })).statusCode, 200);
+    assert.deepEqual(await state.service.work.getSettings(), { defaultModel: null, thinkingLevel: null, serviceTier: null });
   } finally { await state.cleanup(); }
 });
