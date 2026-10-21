@@ -54,7 +54,7 @@ def api(opener, origin, path, body=None, method=None):
         content = response.read(); return json.loads(content) if content else None
 
 def model_settings(opener, origin, model=None):
-    expected = {'defaultModel': model, 'thinkingLevel': None}
+    expected = {'defaultModel': model, 'thinkingLevel': None, 'serviceTier': None}
     assert api(opener, origin, 'settings', expected, method='PATCH') == expected
     assert api(opener, origin, 'settings') == expected
     return expected
@@ -132,11 +132,11 @@ def smoke(args):
             password = secrets.token_urlsafe(24)
             api(opener, origin, 'session/setup', {'password': password})
             api(opener, origin, 'session/login', {'password': password})
-            model_settings(opener, origin)
+            initial_settings = model_settings(opener, origin)
             assert api(opener, origin, 'session')['authenticated']
             if args.published_only:
                 # Registry + shipped archive installation, not another whole core suite.
-                assert api(opener, origin, 'settings') == {'defaultModel': None, 'thinkingLevel': None}
+                assert api(opener, origin, 'settings') == initial_settings
                 print('Published Node image setup/login/static installation passed.')
                 return
             manage(bundle, root, 'stop')

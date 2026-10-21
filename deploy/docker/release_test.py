@@ -20,14 +20,14 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(path, 'settings')
             if method == 'PATCH':
                 writes.append(body); stored = body.copy()
-            return stored.copy()
+            return {'serviceTier': None, **stored}
         model = {'provider': 'faux', 'modelId': 'controlled'}
         with patch.object(smoke, 'api', side_effect=api):
             empty = smoke.model_settings(None, 'http://test-only')
             original = smoke.model_settings(None, 'http://test-only', model)
             changed = smoke.model_settings(None, 'http://test-only')
         self.assertEqual(writes, [empty, original, changed])
-        self.assertEqual(original, {'defaultModel': model, 'thinkingLevel': None})
+        self.assertEqual(original, {'defaultModel': model, 'thinkingLevel': None, 'serviceTier': None})
         self.assertNotEqual(original, changed)
         self.assertEqual(empty, changed)
 
