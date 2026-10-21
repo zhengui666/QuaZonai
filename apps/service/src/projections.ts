@@ -20,11 +20,15 @@ function publicObservationError(value: unknown, fallback: string): string | null
   return /^[a-z][a-z0-9_]{0,127}$/.test(value) ? value : fallback;
 }
 
-function catalogDetails(value: Json | undefined, final = false): { assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } {
+function catalogDetails(value: Json | undefined, final = false): { account?: JsonObject; assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } {
   const result = value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
   const portfolio = result?.portfolio;
   if (!portfolio || typeof portfolio !== 'object' || Array.isArray(portfolio) || portfolio.strategy_kind !== 'catalog-ensemble') return {};
-  return { ...(Array.isArray(portfolio.assumptions) ? { assumptions: portfolio.assumptions.filter((item): item is string => typeof item === 'string') } : {}),
+  const summary = portfolio.summary;
+  return { account: { ...Object.fromEntries(['source', 'revision', 'native_version', 'partition', 'catalog_series', 'observed_markets', 'bars', 'source_records',
+    'iterations', 'events', 'orders', 'positions', 'consumed_target_points', 'returns_kind', 'returns_status', 'returns_reason', 'consumed_fuel', 'recorded_fee_totals'].map(key => [key, portfolio[key] ?? null])),
+    summary: summary && typeof summary === 'object' && !Array.isArray(summary) ? Object.fromEntries(Object.entries(summary).filter(([, item]) => typeof item === 'string')) : null },
+    ...(Array.isArray(portfolio.assumptions) ? { assumptions: portfolio.assumptions.filter((item): item is string => typeof item === 'string') } : {}),
     ...(final && portfolio.partition === 'HELDOUT' && result?.request ? { registeredRequest: object(result.registered_request ?? result.request, 'registered_request'),
       ...(result.registered_request ? { executionRequest: object(result.request, 'execution_request') } : {}) } : {}),
     ...(final && portfolio.partition === 'HELDOUT' && Array.isArray(portfolio.daily_returns) ? { dailyReturns: portfolio.daily_returns as unknown as DailyReturn[] } : {}) };

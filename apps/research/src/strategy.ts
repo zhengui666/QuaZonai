@@ -187,7 +187,7 @@ function nativeCounter(value: unknown, name: string): bigint {
   return BigInt(text);
 }
 
-function nativeDecimal(value: unknown): bigint {
+export function nativeDecimal(value: unknown): bigint {
   if (typeof value !== 'string' || value.length > 64 || !/^[+-]?(?:0*[0-9]{1,20}(?:\.[0-9]{0,18}0*)?|\.[0-9]{1,18}0*)$(?![\s\S])/.test(value)) throw new Error('strategy_simulation_decimal_required');
   const [whole, fraction = ''] = value.replace(/^[+-]/, '').split('.');
   const units = BigInt(whole || '0') * 10n ** 18n + BigInt(fraction.padEnd(18, '0').slice(0, 18));

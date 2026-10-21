@@ -28,7 +28,7 @@ export function modelFeedback(result: JsonObject): JsonObject {
   return {
     // Keep all original nullable account scalars before optional component diagnostics.
     portfolio: { ...scalars(portfolio), statistics: portfolio.statistics ?? [],
-      ...(portfolio.strategy_kind === 'catalog-ensemble' ? { assumptions: portfolio.assumptions ?? [], consumed_fuel: portfolio.consumed_fuel ?? null } : {}),
+      ...(portfolio.strategy_kind === 'catalog-ensemble' ? { assumptions: portfolio.assumptions ?? [], consumed_fuel: portfolio.consumed_fuel ?? null, recorded_fee_totals: portfolio.recorded_fee_totals ?? null } : {}),
       summary: scalars(record(portfolio.summary) ?? {}), provenance: crossMarket && provenance
         ? { ...provenance, selection: modelSelection(provenance.selection) } : portfolio.provenance ?? null },
     schema_version: result.schema_version ?? null, request: crossMarket ? modelRequest(result.request) : result.request ?? null,

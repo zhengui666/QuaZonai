@@ -49,7 +49,7 @@ export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
   createdAt: string | null; updatedAt: string | null;
 }
-export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; assumptions?: string[]; error: string | null; errorDetail?: ExecutionErrorDetail | null }
+export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; error: string | null; errorDetail?: ExecutionErrorDetail | null }
 export interface DailyReturn { timestamp_ns: string; value: number | null; reason_code: string | null }
 export interface TaskView { id: number; name: string; status: string; error: string | null; outcome?: string }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null }
@@ -59,7 +59,7 @@ export interface ResearchDetail extends ResearchSummary {
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   criterion?: CriterionView; factors?: string[];
-  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
+  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;

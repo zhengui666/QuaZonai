@@ -52,12 +52,22 @@ test('research detail exposes original catalog final daily returns and assumptio
     assert.equal('assumptions' in legacy.final, false);
     assert.equal('assumptions' in legacy.trialRecords[0], false);
     assert.equal('dailyReturns' in legacy.final, false);
+    assert.equal('account' in legacy.final, false); assert.equal('account' in legacy.trialRecords[0], false);
     const assumptions = ['CONDITIONAL_RESEARCH_NOT_VERIFIED_HISTORICAL_EXECUTION', 'Original receive clock is modeled; pUSD uses a margin proxy.'];
     const dailyReturns = [{ timestamp_ns: '86400000000000000', value: 0.021, reason_code: null },
       { timestamp_ns: '86486400000000000', value: null, reason_code: 'ORIGINAL_NATIVE_RETURN_UNAVAILABLE' },
       { timestamp_ns: '86572800000000000', value: -0.01, reason_code: null }];
+    const coverage = { catalog_series: '3000000', observed_markets: '2999999', bars: '9007199254740994', source_records: '9007199254740993', consumed_fuel: [null, '9223372036854775807'] };
+    const execution = { native_version: 'TEST_ONLY_NATIVE', summary: { commissions: '0.000000000000000001 pUSD', final_balance: '3021.000000000000000001 pUSD' },
+      iterations: '1', events: '9007199254740994', positions: '7', consumed_target_points: '19', returns_kind: 'PORTFOLIO_DAILY', returns_status: 'INCOMPLETE', returns_reason: 'TEST_ONLY_ORIGINAL_REASON' };
+    const recordedFees = { currency: 'pUSD', fills: [
+      { commission: '9007199254741000.000000000000000001', fill_quantity: '9007199254740993.000000000000000001', fill_price: '0.000000000000000001', allocations: [{ private: 'OWNER_ONLY_FEE_ALLOCATIONS' }] },
+      { commission: '-0.000000000000000001', fill_quantity: '0.000000000000000001', fill_price: '0.000000000000000001', allocations: [] },
+    ] };
+    const feeTotals = { currency: 'pUSD', fills: '2', commission_total: '9007199254741000', gross_fill_notional: '0.009007199254740993000000000000000002' };
+    const finalFeeTotals = { ...feeTotals, commission_total: '123456789' };
     const binary = join(state.directory, 'catalog-daily-protocol.mjs');
-    await writeFile(binary, `#!${process.execPath}\n// TEST ONLY: retain original wire values; no scientific calculation.\nlet raw = ''; for await (const chunk of process.stdin) raw += chunk; const request = JSON.parse(raw);\nprocess.stdout.write(JSON.stringify({ source: request.source, revision: request.revision, assumptions: ${JSON.stringify(assumptions)}, simulation: { statistics: [], returns: ${JSON.stringify(dailyReturns)}, canonical_result: { private: 'OWNER_ONLY_ACCOUNT' }, fills: [987654.321] } }));\n`, { mode: 0o700 });
+    await writeFile(binary, `#!${process.execPath}\n// TEST ONLY: retain original wire values; no scientific calculation.\nlet raw = ''; for await (const chunk of process.stdin) raw += chunk; const request = JSON.parse(raw); const recorded = ${JSON.stringify(recordedFees)}; if (request.evaluation_start_ns === '20') recorded.fills[0].commission = '123456789.000000000000000001';\nprocess.stdout.write(JSON.stringify({ source: request.source, revision: request.revision, assumptions: ${JSON.stringify(assumptions)}, ...${JSON.stringify(coverage)}, simulation: { ...${JSON.stringify(execution)}, recorded_fee_replay: request.score_threshold === 2 ? null : request.score_threshold === 1 ? { ...recorded, fills: [] } : request.score_threshold === 3 ? { ...recorded, fills: recorded.fills.slice(1) } : recorded, statistics: [], returns: ${JSON.stringify(dailyReturns)}, canonical_result: { private: 'OWNER_ONLY_ACCOUNT' }, fills: [987654.321] } }));\n`, { mode: 0o700 });
     const model = '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))';
     const members = [{ model, weight: '0.5' }, { model, weight: '0.5' }];
     const data = { catalog: state.options.config.datasets[0]!.data.catalog!, catalog_partitions: '/private/test-only-manifest', train_end_ns: '10', validation_end_ns: '20',
@@ -68,22 +78,37 @@ test('research detail exposes original catalog final daily returns and assumptio
     const validation = await evaluatePortfolio({ ...input, partition: 'VALIDATION' }, context, scope);
     const final = await evaluatePortfolio({ ...input, partition: 'HELDOUT' }, context, scope);
     const validationPortfolio = object(validation.summary.portfolio);
+    assert.deepEqual(validationPortfolio.recorded_fee_totals, feeTotals);
+    assert.deepEqual(object(final.summary.portfolio).recorded_fee_totals, finalFeeTotals);
+    assert.deepEqual(object(modelFeedback(validation.summary).portfolio).recorded_fee_totals, feeTotals);
+    for (const [threshold, expected] of [[1, { currency: 'pUSD', fills: '0', commission_total: '0', gross_fill_notional: '0' }], [2, null],
+      [3, { currency: 'pUSD', fills: '1', commission_total: '-0.000000000000000001', gross_fill_notional: '0.000000000000000000000000000000000001' }]] as const) {
+      const selected = { ...input, data: { ...data, catalog_ensemble_request: { ...data.catalog_ensemble_request, score_threshold: threshold } } };
+      assert.deepEqual(object((await evaluatePortfolio({ ...selected, partition: 'VALIDATION' }, context, scope)).summary.portfolio).recorded_fee_totals, expected);
+    }
     assert.equal('daily_returns' in validationPortfolio, false);
     assert.deepEqual(object(final.summary.portfolio).daily_returns, dailyReturns);
     assert.equal(JSON.stringify(modelFeedback({ ...validation.summary, portfolio: { ...validationPortfolio, daily_returns: dailyReturns } })).includes('86400000000000000'), false);
     assert.throws(() => modelFeedback(final.summary), /validation_feedback_required/);
     await state.service.research.harness.commit(async tx => {
       const study = await tx.doc(Study, receipt.conversationId);
-      study.trials[0]!.result = { ...validation.summary, portfolio: { ...validationPortfolio, daily_returns: dailyReturns } };
-      study.final!.result = final.summary;
+      const privateFields = { canonical_result: { private: 'OWNER_ONLY_ACCOUNT' }, fills: [987654.321], catalog_scope: { taskId: 42 },
+        summary: { ...execution.summary, canonical_result: { private: 'OWNER_ONLY_ACCOUNT' }, fills: [987654.321], daily_returns: dailyReturns, owned_ref: { taskId: 42 } } };
+      study.trials[0]!.result = { ...validation.summary, portfolio: { ...validationPortfolio, ...privateFields, daily_returns: dailyReturns } };
+      study.final!.result = { ...final.summary, portfolio: { ...object(final.summary.portfolio), ...privateFields } };
     }, context);
     const response = await get(); assert.equal(response.statusCode, 200, response.body);
+    for (const [partition, view] of [['VALIDATION', response.json().trialRecords[0]], ['HELDOUT', response.json().final]] as const) {
+      assert.deepEqual(view.account, { source: 'TEST_ONLY', revision: 'protocol', partition, ...coverage, ...execution, orders: null, recorded_fee_totals: partition === 'HELDOUT' ? finalFeeTotals : feeTotals });
+      for (const key of ['canonical_result', 'fills', 'allocations', 'provenance', 'catalog_scope', 'daily_returns']) assert.equal(key in view.account, false);
+    }
     assert.deepEqual(response.json().trialRecords[0].assumptions, assumptions);
     assert.deepEqual(response.json().final.assumptions, assumptions);
     assert.deepEqual(response.json().final.dailyReturns, dailyReturns);
     assert.equal('dailyReturns' in response.json().trialRecords[0], false);
     assert.equal(response.body.includes('OWNER_ONLY_ACCOUNT'), false);
     assert.equal(response.body.includes('987654.321'), false);
+    assert.equal(response.body.includes('OWNER_ONLY_FEE_ALLOCATIONS'), false);
     await state.service.research.harness.commit(async tx => {
       delete object((await tx.doc(Study, receipt.conversationId)).final!.result).registered_request;
     }, context);
@@ -100,6 +125,11 @@ test('research detail exposes original catalog final daily returns and assumptio
     assert.ok(entries.includes('research_trial'));
     assert.equal(entries.includes('86400000000000000'), false);
     assert.equal(entries.includes('ORIGINAL_NATIVE_RETURN_UNAVAILABLE'), false);
+    assert.equal(entries.includes('OWNER_ONLY_ACCOUNT'), false);
+    assert.equal(entries.includes('OWNER_ONLY_FEE_ALLOCATIONS'), false);
+    assert.ok(entries.includes('recorded_fee_totals'));
+    assert.ok(entries.includes('9007199254741000'));
+    assert.equal(entries.includes('123456789'), false);
   } finally { await state.cleanup(); }
 });
 

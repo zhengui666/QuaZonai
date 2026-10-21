@@ -7,7 +7,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../src/documents.ts';
 import { object } from '../src/trials.ts';
-import { intervalTargets, simulationSelection, thresholdTargets } from '../src/strategy.ts';
+import { intervalTargets, nativeDecimal, simulationSelection, thresholdTargets } from '../src/strategy.ts';
 import { JsonReader, jsonChunks } from '../src/native-json.ts';
 import type { StrategyMember, StrategyPartition, StrategyPolicy, ThresholdPolicy } from '../src/strategy.ts';
 import { compileWasm, iterationRequest, normalizedRequest } from './native-wasm.ts';
@@ -151,6 +151,7 @@ async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context:
       catalog_series: result.catalog_series ?? null,
       bars: result.bars ?? null, source_records: result.source_records ?? null, consumed_fuel: result.consumed_fuel ?? null,
       assumptions: result.assumptions ?? [], statistics: simulation.statistics ?? [], summary: simulation.summary ?? {},
+      recorded_fee_totals: recordedFeeTotals(simulation),
       iterations: simulation.iterations ?? null, events: simulation.events ?? null, orders: simulation.orders ?? null,
       positions: simulation.positions ?? null, consumed_target_points: simulation.consumed_target_points ?? null,
       returns_kind: simulation.returns_kind ?? null, returns_status: simulation.returns_status ?? null, returns_reason: simulation.returns_reason ?? null,
@@ -160,4 +161,23 @@ async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context:
       request: nativeRequest, registered_request: request, policy: JSON.parse(JSON.stringify(input.policy)), members: input.members.map(member => ({ ...member })), nativeRequest, simulation, result };
     return { summary, evidence };
   } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+function exactTotal(value: bigint, places: number): string {
+  const digits = (value < 0n ? -value : value).toString().padStart(places + 1, '0');
+  const fraction = digits.slice(-places).replace(/0+$/, '');
+  return `${value < 0n ? '-' : ''}${digits.slice(0, -places)}${fraction ? `.${fraction}` : ''}`;
+}
+
+function recordedFeeTotals(simulation: JsonObject): JsonObject | null {
+  if (simulation.recorded_fee_replay == null) return null;
+  const report = object(simulation.recorded_fee_replay, 'recorded_fee_replay');
+  if (typeof report.currency !== 'string' || !Array.isArray(report.fills)) throw new Error('native_recorded_fee_replay_invalid');
+  let fills = 0n; let commission = 0n; let notional = 0n;
+  for (const value of report.fills) {
+    const fill = object(value, 'recorded_fee_fill');
+    fills++; commission += nativeDecimal(fill.commission);
+    notional += nativeDecimal(fill.fill_quantity) * nativeDecimal(fill.fill_price);
+  }
+  return { currency: report.currency, fills: fills.toString(), commission_total: exactTotal(commission, 18), gross_fill_notional: exactTotal(notional, 36) };
 }
