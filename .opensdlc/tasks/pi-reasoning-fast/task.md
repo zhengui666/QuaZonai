@@ -27,4 +27,14 @@ Reuse current contracts, settings persistence, research admission/replay, offici
 
 Official provider tests inspect actual serialized OpenAI requests using synthetic authentication and local fetch responses. They cover `max`, priority/standard/omitted tiers, concurrent studies, original replay, restart/resume and compaction immediately after reopening. No paid inference, account entitlement or model-quality evaluation is performed.
 
-`make check-web` passed (21 unit tests and production build); five relevant Playwright interactions passed. Service model tests passed (3 tests). Full `make check-ts check-deploy` is running; hosted checks and GitHub Codex review remain pending.
+`make check-ts check-deploy` passed. The deployment helper suite retains its existing skip for a real prebuilt release distribution. `make check-web` passed (21 unit tests and production build); five relevant Playwright interactions passed. Research request tests passed (3 tests), as did the service model tests (3 tests). No scientific source or native implementation changed; the existing hosted science/core check still applies.
+
+<a id="review"></a>
+## Review
+
+Independent read-only review found no actionable P1/P2 issues after correcting the model facade's method binding and covering compaction plus the primary OpenAI subscription provider. Final GitHub Codex review and hosted CI are tracked in [PR #224](https://github.com/zhengui666/QuaZonai/pull/224).
+
+<a id="delivery"></a>
+## Delivery
+
+[PR #224](https://github.com/zhengui666/QuaZonai/pull/224) is the authoritative merge and CI record for the requested `dev` endpoint. No production deployment or real account entitlement/latency check is included. Fast is an explicit request; actual service and quota consumption remain OpenAI's decision.
