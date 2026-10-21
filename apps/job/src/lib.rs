@@ -5,6 +5,8 @@ pub mod bounded;
 pub mod capacity;
 pub mod capital_exit_gate;
 pub mod catalog;
+pub mod catalog_ensemble;
+mod catalog_ensemble_policy;
 pub mod experiment;
 pub mod factors;
 pub mod feature_model;

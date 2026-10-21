@@ -731,6 +731,41 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
         assert!((row.value.unwrap() - expected).abs() < 1e-14, "{key}");
         assert!(row.reason_code.is_none());
     }
+
+    // A closing-BAR selection's 1 ns tail does not add a complete UTC day.
+    request.selection.event_end_ns = count(end + 1);
+    request.selection.decision_cutoff_ns = count(end + 1);
+    let extended = simulate(directory.path(), &request).unwrap();
+    assert!(extended.returns.len() >= result.returns.len());
+    for key in [
+        "Calendar Expected Days",
+        "Calendar Observed Return Days",
+        "Calendar Coverage Ratio",
+        "Calendar Geometric Daily Return",
+        "Calendar Minimum Daily Return",
+        "Calendar Maximum Daily Return",
+        "Calendar Maximum Absolute Deviation",
+        "Calendar Negative Days",
+        "Calendar Zero Days",
+    ] {
+        let metric = |rows: &NativeSimulationResultV1| {
+            rows.statistics
+                .iter()
+                .find(|row| row.native_key == key)
+                .unwrap()
+                .value
+        };
+        assert_eq!(metric(&extended), metric(&result), "{key}");
+    }
+    assert_eq!(
+        extended
+            .statistics
+            .iter()
+            .find(|row| row.native_key == "Calendar Partial Days")
+            .unwrap()
+            .value,
+        Some(1.0)
+    );
 }
 
 #[test]

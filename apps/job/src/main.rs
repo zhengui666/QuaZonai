@@ -92,6 +92,18 @@ enum Operation {
         #[arg(long)]
         scope: Option<PathBuf>,
     },
+    /// Conditional dynamic ensemble research across every registered catalog market.
+    ReplayCatalogEnsemble {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        partitions: PathBuf,
+        /// Original complete machine-private BAR scope, never a source-derived shortlist.
+        #[arg(long)]
+        scope: PathBuf,
+        #[arg(long, required = true)]
+        model: Vec<PathBuf>,
+    },
     /// Execute every independent native fold; stdout remains restricted evidence.
     ValidateAlpha {
         #[arg(long)]
@@ -265,6 +277,25 @@ fn run(operation: Operation) -> Result<()> {
             &input()?,
             &model_bytes(&model)?,
         )?),
+        Operation::ReplayCatalogEnsemble {
+            catalog,
+            partitions,
+            scope,
+            model,
+        } => {
+            let scope: Vec<String> = serde_json::from_reader(fs::File::open(scope)?)?;
+            let models = model
+                .iter()
+                .map(|path| model_bytes(path))
+                .collect::<Result<Vec<_>>>()?;
+            output(&job::catalog_ensemble::replay(
+                &catalog,
+                &partitions,
+                &input()?,
+                &models,
+                &scope,
+            )?)
+        }
         Operation::EvaluateExperiment {
             catalog,
             model,

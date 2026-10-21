@@ -30,6 +30,7 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'leg
       parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1, total_fuel: null } } };
     const finalRequest = structuredClone(request); Object.assign(finalRequest.forecast.selection, { event_end_ns: '30', decision_cutoff_ns: '40' });
     const dataset = state.options.config.datasets[0]!;
+    assert.ok(dataset.strategy && dataset.strategy.kind !== 'catalog-ensemble');
     dataset.data = { catalog: prefix, request, sealed: { catalog: sealed, request: finalRequest } };
     Object.assign(dataset.strategy!, { forecastMode: 'price-volume', evaluationPartition: 'HELDOUT',
       simulationSettings: { base_currency: 'USD', starting_capital: '3000', original_policy_marker: 'TEST_ONLY' } });
@@ -130,6 +131,7 @@ test('legacy v1 single-evidence replay retains the consumer policy and whole ori
       capital: '3000', currency: 'USD', evidence, policy }, context);
     assert.deepEqual(object(result.native.simulationRequest).selection, object(object(dataset.data.request).forecast).selection);
     assert.deepEqual(object((result.native.sources as JsonObject[])[0]).policy, policy);
+    assert.ok(result.target);
     assert.equal(object((result.target.targets as JsonObject[])[0]).instrument_id, 'TEST.SIM');
     assert.equal(result.curve[0]!.value, '3000');
   } finally { await state.cleanup(); }

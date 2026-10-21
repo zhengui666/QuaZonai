@@ -57,31 +57,31 @@ function parseOriginalJson(contents: string): unknown {
 function nativeKeys(value: JsonObject, allowed: string[]): void {
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new Error('unknown_native_request_field');
 }
-function selection(value: unknown): JsonObject {
+function selection(value: unknown, catalog = false): JsonObject {
   const result = object(value, 'native_selection');
-  nativeKeys(result, ['schema_version', 'bar_types', 'event_start_ns', 'event_end_ns', 'decision_cutoff_ns', 'maximum_rows']);
-  if (result.schema_version !== 1 || !Array.isArray(result.bar_types) || !result.bar_types.length
+  if (!catalog) nativeKeys(result, ['schema_version', 'bar_types', 'event_start_ns', 'event_end_ns', 'decision_cutoff_ns', 'maximum_rows']);
+  if (result.schema_version !== 1 || !catalog && (!Array.isArray(result.bar_types) || !result.bar_types.length
     || result.bar_types.some((id) => typeof id !== 'string' || !id)
-    || new Set(result.bar_types).size !== result.bar_types.length
+    || new Set(result.bar_types).size !== result.bar_types.length)
     || ns(result.event_start_ns) >= ns(result.event_end_ns)
     || ns(result.event_end_ns) > ns(result.decision_cutoff_ns)) throw new Error('native_selection_required');
   ns(result.decision_cutoff_ns); uint(result.maximum_rows);
   return result;
 }
-function factorRequest(value: JsonObject): JsonObject {
+export function factorRequest(value: JsonObject, catalog = false): JsonObject {
   safeNumbers(value);
-  const forecast = object(value.forecast, 'forecast');
+  const forecast = catalog ? value : object(value.forecast, 'forecast');
   const parameters = object(forecast.parameters, 'parameters');
-  nativeKeys(value, ['schema_version', 'forecast', 'train_end_ns', 'validation_end_ns']);
-  nativeKeys(forecast, ['schema_version', 'selection', 'parameters']);
+  nativeKeys(value, catalog ? ['schema_version', 'event_start_ns', 'event_end_ns', 'decision_cutoff_ns', 'maximum_rows', 'parameters', 'train_end_ns', 'validation_end_ns'] : ['schema_version', 'forecast', 'train_end_ns', 'validation_end_ns']);
+  if (!catalog) nativeKeys(forecast, ['schema_version', 'selection', 'parameters']);
   nativeKeys(parameters, ['schema_version', 'fast_period', 'slow_period', 'label_horizon_observations', 'total_fuel']);
   if (value.schema_version !== 1 || forecast.schema_version !== 1 || parameters.schema_version !== 1) throw new Error('native_schema_version_required');
-  selection(forecast.selection);
+  selection(catalog ? value : forecast.selection, catalog);
   uint(parameters.fast_period); uint(parameters.slow_period); uint(parameters.label_horizon_observations);
   if (Number(parameters.slow_period) <= Number(parameters.fast_period)
     || (parameters.total_fuel !== null && parameters.total_fuel !== undefined && ns(parameters.total_fuel) === 0n)) throw new Error('native_forecast_parameters_required');
   // Reuse the exact current research boundary and optional-fuel normalization.
-  iterationRequest({ request: value });
+  iterationRequest(catalog ? { catalog_scan_request: value } : { request: value });
   return value;
 }
 function contained(wanted: JsonObject, prepared: JsonObject): void {

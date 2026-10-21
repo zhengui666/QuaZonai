@@ -2,14 +2,162 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { researchCapital, researchSpecification, researchInstructions, researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { factorViews, factorId } from '../src/factors.ts';
-import { Study } from '../../research/src/documents.ts';
+import { Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import research from '../../research/plugins/research.ts';
+import factorWasm from '../../research/plugins/factor-wasm.ts';
+import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
+import strategyPortfolio from '../../research/plugins/strategy-portfolio.ts';
+import { maxDbCounter } from '../../research/src/strategy.ts';
+import { Application } from '../src/facts.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup, wat } from './support.ts';
 
 const specification = researchSpecification({ version: 1, name: 'Volume hypothesis', question: 'Does volume predict the registered return?', rationale: 'Falsifiable original economic mechanism',
   evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' },
   capital: { scenarios: ['1000.000000000000000001'], participation: '0.01', maximumAgeSeconds: 120 } });
+
+test('new structured native studies reject missing bindings and unsupported runners before model admission', async () => {
+  const state = await setup();
+  try {
+    state.options.extensions.push(factorWasm, strategyPortfolio);
+    const extensions = [...state.options.extensions];
+    const dataset = state.options.config.datasets[0]!;
+    const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, string> = {}) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+    Object.assign(dataset.strategy!, { simulationSettings: { schema_version: 1, base_currency: 'USD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60000,
+      fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
+      fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel'),
+      latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' }),
+      fee_rates: [{ instrument_id: 'TEST.SIM', maker: '0', taker: '0' }] } });
+    const original = structuredClone(dataset.data);
+    const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
+      selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100 },
+      parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1 } } };
+    const ensemble = researchSpecification({ ...specification, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 8, stop: 'budget-or-selection' } });
+    const scan = { schema_version: 1, event_start_ns: '0', train_end_ns: '10', validation_end_ns: '20', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, parameters: request.forecast.parameters };
+    const failures: { data: typeof original; spec: typeof specification; error: string; missingStrategy?: boolean; missingPortfolio?: boolean; missingFactor?: boolean }[] = [
+      { data: { catalog: original.catalog!, storageMode: 'price-volume' }, spec: ensemble, error: 'native_request_required' },
+      { data: { catalog: original.catalog!, catalog_scan_request: scan }, spec: ensemble, error: 'catalog_factor_only_account_binding_required' },
+      { data: { catalog: original.catalog!, request, catalog_scan_request: scan }, spec: specification, error: 'ambiguous_factor_request' },
+      { data: { request }, spec: specification, error: 'catalog_required' },
+      { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_policy_required', missingStrategy: true },
+      { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_adapter_not_configured', missingPortfolio: true },
+      { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true },
+      { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true, missingPortfolio: true },
+      { data: { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } }, spec: specification, error: 'registered_final_evaluator_required' },
+    ];
+    for (const [index, failure] of failures.entries()) {
+      dataset.data = failure.data;
+      const strategy = dataset.strategy;
+      if (failure.missingStrategy) delete dataset.strategy;
+      state.options.extensions = extensions.filter(extension => !(failure.missingPortfolio && extension === strategyPortfolio || failure.missingFactor && extension === factorWasm));
+      await state.restart();
+      const requestId = `invalid-native-binding-${index}`;
+      const body = { requestId, goal: failure.spec.question, specification: failure.spec, model: state.model, datasetId: dataset.id, maxTrials: 100000 };
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: body });
+      assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, failure.error);
+      assert.equal(state.faux.state.callCount, 0);
+      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+      dataset.strategy = strategy;
+    }
+    const strategy = dataset.strategy!;
+    assert.ok(strategy.kind !== 'catalog-ensemble');
+    dataset.data = { catalog: original.catalog!, request };
+    const invalidPolicies = [
+      { policy: { kind: 'factor-threshold' }, error: 'strategy_instrument_invalid' },
+      { policy: { ...strategy, simulationSettings: { base_currency: 'USD' } }, error: 'strategy_starting_capital_required' },
+      { policy: { ...strategy, instrumentIds: ['TEST.SIM', 'MISSING.SIM'] }, error: 'strategy_instrument_fee_missing' },
+      { policy: { ...strategy, simulationSettings: { ...strategy.simulationSettings, typo: true } }, error: 'strategy_simulation_settings_invalid' },
+      { policy: { ...strategy, targetTtlNs: (maxDbCounter + 1n).toString() }, error: 'target_ttl_invalid' },
+      { policy: { ...strategy, targetTtlNs: (maxDbCounter - 20n).toString() }, error: 'target_ttl_invalid' },
+    ];
+    for (const [index, invalid] of invalidPolicies.entries()) {
+      dataset.strategy = invalid.policy as typeof strategy; state.options.extensions = extensions;
+      await state.restart();
+      const requestId = `invalid-native-policy-${index}`;
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+        payload: { requestId, goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
+      assert.equal(response.statusCode, 400, response.body);
+      assert.equal(response.json().error, invalid.error);
+      assert.equal(state.faux.state.callCount, 0);
+      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+    }
+    dataset.strategy = strategy;
+    state.options.extensions = [...extensions, heldoutWasm];
+    const changed = structuredClone(request); changed.forecast.parameters.fast_period = 1;
+    const sealedFailures: { sealed: typeof original; error: string }[] = [
+      { sealed: { request }, error: 'heldout_catalog_required' },
+      { sealed: { catalog: original.catalog! }, error: 'native_request_required' },
+      { sealed: { catalog: original.catalog!, request: { ...request, train_end_ns: '0' } }, error: 'native_partition_boundaries' },
+      { sealed: { catalog: original.catalog!, request: changed }, error: 'heldout_criteria_mismatch' },
+    ];
+    for (const [index, failure] of sealedFailures.entries()) {
+      dataset.data = { catalog: original.catalog!, request, sealed: failure.sealed };
+      await state.restart();
+      const requestId = `invalid-native-sealed-${index}`;
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+        payload: { requestId, goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
+      assert.equal(response.statusCode, 400, response.body); assert.equal(response.json().error, failure.error);
+      assert.equal(state.faux.state.callCount, 0);
+      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+    }
+    state.options.extensions = extensions;
+    dataset.data = { catalog: original.catalog!, request };
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('Valid native binding admitted; no computation claimed.')]);
+    const accepted = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+      payload: { requestId: 'valid-native-ensemble', goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id, maxTrials: 1 } });
+    assert.equal(accepted.statusCode, 202, accepted.body);
+    await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
+    assert.equal(state.faux.state.callCount, 1);
+    state.options.extensions.push(heldoutWasm);
+    dataset.data = { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } };
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('Registered finalizer available; no computation claimed.')]);
+    const sealed = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+      payload: { requestId: 'valid-native-sealed-factor', goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 1 } });
+    assert.equal(sealed.statusCode, 202, sealed.body);
+    await (await state.service.research.harness.submission(sealed.json().submissionId, context))!.wait(context);
+    assert.equal(state.faux.state.callCount, 2);
+  } finally { await state.cleanup(); }
+});
+
+test('custom structured data remains opaque and an admitted request replays after native adapters are installed', async () => {
+  const state = await setup();
+  try {
+    const datasets = state.options.config.datasets;
+    datasets[0]!.data = { catalog: 'custom protocol catalog', request: { schema_version: 2, forecast: { protocol: 'opaque' } }, catalog_scan_request: { schema_version: 2, protocol: 'opaque' } };
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('Custom research input retained; no native result claimed.')]);
+    const body = { requestId: 'opaque-original', goal: specification.question, specification, model: state.model, datasetId: 'controlled', maxTrials: 1 };
+    const post = () => state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: body });
+    const response = await post(); assert.equal(response.statusCode, 202, response.body); const receipt = response.json();
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const original = (await state.service.research.state(receipt.conversationId)).research;
+    const nativeInput = researchInput({ goal: specification.question, specification, model: state.model, data: datasets[0]!.data, policy: { max_trials: 1 } });
+    state.faux.setResponses([fauxAssistantMessage('Original custom admission retained.')]);
+    const nativeReceipt = await state.service.research.start('opaque-native-original', nativeInput);
+    await (await state.service.research.harness.submission(nativeReceipt.submissionId, context))!.wait(context);
+    state.options.extensions.push(factorWasm, strategyPortfolio);
+    state.options.config.datasets = [];
+    await state.restart();
+    const replay = await post(); assert.equal(replay.statusCode, 202, replay.body); assert.deepEqual(replay.json(), receipt);
+    assert.deepEqual((await state.service.research.state(receipt.conversationId)).research, original);
+    const nativeReplay = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+      payload: { requestId: 'opaque-native-original', input: nativeInput } });
+    assert.equal(nativeReplay.statusCode, 202, nativeReplay.body); assert.deepEqual(nativeReplay.json(), nativeReceipt);
+    assert.equal(state.faux.state.callCount, 2);
+    state.options.config.datasets = datasets;
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('Custom runner remains available beside native adapters.')]);
+    const mixed = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...body, requestId: 'opaque-mixed' } });
+    assert.equal(mixed.statusCode, 202, mixed.body);
+    await (await state.service.research.harness.submission(mixed.json().submissionId, context))!.wait(context);
+    assert.equal(state.faux.state.callCount, 3);
+  } finally { await state.cleanup(); }
+});
 
 test('structured admission captures the mandate, rejects unsupported overrides and retains exact original identity through restart', async () => {
   const state = await setup();
@@ -82,6 +230,7 @@ test('structured native input accepts only the registered inherited policy and s
   const state = await setup();
   try {
     const registered = state.options.config.datasets[0]!;
+    assert.ok(registered.strategy && registered.strategy.kind !== 'catalog-ensemble');
     registered.strategy = { ...registered.strategy!, instrumentIds: ['TEST.SIM'], evaluationPartition: 'HELDOUT' };
     await state.restart();
     const policy = { ...registered.policy, max_trials: 0, strategy: registered.strategy };

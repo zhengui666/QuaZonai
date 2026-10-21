@@ -1,5 +1,5 @@
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId, TaskRuntime, ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -8,7 +8,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { JsonReader } from '../src/native-json.ts';
 import { object } from '../src/trials.ts';
-import { NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
+import { NativeEvidencePart, readNativeEvidence, retainNativeEvidence } from './native-evidence.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
 
 export const CatalogScopes = defineDoc<{ roots: JsonObject[] }>({
@@ -65,6 +65,12 @@ export const CatalogScopeTask = defineTask<{ catalog: string }, { phase: 'read' 
 const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   kind: 'qz.catalog-scope-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
+
+export async function readCatalogScope(runtime: Pick<TaskRuntime<unknown, unknown, unknown, object>, 'getTask' | 'snapshot' | 'snapshotAsOf'>, reference: JsonObject, context: Context): Promise<JsonObject> {
+  const original = await runtime.getTask(reference.taskId as TaskId<JsonObject>, context);
+  if (original?.kind !== 'qz.catalog.scope' || original.state.status !== 'terminal' || original.state.outcome.status !== 'completed') throw new Error('native_catalog_scope_missing');
+  return readNativeEvidence(runtime, original.conversationId, original.id, object(original.state.outcome.result.native, 'scope_native'), context);
+}
 
 export async function catalogScope(api: ToolExecutionApi, context: Context, data: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');

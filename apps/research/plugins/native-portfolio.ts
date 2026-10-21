@@ -7,13 +7,13 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../src/documents.ts';
 import { object } from '../src/trials.ts';
-import { intervalTargets, simulationSelection, thresholdTargets } from '../src/strategy.ts';
+import { intervalTargets, nativeDecimal, simulationSelection, thresholdTargets } from '../src/strategy.ts';
 import { JsonReader, jsonChunks } from '../src/native-json.ts';
-import type { StrategyMember, StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
-import { compileWasm, normalizedRequest } from './native-wasm.ts';
+import type { StrategyMember, StrategyPartition, StrategyPolicy, ThresholdPolicy } from '../src/strategy.ts';
+import { compileWasm, iterationRequest, normalizedRequest } from './native-wasm.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
 
-const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit']);
+const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit']);
 
 /** Original JSON stdin and official process cleanup/cancellation; no provider environment or deadline. */
 export async function executeNative(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
@@ -80,12 +80,13 @@ export async function forecastMembers(binary: string, catalog: string, members: 
 export interface PortfolioEvaluationInput {
   data: JsonObject;
   members: StrategyMember[];
-  policy: ThresholdPolicy;
+  policy: StrategyPolicy;
   partition: StrategyPartition;
   binary: string;
 }
 
-export async function evaluatePortfolio(input: PortfolioEvaluationInput, context: Context) {
+export async function evaluatePortfolio(input: PortfolioEvaluationInput, context: Context, scope?: JsonObject) {
+  if (input.policy.kind === 'catalog-ensemble') return evaluateCatalogEnsemble(input, context, scope);
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(input.data);
   const currency = input.policy.simulationSettings.base_currency;
@@ -113,4 +114,70 @@ export async function evaluatePortfolio(input: PortfolioEvaluationInput, context
       components: targets.components, rows: targets.rows, weights: targets.weights, blend: targets.blend, simulationRequest, simulation };
     return { summary, evidence };
   } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context: Context, scope?: JsonObject) {
+  if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
+  if (typeof input.data.catalog_partitions !== 'string' || !input.data.catalog_partitions.trim()) throw new Error('catalog_partitions_required');
+  if (input.data.catalog_ensemble_request === undefined) throw new Error('catalog_ensemble_request_required');
+  if (input.members.length < 2) throw new Error('strategy_members_required');
+  const request = input.partition === 'VALIDATION' ? iterationRequest(input.data, true) : normalizedRequest(input.data);
+  if (input.partition === 'HELDOUT') request.evaluation_start_ns = input.data.validation_end_ns!;
+  if (!Array.isArray(request.members)) throw new Error('strategy_members_required');
+  const template = request.members.map(value => object(value, 'member_template'));
+  const metered = template.some(member => member.total_fuel !== undefined && member.total_fuel !== null);
+  if (metered && template.length !== input.members.length) throw new Error('catalog_ensemble_member_count_mismatch');
+  const nativeRequest = { ...request, members: input.members.map((member, index) => ({ weight: member.weight,
+    ...(metered && template[index]!.total_fuel !== undefined && template[index]!.total_fuel !== null ? { total_fuel: template[index]!.total_fuel! } : {}) })) };
+  if (!Array.isArray(scope?.barTypes) || !scope.barTypes.length || !scope.barTypes.every(type => typeof type === 'string')) throw new Error('catalog_scope_required');
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-catalog-ensemble-'));
+  try {
+    const scopePath = join(directory, 'scope.json');
+    await writeFile(scopePath, jsonChunks(scope.barTypes));
+    const args = ['--catalog', input.data.catalog, '--partitions', input.data.catalog_partitions, '--scope', scopePath];
+    for (const [index, member] of input.members.entries()) {
+      const path = join(directory, `model-${index}.wasm`);
+      await writeFile(path, compileWasm(member.model, 'catalog-ensemble.wat', 'replay-catalog-ensemble'));
+      args.push('--model', path);
+    }
+    const result = await executeNative(input.binary, 'replay-catalog-ensemble', nativeRequest, args, directory, context);
+    if (result.source !== request.source || result.revision !== request.revision) throw new Error('native_catalog_source_mismatch');
+    const simulation = object(result.simulation, 'native_simulation');
+    const summary: JsonObject = { schema_version: 1, request: nativeRequest, registered_request: request,
+      ...(input.data.catalog_scope ? { catalog_scope: input.data.catalog_scope } : {}), partitions: [], portfolio: {
+      partition: input.partition, strategy_kind: 'catalog-ensemble', native_version: simulation.native_version ?? null,
+      ...(input.policy.evidenceMode ? { evidenceMode: input.policy.evidenceMode } : {}),
+      source: result.source!, revision: result.revision!, observed_markets: result.observed_markets ?? null,
+      catalog_series: result.catalog_series ?? null,
+      bars: result.bars ?? null, source_records: result.source_records ?? null, consumed_fuel: result.consumed_fuel ?? null,
+      assumptions: result.assumptions ?? [], statistics: simulation.statistics ?? [], summary: simulation.summary ?? {},
+      recorded_fee_totals: recordedFeeTotals(simulation),
+      iterations: simulation.iterations ?? null, events: simulation.events ?? null, orders: simulation.orders ?? null,
+      positions: simulation.positions ?? null, consumed_target_points: simulation.consumed_target_points ?? null,
+      returns_kind: simulation.returns_kind ?? null, returns_status: simulation.returns_status ?? null, returns_reason: simulation.returns_reason ?? null,
+      ...(input.partition === 'HELDOUT' && Array.isArray(simulation.returns) ? { daily_returns: simulation.returns } : {}),
+      provenance: { command: 'replay-catalog-ensemble', account: 'ONE_NATIVE_SHARED_ACCOUNT', selection: nativeRequest } } };
+    const evidence: JsonObject = { catalog: input.data.catalog, catalog_partitions: input.data.catalog_partitions,
+      request: nativeRequest, registered_request: request, policy: JSON.parse(JSON.stringify(input.policy)), members: input.members.map(member => ({ ...member })), nativeRequest, simulation, result };
+    return { summary, evidence };
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+function exactTotal(value: bigint, places: number): string {
+  const digits = (value < 0n ? -value : value).toString().padStart(places + 1, '0');
+  const fraction = digits.slice(-places).replace(/0+$/, '');
+  return `${value < 0n ? '-' : ''}${digits.slice(0, -places)}${fraction ? `.${fraction}` : ''}`;
+}
+
+function recordedFeeTotals(simulation: JsonObject): JsonObject | null {
+  if (simulation.recorded_fee_replay == null) return null;
+  const report = object(simulation.recorded_fee_replay, 'recorded_fee_replay');
+  if (typeof report.currency !== 'string' || !Array.isArray(report.fills)) throw new Error('native_recorded_fee_replay_invalid');
+  let fills = 0n; let commission = 0n; let notional = 0n;
+  for (const value of report.fills) {
+    const fill = object(value, 'recorded_fee_fill');
+    fills++; commission += nativeDecimal(fill.commission);
+    notional += nativeDecimal(fill.fill_quantity) * nativeDecimal(fill.fill_price);
+  }
+  return { currency: report.currency, fills: fills.toString(), commission_total: exactTotal(commission, 18), gross_fill_notional: exactTotal(notional, 36) };
 }

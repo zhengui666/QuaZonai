@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM node AS application
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl bash tini libssl3 libstdc++6 python3 \
+ && apt-get install -y --no-install-recommends ca-certificates curl bash tini libssl3 libstdc++6 python3 zstd \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/quazonai
 COPY --from=dependencies /opt/quazonai/apps/ ./apps/

@@ -1,4 +1,5 @@
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import { computePortfolio } from './native.ts';
 import type { PortfolioTaskInput } from './native.ts';
@@ -7,18 +8,30 @@ import type { ObservationTaskInput } from './downstream.ts';
 import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
 import { accountKey, CapitalExitCommand } from './capital-exit.ts';
 import { classifyExecutionError, executionDiagnostic } from '../../research/src/execution-errors.ts';
+import { readCatalogScope } from '../../research/plugins/native-catalog-scope.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
   name: 'qz.portfolio', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     try {
-      const result = await computePortfolio(task.input, context);
+      let scope: JsonObject | undefined;
+      if (task.input.policy.kind === 'catalog-ensemble') {
+        const source = Array.isArray(task.input.evidence) ? task.input.evidence[0] : task.input.evidence;
+        const final = object(object(source!.final, 'independent_final').result, 'independent_result');
+        let reference = final.catalog_scope;
+        if (!reference) {
+          const original = await runtime.getTask(final.evidenceTaskId as TaskId<JsonObject>, context);
+          reference = object(object(original?.input, 'portfolio_input').data, 'study_data').catalog_scope;
+        }
+        scope = await readCatalogScope(runtime, object(reference, 'catalog_scope'), context);
+      }
+      const result = await computePortfolio(task.input, context, scope);
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
         fact.view.curve = result.curve; fact.view.metrics = result.metrics; fact.view.capacity = result.capacity;
-        fact.view.targets = (result.target.targets as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
+        fact.view.targets = ((result.target?.targets ?? []) as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
         fact.view.status = 'COMPUTED'; fact.view.error = null; fact.view.errorDetail = null;
         facts.portfolios[task.input.id] = json(fact);
         return { status: 'terminal', outcome: { status: 'completed', result: null } };

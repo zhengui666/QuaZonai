@@ -18,6 +18,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
   const admission = requestId ? admissions?.[`request:${requestId}`] : undefined;
   const dataset = admission?.dataset;
   const strategy = input.policy.strategy ? object(input.policy.strategy) : null;
+  const simulationSettings = strategy?.simulationSettings ?? (input.data.catalog_ensemble_request ? object(input.data.catalog_ensemble_request).settings : undefined);
   return study.trials.flatMap(trial => {
     const proposal = object(trial.proposal); let members;
     try { members = strategyMembers(proposal); } catch { return []; }
@@ -27,9 +28,10 @@ export function factorViews(id: number, study: { input: import('../../research/s
       const result = independentlyComputed ? study.final?.result : trial.result;
       const raw = result ? object(result) : null;
       const components = Array.isArray(raw?.components) ? raw.components : [];
-      const diagnostic = components.length ? object(object(components[memberIndex]).summary) : raw;
+      const summary = components[memberIndex] ? object(components[memberIndex]).summary : null;
+      const diagnostic = summary ? object(summary) : members.length === 1 ? raw : null;
       const measured = metrics(diagnostic ?? undefined);
-      const criterion = researchCriterion(input.specification, independentlyComputed ? 'COMPUTED' : String(trial.status), metrics(raw ?? undefined));
+      const criterion = members.length > 1 && !diagnostic ? null : researchCriterion(input.specification, independentlyComputed ? 'COMPUTED' : String(trial.status), measured);
       const heldout = diagnostic && Array.isArray(diagnostic.partitions) ? diagnostic.partitions.map(item => object(item)).find(item => item.partition === 'HELDOUT') : null;
       const included = heldout ? object(object(heldout.metric).counts).included : null;
       const evidence = independentlyComputed ? strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' ? 'historical' : 'independent' : members.length > 1 ? 'component_only' : trial.status === 'COMPUTED' ? 'validation_only' : 'unavailable';
@@ -38,7 +40,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
           : criterion && !['computed', 'met'].includes(criterion.status) ? criterion.status === 'insufficient' ? 'research_criterion_insufficient' : 'research_criterion_not_met' : input.data.catalog_scan_request !== undefined ? 'catalog_factor_only_account_binding_required' : !strategy ? 'strategy_policy_missing' : null;
       return { id: factorId(id, Number(trial.taskId), memberIndex), researchId: id, trialId: Number(trial.taskId), memberIndex,
         name: input.specification?.name ?? input.goal, hypothesis: String(proposal.hypothesis ?? ''), modelSource: member.model,
-        datasetId: typeof dataset?.id === 'string' ? dataset.id : null, currency: typeof dataset?.currency === 'string' ? dataset.currency : typeof (strategy?.simulationSettings as Record<string, unknown> | undefined)?.base_currency === 'string' ? String((strategy!.simulationSettings as Record<string, unknown>).base_currency) : null,
+        datasetId: typeof dataset?.id === 'string' ? dataset.id : null, currency: typeof dataset?.currency === 'string' ? dataset.currency : typeof (simulationSettings as Record<string, unknown> | undefined)?.base_currency === 'string' ? String((simulationSettings as Record<string, unknown>).base_currency) : null,
         market: Array.isArray(proposal.allocations) ? proposal.allocations.map(item => String(object(item).instrumentId)) : [proposal.instrumentId ?? strategy?.instrumentId].filter((item): item is string => typeof item === 'string'),
         status: String(trial.status), ...(input.specification?.capital ? { capacityAssumptions: input.specification.capital } : {}), evidence, metrics: measured, criterion: criterion ?? null, combinable: reason === null, reason };
     });

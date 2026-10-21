@@ -4,18 +4,46 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 assert.equal(process.env.QZ_TEST_PROVIDER_SECRET, undefined);
 const [log, command, ...args] = process.argv.slice(2);
+if (command === 'catalog-factor-scope') {
+  appendFileSync(log, JSON.stringify({ command, args }) + '\n');
+  console.log(JSON.stringify(['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL']));
+  process.exit(0);
+}
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const catalog = args.includes('--catalog') ? args[args.indexOf('--catalog') + 1] : null;
 const binding = catalog ? JSON.parse(readFileSync(join(catalog, 'binding.json'), 'utf8')) : null;
 let prediction = null;
-if (args.includes('--model')) {
+if (command !== 'replay-catalog-ensemble' && args.includes('--model')) {
   const module = new WebAssembly.Module(readFileSync(args[args.indexOf('--model') + 1]));
   prediction = new WebAssembly.Instance(module).exports.predict(1, 2, 3, 4, 5, 6, 7, 8);
 }
-appendFileSync(log, JSON.stringify({ command, args, input, binding, prediction }) + '\n');
-const selection = input.forecast?.selection ?? input.selection;
+const scope = args.includes('--scope') ? JSON.parse(readFileSync(args[args.indexOf('--scope') + 1], 'utf8')) : null;
+appendFileSync(log, JSON.stringify({ command, args, input, binding, prediction, scope }) + '\n');
+const selection = input.forecast?.selection ?? input.selection ?? input;
 if (binding) assert.ok(BigInt(selection.event_end_ns) <= BigInt(binding.end), 'requested suffix is absent from this original catalog');
-if (command === 'evaluate-factor') {
+if (command === 'replay-catalog-ensemble') {
+  assert.ok(args.includes('--partitions'));
+  assert.deepEqual(scope, ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL']);
+  assert.equal(input.settings.starting_capital, '3000');
+  assert.equal(input.event_start_ns, '0');
+  assert.ok(['10', '20'].includes(input.evaluation_start_ns));
+  const modelPaths = args.flatMap((arg, index) => arg === '--model' ? [args[index + 1]] : []);
+  assert.equal(modelPaths.length, input.members.length);
+  for (const path of modelPaths) {
+    const model = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(path))).exports;
+    model.qz_set_feature_v2(0, 1, 0, 0n, 0n);
+    assert.equal(model.qz_predict_v2(0n, 0n, 0, 0, 7), 1);
+  }
+  const final = input.evaluation_start_ns === '20';
+  console.log(JSON.stringify({ schema_version: 1, source: input.source, revision: input.revision,
+    catalog_series: '2', observed_markets: '2', bars: '18', source_records: '50', consumed_fuel: input.members.map(() => null),
+    assumptions: ['TEST_ONLY_CONDITIONAL_PROXY_NOT_VERIFIED_PIT'],
+    simulation: { native_version: 'TEST_ONLY', iterations: '1', events: '18', orders: '0', positions: '0', consumed_target_points: '4',
+      statistics: [{ native_key: 'Sharpe Ratio (252 days)', value: binding?.account_replay_protocol ? 1 : null, reason_code: 'TEST_ONLY_NO_SCIENCE' }],
+      summary: { protocol: final ? 'HELDOUT_OWNER_ONLY_PROTOCOL' : 'VALIDATION_PROTOCOL' },
+      returns: [{ value: 12345.6789 }], canonical_result: { private_protocol_marker: 'CATALOG_RAW_ACCOUNT_OWNER_ONLY',
+        ...(binding?.account_replay_protocol ? { portfolio_snapshots: [{ ts_event: input.evaluation_start_ns, total_equity: [`${input.settings.starting_capital} pUSD`] }] } : {}) } } }));
+} else if (command === 'evaluate-factor') {
   assert.ok(args.includes('--summary-only'));
   const full = BigInt(selection.event_end_ns) > BigInt(input.validation_end_ns);
   console.log(JSON.stringify({ request: input, native_versions: { protocol: 'TEST_ONLY' }, consumed_fuel: null,

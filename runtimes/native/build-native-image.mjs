@@ -71,15 +71,17 @@ try {
   if (!installed.split(/\r?\n/).includes('wasm32-unknown-unknown')) throw new Error('Install the native wasm32-unknown-unknown standard target first');
   run('job-version', executable, ['--version']);
   const timeoutBinary = '/usr/bin/timeout';
+  const archiveBinaries = ['/usr/bin/tar', '/usr/bin/zstd'];
   const timeoutVersion = run('timeout-version', timeoutBinary, ['--version']).stdout;
   if (!timeoutVersion.includes('GNU coreutils')) throw new Error('Native GNU timeout required');
   const sourceCommit = run('tested-source', 'git', ['rev-parse', 'HEAD']).stdout.trim();
   copyNative(executable, '/usr/local/bin/job');
   copyNative(timeoutBinary, '/usr/bin/timeout');
+  for (const binary of archiveBinaries) copyNative(binary, binary);
   fs.mkdirSync(destination('/opt/rust'), { recursive: true, mode: 0o755 });
   copyNative(path.join(sysroot, 'bin/rustc'), '/opt/rust/bin/rustc');
   fs.cpSync(path.join(sysroot, 'lib'), destination('/opt/rust/lib'), { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false });
-  const nativeFiles = [executable, timeoutBinary, path.join(sysroot, 'bin/rustc'), ...nativeExecutables(path.join(sysroot, 'lib'))];
+  const nativeFiles = [executable, timeoutBinary, ...archiveBinaries, path.join(sysroot, 'bin/rustc'), ...nativeExecutables(path.join(sysroot, 'lib'))];
   if (values['isolation-probe']) {
     const probe = fs.realpathSync(values['isolation-probe']);
     copyNative(probe, '/usr/local/bin/isolation-probe');
@@ -117,9 +119,13 @@ try {
   copyNative(path.join(repository, 'licenses/nautilus-backtest-LGPL-3.0.txt'), '/usr/share/doc/quazonai/licenses/nautilus-backtest-LGPL-3.0.txt');
   const noticeRoot = path.join(sysroot, 'share/doc/rust');
   if (fs.existsSync(noticeRoot)) fs.cpSync(noticeRoot, destination('/usr/share/doc/rust'), { recursive: true, dereference: false, verbatimSymlinks: true });
-  for (const component of ['coreutils', 'libc6', 'libgcc-s1', 'libstdc++6']) {
+  for (const component of ['coreutils', 'tar', 'zstd', 'libacl1', 'libzstd1', 'liblz4-1', 'liblzma5', 'zlib1g', 'libc6', 'libgcc-s1', 'libstdc++6']) {
     const copyright = '/usr/share/doc/' + component + '/copyright';
     if (fs.existsSync(copyright)) copyNative(copyright, copyright);
+  }
+  for (const name of ['GPL-2', 'GPL-3', 'LGPL-2.1']) {
+    const license = '/usr/share/common-licenses/' + name;
+    if (fs.existsSync(license)) copyNative(license, license);
   }
   fs.copyFileSync(path.join(repository, 'Cargo.lock'), destination('/usr/share/doc/quazonai/Cargo.lock'));
   // Only selected public native files enter this image. A private host toolchain

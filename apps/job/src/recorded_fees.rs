@@ -40,6 +40,7 @@ struct Bucket {
 struct State {
     buckets: BTreeMap<Key, Bucket>,
     report: RecordedFeeReplayV1,
+    source_bars: Option<BTreeMap<String, u64>>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct RecordedFeeModel {
@@ -122,7 +123,7 @@ impl RecordedFeeModel {
         Self::new(source, market, clock)
     }
 
-    fn new(
+    pub(crate) fn new(
         source: RecordedTradeFeesV1,
         market: &NativeMarketData,
         clock: Rc<RefCell<dyn Clock>>,
@@ -216,6 +217,7 @@ impl RecordedFeeModel {
             currency,
             state: Rc::new(RefCell::new(State {
                 buckets,
+                source_bars: None,
                 report: RecordedFeeReplayV1 {
                     source: source.source,
                     revision: source.revision,
@@ -229,7 +231,15 @@ impl RecordedFeeModel {
 
     fn key(&self, instrument: &InstrumentAny) -> Key {
         let now = self.clock.borrow().timestamp_ns().as_u64();
-        (instrument.id().to_string(), now / MINUTE_NS * MINUTE_NS)
+        let id = instrument.id().to_string();
+        let bound = self
+            .state
+            .borrow()
+            .source_bars
+            .as_ref()
+            .and_then(|bars| bars.get(&id))
+            .copied();
+        (id, bound.unwrap_or(now / MINUTE_NS * MINUTE_NS))
     }
 
     pub(crate) fn handle(&self) -> FeeModelHandle {
@@ -237,6 +247,63 @@ impl RecordedFeeModel {
     }
     pub(crate) fn report(&self) -> RecordedFeeReplayV1 {
         self.state.borrow().report.clone()
+    }
+
+    /// Keep pools backing pending orders across source windows. Other old pools
+    /// can leave memory after their complete partition has been observed.
+    pub(crate) fn replace_source(
+        &self,
+        source: RecordedTradeFeesV1,
+        market: &NativeMarketData,
+    ) -> Result<()> {
+        let replacement = Self::new(source, market, self.clock.clone())?;
+        let mut incoming = replacement.state.borrow_mut();
+        let mut current = self.state.borrow_mut();
+        ensure!(
+            current.report.source == incoming.report.source
+                && current.report.revision == incoming.report.revision
+                && current.report.currency == incoming.report.currency,
+            "RECORDED_FEE_PARTITION_SOURCE_MISMATCH"
+        );
+        ensure!(
+            current.buckets.keys().map(|key| key.1).max()
+                < incoming.buckets.keys().map(|key| key.1).min(),
+            "RECORDED_FEE_STREAM_PARTITION_ORDER"
+        );
+        let bound = current.source_bars.clone().unwrap_or_default();
+        current
+            .buckets
+            .retain(|(id, end), _| bound.get(id) == Some(end));
+        current.buckets.append(&mut incoming.buckets);
+        Ok(())
+    }
+
+    /// Compact research explicitly binds fills to their already observed source
+    /// BAR pools. Ordinary replay retains its original fill-clock allocation.
+    pub(crate) fn bind_source_bars(&self, ids: &[String], bar_end_ns: u64) -> Result<()> {
+        let mut state = self.state.borrow_mut();
+        ensure!(
+            ids.iter()
+                .all(|id| state.buckets.contains_key(&(id.clone(), bar_end_ns))),
+            "RECORDED_FEE_SOURCE_BAR_REQUIRED"
+        );
+        state.source_bars = Some(ids.iter().cloned().map(|id| (id, bar_end_ns)).collect());
+        state.report.allocation_rule = "Compact conditional replay: actual native fills consume the original already-completed source BAR bound to their target, not a later fill-clock BAR. Source records sorted by (timestamp,id), consumed once FIFO; allocated_fee = original fee_usdc * allocated_quantity / same-ID original native quantity, rounded once per fill half-even at pUSD precision. Old source pools remain until pending orders settle. This is conditional source-liquidity/cost reuse, not historical executable liquidity or fee eligibility; no fitted rate, direction inference, missing-to-zero or quantity extrapolation.".into();
+        Ok(())
+    }
+
+    pub(crate) fn with_records<T>(
+        &self,
+        instrument_id: &str,
+        bar_end_ns: u64,
+        observe: impl FnOnce(&[RecordedTradeFeeV1]) -> Result<T>,
+    ) -> Result<T> {
+        let state = self.state.borrow();
+        let bucket = state
+            .buckets
+            .get(&(instrument_id.to_owned(), bar_end_ns))
+            .context("RECORDED_FEE_BAR_RECORDS_MISSING")?;
+        observe(&bucket.records)
     }
 }
 

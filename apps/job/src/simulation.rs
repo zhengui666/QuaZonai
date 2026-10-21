@@ -26,7 +26,7 @@ use nautilus_execution::models::{
 };
 use nautilus_model::{
     accounts::{Account, AccountAny},
-    data::{Bar, BarType, Data, InstrumentClose, InstrumentStatus},
+    data::{Bar, BarType, CustomData, Data, DataType, InstrumentClose, InstrumentStatus},
     enums::{
         AccountType, BookType, MarketStatusAction, OmsType, OrderSide, OrderStatus, TimeInForce,
     },
@@ -155,6 +155,19 @@ pub(crate) struct StudyInput {
     pub liquidity_maximum_age: Option<u32>,
 }
 
+pub(crate) struct CatalogReplayFrame {
+    pub instruments: Vec<InstrumentAny>,
+    pub point: NativeTargetPointV1,
+    pub bar_end_ns: u64,
+}
+
+pub(crate) struct CatalogReplayInbox {
+    pub pending: Option<CatalogReplayFrame>,
+    pub consumed: usize,
+    gross_exposure: Decimal,
+    bar_end_ns: u64,
+}
+
 pub(crate) struct TargetReplay {
     core: StrategyCore,
     instruments: Vec<InstrumentAny>,
@@ -185,6 +198,7 @@ pub(crate) struct TargetReplay {
     paper: Option<PaperClock>,
     capital_exit_gate: Option<(crate::capital_exit_gate::CapitalExitGate, DbCounter)>,
     capital_exit_source_pending: bool,
+    catalog: Option<Rc<RefCell<CatalogReplayInbox>>>,
 }
 
 struct PaperClock {
@@ -654,6 +668,9 @@ impl TargetReplay {
         let Some(mut point) = self.points.get(next).cloned() else {
             return Ok(());
         };
+        if self.catalog.is_some() && receipt_ns < point.asof_ns.get() {
+            return Ok(());
+        }
         let now = if let Some(scope) = &point.rebalance_instrument_ids {
             // Only genuine observations at this decision's receive clock can
             // authorize orders. Wait for the entire same-clock scope, not an
@@ -670,7 +687,11 @@ impl TargetReplay {
                         observed.ts_event <= observed.ts_init,
                         "SIMULATION_SCOPE_BAR_FROM_FUTURE"
                     );
-                    ready &= observed.ts_init.as_u64() == point.asof_ns.get();
+                    ready &= if let Some(inbox) = &self.catalog {
+                        observed.ts_event.as_u64() == inbox.borrow().bar_end_ns
+                    } else {
+                        observed.ts_init.as_u64() == point.asof_ns.get()
+                    };
                 } else {
                     ready = false;
                 }
@@ -742,6 +763,58 @@ impl TargetReplay {
                 .as_decimal()
         };
         ensure!(equity > Decimal::ZERO, "SIMULATION_NONPOSITIVE_EQUITY");
+        if let Some(inbox) = &self.catalog {
+            let ids = self
+                .instruments
+                .iter()
+                .map(Instrument::id)
+                .collect::<BTreeSet<_>>();
+            let mut residual = Decimal::ZERO;
+            for (id, last) in &self.latest {
+                if ids.contains(id) {
+                    continue;
+                }
+                let quantity = self.portfolio().net_position(id);
+                ensure!(quantity >= Decimal::ZERO, "CATALOG_ENSEMBLE_SHORT_POSITION");
+                residual = checked(
+                    residual.checked_add(checked(quantity.checked_mul(last.close.as_decimal()))?),
+                )?;
+            }
+            let allowance = checked(
+                inbox
+                    .borrow()
+                    .gross_exposure
+                    .checked_sub(checked(residual.checked_div(equity))?),
+            )?
+            .max(Decimal::ZERO);
+            let requested = point
+                .targets
+                .iter()
+                .try_fold(Decimal::ZERO, |sum, target| {
+                    checked(sum.checked_add(native_decimal(&target.weight)?))
+                })?;
+            if requested > allowance {
+                let scale = checked(allowance.checked_div(requested))?;
+                for target in &mut point.targets {
+                    target.weight = checked(native_decimal(&target.weight)?.checked_mul(scale))?
+                        .round_dp_with_strategy(18, rust_decimal::RoundingStrategy::ToZero)
+                        .to_string()
+                        .parse()
+                        .map_err(anyhow::Error::msg)?;
+                }
+            }
+            let allocated = point
+                .targets
+                .iter()
+                .try_fold(Decimal::ZERO, |sum, target| {
+                    checked(sum.checked_add(native_decimal(&target.weight)?))
+                })?;
+            point.cash_weight = checked(Decimal::ONE.checked_sub(allocated))?
+                .to_string()
+                .parse()
+                .map_err(anyhow::Error::msg)?;
+            validate_point(&self.settings, &point, &self.instruments)?;
+        }
         if let Some(planned) = self.study_inputs.get(next) {
             let mut input = planned.input.clone();
             input.forecasts.decision_asof_ns = DbCounter::new(now).map_err(anyhow::Error::msg)?;
@@ -976,6 +1049,78 @@ impl DataActor for TargetReplay {
         for kind in self.bar_types.clone() {
             self.subscribe_bars(kind, None, None);
         }
+        if self.catalog.is_some() {
+            self.subscribe_data(
+                DataType::new(crate::catalog_ensemble::EVENT_TYPE, None, None),
+                None,
+                None,
+            );
+        }
+        Ok(())
+    }
+    fn on_data(&mut self, _data: &CustomData) -> Result<()> {
+        let result = (|| -> Result<()> {
+            let Some(inbox) = self.catalog.clone() else {
+                return Ok(());
+            };
+            let pending = inbox.borrow_mut().pending.take();
+            if let Some(frame) = pending {
+                ensure!(
+                    self.orders_settled(),
+                    "CATALOG_ENSEMBLE_PREVIOUS_ORDERS_PENDING"
+                );
+                let mut status = self.status.borrow_mut();
+                status.check_callback_error()?;
+                inbox.borrow_mut().consumed += status.consumed;
+                status.consumed = 0;
+                drop(status);
+                self.instruments = frame.instruments;
+                inbox.borrow_mut().bar_end_ns = frame.bar_end_ns;
+                self.bar_types = frame
+                    .point
+                    .targets
+                    .iter()
+                    .map(|target| {
+                        BarType::from_str(&format!(
+                            "{}-1-MINUTE-LAST-EXTERNAL",
+                            target.instrument_id
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                for kind in self.bar_types.clone() {
+                    self.subscribe_bars(kind, None, None);
+                    let observed = self.cache().bar(&kind).ok_or_else(|| {
+                        anyhow::anyhow!("CATALOG_ENSEMBLE_NATIVE_BAR_NOT_DELIVERED")
+                    })?;
+                    ensure!(
+                        observed.ts_event.as_u64() == frame.bar_end_ns
+                            && observed.ts_init.as_u64() <= frame.point.asof_ns.get(),
+                        "CATALOG_ENSEMBLE_NATIVE_BAR_NOT_CURRENT"
+                    );
+                    self.latest.insert(kind.instrument_id(), observed);
+                }
+                self.points = vec![frame.point];
+                if self.instruments.is_empty() {
+                    self.status.borrow_mut().consumed = 1;
+                    return Ok(());
+                }
+            }
+            if let Some(bar) = self.latest.values().max_by_key(|bar| bar.ts_init).copied() {
+                let now = self.clock().timestamp_ns().as_u64();
+                if self
+                    .points
+                    .first()
+                    .is_some_and(|point| now >= point.asof_ns.get())
+                {
+                    self.apply_bar(&bar, now)?;
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.status.borrow_mut().record_callback_error(error);
+            return Err(anyhow::anyhow!("NATIVE_TARGET_REPLAY_FAILED"));
+        }
         Ok(())
     }
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
@@ -998,6 +1143,171 @@ impl DataActor for TargetReplay {
         self.finish_recorded_tail();
         Ok(())
     }
+}
+
+/// A sparse target stream uses the same sizing, fills, reductions and native
+/// account as ordinary replay. Only currently observed instruments are replaced.
+pub(crate) fn catalog_target_strategy(
+    settings: NativeSimulationSettingsV1,
+    gross_exposure: Decimal,
+) -> Result<(
+    TargetReplay,
+    Rc<RefCell<ReplayStatus>>,
+    Rc<RefCell<CatalogReplayInbox>>,
+)> {
+    let (_, latency) = domain::portfolio::simulation_models(&settings)?;
+    let latency_ns = latency
+        .base_latency_ns
+        .get()
+        .checked_add(latency.insert_latency_ns.get())
+        .ok_or_else(|| anyhow::anyhow!("CATALOG_ENSEMBLE_LATENCY"))?;
+    ensure!(latency_ns > 0, "CATALOG_ENSEMBLE_POSITIVE_LATENCY");
+    let status = Rc::new(RefCell::new(ReplayStatus::default()));
+    let inbox = Rc::new(RefCell::new(CatalogReplayInbox {
+        pending: None,
+        consumed: 0,
+        gross_exposure,
+        bar_end_ns: 0,
+    }));
+    let strategy = TargetReplay {
+        core: StrategyCore::new_checked(
+            StrategyConfig::builder()
+                .strategy_id(StrategyId::from("CATALOG-001"))
+                .order_id_tag("001".into())
+                .oms_type(OmsType::Netting)
+                .log_events(false)
+                .log_commands(false)
+                .build()?,
+        )?,
+        instruments: Vec::new(),
+        bar_types: Vec::new(),
+        latest: BTreeMap::new(),
+        points: Vec::new(),
+        study_inputs: Vec::new(),
+        strategy_constraints: None,
+        currency: Currency::from_str(&settings.base_currency)?,
+        venue: Venue::from("POLYMARKET"),
+        tolerance: native_decimal(&settings.exposure_tolerance)?,
+        settings,
+        spot_cash: None,
+        latency_ns,
+        wake_order_arrivals: true,
+        reduction_ids: BTreeSet::new(),
+        deferred_orders: Vec::new(),
+        active_expiry_ns: 0,
+        awaiting_settlement: false,
+        outstanding_orders: BTreeSet::new(),
+        settlement_events: BTreeMap::new(),
+        status: status.clone(),
+        recorded_bar_ends: None,
+        paper: None,
+        capital_exit_gate: None,
+        capital_exit_source_pending: false,
+        catalog: Some(inbox.clone()),
+    };
+    Ok((strategy, status, inbox))
+}
+
+pub(crate) fn catalog_simulation_result(
+    engine: &BacktestEngine,
+    settings: &NativeSimulationSettingsV1,
+    start_ns: u64,
+    end_ns: u64,
+    consumed: usize,
+    fees: &crate::recorded_fees::RecordedFeeModel,
+) -> Result<NativeSimulationResultV1> {
+    let native = engine.get_result();
+    ensure!(
+        native.summary.get("orders.open").map(String::as_str) == Some("0")
+            && native.summary.get("orders.inflight").map(String::as_str) == Some("0"),
+        "NATIVE_ORDERS_NOT_SETTLED"
+    );
+    let statistic = |group, native_key, currency, value: f64| NativeStatisticV1 {
+        group,
+        native_key,
+        currency,
+        value: value.is_finite().then_some(value),
+        reason_code: (!value.is_finite()).then(|| "NATIVE_STATISTIC_UNAVAILABLE".into()),
+    };
+    let mut statistics = Vec::new();
+    for (currency, values) in native.stats_pnls {
+        for (key, value) in values {
+            statistics.push(statistic(
+                NativeStatisticGroup::Pnl,
+                key,
+                Some(currency.clone()),
+                value,
+            ));
+        }
+    }
+    let (daily, fully_priced) = portfolio_return_analysis(engine, settings)?;
+    statistics.extend(calendar_returns::statistics(
+        start_ns,
+        end_ns,
+        fully_priced,
+        daily
+            .portfolio_returns()
+            .iter()
+            .map(|(time, value)| (time.as_u64(), *value)),
+    ));
+    for (group, values) in [
+        (
+            NativeStatisticGroup::Returns,
+            daily.get_performance_stats_returns(),
+        ),
+        (NativeStatisticGroup::General, native.stats_general),
+    ] {
+        for (key, value) in values {
+            statistics.push(statistic(group, key, None, value));
+        }
+    }
+    statistics.sort_by(|a, b| (&a.native_key, &a.currency).cmp(&(&b.native_key, &b.currency)));
+    let returns = daily
+        .portfolio_returns()
+        .iter()
+        .map(|(time, &value)| {
+            Ok(NativeReturnV1 {
+                timestamp_ns: DbCounter::new(time.as_u64()).map_err(anyhow::Error::msg)?,
+                value: value.is_finite().then_some(value),
+                reason_code: (!value.is_finite()).then(|| "NATIVE_RETURN_UNAVAILABLE".into()),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (returns_status, returns_reason) = if returns.is_empty() {
+        (
+            contracts::evidence::MetricStatus::InsufficientData,
+            Some("PORTFOLIO_DAILY_RETURNS_UNAVAILABLE".into()),
+        )
+    } else if returns.iter().any(|row| row.value.is_none()) {
+        (
+            contracts::evidence::MetricStatus::Failed,
+            Some("NATIVE_RETURN_UNAVAILABLE".into()),
+        )
+    } else {
+        (contracts::evidence::MetricStatus::Ok, None)
+    };
+    Ok(NativeSimulationResultV1 {
+        settled_replay_ns: Some(
+            DbCounter::new(engine.kernel().clock.borrow().timestamp_ns().as_u64())
+                .map_err(anyhow::Error::msg)?,
+        ),
+        spot_cash_report: None,
+        recorded_fee_replay: Some(fees.report()),
+        schema_version: SchemaV1,
+        native_version: "0.63.0".into(),
+        iterations: count(native.iterations)?,
+        events: count(native.total_events)?,
+        orders: count(native.total_orders)?,
+        positions: count(native.total_positions)?,
+        consumed_target_points: count(consumed)?,
+        summary: native.summary.into_iter().collect(),
+        statistics,
+        returns_kind: NativeReturnsKind::PortfolioDaily,
+        returns_status,
+        returns_reason,
+        returns,
+        canonical_result: serde_json::from_slice(&engine.get_canonical_result()?.to_bytes()?)?,
+    })
 }
 
 /// Construct one target for a native Paper node. Instrument definitions may be
@@ -1082,6 +1392,7 @@ pub(crate) fn paper_target_strategy(
         strategy_constraints: None,
         capital_exit_gate: None,
         capital_exit_source_pending: false,
+        catalog: None,
         paper: Some(PaperClock {
             execution_client_id: client_id,
             started_ns: 0,
@@ -1573,6 +1884,7 @@ fn run_with_strategy_and_spot(
         capital_exit_gate: None,
         capital_exit_source_pending: false,
         paper: None,
+        catalog: None,
     };
     let config = BacktestEngineConfig {
         portfolio: Some(

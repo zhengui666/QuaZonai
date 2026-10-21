@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, Cursor, TaskRecord } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
-import type { EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
+import type { DailyReturn, EquityPoint, Json, JsonObject, Metric, ObservationView, PortfolioView, RecordedDataset, ResearchDetail, ResearchInput, TaskView } from '../../../packages/contracts/src/index.ts';
 import { Application, counter, decimal, nowNs, nsTime, object, Problem } from './facts.ts';
 import { submissionView } from '../../research/src/recovery.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
@@ -18,6 +18,20 @@ function publicExecutionError(value: unknown, fallback: 'scientific_execution_fa
 function publicObservationError(value: unknown, fallback: string): string | null {
   if (typeof value !== 'string' || !value) return null;
   return /^[a-z][a-z0-9_]{0,127}$/.test(value) ? value : fallback;
+}
+
+function catalogDetails(value: Json | undefined, final = false): { account?: JsonObject; assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } {
+  const result = value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+  const portfolio = result?.portfolio;
+  if (!portfolio || typeof portfolio !== 'object' || Array.isArray(portfolio) || portfolio.strategy_kind !== 'catalog-ensemble') return {};
+  const summary = portfolio.summary;
+  return { account: { ...Object.fromEntries(['source', 'revision', 'native_version', 'partition', 'catalog_series', 'observed_markets', 'bars', 'source_records',
+    'iterations', 'events', 'orders', 'positions', 'consumed_target_points', 'returns_kind', 'returns_status', 'returns_reason', 'consumed_fuel', 'recorded_fee_totals'].map(key => [key, portfolio[key] ?? null])),
+    summary: summary && typeof summary === 'object' && !Array.isArray(summary) ? Object.fromEntries(Object.entries(summary).filter(([, item]) => typeof item === 'string')) : null },
+    ...(Array.isArray(portfolio.assumptions) ? { assumptions: portfolio.assumptions.filter((item): item is string => typeof item === 'string') } : {}),
+    ...(final && portfolio.partition === 'HELDOUT' && result?.request ? { registeredRequest: object(result.registered_request ?? result.request, 'registered_request'),
+      ...(result.registered_request ? { executionRequest: object(result.request, 'execution_request') } : {}) } : {}),
+    ...(final && portfolio.partition === 'HELDOUT' && Array.isArray(portfolio.daily_returns) ? { dailyReturns: portfolio.daily_returns as unknown as DailyReturn[] } : {}) };
 }
 
 /** Retain native scalar values; missing metrics are not converted into zero. */
@@ -114,14 +128,14 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
       id: Number(trial.taskId), hypothesis: String((trial.proposal as JsonObject)?.hypothesis ?? ''),
-      status: String(trial.status), metrics: metrics(trial.result),
+      status: String(trial.status), metrics: metrics(trial.result), ...catalogDetails(trial.result),
       ...publicExecutionError(trial.error, 'scientific_execution_failed', Array.isArray((trial.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', trial.errorDetail),
     })), tasks,
     final: final ? { status: String(final.status), trialId: typeof final.trialId === 'number' ? final.trialId : null,
       reason: typeof final.reason === 'string' ? final.reason : null,
       ...publicExecutionError(final.error, 'scientific_execution_failed',
         Array.isArray((study.trials.find(trial => trial.taskId === final.trialId)?.proposal as JsonObject)?.members) ? 'portfolio-evaluation' : 'evaluate-factor', final.errorDetail),
-      metrics: metrics(final.result) } : null,
+      metrics: metrics(final.result), ...catalogDetails(final.result, true) } : null,
   };
 }
 

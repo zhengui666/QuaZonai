@@ -15,12 +15,13 @@ import { readFactor } from './factors.ts';
 
 type Assumptions = NonNullable<ResearchSpecification['capital']>;
 export function unavailableCapacity(currency: string, reason: string, scope = 'portfolio', policy?: Assumptions): CapacityReport {
+  const catalog = reason === 'catalog_ensemble_capacity_unavailable';
   const scenarios = policy?.scenarios.map(capital => ({ capital, requiredTurnover: null, maximumParticipation: null, usableCapital: null, unallocatedCash: null, status: 'UNAVAILABLE', reason,
     entryRebalanceTurnover: null, exitTurnover: null, entryRebalanceParticipation: null, exitParticipation: null })) ?? [];
-  return { status: 'UNAVAILABLE', reason, scope, currency, basis: 'HISTORICAL_BAR_ESTIMATE',
+  return { status: 'UNAVAILABLE', reason, scope, currency, basis: catalog ? 'NOT_ASSESSED' : 'HISTORICAL_BAR_ESTIMATE',
     ...(policy ? { requestedAssumptions: structuredClone(policy) } : {}), maximumCapital: null, minimumCapital: null, bindingInstrument: null,
     observationStartNs: null, observationEndNs: null, decisionClockNs: null, validUntilNs: null,
-    assumptions: { participation: policy?.participation ?? null, maximumAgeSeconds: policy?.maximumAgeSeconds ?? null, executionWindow: 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: 'BAR_NOTIONAL_ONLY' }, scenarios,
+    assumptions: { participation: policy?.participation ?? null, maximumAgeSeconds: policy?.maximumAgeSeconds ?? null, executionWindow: catalog ? 'NOT_ASSESSED' : 'LAST_AVAILABLE_BAR_SHARED_BUDGET', exit: 'standalone_full_exit; future_exit_depth_unknown', fees: 'execution_costs_not_estimated', depth: catalog ? 'NOT_ASSESSED' : 'BAR_NOTIONAL_ONLY' }, scenarios,
     volumeStress: ['1', '0.5'].map(volumeMultiplier => ({ volumeMultiplier, maximumCapital: null, status: 'UNAVAILABLE', reason, scenarios })),
     economicCapacity: { status: 'UNAVAILABLE', maximumCapital: null, reason: 'required_economic_inputs_missing', missingInputs: [
       'matched_out_of_sample_returns_at_capital_scales', 'venue_calibrated_market_impact', 'matched_spread_fees_and_execution_timing', 'validated_exit_execution'] } };
@@ -51,6 +52,7 @@ export async function assessCapacity(binary: string, catalog: string, simulation
 export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConfig, context: Context, assumptions: Assumptions): Promise<CapacityReport> {
   const { id, currency, status } = fact.view;
   if (status !== 'COMPUTED') return unavailableCapacity(currency, 'portfolio_not_computed', id, assumptions);
+  if (fact.policy.kind === 'catalog-ensemble') return unavailableCapacity(currency, 'catalog_ensemble_capacity_unavailable', id, assumptions);
   const simulation = fact.native?.simulationRequest;
   if (!simulation || typeof simulation !== 'object' || Array.isArray(simulation)) return unavailableCapacity(currency, 'portfolio_simulation_request_missing', id, assumptions);
   const catalog = fact.native?.catalog;
@@ -69,6 +71,7 @@ export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConf
 export async function factorCapacity(host: ResearchHost, config: ServiceConfig, id: string, context: Context, assumptions?: Assumptions): Promise<CapacityReport> {
   const { view, study, specification } = await readFactor(host, id);
   const capital = assumptions ?? specification?.capital;
+  if (study.input?.data.catalog_ensemble_request !== undefined) return unavailableCapacity(view.currency ?? '', 'catalog_ensemble_capacity_unavailable', id, capital);
   if (!view.combinable) return unavailableCapacity(view.currency ?? '', view.reason ?? 'independent_evidence_missing', id, capital);
   if (!capital) return unavailableCapacity(view.currency ?? '', 'explicit_capacity_policy_missing', id);
   const selected = study.trials.find(trial => trial.taskId === view.trialId)!;

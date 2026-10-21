@@ -4,12 +4,12 @@ import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-dur
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { DatasetView, JsonObject, ModelRef, ObservationMode, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
 
-import type { ThresholdPolicy } from '../../research/src/strategy.ts';
-export type { ThresholdPolicy } from '../../research/src/strategy.ts';
+import type { StrategyPolicy } from '../../research/src/strategy.ts';
+export type { StrategyPolicy, ThresholdPolicy } from '../../research/src/strategy.ts';
 export interface DatasetConfig extends DatasetView {
   data: JsonObject;
   policy?: JsonObject;
-  strategy?: ThresholdPolicy;
+  strategy?: StrategyPolicy;
 }
 export interface ConnectionConfig {
   id: string; name: string; mode: ObservationMode;
@@ -49,7 +49,9 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
   // Native catalogs are trusted immutable server-side inputs, not browser paths.
   for (const dataset of config.datasets) {
     for (const data of [dataset.data, dataset.data.sealed]) {
-      if (data && typeof data === 'object' && !Array.isArray(data) && typeof data.catalog === 'string') data.catalog = resolve(base, data.catalog);
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        for (const key of ['catalog', 'catalog_partitions']) if (typeof data[key] === 'string') data[key] = resolve(base, data[key]);
+      }
     }
   }
   return config;

@@ -42,7 +42,7 @@ pub fn assert_daily_returns_unavailable(result: &NativeSimulationResultV1) {
         .iter()
         .filter(|statistic| statistic.native_key.starts_with("Calendar "))
         .collect::<Vec<_>>();
-    assert_eq!(calendar.len(), 9);
+    assert_eq!(calendar.len(), 11);
     assert_eq!(
         calendar
             .iter()

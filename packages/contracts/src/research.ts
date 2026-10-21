@@ -49,12 +49,15 @@ export function researchCriterion(spec: ResearchSpecification | undefined, statu
 }
 
 export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject) {
-  const request = data.request as JsonObject | undefined;
-  const forecast = request?.forecast as JsonObject | undefined;
+  const ensemble = data.catalog_ensemble_request !== undefined;
+  const catalog = ensemble || data.catalog_scan_request !== undefined;
+  const request = (ensemble ? data.catalog_ensemble_request : catalog ? data.catalog_scan_request : data.request) as JsonObject | undefined;
+  const forecast = (catalog ? request : request?.forecast) as JsonObject | undefined;
   const parameters = forecast?.parameters as JsonObject | undefined;
-  const selection = forecast?.selection as JsonObject | undefined;
+  const selection = (catalog ? request : forecast?.selection) as JsonObject | undefined;
+  if (catalog && !ensemble) strategy = undefined;
   return { instruments: Array.isArray(strategy?.instrumentIds) ? strategy.instrumentIds as string[] : typeof strategy?.instrumentId === 'string' ? [strategy.instrumentId] : [],
-    inputFamily: 'price-volume', horizon: typeof parameters?.label_horizon_observations === 'number' ? parameters.label_horizon_observations : null,
-    partitions: request ? { trainEndNs: request.train_end_ns ?? null, validationEndNs: request.validation_end_ns ?? null, endNs: selection?.event_end_ns ?? null, historical: strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' } : null,
-    strategy: strategy ? { kind: strategy.kind ?? null, threshold: strategy.threshold ?? null, investedWeight: strategy.investedWeight ?? null, targetTtlNs: strategy.targetTtlNs ?? null, simulationSettings: strategy.simulationSettings ?? null } : null };
+    inputFamily: ensemble ? 'feature-abi-v2: completed_bar_close, previous_observed_bar_return, source_taker_quantity_imbalance, source_taker_cash_imbalance, source_trade_count, source_fee_per_cash, source_within_minute_price_response' : 'price-volume', horizon: typeof parameters?.label_horizon_observations === 'number' ? parameters.label_horizon_observations : null,
+    partitions: request ? { trainEndNs: (ensemble ? data : request).train_end_ns ?? null, validationEndNs: (ensemble ? data : request).validation_end_ns ?? null, endNs: selection?.event_end_ns ?? null, historical: strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' } : null,
+    strategy: strategy ? { kind: strategy.kind ?? null, threshold: (ensemble ? request?.score_threshold : strategy.threshold) ?? null, investedWeight: (ensemble ? request?.gross_exposure : strategy.investedWeight) ?? null, targetTtlNs: (ensemble ? request?.target_ttl_ns : strategy.targetTtlNs) ?? null, simulationSettings: (ensemble ? request?.settings : strategy.simulationSettings) ?? null } : null };
 }
