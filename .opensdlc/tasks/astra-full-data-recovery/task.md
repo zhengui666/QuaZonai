@@ -1,5 +1,7 @@
 # Restore catalog-wide Astra research
 
+The catalog ensemble recovery merged through PR226 into dev `65b2dae2`. Its four push-CI jobs passed, but official dev publication39657262803 failed before image publication: the installation check still expected two Settings fields after Fast added nullable `serviceTier`. The existing settings regression reproduced the same assertion once its response included the actual third field. The focused repair resets and checks all three settings fields and reuses that expected value in the published-install path; service behavior is unchanged. Local release3/3, package2/2 and workflow4/4 checks pass. A new final-Head review, CI, dev merge and matching publication remain required. The installed application, data and stopped study1173 were not changed, and successor research has not started.
+
 <a id="task"></a>
 ## Task
 
