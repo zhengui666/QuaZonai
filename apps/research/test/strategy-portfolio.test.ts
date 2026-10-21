@@ -240,7 +240,7 @@ test('universe resolution selects exactly one unchanged original fee reserve for
   const settings = { base_currency: 'pUSD', starting_capital: '3000.000000000000000001', fee_rates: fees, leverage: '1',
     fee_model: { adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', parameters: { original_source: 'unchanged' } },
     latency_model: { parameters: { insert_latency_ns: '1000000' } }, exposure_tolerance: '0.000001' };
-  const original = { name: 'original', kind: 'factor-threshold', instrumentId: 'BASE.SIM', instrumentIds: ['BASE.SIM', 'ALT-YES.SIM'], simulationSettings: settings };
+  const original = { name: 'original', kind: 'factor-threshold', instrumentId: 'BASE.SIM', instrumentIds: ['BASE.SIM', 'ALT-YES.SIM'], threshold: 0, investedWeight: '1', targetTtlNs: '5', simulationSettings: settings };
   const before = structuredClone(original);
   const proposals: JsonObject[] = [{}, { instrumentId: 'BASE.SIM' }, { instrumentId: 'ALT-YES.SIM' }];
   for (const proposal of proposals) {

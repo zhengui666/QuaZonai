@@ -6,6 +6,7 @@ import { Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import research from '../../research/plugins/research.ts';
 import factorWasm from '../../research/plugins/factor-wasm.ts';
+import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 import strategyPortfolio from '../../research/plugins/strategy-portfolio.ts';
 import { Application } from '../src/facts.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup, wat } from './support.ts';
@@ -20,6 +21,12 @@ test('new structured native studies reject missing bindings and unsupported runn
     state.options.extensions.push(factorWasm, strategyPortfolio);
     const extensions = [...state.options.extensions];
     const dataset = state.options.config.datasets[0]!;
+    const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, string> = {}) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+    dataset.strategy!.simulationSettings = { schema_version: 1, base_currency: 'USD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60000,
+      fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
+      fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel'),
+      latency_model: modelRef('NAUTILUS_STATIC_LATENCY', 'nautilus_execution::models::latency::StaticLatencyModel', { base_latency_ns: '0', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' }),
+      fee_rates: [{ instrument_id: 'TEST.SIM', maker: '0', taker: '0' }] };
     const original = structuredClone(dataset.data);
     const request = { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
       selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100 },
@@ -27,13 +34,15 @@ test('new structured native studies reject missing bindings and unsupported runn
     const ensemble = researchSpecification({ ...specification, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 8, stop: 'budget-or-selection' } });
     const scan = { schema_version: 1, event_start_ns: '0', train_end_ns: '10', validation_end_ns: '20', event_end_ns: '30', decision_cutoff_ns: '30', maximum_rows: 100, parameters: request.forecast.parameters };
     const failures: { data: typeof original; spec: typeof specification; error: string; missingStrategy?: boolean; missingPortfolio?: boolean; missingFactor?: boolean }[] = [
-      { data: { catalog: original.catalog! }, spec: ensemble, error: 'native_request_required' },
+      { data: { catalog: original.catalog!, storageMode: 'price-volume' }, spec: ensemble, error: 'native_request_required' },
       { data: { catalog: original.catalog!, catalog_scan_request: scan }, spec: ensemble, error: 'catalog_factor_only_account_binding_required' },
       { data: { catalog: original.catalog!, request, catalog_scan_request: scan }, spec: specification, error: 'ambiguous_factor_request' },
       { data: { request }, spec: specification, error: 'catalog_required' },
       { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_policy_required', missingStrategy: true },
       { data: { catalog: original.catalog!, request }, spec: ensemble, error: 'strategy_adapter_not_configured', missingPortfolio: true },
       { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true },
+      { data: { catalog: original.catalog!, request }, spec: specification, error: 'selected_factor_evaluator_unavailable', missingFactor: true, missingPortfolio: true },
+      { data: { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } }, spec: specification, error: 'registered_final_evaluator_required' },
     ];
     for (const [index, failure] of failures.entries()) {
       dataset.data = failure.data;
@@ -50,6 +59,21 @@ test('new structured native studies reject missing bindings and unsupported runn
       assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
       dataset.strategy = strategy;
     }
+    const strategy = dataset.strategy!;
+    dataset.data = { catalog: original.catalog!, request };
+    for (const [index, invalid] of [{ kind: 'factor-threshold' }, { ...strategy, simulationSettings: { base_currency: 'USD' } }].entries()) {
+      dataset.strategy = invalid as typeof strategy; state.options.extensions = extensions;
+      await state.restart();
+      const requestId = `invalid-native-policy-${index}`;
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+        payload: { requestId, goal: ensemble.question, specification: ensemble, model: state.model, datasetId: dataset.id, maxTrials: 100000 } });
+      assert.equal(response.statusCode, 400, response.body);
+      assert.equal(response.json().error, index ? 'strategy_starting_capital_required' : 'strategy_instrument_invalid');
+      assert.equal(state.faux.state.callCount, 0);
+      assert.equal((await state.service.research.harness.snapshot(Application, context))!.researchRequests[`request:${requestId}`], undefined);
+      assert.equal((await state.service.research.harness.snapshot(Requests, context))?.requests[`request:${requestId}`], undefined);
+    }
+    dataset.strategy = strategy;
     state.options.extensions = extensions;
     dataset.data = { catalog: original.catalog!, request };
     await state.restart();
@@ -59,6 +83,15 @@ test('new structured native studies reject missing bindings and unsupported runn
     assert.equal(accepted.statusCode, 202, accepted.body);
     await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
     assert.equal(state.faux.state.callCount, 1);
+    state.options.extensions.push(heldoutWasm);
+    dataset.data = { catalog: original.catalog!, request, sealed: { catalog: original.catalog!, request } };
+    await state.restart();
+    state.faux.setResponses([fauxAssistantMessage('Registered finalizer available; no computation claimed.')]);
+    const sealed = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers,
+      payload: { requestId: 'valid-native-sealed-factor', goal: specification.question, specification, model: state.model, datasetId: dataset.id, maxTrials: 1 } });
+    assert.equal(sealed.statusCode, 202, sealed.body);
+    await (await state.service.research.harness.submission(sealed.json().submissionId, context))!.wait(context);
+    assert.equal(state.faux.state.callCount, 2);
   } finally { await state.cleanup(); }
 });
 
@@ -66,7 +99,7 @@ test('custom structured data remains opaque and an admitted request replays afte
   const state = await setup();
   try {
     const datasets = state.options.config.datasets;
-    datasets[0]!.data = { customSource: 'protocol-only' };
+    datasets[0]!.data = { catalog: 'custom protocol catalog', request: { protocol: 'opaque' }, catalog_scan_request: { protocol: 'opaque' } };
     await state.restart();
     state.faux.setResponses([fauxAssistantMessage('Custom research input retained; no native result claimed.')]);
     const body = { requestId: 'opaque-original', goal: specification.question, specification, model: state.model, datasetId: 'controlled', maxTrials: 1 };

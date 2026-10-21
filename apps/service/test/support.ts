@@ -36,7 +36,7 @@ export async function setup(owner = true, staticDir?: string, storage?: Storage)
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${fixture.pathname}' "$@"\n`, { mode: 0o700 });
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const model = { provider: faux.provider.id, modelId: faux.getModel().id };
-  const request = { schema_version: 1, train_end_ns: '1', validation_end_ns: '2', forecast: { schema_version: 1, selection: {}, parameters: {} } };
+  const request = { protocol_version: 1, train_end_ns: '1', validation_end_ns: '2', forecast: { schema_version: 1, selection: {}, parameters: {} } };
   const config = configDefaults({ dataDir: directory, staticDir, research: { database: join(directory, 'original-research.sqlite') }, jobBinary: binary,
     datasets: [{ id: 'controlled', name: 'Protocol dataset', assetClass: 'TEST', currency: 'USD', source: 'test only', start: null, end: null, ready: true,
       data: { catalog, request }, strategy: { name: 'fixed-before-trials', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0, investedWeight: '0.250000000000000001', targetTtlNs: '60000000000', simulationSettings: { base_currency: 'USD' } } }] });
