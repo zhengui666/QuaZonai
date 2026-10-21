@@ -85,8 +85,8 @@ export interface PortfolioEvaluationInput {
   binary: string;
 }
 
-export async function evaluatePortfolio(input: PortfolioEvaluationInput, context: Context) {
-  if (input.policy.kind === 'catalog-ensemble') return evaluateCatalogEnsemble(input, context);
+export async function evaluatePortfolio(input: PortfolioEvaluationInput, context: Context, scope?: JsonObject) {
+  if (input.policy.kind === 'catalog-ensemble') return evaluateCatalogEnsemble(input, context, scope);
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(input.data);
   const currency = input.policy.simulationSettings.base_currency;
@@ -116,7 +116,7 @@ export async function evaluatePortfolio(input: PortfolioEvaluationInput, context
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context: Context) {
+async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context: Context, scope?: JsonObject) {
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   if (typeof input.data.catalog_partitions !== 'string' || !input.data.catalog_partitions.trim()) throw new Error('catalog_partitions_required');
   if (input.data.catalog_ensemble_request === undefined) throw new Error('catalog_ensemble_request_required');
@@ -129,9 +129,12 @@ async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context:
   if (metered && template.length !== input.members.length) throw new Error('catalog_ensemble_member_count_mismatch');
   const nativeRequest = { ...request, members: input.members.map((member, index) => ({ weight: member.weight,
     ...(metered && template[index]!.total_fuel !== undefined && template[index]!.total_fuel !== null ? { total_fuel: template[index]!.total_fuel! } : {}) })) };
+  if (!Array.isArray(scope?.barTypes) || !scope.barTypes.length || !scope.barTypes.every(type => typeof type === 'string')) throw new Error('catalog_scope_required');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-catalog-ensemble-'));
   try {
-    const args = ['--catalog', input.data.catalog, '--partitions', input.data.catalog_partitions];
+    const scopePath = join(directory, 'scope.json');
+    await writeFile(scopePath, jsonChunks(scope.barTypes));
+    const args = ['--catalog', input.data.catalog, '--partitions', input.data.catalog_partitions, '--scope', scopePath];
     for (const [index, member] of input.members.entries()) {
       const path = join(directory, `model-${index}.wasm`);
       await writeFile(path, compileWasm(member.model, 'catalog-ensemble.wat', 'replay-catalog-ensemble'));
@@ -140,19 +143,21 @@ async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context:
     const result = await executeNative(input.binary, 'replay-catalog-ensemble', nativeRequest, args, directory, context);
     if (result.source !== request.source || result.revision !== request.revision) throw new Error('native_catalog_source_mismatch');
     const simulation = object(result.simulation, 'native_simulation');
-    const summary: JsonObject = { schema_version: 1, request, partitions: [], portfolio: {
+    const summary: JsonObject = { schema_version: 1, request: nativeRequest, registered_request: request,
+      ...(input.data.catalog_scope ? { catalog_scope: input.data.catalog_scope } : {}), partitions: [], portfolio: {
       partition: input.partition, strategy_kind: 'catalog-ensemble', native_version: simulation.native_version ?? null,
       ...(input.policy.evidenceMode ? { evidenceMode: input.policy.evidenceMode } : {}),
       source: result.source!, revision: result.revision!, observed_markets: result.observed_markets ?? null,
+      catalog_series: result.catalog_series ?? null,
       bars: result.bars ?? null, source_records: result.source_records ?? null, consumed_fuel: result.consumed_fuel ?? null,
       assumptions: result.assumptions ?? [], statistics: simulation.statistics ?? [], summary: simulation.summary ?? {},
       iterations: simulation.iterations ?? null, events: simulation.events ?? null, orders: simulation.orders ?? null,
       positions: simulation.positions ?? null, consumed_target_points: simulation.consumed_target_points ?? null,
       returns_kind: simulation.returns_kind ?? null, returns_status: simulation.returns_status ?? null, returns_reason: simulation.returns_reason ?? null,
       ...(input.partition === 'HELDOUT' && Array.isArray(simulation.returns) ? { daily_returns: simulation.returns } : {}),
-      provenance: { command: 'replay-catalog-ensemble', account: 'ONE_NATIVE_SHARED_ACCOUNT', selection: request } } };
+      provenance: { command: 'replay-catalog-ensemble', account: 'ONE_NATIVE_SHARED_ACCOUNT', selection: nativeRequest } } };
     const evidence: JsonObject = { catalog: input.data.catalog, catalog_partitions: input.data.catalog_partitions,
-      request, policy: JSON.parse(JSON.stringify(input.policy)), members: input.members.map(member => ({ ...member })), nativeRequest, simulation, result };
+      request: nativeRequest, registered_request: request, policy: JSON.parse(JSON.stringify(input.policy)), members: input.members.map(member => ({ ...member })), nativeRequest, simulation, result };
     return { summary, evidence };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }

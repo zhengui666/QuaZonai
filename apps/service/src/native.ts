@@ -25,7 +25,7 @@ export async function nativeJob(binary: string, command: string, input: JsonObje
 }
 
 /** Original ensembles → native exact member blending → optional study blending → ONE shared account. */
-export async function computePortfolio(input: PortfolioTaskInput, context: Context) {
+export async function computePortfolio(input: PortfolioTaskInput, context: Context, scope?: JsonObject) {
   const evidence = Array.isArray(input.evidence) ? input.evidence : [input.evidence];
   const weights = input.weights ?? (evidence.length === 1 ? ['1'] : null);
   if (!weights || !evidence.length || weights.length !== evidence.length) throw new Problem('portfolio_weights_required');
@@ -40,7 +40,8 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const proposal = object(object(source.selected, 'selected_trial').proposal, 'selected_proposal');
       const originalPolicy = object(object(studyInput.policy, 'study_policy').strategy, 'strategy_policy');
       if (canonical(originalPolicy) !== canonical(json(input.policy))) throw new Problem('strategy_policy_mismatch');
-      const request = object(object(object(source.final, 'independent_final').result, 'independent_result').request, 'independent_request');
+      const final = object(object(source.final, 'independent_final').result, 'independent_result');
+      const request = object(final.registered_request ?? final.request, 'independent_request');
       if (replayCatalog(data, request) !== input.catalog) throw new Problem('strategy_request_binding_mismatch');
       const binding = data.sealed ? object(data.sealed, 'heldout_data') : data;
       const admitted = normalizedRequest(binding);
@@ -49,7 +50,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const policy = resolvePortfolioPolicy(proposal, originalPolicy);
       const result = await evaluatePortfolio({ data: { ...binding, catalog: input.catalog,
         catalog_ensemble_request: { ...admitted, settings: { ...settings, starting_capital: input.capital } } },
-        members: strategyMembers(proposal), policy, partition: 'HELDOUT', binary: input.binary }, context);
+        members: strategyMembers(proposal), policy, partition: 'HELDOUT', binary: input.binary }, context, scope);
       const simulation = object(result.evidence.simulation, 'native_simulation');
       const native: JsonObject = { ...result.evidence, summary: result.summary };
       return { native, target: null, curve: nativeCurve(simulation, input.currency), metrics: simulationMetrics(simulation),

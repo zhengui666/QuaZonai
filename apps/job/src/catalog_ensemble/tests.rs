@@ -191,7 +191,15 @@ fn native_stream_retains_one_account_and_fees_while_dynamic_market_changes() {
     let directory = tempfile::tempdir().unwrap();
     let (catalog, manifest) = fixture(directory.path());
     let request = request();
-    let result = super::replay(&catalog, &manifest, &request, &[model(), model()]).unwrap();
+    let result = super::replay(
+        &catalog,
+        &manifest,
+        &request,
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.catalog_series, count(2));
     assert_eq!(result.observed_markets, count(2));
     assert_eq!(result.bars, count(8));
     assert_eq!(result.source_records, count(8));
@@ -232,7 +240,14 @@ fn long_modeled_lag_and_pending_order_keep_original_pool_across_source_partition
         parameters.base_latency_ns = count(MINUTE + 1);
         parameters.insert_latency_ns = count(MINUTE + 1);
     }
-    let result = super::replay(&catalog, &manifest, &request, &[model(), model()]).unwrap();
+    let result = super::replay(
+        &catalog,
+        &manifest,
+        &request,
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .unwrap();
     assert_eq!(result.bars, count(8));
     assert_eq!(result.simulation.consumed_target_points, count(1));
     let report = result.simulation.recorded_fee_replay.unwrap();
@@ -253,7 +268,14 @@ fn modeled_observations_after_decision_cutoff_never_reach_member_models() {
     let mut request = request();
     request.modeled_lag_ns = count(2 * MINUTE);
     request.decision_cutoff_ns = count(4 * MINUTE + 1);
-    let result = super::replay(&catalog, &manifest, &request, &[model(), model()]).unwrap();
+    let result = super::replay(
+        &catalog,
+        &manifest,
+        &request,
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .unwrap();
     assert_eq!(result.bars, count(4));
     assert_eq!(result.source_records, count(8));
     assert_eq!(result.simulation.consumed_target_points, count(1));
@@ -271,10 +293,126 @@ fn compact_account_preserves_existing_snapshot_and_tolerance_constraints() {
             &directory.path().join("not-opened.json"),
             &request,
             &[model(), model()],
+            &[],
         )
         .unwrap_err();
         assert!(error
             .to_string()
             .contains("CATALOG_ENSEMBLE_CONDITIONAL_ACCOUNT"));
     }
+}
+
+fn omit_source_market(root: &Path, part: usize) {
+    let input = root.join(format!("part-{part}"));
+    fs::remove_file(input.join("200.POLYMARKET.json")).unwrap();
+    let archive = root.join(format!("part-{part}.tar.zst"));
+    assert!(Command::new("tar")
+        .arg("--zstd")
+        .arg("-cf")
+        .arg(archive)
+        .arg("-C")
+        .arg(input)
+        .arg(".")
+        .status()
+        .unwrap()
+        .success());
+    let manifest = root.join("original-cost-preparation.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    value["parts"][part]["records"] = json!(2);
+    value["parts"][part]["bars"] = json!(2);
+    fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+#[test]
+fn entire_catalog_market_missing_from_self_consistent_source_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let (catalog, manifest) = fixture(directory.path());
+    omit_source_market(directory.path(), 0);
+    omit_source_market(directory.path(), 1);
+    let error = super::replay(
+        &catalog,
+        &manifest,
+        &request(),
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .err()
+    .expect("an omitted market was accepted");
+    assert!(error
+        .to_string()
+        .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE"));
+}
+
+#[test]
+fn one_market_missing_only_one_source_period_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let (catalog, manifest) = fixture(directory.path());
+    omit_source_market(directory.path(), 1);
+    let error = super::replay(
+        &catalog,
+        &manifest,
+        &request(),
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .err()
+    .expect("a missing market period was accepted");
+    assert!(error
+        .to_string()
+        .contains("CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE"));
+}
+
+#[test]
+fn complete_source_scope_counts_boundary_groups_and_ignores_outside_window_series() {
+    let directory = tempfile::tempdir().unwrap();
+    let (catalog, manifest) = fixture(directory.path());
+    let native =
+        ParquetDataCatalog::from_uri(catalog.to_str().unwrap(), None, None, None, None).unwrap();
+    let kind = BarType::from_str("300.POLYMARKET-1-MINUTE-LAST-EXTERNAL").unwrap();
+    let price = Price::from("0.500000");
+    native
+        .write_to_parquet(
+            &[Bar::new_checked(
+                kind,
+                price,
+                price,
+                price,
+                price,
+                Quantity::from("1.000000"),
+                (6 * MINUTE).into(),
+                (6 * MINUTE).into(),
+            )
+            .unwrap()],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let mut request = request();
+    request.event_end_ns = count(3 * MINUTE);
+    request.decision_cutoff_ns = count(3 * MINUTE);
+    let result = super::replay(
+        &catalog,
+        &manifest,
+        &request,
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.catalog_series, count(3));
+    assert_eq!(result.observed_markets, count(2));
+    assert_eq!(result.bars, count(4));
+}
+
+#[test]
+fn caller_scope_cannot_shorten_the_actual_catalog() {
+    let directory = tempfile::tempdir().unwrap();
+    let (catalog, manifest) = fixture(directory.path());
+    let mut scope = crate::factors::catalog_factor_scope(&catalog).unwrap();
+    scope.pop();
+    let error = super::replay(&catalog, &manifest, &request(), &[model(), model()], &scope)
+        .err()
+        .expect("a shortened scope was accepted");
+    assert!(error.to_string().contains("CATALOG_ENSEMBLE_SCOPE_CHANGED"));
 }

@@ -98,6 +98,9 @@ enum Operation {
         catalog: PathBuf,
         #[arg(long)]
         partitions: PathBuf,
+        /// Original complete machine-private BAR scope, never a source-derived shortlist.
+        #[arg(long)]
+        scope: PathBuf,
         #[arg(long, required = true)]
         model: Vec<PathBuf>,
     },
@@ -277,8 +280,10 @@ fn run(operation: Operation) -> Result<()> {
         Operation::ReplayCatalogEnsemble {
             catalog,
             partitions,
+            scope,
             model,
         } => {
+            let scope: Vec<String> = serde_json::from_reader(fs::File::open(scope)?)?;
             let models = model
                 .iter()
                 .map(|path| model_bytes(path))
@@ -288,6 +293,7 @@ fn run(operation: Operation) -> Result<()> {
                 &partitions,
                 &input()?,
                 &models,
+                &scope,
             )?)
         }
         Operation::EvaluateExperiment {

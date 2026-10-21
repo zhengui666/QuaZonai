@@ -8,7 +8,7 @@ import type { ResearchInput as NativeResearchInput } from '../../research/src/do
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import { isRecoveryRequestId } from '../../research/src/recovery.ts';
-import { exactWeights, maxDbCounter, replayCatalog, resolvePortfolioPolicy, strategyMembers, thresholdPolicy, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
+import { exactWeights, maxDbCounter, replayCatalog, resolvePortfolioPolicy, strategyMembers, thresholdPolicy, validateCatalogEnsembleRequest, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
 import { iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
@@ -111,7 +111,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           if (object(validated.policy.strategy, 'strategy_policy').kind !== 'catalog-ensemble') throw new Problem('catalog_ensemble_strategy_required');
           if (!registry.task('qz.strategy-portfolio.evaluate') || !registry.task('qz.catalog.scope')) throw new Problem('strategy_adapter_not_configured');
         }
-        let finalRequest = normalizedRequest(validated.data);
+        let finalRequest = catalogEnsemble ? validateCatalogEnsembleRequest(validated.data) : normalizedRequest(validated.data);
         if (!catalogEnsemble) factorRequest(finalRequest, validated.data.catalog_scan_request !== undefined);
         if (catalogEnsemble || validated.data.sealed !== undefined) {
           const sealed = object(validated.data.sealed, 'heldout_data');
@@ -120,7 +120,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
             text(sealed.catalog_partitions, 'heldout_catalog_partitions');
             if (sealed.catalog_ensemble_request === undefined) throw new Problem('heldout_catalog_ensemble_request_required');
           }
-          finalRequest = normalizedRequest(sealed);
+          finalRequest = catalogEnsemble ? validateCatalogEnsembleRequest(sealed) : normalizedRequest(sealed);
+          if (catalogEnsemble && BigInt(counter(sealed.validation_end_ns, 'validation_end')) >= BigInt(counter(finalRequest.event_end_ns, 'event_end'))) throw new Problem('catalog_ensemble_clock_invalid');
           if (!catalogEnsemble) factorRequest(finalRequest, sealed.catalog_scan_request !== undefined);
           const clip = validated.specification.search.scope === 'ensemble';
           if (canonical(iterationRequest(validated.data, clip)) !== canonical(iterationRequest(sealed, clip))) throw new Problem('heldout_criteria_mismatch');

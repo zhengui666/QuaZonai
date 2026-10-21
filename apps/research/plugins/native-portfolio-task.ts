@@ -6,12 +6,14 @@ import type { PortfolioEvaluationInput } from './native-portfolio.ts';
 import { object } from '../src/trials.ts';
 import { NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
+import { readCatalogScope } from './native-catalog-scope.ts';
 
 export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { phase: 'compute' }, JsonObject>({
   name: 'qz.strategy-portfolio.evaluate', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     try {
-      const result = await evaluatePortfolio(task.input, context);
+      const scope = task.input.policy.kind === 'catalog-ensemble' ? await readCatalogScope(runtime, object(task.input.data.catalog_scope, 'catalog_scope'), context) : undefined;
+      const result = await evaluatePortfolio(task.input, context, scope);
       const native = await retainNativeEvidence(result.evidence, async (index, data) => {
         await runtime.commit(async (tx) => {
           (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${index}`, null)).data = data;

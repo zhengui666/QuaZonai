@@ -64,8 +64,9 @@ test('research detail exposes original catalog final daily returns and assumptio
       catalog_ensemble_request: { schema_version: 1, event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30', evaluation_start_ns: '10', source: 'TEST_ONLY', revision: 'protocol',
         modeled_lag_ns: '0', score_threshold: 0, members: members.map(member => ({ weight: member.weight })), gross_exposure: '1', target_ttl_ns: '5', settings: { base_currency: 'pUSD', starting_capital: '3000' } } };
     const input = { data, members, policy: { name: 'TEST_ONLY', kind: 'catalog-ensemble' as const }, binary };
-    const validation = await evaluatePortfolio({ ...input, partition: 'VALIDATION' }, context);
-    const final = await evaluatePortfolio({ ...input, partition: 'HELDOUT' }, context);
+    const scope = { barTypes: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] };
+    const validation = await evaluatePortfolio({ ...input, partition: 'VALIDATION' }, context, scope);
+    const final = await evaluatePortfolio({ ...input, partition: 'HELDOUT' }, context, scope);
     const validationPortfolio = object(validation.summary.portfolio);
     assert.equal('daily_returns' in validationPortfolio, false);
     assert.deepEqual(object(final.summary.portfolio).daily_returns, dailyReturns);
@@ -83,6 +84,12 @@ test('research detail exposes original catalog final daily returns and assumptio
     assert.equal('dailyReturns' in response.json().trialRecords[0], false);
     assert.equal(response.body.includes('OWNER_ONLY_ACCOUNT'), false);
     assert.equal(response.body.includes('987654.321'), false);
+    await state.service.research.harness.commit(async tx => {
+      delete object((await tx.doc(Study, receipt.conversationId)).final!.result).registered_request;
+    }, context);
+    const historical = (await get()).json();
+    assert.equal('executionRequest' in historical.final, false);
+    assert.deepEqual(historical.final.registeredRequest, final.summary.request);
     state.service.research.registry.install(research);
     const trialId = response.json().trialRecords[0].id;
     state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_trial', { trialId }), { stopReason: 'toolUse' })]);
@@ -175,6 +182,8 @@ test('historical native codes and WAT failures keep specific safe public causes'
     for (const [diagnostic, code, category] of [
       ['QZ_NATIVE_JOB_MEMORY_LIMIT\nprivate /private/test-only/model.wasm token=synthetic-secret', 'QZ_NATIVE_JOB_MEMORY_LIMIT', 'resource'],
       ['QZ_NATIVE_JOB_FAILED\nFORECAST_INSUFFICIENT_WARMUP: /private/test-only/catalog', 'FORECAST_INSUFFICIENT_WARMUP', 'data'],
+      ['QZ_NATIVE_JOB_FAILED\nCATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE: /private/test-only/archive', 'CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE', 'data'],
+      ['QZ_NATIVE_JOB_FAILED\nCATALOG_ENSEMBLE_SCOPE_CHANGED: /private/test-only/scope', 'CATALOG_ENSEMBLE_SCOPE_CHANGED', 'data'],
       ['parseWat failed:\nfactor.wat:1:2: error: unexpected token\n(module private-source-marker)', 'wasm_compile_failed', 'model'],
       ['custom_evaluator_failed', 'custom_evaluator_failed', 'unknown'],
       ['strategy_market_not_allowed', 'strategy_market_not_allowed', 'request'],

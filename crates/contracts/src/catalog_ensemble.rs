@@ -43,6 +43,8 @@ pub struct NativeCatalogEnsembleResultV1 {
     pub schema_version: SchemaV1,
     pub source: String,
     pub revision: String,
+    /// Count of the complete captured catalog scope, including unobserved series.
+    pub catalog_series: DbCounter,
     pub observed_markets: DbCounter,
     pub bars: DbCounter,
     pub source_records: DbCounter,

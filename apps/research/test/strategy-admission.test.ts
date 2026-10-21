@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { maxDbCounter, thresholdPolicy, thresholdTargets, validateNativeSimulationSettings } from '../src/strategy.ts';
+import { maxDbCounter, thresholdPolicy, thresholdTargets, validateCatalogEnsembleRequest, validateNativeSimulationSettings } from '../src/strategy.ts';
 
 const settings: JsonObject = { schema_version: 1, base_currency: 'pUSD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
   exposure_tolerance: '0.000001', snapshot_interval_ms: 1000,
@@ -144,4 +144,60 @@ test('native admission rejects unknown native fields and requires original fees 
   const before = structuredClone(complete);
   assert.equal(validateNativeSimulationSettings(complete, ['A.SIM', 'B.SIM']), complete);
   assert.deepEqual(complete, before);
+});
+
+const catalogRequest: JsonObject = { schema_version: 1, event_start_ns: '0', evaluation_start_ns: '10', event_end_ns: '30', decision_cutoff_ns: '30',
+  source: 'TimeSeventeen/Polymarket-v2', revision: 'original-source-revision', modeled_lag_ns: '0', score_threshold: 0,
+  members: [{ weight: '0.5' }, { weight: '0.5' }], gross_exposure: '0.9', target_ttl_ns: '5', settings: { ...settings, fee_rates: [],
+    fee_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.63.0', parameters: {} },
+    fill_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.63.0', parameters: (settings.fill_model as JsonObject).parameters! } } };
+const catalogData: JsonObject = { train_end_ns: '10', validation_end_ns: '20', catalog_ensemble_request: catalogRequest };
+
+test('catalog admission reuses native settings while scanning an uncapped source universe with dynamic member weights', () => {
+  const before = structuredClone(catalogData);
+  assert.deepEqual(validateCatalogEnsembleRequest(catalogData), catalogRequest);
+  assert.deepEqual(catalogData, before);
+  assert.throws(() => validateNativeSimulationSettings(catalogRequest.settings), /strategy_instrument_fee_missing/);
+  const template: JsonObject = { ...catalogRequest, revision: 'another-original-revision', members: [{ weight: '1' }, { weight: '2', total_fuel: '10000' }, { weight: '3', total_fuel: null }], score_max_age_ns: null };
+  const normalized = validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: template });
+  assert.deepEqual(normalized.members, [{ weight: '1' }, { weight: '2', total_fuel: '10000' }, { weight: '3' }]);
+  assert.equal(Object.hasOwn(normalized, 'score_max_age_ns'), false);
+  assert.equal(template.score_max_age_ns, null);
+});
+
+test('catalog admission rejects malformed native source, models, exposure and member bindings before paid execution', () => {
+  for (const field of Object.keys(catalogRequest)) {
+    const incomplete = { ...catalogRequest }; delete incomplete[field];
+    assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: incomplete }), /required|invalid|boundaries/);
+  }
+  const invalidRequests: JsonObject[] = [{ schema_version: 2 }, { source: 'TEST_ONLY' }, { revision: ' ' }, { source_extra: true },
+    { gross_exposure: '0' }, { gross_exposure: '1.000000000000000001' }, { target_ttl_ns: '0' }, { score_threshold: Infinity },
+    { score_max_age_ns: '0' }, { members: [{ weight: '1' }] }, { members: [{ weight: '0' }, { weight: '1' }] },
+    { members: [{ weight: '1', total_fuel: '0' }, { weight: '1' }] }, { members: [{ weight: '1', unexpected: '1' }, { weight: '1' }] }];
+  for (const change of invalidRequests) {
+    assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, ...change } }), /catalog_ensemble_/);
+  }
+  const originalSettings = catalogRequest.settings as JsonObject;
+  const invalidSettings: JsonObject[] = [{ fill_model: settings.fill_model }, { fee_model: settings.fee_model, fill_model: settings.fill_model },
+    { account_kind: 'CASH' }, { base_currency: 'USD' }, { leverage: '2' }, { starting_capital: '0' },
+    { multi_currency_spot_cash: {} }, { unsupported: true }];
+  for (const change of invalidSettings) {
+    assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, settings: { ...originalSettings, ...change } } }), /catalog_ensemble_|strategy_|multi_currency_/);
+  }
+  for (const field of Object.keys(originalSettings)) {
+    const incomplete = { ...originalSettings }; delete incomplete[field];
+    assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, settings: incomplete } }), /strategy_/);
+  }
+});
+
+test('catalog admission validates raw and clipped partition clocks, scalar limits and the native settlement TTL', () => {
+  const invalid: JsonObject[] = [{ evaluation_start_ns: '0' }, { evaluation_start_ns: '30' }, { decision_cutoff_ns: '29' },
+    { modeled_lag_ns: '11' }, { target_ttl_ns: '2' }, { target_ttl_ns: maxDbCounter.toString() },
+    { modeled_lag_ns: (maxDbCounter + 1n).toString() }, { score_max_age_ns: (maxDbCounter + 1n).toString() }, { evaluation_start_ns: '01' },
+    { members: [{ weight: '1', total_fuel: (maxDbCounter + 1n).toString() }, { weight: '1' }] }];
+  for (const change of invalid) {
+    assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, ...change } }), /catalog_ensemble_|strategy_simulation_/);
+  }
+  const delayed = { ...catalogRequest, modeled_lag_ns: '10', score_max_age_ns: '1', target_ttl_ns: '3' };
+  assert.deepEqual(validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: delayed }), delayed);
 });

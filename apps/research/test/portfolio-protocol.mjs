@@ -17,11 +17,13 @@ if (command !== 'replay-catalog-ensemble' && args.includes('--model')) {
   const module = new WebAssembly.Module(readFileSync(args[args.indexOf('--model') + 1]));
   prediction = new WebAssembly.Instance(module).exports.predict(1, 2, 3, 4, 5, 6, 7, 8);
 }
-appendFileSync(log, JSON.stringify({ command, args, input, binding, prediction }) + '\n');
+const scope = args.includes('--scope') ? JSON.parse(readFileSync(args[args.indexOf('--scope') + 1], 'utf8')) : null;
+appendFileSync(log, JSON.stringify({ command, args, input, binding, prediction, scope }) + '\n');
 const selection = input.forecast?.selection ?? input.selection ?? input;
 if (binding) assert.ok(BigInt(selection.event_end_ns) <= BigInt(binding.end), 'requested suffix is absent from this original catalog');
 if (command === 'replay-catalog-ensemble') {
   assert.ok(args.includes('--partitions'));
+  assert.deepEqual(scope, ['BASE.SIM-1-MINUTE-LAST-EXTERNAL', 'TEST.SIM-1-MINUTE-LAST-EXTERNAL']);
   assert.equal(input.settings.starting_capital, '3000');
   assert.equal(input.event_start_ns, '0');
   assert.ok(['10', '20'].includes(input.evaluation_start_ns));
@@ -34,7 +36,7 @@ if (command === 'replay-catalog-ensemble') {
   }
   const final = input.evaluation_start_ns === '20';
   console.log(JSON.stringify({ schema_version: 1, source: input.source, revision: input.revision,
-    observed_markets: '2', bars: '18', source_records: '50', consumed_fuel: input.members.map(() => null),
+    catalog_series: '2', observed_markets: '2', bars: '18', source_records: '50', consumed_fuel: input.members.map(() => null),
     assumptions: ['TEST_ONLY_CONDITIONAL_PROXY_NOT_VERIFIED_PIT'],
     simulation: { native_version: 'TEST_ONLY', iterations: '1', events: '18', orders: '0', positions: '0', consumed_target_points: '4',
       statistics: [{ native_key: 'Sharpe Ratio (252 days)', value: binding?.account_replay_protocol ? 1 : null, reason_code: 'TEST_ONLY_NO_SCIENCE' }],

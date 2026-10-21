@@ -178,6 +178,8 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
     transcript => {
       const result = textResult(transcript, 'strategy_portfolio_evaluate'); const portfolio = object(result.portfolio, 'portfolio');
       assert.equal(portfolio.partition, 'VALIDATION'); assert.equal(portfolio.strategy_kind, 'catalog-ensemble');
+      assert.deepEqual(object(result.request, 'executed_request').members, proposed.map(member => ({ weight: member.weight })));
+      assert.equal('registered_request' in result, false); assert.equal('catalog_scope' in result, false);
       assert.deepEqual(portfolio.assumptions, ['TEST_ONLY_CONDITIONAL_PROXY_NOT_VERIFIED_PIT']);
       assert.equal(JSON.stringify(result).includes('CATALOG_RAW_ACCOUNT_OWNER_ONLY'), false);
       assert.equal(JSON.stringify(result).includes('12345.6789'), false);
@@ -196,12 +198,22 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
     assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
     const calls = (await state.calls()).filter(call => call.command === 'replay-catalog-ensemble');
     assert.equal(calls.length, 2);
+    for (const [index, result] of [study.trials[1]!.result, study.final!.result].entries()) {
+      const summary = object(result, 'summary');
+      assert.deepEqual(summary.request, calls[index]!.input);
+      assert.deepEqual(object(object(summary.portfolio, 'portfolio').provenance, 'provenance').selection, calls[index]!.input);
+      assert.deepEqual(object(summary.registered_request, 'registered_request').members, originalRequest.members);
+    }
     assert.deepEqual(calls.map(call => object(call.input, 'native').evaluation_start_ns), ['10', '20']);
     assert.deepEqual(calls.map(call => object(call.input, 'native').event_end_ns), ['20', '30']);
     assert.deepEqual(calls.map(call => object(call.input, 'native').event_start_ns), ['0', '0']);
+    assert.ok(calls.every(call => Array.isArray(call.scope) && call.scope.length === 2));
     assert.deepEqual(calls.map(call => object(call.input, 'native').members), [proposed.map(member => ({ weight: member.weight })), proposed.map(member => ({ weight: member.weight }))]);
     assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows.map(window => window.kind), ['ITERATION', 'FINAL']);
-    assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('HELDOUT_OWNER_ONLY_PROTOCOL'), false);
+    const modelEntries = JSON.stringify((await host.view(receipt.conversationId)).entries);
+    assert.equal(modelEntries.includes('HELDOUT_OWNER_ONLY_PROTOCOL'), false);
+    assert.equal(modelEntries.includes('BASE.SIM-1-MINUTE-LAST-EXTERNAL'), false);
+    assert.equal(modelEntries.includes('scope.json'), false);
     state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'A new conversation cannot reset final exposure.', members: proposed }),
       tool('research_finish', { reason: 'The original window is already exposed.' })]);
     const exposed = await host.start('compact-catalog-exposed-again', input);

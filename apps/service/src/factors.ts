@@ -28,9 +28,10 @@ export function factorViews(id: number, study: { input: import('../../research/s
       const result = independentlyComputed ? study.final?.result : trial.result;
       const raw = result ? object(result) : null;
       const components = Array.isArray(raw?.components) ? raw.components : [];
-      const diagnostic = components.length ? object(object(components[memberIndex]).summary) : raw;
+      const summary = components[memberIndex] ? object(components[memberIndex]).summary : null;
+      const diagnostic = summary ? object(summary) : members.length === 1 ? raw : null;
       const measured = metrics(diagnostic ?? undefined);
-      const criterion = researchCriterion(input.specification, independentlyComputed ? 'COMPUTED' : String(trial.status), metrics(raw ?? undefined));
+      const criterion = members.length > 1 && !diagnostic ? null : researchCriterion(input.specification, independentlyComputed ? 'COMPUTED' : String(trial.status), measured);
       const heldout = diagnostic && Array.isArray(diagnostic.partitions) ? diagnostic.partitions.map(item => object(item)).find(item => item.partition === 'HELDOUT') : null;
       const included = heldout ? object(object(heldout.metric).counts).included : null;
       const evidence = independentlyComputed ? strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' ? 'historical' : 'independent' : members.length > 1 ? 'component_only' : trial.status === 'COMPUTED' ? 'validation_only' : 'unavailable';

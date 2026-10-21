@@ -61,6 +61,7 @@ test('new structured native studies reject missing bindings and unsupported runn
       dataset.strategy = strategy;
     }
     const strategy = dataset.strategy!;
+    assert.ok(strategy.kind !== 'catalog-ensemble');
     dataset.data = { catalog: original.catalog!, request };
     const invalidPolicies = [
       { policy: { kind: 'factor-threshold' }, error: 'strategy_instrument_invalid' },

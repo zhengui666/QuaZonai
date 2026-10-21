@@ -4,8 +4,8 @@ import { object } from './trials.ts';
 import { canonical } from './documents.ts';
 import { normalizedRequest } from '../plugins/native-wasm.ts';
 
-const nativeSimulationSchema = JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8'))
-  .components.schemas.NativeSimulationSettingsV1;
+const nativeSchemas = JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8')).components.schemas;
+const nativeSimulationSchema = nativeSchemas.NativeSimulationSettingsV1;
 const nativeCurrencies = new Set<string>(nativeSimulationSchema.properties.base_currency.oneOf.flatMap((choice: { enum: string[] }) => choice.enum));
 export const maxDbCounter = 9223372036854775807n;
 
@@ -78,7 +78,7 @@ export function thresholdPolicy(value: JsonObject): ThresholdPolicy {
 }
 
 /** Static bindings from domain::portfolio::simulation_settings/models, before paid work. */
-export function validateNativeSimulationSettings(value: unknown, instrumentIds: readonly string[] = []): JsonObject {
+export function validateNativeSimulationSettings(value: unknown, instrumentIds: readonly string[] = [], mode: 'explicit' | 'catalog-ensemble' = 'explicit'): JsonObject {
   const settings = object(value as JsonObject, 'strategy_simulation_settings');
   if (Object.keys(settings).some(key => !Object.hasOwn(nativeSimulationSchema.properties, key))) throw new Error('strategy_simulation_settings_invalid');
   if (settings.multi_currency_spot_cash !== undefined && settings.multi_currency_spot_cash !== null) throw new Error('multi_currency_spot_cash_not_integrated');
@@ -118,10 +118,7 @@ export function validateNativeSimulationSettings(value: unknown, instrumentIds: 
         if (probability < 0n || probability > one) throw new Error('strategy_simulation_model_parameters_invalid');
       }
     }
-    for (const key of clocks) {
-      const value = counter(parameters[key], `strategy_simulation_${key}`);
-      if (!/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) > maxDbCounter) throw new Error('strategy_simulation_counter_invalid');
-    }
+    for (const key of clocks) nativeCounter(parameters[key], `strategy_simulation_${key}`);
     if (field === 'latency_model' && BigInt(parameters.base_latency_ns as string) + BigInt(parameters.insert_latency_ns as string) === 0n) throw new Error('strategy_simulation_model_parameters_invalid');
     const fields = field === 'fill_model' ? [...clocks, 'prob_fill_on_limit', 'prob_slippage'] : clocks;
     if (Object.keys(parameters).some(key => !fields.includes(key))) throw new Error('strategy_simulation_model_parameters_invalid');
@@ -129,7 +126,7 @@ export function validateNativeSimulationSettings(value: unknown, instrumentIds: 
   const fee = object(settings.fee_model, 'strategy_simulation_model'); const fill = object(settings.fill_model, 'strategy_simulation_model');
   if (fill.adapter_kind === 'POLYMARKET_V2_RECORDED_LIQUIDITY' && fee.adapter_kind !== 'POLYMARKET_V2_RECORDED_FEES'
     || fee.adapter_kind === 'POLYMARKET_V2_RECORDED_FEES' && (settings.account_kind !== 'MARGIN' || leverage !== one || settings.base_currency !== 'pUSD')) throw new Error('strategy_simulation_model_invalid');
-  if (!Array.isArray(settings.fee_rates) || !settings.fee_rates.length) throw new Error('strategy_instrument_fee_missing');
+  if (!Array.isArray(settings.fee_rates) || !settings.fee_rates.length && mode !== 'catalog-ensemble') throw new Error('strategy_instrument_fee_missing');
   const instruments = new Set<string>();
   for (const value of settings.fee_rates) {
     const rate = object(value, 'strategy_instrument_fee');
@@ -142,6 +139,52 @@ export function validateNativeSimulationSettings(value: unknown, instrumentIds: 
   }
   instrumentFeeRates(settings.fee_rates, instrumentIds);
   return settings;
+}
+
+/** Native request rules shared by both registered catalog bindings before model admission. */
+export function validateCatalogEnsembleRequest(data: JsonObject): JsonObject {
+  if (data.catalog_ensemble_request === undefined) throw new Error('catalog_ensemble_request_required');
+  const request = normalizedRequest(data);
+  if (Object.keys(request).some(key => !Object.hasOwn(nativeSchemas.NativeCatalogEnsembleRequestV1.properties, key))
+    || request.schema_version !== 1 || request.source !== 'TimeSeventeen/Polymarket-v2'
+    || typeof request.revision !== 'string' || !request.revision.trim()) throw new Error('catalog_ensemble_request_invalid');
+  const start = nativeCounter(request.event_start_ns, 'catalog_ensemble_start');
+  const evaluation = nativeCounter(request.evaluation_start_ns, 'catalog_ensemble_evaluation');
+  const end = nativeCounter(request.event_end_ns, 'catalog_ensemble_end');
+  const cutoff = nativeCounter(request.decision_cutoff_ns, 'catalog_ensemble_cutoff');
+  const lag = nativeCounter(request.modeled_lag_ns, 'catalog_ensemble_lag');
+  const ttl = nativeCounter(request.target_ttl_ns, 'catalog_ensemble_ttl');
+  const train = nativeCounter(data.train_end_ns, 'catalog_ensemble_train'); const validation = nativeCounter(data.validation_end_ns, 'catalog_ensemble_validation');
+  if (!(start < evaluation && evaluation < end && end <= cutoff) || evaluation + lag > cutoff
+    || train + lag > validation || end > validation && validation + lag > cutoff
+    || cutoff + ttl > maxDbCounter) throw new Error('catalog_ensemble_clock_invalid');
+  if (request.score_max_age_ns !== undefined && nativeCounter(request.score_max_age_ns, 'catalog_ensemble_score_age') === 0n) throw new Error('catalog_ensemble_score_age_invalid');
+  if (typeof request.score_threshold !== 'number' || !Number.isFinite(request.score_threshold)) throw new Error('catalog_ensemble_threshold_invalid');
+  if (!Array.isArray(request.members) || request.members.length < 2) throw new Error('catalog_ensemble_members_required');
+  let weight = 0;
+  for (const value of request.members) {
+    const member = object(value, 'catalog_ensemble_member');
+    if (Object.keys(member).some(key => !Object.hasOwn(nativeSchemas.NativeCatalogEnsembleMemberV1.properties, key))) throw new Error('catalog_ensemble_member_invalid');
+    if (nativeDecimal(member.weight) <= 0n) throw new Error('catalog_ensemble_member_weight_invalid');
+    weight += Number(member.weight);
+    if (member.total_fuel !== undefined && nativeCounter(member.total_fuel, 'catalog_ensemble_fuel') === 0n) throw new Error('catalog_ensemble_fuel_invalid');
+  }
+  if (!Number.isFinite(weight) || weight <= 0) throw new Error('catalog_ensemble_member_weight_invalid');
+  const gross = nativeDecimal(request.gross_exposure);
+  if (gross <= 0n || gross > 10n ** 18n || ttl === 0n) throw new Error('catalog_ensemble_exposure_invalid');
+  const settings = validateNativeSimulationSettings(request.settings, [], 'catalog-ensemble');
+  if (object(settings.fee_model, 'fee_model').adapter_kind !== 'POLYMARKET_V2_RECORDED_FEES'
+    || object(settings.fill_model, 'fill_model').adapter_kind !== 'POLYMARKET_V2_RECORDED_LIQUIDITY') throw new Error('catalog_ensemble_conditional_account_required');
+  const latency = object(object(settings.latency_model, 'latency_model').parameters, 'latency_parameters');
+  const insert = nativeCounter(latency.base_latency_ns, 'base_latency') + nativeCounter(latency.insert_latency_ns, 'insert_latency');
+  if (ttl <= 2n * insert) throw new Error('catalog_ensemble_target_expires_before_insert');
+  return request;
+}
+
+function nativeCounter(value: unknown, name: string): bigint {
+  const text = counter(value, name);
+  if (!/^(0|[1-9][0-9]*)$/.test(text) || BigInt(text) > maxDbCounter) throw new Error('strategy_simulation_counter_invalid');
+  return BigInt(text);
 }
 
 function nativeDecimal(value: unknown): bigint {

@@ -48,9 +48,11 @@ export default defineExtension({
         const proposal = object(trial.proposal, 'proposal');
         if (!Array.isArray(proposal.members)) throw new Error('selected_portfolio_evaluator_unavailable');
         const members = strategyMembers(proposal);
+        const result = object(trial.result, 'trial_result');
+        const registeredRequest = input.data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
         if (canonical(proposal.request!) !== canonical(input.data.catalog_ensemble_request ?? input.data.request!) || canonical(proposal.strategy!) !== canonical(input.policy.strategy!)
-          || canonical(iterationRequest(data, true)) !== canonical(object(trial.result, 'trial_result').request!)
-          || canonical(iterationRequest(input.data, true)) !== canonical(object(trial.result, 'trial_result').request!)) throw new Error('heldout_criteria_mismatch');
+          || canonical(iterationRequest(data, true)) !== canonical(registeredRequest!)
+          || canonical(iterationRequest(input.data, true)) !== canonical(registeredRequest!)) throw new Error('heldout_criteria_mismatch');
         study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, status: 'STARTED', result: null, error: null };
         return { members, policy: resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy')), settled: study.final.status !== 'STARTED' };
       }, context);

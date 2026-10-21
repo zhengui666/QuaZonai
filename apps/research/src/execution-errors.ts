@@ -31,6 +31,8 @@ const reasons: Reason[] = [
   { codes: ['CATALOG_EMPTY_SELECTION'], category: 'data', message: '原数据目录在所选标的和时间范围内没有可用行情。', action: '核对目录准备结果、标的、时间范围和可得时间；不要以零值补齐缺失行情。' },
   { codes: ['CATALOG_INSTRUMENT_MISSING', 'CATALOG_INSTRUMENT_VERSION_MISMATCH', 'CATALOG_INSTRUMENT_CHANGED', 'CATALOG_EXTRA_INSTRUMENT'], category: 'data',
     message: '行情目录缺少匹配的原始合约定义，或定义与请求不一致。', action: '检查目录中的合约定义及历史版本；重新准备匹配的数据，不要猜测合约参数。' },
+  { codes: ['CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE', 'CATALOG_ENSEMBLE_SCOPE_CHANGED'], category: 'data',
+    message: '原始成交档案未覆盖完整登记目录，或目录范围已改变。', action: '核对原登记目录与成交档案覆盖；不能静默缩小市场范围。' },
   { codes: ['CATALOG_ROOT_INVALID', 'CATALOG_PARQUET_FOOTER_INVALID', 'CATALOG_NATIVE_TYPE_MISMATCH', 'CATALOG_SELECTION_INVALID', 'CATALOG_BAR_TYPE_INVALID',
     'CATALOG_UNREQUESTED_BAR_TYPE', 'CATALOG_TIME_INVALID', 'CATALOG_NONUNIQUE_OR_REVISED_BAR', 'CATALOG_VOLUME_UNDEFINED', 'CATALOG_PRICE_UNDEFINED',
     'CATALOG_OHLC_INVALID', 'CATALOG_PRICE_PRECISION_MISMATCH', 'CATALOG_PRICE_OUTSIDE_INSTRUMENT_BOUNDS', 'CATALOG_AMBIGUOUS_INSTRUMENT_UPDATE'], category: 'data',

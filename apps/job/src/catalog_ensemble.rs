@@ -36,7 +36,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::BufReader,
     path::{Path, PathBuf},
@@ -207,12 +207,135 @@ fn model_instrument(id: InstrumentId, bar: &Bar, at: u64) -> Result<InstrumentAn
     ))
 }
 
+fn bound_scope(root: &Path, scope: &[String]) -> Result<Vec<BarType>> {
+    let kinds = scope
+        .iter()
+        .map(|name| Ok(crate::catalog::bar_types(std::slice::from_ref(name))?[0]))
+        .collect::<Result<Vec<_>>>()?;
+    let mut directories = kinds
+        .iter()
+        .map(|kind| {
+            nautilus_persistence::backend::catalog::urisafe_instrument_id(&kind.to_string())
+        })
+        .collect::<HashSet<_>>();
+    ensure!(
+        !kinds.is_empty() && directories.len() == kinds.len(),
+        "CATALOG_ENSEMBLE_SCOPE_CHANGED"
+    );
+    for entry in fs::read_dir(root.join("data/bars"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            ensure!(
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| directories.remove(name)),
+                "CATALOG_ENSEMBLE_SCOPE_CHANGED"
+            );
+        }
+    }
+    ensure!(directories.is_empty(), "CATALOG_ENSEMBLE_SCOPE_CHANGED");
+    Ok(kinds)
+}
+
+/// Whole in-window row groups can be counted from official Parquet metadata.
+/// Decode only boundary/unknown groups when checking the independent scope.
+fn series_rows(
+    root: &Path,
+    kind: BarType,
+    start: u64,
+    end: u64,
+    retain_bars: bool,
+) -> Result<(u64, Vec<Bar>)> {
+    let name = kind.to_string();
+    let directory = root
+        .join("data/bars")
+        .join(nautilus_persistence::backend::catalog::urisafe_instrument_id(&name));
+    let mut files = fs::read_dir(directory)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    files.retain(|path| {
+        path.extension()
+            .is_some_and(|extension| extension == "parquet")
+    });
+    files.sort();
+    ensure!(!files.is_empty(), "CATALOG_ENSEMBLE_NATIVE_BARS_REQUIRED");
+    let mut rows = 0_u64;
+    let mut bars = Vec::new();
+    for path in files {
+        if retain_bars
+            && nautilus_persistence::backend::catalog::parse_filename_timestamps(
+                &path.to_string_lossy(),
+            )
+            .is_some_and(|(first, last)| last < start || first >= end)
+        {
+            continue;
+        }
+        let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)?;
+        let metadata = builder.schema().metadata().clone();
+        ensure!(
+            metadata.get("bar_type") == Some(&name),
+            "CATALOG_ENSEMBLE_BAR_IDENTITY"
+        );
+        let event_index = builder.schema().index_of("ts_event")?;
+        let mut groups = Vec::new();
+        for (index, group) in builder.metadata().row_groups().iter().enumerate() {
+            let stats = group
+                .columns()
+                .get(event_index)
+                .and_then(|column| column.statistics());
+            let bounds = match stats {
+                Some(Statistics::Int64(stats)) => stats
+                    .min_opt()
+                    .zip(stats.max_opt())
+                    .map(|(first, last)| (*first as u64, *last as u64)),
+                _ => None,
+            };
+            if let Some((first, last)) = bounds.filter(|(first, last)| first <= last) {
+                if last < start || first >= end {
+                    continue;
+                }
+                if !retain_bars
+                    && first >= start
+                    && last < end
+                    && stats.and_then(|stats| stats.null_count_opt()) == Some(0)
+                {
+                    rows += u64::try_from(group.num_rows())?;
+                    continue;
+                }
+            }
+            groups.push(index);
+        }
+        if groups.is_empty() {
+            continue;
+        }
+        for batch in builder
+            .with_row_groups(groups)
+            .with_batch_size(4096)
+            .build()?
+        {
+            for bar in Bar::decode_batch(&metadata, batch?)? {
+                ensure!(bar.bar_type == kind, "CATALOG_ENSEMBLE_BAR_IDENTITY");
+                let at = bar.ts_event.as_u64();
+                if at >= start && at < end {
+                    rows += 1;
+                    if retain_bars {
+                        bars.push(bar);
+                    }
+                }
+            }
+        }
+    }
+    Ok((rows, bars))
+}
+
 fn market(
     root: &Path,
     source: &RecordedTradeFeesV1,
     first: u64,
     last: u64,
     request: &NativeCatalogEnsembleRequestV1,
+    covered: &mut HashMap<BarType, u64>,
 ) -> Result<NativeMarketData> {
     let ids = source
         .records
@@ -223,68 +346,13 @@ fn market(
     let mut rows = 0;
     for id in ids {
         let kind = BarType::from_str(&format!("{id}-1-MINUTE-LAST-EXTERNAL"))?;
-        let directory = root
-            .join("data/bars")
-            .join(nautilus_persistence::backend::catalog::urisafe_instrument_id(&kind.to_string()));
-        let mut files = fs::read_dir(directory)?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        files.retain(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "parquet")
-        });
-        files.sort();
-        let mut bars = Vec::new();
-        for path in files {
-            if nautilus_persistence::backend::catalog::parse_filename_timestamps(
-                &path.to_string_lossy(),
-            )
-            .is_some_and(|(start, end)| end <= first || start > last)
-            {
-                continue;
-            }
-            let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path)?)?;
-            let metadata = builder.schema().metadata().clone();
-            let event_index = builder.schema().index_of("ts_event")?;
-            let groups = builder
-                .metadata()
-                .row_groups()
-                .iter()
-                .enumerate()
-                .filter_map(|(index, group)| {
-                    let intersects = match group
-                        .columns()
-                        .get(event_index)
-                        .and_then(|column| column.statistics())
-                    {
-                        Some(Statistics::Int64(stats)) => stats
-                            .min_opt()
-                            .zip(stats.max_opt())
-                            .is_none_or(|(start, end)| {
-                                (*end as u64) > first && (*start as u64) <= last
-                            }),
-                        _ => true,
-                    };
-                    intersects.then_some(index)
-                })
-                .collect::<Vec<_>>();
-            if groups.is_empty() {
-                continue;
-            }
-            for batch in builder
-                .with_row_groups(groups)
-                .with_batch_size(4096)
-                .build()?
-            {
-                for bar in Bar::decode_batch(&metadata, batch?)? {
-                    ensure!(bar.bar_type == kind, "CATALOG_ENSEMBLE_BAR_IDENTITY");
-                    let at = bar.ts_event.as_u64();
-                    if at > first && at <= last {
-                        bars.push(bar);
-                    }
-                }
-            }
-        }
+        let (_, mut bars) = series_rows(
+            root,
+            kind,
+            first.checked_add(1).context("CATALOG_ENSEMBLE_CLOCK")?,
+            last.checked_add(1).context("CATALOG_ENSEMBLE_CLOCK")?,
+            true,
+        )?;
         bars.sort_by_key(|bar| (bar.ts_init, bar.ts_event));
         for (index, bar) in bars.iter().enumerate() {
             crate::catalog::validate_price_bar(
@@ -292,6 +360,14 @@ fn market(
                 index.checked_sub(1).map(|previous| &bars[previous]),
             )?;
         }
+        *covered.entry(kind).or_default() += u64::try_from(
+            bars.iter()
+                .filter(|bar| {
+                    bar.ts_event.as_u64() >= request.event_start_ns.get()
+                        && bar.ts_event.as_u64() < request.event_end_ns.get()
+                })
+                .count(),
+        )?;
         let baseline = bars
             .first()
             .context("CATALOG_ENSEMBLE_NATIVE_BARS_REQUIRED")?;
@@ -308,11 +384,38 @@ fn market(
     Ok(NativeMarketData { series, rows })
 }
 
+fn complete_scope(
+    root: &Path,
+    scope: &[BarType],
+    request: &NativeCatalogEnsembleRequestV1,
+    mut covered: HashMap<BarType, u64>,
+) -> Result<()> {
+    for (index, &kind) in scope.iter().enumerate() {
+        if index > 0 && index % 10_000 == 0 {
+            eprintln!("catalog_ensemble: scope_series={index}/{}", scope.len());
+        }
+        let (expected, _) = series_rows(
+            root,
+            kind,
+            request.event_start_ns.get(),
+            request.event_end_ns.get(),
+            false,
+        )?;
+        ensure!(
+            covered.remove(&kind).unwrap_or(0) == expected,
+            "CATALOG_ENSEMBLE_SOURCE_SCOPE_INCOMPLETE"
+        );
+    }
+    ensure!(covered.is_empty(), "CATALOG_ENSEMBLE_SCOPE_CHANGED");
+    Ok(())
+}
+
 pub fn replay(
     root: &Path,
     manifest: &Path,
     request: &NativeCatalogEnsembleRequestV1,
     models: &[Vec<u8>],
+    scope: &[String],
 ) -> Result<NativeCatalogEnsembleResultV1> {
     ensure!(
         request.source == POLYMARKET_V2_SOURCE
@@ -364,6 +467,7 @@ pub fn replay(
     );
     let root = crate::catalog::catalog_root(root)?;
     crate::catalog::currencies::load(&root)?;
+    let scope = bound_scope(&root, scope)?;
     let bindings = models
         .iter()
         .zip(&request.members)
@@ -431,6 +535,7 @@ pub fn replay(
             crate::simulation::catalog_target_strategy(settings.clone(), gross)?;
         engine.add_strategy(strategy)?;
         let mut registered = BTreeSet::new();
+        let mut covered = HashMap::new();
         let mut previous_end = None;
         let mut records = 0_u64;
         let mut native_started = false;
@@ -466,7 +571,7 @@ pub fn replay(
                         && record.ts_event_ns.get() < last),
                 "CATALOG_ENSEMBLE_PARTITION_SOURCE_TIME"
             );
-            let market = market(&root, &source, first, last, request)?;
+            let market = market(&root, &source, first, last, request, &mut covered)?;
             ensure!(
                 u64::try_from(market.rows)? == part.bars,
                 "CATALOG_ENSEMBLE_PARTITION_BAR_COUNT"
@@ -709,6 +814,7 @@ pub fn replay(
                 cursor = end;
             }
         }
+        complete_scope(&root, &scope, request, covered)?;
         ensure!(native_started, "CATALOG_ENSEMBLE_EVALUATION_EMPTY");
         // Only pending native commands advance beyond the final observed frame.
         // Clock events provide no extra prices, quantities or fee observations.
@@ -743,6 +849,7 @@ pub fn replay(
             fees.as_ref().context("CATALOG_ENSEMBLE_SOURCE_REQUIRED")?,
         )?;
         Ok(NativeCatalogEnsembleResultV1 { schema_version: SchemaV1, source: request.source.clone(), revision: request.revision.clone(),
+            catalog_series: counter(u64::try_from(scope.len())?)?,
             observed_markets: counter(u64::try_from(policy.observed_markets())?)?, bars: counter(policy.observations())?, source_records: counter(records)?,
             consumed_fuel: policy.consumed_fuel().into_iter().map(|fuel| fuel.map(counter).transpose()).collect::<Result<_>>()?, simulation,
             assumptions: vec![
