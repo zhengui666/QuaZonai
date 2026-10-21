@@ -36,7 +36,7 @@ export function portfolio(value: unknown) { return value as PortfolioFact; }
 export function observation(value: unknown) { return value as ObservationFact; }
 export function settings(value: unknown): SettingsView {
   const stored = value as Partial<SettingsView> | null;
-  return { defaultModel: stored?.defaultModel ?? null, thinkingLevel: stored?.thinkingLevel ?? null };
+  return { defaultModel: stored?.defaultModel ?? null, thinkingLevel: stored?.thinkingLevel ?? null, serviceTier: stored?.serviceTier ?? null };
 }
 export class Problem extends Error {
   statusCode: number;

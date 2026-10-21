@@ -123,17 +123,20 @@ export function registerModels(app: FastifyInstance, host: ResearchHost, getSett
   app.get(`${API}/settings`, getSettings);
   app.patch(`${API}/settings`, async request => {
     const patch = object(request.body);
-    if (Object.keys(patch).some(key => !['defaultModel', 'thinkingLevel'].includes(key))) throw new Problem('settings_field_not_mutable');
+    if (Object.keys(patch).some(key => !['defaultModel', 'thinkingLevel', 'serviceTier'].includes(key))) throw new Problem('settings_field_not_mutable');
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const current = settings(facts.settings);
       const next = { ...current, ...patch } as SettingsView;
+      if (next.serviceTier !== null && !['default', 'priority'].includes(next.serviceTier)) throw new Problem('invalid_service_tier');
       if (next.defaultModel !== null) {
         const ref = object(next.defaultModel, 'model');
         if (Object.keys(ref).some(key => !['provider', 'modelId'].includes(key))) throw new Problem('model_invalid');
         const model = host.models.getModel(text(ref.provider, 'provider'), text(ref.modelId, 'model_id'));
-        if (!model || !(await host.availableModels(model.provider)).some(item => item.modelId === model.id)) throw new Problem('model_unavailable', 409);
+        const available = model && (await host.availableModels(model.provider)).find(item => item.modelId === model.id);
+        if (!model || !available) throw new Problem('model_unavailable', 409);
         if (next.thinkingLevel !== null && !getSupportedThinkingLevels(model).includes(next.thinkingLevel as ModelThinkingLevel)) throw new Problem('thinking_level_unsupported');
-      } else if (next.thinkingLevel !== null) throw new Problem('model_required');
+        if (next.serviceTier !== null && !available.serviceTiers.includes(next.serviceTier)) throw new Problem('service_tier_unsupported');
+      } else if (next.thinkingLevel !== null || next.serviceTier !== null) throw new Problem('model_required');
       facts.settings = { ...facts.settings, ...patch };
     }, BACKGROUND_CONTEXT);
     return getSettings();

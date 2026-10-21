@@ -80,9 +80,12 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       capturedDataset = captureDataset(configured);
       if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
+      if (submission.serviceTier !== undefined && !['default', 'priority'].includes(submission.serviceTier)) throw new Problem('invalid_service_tier');
       const preferences = await getSettings();
-      const thinkingLevel = submission.thinkingLevel ?? (preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId ? preferences.thinkingLevel : null);
-      input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), data: structuredClone(configured.data),
+      const preferredModel = preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId;
+      const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
+      const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
+      input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
         policy: { ...configured.policy, max_trials: submission.maxTrials, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
@@ -90,6 +93,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const selectedModel = available.find(item => item.modelId === model.modelId);
     if (!selectedModel) throw new Problem('model_unavailable', 409);
     if (input.thinkingLevel !== undefined && !selectedModel.thinkingLevels.includes(input.thinkingLevel)) throw new Problem('thinking_level_unsupported');
+    if (input.serviceTier !== undefined && !['default', 'priority'].includes(input.serviceTier)) throw new Problem('invalid_service_tier');
+    if (input.serviceTier !== undefined && !selectedModel.serviceTiers.includes(input.serviceTier)) throw new Problem('service_tier_unsupported');
     const policy = object(input.policy, 'policy');
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);

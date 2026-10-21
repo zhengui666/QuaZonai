@@ -5,7 +5,8 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type JsonObject = { [key: string]: Json };
 export interface ModelRef { provider: string; modelId: string }
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; effectiveThinkingLevel: ThinkingLevel }
+export type ServiceTier = 'default' | 'priority';
+export interface ModelView extends ModelRef { name: string; reasoning: boolean; thinkingLevels: ThinkingLevel[]; effectiveThinkingLevel: ThinkingLevel; serviceTiers: ServiceTier[] }
 export type ModelAuthType = 'api_key' | 'oauth';
 export interface ProviderView { id: string; name: string; configured: boolean; authTypes: ModelAuthType[]; login: { id: string; type: ModelAuthType } | null; error: string | null }
 export interface ModelCatalog { providers: ProviderView[]; models: ModelView[] }
@@ -30,9 +31,9 @@ export interface ResearchSpecification {
   search: { scope: 'single-factor' | 'ensemble'; maxMembers: number; stop: 'budget-or-selection' };
   capital?: CapitalAssumptions;
 }
-export interface ResearchInput { goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; data: JsonObject; policy: JsonObject }
+export interface ResearchInput { goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
 export type ResearchStart = { requestId: string; input: ResearchInput } | {
-  requestId: string; goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; datasetId: string; maxTrials: number;
+  requestId: string; goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
@@ -147,7 +148,7 @@ export interface ObservationView {
   provenance?: { clientId: string; accountId: string; sequence: string; nativeClockNs: string } | null;
 }
 export interface ConnectionView { id: string; name: string; mode: ObservationMode; connected: boolean }
-export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null }
+export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null }
 export interface WorkspaceView { name: string; connections: ConnectionView[] }
 export interface ExtensionView {
   name: string; version: string | null; enabled: boolean; kind: string; required?: boolean;
