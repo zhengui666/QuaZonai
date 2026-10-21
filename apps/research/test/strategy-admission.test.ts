@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { thresholdPolicy, thresholdTargets, validateNativeSimulationSettings } from '../src/strategy.ts';
+import { maxDbCounter, thresholdPolicy, thresholdTargets, validateNativeSimulationSettings } from '../src/strategy.ts';
 
 const settings: JsonObject = { schema_version: 1, base_currency: 'pUSD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
   exposure_tolerance: '0.000001', snapshot_interval_ms: 1000,
@@ -26,6 +26,8 @@ test('admission shares required threshold mapping validation with target constru
   assert.throws(() => thresholdPolicy({ ...policy, threshold: Infinity }), /strategy_threshold_invalid/);
   assert.throws(() => thresholdPolicy({ ...policy, investedWeight: '1.1' }), /strategy_weight_invalid/);
   assert.throws(() => thresholdPolicy({ ...policy, targetTtlNs: '0' }), /target_ttl_invalid/);
+  assert.throws(() => thresholdPolicy({ ...policy, targetTtlNs: (maxDbCounter + 1n).toString() }), /target_ttl_invalid/);
+  assert.equal(thresholdPolicy({ ...policy, targetTtlNs: maxDbCounter.toString() }).targetTtlNs, maxDbCounter.toString());
   assert.deepEqual(policy, before);
 });
 
@@ -127,4 +129,19 @@ test('native admission rejects static account and model bounds using exact decim
   const exact = { ...settings, starting_capital: '+.000000000000000001', leverage: '+0001.00000000000000000000', exposure_tolerance: '.0010000000000000000000' };
   assert.equal(validateNativeSimulationSettings(exact), exact);
   assert.throws(() => validateNativeSimulationSettings({ ...settings, starting_capital: '0'.repeat(64) + '1' }), /strategy_simulation_decimal_required/);
+});
+
+test('native admission rejects unknown native fields and requires original fees for every admitted instrument', () => {
+  assert.throws(() => validateNativeSimulationSettings({ ...settings, exposure_tollerance: '0.000001' }), /strategy_simulation_settings_invalid/);
+  for (const field of ['fee_model', 'fill_model', 'latency_model']) {
+    assert.throws(() => validateNativeSimulationSettings({ ...settings, [field]: { ...(settings[field] as JsonObject), unexpected: 'x' } }), /strategy_simulation_model_invalid/);
+  }
+  assert.throws(() => validateNativeSimulationSettings({ ...settings, fee_rates: [{ ...(settings.fee_rates as JsonObject[])[0], takeer: '0' }] }), /strategy_instrument_fee_invalid/);
+  assert.equal(validateNativeSimulationSettings(settings, ['A.SIM']), settings);
+  assert.throws(() => validateNativeSimulationSettings(settings, ['B.SIM']), /strategy_instrument_fee_missing/);
+  assert.throws(() => validateNativeSimulationSettings(settings, ['A.SIM', 'B.SIM']), /strategy_instrument_fee_missing/);
+  const complete = { ...settings, fee_rates: [...settings.fee_rates as JsonObject[], { instrument_id: 'B.SIM', maker: '0', taker: '0' }] };
+  const before = structuredClone(complete);
+  assert.equal(validateNativeSimulationSettings(complete, ['A.SIM', 'B.SIM']), complete);
+  assert.deepEqual(complete, before);
 });

@@ -8,7 +8,7 @@ import type { ResearchInput as NativeResearchInput } from '../../research/src/do
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { researchInput } from '../../research/src/input.ts';
 import { isRecoveryRequestId } from '../../research/src/recovery.ts';
-import { exactWeights, replayCatalog, resolvePortfolioPolicy, strategyMembers, thresholdPolicy, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
+import { exactWeights, maxDbCounter, replayCatalog, resolvePortfolioPolicy, strategyMembers, thresholdPolicy, validateNativeSimulationSettings } from '../../research/src/strategy.ts';
 import { iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
@@ -16,6 +16,7 @@ import type { ObservationFact, PortfolioFact } from './facts.ts';
 import { factorViews } from './factors.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
+import { factorRequest } from './dataset-export.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
@@ -93,10 +94,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
     const registry = host.registry.snapshot();
-    const request = validated.data.request; const scan = validated.data.catalog_scan_request;
+    const versioned = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value) && 'schema_version' in value && value.schema_version === 1 ? value as Record<string, unknown> : null;
+    const request = versioned(validated.data.request); const forecast = versioned(request?.forecast);
+    const selection = versioned(forecast?.selection); const scan = versioned(validated.data.catalog_scan_request);
     const native = validated.data.catalog_ensemble_request !== undefined || validated.data.storageMode === 'price-volume'
-      || request !== null && typeof request === 'object' && !Array.isArray(request) && 'schema_version' in request && 'forecast' in request
-      || scan !== null && typeof scan === 'object' && !Array.isArray(scan) && 'schema_version' in scan && 'event_start_ns' in scan;
+      || request && forecast && selection && versioned(forecast.parameters) && Array.isArray(selection.bar_types)
+        && typeof request.train_end_ns === 'string' && typeof request.validation_end_ns === 'string'
+      || scan && versioned(scan.parameters) && ['event_start_ns', 'event_end_ns', 'train_end_ns', 'validation_end_ns', 'decision_cutoff_ns'].every(key => typeof scan[key] === 'string');
     if (validated.specification && native) {
       try {
         text(validated.data.catalog, 'catalog');
@@ -107,7 +111,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           if (object(validated.policy.strategy, 'strategy_policy').kind !== 'catalog-ensemble') throw new Problem('catalog_ensemble_strategy_required');
           if (!registry.task('qz.strategy-portfolio.evaluate') || !registry.task('qz.catalog.scope')) throw new Problem('strategy_adapter_not_configured');
         }
-        normalizedRequest(validated.data);
+        let finalRequest = normalizedRequest(validated.data);
+        if (!catalogEnsemble) factorRequest(finalRequest, validated.data.catalog_scan_request !== undefined);
         if (catalogEnsemble || validated.data.sealed !== undefined) {
           const sealed = object(validated.data.sealed, 'heldout_data');
           text(sealed.catalog, 'heldout_catalog');
@@ -115,7 +120,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
             text(sealed.catalog_partitions, 'heldout_catalog_partitions');
             if (sealed.catalog_ensemble_request === undefined) throw new Problem('heldout_catalog_ensemble_request_required');
           }
-          normalizedRequest(sealed);
+          finalRequest = normalizedRequest(sealed);
+          if (!catalogEnsemble) factorRequest(finalRequest, sealed.catalog_scan_request !== undefined);
           const clip = validated.specification.search.scope === 'ensemble';
           if (canonical(iterationRequest(validated.data, clip)) !== canonical(iterationRequest(sealed, clip))) throw new Problem('heldout_criteria_mismatch');
         }
@@ -125,7 +131,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           if (catalogEnsemble) resolvePortfolioPolicy({}, object(validated.policy.strategy, 'strategy_policy'));
           else {
             const strategy = thresholdPolicy(object(validated.policy.strategy, 'strategy_policy'));
-            validateNativeSimulationSettings(strategy.simulationSettings);
+            validateNativeSimulationSettings(strategy.simulationSettings, strategy.instrumentIds ?? [strategy.instrumentId!]);
+            const cutoff = object(object(finalRequest.forecast, 'forecast').selection, 'selection').decision_cutoff_ns;
+            if (BigInt(counter(cutoff, 'decision_cutoff')) + BigInt(strategy.targetTtlNs) > maxDbCounter) throw new Problem('target_ttl_invalid');
           }
         } else if (!registry.task('qz.factor.wasm') || !registry.extension('qz.factor-wasm') && !registry.extension('qz.factor-volume')) throw new Problem('selected_factor_evaluator_unavailable');
         else if (validated.data.sealed && !registry.tools().some(item => item.extension.name === 'qz.heldout-wasm' && item.tool.name === 'factor_finalize')) throw new Problem('registered_final_evaluator_required');
@@ -205,8 +213,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           const factor = factorViews(id, study).find(item => item.id === input.factors![index]!.factorId);
           if (!factor?.combinable) throw new Problem(factor?.reason ?? 'factor_not_found', 422);
         }
-        if (study.input.data.sealed) replayCatalog(study.input.data, object(result.request, 'independent_request'));
-        const current = canonical(catalogEnsemble ? object(result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!);
+        if (study.input.data.sealed) replayCatalog(study.input.data, object(result.registered_request ?? result.request, 'independent_request'));
+        const current = canonical(catalogEnsemble ? object(result.registered_request ?? result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!);
         if (selection !== undefined && selection !== current) throw new Problem('strategy_selection_mismatch', 422);
         selection = current;
         records.push(json({ researchId: id, ...(input.factors ? { factorId: input.factors[index]!.factorId } : {}), input: study.input, selected, final }));
@@ -215,7 +223,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }, context);
     const id = randomUUID();
     const originalData = object(object(evidence[0]!.input).data);
-    const originalRequest = object(object(object(evidence[0]!.final).result).request);
+    const originalResult = object(object(evidence[0]!.final).result);
+    const originalRequest = object(originalResult.registered_request ?? originalResult.request);
     const catalog = originalData.sealed ? replayCatalog(originalData, originalRequest) : text(originalData.catalog, 'catalog');
     const capture = catalogEnsemble ? catalog : join(config.dataDir, 'catalogs', id);
     if (!catalogEnsemble) {

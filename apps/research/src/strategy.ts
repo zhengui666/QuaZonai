@@ -4,8 +4,10 @@ import { object } from './trials.ts';
 import { canonical } from './documents.ts';
 import { normalizedRequest } from '../plugins/native-wasm.ts';
 
-const nativeCurrencies = new Set<string>(JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8'))
-  .components.schemas.NativeSimulationSettingsV1.properties.base_currency.oneOf.flatMap((choice: { enum: string[] }) => choice.enum));
+const nativeSimulationSchema = JSON.parse(await readFile(new URL('../../../contracts/generated/domain-v1.openapi.json', import.meta.url), 'utf8'))
+  .components.schemas.NativeSimulationSettingsV1;
+const nativeCurrencies = new Set<string>(nativeSimulationSchema.properties.base_currency.oneOf.flatMap((choice: { enum: string[] }) => choice.enum));
+export const maxDbCounter = 9223372036854775807n;
 
 /** Explicit score-to-target mapping, never an expected-return estimate. */
 export interface ThresholdPolicy {
@@ -76,8 +78,9 @@ export function thresholdPolicy(value: JsonObject): ThresholdPolicy {
 }
 
 /** Static bindings from domain::portfolio::simulation_settings/models, before paid work. */
-export function validateNativeSimulationSettings(value: unknown): JsonObject {
+export function validateNativeSimulationSettings(value: unknown, instrumentIds: readonly string[] = []): JsonObject {
   const settings = object(value as JsonObject, 'strategy_simulation_settings');
+  if (Object.keys(settings).some(key => !Object.hasOwn(nativeSimulationSchema.properties, key))) throw new Error('strategy_simulation_settings_invalid');
   if (settings.multi_currency_spot_cash !== undefined && settings.multi_currency_spot_cash !== null) throw new Error('multi_currency_spot_cash_not_integrated');
   if (typeof settings.base_currency !== 'string' || !settings.base_currency.trim()) throw new Error('strategy_currency_required');
   if (!nativeCurrencies.has(settings.base_currency)) throw new Error('strategy_currency_unsupported');
@@ -103,6 +106,9 @@ export function validateNativeSimulationSettings(value: unknown): JsonObject {
       || !(model.adapter_kind.startsWith('POLYMARKET_')
         ? model.native_version === '0.63.0'
         : model.upstream_class === classes[model.adapter_kind] && model.upstream_version === '0.63.0')) throw new Error('strategy_simulation_model_invalid');
+    const modelFields = model.adapter_kind.startsWith('POLYMARKET_') ? ['schema_version', 'adapter_kind', 'native_version', 'parameters']
+      : ['schema_version', 'adapter_kind', 'upstream_class', 'upstream_version', 'parameters'];
+    if (Object.keys(model).some(key => !modelFields.includes(key))) throw new Error('strategy_simulation_model_invalid');
     const parameters = object(model.parameters, 'strategy_simulation_model_parameters');
     const clocks = field === 'fill_model' ? ['random_seed'] : field === 'latency_model'
       ? ['base_latency_ns', 'insert_latency_ns', 'update_latency_ns', 'cancel_latency_ns'] : [];
@@ -114,7 +120,7 @@ export function validateNativeSimulationSettings(value: unknown): JsonObject {
     }
     for (const key of clocks) {
       const value = counter(parameters[key], `strategy_simulation_${key}`);
-      if (!/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) > 9223372036854775807n) throw new Error('strategy_simulation_counter_invalid');
+      if (!/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) > maxDbCounter) throw new Error('strategy_simulation_counter_invalid');
     }
     if (field === 'latency_model' && BigInt(parameters.base_latency_ns as string) + BigInt(parameters.insert_latency_ns as string) === 0n) throw new Error('strategy_simulation_model_parameters_invalid');
     const fields = field === 'fill_model' ? [...clocks, 'prob_fill_on_limit', 'prob_slippage'] : clocks;
@@ -127,12 +133,14 @@ export function validateNativeSimulationSettings(value: unknown): JsonObject {
   const instruments = new Set<string>();
   for (const value of settings.fee_rates) {
     const rate = object(value, 'strategy_instrument_fee');
+    if (Object.keys(rate).some(key => !['instrument_id', 'maker', 'taker'].includes(key))) throw new Error('strategy_instrument_fee_invalid');
     if (typeof rate.instrument_id !== 'string' || !rate.instrument_id.trim() || [...rate.instrument_id].length > 200
       || /[\u0000-\u001f\u007f-\u009f]/.test(rate.instrument_id)) throw new Error('strategy_instrument_invalid');
     if (instruments.has(rate.instrument_id)) throw new Error('strategy_instrument_fee_duplicate');
     instruments.add(rate.instrument_id);
     nativeDecimal(rate.maker); nativeDecimal(rate.taker);
   }
+  instrumentFeeRates(settings.fee_rates, instrumentIds);
   return settings;
 }
 
@@ -171,15 +179,20 @@ export function resolvePortfolioPolicy(proposal: JsonObject, original: JsonObjec
 
 function selectedSettings(original: JsonObject, ids: string[]): JsonObject {
   const settings = JSON.parse(JSON.stringify(original)) as JsonObject;
-  if (!Array.isArray(settings.fee_rates)) throw new Error('strategy_instrument_fee_missing');
-  const rates = settings.fee_rates;
+  const rates = instrumentFeeRates(settings.fee_rates, ids);
+  settings.fee_rates = rates.filter((rate) => ids.includes(String(object(rate, 'fee_rate').instrument_id)));
+  return settings;
+}
+
+function instrumentFeeRates(value: unknown, ids: readonly string[]): JsonObject[string][] {
+  if (!Array.isArray(value)) throw new Error('strategy_instrument_fee_missing');
+  const rates = value as JsonObject[string][];
   for (const id of ids) {
     const matched = rates.filter((rate) => rate !== null && typeof rate === 'object' && !Array.isArray(rate) && rate.instrument_id === id);
     if (!matched.length) throw new Error('strategy_instrument_fee_missing');
     if (matched.length !== 1) throw new Error('strategy_instrument_fee_duplicate');
   }
-  settings.fee_rates = rates.filter((rate) => ids.includes(String(object(rate, 'fee_rate').instrument_id)));
-  return settings;
+  return rates;
 }
 
 function marketAllocations(value: unknown, universe: string[]): MarketAllocation[] {
@@ -216,7 +229,7 @@ function thresholdParameters(policy: ThresholdPolicy): { units: bigint; ttl: big
   if (fraction.length > 18) throw new Error('decimal_precision_unsupported');
   const units = BigInt(whole + fraction.padEnd(18, '0'));
   if (units <= 0n || units > 10n ** 18n) throw new Error('strategy_weight_invalid');
-  const ttl = BigInt(counter(policy.targetTtlNs, 'target_ttl')); if (ttl <= 0n) throw new Error('target_ttl_invalid');
+  const ttl = BigInt(counter(policy.targetTtlNs, 'target_ttl')); if (ttl <= 0n || ttl > maxDbCounter) throw new Error('target_ttl_invalid');
   const settings = object(policy.simulationSettings, 'strategy_simulation_settings');
   if (typeof settings.base_currency !== 'string' || !settings.base_currency.trim()) throw new Error('strategy_currency_required');
   return { units, ttl };
