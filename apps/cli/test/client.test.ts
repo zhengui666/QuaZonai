@@ -79,7 +79,7 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
   });
   const config = await configuration(api.origin);
   const file = join(config.directory, 'original.json');
-  const bytes = '{\n "requestId":"original", "input":{"goal":"Finite original goal", "model":{"provider":"faux","modelId":"x"},"data":{"clock":"9223372036854775807"},"policy":{"max_trials":2}}\n}\n';
+  const bytes = '{\n "requestId":"original", "input":{"goal":"Finite original goal", "model":{"provider":"openai","modelId":"gpt-6.1-sol"},"thinkingLevel":"max","serviceTier":"priority","data":{"clock":"9223372036854775807"},"policy":{"max_trials":2}}\n}\n';
   await writeFile(file, bytes);
   try {
     const output: unknown[] = [];

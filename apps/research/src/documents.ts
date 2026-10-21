@@ -7,6 +7,7 @@ export type ResearchInput = JsonObject & {
   specification?: import('../../../packages/contracts/src/index.ts').ResearchSpecification;
   model: { provider: string; modelId: string };
   thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
+  serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier;
   data: JsonObject;
   policy: JsonObject;
 }
