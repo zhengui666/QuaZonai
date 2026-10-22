@@ -130,14 +130,14 @@ test('retiring an account controller cannot transfer ownership while residual-po
   } finally { await f.cleanup(); }
 });
 
-for (const existing of ['UNCERTAIN_RECEIPT', 'ACTIVE_AUTOMATIC', 'ACKNOWLEDGED_UNEXPIRED'] as const) {
+for (const existing of ['UNCERTAIN_RECEIPT', 'ACTIVE_AUTOMATIC', 'ACKNOWLEDGED_UNEXPIRED', 'ACKNOWLEDGED_EXPIRED_WITH_OLDER_ACCOUNT'] as const) {
   test(`a legacy ${existing} blocks new PM control across the physical-account alias`, { timeout: 30_000 }, async () => {
     const f = await fixture();
     try {
       await f.state.service.research.harness.commit(async tx => {
         const app = await tx.doc(Application); const prior = observation(app.observations[f.connections[0]!.id]);
         if (existing !== 'ACTIVE_AUTOMATIC') prior.view.receipt = { id: 'legacy:original-uncertain', status: existing === 'UNCERTAIN_RECEIPT' ? 'UNCERTAIN' : 'ACKNOWLEDGED', externalId: null,
-          expiresAt: nsTime((BigInt(nowNs()) + 60_000_000_000n).toString()), acknowledgedAt: null };
+          expiresAt: nsTime((BigInt(nowNs()) + (existing === 'ACKNOWLEDGED_EXPIRED_WITH_OLDER_ACCOUNT' ? -1_000_000_000n : 60_000_000_000n)).toString()), acknowledgedAt: null };
         else prior.view.automaticPolicy = { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 };
         app.observations[f.connections[0]!.id] = json(prior);
       }, context);
@@ -151,6 +151,67 @@ for (const existing of ['UNCERTAIN_RECEIPT', 'ACTIVE_AUTOMATIC', 'ACKNOWLEDGED_U
     } finally { await f.cleanup(); }
   });
 }
+
+test('legacy target expiry needs a later native flat account, whose original handover proof survives subsequent PM inventory', { timeout: 45_000 }, async () => {
+  const f = await fixture();
+  try {
+    const expiry = (BigInt(nowNs()) - 1_000_000_000n).toString();
+    await f.state.service.research.harness.commit(async tx => {
+      const app = await tx.doc(Application); const original = observation(app.observations[f.connections[0]!.id]);
+      original.view.receipt = { id: 'legacy:expired-received-target', status: 'ACKNOWLEDGED', externalId: 'legacy:original-external',
+        expiresAt: nsTime(expiry), acknowledgedAt: null };
+      app.observations[f.connections[0]!.id] = json(original);
+    }, context);
+    const original = observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connections[1]!.id]).snapshot!;
+    const flat = structuredClone(original); flat.positions = [];
+    const native = object(object(flat.nativeObservation).snapshot), funds = (amount: string) => ({ amount, currency: 'USDC' });
+    native.balances = [{ total: funds('1000'), free: funds('1000'), locked: funds('0') }]; native.total_equity = [funds('1000')];
+    // A later receipt/sequence is still the old economic account clock.
+    const lateSequence = (BigInt(String(original.sequence)) + 1n).toString();
+    flat.sequence = lateSequence; object(flat.nativeObservation).sequence = lateSequence;
+    f.accountSnapshot(flat);
+    const refresh = () => f.state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${encodeURIComponent(f.connections[1]!.id)}/refresh`, headers: f.state.headers });
+    assert.equal((await refresh()).statusCode, 200);
+    assert.equal((await f.start('controller:late-old-flat', 1)).statusCode, 409, 'A late HTTP receipt cannot re-date a pre-expiry native snapshot.');
+    await f.stopMonitors();
+    const closedAt = nowNs(), closedSequence = (BigInt(lateSequence) + 1n).toString();
+    flat.sequence = closedSequence; flat.nativeClockNs = closedAt;
+    const wrapped = object(flat.nativeObservation); wrapped.sequence = closedSequence; wrapped.observed_at_ns = closedAt;
+    native.ts_event = closedAt; native.ts_init = closedAt;
+    flat.openOrders = { schema_version: 1, account_id: native.account_id!, asof_ns: closedAt, available_ns: closedAt, count: 0 };
+    f.accountSnapshot(flat); assert.equal((await refresh()).statusCode, 200);
+    const admitted = await f.start('controller:after-real-flat', 1); assert.equal(admitted.statusCode, 202, admitted.body); await f.stopMonitors();
+    const id = admitted.json<PmMandateView>().mandate.id;
+    // Once ownership has genuinely transferred, new inventory does not undo
+    // the immutable closure of the old controller's expired target.
+    const held = structuredClone(original), heldAt = nowNs(), heldSequence = (BigInt(closedSequence) + 1n).toString();
+    held.sequence = heldSequence; held.nativeClockNs = heldAt;
+    const heldObservation = object(held.nativeObservation), heldNative = object(heldObservation.snapshot);
+    heldObservation.sequence = heldSequence; heldObservation.observed_at_ns = heldAt; heldNative.ts_event = heldAt; heldNative.ts_init = heldAt;
+    held.openOrders = { schema_version: 1, account_id: heldNative.account_id!, asof_ns: heldAt, available_ns: heldAt, count: 0 };
+    f.accountSnapshot(held); assert.equal((await refresh()).statusCode, 200);
+    await f.state.restart();
+    const decisionId = 'TEST_ONLY_LEGACY_HANDOVER_CONTINUED';
+    f.receiverCurrentBasis(await controlledTarget(f, id, decisionId));
+    const offered = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
+      payload: { requestId: 'controller:original-handover-remains-closed', expectedRevision: '0', decisionId } });
+    assert.equal(offered.statusCode, 202, offered.body);
+    await until(async () => f.accepted.length === 1, 'The original handover proof must survive restart and permit the same PM controller to manage its later inventory.');
+    assert.equal(f.posts.length, 1);
+    const laterExpiry = (BigInt(nowNs()) - 1_000_000n).toString();
+    assert.ok(BigInt(laterExpiry) > BigInt(closedAt));
+    await f.state.service.research.harness.commit(async tx => {
+      const app = await tx.doc(Application); const legacy = observation(app.observations[f.connections[0]!.id]);
+      legacy.view.receipt = { id: 'legacy:another-later-target', status: 'ACKNOWLEDGED', externalId: 'legacy:later-external',
+        expiresAt: nsTime(laterExpiry), acknowledgedAt: null }; app.observations[f.connections[0]!.id] = json(legacy);
+    }, context);
+    const laterDecision = 'TEST_ONLY_LATER_LEGACY_AUTHORITY'; await controlledTarget(f, id, laterDecision);
+    const blocked = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(id)}/targets`, headers: f.state.headers,
+      payload: { requestId: 'controller:no-blanket-handover', expectedRevision: '0', decisionId: laterDecision } });
+    assert.equal(blocked.statusCode, 409, blocked.body);
+    assert.equal(f.posts.length, 1, 'The initial flat proof cannot close a different target expiring after that proof.');
+  } finally { await f.cleanup(); }
+});
 
 test('an admitted PM controller also blocks legacy automatic enablement on its account alias', { timeout: 30_000 }, async () => {
   const f = await fixture();

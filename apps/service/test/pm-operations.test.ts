@@ -38,7 +38,7 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
     remote.get<{ Params: { id: string } }>('/targets/:id', (request, reply) => {
       gets.push(request.params.id);
       if (request.params.id === 'controlled-prior-target') return { id: request.params.id, clientId: 'controlled-client', accountId: 'controlled-account',
-        expiresAt: priorExpiry, status: 'ACKNOWLEDGED', externalId: 'controlled-prior-external' };
+        expiresAt: priorExpiry, status: 'REJECTED', externalId: 'controlled-prior-external' };
       if (receive === 'UNAVAILABLE') return reply.code(503).send({ error: 'receipt_not_yet_readable' });
       const original = accepted.find(body => body.id === request.params.id);
       if (!original) return reply.code(404).send({ error: 'original_request_not_accepted' });
@@ -67,7 +67,9 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
         sequence: '9007199254740995', nativeClockNs: observedAtNs, controlRevision: '3', currency: 'USD', equity: '1000.000000000000000001', cash: '900.000000000000000001',
         positions: [{ instrumentId: 'TEST.SIM', quantity: '10', value: '100', pnl: null }] },
     };
-    if (keepMonitor) account.view.receipt = { id: 'controlled-prior-target', status: 'ACKNOWLEDGED', externalId: 'controlled-prior-external', expiresAt: priorExpiry, acknowledgedAt: null };
+    // This protocol fixture has existing inventory, but no previously accepted
+    // target authority. An expired ACK would require a later native flat proof.
+    if (keepMonitor) account.view.receipt = { id: 'controlled-prior-target', status: 'REJECTED', externalId: 'controlled-prior-external', expiresAt: priorExpiry, acknowledgedAt: null };
     remoteAccount = json(account.snapshot);
     const initialControl = await readCapitalControl(connection, 'USD');
     await state.service.research.harness.commit(async tx => {
@@ -274,6 +276,18 @@ for (const changed of ['positions', 'openOrders'] as const) {
     } finally { await f.cleanup(); }
   });
 }
+
+test('PM operations: a historical decision without an account basis returns a business refusal without creating a target', { timeout: 15_000 }, async () => {
+  const f = await fixture();
+  try {
+    await f.state.service.research.harness.commit(async tx => {
+      const record = pmRecord(pmState(await tx.doc(PmDocument)), f.id);
+      record.decisions[f.decisionId]!.accountBasis = null;
+    }, context);
+    const rejected = await f.offer(); assert.equal(rejected.statusCode, 409, rejected.body);
+    assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
+  } finally { await f.cleanup(); }
+});
 
 test('PM operations: a superseded READY assessment cannot qualify a strategy whose current assessment needs evidence', { timeout: 15_000 }, async () => {
   const f = await fixture();

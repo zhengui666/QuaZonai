@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import './capital-native.ts';
 import './pm-science-native.ts';
+import './pm-independent-policy.test.ts';
 import './pm-account-native.test.ts';
 import './pm-account-http.test.ts';
 import './pm-forward.native.test.ts';
@@ -9,6 +10,8 @@ import './pm-forward-feasibility.test.ts';
 import './pm-forward-http.test.ts';
 import './pm-paper-receiver.test.ts';
 import './pm-campaign-account.test.ts';
+import './pm-source-recovery.test.ts';
+import './pm-outcome-receipts.test.ts';
 import './pm-operations.test.ts';
 import './pm-business-acceptance.test.ts';
 import { test } from 'node:test';

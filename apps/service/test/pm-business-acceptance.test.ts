@@ -15,6 +15,7 @@ import { Exposures } from '../../research/plugins/native-exposure.ts';
 import { pmRecord, pmState } from '../src/pm-facts.ts';
 import { evaluatePmIndependent } from '../src/pm-science.ts';
 import { pmAllocationMethod } from '../src/pm-method.ts';
+import { publishDatasetRevision } from '../src/dataset-revision-publish.ts';
 import { fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
 
 // Real HTTP + official SQLite/Durable. The research provider and job executable
@@ -268,10 +269,11 @@ test('PM HTTP source: an automatic revision invalidates the old basis and cannot
 });
 
 test('PM native HTTP: learned signals produce a matched owner-NAV decision with original costs, budgets and replayable evidence',
-  { timeout: 180_000, skip: !nativeFixtureDirectory || !nativeJob ? 'Requires the generated native multi-day catalog and matching real job binary.' : false }, async t => {
+  { timeout: 240_000, skip: !nativeFixtureDirectory || !nativeJob ? 'Requires the generated native multi-day catalog and matching real job binary.' : false }, async t => {
     const source = JSON.parse(await readFile(join(nativeFixtureDirectory!, 'source.json'), 'utf8'));
     assert.equal(typeof source.catalog, 'string', 'The native generator must identify the actual immutable catalog used by its report.');
     const state = await setup();
+    const originalBinary = process.env.QZ_JOB_BINARY;
     try {
       const dataset = state.options.config.datasets[0]!;
       assert.equal(source.data.catalog, source.catalog);
@@ -279,7 +281,14 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
         'The fixture must export its original clipped data, sealed extension and actually replayed policy.');
       dataset.data = { ...source.data, sealed: source.heldoutData };
       dataset.strategy = source.policy;
-      state.options.config.jobBinary = nativeJob!;
+      dataset.revisionManifest = join(state.directory, 'immutable-native-source', 'current.json');
+      const published = await publishDatasetRevision(dataset, { scope: 'TEST_NATIVE_HISTORY_RECOVERY' });
+      dataset.data = published.configured.data;
+      const originalManifest = await readFile(dataset.revisionManifest, 'utf8');
+      const nativeLog = join(state.directory, 'actual-native-commands.log');
+      const nativeWrapper = join(state.directory, 'original-native-job.mjs');
+      await writeFile(nativeWrapper, `#!${process.execPath}\nimport {spawnSync} from 'node:child_process';\nimport {appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);appendFileSync(${JSON.stringify(nativeLog)},args[0]+'\\n');\nconst chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);const child=spawnSync(${JSON.stringify(nativeJob)},args,{input:Buffer.concat(chunks),stdio:['pipe','inherit','inherit']});process.exit(child.status??1);\n`, { mode: 0o700 });
+      process.env.QZ_JOB_BINARY = nativeWrapper; state.options.config.jobBinary = nativeWrapper;
       state.options.extensions = [research, factors, fittedEnsemble];
       await state.restart();
       scriptNativeResearch(state, source);
@@ -398,15 +407,54 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       }
       const original = structuredClone(decision);
       await state.restart();
-      const restored = await read(state, admitted.mandate.id);
+      let restored = await read(state, admitted.mandate.id);
       assert.deepEqual(restored.history.find(item => item.id === original.id), original,
         'Restart must disclose the original scientific decision instead of recomputing a more favorable one.');
+      const completeRecord = pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id);
+      const originalComparison = structuredClone(completeRecord.comparisons[original.comparisonRef]);
+      const originalAttempts = structuredClone(completeRecord.derivedTrials);
+      const originalMovements = structuredClone(completeRecord.budgetMovements);
+      const originalExposures = structuredClone((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows);
+      const commandsBefore = (await readFile(nativeLog, 'utf8')).split('\n');
+      const waitForSource = async (predicate: (value: PmMandateView) => boolean) => {
+        const stop = Date.now() + 20_000; let value = await read(state, admitted.mandate.id);
+        while (!predicate(value) && Date.now() < stop) { await new Promise(resolve => setTimeout(resolve, 50)); value = await read(state, admitted.mandate.id); }
+        assert.ok(predicate(value), JSON.stringify({ gaps: value.gaps, cycle: value.lastCycle })); return value;
+      };
+      await writeFile(dataset.revisionManifest, '{temporary unreadable native source');
+      await waitForSource(value => value.currentDecision === null && value.gaps.some(item => item.requiredCapability === 'source_revision' && item.state === 'OPEN'));
+      await state.restart();
+      await writeFile(dataset.revisionManifest, originalManifest);
+      restored = await waitForSource(value => value.currentDecision?.id === original.id);
+      const recoveredRecord = pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id);
+      const recoveredEvent = Object.values(recoveredRecord.events).find(item => item.kind === 'SOURCE_RECOVERED')!;
+      assert.ok(recoveredEvent);
+      const recoveredEvidence = await state.service.app.inject({ url: `/api/v3/pm-evidence/${encodeURIComponent(recoveredEvent.sourceRevisionRef)}`, headers: state.headers });
+      assert.equal(recoveredEvidence.statusCode, 200, recoveredEvidence.body);
+      assert.equal(recoveredEvidence.json().payload.outcome, 'HISTORICAL_REPORT_RESTORED');
+      assert.equal(recoveredEvidence.json().payload.restoredDecisionId, original.id);
+      assert.equal(recoveredEvidence.json().payload.prefixVerification.method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V1');
+      assert.deepEqual(recoveredRecord.comparisons[original.comparisonRef], originalComparison);
+      assert.deepEqual(recoveredRecord.derivedTrials, originalAttempts); assert.deepEqual(recoveredRecord.budgetMovements, originalMovements);
+      assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, originalExposures);
+      const recoveredCommands = (await readFile(nativeLog, 'utf8')).split('\n');
+      assert.deepEqual(recoveredCommands.filter(command => command !== 'catalog-prefix-digest'), commandsBefore.filter(command => command !== 'catalog-prefix-digest'),
+        'Historical recovery may verify the original prefix but never repeat native science or consume FINAL again.');
+      assert.ok(recoveredCommands.filter(command => command === 'catalog-prefix-digest').length > commandsBefore.filter(command => command === 'catalog-prefix-digest').length);
+      const { revision: _originalRevision, status: _originalStatus, reasonCodes: _originalReasons, ...originalFacts } = original;
+      const { revision: _recoveredRevision, status: _recoveredStatus, reasonCodes: _recoveredReasons, ...recoveredFacts } = restored.currentDecision!;
+      assert.deepEqual(recoveredFacts, originalFacts, 'All original economics, as-of, evidence and expiry survive; recovery does not refresh a historical target.');
+      assert.equal(restored.targetCommands.length, 0);
+      await state.restart(); restored = await read(state, admitted.mandate.id);
+      assert.equal(Object.values(pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id).events).filter(item => item.kind === 'SOURCE_RECOVERED').length, 1);
       const sealedBefore = (await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!;
       assert.equal(sealedBefore.windows.filter(item => item.kind === 'FINAL').length, 1,
         'This intent-revision counterexample requires the actual PM independent sample to have been consumed first.');
       const trialsBefore = structuredClone(restored.researchTrials.filter(item => item.countedAttempt));
       assert.equal(trialsBefore.length, 10, 'Original search, joint capital comparisons and both independent legs must remain charged.');
       const budgetBefore = structuredClone(pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id).budget);
+      await writeFile(dataset.revisionManifest, '{second temporary unreadable native source');
+      await waitForSource(value => value.currentDecision === null && value.gaps.some(item => item.requiredCapability === 'source_revision' && item.state === 'OPEN'));
       const ownerClarification = await state.service.app.inject({ method: 'POST',
         url: `/api/v3/mandates/${encodeURIComponent(admitted.mandate.id)}/intent-clarifications`, headers: state.headers,
         payload: { requestId: 'native-intent-after-independent-exposure', expectedRevision: restored.mandate.revision,
@@ -422,6 +470,15 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       assert.deepEqual(revised.researchTrials.filter(item => item.countedAttempt), trialsBefore);
       assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, sealedBefore.windows);
       assert.deepEqual(pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id).budget, budgetBefore);
+      await writeFile(dataset.revisionManifest, originalManifest);
+      const afterPolicyRecovery = await waitForSource(value => value.gaps.filter(item => item.requiredCapability === 'source_revision').every(item => item.state === 'RESOLVED'));
+      assert.equal(afterPolicyRecovery.currentDecision, null, 'Readable original bytes cannot revive P1 under the owner\'s new P2.');
+      const policyRecoveryRecord = pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id);
+      const recoveryEvents = Object.values(policyRecoveryRecord.events).filter(item => item.kind === 'SOURCE_RECOVERED');
+      assert.equal(recoveryEvents.length, 2);
+      assert.equal(policyRecoveryRecord.artifacts[recoveryEvents.at(-1)!.sourceRevisionRef]!.outcome, 'NEEDS_EVIDENCE');
+      assert.deepEqual((await readFile(nativeLog, 'utf8')).split('\n').filter(command => command !== 'catalog-prefix-digest'),
+        commandsBefore.filter(command => command !== 'catalog-prefix-digest'));
       // The original source is MARGIN: this authenticated new constraint must
       // not relabel the old study as a CASH/no-borrow proof or reuse its FINAL.
       assert.ok(revised.history.every(item => item.targetCommandId === null));
@@ -435,7 +492,7 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
         countedAttempts: view.researchTrials.filter(item => item.countedAttempt).length,
         independentEvidenceRef: (original.explanationFacts as JsonObject).independentEvidenceRef ?? null,
         scope: 'SYNTHETIC_NATIVE_PIPELINE_NOT_MARKET_PERFORMANCE_OR_LIVE_QUALIFICATION' }));
-    } finally { await state.cleanup(); }
+    } finally { process.env.QZ_JOB_BINARY = originalBinary; await state.cleanup(); }
   });
 
 test('PM native source: a disjoint automatic data revision refits original panels and updates the decision without spending sealed data or resetting the budget',

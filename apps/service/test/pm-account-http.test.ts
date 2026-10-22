@@ -13,6 +13,7 @@ import { Application, json, object } from '../src/facts.ts';
 import type { ObservationFact } from '../src/facts.ts';
 import { acceptSnapshot } from '../src/downstream.ts';
 import { captureAccount } from '../src/pm-account.ts';
+import { campaignAccount, campaignAccountKey } from '../src/pm-campaign-account.ts';
 import { toNativeObservedSpotStart } from '../src/pm-account-native.ts';
 import { pmRecord, pmState } from '../src/pm-facts.ts';
 import { observedSpotFixture } from './pm-observed-fixture.ts';
@@ -107,18 +108,33 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
       const application = await tx.doc(Application); application.observations[f.connection.id] = json(archival);
       application.accountControls = controls;
     }, context);
-    // This archive has no live portfolio/target transport to refresh. A failed
-    // refresh must retain its actual old receipt, not invent a current one.
-    await assert.rejects(state.service.work.refreshObservation(f.connection.id));
-    const retainedArchive = (await state.service.work.getObservation(f.connection.id));
-    assert.equal(retainedArchive.snapshotReceivedAtNs, archival.snapshotReceivedAtNs);
-    assert.deepEqual(retainedArchive.snapshot, archival.snapshot);
     script(state, source);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
       requestId: 'original-observed-native-account', goal: 'Research predictive alpha from causal bar factors; compare complete net daily account outcomes with retaining original spot quantities. No leverage.',
       datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model,
       maxTrials: 12, businessPreference: 'NET_RETURN', operatingAuthority: 'RESEARCH_ONLY' } });
     assert.equal(response.statusCode, 202, response.body); let view = response.json<PmMandateView>(); const id = view.mandate.id; mandateId = id;
+    // The historical campaign must be admitted while its original archived
+    // state is still the actually known basis. A later failed current refresh
+    // is not permission to backdate or rebind a campaign admitted after failure.
+    const admittedRecord = pmRecord(pmState(await state.service.pm.snapshot()), id);
+    const admittedCampaign = admittedRecord.campaigns[view.campaigns[0]!.id]!;
+    const archivedStart = campaignAccount(admittedRecord, admittedCampaign);
+    assert.deepEqual(archivedStart.basis, f.common.capture.basis);
+    const originalStartMarker = structuredClone(admittedRecord.artifacts[campaignAccountKey(admittedCampaign.id)]);
+    // This archive has no active account transport. The real failed read must
+    // make current control unknown, retaining the old receipt as history only.
+    await assert.rejects(state.service.work.refreshObservation(f.connection.id));
+    const retainedArchive = await state.service.work.getObservation(f.connection.id);
+    assert.equal(retainedArchive.snapshotReceivedAtNs, archival.snapshotReceivedAtNs);
+    assert.deepEqual(retainedArchive.snapshot, archival.snapshot);
+    const currentUnknown = captureAccount((await state.service.research.harness.snapshot(Application, context))!, f.connection.id);
+    assert.equal(currentUnknown.basis.reserved, null);
+    assert.equal(object(currentUnknown.artifact.capitalControl).capability, 'BLOCKED');
+    assert.ok(currentUnknown.artifact.capitalControlFailure);
+    const afterFailure = pmRecord(pmState(await state.service.pm.snapshot()), id);
+    assert.deepEqual(afterFailure.artifacts[campaignAccountKey(admittedCampaign.id)], originalStartMarker);
+    assert.deepEqual(campaignAccount(afterFailure, afterFailure.campaigns[admittedCampaign.id]!), archivedStart);
     const read = async () => { const response = await state.service.app.inject({ url: `/api/v3/mandates/${encodeURIComponent(id)}`, headers: state.headers });
       assert.equal(response.statusCode, 200, response.body); return response.json<PmMandateView>(); };
     const deadline = Date.now() + 150_000;

@@ -84,10 +84,13 @@ QP's CASH funding constraint before research. Allocation plus fees must fit the
 original deployment budget while preserving the cash floor. Observed study,
 independent evaluation and current build use the same frozen field; old methods
 do not inherit the new qualification. Actual buying/selling and zero-fee native
-counterexamples passed within 68 affected regressions. The same frozen native
-source has passed the complete 664-test scientific scope and exported all seven
-mandatory fixtures. Core and the authorized paper receiver chain are verified
-separately.
+counterexamples passed within 68 affected regressions. The earlier 6cced native
+candidate passed 666 scientific tests and exported seven fixtures, but that scope
+predates the subsequent original-NAV residual, positive cash-floor and strict
+long-only guards. It is preserved as historical evidence, not final-source
+acceptance. The final native SHA, complete scientific and core runs, and the
+authorized paper receiver chain are confirmed separately by the actual runs for
+PR #233's final commit; new test totals are not asserted in advance.
 
 Paper shadow target operation has a separate PAPER assessment and original source
 execution bounds. Live TARGET_OPERATION additionally requires an original

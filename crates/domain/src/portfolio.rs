@@ -732,6 +732,9 @@ pub fn allocation_result(
             return Err(invalid());
         }
         let weight = target.weight.as_decimal();
+        if constraints.cash_funding.is_some() && !target.weight.is_nonnegative() {
+            return Err(DomainError::Invalid("cash_funding_shorting"));
+        }
         let (low, high) = overrides
             .get(asset.instrument_id.as_str())
             .map(|v| (v.min.as_decimal(), v.max.as_decimal()))
@@ -792,12 +795,26 @@ pub fn allocation_result(
     {
         return Err(DomainError::Invalid("portfolio_exposure_bound"));
     }
-    if constraints.cash_funding.is_some()
-        && cash - linear_cost < constraints.min_cash_weight.as_decimal() - tolerance
-    {
+    if constraints.cash_funding.is_some() {
         // Validate the actual target deltas, independently of the solver's
-        // auxiliary epigraph values. The allowance is the frozen weight tolerance.
-        return Err(DomainError::Invalid("cash_funding_bound"));
+        // auxiliary epigraph values. A CASH account cannot borrow even within
+        // the exposure tolerance; only the positive reserve floor has allowance.
+        let post_fee_cash = cash - &linear_cost;
+        if post_fee_cash < BigDecimal::from(0) {
+            return Err(DomainError::Invalid("cash_funding_borrowing"));
+        }
+        // The reported cash variable and original NAV must both fund the
+        // trade. Capital-equality tolerance cannot mint cash or be reused as
+        // an additional reserve-floor allowance. These are checks only: the
+        // original solved weights and cash are never clamped or rewritten.
+        let nav_residual = BigDecimal::from(1) - &net - linear_cost;
+        if nav_residual < BigDecimal::from(0) {
+            return Err(DomainError::Invalid("cash_funding_nav_shortfall"));
+        }
+        let minimum = constraints.min_cash_weight.as_decimal() - tolerance;
+        if post_fee_cash < minimum || nav_residual < minimum {
+            return Err(DomainError::Invalid("cash_funding_bound"));
+        }
     }
     for group in &constraints.group_bounds {
         let total = group_weights

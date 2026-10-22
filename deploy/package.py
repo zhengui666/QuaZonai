@@ -135,6 +135,12 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
                 raise ValueError(f'Extracted CLI cannot read its original {name} contract.')
             if name == 'AssetTarget' and not re.search(r'export interface AssetTarget\s*\{[^}]*\bexecutionEstimate\?:', contract.get('source', '')):
                 raise ValueError('Extracted CLI lacks the separate rounded execution estimate contract.')
+        if 'DecisionTrigger' not in schemas.get('names', []):
+            raise ValueError('Extracted CLI lacks the DecisionTrigger contract.')
+        trigger = json.loads(run('schema', 'show', 'DecisionTrigger'))
+        definition = re.search(r'export type DecisionTrigger\s*=([^;]+);', trigger.get('source', ''))
+        if trigger.get('entry') != 'DecisionTrigger' or not definition or "'SOURCE_RECOVERED'" not in definition.group(1):
+            raise ValueError('Extracted CLI lacks the source recovery decision trigger contract.')
         domain = json.loads(run('schema', 'list', '--domain'))
         for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1'):
             if name not in domain.get('names', []):

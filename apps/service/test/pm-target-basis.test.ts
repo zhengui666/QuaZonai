@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { accountKey, recordCapitalControl } from '../src/capital-exit.ts';
+import { accountKey, recordCapitalControl, transportCapability } from '../src/capital-exit.ts';
 import type { AccountControl } from '../src/capital-exit.ts';
 import { captureAccount } from '../src/pm-account.ts';
 import { json, nowNs } from '../src/facts.ts';
@@ -31,7 +31,7 @@ test('PM account transport capability changes invalidate the retained basis with
   assert.equal(after.basis.observedAtNs, captured.basis.observedAtNs);
   assert.equal(after.basis.sequence, captured.basis.sequence);
   assert.equal(after.basis.equity, null);
-  assert.deepEqual(after.artifact.capitalCapabilities, { document: changed.capabilities, receivedAtNs: changed.capabilitiesReceivedAtNs });
+  assert.deepEqual(after.artifact.capitalCapabilities, transportCapability(changed, f.connection));
   assert.ok(BigInt(after.basis.availableAtNs) <= BigInt(nowNs()));
 });
 

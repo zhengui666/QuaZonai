@@ -4,7 +4,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, object, observation, portfolio, Problem, text } from './facts.ts';
-import { accountKey, CapitalExitCommand, capitalStatusForBinding, control, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
+import { accountKey, assertCapitalCommandPermission, capitalCommandPermission, CapitalExitCommand, capitalStatusForBinding, control, physicalCapitalState, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
 import { downstreamRequest } from './downstream.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -73,6 +73,8 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
     const old = control(controls?.[key]).commands[requestId];
     if (old) { if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return { requestId, state: old.state, result: old.result }; }
     if (status.capability !== 'SUPPORTED') throw new Problem(status.reason ?? 'capital_exit_unavailable', 409);
+    const permissionBasis = capitalCommandPermission(control(controls?.[key]), current.connection);
+    if (canonical(physicalCapitalState(permissionBasis.status)) !== canonical(physicalCapitalState(status))) throw new Problem('capital_exit_permission_basis_changed', 409);
     const previews = Object.values(current.capitalPreviews ?? {}).filter(value => value.preview).map(value => object(value.preview));
     let native: import('@earendil-works/pi-durable').JsonObject; let path: string; let reserved = '0';
     if (original.action === 'START') {
@@ -104,12 +106,13 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       const facts = await tx.doc(Application); const state = control(facts.accountControls?.[key]);
       const prior = state.commands[requestId];
       if (prior) { if (canonical(prior.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return json({ requestId, state: prior.state, result: prior.result }); }
+      assertCapitalCommandPermission(state, current.connection, permissionBasis);
       if (Object.values(state.commands).some(value => ['PENDING', 'UNCERTAIN'].includes(value.state))) throw new Problem('capital_exit_command_requires_reconciliation', 409);
       if (state.status?.controlRevision !== status.controlRevision) throw new Problem('capital_exit_revision_conflict', 409);
       // Local reservation and durable command admission are one transaction, before any unsafe POST.
       const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: config.jobBinary, dataDir: config.dataDir },
         { conversationId: portfolio(facts.portfolios[current.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true });
-      state.commands[requestId] = { original: json(original), body: native, path, reserved, state: 'PENDING', result: null, error: null, taskId };
+      state.commands[requestId] = { original: json(original), body: native, path, reserved, state: 'PENDING', result: null, error: null, taskId, permissionBasis };
       facts.accountControls ??= {}; facts.accountControls[key] = json(state); return { requestId, state: 'PENDING', result: null };
     }, context);
   }

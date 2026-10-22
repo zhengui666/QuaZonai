@@ -2,7 +2,7 @@ import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import type { CapturedAccount } from './pm-account.ts';
 import type { PmRecord } from './pm-facts.ts';
 import { digest, fact, gap, identity } from './pm-facts.ts';
-import { json, object, Problem } from './facts.ts';
+import { json, nowNs, object, Problem } from './facts.ts';
 import { addDecimal, subtractDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { accountEventKey, projectAccountEvents } from './pm-account-events.ts';
 import type { AccountEventIdentity, CapturedAccountEvents } from './pm-account-events.ts';
@@ -82,8 +82,37 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
     const sampleRequired = previous === null || matchedNewExecution || !!events?.newEventKeys.length
       || previous.completeness !== completeness || receiptChanged || matured;
     if (!sampleRequired) continue;
-    const id = identity('outcome', [decision.id, account.evidence.sourceRevision]); if (record.outcomes[id]) continue;
+    // Target receipt settlement is independent of the account source stream.
+    // Reconciliation may advance UNCERTAIN/PENDING while the original account
+    // sequence, native clock and payload remain exactly unchanged. Bind the
+    // immutable first-received receipt observation, not a new account identity
+    // or the mutable latest-receipt pointer. Legacy records without that clock
+    // become known conservatively at this observation, never backdated.
+    const receiptClock = record.artifacts[`target-receipt-clock:${command.id}`];
+    const observedRef = typeof receiptClock?.observationRef === 'string' ? receiptClock.observationRef : null;
+    let observedReceipt = observedRef ? record.artifacts[observedRef] : null;
+    let receiptObservationRef = observedReceipt?.commandId === command.id
+      && typeof observedReceipt.availableAtNs === 'string' && /^\d+$/.test(observedReceipt.availableAtNs) ? observedRef : null;
+    if (!receiptObservationRef) {
+      const retained = command.externalReceiptRef ? record.artifacts[command.externalReceiptRef] ?? null : null;
+      receiptObservationRef = identity('target-state-observation', [command.id, command.state, retained ? digest(retained) : null]);
+      record.artifacts[receiptObservationRef] ??= json({ commandId: command.id, receiptState: command.state,
+        receiptRef: command.externalReceiptRef ?? null, receipt: retained, availableAtNs: nowNs(),
+        clockBasis: 'FIRST_LOCAL_OBSERVATION_ORIGINAL_RECEIVE_CLOCK_UNAVAILABLE' });
+      observedReceipt = record.artifacts[receiptObservationRef]!;
+    }
+    const receiptAvailableAtNs = String(observedReceipt!.availableAtNs);
+    const availableAtNs = BigInt(receiptAvailableAtNs) > BigInt(account.basis.availableAtNs) ? receiptAvailableAtNs : account.basis.availableAtNs;
+    const sampling = { sourceRevision: account.evidence.sourceRevision, completeness,
+      receiptState: command.state, receiptObservationRef, window, matured: previous?.matured === true || matured, observedAtNs: account.basis.observedAtNs };
+    const accountObservationId = identity('outcome', [decision.id, account.evidence.sourceRevision]);
+    const id = identity('outcome', [decision.id, account.evidence.sourceRevision, command.state, receiptObservationRef]);
+    if (record.outcomes[id]) { record.artifacts[key] = sampling; continue; }
     retainSource();
+    if (receiptObservationRef) record.evidence[receiptObservationRef] ??= { id: receiptObservationRef, sourceKind: observedReceipt?.clockBasis ? 'DERIVED' : 'ACCOUNT', role: 'OBSERVED', runtime: null,
+      objectKey: receiptObservationRef, contentDigest: digest(observedReceipt), mediaType: 'application/json', sourceRevision: receiptObservationRef,
+      eventInterval: null, availableAtNs: receiptAvailableAtNs, clockPrecision: 'NANOSECOND',
+      schemaId: observedReceipt?.clockBasis ? 'qz.pm.legacy-target-state-observation/1' : 'qz.pm.target-receipt-observation/1', visibility: 'OWNER_ONLY' };
     const interval = { startNs: original.observedAtNs, endExclusiveNs: (BigInt(account.basis.observedAtNs) + 1n).toString() };
     const makeMetric = (key: string, label: string, value: string | null, reasons: string[], refs: string[]): Pm.MetricObservation => ({
       definition: { id: `qz.metric.${key}/1`, key: `account.${key}`, definitionVersion: '1', label, unit: 'CURRENCY',
@@ -98,7 +127,10 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
       closingUnpriced ? ['native_account_valuation_stale_or_unpriced'] : account.basis.equity ? [] : ['authoritative_equity_unavailable'], [account.evidence.id]);
     const metrics = [metric];
     const reasons = ['observed_account_changes_are_not_identified_strategy_pnl'];
-    const normalizationRef = identity('cashflow-normalization', id);
+    if (receiptChanged && previous.sourceRevision === account.evidence.sourceRevision) reasons.push('receipt_settlement_without_new_account_observation');
+    // Account-only metrics keep their original identity across receipt changes.
+    // ACK/REJECTED cannot create another equity, execution or cash-flow fact.
+    const normalizationRef = identity('cashflow-normalization', accountObservationId);
     const coverage = !!events && events.complete.cashFlows && BigInt(events.interval.startNs) <= BigInt(original.observedAtNs) + 1n
       && BigInt(events.interval.endExclusiveNs) >= BigInt(interval.endExclusiveNs);
     const flows = events?.cashFlows.filter(flow => BigInt(flow.eventAtNs) > BigInt(original.observedAtNs) && BigInt(flow.eventAtNs) <= BigInt(account.basis.observedAtNs)) ?? [];
@@ -133,7 +165,7 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
       && BigInt(event.eventAtNs) <= BigInt(account.basis.observedAtNs)) ?? [];
     const matchedExecutions = command ? actualExecutions.filter(event => event.clientTargetId === command.idempotencyKey) : [];
     reasons.push(events ? events.complete.executions ? 'source_execution_coverage_declared' : 'partial_source_execution_coverage' : 'actual_executions_not_provided');
-    const executionRef = identity('execution-attribution', id);
+    const executionRef = identity('execution-attribution', accountObservationId);
     record.artifacts[executionRef] = json({ decisionId: decision.id, commandId: command?.id ?? null, sourceEvidenceRef: events?.evidence.id ?? null,
       matchedExecutionIds: matchedExecutions.map(event => event.id), unmatchedExecutionIds: actualExecutions.filter(event => !matchedExecutions.includes(event)).map(event => event.id),
       completeness: events?.complete.executions ?? null, identification: 'REPORTED_TARGET_ID_ONLY_NOT_PNL_CAUSALITY' });
@@ -141,19 +173,18 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
       contentDigest: digest(record.artifacts[executionRef]), schemaId: 'qz.account-execution-attribution/1' };
     const attributionId = identity('attribution', id);
     const outcome: Pm.ObservedOutcome = { ...fact(id), decisionId: decision.id, targetCommandId: decision.targetCommandId,
-      accountBasis: account.basis, interval, availableAtNs: account.basis.availableAtNs, receiptState: command?.state ?? 'NOT_OFFERED',
+      accountBasis: account.basis, interval, availableAtNs, receiptState: command?.state ?? 'NOT_OFFERED',
       reconciliationStatus: matchedExecutions.length || command?.state === 'ACKNOWLEDGED' ? 'PARTIAL' : 'UNMATCHED', realizedMetrics: metrics, attributionEvidenceRef: attributionId,
       matureLabelEvidenceRef: null, reasonCodes: reasons };
     const comparison = record.comparisons[decision.comparisonRef];
     if (comparison) record.attributions[attributionId] = { ...fact(attributionId), observedOutcomeId: id, decisionId: decision.id,
       scope: { ...comparison.scope, id: identity('observed-scope', id), interval, role: 'OBSERVED', capital: account.basis.equity },
-      cashFlowNormalizationRef: normalizationRef, actualObservationRefs: [...refs, executionRef], counterfactualEvidenceRefs: [],
+      cashFlowNormalizationRef: normalizationRef, actualObservationRefs: [...refs, executionRef, ...(receiptObservationRef ? [receiptObservationRef] : [])], counterfactualEvidenceRefs: [],
       components: [{ kind: 'DATA', metric, identification: 'UNIDENTIFIED', methodRef: null },
         { kind: 'CAPITAL', metric: adjusted, identification: 'UNIDENTIFIED', methodRef: 'qz.account-flow-adjusted-currency-delta/1' }],
       aggregation: 'NON_ADDITIVE_COUNTERFACTUAL', residual: null, limitations: reasons };
     else outcome.attributionEvidenceRef = null;
     record.outcomes[id] = outcome;
-    record.artifacts[key] = { sourceRevision: account.evidence.sourceRevision, completeness,
-      receiptState: command.state, window, matured: previous?.matured === true || matured, observedAtNs: account.basis.observedAtNs };
+    record.artifacts[key] = sampling;
   }
 }

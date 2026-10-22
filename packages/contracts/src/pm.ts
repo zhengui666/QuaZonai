@@ -595,12 +595,14 @@ export interface ObservedOutcome extends VersionedFact {
   matureLabelEvidenceRef: Id | null;
   reasonCodes: string[];
 }
-export type DecisionTrigger = 'DATA_REVISION' | 'LABEL_MATURED' | 'ACCOUNT_CHANGED'
+export type DecisionTrigger = 'DATA_REVISION' | 'SOURCE_RECOVERED' | 'LABEL_MATURED' | 'ACCOUNT_CHANGED'
   | 'COST_OR_RULE_CHANGED' | 'RESEARCH_EVIDENCE' | 'EVIDENCE_INVALIDATED'
   | 'MANDATE_CHANGED' | 'FRESHNESS_DEADLINE';
 export interface BusinessEvent {
   id: Id;
   kind: DecisionTrigger;
+  /** SOURCE_RECOVERED references the recovery audit evidence. It does not
+   * invent a new dataset revision or change that dataset's availability clock. */
   sourceRevisionRef: Id;
   availableAtNs: Ns;
   affectedMandateIds: Id[];

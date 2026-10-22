@@ -38,6 +38,8 @@ import { clarificationInput, mergeOwnerBoundaries, retainIntentEvidence, reviseO
 import { computePmForward, forwardSeedDecision } from './pm-forward.ts';
 import { pmOperatingRule } from './pm-operating-rule.ts';
 import { retirementOutstandingTargets } from './pm-retirement.ts';
+import { historicalSourceRecovery, markPmSourceFailure, recordOperatingRecoveryWait, recoverPmSource } from './pm-source-recovery.ts';
+import { verifyOriginalPrefix } from './pm-science.ts';
 
 const context = BACKGROUND_CONTEXT;
 type Work = ReturnType<typeof workbench>;
@@ -88,7 +90,7 @@ export function createPmPlatform(config: ServiceConfig) {
     assertBusinessAdmission(await tx.doc(Application));
     const atNs = nowNs();
     const campaign = Object.values(record.campaigns).at(-1)!;
-    const forward = record.mandate.capitalSource.kind === 'ACCOUNT' && ['ACCOUNT_CHANGED', 'FRESHNESS_DEADLINE'].includes(event.kind);
+    const forward = record.mandate.capitalSource.kind === 'ACCOUNT' && ['ACCOUNT_CHANGED', 'FRESHNESS_DEADLINE', 'SOURCE_RECOVERED'].includes(event.kind);
     if (!forward && canonical(json(campaign.datasetRevisionIds)) !== canonical(json(record.datasets))) {
       // The new revision invalidates the old result, but cannot re-label an old
       // campaign's research or account start. Its own new campaign is admitted
@@ -126,7 +128,7 @@ export function createPmPlatform(config: ServiceConfig) {
       }
       return record.latestCycleId ? record.cycles[record.latestCycleId]! : null;
     };
-    if (forward && !seed) return coalesce();
+    if (forward && !seed) { recordOperatingRecoveryWait(record, event, 'source_recovered_without_qualified_current_policy_seed'); return coalesce(); }
     const basisRevision = digest({ mandate: record.mandate, policy: record.policy.id, strategy: seed?.strategyVersionId ?? record.latestStrategyId,
       datasets: record.datasets, accountBasis, eventId: event.id });
     const cycleId = identity('cycle', [record.mandate.id, basisRevision]);
@@ -136,10 +138,13 @@ export function createPmPlatform(config: ServiceConfig) {
       const ttl = BigInt(String(explanation.forwardTtlSeconds)) * 1_000_000_000n;
       const slot = (BigInt(atNs) - anchor) / ttl; const slotKey = `forward-slot:${seed.id}:${slot}`;
       operatingSlotAlreadyAdmitted = !!record.artifacts[slotKey] && record.artifacts[slotKey]!.cycleId !== cycleId;
-      if (operatingSlotAlreadyAdmitted) return coalesce();
+      if (operatingSlotAlreadyAdmitted) { recordOperatingRecoveryWait(record, event, 'source_recovered_waiting_for_next_registered_operating_slot'); return coalesce(); }
       record.artifacts[slotKey] ??= { cycleId, seedDecisionId: seed.id, slot: slot.toString(), policyRevisionId: record.policy.id };
     }
     record.events[event.id] = event;
+    if (forward) for (const missing of Object.values(record.gaps)) if (missing.requiredCapability === 'source_recovery_operating' && missing.state !== 'RESOLVED') {
+      revise(missing); missing.state = 'RESOLVED'; missing.resolutionEvidenceRefs = [event.sourceRevisionRef];
+    }
     if (capturedAccount) {
       record.evidence[capturedAccount.evidence.id] = capturedAccount.evidence;
       record.artifacts[capturedAccount.evidence.objectKey] = capturedAccount.artifact;
@@ -457,6 +462,23 @@ export function createPmPlatform(config: ServiceConfig) {
           if (previous.data.catalog === source.configured.data.catalog && previous.revision.contentRef !== source.contentDigest) { sourceError = 'source_catalog_must_be_immutable'; source = null; }
           else configured.data = source.configured.data;
         }
+        // Reopen only an already complete historical result. Prefix validation
+        // is read-only and outside the business transaction; commit rechecks
+        // all original identities before restoring its display pointer.
+        let verifiedRecovery: { signature: string; prefix: JsonObject } | null = null;
+        if (source && !retired && !maintenanceOnly && record.artifacts['source-health']?.state === 'FAILED') {
+          const registered = state.datasets[record.datasets.at(-1)!];
+          const candidate = registered?.revision.contentRef === source.contentDigest ? historicalSourceRecovery(record, registered.revision) : null;
+          if (candidate) try {
+            const prefix = await verifyOriginalPrefix(candidate.source, String(source.configured.data.catalog), config.jobBinary, config.dataDir, ctx);
+            const checked = await readSourceRevision(configured);
+            if (!checked || checked.contentDigest !== source.contentDigest) throw new Problem('source_changed_during_recovery_verification');
+            verifiedRecovery = { signature: candidate.signature, prefix };
+          } catch (error) {
+            if (runtime.signal.aborted) throw error;
+            sourceError = error instanceof Error && /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'source_recovery_prefix_verification_failed'; source = null;
+          }
+        }
         if (record.mandate.capitalSource.kind === 'ACCOUNT') {
           try { await work.refreshObservation(record.mandate.capitalSource.accountBindingId); } catch { /* Original account facts retain transport failures. */ }
         }
@@ -472,15 +494,12 @@ export function createPmPlatform(config: ServiceConfig) {
           }
           const research = original?.research; const scientific = original?.campaignResearch;
           if (sourceError && !maintenanceOnly) {
-            gap(stored, 'source_revision', sourceError, 'REFRESH_SOURCE');
-            if (!retired) await enqueue(tx, latest, stored, { id: identity('source-error', [stored.mandate.id, sourceError]), kind: 'EVIDENCE_INVALIDATED', sourceRevisionRef: sourceError,
-              availableAtNs: nowNs(), affectedMandateIds: [stored.mandate.id], supersedesEventId: null });
+            if (!retired) markPmSourceFailure(stored, sourceError, nowNs());
           }
           if (source && !retired && !maintenanceOnly) {
             let captured: ReturnType<typeof captureDataset> | null = null;
             try { captured = captureDataset(source.configured, latest, nowNs(), source); } catch (error) {
-              const reason = error instanceof Problem ? error.message : 'source_revision_admission_failed'; gap(stored, 'source_revision', reason, 'REFRESH_SOURCE');
-              await enqueue(tx, latest, stored, { id: identity('source-error', [stored.mandate.id, reason]), kind: 'EVIDENCE_INVALIDATED', sourceRevisionRef: reason, availableAtNs: nowNs(), affectedMandateIds: [stored.mandate.id], supersedesEventId: null });
+              const reason = error instanceof Problem ? error.message : 'source_revision_admission_failed'; markPmSourceFailure(stored, reason, nowNs());
             }
             if (captured) {
               const sourceEvidenceId = identity('source-evidence', captured.revision.id); const artifact = json(source.manifest);
@@ -489,6 +508,8 @@ export function createPmPlatform(config: ServiceConfig) {
                 objectKey: sourceEvidenceId, contentDigest: digest(artifact), mediaType: 'application/json', sourceRevision: captured.revision.sourceRevision,
                 eventInterval: captured.revision.eventInterval, availableAtNs: source.availableAtNs, clockPrecision: 'NANOSECOND', schemaId: 'qz.dataset-revision-manifest/1', visibility: 'OWNER_ONLY' };
               for (const missing of Object.values(stored.gaps)) if (missing.requiredCapability === 'source_revision' && missing.state !== 'RESOLVED') { revise(missing); missing.state = 'RESOLVED'; missing.resolutionEvidenceRefs = [sourceEvidenceId]; }
+              const recovery = recoverPmSource(stored, captured.revision, sourceEvidenceId, nowNs(), runtime.taskId, verifiedRecovery);
+              if (recovery?.forward) await enqueue(tx, latest, stored, recovery.event);
             }
             if (captured && !stored.datasets.includes(captured.revision.id)) {
               const prior = latest.datasets[stored.datasets.at(-1)!]!;
@@ -648,7 +669,7 @@ export function createPmPlatform(config: ServiceConfig) {
         const application = await tx.doc(Application);
         initialAccount = captureAccount(application, input.funding.accountBindingId, atNs); currency = initialAccount.basis.currency;
         if (input.operatingAuthority === 'AUTHORIZED_TARGETS') assertAccountTargetControl(application, state,
-          observation(application.observations[input.funding.accountBindingId]).connection, { kind: 'PM', mandateId: id });
+          observation(application.observations[input.funding.accountBindingId]).connection, { kind: 'PM', mandateId: id, accountBindingId: input.funding.accountBindingId });
       }
       else currency = input.funding.capital.currency;
       if (configured.currency !== currency) throw new Problem('mandate_currency_mismatch');
@@ -811,7 +832,7 @@ export function createPmPlatform(config: ServiceConfig) {
       const account = captureAccount(await tx.doc(Application), record.mandate.capitalSource.accountBindingId);
       if (decision.targetCommandId) throw new Problem('target_decision_already_offered', 409);
       const application = await tx.doc(Application); const source = observation(application.observations[account.basis.accountBindingId]);
-      assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: id });
+      assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: id, accountBindingId: account.basis.accountBindingId });
       targetEligibility(record, decision, account.basis, source.connection.mode);
       const targetId = identity('target-command', [id, requestId]); const payloadRef = identity('target-payload', targetId);
       const target = pmTargetPayload(record, decision);

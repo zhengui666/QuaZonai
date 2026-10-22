@@ -121,7 +121,7 @@ export const PmTargetTask = defineTask<{ mandateId: string; commandId: string; r
         const application = await tx.doc(Application); const source = observation(application.observations[command.accountBindingId]);
         try {
           const decision = record.decisions[command.decisionId]!;
-          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, commandId: command.id });
+          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, accountBindingId: command.accountBindingId, commandId: command.id });
           targetEligibility(record, decision, captureAccount(application, command.accountBindingId).basis, source.connection.mode);
           if (canonical(record.artifacts[command.payloadEvidenceRef]!) !== canonical(pmTargetPayload(record, decision))) throw new Problem('target_prepared_payload_changed', 409);
           const allocation = record.artifacts[`target-allocation:${command.id}`];
@@ -147,7 +147,7 @@ export const PmTargetTask = defineTask<{ mandateId: string; commandId: string; r
           const application = await tx.doc(Application);
           const source = observation(application.observations[command.accountBindingId]);
           const decision = latest.decisions[command.decisionId]!;
-          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, commandId: command.id });
+          assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: task.input.mandateId, accountBindingId: command.accountBindingId, commandId: command.id });
           targetEligibility(latest, decision, captureAccount(application, command.accountBindingId).basis, source.connection.mode);
           if (canonical(prepared.target) !== canonical(pmTargetPayload(latest, decision))
             || canonical(prepared.allocation!) !== canonical(pmTargetAllocation(latest, decision, source, application.accountControls))) throw new Problem('target_basis_changed_before_transport', 409);

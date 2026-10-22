@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
-import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
+import { compareDecimal, pmCanonical } from '../../../packages/contracts/src/pm-validation.ts';
 import research from '../../research/plugins/research.ts';
 import factors from '../../research/plugins/factor-wasm.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
@@ -23,7 +23,7 @@ import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts
 const available = !!process.env.QZ_PM_OBSERVED_FIXTURE_DIR && !!process.env.QZ_JOB_BINARY;
 const child = process.env.QZ_PM_FORWARD_HTTP_CHILD === '1';
 const paper = process.env.QZ_PM_FORWARD_HTTP_MODE === 'PAPER';
-const options = { timeout: 360_000, skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false };
+const options = { timeout: paper ? 420_000 : 360_000, skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false };
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 function result(transcript: { messages: readonly unknown[] }, name: string, offset = -1): JsonObject {
   const entry = (transcript.messages.filter(value => (value as { role?: string; toolName?: string }).role === 'toolResult'
@@ -52,7 +52,8 @@ function script(state: Awaited<ReturnType<typeof setup>>, source: JsonObject) {
 }
 async function exists(path: string) { try { await access(path); return true; } catch { return false; } }
 
-if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, options, async () => {
+if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, { ...options, timeout: mode === 'PAPER' ? 420_000 : 360_000 }, async () => {
+  console.log(JSON.stringify({ scope: 'ORIGINAL_FORWARD_HTTP_RUNTIME', mode, node: process.version, execPath: process.execPath }));
   await access(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science', 'cash-heavy-hour', 'source.json'));
   const output = await new Promise<{ code: number | null; log: string }>((resolve, reject) => {
     const environment: NodeJS.ProcessEnv = { ...process.env, QZ_PM_FORWARD_HTTP_CHILD: '1', QZ_PM_FORWARD_HTTP_MODE: mode };
@@ -63,13 +64,16 @@ if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${
       env: environment, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let log = ''; processChild.stdout.on('data', value => { log += value; }); processChild.stderr.on('data', value => { log += value; });
-    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, 350_000);
+    // PAPER includes at most one additional original one-minute source wait;
+    // only the test watchdog changes, never a financial freshness deadline.
+    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, mode === 'PAPER' ? 410_000 : 350_000);
     processChild.on('error', error => { clearTimeout(timer); reject(error); });
     processChild.on('close', code => { clearTimeout(timer); resolve({ code, log }); });
   });
   assert.equal(output.code, 0, output.log);
   assert.match(output.log, /ARCHIVAL_SOFTWARE_CONTROLLED_CLOCK_FORWARD_RECOVERY_PASS/);
   if (mode === 'PAPER') assert.match(output.log, /ORIGINAL_PAPER_TARGET_RECEIPT_RECOVERY_PASS/);
+  for (const line of output.log.split('\n')) if (line.includes('THIS_CONTROLLED_FRESH_SOURCE_WINDOW_NOT_A_PRODUCTION_THROUGHPUT_GUARANTEE')) console.log(line);
 }); }
 else test('actual learned ACCOUNT method survives independent evaluation and original current-task recovery without another trial or sealed read', options, async t => {
   const f = await observedSpotFixture(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science', 'cash-heavy-hour'));
@@ -87,7 +91,7 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
   // The executable always invokes the original job unchanged. Only the next
   // read-only prefix verification waits, after its genuine build result has
   // reached the official memo. Closing the service exercises real cancellation.
-  await writeFile(binary, `#!${process.execPath}\nimport {spawnSync} from 'node:child_process';\nimport {appendFileSync,existsSync,writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nif(args[0]==='catalog-prefix-digest'&&existsSync(${JSON.stringify(builtPath)})&&existsSync(${JSON.stringify(pausePath)})){writeFileSync(${JSON.stringify(reachedPath)},'saved');while(existsSync(${JSON.stringify(pausePath)}))await new Promise(r=>setTimeout(r,20));}\nappendFileSync(${JSON.stringify(logPath)},args[0]+'\\n');\nconst result=spawnSync(${JSON.stringify(actualBinary)},args,{stdio:'inherit'});\nif(args[0]==='build-observed-spot'&&result.status===0)writeFileSync(${JSON.stringify(builtPath)},'completed');\nprocess.exit(result.status??1);\n`, { mode: 0o700 });
+  await writeFile(binary, `#!${process.execPath}\nimport {spawnSync} from 'node:child_process';\nimport {appendFileSync,existsSync,writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nif(args[0]==='catalog-prefix-digest'&&existsSync(${JSON.stringify(builtPath)})&&existsSync(${JSON.stringify(pausePath)})){writeFileSync(${JSON.stringify(reachedPath)},'saved');while(existsSync(${JSON.stringify(pausePath)}))await new Promise(r=>setTimeout(r,20));}\nappendFileSync(${JSON.stringify(logPath)},args[0]+'\\n');\nconst started=process.hrtime.bigint();\nconst result=spawnSync(${JSON.stringify(actualBinary)},args,{stdio:'inherit'});\nif(args[0]==='build-observed-spot'&&result.status===0)writeFileSync(${JSON.stringify(builtPath)},JSON.stringify({elapsedNs:(process.hrtime.bigint()-started).toString()}));\nprocess.exit(result.status??1);\n`, { mode: 0o700 });
   await writeFile(pausePath, 'pause original next verification');
   const originalEnvironmentBinary = process.env.QZ_JOB_BINARY; process.env.QZ_JOB_BINARY = binary;
   try {
@@ -123,7 +127,70 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     const read = async () => { const response = await state.service.app.inject({ url: `/api/v3/mandates/${encodeURIComponent(mandateId!)}`, headers: state.headers });
       assert.equal(response.statusCode, 200, response.body); return response.json<PmMandateView>(); };
     const record = async () => pmRecord(pmState(await state.service.pm.snapshot()), mandateId!);
-    let currentPublished = false; const deadline = realNow() + 220_000;
+    const diagnose = async (stage: string, value: Awaited<ReturnType<typeof record>>) => {
+      // Failure-only bounded diagnostics: no raw native tapes, full policy,
+      // ledger, account balances or model payloads are dumped into CI output.
+      const cycles = Object.values(value.cycles).slice(-12);
+      const taskIds = [...new Set([value.monitorTaskId, ...cycles.map(cycle => cycle.runtime.taskId)])].filter((id): id is number => typeof id === 'number');
+      const tasks = await Promise.all(taskIds.map(async id => {
+        try {
+          const task = await state.service.research.harness.getTask(id as TaskId, context);
+          const storedState = object(json(task?.state ?? {}));
+          return { id, status: storedState.status ?? null, phase: storedState.checkpoint ? object(storedState.checkpoint).phase ?? null : null,
+            outcomeStatus: storedState.outcome ? object(storedState.outcome).status ?? null : null };
+        } catch { return { id, readFailure: true }; }
+      }));
+      const basis = (input: unknown) => {
+        if (!input) return null;
+        const row = object(input);
+        return Object.fromEntries(['accountBindingId', 'accountSourceId', 'observationId', 'sequence', 'observedAtNs', 'availableAtNs',
+          'controlRevision', 'positionsEvidenceRef', 'outstandingCommandsRef'].map(key => [key, row[key] ?? null]));
+      };
+      const pending = value.artifacts['latest-account-pending']; const capture = pending?.capture ? object(pending.capture) : null;
+      const capturedArtifact = capture?.artifact ? object(capture.artifact) : null;
+      const app = await state.service.research.harness.snapshot(Application, context);
+      const observed = app?.observations[f.connection.id] ? observation(app.observations[f.connection.id]) : null;
+      const snapshot = observed?.snapshot ? object(observed.snapshot) : null;
+      return JSON.stringify({ stage, runtime: { node: process.version, atNs: (BigInt(Date.now()) * 1_000_000n).toString(), realNowMs: realNow() },
+        currentDecisionId: value.currentDecisionId, latestCycleId: value.latestCycleId, basisRevision: value.basisRevision,
+        policy: { id: value.policy.id, operatingRuleId: object(object(value.policy.validDomain).operatingRule ?? {}).id ?? null,
+          allocationMethodId: object(object(value.policy.validDomain).jointAllocationMethod ?? {}).id ?? null },
+        counts: Object.fromEntries(['campaigns', 'cycles', 'decisions', 'events', 'gaps'].map(key => [key, Object.keys(value[key as keyof typeof value] as object).length])),
+        cycles: cycles.map(cycle => ({ id: cycle.id, state: cycle.state, taskId: cycle.runtime.taskId, asOfNs: cycle.asOfNs,
+          availableCutoffNs: cycle.availableCutoffNs, outputDecisionId: cycle.outputDecisionId, reasonCodes: cycle.reasonCodes.slice(-8),
+          matchesCurrentBasis: cycle.basisRevision === value.basisRevision, matchesCurrentPolicy: cycle.policyRevisionId === value.policy.id,
+          operatingForward: value.artifacts[cycle.id]?.operatingForward ?? null,
+          forwardSeedDecisionId: value.artifacts[cycle.id]?.forwardSeedDecisionId ?? null, accountBasis: basis(cycle.accountBasis) })), tasks,
+        forwardSlots: Object.entries(value.artifacts).filter(([key]) => key.startsWith('forward-slot:')).slice(-12).map(([key, slot]) =>
+          ({ key, cycleId: slot.cycleId, seedDecisionId: slot.seedDecisionId, slot: slot.slot, policyRevisionId: slot.policyRevisionId })),
+        decisions: Object.values(value.decisions).slice(-8).map(decision => {
+          const explanation = object(decision.explanationFacts); const frozen = value.artifacts[`independent-input:${decision.id}`];
+          return { id: decision.id, cycleId: decision.cycleId, action: decision.action, status: decision.status, reasonCodes: decision.reasonCodes.slice(-8),
+            policyRevisionId: decision.policyRevisionId, matchesCurrentPolicy: decision.policyRevisionId === value.policy.id,
+            frozenIndependentPolicyMatchesCurrent: !!frozen?.policy && pmCanonical(frozen.policy) === pmCanonical(value.policy),
+            forwardSeedEvidenceRef: explanation.forwardSeedEvidenceRef ?? null, independentEvidenceRef: explanation.independentEvidenceRef ?? null,
+            economicQualification: object(explanation.economicQualification ?? {}).outcome ?? null,
+            forwardAnchorNs: explanation.forwardAnchorNs ?? null, forwardTtlSeconds: explanation.forwardTtlSeconds ?? null,
+            strategyControl: value.artifacts[`strategy-control:${decision.strategyVersionId}`]?.action ?? null };
+        }),
+        latestAccountPending: { eventKind: pending?.eventKind ?? null, basis: basis(capture?.basis),
+          snapshotReceivedAtNs: capturedArtifact?.snapshotReceivedAtNs ?? null, capitalControlReceivedAtNs: capturedArtifact?.capitalControlReceivedAtNs ?? null,
+          capabilitiesReceivedAtNs: capturedArtifact?.capitalCapabilities ? object(capturedArtifact.capitalCapabilities).receivedAtNs ?? null : null },
+        originalLatestAccount: { snapshotReceivedAtNs: observed?.snapshotReceivedAtNs ?? null,
+          ...Object.fromEntries(['accountSourceId', 'observationId', 'sequence', 'nativeClockNs', 'controlRevision'].map(key => [key, snapshot?.[key] ?? null])),
+          transportError: observed?.view.error ?? null },
+        events: Object.values(value.events).slice(-12).map(event => ({ id: event.id, kind: event.kind, availableAtNs: event.availableAtNs, sourceRevisionRef: event.sourceRevisionRef })),
+        gaps: Object.values(value.gaps).slice(-16).map(gap => ({ capability: gap.requiredCapability, reasonCode: gap.reasonCode, state: gap.state })),
+        errors: Object.values(value.artifacts).filter(item => item.stage).slice(-8).map(item => ({
+          stage: typeof item.stage === 'string' ? item.stage.slice(0, 160) : null,
+          reason: typeof item.reason === 'string' ? item.reason.slice(0, 500) : typeof item.error === 'string' ? item.error.slice(0, 500) : null })),
+        nativeCalls: await exists(logPath) ? (await readFile(logPath, 'utf8')).trim().split('\n').slice(-16) : [] });
+    };
+    let currentPublished = false; let sourceEpoch: string | null = null; let sourceResumed = false;
+    let expectedFreshPriceNs: string | null = null;
+    // PAPER also waits at most one original one-minute source interval. This
+    // technical wait does not change the native 65-second price-age policy.
+    const deadline = realNow() + (paper ? 290_000 : 220_000);
     while (!(await exists(reachedPath)) && realNow() < deadline) {
       const stored = await record(); const view = await read();
       if (!currentPublished && view.cycles.some(cycle => cycle.state === 'COMPUTING')) {
@@ -139,17 +206,57 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
         const capital = await state.service.app.inject({ url: `/api/v3/observations/${encodeURIComponent(f.connection.id)}/capital-exits`, headers: state.headers });
         assert.equal(capital.statusCode, 200, capital.body); assert.equal(compareDecimal(capital.json().reserved, '0'), 0);
         currentPublished = true;
+        if (paper) {
+          // Drain the already admitted historical selection/independent work.
+          // A new current solve must not depend on which second that lengthy
+          // research happens to finish within the original candle interval.
+          const draining = await state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/enter', headers: state.headers,
+            payload: { requestId: 'paper-wait-original-next-source', reason: 'Drain admitted research before the next original market receipt' } });
+          assert.equal(draining.statusCode, 202, draining.body); sourceEpoch = draining.json().receipt.epoch;
+        }
       }
-      assert.ok(!view.cycles.some(cycle => cycle.state === 'FAILED'), JSON.stringify({ cycles: view.cycles, gaps: view.gaps, errors: Object.values(stored.artifacts).filter(value => value.stage) }));
+      if (view.cycles.some(cycle => cycle.state === 'FAILED')) assert.fail(await diagnose('original_cycle_failed', stored));
       const settled = view.cycles.filter(cycle => cycle.outputDecisionId);
       if (settled.length && !view.cycles.some(cycle => ['PENDING', 'COMPUTING', 'EVALUATING'].includes(cycle.state))) {
-        assert.ok(Object.values(stored.decisions).some(decision => object(object(decision.explanationFacts).economicQualification ?? {}).outcome === 'READY'),
-          JSON.stringify({ stage: 'original_native_method_did_not_qualify', decisions: Object.values(stored.decisions), comparisons: Object.values(stored.comparisons) }));
+        if (!Object.values(stored.decisions).some(decision => object(object(decision.explanationFacts).economicQualification ?? {}).outcome === 'READY'))
+          assert.fail(await diagnose('original_native_method_did_not_qualify', stored));
+      }
+      if (paper && sourceEpoch && !sourceResumed && Object.values(stored.decisions).some(decision =>
+        object(object(decision.explanationFacts).economicQualification ?? {}).outcome === 'READY')) {
+        const maintenance = await state.service.maintenance.status();
+        if (maintenance.state === 'QUIESCED') {
+          assert.equal(maintenance.epoch, sourceEpoch); assert.ok(maintenance.parkedTaskIds.includes(stored.monitorTaskId!));
+          assert.equal((await readFile(logPath, 'utf8')).split('\n').filter(value => value === 'build-observed-spot').length, 0);
+          const scientificLedger = json(stored.derivedTrials), scientificBudget = json(stored.budgetMovements);
+          const scientificExposure = json((await state.service.research.harness.snapshot(Exposures, context))?.windows ?? []);
+          const metadata = object(JSON.parse(await readFile(join(String(f.source.catalog), 'qz-spot-cash-source.json'), 'utf8')));
+          const waitingAtNs = BigInt(Date.now()) * 1_000_000n;
+          const next = (metadata.responses as JsonObject[]).find(row => BigInt(String(row.received_ns)) > waitingAtNs);
+          assert.ok(next, 'The original immutable source must contain a later genuine receipt; no clock or market row is synthesized.');
+          const receiptNs = BigInt(String(next.received_ns));
+          assert.ok(receiptNs - waitingAtNs <= 61_000_000_000n, 'Wait only for the original next one-minute source receipt.');
+          const originalBar = object((next.response as JsonObject[]).at(-1));
+          expectedFreshPriceNs = ((BigInt(String(originalBar.T)) + 1n) * 1_000_000n).toString();
+          while (BigInt(Date.now()) * 1_000_000n < receiptNs) await new Promise(resolve => setTimeout(resolve, 50));
+          // No new account frame/proof is published and no evidence deadline
+          // is renewed. Resume the original parked monitor at the actual clock.
+          const resumedAtNs = (BigInt(Date.now()) * 1_000_000n).toString();
+          const resumed: { statusCode: number; body: string } = await state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/resume', headers: state.headers,
+            payload: { requestId: 'paper-original-source-arrived', epoch: sourceEpoch } });
+          assert.equal(resumed.statusCode, 202, resumed.body); sourceResumed = true;
+          const after = await record();
+          assert.deepEqual(json(after.derivedTrials), scientificLedger); assert.deepEqual(json(after.budgetMovements), scientificBudget);
+          assert.deepEqual(json((await state.service.research.harness.snapshot(Exposures, context))?.windows ?? []), scientificExposure);
+          await writeFile(join(directory, 'paper-current-source-timing.json'), JSON.stringify({ schemaVersion: 1,
+            scope: 'ARCHIVAL_SOFTWARE_CONTROLLED_CLOCK', originalMaintenanceEpoch: sourceEpoch, waitingAtNs: waitingAtNs.toString(),
+            originalReceiptNs: receiptNs.toString(), originalPriceEventNs: expectedFreshPriceNs, resumedAtNs,
+            originalMaximumPriceAgeNs: object(f.settings.multi_currency_spot_cash).maximum_price_age_ns }), { mode: 0o600 });
+        }
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     let stored = await record();
-    assert.ok(await exists(reachedPath), JSON.stringify({ stage: 'original_current_receipt_not_reached', campaigns: Object.values(stored.campaigns), gaps: Object.values(stored.gaps), decisions: Object.values(stored.decisions), errors: Object.values(stored.artifacts).filter(value => value.stage) }));
+    if (!await exists(reachedPath)) assert.fail(await diagnose('original_current_receipt_not_reached', stored));
     const cycle = Object.values(stored.cycles).find(value => value.state === 'COMPUTING' && stored.artifacts[value.id]?.operatingForward === true)!;
     assert.ok(cycle); const originalTaskId = cycle.runtime.taskId!;
     const seed = Object.values(stored.decisions).find(value => typeof object(value.explanationFacts).forwardSeedEvidenceRef === 'string')!;
@@ -203,6 +310,11 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     assert.ok((object(object(object(artifact.result).build).input).assets as JsonObject[]).every(asset =>
       asset.transaction_cost_rate === object(remote!.registration.costs).commissionRate));
     assert.equal(object(object(artifact.result).request).selection && object(object(object(artifact.result).request).selection).decision_cutoff_ns, cycle.asOfNs);
+    if (paper) {
+      assert.ok(sourceResumed && expectedFreshPriceNs);
+      assert.ok((object(artifact.result).trade_estimates as JsonObject[]).every(trade => BigInt(String(trade.price_event_ns)) >= BigInt(expectedFreshPriceNs!)),
+        'The current solve must use the newly available original source mark after maintenance resumes.');
+    }
     assert.deepEqual(json(stored.derivedTrials), trials); assert.deepEqual(json(stored.budgetMovements), movements);
     assert.deepEqual(json((await state.service.research.harness.snapshot(Exposures, context))?.windows ?? []), exposures);
     assert.equal((await readFile(logPath, 'utf8')).split('\n').filter(value => value === 'build-observed-spot').length, 1, 'Recovery must consume the original durable native receipt, not solve again.');
@@ -223,12 +335,25 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
       const assessment = stored.assessments[stored.strategies[currentDecision.strategyVersionId]!.pipelineAssessmentId]!;
       assert.equal(assessment.stage, 'PAPER', JSON.stringify({ currentDecision, assessment }));
       assert.equal(assessment.outcome, 'READY', JSON.stringify({ currentDecision, assessment }));
+      const qualification = object(stored.artifacts[String(object(currentDecision.explanationFacts).executionQualificationEvidenceRef)]);
+      const originalPriceDeadline = (qualification.deadlines as JsonObject[]).find(value => String(value.sourceKind).startsWith('ORIGINAL_MARK_PRICE_AND_INPUT_AGE:'))!;
+      assert.ok(originalPriceDeadline);
+      const price = (object(artifact.result).trade_estimates as JsonObject[])[0]!;
+      assert.equal(BigInt(String(originalPriceDeadline.validUntilNs)), BigInt(String(price.price_event_ns))
+        + BigInt(String(object(f.settings.multi_currency_spot_cash).maximum_price_age_ns)));
+      assert.ok(BigInt(assessment.evaluatedAtNs) < BigInt(String(originalPriceDeadline.validUntilNs)), 'Positive delivery is only claimed within this original fresh-price window.');
+      const measured = object(JSON.parse(await readFile(builtPath, 'utf8')));
+      assert.ok(BigInt(String(measured.elapsedNs)) > 0n);
+      console.log(JSON.stringify({ scope: 'THIS_CONTROLLED_FRESH_SOURCE_WINDOW_NOT_A_PRODUCTION_THROUGHPUT_GUARANTEE',
+        nativeElapsedNs: measured.elapsedNs, cycleAsOfNs: cycle.asOfNs, evaluatedAtNs: assessment.evaluatedAtNs,
+        originalPriceEventNs: price.price_event_ns, originalPriceValidUntilNs: originalPriceDeadline.validUntilNs }));
       assert.equal(object(object(stored.policy.validDomain).qualificationProtocol).maximumPromotion, 'SHADOW', 'Paper readiness never promotes the original method to live.');
       assert.ok(currentDecision.targetCommandId, JSON.stringify(currentDecision));
       const command = stored.commands[currentDecision.targetCommandId]!;
       assert.equal(command.state, 'UNCERTAIN'); assert.equal(remote.posts, 1); assert.equal(remote.requests.length, 1);
       const targetTaskId = Number(stored.artifacts[`target-task:${command.id}`]!.taskId) as TaskId;
       const originalDeadline = command.validUntilNs; const accepted = remote.receipts[0]!;
+      assert.equal(originalDeadline, qualification.validUntilNs, 'Delivery retains the minimum original source deadline.');
       assert.equal(accepted.id, command.idempotencyKey);
       assert.ok(currentDecision.assetTargets.length > 0);
       assert.deepEqual(object(accepted.target).targets, object(object(artifact.result).target).targets);
@@ -292,6 +417,68 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     assert.equal((await readFile(logPath, 'utf8')).split('\n').filter(value => value === 'build-observed-spot').length, 1);
     assert.equal(remote!.posts, 0, 'A fully implemented paper receiver does not override research-only owner authority.');
     assert.deepEqual(json(stored.derivedTrials), trials); assert.deepEqual(json(stored.budgetMovements), movements);
+    {
+      // The original operating slot is already consumed. A real source outage
+      // and recovery must preserve that claim, rather than manufacture a new
+      // current solve or relabel the old account/independent evidence as fresh.
+      const manifestPath = dataset.revisionManifest!;
+      const originalManifest = await readFile(manifestPath, 'utf8');
+      const originalCycles = json(stored.cycles), originalDecisions = json(stored.decisions);
+      const originalDatasets = structuredClone((await read()).datasetRevisions);
+      const originalPendingBasis = json(object(object(stored.artifacts['latest-account-pending']!.capture).basis));
+      const originalAccount = observation((await state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]);
+      const originalSnapshot = json(originalAccount.snapshot!), originalReceivedAtNs = originalAccount.snapshotReceivedAtNs;
+      const originalSlots = json(Object.fromEntries(Object.entries(stored.artifacts).filter(([key]) => key.startsWith('forward-slot:'))));
+      const recoveryIds = (value: typeof stored) => Object.values(value.events).filter(event => event.kind === 'SOURCE_RECOVERED').map(event => event.id);
+      assert.deepEqual(recoveryIds(stored), []);
+      const waitForSource = async (predicate: (value: typeof stored) => boolean) => {
+        const limit = realNow() + 12_000;
+        while (realNow() < limit) { stored = await record(); if (predicate(stored)) return; await new Promise(resolve => setTimeout(resolve, 50)); }
+        assert.ok(predicate(stored), JSON.stringify({ health: stored.artifacts['source-health'], gaps: Object.values(stored.gaps), events: Object.values(stored.events) }));
+      };
+      try {
+        await writeFile(manifestPath, '{unreadable source manifest');
+        await waitForSource(value => value.artifacts['source-health']?.state === 'FAILED'
+          && Object.values(value.gaps).some(gap => gap.requiredCapability === 'source_revision' && gap.state === 'OPEN'));
+      } finally {
+        // Restore the exact original manifest, not a republished revision or a
+        // new availability clock. All native source bytes remain untouched.
+        await writeFile(manifestPath, originalManifest);
+      }
+      const failureId = String(stored.artifacts['source-health']!.failureEventId);
+      await waitForSource(value => recoveryIds(value).length === 1 && Object.values(value.gaps).some(gap =>
+        gap.requiredCapability === 'source_recovery_operating' && gap.state !== 'RESOLVED'
+        && gap.reasonCode === 'source_recovered_waiting_for_next_registered_operating_slot'));
+      const recoveredId = recoveryIds(stored)[0]!; const recovered = stored.events[recoveredId]!;
+      assert.equal(recovered.supersedesEventId, failureId);
+      const recoveryEvidence = stored.evidence[recovered.sourceRevisionRef]!;
+      const recoveryArtifact = stored.artifacts[recoveryEvidence.objectKey]!;
+      assert.equal(recoveryArtifact.outcome, 'WAITING_EVIDENCE');
+      assert.equal(recoveryArtifact.datasetRevisionId, originalDatasets[0]!.id);
+      assert.equal(recoveryArtifact.contentRef, originalDatasets[0]!.contentRef);
+      assert.equal(recoveryArtifact.reasonCode, 'source_recovered_waiting_for_next_registered_operating_slot');
+      assert.ok(BigInt(recovered.availableAtNs) >= BigInt(stored.events[failureId]!.availableAtNs));
+      for (let poll = 0; poll < 3; poll++) await read();
+      await state.restart();
+      // Let the original persisted Monitor perform another actual source GET
+      // and manifest verification after reopen; no synthetic task is invoked.
+      await new Promise(resolve => setTimeout(resolve, 5500));
+      stored = await record();
+      assert.deepEqual(recoveryIds(stored), [recoveredId], 'One failure episode has one immutable recovery even after polling and SQLite reopen.');
+      assert.deepEqual(stored.artifacts[recoveryEvidence.objectKey], recoveryArtifact);
+      assert.ok(Object.values(stored.gaps).filter(gap => gap.requiredCapability === 'source_revision').every(gap => gap.state === 'RESOLVED'));
+      assert.deepEqual((await read()).datasetRevisions, originalDatasets);
+      assert.deepEqual(json(stored.cycles), originalCycles); assert.deepEqual(json(stored.decisions), originalDecisions);
+      assert.deepEqual(json(Object.fromEntries(Object.entries(stored.artifacts).filter(([key]) => key.startsWith('forward-slot:')))), originalSlots);
+      assert.equal(stored.currentDecisionId, null);
+      assert.deepEqual(json(object(object(stored.artifacts['latest-account-pending']!.capture).basis)), originalPendingBasis);
+      const afterAccount = observation((await state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]);
+      assert.deepEqual(json(afterAccount.snapshot!), originalSnapshot); assert.equal(afterAccount.snapshotReceivedAtNs, originalReceivedAtNs);
+      assert.deepEqual(json(stored.derivedTrials), trials); assert.deepEqual(json(stored.budgetMovements), movements);
+      assert.deepEqual(json((await state.service.research.harness.snapshot(Exposures, context))?.windows ?? []), exposures);
+      assert.equal((await readFile(logPath, 'utf8')).split('\n').filter(value => value === 'build-observed-spot').length, 1);
+      assert.equal(remote!.posts, 0);
+    }
     const entering = await state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/enter', headers: state.headers,
       payload: { requestId: 'pause-original-forward-monitor', reason: 'Verify original monitor maintenance after recovery' } });
     assert.equal(entering.statusCode, 202, entering.body);

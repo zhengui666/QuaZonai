@@ -15,6 +15,7 @@ import { pmArtifactDigest, pmScienceCheckpoint, retainPmArtifacts } from './pm-e
 import type { CapturedAccount } from './pm-account.ts';
 import { campaignAccount } from './pm-campaign-account.ts';
 import { canonical } from '../../research/src/documents.ts';
+import { validatePmEntity } from '../../../packages/contracts/src/pm-validation.ts';
 
 /** The selected method/capital are immutable before this owner-only task sees FINAL. */
 export function pmIndependentTask(config: ServiceConfig) {
@@ -30,6 +31,7 @@ export function pmIndependentTask(config: ServiceConfig) {
           const cycle = record.cycles[task.input.cycleId]!; const decision = record.decisions[task.input.decisionId]!;
           if (record.derivedTrials[trialId] && record.derivedTrials[baselineTrialId]) { admitted = true; return undefined; }
           if (cycle.state === 'SUPERSEDED' || decision.status === 'SUPERSEDED' || record.basisRevision !== cycle.basisRevision) return { status: 'terminal', outcome: { status: 'completed', result: null } };
+          if (record.policy.id !== decision.policyRevisionId || cycle.policyRevisionId !== decision.policyRevisionId) throw new Problem('independent_selected_policy_mismatch');
           const parents = Object.values(record.derivedTrials).filter(item => item.proposalRef === cycle.id && item.state === 'COMPUTED');
           const parent = parents.find(item => item.evidenceRefs.includes(decision.jointReplayEvidenceRef!));
           if (!parent || !decision.capital) throw new Problem('independent_selected_configuration_missing');
@@ -57,14 +59,19 @@ export function pmIndependentTask(config: ServiceConfig) {
         if (!admitted) return;
         const snapshot = pmRecord(pmState(await runtime.snapshot(PmDocument, ctx)), task.input.mandateId);
         const frozen = object(snapshot.artifacts[`independent-input:${task.input.decisionId}`]);
+        const policy = validatePmEntity('DecisionPolicyRevision', json(frozen.policy));
+        const originalDecision = snapshot.decisions[task.input.decisionId]!;
         const data = object(frozen.data); const heldout = object(data.sealed, 'registered_independent_data');
         const frozenCycle = snapshot.cycles[task.input.cycleId]!;
+        if (frozen.decisionId !== originalDecision.id || frozen.cycle !== frozenCycle.id || frozen.basisRevision !== frozenCycle.basisRevision
+          || policy.id !== originalDecision.policyRevisionId || policy.id !== frozenCycle.policyRevisionId
+          || policy.mandateRevisionId !== originalDecision.mandateRevisionId) throw new Problem('independent_frozen_policy_identity_mismatch');
         assertPmDataAvailable(heldout, frozenCycle.availableCutoffNs);
         await checkExposure(researchRuntime(runtime), ctx, heldout, true);
         const result = await evaluatePmIndependent({ source: object(frozen.source), capital: frozen.capital as unknown as Pm.Money,
           currency: String(object(frozen.capital).currency), catalog: String(heldout.catalog), dataDir: config.dataDir, binary: config.jobBinary,
-          cycleId: task.input.cycleId, allocationMethod: object(object(object(frozen.policy).validDomain).jointAllocationMethod),
-          ownerBoundaries: (object(object(frozen.policy).validDomain).ownerBoundaries ?? []) as unknown as Pm.OwnerBoundary[],
+          cycleId: task.input.cycleId, allocationMethod: object(object(policy.validDomain).jointAllocationMethod),
+          ownerBoundaries: (object(policy.validDomain).ownerBoundaries ?? []) as unknown as Pm.OwnerBoundary[],
           selectedCapital: String(frozen.selectedCapital), heldoutData: heldout,
           ...(frozen.capture ? { capture: frozen.capture as unknown as CapturedAccount,
             datasetRevision: { id: String(object(object(frozen.configured).revision).id), contentRef: String(object(object(frozen.configured).revision).contentRef) } } : {}) }, ctx, pmScienceCheckpoint(runtime, 'pm-independent', ctx));
@@ -82,16 +89,15 @@ export function pmIndependentTask(config: ServiceConfig) {
             return projectNativeIndependentMetrics({ portfolio: {
             partition: 'HELDOUT', statistics: report.statistics ?? [], returns_status: frozen.capture ? null : simulation.returns_status ?? null,
             recorded_fee_totals: simulation.recorded_fee_totals ?? null } }, [...pmMetricDefinitions(), ...pmDiagnosticDefinitions()],
-            { role: 'INDEPENDENT', interval: evidence.eventInterval, asOfNs: cycle.asOfNs, availableAtNs: atNs, evidenceRefs: [artifactId], methodRef: record.policy.id,
+            { role: 'INDEPENDENT', interval: evidence.eventInterval, asOfNs: cycle.asOfNs, availableAtNs: atNs, evidenceRefs: [artifactId], methodRef: policy.id,
               currency: decision.capital!.equity.currency, calendarId: 'UTC_COMPLETE_DAYS' });
           };
           const metrics = project(result.point.simulation); const baselineMetrics = project(result.baseline.simulation);
           const baselineSelection = object(result.baseline.simulationRequest.selection);
           if (!selection || baselineSelection.event_start_ns !== selection.event_start_ns || baselineSelection.event_end_ns !== selection.event_end_ns) throw new Problem('independent_baseline_scope_mismatch');
-          const policy = json(record.policy) as unknown as Pm.DecisionPolicyRevision;
           const qualification = evaluatePmQualification(object(object(policy.validDomain).qualificationProtocol, 'qualification_protocol'), policy.selectionRule, metrics, baselineMetrics, atNs);
           artifact.metrics = json(metrics); artifact.baselineMetrics = json(baselineMetrics); artifact.qualification = json(qualification); evidence.contentDigest = pmArtifactDigest(artifact);
-          const complete = result.point.status === 'COMPLETED' && metrics.length > 0 && record.policy.selectionRule.objectives.every(objective => metrics.filter(metric => metric.definition.id === objective.metricDefinitionId && metric.status === 'AVAILABLE').length === 1);
+          const complete = result.point.status === 'COMPLETED' && metrics.length > 0 && policy.selectionRule.objectives.every(objective => metrics.filter(metric => metric.definition.id === objective.metricDefinitionId && metric.status === 'AVAILABLE').length === 1);
           const retainedArtifacts = await retainPmArtifacts(runtime, { [artifactId]: artifact }, ctx);
         await runtime.commit(async tx => {
           const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const decision = record.decisions[task.input.decisionId]!;
