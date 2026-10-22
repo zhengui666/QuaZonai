@@ -1,5 +1,7 @@
 # Recovery
 
+First classify the operation: a read, a locally rejected request, a server rejection, or a write with an unknown outcome. Preserve its original nonsecret input and receipt before changing anything. A new `requestId` with a changed question/model/data is new work, not recovery; it cannot erase failed trials, exposure or an exhausted budget.
+
 | Observation | Action |
 | --- | --- |
 | Login missing/revoked, 401/403 | Stop writes; user repairs the original login in their private terminal. Never read credentials or broaden authority. |
@@ -15,6 +17,12 @@
 | Watch timeout/detachment or missing native submission projection | Observation ended, not admitted work. Read the same ID; disclose unknown settlement rather than infer success from IDLE/empty tasks. |
 | Unknown stop/logout/downstream outcome | Reconcile the original resource/device. A receipt, closed connection or local exit does not prove remote cancellation/revocation. |
 
+For commands that carry `requestId` (such as research start, portfolio build or observation start), uncertain replay uses the unchanged original file and ID. `research resume` instead identifies the original conversation and preceding terminal submission: retain both numeric IDs and the returned `previousSubmissionId`/new `submissionId`; do not supply an invented recovery key or use the conversation ID as the submission ID. Inspect diagnostics before choosing which terminal submission to resume. Existing continuation authorization still applies; a recovered receipt does not require another confirmation.
+
+Commands without a request ID, such as stop, settings or extension changes, do not gain idempotency merely because the CLI can repeat them. Read the original resource/current state and reconcile the intended effect before another write. For a known rejected request that needs a changed body, explain the correction and treat it as a separate authorized operation; never mutate the preserved request used to resolve an unknown outcome.
+
 Keep only approved nonsecret original requests, resource IDs and receipts. Never edit native SQLite, clear budgets/trials/exposures, rediscover credential files or create a replacement task loop.
+
+Recovery is complete when the original effect is established by a receipt/current state, or its unresolved outcome and exact next action are handed off. After recovering a start/resume receipt, continue observing that same study to the user's requested endpoint. Report “receipt recovered; research still running” when that is the evidence, rather than declaring the research complete.
 
 Return requested operation → original IDs → actual observed state → evidence/limitations → the next required action. Distinguish running, failed, stopped, unknown, not attempted and computed-but-unqualified.

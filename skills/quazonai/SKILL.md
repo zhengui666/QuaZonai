@@ -1,12 +1,20 @@
 ---
 name: quazonai
-description: Operate an existing QuaZonai research workbench through its installed HTTP CLI. Submit finite factor studies, inspect trials and independent evidence, build optional shared-account portfolios/backtests, and observe target-only downstream/account bindings. Not a development or deployment workflow.
+description: Operate an existing QuaZonai research workbench through its installed HTTP CLI. Define original goals, testable research questions and evidence-backed rationales; create or continue finite factor studies, inspect trials and independent evidence, build optional shared-account portfolios/backtests, and observe target-only downstream/account bindings. Covers both command usage and agent decision, writing, recovery and handoff standards. Not a development or deployment workflow.
 compatibility: Requires the installed quazonai CLI, Node 22.19+ and a saved owner-device login to a compatible /api/v3 service.
 ---
 
 # Operate QuaZonai
 
 Use the installed `quazonai` executable and the user's requested scope. No repository checkout, service startup or model inference probe is needed to connect.
+
+## Working agreement for agents
+
+1. Establish the requested endpoint: inspect, prepare a local research draft, start a finite study, interpret results, or perform a specifically requested consumer operation. Use existing context and delegated choices; ask only for missing decisions that materially change the question, data, budget or endpoint. Writing a draft does not imply starting computation.
+2. Before authoring or revising a study, read [research authoring](references/research-authoring.md) and [research operations](references/research.md). Preserve the user's original intent, distinguish facts from hypotheses, and align the question, registered data, metric, search scope and trial budget. Valid JSON alone is not a usable study specification.
+3. Inspect existing studies before creating another. Continue the original study when that meets the request; record why a different question needs new work. Retain failed trials, exposed data and original criteria. Do not use a fresh request ID or relaxed target to erase an inconvenient result.
+4. Give each logical write one responsible agent. Helpers can inspect evidence or draft independent parts; the writer reconciles the request and submits once. Handoffs include the original request/file reference, IDs, observed state/time, evidence limits and next action, without credentials.
+5. Follow the requested completion condition and report the actual result. A negative or inconclusive finding can complete a study. Factor completion does not authorize portfolio construction, account observation, settings changes or capital actions.
 
 ## Connect
 
@@ -17,6 +25,7 @@ Run `quazonai identity`. Without a login, have the user run `quazonai login --or
 | Intent | Commands / reference |
 | --- | --- |
 | Choose an actual configured model and dataset | `research models`, `datasets` |
+| Write the original goal, question, rationale, exclusions and acceptance criteria | [Research authoring](references/research-authoring.md) |
 | Submit a finite goal or an original request file | [Research](references/research.md) |
 | Read trials, selection, failure and independent result | `research get ID`; [evidence and portfolios](references/results.md) |
 | Observe or stop the original study | [Bounded observation](references/runs.md) |
@@ -39,5 +48,6 @@ Use `quazonai --help` and offline `schema list` / `schema show NAME` for unfamil
 - Missing/stale values stay unavailable, not zero. Real portfolio equity must come from a shared native account, never summed factor curves. A configured source alone proves no licensing, PIT, data quality or usable account.
 - Model credentials stay in the service's private native credential store or configured host environment. Use Settings for official provider login; never ask for credentials in chat. Model availability is metadata/auth configuration, not a billed test. Never disclose secrets, hidden reasoning or raw Sealed values.
 - Paper/Live describe observed source bindings. QuaZonai is target-only: no broker orders, trading launch or funds transfer. Optional original-V1 capital controls require advertised downstream capability and the user's specific request; a preview or generic development request does not authorize initiating a reservation or external withdrawal. A target ACK is not a fill; local exit or a stop receipt does not prove remote cancellation.
+- For requested settings or extension changes, read the current values/state first, change only the requested scope and read back the result. A configured or enabled extension is not necessarily loaded; report `pending_restart` or `error` as observed, and do not restart the service merely to clear it.
 
-Return the original IDs, observed state, actual evidence/limitations and next required action. Do not expand authority or start optional portfolio/observation work merely because factor research completed.
+Return the original IDs, observed state, actual evidence/limitations and next required action. For research, say which part of the original goal was answered, whether the evidence supports, rejects or leaves the question unresolved, and how the conclusion depends on the recorded data and criteria. Keep proposed follow-up work distinct from work already authorized or started.

@@ -1,5 +1,5 @@
 # Capital exits
 
-The compact workbench CLI has no capital-exit, reduction-order or withdrawal commands. Its Paper/Live page is [target/account observation](account-transport.md), not account control. Do not use retired recipes or invent endpoints to operate funds.
+The installed CLI exposes `capital status OBSERVATION_ID`, `capital preview OBSERVATION_ID --file FILE` and `capital command OBSERVATION_ID --file FILE`. Follow [target/account observation](account-transport.md) for their original request, capability, preview and reconciliation requirements. Use only the user's requested amount/action and the existing observation binding; unsupported initiation does not prevent reading existing native progress.
 
-Retain original historical records and the user's separate authorized account-owner procedures. A cash snapshot, target ACK, stop receipt or local process exit is not withdrawal or remote cancellation evidence.
+Preview does not authorize initiation. Preserve original request/plan/control identities and historical records; unknown outcomes reconcile those same identities. Pause/cancel does not release reserved money. QuaZonai never performs the external transfer, and a cash snapshot, target ACK, stop receipt or local process exit is not withdrawal or remote cancellation evidence. Do not use retired relay recipes or invent fund-operation endpoints.

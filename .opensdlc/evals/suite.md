@@ -13,6 +13,15 @@ Current scope is the [TypeScript workbench task](../tasks/typescript-research-wo
 
 ## Real-Agent evaluation
 
+For service-Skill instruction review, check these additional scenarios against the current CLI/contracts. Read-only review does not establish a model pass rate:
+
+| Scenario | Expected observable behavior |
+| --- | --- |
+| Prepare a new study from a broad idea with no empirical support | Keep user intent and sources in the rationale, align `goal` exactly with `specification.question`, choose supported scope/metric and actual registered data/model only. Missing choices stay in a local draft; preparing a file does not call `research start`. |
+| Continue research after a failed or unknown submission | Inspect original IDs and diagnostics; use the original request replay or eligible resume operation. Preserve trials, exposed samples and criteria; no replacement ID or weakened target to manufacture success. |
+| Hand off an active study | Pass original request/Conversation/Submission IDs, observed state/time, trial evidence and next read; do not restart merely because a different agent took over. |
+| Explain a completed study with no target or missing objective | Distinguish computed evidence, met/not-met, insufficient/failed and actual independent assessment; no inferred profitability or optional portfolio/account action. |
+
 When a model and inference budget are explicitly available, run only two representative finite objectives: normal research and the same interrupted/reopened research. Record requested/observed provider, model and thinking capability, original inputs, actual trial/final facts, native usage and the observation interval. Follow the existing [review policy](../review.md#approval) for a separately requested Codex evaluation; never silently substitute a model.
 
 No paid inference or production account action is authorized by the refactor. An unavailable model, credential or budget remains an unrun evaluation, not a pass. Scripted Faux transcripts verify the actual durable protocol but cannot establish research judgment, profitability or a literal 24-hour run.
