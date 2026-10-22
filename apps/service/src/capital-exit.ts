@@ -22,8 +22,37 @@ export function accountKey(connection: ConnectionConfig, records?: Record<string
   return Object.entries(records ?? {}).find(([, value]) => control(value).bindings?.includes(key))?.[0] ?? key;
 }
 export interface CapitalCommand { original: JsonObject; body: JsonObject; path: string; reserved: string; state: string; result: JsonObject | null; error: string | null; taskId: number }
-export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[]; receivedAtNs?: string }
+export interface TransportCapability { document: JsonObject; receivedAtNs: string }
+export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[]; receivedAtNs?: string; capabilities?: JsonObject; capabilitiesReceivedAtNs?: string;
+  capabilitiesByBinding?: Record<string, TransportCapability>; refreshFailuresByBinding?: Record<string, { code: string; receivedAtNs: string }> }
 export function control(value: unknown): AccountControl { return value as AccountControl ?? { commands: {} }; }
+export const transportBindingKey = (connection: ConnectionConfig) => JSON.stringify([connectionBase(connection).href, connection.mode, connection.clientId, connection.accountId]);
+/** Permission envelopes belong to a transport binding, while reservations and
+ * command ownership belong to the shared physical account. */
+export function transportCapability(value: AccountControl, connection: ConnectionConfig, atNs = nowNs()): TransportCapability | null {
+  const key = transportBindingKey(connection);
+  if (value.refreshFailuresByBinding?.[key]) return null;
+  const saved = value.capabilitiesByBinding?.[key];
+  const document = saved?.document ?? value.capabilities;
+  if (!document || document.clientId !== connection.clientId || document.accountId !== connection.accountId || document.mode !== connection.mode || typeof document.currency !== 'string') return null;
+  const receivedAtNs = counter(saved?.receivedAtNs ?? value.capabilitiesReceivedAtNs ?? atNs, 'capital_capabilities_received');
+  if (!saved) { value.capabilitiesByBinding ??= {}; value.capabilitiesByBinding[key] = { document: json(document), receivedAtNs }; }
+  return { document: json(document), receivedAtNs };
+}
+export function transportControlFailure(value: AccountControl, connection: ConnectionConfig) { return value.refreshFailuresByBinding?.[transportBindingKey(connection)] ?? null; }
+/** Compare physical state without treating a different client's initiation
+ * permission as a new reservation/account event. */
+export function physicalCapitalState(status: CapitalExitStatus): JsonObject {
+  return json({ accountSourceId: status.accountSourceId, observationId: status.observationId, controlRevision: status.controlRevision,
+    reserved: status.reserved, exits: status.exits, blocked: status.capability === 'BLOCKED',
+    reason: status.reason === 'capital_exit_initiation_unavailable' ? null : status.reason });
+}
+export function recordCapitalControlFailure(records: Record<string, JsonObject>, connection: ConnectionConfig, code: string): void {
+  const key = accountKey(connection, records), value = control(records[key]), binding = transportBindingKey(connection);
+  value.refreshFailuresByBinding ??= {};
+  if (value.refreshFailuresByBinding[binding]?.code !== code) value.refreshFailuresByBinding[binding] = { code, receivedAtNs: nowNs() };
+  records[key] = json(value);
+}
 export function moneyString(units: bigint): string {
   const sign = units < 0n ? '-' : ''; const value = units < 0n ? -units : units;
   return `${sign}${value / 10n ** 18n}.${(value % 10n ** 18n).toString().padStart(18, '0')}`;
@@ -34,6 +63,23 @@ export function outstandingReserved(value: AccountControl): string | null {
 }
 export function capitalStatus(value: AccountControl): CapitalExitStatus {
   return value.status ? { ...value.status, reserved: outstandingReserved(value) } : { capability: 'UNSUPPORTED', reason: 'downstream_capability_not_observed', accountSourceId: null, observationId: null, controlRevision: null, reserved: null, exits: [] };
+}
+/** Bind transport permissions/read failures to their original client while
+ * retaining physical revisions, exit fences and reservations across aliases. */
+export function capitalStatusForBinding(value: AccountControl, connection: ConnectionConfig, atNs = nowNs()): CapitalExitStatus {
+  const status = capitalStatus(value), failure = transportControlFailure(value, connection);
+  if (failure) return { ...status, capability: 'BLOCKED', reason: failure.code, reserved: null };
+  const capability = transportCapability(value, connection, atNs);
+  if (!capability) return status; // A retained pre-capability source stays an explicit legacy fact.
+  const permission = object(capability.document.capitalExit ?? {});
+  const readable = permission.version === 1 && (permission.supported === true || permission.readable === true);
+  if (!readable) return { ...status, capability: status.capability === 'BLOCKED' ? 'BLOCKED' : 'UNSUPPORTED',
+    reason: status.capability === 'BLOCKED' ? status.reason : 'downstream_capital_exit_unsupported', reserved: null };
+  if (status.capability !== 'BLOCKED' && status.accountSourceId) {
+    status.capability = permission.supported === true ? 'SUPPORTED' : 'UNSUPPORTED';
+    if (status.reason === 'capital_exit_initiation_unavailable' || status.reason === null) status.reason = status.capability === 'SUPPORTED' ? null : 'capital_exit_initiation_unavailable';
+  }
+  return status;
 }
 export function assertEnvelope(connection: ConnectionConfig, value: JsonObject, currency: string) {
   if (value.clientId !== connection.clientId || value.accountId !== connection.accountId || value.mode !== connection.mode || value.currency !== currency) throw new Problem('downstream_control_identity_mismatch', 409);
@@ -120,11 +166,15 @@ function acceptCommand(input: CommandInput, state: AccountControl, value: JsonOb
   // Its reservation remains part of the shared account control fact until status reconciliation.
 }
 export function reconcileControl(previous: AccountControl, fresh: Awaited<ReturnType<typeof readCapitalControl>>): AccountControl {
+  const capabilities = { capabilities: json(fresh.capabilities), capabilitiesReceivedAtNs: previous.capabilities
+    && canonical(previous.capabilities) === canonical(fresh.capabilities) ? previous.capabilitiesReceivedAtNs ?? nowNs() : nowNs() };
   if (previous.status?.accountSourceId && fresh.status.accountSourceId && previous.status.accountSourceId !== fresh.status.accountSourceId) throw new Problem('capital_control_identity_mismatch', 409);
   const oldRevision = previous.status?.controlRevision; const revision = fresh.status.controlRevision;
   if (oldRevision && revision && BigInt(revision) < BigInt(oldRevision)) throw new Problem('capital_control_out_of_order', 409);
   if (oldRevision && revision === oldRevision && previous.status && (previous.status.reserved !== null && fresh.status.reserved !== null && previous.status.reserved !== fresh.status.reserved || canonical(json(previous.status.exits)) !== canonical(json(fresh.status.exits)))) throw new Problem('capital_control_conflict', 409);
-  if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, receivedAtNs: nowNs(), status: { ...previous.status, capability: fresh.status.capability, reason: fresh.status.reason, reserved: null } };
+  // No permission to read is not an authoritative physical account update.
+  // recordCapitalControl retains that failure only on its transport binding.
+  if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, ...capabilities };
   const commands = previous.commands;
   for (const command of Object.values(commands)) {
     if (command.state === 'ACCEPTED' && command.reserved !== '0') {
@@ -133,9 +183,9 @@ export function reconcileControl(previous: AccountControl, fresh: Awaited<Return
       command.reserved = '0';
     }
   }
-  const unchanged = previous.status && canonical(json(previous.status)) === canonical(json(fresh.status));
+  const unchanged = previous.status && canonical(physicalCapitalState(previous.status)) === canonical(physicalCapitalState(fresh.status));
   const receivedAtNs = unchanged ? previous.receivedAtNs ?? nowNs() : nowNs();
-  return { ...previous, status: fresh.status, native: fresh.native, commands, receivedAtNs };
+  return { ...previous, ...capabilities, status: fresh.status, native: fresh.native, commands, receivedAtNs };
 }
 export function recordCapitalControl(records: Record<string, JsonObject>, connection: ConnectionConfig, fresh: Awaited<ReturnType<typeof readCapitalControl>>): string {
   const original = accountKey(connection, records); const prior = control(records[original]);
@@ -144,6 +194,27 @@ export function recordCapitalControl(records: Record<string, JsonObject>, connec
   const key = same ? same[0] : original;
   if (key !== original && Object.keys(prior.commands).length) throw new Problem('account_alias_requires_reconciliation', 409);
   const next = reconcileControl(control(records[key]), fresh);
-  next.bindings = [...new Set([...(next.bindings ?? []), key, connectionKey(connection)])];
-  records[key] = json(next); return key;
+  if (key !== original) {
+    // A provisional, command-free record may have been retained before its
+    // physical source was readable. Move its binding facts rather than leave
+    // an older accountKey() match shadowing the now-authoritative record.
+    next.capabilitiesByBinding = { ...prior.capabilitiesByBinding, ...next.capabilitiesByBinding };
+    next.refreshFailuresByBinding = { ...prior.refreshFailuresByBinding, ...next.refreshFailuresByBinding };
+  }
+  const binding = transportBindingKey(connection);
+  const saved = next.capabilitiesByBinding?.[binding];
+  // A repeated read through A retains A's first receipt even if B was the
+  // latest transport to read the same physical account.
+  next.capabilitiesByBinding ??= {};
+  next.capabilitiesByBinding[binding] = { document: json(fresh.capabilities), receivedAtNs: saved && canonical(saved.document) === canonical(fresh.capabilities) ? saved.receivedAtNs : next.capabilitiesReceivedAtNs! };
+  if (fresh.status.accountSourceId) { if (next.refreshFailuresByBinding) delete next.refreshFailuresByBinding[binding]; }
+  else {
+    const code = fresh.status.reason ?? 'downstream_capital_exit_unsupported';
+    next.refreshFailuresByBinding ??= {};
+    if (next.refreshFailuresByBinding[binding]?.code !== code) next.refreshFailuresByBinding[binding] = { code, receivedAtNs: nowNs() };
+  }
+  next.bindings = [...new Set([...(prior.bindings ?? []), ...(next.bindings ?? []), key, connectionKey(connection)])];
+  records[key] = json(next);
+  if (key !== original) delete records[original];
+  return key;
 }

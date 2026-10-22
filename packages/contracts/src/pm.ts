@@ -329,6 +329,35 @@ export interface CandidateComparison extends VersionedFact {
   reasonCodes: string[];
   evidenceRefs: Id[];
 }
+/** Predicted return and variance over the original label horizon, never daily
+ * account performance. Objective is lambda * variance + linear cost - gross return.
+ */
+export interface ModeledOperatingOutcome {
+  grossExpectedReturn: number;
+  linearTurnoverCost: number;
+  netExpectedReturn: number;
+  variance: number;
+  objectiveValue: number;
+}
+export interface ModeledOperatingComparison {
+  method: 'MATCHED_LINEAR_RETURN_VARIANCE_V1' | 'MATCHED_ROUNDED_LINEAR_RETURN_VARIANCE_V1';
+  basis: 'FORWARD_MODEL_ESTIMATE';
+  forecastUnit: 'RETURN_PER_HORIZON';
+  methodPolicyRef: Id;
+  horizonRef: Id;
+  /** Registered numerical method parameter; it is not an inferred owner preference. */
+  riskAversion: Decimal;
+  nativeEvidenceRef: Id;
+  startingStateRef: Id;
+  /** Model decision cutoff, not the economic clock of the original snapshot. */
+  asOfNs: Ns;
+  /** Maximum actual availability of consumed source inputs; not computation time. */
+  availableAtNs: Ns;
+  hold: ModeledOperatingOutcome;
+  proposed: ModeledOperatingOutcome | null;
+  targetBlockReason: string | null;
+  limitations: string[];
+}
 export interface OperatingComparison extends VersionedFact {
   cycleId: Id;
   basisRevision: string;
@@ -353,6 +382,7 @@ export interface OperatingComparison extends VersionedFact {
   selectedCandidateId: Id | null;
   conclusion: 'SELECTED' | 'UNRESOLVED_TRADEOFF' | 'NEEDS_EVIDENCE' | 'NO_FEASIBLE_SOLUTION';
   reasonCodes: string[];
+  modeledComparison?: ModeledOperatingComparison;
 }
 
 export interface FactorVersion extends VersionedFact {
@@ -451,10 +481,16 @@ export interface AccountBasis {
   equity: Money | null;
   valuation?: {
     origin: 'DERIVED';
+    /** Omission retains the original snapshot-time contract. Forward valuation
+     * revalues the original quantities without rewriting their source clock. */
+    timeBasis?: 'SNAPSHOT_TIME' | 'DECISION_CUTOFF';
+    priceEvidenceRef?: Id;
     reportValue: Money;
     valuationEvidenceRef: Id;
     methodRef: Id;
     asOfNs: Ns;
+    /** Maximum input availability. For DECISION_CUTOFF this is <= asOfNs;
+     * persisted evidence createdAtNs records later report production separately. */
     availableAtNs: Ns;
   };
   reserved: Money | null;
@@ -479,6 +515,15 @@ export interface AssetTarget {
   targetNotional: Money;
   currentNotional: Money | null;
   netTradeNotional: Money | null;
+  /** Original native lot-rounded estimate at retained marks, never a fill or
+   * realized position. The continuous model target above remains unchanged. */
+  executionEstimate?: {
+    resultingQuantity: Decimal;
+    resultingNotional: Money;
+    netTradeQuantity: Decimal;
+    netTradeNotional: Money;
+    evidenceRef: Id;
+  };
   quantityRuleRef: Id;
   riskContribution: MetricObservation | null;
 }
@@ -839,6 +884,8 @@ export interface PmEntities {
   ComparisonScope: ComparisonScope;
   CandidateScorecard: CandidateScorecard;
   CandidateComparison: CandidateComparison;
+  ModeledOperatingOutcome: ModeledOperatingOutcome;
+  ModeledOperatingComparison: ModeledOperatingComparison;
   OperatingComparison: OperatingComparison;
   FactorVersion: FactorVersion;
   CalibrationModel: CalibrationModel;

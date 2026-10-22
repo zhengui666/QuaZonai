@@ -71,6 +71,8 @@ use utoipa::OpenApi;
     observed_spot::NativeObservedSpotStudyResultV1,
     observed_spot::NativeObservedSpotValuationRequestV1,
     observed_spot::NativeObservedSpotValuationResultV1,
+    observed_spot::NativeObservedSpotBuildRequestV1,
+    observed_spot::NativeObservedSpotBuildResultV1,
     science::NativeForecastRequestV1,
     science::NativeForecastResultV1,
     factors::NativeFactorEvaluationRequestV1,

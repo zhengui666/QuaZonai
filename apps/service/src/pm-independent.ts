@@ -13,6 +13,8 @@ import { assertPmDataAvailable } from './pm-datasets.ts';
 import { evaluatePmQualification } from './pm-qualification.ts';
 import { pmArtifactDigest, pmScienceCheckpoint, retainPmArtifacts } from './pm-evidence.ts';
 import type { CapturedAccount } from './pm-account.ts';
+import { campaignAccount } from './pm-campaign-account.ts';
+import { canonical } from '../../research/src/documents.ts';
 
 /** The selected method/capital are immutable before this owner-only task sees FINAL. */
 export function pmIndependentTask(config: ServiceConfig) {
@@ -43,13 +45,13 @@ export function pmIndependentTask(config: ServiceConfig) {
             kind: 'CONSUME', resource: 'TRIAL', amount: '1', currency: null, fromReservationId: record.budget.reservationForClosureRef,
             toReservationId: null, measurementEvidenceRef: null, reasonCode: id === trialId ? 'one_frozen_selected_portfolio_independent_evaluation' : 'one_matched_independent_baseline_evaluation' };
           }
-          const basis = cycle.accountBasis;
-          const accountEvidence = basis ? record.evidence[basis.positionsEvidenceRef] : null;
+          const capture = cycle.accountBasis ? campaignAccount(record, record.campaigns[parent.campaignId]!) : null;
+          if (capture && canonical(json(capture.basis)) !== canonical(json(cycle.accountBasis))) throw new Problem('independent_campaign_account_start_mismatch');
           record.artifacts[`independent-input:${decision.id}`] = json({ cycle: cycle.id, basisRevision: cycle.basisRevision, decisionId: decision.id,
             selectedCapital: decision.capital.committedCapital.amount, capital: decision.capital.equity, policy: record.policy,
             source: object(record.artifacts[cycle.id]!).nativeSource!, configured: object(record.artifacts[cycle.id]!).configured!,
             data: object(object(record.artifacts[cycle.id]!).configured).data!,
-            capture: basis && accountEvidence ? { basis, evidence: accountEvidence, artifact: record.artifacts[accountEvidence.objectKey]! } : null });
+            capture });
           admitted = true; return undefined;
         }, ctx);
         if (!admitted) return;
@@ -62,6 +64,7 @@ export function pmIndependentTask(config: ServiceConfig) {
         const result = await evaluatePmIndependent({ source: object(frozen.source), capital: frozen.capital as unknown as Pm.Money,
           currency: String(object(frozen.capital).currency), catalog: String(heldout.catalog), dataDir: config.dataDir, binary: config.jobBinary,
           cycleId: task.input.cycleId, allocationMethod: object(object(object(frozen.policy).validDomain).jointAllocationMethod),
+          ownerBoundaries: (object(object(frozen.policy).validDomain).ownerBoundaries ?? []) as unknown as Pm.OwnerBoundary[],
           selectedCapital: String(frozen.selectedCapital), heldoutData: heldout,
           ...(frozen.capture ? { capture: frozen.capture as unknown as CapturedAccount,
             datasetRevision: { id: String(object(object(frozen.configured).revision).id), contentRef: String(object(object(frozen.configured).revision).contentRef) } } : {}) }, ctx, pmScienceCheckpoint(runtime, 'pm-independent', ctx));

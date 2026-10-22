@@ -276,3 +276,78 @@ test('reopening repairs original campaign owner-stop intent interrupted before t
     assert.equal(f.computed, 1); assert.deepEqual(await f.host.start('interrupted-owner-stop', f.input), receipt);
   } finally { release(); await f.close(); }
 });
+
+test('an explicit no-leverage intake produces a canonical boundary and can conclude the original research budget', async () => {
+  const f = await fixture(1); f.input.goal = '研究账户配置。不要杠杆。'; f.input.campaign!.intakeRequired = true;
+  try {
+    f.faux.setResponses([call('strategy_intake', { name: 'Unlevered research', archetype: 'PREDICTIVE_ALPHA', economicMechanism: 'Test an allocation hypothesis', falsificationConditions: ['No validation improvement'],
+      requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Overfit'], ambiguities: [],
+      ownerBoundaries: [{ kind: 'LEVERAGE', sourceStatement: '不要杠杆。', normalizedValue: { maximumGrossNavRatio: '1', borrowingAllowed: false } }] }),
+      hypothesis(), trial(0.4), fauxAssistantMessage('Compare the admitted evidence.')]);
+    const receipt = await f.host.start('no-leverage', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
+    const state = await f.host.state(receipt.conversationId); const intake = state.campaignResearch!.intake!;
+    assert.equal(intake.support, 'CONDITIONAL'); assert.deepEqual(intake.missingCapabilities, []);
+    assert.equal(intake.ownerBoundaries.length, 1); assert.equal(intake.ownerBoundaries[0]!.sourceStatement, '不要杠杆。');
+    assert.deepEqual(intake.ownerBoundaries[0]!.value, { maximumGrossNavRatio: '1', borrowingAllowed: false });
+    assert.equal(state.campaignResearch!.state, 'CONCLUDED'); assert.equal(f.computed, 1);
+    assert.equal(state.campaignResearch!.trials.filter(item => item.countedAttempt).length, 1);
+    const original = JSON.parse(JSON.stringify(state.campaignResearch)); await f.reopen();
+    assert.deepEqual(await f.host.start('no-leverage', f.input), receipt); assert.deepEqual((await f.host.state(receipt.conversationId)).campaignResearch, original);
+  } finally { await f.close(); }
+});
+
+test('authenticated accepted constraints survive model omission and a future drawdown wish stays unresolved', async () => {
+  const f = await fixture(1); f.input.goal = 'Research an allocation. Keep future drawdown below 5%.'; f.input.campaign!.intakeRequired = true;
+  const boundary = { id: 'original-owner-boundary', kind: 'LEVERAGE' as const, sourceStatement: 'Use at most half the NAV and no borrowing.', effectiveFromNs: '0', value: { maximumGrossNavRatio: '0.5', borrowingAllowed: false } };
+  f.input.campaign!.ownerBoundaries = [boundary]; f.input.campaign!.ownerClarificationStatements = [boundary.sourceStatement];
+  try {
+    f.faux.setResponses([call('strategy_intake', { name: 'Allocation research', archetype: 'PREDICTIVE_ALPHA', economicMechanism: 'Test allocation', falsificationConditions: ['No improvement'],
+      requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Unbounded future market risk'], ambiguities: [],
+      ownerBoundaries: [{ kind: 'LOSS', sourceStatement: 'Keep future drawdown below 5%.' }] }),
+      hypothesis(), trial(0.4), fauxAssistantMessage('Future loss cannot be guaranteed.'), fauxAssistantMessage('Await owner clarification of the required risk control.')]);
+    const receipt = await f.host.start('loss-clarification', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
+    const intake = (await f.host.state(receipt.conversationId)).campaignResearch!.intake!;
+    assert.equal(intake.support, 'NEEDS_CLARIFICATION'); assert.ok(intake.missingCapabilities.includes('owner_boundary_normalization_required'));
+    assert.deepEqual(intake.ownerBoundaries, [boundary], 'model omission cannot remove the accepted owner constraint');
+    assert.ok(intake.ownerBoundaryStatements.some(item => item.kind === 'LOSS' && item.sourceStatement === 'Keep future drawdown below 5%.'));
+    assert.equal(f.computed, 0);
+  } finally { await f.close(); }
+});
+
+for (const mode of ['NEEDS_CLARIFICATION', 'UNSUPPORTED', 'ACCEPTED_LOSS'] as const) test(`frozen ${mode} intake can close without spending unusable trials or exposing sealed evidence`, async () => {
+  const f = await fixture(2, false, true); f.input.campaign!.intakeRequired = true;
+  f.input.goal = 'Research an allocation. Keep leverage restrained.';
+  if (mode === 'ACCEPTED_LOSS') f.input.campaign!.ownerBoundaries = [{ id: 'original-loss-constraint', kind: 'LOSS', sourceStatement: 'Future drawdown below 5%.', effectiveFromNs: '0',
+    value: { metricKey: 'account.maximum_drawdown', metricDefinitionId: 'owner-risk-metric', limit: '0.05', unit: 'RATIO', horizonRef: 'future' } }];
+  try {
+    f.faux.setResponses([call('strategy_intake', { name: 'Original research', archetype: mode === 'UNSUPPORTED' ? 'EVENT_DRIVEN' : 'PREDICTIVE_ALPHA',
+      economicMechanism: 'Test the original economic mechanism', falsificationConditions: ['No validation improvement'], requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Missing capability'],
+      ambiguities: [], ownerBoundaries: mode === 'NEEDS_CLARIFICATION' ? [{ kind: 'LEVERAGE', sourceStatement: 'Keep leverage restrained.' }] : [] }),
+      call('research_finish', { reason: 'The frozen intake records why no legitimate experiment can currently proceed.' })]);
+    const receipt = await f.host.start(`intake-stop-${mode}`, f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
+    const state = await f.host.state(receipt.conversationId); const campaign = state.campaignResearch!;
+    assert.equal(campaign.intake!.support, mode === 'NEEDS_CLARIFICATION' ? 'NEEDS_CLARIFICATION' : 'UNSUPPORTED');
+    assert.equal(campaign.state, 'CONCLUDED'); assert.equal(campaign.closingReason, mode === 'NEEDS_CLARIFICATION' ? 'strategy_intake_needs_clarification' : 'strategy_intake_unsupported');
+    assert.equal(state.research!.final!.conclusion, 'NEEDS_EVIDENCE'); assert.equal(state.research!.final!.trialId, null); assert.equal(state.research!.final!.result, null);
+    assert.equal(campaign.trials.length, 0); assert.equal(f.computed, 0); assert.equal(f.faux.state.callCount, 2);
+    assert.equal(campaign.budgetMovements.filter(item => item.resource === 'TRIAL').length, 0);
+    assert.equal((await f.host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context)).items.length, 0);
+    const original = JSON.parse(JSON.stringify(campaign)); await f.reopen();
+    assert.deepEqual(await f.host.start(`intake-stop-${mode}`, f.input), receipt); assert.deepEqual((await f.host.state(receipt.conversationId)).campaignResearch, original);
+  } finally { await f.close(); }
+});
+
+test('original explicit no-leverage statements remain binding even when the first model intake omits every boundary', async () => {
+  const f = await fixture(1); f.input.goal = 'Research net account performance. No leverage.'; f.input.campaign!.intakeRequired = true;
+  try {
+    f.faux.setResponses([call('strategy_intake', { name: 'Unlevered research', archetype: 'PREDICTIVE_ALPHA', economicMechanism: 'Test the allocation', falsificationConditions: ['No improvement'],
+      requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Costs'], ambiguities: [], ownerBoundaries: [] }),
+      call('research_finish', { reason: 'An empty comparison alone must not stop otherwise admissible research.' }),
+      hypothesis(), trial(0.4), fauxAssistantMessage('Close the original trial allowance.')]);
+    const receipt = await f.host.start('omitted-first-boundary', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
+    const intake = (await f.host.state(receipt.conversationId)).campaignResearch!.intake!;
+    assert.equal(intake.support, 'CONDITIONAL'); assert.equal(intake.ownerBoundaries.length, 1);
+    assert.equal(intake.ownerBoundaries[0]!.sourceStatement, 'No leverage.'); assert.deepEqual(intake.ownerBoundaries[0]!.value, { maximumGrossNavRatio: '1', borrowingAllowed: false });
+    assert.equal(f.computed, 1);
+  } finally { await f.close(); }
+});

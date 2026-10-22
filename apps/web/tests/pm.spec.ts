@@ -2,15 +2,15 @@ import { expect, test, type Page } from '@playwright/test';
 
 // Controlled HTTP presentation and original-command protocol. These fixtures
 // deliberately establish no investment performance, model quality or capacity.
-async function pmTransport(page: Page) {
-  const writes: { path: string; raw: string }[] = []; let starts = 0; let revision = '9007199254740993';
+async function pmTransport(page: Page, needsClarification = false, forward = false) {
+  const writes: { path: string; raw: string }[] = []; let starts = 0; let revision = '9007199254740993'; let clarified = !needsClarification; let clarifications = 0;
   const view = () => ({
-    mandate: { id: 'mandate:test/opaque', revision, ownerGoal: '测试目标：比较净收益与下行风险', baseCurrency: 'USD', operatingAuthority: 'RESEARCH_ONLY', unresolvedIntent: [] },
+    mandate: { id: 'mandate:test/opaque', revision, ownerGoal: '测试目标：比较净收益与下行风险', baseCurrency: 'USD', operatingAuthority: forward ? 'AUTHORIZED_TARGETS' : 'RESEARCH_ONLY', unresolvedIntent: clarified ? [] : ['请明确杠杆边界'] },
     activePolicy: {}, lastCycle: { id: 'cycle:test', state: 'COMPLETED', asOfNs: '1790000000000000000' },
-    currentDecision: { id: `decision:${revision}`, strategyVersionId: 'strategy:test', ensembleRevisionId: 'ensemble:test', action: 'NEEDS_EVIDENCE', status: 'CANDIDATE',
+    currentDecision: { id: `decision:${revision}`, strategyVersionId: 'strategy:test', ensembleRevisionId: 'ensemble:test', action: forward ? 'REBALANCE' : 'NEEDS_EVIDENCE', status: forward ? 'CURRENT' : 'CANDIDATE',
       accountBasis: { equity: null, valuation: { origin: 'DERIVED', reportValue: { amount: '1215.448835', currency: 'USD' }, asOfNs: '1790000000000000000' } },
-      reasonCodes: ['comparable_native_metrics_missing'], validUntilNs: null, capital: null, assetTargets: [], strategyAllocations: [], comparisonRef: null },
-    campaigns: [], strategies: [], assessments: [], researchTrials: [], budgetMovements: [], datasetRevisions: [], capabilities: [], comparisons: [], history: [], cycles: [], outcomes: [], retirements: [],
+      reasonCodes: ['comparable_native_metrics_missing'], validUntilNs: forward ? (BigInt(Date.now() + 60_000) * 1_000_000n).toString() : null, capital: null, assetTargets: forward ? [{ instrumentId: 'ASSET.SIM', navWeight: '0.4', targetNotional: { amount: '400', currency: 'USD' }, currentNotional: { amount: '300', currency: 'USD' }, netTradeNotional: { amount: '100', currency: 'USD' }, executionEstimate: { resultingQuantity: '3.995', resultingNotional: { amount: '399.5', currency: 'USD' }, netTradeQuantity: '0.995', netTradeNotional: { amount: '99.5', currency: 'USD' }, evidenceRef: 'native:test' } }] : [], strategyAllocations: [], comparisonRef: forward ? 'comparison:forward' : null },
+    campaigns: [], strategies: forward ? [{ id: 'strategy:test', pipelineAssessmentId: 'assessment:shadow' }] : [], assessments: forward ? [{ id: 'assessment:shadow', strategyVersionId: 'strategy:test', stage: 'SHADOW', outcome: 'READY', reasonCodes: [] }] : [], researchTrials: [], budgetMovements: [], datasetRevisions: [], capabilities: [], comparisons: forward ? [{ id: 'comparison:forward', evaluationContext: 'FORWARD_MODEL_ESTIMATE', scope: { interval: { startNs: '1790000000000000000', endExclusiveNs: '1790000060000000000' } }, candidates: [], selectedCandidateId: null, reasonCodes: [], modeledComparison: { method: 'MATCHED_LINEAR_RETURN_VARIANCE_V1', basis: 'FORWARD_MODEL_ESTIMATE', forecastUnit: 'RETURN_PER_HORIZON', methodPolicyRef: 'policy:test', horizonRef: 'horizon:test', riskAversion: '1', nativeEvidenceRef: 'native:test', startingStateRef: 'state:test', asOfNs: '1790000000000000000', availableAtNs: '1790000000000000000', hold: { grossExpectedReturn: 0.01, linearTurnoverCost: 0, netExpectedReturn: 0.01, variance: 0.001, objectiveValue: -0.009 }, proposed: { grossExpectedReturn: 0.05, linearTurnoverCost: 0.001, netExpectedReturn: 0.049, variance: 0.002, objectiveValue: -0.047 }, targetBlockReason: null, limitations: [] } }] : [], history: [], cycles: [], outcomes: [], retirements: [],
     ensembles: [{ id: 'ensemble:test', members: [{ factorVersionId: 'factor:actual-training-fit', weight: revision === '9007199254740993' ? '0.3' : '0.7', economicFamilyId: 'family:test' }] }],
     capacityEstimates: [{ id: 'capacity:test', level: 'CONDITIONAL_FEASIBILITY', status: 'INSUFFICIENT', asOfNs: '1790000000000000000', minimumTestedCapital: null,
       maximumTestedCapital: null, supportedCapitalUpperBound: null, curve: [], missingEvidence: ['economic_impact_and_exit_capacity_unverified'], assumptions: [] }],
@@ -31,6 +31,10 @@ async function pmTransport(page: Page) {
     }
     if (path === '/mandates/mandate%3Atest%2Fopaque') return reply(view());
     if (path === '/mandates/mandate%3Atest%2Fopaque/recompute') { revision = '9007199254740994'; return reply(view(), 202); }
+    if (path === '/mandates/mandate%3Atest%2Fopaque/intent-clarifications') {
+      if (++clarifications === 1) return route.abort('failed');
+      clarified = true; revision = '9007199254740994'; return reply(view(), 202);
+    }
     return reply({ error: 'not_found' }, 404);
   });
   return { writes, advance: () => { revision = '9007199254740994'; } };
@@ -55,11 +59,32 @@ test('PM intake preserves one original request after a lost response, without as
   expect(state.writes).toHaveLength(2); expect(state.writes[1]!.raw).toBe(state.writes[0]!.raw);
 });
 
+test('PM clarification retains the exact owner statement and original command through lost response and reload', async ({ page }) => {
+  const state = await pmTransport(page, true); await page.goto('/#/pm/mandate%3Atest%2Fopaque');
+  await page.getByText('澄清投资意图', { exact: true }).click();
+  await page.getByLabel('补充说明', { exact: true }).fill('仅使用自有资金开展研究。');
+  await page.getByLabel('明确为不使用杠杆、不借入资金', { exact: true }).check();
+  const ambiguity = page.getByRole('checkbox', { name: '请明确杠杆边界', exact: true });
+  await ambiguity.click(); await expect(ambiguity).toBeChecked();
+  await page.getByRole('button', { name: '保存意图澄清', exact: true }).click();
+  await expect(page.getByRole('button', { name: '核对原澄清请求', exact: true })).toBeVisible();
+  const original = state.writes[0]!.raw; const body = JSON.parse(original);
+  expect(body.statement).toBe('仅使用自有资金开展研究。\n不使用杠杆');
+  expect(body.boundaries).toEqual([{ kind: 'LEVERAGE', sourceStatement: '不使用杠杆', value: { maximumGrossNavRatio: '1', borrowingAllowed: false } }]);
+  expect(body.expectedRevision).toBe('9007199254740993');
+  expect(body.resolvedAmbiguities).toEqual(['请明确杠杆边界']);
+  await page.reload(); await page.getByText('澄清投资意图', { exact: true }).click();
+  await expect(page.getByLabel('补充说明', { exact: true })).toHaveValue('仅使用自有资金开展研究。');
+  await page.getByRole('button', { name: '核对原澄清请求', exact: true }).click();
+  await expect(page.getByText('澄清投资意图', { exact: true })).toHaveCount(0);
+  expect(state.writes[1]!.raw).toBe(original);
+});
+
 test('PM owner surface retains unknown capacity and refreshes learned proportions with exact revision commands', async ({ page }) => {
   const state = await pmTransport(page); await page.goto('/#/pm/mandate%3Atest%2Fopaque');
   await expect(page.getByRole('heading', { name: '因子组合比例' })).toBeVisible();
   await expect(page.getByText('原余额派生估值', { exact: true })).toBeVisible();
-  await expect(page.getByText('1215.448835', { exact: true })).toBeVisible();
+  await expect(page.getByRole('definition').filter({ hasText: '1215.448835 USD' })).toBeVisible();
   await expect(page.getByRole('cell', { name: '30.00%', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '重算当前证据' }).click();
   await expect(page.getByRole('cell', { name: '70.00%', exact: true })).toBeVisible();
@@ -70,4 +95,24 @@ test('PM owner surface retains unknown capacity and refreshes learned proportion
   await expect(capacity.getByText('未确定', { exact: true })).toHaveCount(3);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+// This controls presentation only; the timestamp and SHADOW assessment below
+// are not evidence from a market, account producer or qualification protocol.
+test('PM forward presentation separates current modeled targets from historical performance and target authorization', async ({ page }) => {
+  await pmTransport(page, false, true); await page.goto('/#/pm/mandate%3Atest%2Fopaque');
+  await expect(page.getByRole('heading', { name: '当前模型配置', exact: true })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: '目标金额', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '400 USD', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '300 USD', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '100 USD', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '按交易单位预计的调整', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '399.5 USD', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '99.5 USD', exact: true })).toBeVisible();
+  await expect(page.getByText('这是当前模型估计，尚未观测到该区间的收益。', { exact: false })).toBeVisible();
+  await expect(page.getByText('历史比较选出的配置', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '同一预测期限下的模型估计', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '4.90%', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '0.002', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '等待运营证据', exact: true })).toBeDisabled();
 });

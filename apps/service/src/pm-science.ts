@@ -5,8 +5,8 @@ import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { v7 as uuidv7 } from 'uuid';
-import type { Money } from '../../../packages/contracts/src/pm.ts';
-import { compareDecimal, subtractDecimal } from '../../../packages/contracts/src/pm-validation.ts';
+import type { Money, OwnerBoundary } from '../../../packages/contracts/src/pm.ts';
+import { compareDecimal, subtractDecimal, validatePmEntity } from '../../../packages/contracts/src/pm-validation.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { compileWasm, iterationRequest, normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import { jsonChunks } from '../../research/src/native-json.ts';
@@ -20,6 +20,7 @@ import type { ObservedSpotLeg, ObservedSpotValuationResult } from './pm-account-
 export interface PmScienceInput {
   source: JsonObject; capital: Money; currency: string; catalog: string;
   dataDir: string; binary: string; maximumTrials: number; cycleId: string; allocationMethod: JsonObject;
+  ownerBoundaries?: OwnerBoundary[];
 }
 export interface PmScienceCheckpoint {
   read(key: string): Promise<JsonObject | undefined>;
@@ -54,7 +55,7 @@ export interface PmAccountScienceResult {
   consumedTrials: number; limitations: string[]; evidence: JsonObject;
 }
 
-async function implementationIdentity(binary: string): Promise<string> {
+export async function implementationIdentity(binary: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(binary)) hash.update(chunk);
   return `sha256:${hash.digest('hex')}`;
@@ -64,7 +65,7 @@ async function implementationIdentity(binary: string): Promise<string> {
  * read those rows. Paths, matching metadata and a fresh digest taken only at
  * independent evaluation cannot establish that the original history survived.
  */
-async function verifyOriginalPrefix(source: JsonObject, catalog: string, binary: string, dataDir: string, context: Context): Promise<JsonObject> {
+export async function verifyOriginalPrefix(source: JsonObject, catalog: string, binary: string, dataDir: string, context: Context): Promise<JsonObject> {
   const expected = object(source.catalogPrefix, 'original_fit_catalog_prefix_evidence');
   const selection = object(object(object(source.request).forecast).selection, 'original_fit_prefix_selection');
   if (expected.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V1' || typeof expected.content_sha256 !== 'string'
@@ -112,6 +113,23 @@ function scheduleClocks(anchor: bigint, start: bigint, end: bigint, ttl: bigint)
   return clocks;
 }
 
+function ownerGrossCap(boundaries: OwnerBoundary[], settings: JsonObject): string {
+  let cap = '1';
+  for (const boundary of boundaries) {
+    validatePmEntity('OwnerBoundary', boundary);
+    if (boundary.kind !== 'LEVERAGE') throw new Error('pm_owner_boundary_execution_unavailable');
+    const value = object(boundary.value, 'owner_leverage_boundary');
+    const maximum = String(value.maximumGrossNavRatio);
+    if (compareDecimal(maximum, cap) < 0) cap = maximum;
+    // The official venue prohibits cash borrowing for CASH. A margin leverage
+    // field of one cannot prove a no-borrow mandate, so it stays unsupported.
+    if (value.borrowingAllowed === false && (settings.account_kind !== 'CASH' || compareDecimal(String(settings.leverage), '1') > 0)) {
+      throw new Error('pm_no_borrow_boundary_requires_native_cash_account');
+    }
+  }
+  return cap;
+}
+
 /** A native allocation and one fresh, causal, shared-account study at EVERY K.
  * All candidates retain the owner's whole initial NAV; K/NAV caps the exposure
  * fraction and profits are reinvested at that fraction. The remainder stays as
@@ -149,7 +167,7 @@ async function runPmAccountScience(input: PmAccountScienceInput, context: Contex
   const nativeImplementation = await implementationIdentity(input.binary);
   const fingerprint = createHash('sha256').update(canonical({ source: input.source, capture: input.capture as unknown as JsonObject,
     datasetRevision: input.datasetRevision, method: input.allocationMethod, cycleId: input.cycleId, nativeImplementation,
-    independent: independent ?? null })).digest('hex');
+    independent: independent ?? null, ownerBoundaries: (input.ownerBoundaries ?? []) as unknown as JsonObject[] })).digest('hex');
   async function retain(key: string, compute: () => Promise<JsonObject>): Promise<JsonObject> {
     const saved = await checkpoint?.read(`account:${key}`);
     if (saved) {
@@ -241,6 +259,8 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   const fullSelection = independent ? object(object(normalizedRequest(independent.heldoutData).forecast).selection) : object(forecast.selection, 'causal_source_selection');
   const selection = object(original.selection, 'selection_partition');
   const settings: JsonObject = { ...object(original.settings, 'native_execution_settings'), starting_capital: input.capital.amount };
+  const ownerBoundaries = input.ownerBoundaries ?? [];
+  const grossCap = ownerGrossCap(ownerBoundaries, settings);
   if (settings.base_currency !== input.currency) throw new Error('pm_science_currency_mismatch');
   if (settings.multi_currency_spot_cash != null && !account) throw new Error('pm_joint_spot_cash_study_not_supported');
   if (account && settings.multi_currency_spot_cash == null) throw new Error('pm_account_explicit_spot_execution_policy_required');
@@ -277,7 +297,8 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   const nativeImplementation = await implementationIdentity(input.binary);
   const fingerprint = createHash('sha256').update(canonical({ source: input.source, capital: { ...input.capital },
     method: input.allocationMethod, maximumTrials: input.maximumTrials, cycleId: input.cycleId, catalog: input.catalog,
-    nativeImplementation, verifiedPrefix, account: account ? { sourceEvidenceRef: account.capture.evidence.id, bridge: account.bridge, valuation: account.valuation as unknown as JsonObject } : null })).digest('hex');
+    nativeImplementation, verifiedPrefix, ownerBoundaries: ownerBoundaries as unknown as JsonObject[],
+    account: account ? { sourceEvidenceRef: account.capture.evidence.id, bridge: account.bridge, valuation: account.valuation as unknown as JsonObject } : null })).digest('hex');
   async function retained(key: string, compute: () => Promise<JsonObject>): Promise<JsonObject> {
     const saved = await checkpoint?.read(key);
     if (saved) {
@@ -320,7 +341,8 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     const costId = await put(settings);
     const universeId = await put({ barTypes: fullSelection.bar_types!, sourceRequest: request });
     const policyId = await put({ kind: independent ? 'INDEPENDENT_FROZEN_CONFIGURATION' : 'HISTORICAL_SELECTION_ONLY', cycleId: input.cycleId, originalPolicy,
-      allocationMethod: input.allocationMethod, fitCutoffNs: fit.fit_end_ns!, schedule: { anchorNs: originalClocks[0]!.toString(), ttlNs: targetTtl.toString(), cutoffNs: clocks.map(String) } });
+      allocationMethod: input.allocationMethod, ownerBoundaries: ownerBoundaries as unknown as JsonObject[], fitCutoffNs: fit.fit_end_ns!,
+      schedule: { anchorNs: originalClocks[0]!.toString(), ttlNs: targetTtl.toString(), cutoffNs: clocks.map(String) } });
     const assumptionsId = await put({ simulationSettingsId: costId, sourceSelection: selection });
     return { objects, bindings, nativeMembers, frozenMembers, freezeRequest, frozen, costId, universeId, policyId, assumptionsId };
     });
@@ -352,7 +374,8 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     let consumedTrials = 0;
     for (const amount of capitalPoints) {
       if (typeof amount !== 'string' || compareDecimal(amount, '0') <= 0 || compareDecimal(amount, input.capital.amount) > 0) throw new Error('pm_planned_capital_invalid');
-      const exposure = fraction(amount, input.capital.amount);
+      const plannedExposure = fraction(amount, input.capital.amount);
+      const exposure = compareDecimal(plannedExposure, grossCap) > 0 ? grossCap : plannedExposure;
       const studyRequest: JsonObject = { schema_version: 1, settlements: original.settlements ?? [],
         source_selection: { ...fullSelection, event_end_ns: end.toString(), decision_cutoff_ns: end.toString() },
         evaluation_start_ns: clocks[0]!.toString(), manual_cutoffs_ns: clocks.map(String), calendar: null,
@@ -363,6 +386,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
           alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
           optimizer: input.allocationMethod.optimizer!,
           constraints: { schema_version: 1, long_only: true, min_cash_weight: subtractDecimal('1', exposure), max_cash_weight: '1', min_asset_weight: '0', max_asset_weight: exposure,
+            ...(account ? { cash_funding: object(input.allocationMethod.cashFunding).nativeConstraint! } : {}),
             max_gross_exposure: exposure, min_net_exposure: '0', max_net_exposure: exposure, max_turnover_per_rebalance: '2',
             max_participation: null, max_ex_ante_risk: null, group_bounds: [], asset_overrides: [], transaction_costs_ref: costId, liquidity_ref: null },
           rebalance_schedule: { schema_version: 1, kind: 'MANUAL', interval_seconds: null, calendar_ref: null, timezone: 'UTC', session_offset_seconds: null,

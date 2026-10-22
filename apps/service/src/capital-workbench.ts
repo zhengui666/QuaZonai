@@ -4,7 +4,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, object, observation, portfolio, Problem, text } from './facts.ts';
-import { accountKey, CapitalExitCommand, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
+import { accountKey, CapitalExitCommand, capitalStatusForBinding, control, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
 import { downstreamRequest } from './downstream.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -25,14 +25,13 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       }, context);
     } catch (error) {
       await host.harness.commit(async tx => {
-        const facts = await tx.doc(Application); key = accountKey(original.connection, facts.accountControls); const previous = control(facts.accountControls?.[key]);
+        const facts = await tx.doc(Application); key = accountKey(original.connection, facts.accountControls);
         const unsupported = error instanceof Problem && error.message === 'downstream_control_404';
-        previous.status = { ...(previous.status ?? capitalStatus({ commands: {} })), reserved: null, capability: unsupported ? 'UNSUPPORTED' : 'BLOCKED', reason: unsupported ? 'downstream_capital_exit_unsupported' : 'capital_exit_status_unavailable' };
-        facts.accountControls ??= {}; facts.accountControls[key] = json(previous);
+        facts.accountControls ??= {}; recordCapitalControlFailure(facts.accountControls, original.connection, unsupported ? 'downstream_capital_exit_unsupported' : 'capital_exit_status_unavailable');
       }, context);
     }
     const state = control((await host.harness.snapshot(Application, context))?.accountControls?.[key]);
-    return { ...capitalStatus(state), commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error, result: value.result })) };
+    return { ...capitalStatusForBinding(state, original.connection), commands: Object.entries(state.commands).map(([requestId, value]) => ({ requestId, state: value.state, error: value.error, result: value.result })) };
   }
   async function previewCapital(id: string, value: unknown) {
     const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = await fact(id);

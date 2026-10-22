@@ -87,6 +87,22 @@ test('PM observed account: later local reservations and releases cannot inherit 
   assert.deepEqual(captureAccount(f.application, f.connection.id, '140').evidence, released.evidence);
 });
 
+test('PM observed account: original target capabilities become available at their own receipt and cannot backdate the account bundle', () => {
+  const f = fixture(); const control = f.application.accountControls[accountKey(f.connection)] as unknown as JsonObject;
+  control.capabilities = { clientId: f.connection.clientId, accountId: f.connection.accountId, mode: f.connection.mode, currency: 'USDC',
+    capitalExit: { version: 1, supported: true, readable: true }, automaticTargets: { supported: true, revisionBound: true } };
+  control.capabilitiesReceivedAtNs = '108';
+  const capture = f.capture();
+  assert.equal(capture.basis.availableAtNs, '108'); assert.equal(capture.basis.observedAtNs, '99');
+  assert.equal(toNativeObservedSpotStart(capture, { selectionStartNs: '108' }).available_ns, '108');
+  assert.throws(() => toNativeObservedSpotStart(capture, { selectionStartNs: '107' }), /snapshot_not_available_before_replay/);
+  delete control.capabilitiesReceivedAtNs;
+  delete control.capabilitiesByBinding;
+  const legacy = captureAccount(f.application, f.connection.id, '120');
+  assert.equal(legacy.basis.availableAtNs, '120');
+  assert.deepEqual(captureAccount(f.application, f.connection.id, '130').evidence, legacy.evidence);
+});
+
 test('PM observed account: first real transport receipt and complete native extensions survive identical snapshot replay', () => {
   const f = fixture(); const observed = { ...f.observation, snapshot: null, snapshotReceivedAtNs: undefined };
   acceptSnapshot(observed, f.snapshot); const received = observed.snapshotReceivedAtNs; assert.ok(received);

@@ -401,6 +401,35 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       const restored = await read(state, admitted.mandate.id);
       assert.deepEqual(restored.history.find(item => item.id === original.id), original,
         'Restart must disclose the original scientific decision instead of recomputing a more favorable one.');
+      const sealedBefore = (await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!;
+      assert.equal(sealedBefore.windows.filter(item => item.kind === 'FINAL').length, 1,
+        'This intent-revision counterexample requires the actual PM independent sample to have been consumed first.');
+      const trialsBefore = structuredClone(restored.researchTrials.filter(item => item.countedAttempt));
+      assert.equal(trialsBefore.length, 10, 'Original search, joint capital comparisons and both independent legs must remain charged.');
+      const budgetBefore = structuredClone(pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id).budget);
+      const ownerClarification = await state.service.app.inject({ method: 'POST',
+        url: `/api/v3/mandates/${encodeURIComponent(admitted.mandate.id)}/intent-clarifications`, headers: state.headers,
+        payload: { requestId: 'native-intent-after-independent-exposure', expectedRevision: restored.mandate.revision,
+          statement: 'No leverage.', boundaries: [{ kind: 'LEVERAGE', sourceStatement: 'No leverage.',
+            value: { maximumGrossNavRatio: '1', borrowingAllowed: false } }], resolvedAmbiguities: [] } });
+      assert.equal(ownerClarification.statusCode, 202, ownerClarification.body);
+      const revised = ownerClarification.json<PmMandateView>();
+      assert.equal(revised.mandate.ownerGoal, restored.mandate.ownerGoal);
+      assert.notEqual(revised.activePolicy.id, restored.activePolicy.id);
+      assert.equal(revised.campaigns.at(-1)!.state, 'PAUSED');
+      assert.equal(revised.campaigns.at(-1)!.conclusionReason, 'intent_revision_requires_new_unexposed_data');
+      assert.equal(revised.history.find(item => item.id === original.id)!.status, 'SUPERSEDED');
+      assert.deepEqual(revised.researchTrials.filter(item => item.countedAttempt), trialsBefore);
+      assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, sealedBefore.windows);
+      assert.deepEqual(pmRecord(pmState(await state.service.pm.snapshot()), admitted.mandate.id).budget, budgetBefore);
+      // The original source is MARGIN: this authenticated new constraint must
+      // not relabel the old study as a CASH/no-borrow proof or reuse its FINAL.
+      assert.ok(revised.history.every(item => item.targetCommandId === null));
+      await state.restart();
+      const revisedRestored = await read(state, admitted.mandate.id);
+      assert.equal(revisedRestored.campaigns.at(-1)!.state, 'PAUSED');
+      assert.deepEqual(revisedRestored.researchTrials.filter(item => item.countedAttempt), trialsBefore);
+      assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, sealedBefore.windows);
       t.diagnostic(JSON.stringify({ action: original.action, ownerNav: original.capital!.equity.amount,
         committedCapital: original.capital!.committedCapital.amount, testedCapitalPoints: view.capacityEstimates.flatMap(item => item.curve.map(point => point.capital.amount)),
         countedAttempts: view.researchTrials.filter(item => item.countedAttempt).length,

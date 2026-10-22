@@ -187,6 +187,13 @@ enum Operation {
         #[arg(long)]
         objects: PathBuf,
     },
+    /// One as-of model allocation from observed spot balances, without replay or delivery.
+    BuildObservedSpot {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        objects: PathBuf,
+    },
 }
 
 fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
@@ -414,6 +421,11 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::StudyObservedSpot { catalog, objects } => {
             output(&job::observed_spot::study(&catalog, &input()?, |id| {
+                model_bytes(&objects.join(id.to_string()))
+            })?)
+        }
+        Operation::BuildObservedSpot { catalog, objects } => {
+            output(&job::observed_spot::build(&catalog, &input()?, |id| {
                 model_bytes(&objects.join(id.to_string()))
             })?)
         }

@@ -14,6 +14,7 @@ import { Application } from './facts.ts';
 import { pmView } from './pm-view.ts';
 import { readPmArtifact } from './pm-evidence.ts';
 import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
+import { admitCampaignAccount } from './pm-campaign-account.ts';
 
 type Action = 'pause' | 'resume' | 'close';
 type ResourceKind = 'evidence' | 'capabilities' | 'decision' | 'decisions' | 'cycle' | 'capacity' | 'campaign' | 'trials' | 'campaignDecision' | 'strategyVersions' | 'strategyAssessments';
@@ -139,8 +140,11 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
       if (canonical(json(previous.datasetRevisionIds)) === canonical(json(record.datasets))) throw new Problem('new_campaign_requires_new_data_revision', 409);
       if (Object.values(record.derivedTrials).filter(item => item.countedAttempt).length >= record.budget.maximumTrials) throw new Problem('shared_trial_budget_exhausted', 409);
       const campaignId = identity('campaign', [id, record.datasets]);
-      record.campaigns[campaignId] ??= { ...previous, ...fact(campaignId), state: 'PLANNED', runtime: { conversationId: record.conversationId, taskId: record.monitorTaskId },
-        datasetRevisionIds: [...record.datasets], hypothesisIds: [], trialIds: [], latestComparisonId: null, selectedStrategyVersionId: null, conclusionReason: null };
+      if (!record.campaigns[campaignId]) {
+        record.campaigns[campaignId] = { ...previous, ...fact(campaignId), state: 'PLANNED', runtime: { conversationId: record.conversationId, taskId: record.monitorTaskId },
+          datasetRevisionIds: [...record.datasets], hypothesisIds: [], trialIds: [], latestComparisonId: null, selectedStrategyVersionId: null, conclusionReason: null };
+        admitCampaignAccount(record, record.campaigns[campaignId]!, await tx.doc(Application));
+      }
       state.commands[key] = { original, mandateId: id, resourceId: campaignId };
     }, context);
     const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(pmRecord(state, id), state);

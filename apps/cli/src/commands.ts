@@ -18,6 +18,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   pm start --file MANDATE.json | recompute ID --file ORIGINAL_COMMAND.json
   pm retire ID --file ORIGINAL_COMMAND.json | cycle ID | capacity ID
   pm targets ID --file ORIGINAL_COMMAND.json | refresh-data ID --file ORIGINAL_COMMAND.json
+  pm clarify-intent ID --file ORIGINAL_COMMAND.json
   campaign start --file REQUEST.json | get ID | trials ID | compare ID
   campaign close ID --file COMMAND.json | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
@@ -131,9 +132,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       path = `/mandates/${resourceId(id)}${action === 'get' ? '' : action === 'history' ? '/decisions' : `/${action}`}`;
     } else if (action === 'cycle') path = `/cycles/${resourceId(id)}`;
     else if (action === 'capacity') path = `/capacity-estimates/${resourceId(id)}`;
-    else if (['recompute', 'retire', 'targets', 'refresh-data'].includes(action)) {
+    else if (['recompute', 'retire', 'targets', 'refresh-data', 'clarify-intent'].includes(action)) {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
-      method = 'POST'; path = `/mandates/${resourceId(id)}/${action}`; body = file.bytes;
+      method = 'POST'; path = `/mandates/${resourceId(id)}/${action === 'clarify-intent' ? 'intent-clarifications' : action}`; body = file.bytes;
     } else throw new CliError('unknown_pm_command');
   } else if (group === 'campaign') {
     if (action === 'start') {

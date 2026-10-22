@@ -31,6 +31,11 @@ Use official Pi Durable Doc/Task and public APIs, existing Nautilus account/repl
 
 Detailed counterexamples and coverage are tracked in [the reviewed acceptance set](../quant-pipeline-integrity/design/acceptance.md) and the implementation's `acceptance-coverage.md`. Record actual passed, failed, skipped and unavailable work. Synthetic catalogs and Faux establish controlled software/science behavior; they do not establish profitability or paid-model quality.
 
+The implemented current-operation fields, fee-funding equations, class relations,
+account controller and retirement rules are described in
+[current operation](current-operation.md). The corresponding source contracts
+remain authoritative; the document does not upgrade pending acceptance work.
+
 ## Delivery and operational boundary
 
 Execute final applicable TypeScript, native science/core, Web/browser and packaging/operations checks. A separate reviewer inspects the immutable final revision; resolve its findings, obtain GitHub Codex's explicit clean review for that same Head, and merge only into remote `dev`. Verify the merge and any automatically published artifacts by reading their actual state. A merge is distinct from deployment to a user installation.
@@ -39,14 +44,16 @@ Operational work in this session covers reproducible disposable service operatio
 
 ## Status
 
-The implementation candidate is ready for final revision checks. The owner's
+The implementation candidate is undergoing its final business acceptance checks. The owner's
 goal and funding feed registered strategy intake, a shared search ledger, native
 training-only ensemble fitting, fresh optimization at each automatically planned
 capital point, and a matched account comparison. A new admitted market revision
 starts a new campaign without resetting the budget or reusing the previous sealed
 interval. Actual two-revision HTTP/native acceptance has recalculated numerical
 calibration coefficients and produced new decisions while preserving both original
-independent exposures.
+independent exposures. Authenticated intent clarification creates a new policy
+without replenishing budget, relaxing accepted constraints or reusing exposed data.
+Explicit supported no-leverage statements survive a model omission.
 
 Observed spot support uses original native balances and explicit zero-order
 evidence. Inventory valuation is a separate derived amount; reported equity stays
@@ -55,12 +62,43 @@ native account. Both runs consume scientific attempts. Locked cash, debt, unknow
 orders, different account venues and unavailable marks remain explicit gaps.
 
 The registered qualification protocol evaluates the already frozen configuration
-against a matched independent baseline. Its maximum promotion is SHADOW; it makes
-no statistical significance or live execution claim. The current PM consumer does
-not yet produce an as-of forward investment decision or a production
-TARGET_OPERATION qualification. Historical targets retain no delivery TTL. Existing
-target transport/recovery checks establish only their scoped operational behavior.
-Real model evaluation is separately blocked by missing provider authorization.
+against a matched independent baseline. Its maximum research promotion is SHADOW;
+it makes no statistical significance or live investment claim. A separate
+operating rule is registered before research. Its current consumer applies the
+frozen factors, calibrations, coefficients, capital fraction and numerical method
+to the original account inventory and cutoff-available marks. It computes a new
+valuation, current weights and a native optimized target without refitting or
+consuming another search trial. Changed method inputs return to research.
+
+Continuous model targets, exact lot-rounded trade estimates and modeled outcomes
+are retained separately. Operating comparison uses rounded model return, cost,
+variance and objective over the original label horizon; it does not reuse historical
+daily return or drawdown metrics. Current entry/exit and funding checks use rounded
+inventory. They do not manufacture a historical capital curve or economic capacity.
+The supported current native domain is one Hyperliquid spot instrument in the same
+venue CASH account, with multiple fitted factors and original REST receipt proofs.
+Other domains retain explicit capability gaps.
+
+The v2 method registers the original linear turnover costs inside the same native
+QP's CASH funding constraint before research. Allocation plus fees must fit the
+original deployment budget while preserving the cash floor. Observed study,
+independent evaluation and current build use the same frozen field; old methods
+do not inherit the new qualification. Actual buying/selling and zero-fee native
+counterexamples passed within 68 affected regressions. The same frozen native
+source has passed the complete 664-test scientific scope and exported all seven
+mandatory fixtures. Core and the authorized paper receiver chain are verified
+separately.
+
+Paper shadow target operation has a separate PAPER assessment and original source
+execution bounds. Live TARGET_OPERATION additionally requires an original
+independent protocol authorizing that use, qualified PIT and current execution
+sources; the current SHADOW-only protocol cannot pass that live gate. Targets keep
+the original native cutoff and may only shorten their deadline. Delivery carries
+the original revision-bound allocation and requires its exact receipt echo.
+Historical target weights retain no renewed delivery TTL. Current forward HTTP,
+long-run coalescing and final revision checks are being completed; isolated native
+or transport tests do not substitute for that positive chain. Real model evaluation
+is separately blocked by missing provider authorization.
 
 Source publication now runs through the existing prepared-data export path and
 preserves immutable revisions, original metadata bytes, a parent chain and atomic
@@ -71,5 +109,6 @@ official Durable evidence parts, retaining original IDs and owner readback.
 Maintenance parks the original recurring tasks at an epoch-bound official gate;
 stopped-writer SQLite checks, backup/restore and resumption retain those task IDs.
 Final CI, exact-Head independent review, GitHub Codex review, merge and operational
-readback are still pending. Their actual results belong to the PR and the task
-board; local fixture results do not establish a user installation deployment.
+readback are recorded on [PR #233](https://github.com/zhengui666/QuaZonai/pull/233)
+and the task board. They must refer to the same final Head; this document's local
+fixture results do not establish a user installation deployment.

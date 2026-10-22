@@ -225,6 +225,19 @@ pub fn source_fixture_with_rows(
     rows: u32,
     trend: bool,
 ) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    source_fixture_with_prices(rows, |index| {
+        format!(
+            "{:.2}",
+            100.0 + if trend { index as f64 * 0.01 } else { 0.0 }
+        )
+    })
+}
+
+#[cfg(feature = "hyperliquid-offline")]
+pub fn source_fixture_with_prices(
+    rows: u32,
+    price: impl Fn(u64) -> String,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     use contracts::spot_cash_source::*;
     use nautilus_hyperliquid::websocket::{messages::CandleData, parse::parse_ws_candle};
     let (original, mut request, _) = fixture(rows);
@@ -254,10 +267,7 @@ pub fn source_fixture_with_rows(
         let open = START + index * MINUTE;
         let close = open + MINUTE;
         let received = close + 500_000_000;
-        let price = format!(
-            "{:.2}",
-            100.0 + if trend { index as f64 * 0.01 } else { 0.0 }
-        );
+        let price = price(index);
         let raw = serde_json::json!({"t":open/1_000_000,"T":close/1_000_000-1,"s":"@142","i":"1m","o":price,"h":price,"l":price,"c":price,"v":"100.0000","n":1});
         let candle: CandleData = serde_json::from_value(raw.clone()).unwrap();
         bars.push(parse_ws_candle(&candle, &instrument, &bar_type, received.into()).unwrap());

@@ -54,13 +54,20 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   if (BigInt(nativeClock) > BigInt(nativeReceived) || BigInt(heartbeat) < BigInt(nativeReceived)) refuse('native_clock_order_invalid');
   const received = counter(capture.artifact.snapshotReceivedAtNs, 'snapshot_received_clock');
   const controlReceived = counter(capture.artifact.capitalControlReceivedAtNs, 'capital_control_received_clock');
-  const available = BigInt(received) > BigInt(controlReceived) ? received : controlReceived;
+  const capabilityReceived = capture.artifact.capitalCapabilities === undefined ? null
+    : counter(object(capture.artifact.capitalCapabilities, 'capital_capabilities').receivedAtNs, 'capital_capabilities_received_clock');
+  const available = [received, controlReceived, ...(capabilityReceived === null ? [] : [capabilityReceived])]
+    .reduce((left, right) => BigInt(left) > BigInt(right) ? left : right);
   const start = counter(options.selectionStartNs, 'replay_start');
   if (available !== capture.basis.availableAtNs || available !== capture.evidence.availableAtNs || BigInt(heartbeat) > BigInt(received)
     || BigInt(nativeClock) > BigInt(received) || BigInt(available) > BigInt(start)) refuse('snapshot_not_available_before_replay');
   if (transport.accountSourceId !== capture.basis.accountSourceId || transport.observationId !== capture.basis.observationId) refuse('source_identity_required');
   const control = object(capture.artifact.capitalControl, 'capital_control');
-  if (control.capability !== 'SUPPORTED' || control.accountSourceId !== capture.basis.accountSourceId || control.observationId !== capture.basis.observationId
+  const capabilityDocument = capture.artifact.capitalCapabilities ? object(object(capture.artifact.capitalCapabilities).document) : null;
+  const capitalPermission = capabilityDocument?.capitalExit ? object(capabilityDocument.capitalExit) : null;
+  const readableControl = control.capability === 'SUPPORTED' || control.capability === 'UNSUPPORTED' && control.reason === 'capital_exit_initiation_unavailable'
+    && capitalPermission?.version === 1 && capitalPermission.readable === true;
+  if (!readableControl || control.accountSourceId !== capture.basis.accountSourceId || control.observationId !== capture.basis.observationId
     || control.controlRevision !== capture.basis.controlRevision || transport.controlRevision !== capture.basis.controlRevision) refuse('capital_control_not_matched');
   if (!capture.basis.reserved || capture.basis.reserved.currency !== capture.basis.currency || compareDecimal(capture.basis.reserved.amount, '0') !== 0) refuse('capital_reserved_or_unknown');
   const balances = array(native.balances, 'native_balances'); if (!balances.length) refuse('native_balances_required');

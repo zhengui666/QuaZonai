@@ -9,6 +9,8 @@ import { AdjustAccount, acceptAllocationReceipt } from './automatic.ts';
 import { accountKey, CapitalExitCommand } from './capital-exit.ts';
 import { classifyExecutionError, executionDiagnostic } from '../../research/src/execution-errors.ts';
 import { readCatalogScope } from '../../research/plugins/native-catalog-scope.ts';
+import { assertAccountTargetControl } from './account-target-control.ts';
+import { PmDocument, pmState } from './pm-facts.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
@@ -68,11 +70,28 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
           stopped = true; fact.view.receipt!.status = 'NOT_OFFERED'; facts.observations[task.input.id] = json(fact);
           return { status: 'terminal', outcome: { status: 'aborted' } };
         }
+        try {
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
+            { kind: 'LEGACY', observationId: fact.view.id, commandId: task.input.receiptId });
+        } catch (error) {
+          stopped = true; fact.view.receipt!.status = 'NOT_OFFERED'; fact.view.status = 'FAILED'; fact.view.error = errorCode(error);
+          facts.observations[task.input.id] = json(fact);
+          return { status: 'terminal', outcome: { status: 'failed', error: { message: errorCode(error) } } };
+        }
         fact.view.receipt!.status = 'UNCERTAIN'; fact.view.status = 'UNCERTAIN'; facts.observations[task.input.id] = json(fact);
         return { status: 'running', checkpoint: { phase: 'reconcile' } };
       }, context);
       if (stopped) return;
+      let checkingController = true;
       try {
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
+          if (fact.view.status === 'STOPPED') throw new Problem('observation_stopped', 409);
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
+            { kind: 'LEGACY', observationId: fact.view.id, commandId: task.input.receiptId });
+          return undefined;
+        }, context);
+        checkingController = false;
         const receipt = await downstream(task.input, 'deliver', runtime.signal);
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
@@ -83,7 +102,7 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
-          if (isPreTransportRejection(error)) {
+          if (checkingController || isPreTransportRejection(error)) {
             fact.view.receipt!.status = 'NOT_OFFERED'; if (fact.view.status !== 'STOPPED') fact.view.status = 'FAILED';
           }
           fact.view.error = errorCode(error); facts.observations[task.input.id] = json(fact);

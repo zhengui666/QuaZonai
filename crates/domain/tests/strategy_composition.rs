@@ -61,6 +61,20 @@ fn declared_constraints_use_actual_current_weights_instead_of_previous_target() 
     mandate.constraints.max_asset_weight = "1".parse().unwrap();
     mandate.constraints.max_ex_ante_risk = Some("0.5".parse().unwrap());
     assert!(strategy::mandate(&mandate).is_err());
+    mandate.constraints.max_ex_ante_risk = None;
+    mandate.constraints.cash_funding =
+        Some(contracts::portfolio::NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    // Fixed target composition has neither the cost vector nor a funded QP.
+    // It must not silently accept the new observed-CASH allocation policy.
+    assert!(strategy::mandate(&mandate).is_err());
+    assert!(strategy::target_bounds(
+        &mandate.constraints,
+        &mandate.base_currency,
+        &mandate.exposure_tolerance,
+        &target,
+        &["0.2".parse().unwrap()],
+    )
+    .is_err());
 }
 
 #[test]

@@ -55,7 +55,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   const result: PmDecisionResult = { decision, comparison, capacities: {}, ensembles: {}, evidence: {}, artifacts: {}, trials: {}, budgetMovements: {}, gaps: [], scienceCompleted: false, trialSettlements: [] };
   const unavailable = (reason: string, capability = 'joint_portfolio_evidence', remedy: Pm.EvidenceGap['permittedRemedy'] = 'RECOMPUTE') => {
     result.comparison.reasonCodes.push(reason); decision.reasonCodes.push(reason); result.gaps.push({ capability, reason, remedy });
-    decision.explanationFacts = { summary: 'No new investment allocation is supported by the captured evidence.', drivers: [...decision.reasonCodes] }; return result;
+    decision.explanationFacts = { ...object(decision.explanationFacts), summary: 'No new investment allocation is supported by the captured evidence.', drivers: [...decision.reasonCodes] }; return result;
   };
   if (Object.values(record.gaps).some(item => item.state !== 'RESOLVED' && item.reasonCode === 'pm_account_consumer_not_requested')) { const missing = unavailable('pm_account_consumer_not_requested', 'owner_account_decision_intent', 'CLARIFY_INTENT'); decision.explanationFacts = { summary: 'Independent factor research is available through the research workflow; this mandate requires explicit account or capital decision intent.', drivers: ['pm_account_consumer_not_requested'], researchEntry: '/research' }; return missing; }
   if (Object.values(record.gaps).some(item => item.state !== 'RESOLVED' && item.requiredCapability === 'source_revision')) return unavailable('source_revision_verification_required', 'source_revision', 'REFRESH_SOURCE');
@@ -82,6 +82,21 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
       availableAtNs: atNs, clockPrecision: 'NANOSECOND', schemaId: 'qz.pm.native-evidence/1', visibility: isAccount || role === 'INDEPENDENT' || role === 'OBSERVED' ? 'OWNER_ONLY' : 'RESEARCH_VISIBLE' };
     return id;
   };
+  const unsupportedBoundary = (reason: string, capability: string) => {
+    const ref = evidence(identity('boundary-capability', cycle.id), json({ phase: 'BEFORE_NATIVE_SCIENCE', reason,
+      ownerBoundaries: record.mandate.ownerBoundaries, originalSettings: object(source.simulationRequest).settings }), 'CONTROL');
+    // No scientific configuration has executed at this capability boundary.
+    // Release only this cycle's admitted but unexecuted downstream slots.
+    result.trialSettlements = Array.from({ length: Number(frozen.maximumTrials ?? 0) }, () => ({ state: 'REJECTED' as const, countedAttempt: false, evidenceRefs: [ref], errorCode: reason }));
+    return unavailable(reason, capability, 'UNSUPPORTED');
+  };
+  for (const boundary of record.mandate.ownerBoundaries) {
+    if (boundary.kind !== 'LEVERAGE') return unsupportedBoundary('owner_boundary_execution_unavailable', 'owner_boundary_execution');
+    const value = object(boundary.value); const settings = object(object(source.simulationRequest).settings);
+    if (value.borrowingAllowed === false && (settings.account_kind !== 'CASH' || typeof settings.leverage !== 'string' || compareDecimal(settings.leverage, '1') > 0)) {
+      return unsupportedBoundary('no_borrow_boundary_requires_native_cash_account', 'native_no_borrow_account');
+    }
+  }
   evidence(fitEvidenceId, fit, 'TRAINING');
   result.evidence[fitEvidenceId]!.eventInterval = { startNs: String(object(object(sourceRequest.forecast).selection).event_start_ns), endExclusiveNs: String(fit.fit_end_ns) };
   const ensemble: Pm.EnsembleRevision = { ...fact(ensembleId), strategyVersionId: cycle.strategyVersionId, policyRevisionId: record.policy.id,
@@ -92,6 +107,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   result.ensembles[ensembleId] = ensemble; decision.ensembleRevisionId = ensembleId;
   const common = { source, currency: capital?.currency ?? cycle.accountBasis!.currency, catalog: String(data.catalog), dataDir: config.dataDir,
     binary: config.jobBinary, maximumTrials: Number(frozen.maximumTrials ?? 0), cycleId: cycle.id,
+    ownerBoundaries: record.mandate.ownerBoundaries,
     allocationMethod: object(object(record.policy.validDomain).jointAllocationMethod, 'joint_allocation_method') };
   let accountScience: PmAccountScienceResult | null = null;
   let researchScience: PmScienceResult | null = null;
@@ -104,6 +120,16 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
     scope.capital = capital; scope.accountingPolicyRef = 'qz.observed-multi-currency-spot-account/1'; scope.startingStateRef = ref.id;
   } else researchScience = await computePmScience({ ...common, capital: capital! }, context, checkpoint);
   if (!capital) throw new Problem('native_account_valuation_missing');
+  let valuationRef: string | null = null;
+  if (accountScience) {
+    // Derived account value is an observed-state fact independent of whether
+    // the frozen preference resolves the investment comparison.
+    valuationRef = evidence(identity('account-valuation', cycle.id), accountScience.valuation as unknown as JsonObject, 'OBSERVED');
+    result.evidence[valuationRef]!.eventInterval = null; // A point-in-time inventory valuation, not a period return.
+    decision.accountBasis = { ...cycle.accountBasis!, valuation: { origin: 'DERIVED', reportValue: capital, valuationEvidenceRef: valuationRef,
+      methodRef: 'qz.native.observed-spot-pit-valuation/1', asOfNs: accountScience.valuation.asOfNs, availableAtNs: accountScience.valuation.availableAtNs } };
+    decision.explanationFacts = { ...object(decision.explanationFacts), valuationEvidenceRef: valuationRef };
+  }
   const science = accountScience ?? researchScience!;
   const firstHold = accountScience?.points[0]?.hold;
   const baseline = accountScience ? firstHold ? { kind: 'HOLD' as const, simulationRequest: firstHold.simulationRequest, simulation: firstHold.result, status: firstHold.status, reason: firstHold.reason }
@@ -194,14 +220,10 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   const selected = selectedId === cashId ? null : pointResults.get(selectedId)!;
   const selectedEvidenceId = comparison.candidates.find(item => item.id === selectedId)!.configurationEvidenceRef;
   if (accountScience) {
-    const valuationRef = evidence(identity('account-valuation', cycle.id), accountScience.valuation as unknown as JsonObject, 'OBSERVED');
-    decision.explanationFacts = { summary: 'Matched observed-account historical comparison completed.', drivers: [valuationRef], valuationEvidenceRef: valuationRef };
-    decision.accountBasis = { ...cycle.accountBasis!, valuation: { origin: 'DERIVED', reportValue: capital, valuationEvidenceRef: valuationRef,
-      methodRef: 'qz.native.observed-spot-pit-valuation/1', asOfNs: accountScience.valuation.asOfNs, availableAtNs: accountScience.valuation.availableAtNs } };
     if (!selected) {
       decision.action = 'HOLD'; decision.ensembleRevisionId = null; decision.jointReplayEvidenceRef = selectedEvidenceId;
       decision.reasonCodes = ['matched_observed_state_hold_preferred', 'historical_counterfactual_not_current_portfolio_instruction', 'no_new_capital_allocation', 'target_not_offered'];
-      decision.explanationFacts = { summary: 'Keeping the original observed balances is preferred under the frozen business preference.', drivers: [selectedEvidenceId, valuationRef, ...decision.reasonCodes] };
+      decision.explanationFacts = { ...object(decision.explanationFacts), summary: 'Keeping the original observed balances is preferred under the frozen business preference.', drivers: [selectedEvidenceId, valuationRef!, ...decision.reasonCodes] };
       validatePmEntity('PortfolioDecision', decision); validatePmEntity('CapacityEstimate', capacity);
       return result;
     }
@@ -226,11 +248,25 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   if (compareDecimal(committed, '0') > 0) decision.strategyAllocations = [{ strategyVersionId: cycle.strategyVersionId, ensembleRevisionId: ensembleId,
     committedCapital: { amount: committed, currency: capital.currency }, capitalFraction: '1', allocationEvidenceRef: selectedEvidenceId, riskContributionEvidenceRef: null, nettingGroupId: cycle.id }];
   decision.reasonCodes = [isAccount ? 'historical_observed_account_counterfactual' : 'historical_research_allocation', 'initial_nav_normalized_research_targets_not_observed_positions', 'matched_owner_nav_comparison', 'new_portfolio_requires_independent_evaluation', 'target_not_offered'];
-  decision.explanationFacts = { summary: selected ? 'Selected a native optimized allocation using the frozen business preference and a matched starting-state baseline.' : 'The matched starting-state baseline is preferred under the frozen business preference.',
+  decision.explanationFacts = { ...object(decision.explanationFacts), summary: selected ? 'Selected a native optimized allocation using the frozen business preference and a matched starting-state baseline.' : 'The matched starting-state baseline is preferred under the frozen business preference.',
     drivers: [result.comparison.id, selectedEvidenceId, ...decision.reasonCodes] };
   ensemble.jointValidationEvidenceRefs = selected ? [selectedEvidenceId] : []; ensemble.qualification = selected ? 'SELECTED' : 'CANDIDATE';
   if (!selected) { decision.ensembleRevisionId = null; decision.reasonCodes = decision.reasonCodes.filter(reason => reason !== 'new_portfolio_requires_independent_evaluation'); decision.reasonCodes.push('baseline_does_not_qualify_alpha_strategy'); }
   if (selected) result.gaps.push({ capability: 'independent_portfolio_evaluation', reason: 'new_optimized_portfolio_not_independently_evaluated', remedy: 'RECOMPUTE' });
+  if (selected && object(record.policy.validDomain).operatingRule) {
+    const studies = Array.isArray(science.evidence.studies) ? science.evidence.studies.map(value => object(value)) : [];
+    const study = studies.find(value => value.capital === selected.capital);
+    if (!study?.request) throw new Problem('selected_operating_method_request_missing');
+    const seedRef = identity('forward-seed', decision.id);
+    evidence(seedRef, { source, study: object(study.request), objects: scientificObjects, bindings: scientificBindings,
+      nativeImplementation: science.evidence.nativeImplementation!,
+      allocationMethod: object(record.policy.validDomain).jointAllocationMethod!,
+      selectedCapital: committed, originalNav: capital.amount, currency: capital.currency,
+      operatingRule: object(record.policy.validDomain).operatingRule!, policyRevisionId: record.policy.id,
+      strategyVersionId: cycle.strategyVersionId, ensembleRevisionId: ensembleId, selectionEvidenceRef: selectedEvidenceId }, 'CONTROL');
+    decision.explanationFacts = { ...object(decision.explanationFacts), forwardSeedEvidenceRef: seedRef,
+      forwardAnchorNs: object(study.request).evaluation_start_ns!, forwardTtlSeconds: object(object(object(study.request).mandate).rebalance_schedule).target_ttl_seconds! };
+  }
   // Historical decisions never receive a renewed TTL or pretend to offer a current target.
   validatePmEntity('PortfolioDecision', decision); validatePmEntity('CapacityEstimate', capacity);
   return result;

@@ -7,11 +7,14 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical, Study } from '../../research/src/documents.ts';
 import { CampaignResearchDoc } from '../../research/src/pm-campaign.ts';
 import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
+import { Exposures } from '../../research/plugins/native-exposure.ts';
+import { canonicalOwnerBoundary } from '../../../packages/contracts/src/pm-intent.ts';
 import type { ResearchCampaignBinding } from '../../research/src/pm-campaign.ts';
 import type { ServiceConfig } from './config.ts';
 import type { workbench } from './workbench.ts';
-import { Application, counter, decimal, decimalUnits, json, nowNs, object, Problem, text } from './facts.ts';
+import { Application, counter, decimal, decimalUnits, json, nowNs, object, observation, Problem, text } from './facts.ts';
 import { captureAccount } from './pm-account.ts';
+import { admitCampaignAccount, campaignAccount, freezeCampaignAccount } from './pm-campaign-account.ts';
 import { retirementAccountFlat } from './pm-account-native.ts';
 import { captureDataset } from './pm-datasets.ts';
 import { PmDocument, currentStrategy, digest, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
@@ -22,13 +25,19 @@ import { computePmDecision } from './pm-native.ts';
 import { pmQualificationProtocol } from './pm-qualification.ts';
 import { pmAllocationMethod } from './pm-method.ts';
 import { readSourceRevision } from './pm-source.ts';
-import { PmTargetTask, targetEligibility } from './pm-target.ts';
+import { PmTargetTask, pmTargetAllocation, pmTargetPayload, targetEligibility } from './pm-target.ts';
+import { activeAcknowledgedReceipt, assertAccountTargetControl } from './account-target-control.ts';
+import { accountKey } from './capital-exit.ts';
 import { observePmOutcome } from './pm-outcomes.ts';
 import { assertBusinessAdmission, maintenancePark, maintenanceState, resumeMaintenance } from './pm-maintenance.ts';
 import type { MaintenanceCheckpoint } from './pm-maintenance.ts';
 import { pmControls } from './pm-controls.ts';
-import { pmScienceCheckpoint, retainPmArtifacts } from './pm-evidence.ts';
+import { pmScienceCheckpoint, readPmArtifact, retainPmArtifacts } from './pm-evidence.ts';
 import { pmIndependentTask } from './pm-independent.ts';
+import { clarificationInput, mergeOwnerBoundaries, retainIntentEvidence, reviseOwnerIntent } from './pm-intent-state.ts';
+import { computePmForward, forwardSeedDecision } from './pm-forward.ts';
+import { pmOperatingRule } from './pm-operating-rule.ts';
+import { retirementOutstandingTargets } from './pm-retirement.ts';
 
 const context = BACKGROUND_CONTEXT;
 type Work = ReturnType<typeof workbench>;
@@ -62,21 +71,79 @@ export function createPmPlatform(config: ServiceConfig) {
 
   const controls = pmControls(ready);
 
+  async function trackAcknowledgedRetirement(tx: Tx, record: PmRecord) {
+    if (!Object.values(record.retirements).some(item => item.reconciliationRequired)) return;
+    for (const command of Object.values(record.commands)) {
+      const key = `retirement-target-task:${command.id}`;
+      if (command.state !== 'ACKNOWLEDGED' || BigInt(command.validUntilNs) <= BigInt(nowNs()) || record.artifacts[key]) continue;
+      const taskId = await tx.createTask(PmTargetTask, { mandateId: record.mandate.id, commandId: command.id,
+        reconcileOnly: true, trackAcknowledgedUntilExpiry: true },
+      { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+      record.artifacts[key] = { taskId, commandId: command.id, originalValidUntilNs: command.validUntilNs };
+    }
+  }
+
   async function enqueue(tx: Tx, state: PmState, record: PmRecord, event: Pm.BusinessEvent) {
     if (record.events[event.id]) return record.cycles[record.latestCycleId ?? ''] ?? null;
     assertBusinessAdmission(await tx.doc(Application));
-    record.events[event.id] = event;
     const atNs = nowNs();
+    const campaign = Object.values(record.campaigns).at(-1)!;
+    const forward = record.mandate.capitalSource.kind === 'ACCOUNT' && ['ACCOUNT_CHANGED', 'FRESHNESS_DEADLINE'].includes(event.kind);
+    if (!forward && canonical(json(campaign.datasetRevisionIds)) !== canonical(json(record.datasets))) {
+      // The new revision invalidates the old result, but cannot re-label an old
+      // campaign's research or account start. Its own new campaign is admitted
+      // below by the monitor, with a separately captured starting state.
+      record.events[event.id] = event;
+      if (record.currentDecisionId) { const previous = record.decisions[record.currentDecisionId]!; revise(previous); previous.status = 'SUPERSEDED'; previous.reasonCodes.push('dependency_revision_changed'); record.currentDecisionId = null; }
+      const old = record.latestCycleId ? record.cycles[record.latestCycleId] : null;
+      if (old && !['CONCLUDED', 'FAILED', 'SUPERSEDED'].includes(old.state)) { revise(old); old.state = 'SUPERSEDED'; old.reasonCodes.push('new_data_requires_new_campaign'); }
+      record.basisRevision = digest([record.basisRevision, event.id, record.datasets]);
+      return old ?? null;
+    }
     let accountBasis: Pm.AccountBasis | null = null;
+    let capturedAccount: ReturnType<typeof captureAccount> | null = null;
     if (record.mandate.capitalSource.kind === 'ACCOUNT') {
       try {
-        const capture = captureAccount(await tx.doc(Application), record.mandate.capitalSource.accountBindingId, atNs);
-        accountBasis = capture.basis; record.evidence[capture.evidence.id] = capture.evidence; record.artifacts[capture.evidence.objectKey] = capture.artifact;
+        capturedAccount = forward ? captureAccount(await tx.doc(Application), record.mandate.capitalSource.accountBindingId, atNs) : campaignAccount(record, campaign);
+        accountBasis = capturedAccount.basis;
       } catch (error) { gap(record, 'authoritative_account_basis', error instanceof Problem ? error.message : 'account_basis_unavailable', 'REFRESH_SOURCE'); }
     }
-    const basisRevision = digest({ mandate: record.mandate, policy: record.policy.id, strategy: record.latestStrategyId,
+    const seed = forward ? forwardSeedDecision(record) : null;
+    // Historical matched replay keeps its captured starting state. A new
+    // observation is not permission to run another unbudgeted research trial
+    // or cancel the first independent method evaluation before a seed exists.
+    const coalesce = () => {
+      // Application retains the latest authoritative receipt. This one bounded
+      // pending entry is not a new scientific fact/cycle for every heartbeat.
+      if (capturedAccount) record.artifacts['latest-account-pending'] = json({ capture: capturedAccount, eventKind: event.kind });
+      if (record.currentDecisionId && accountBasis) {
+        const previous = record.decisions[record.currentDecisionId]!;
+        if (record.comparisons[previous.comparisonRef]?.evaluationContext === 'FORWARD_MODEL_ESTIMATE'
+          && previous.accountBasis?.positionsEvidenceRef !== accountBasis.positionsEvidenceRef) {
+          revise(previous); previous.status = 'SUPERSEDED'; previous.reasonCodes.push('current_account_receipt_changed_waiting_for_next_registered_slot');
+          record.currentDecisionId = null;
+        }
+      }
+      return record.latestCycleId ? record.cycles[record.latestCycleId]! : null;
+    };
+    if (forward && !seed) return coalesce();
+    const basisRevision = digest({ mandate: record.mandate, policy: record.policy.id, strategy: seed?.strategyVersionId ?? record.latestStrategyId,
       datasets: record.datasets, accountBasis, eventId: event.id });
     const cycleId = identity('cycle', [record.mandate.id, basisRevision]);
+    let operatingSlotAlreadyAdmitted = false;
+    if (seed) {
+      const explanation = object(seed.explanationFacts); const anchor = BigInt(String(explanation.forwardAnchorNs));
+      const ttl = BigInt(String(explanation.forwardTtlSeconds)) * 1_000_000_000n;
+      const slot = (BigInt(atNs) - anchor) / ttl; const slotKey = `forward-slot:${seed.id}:${slot}`;
+      operatingSlotAlreadyAdmitted = !!record.artifacts[slotKey] && record.artifacts[slotKey]!.cycleId !== cycleId;
+      if (operatingSlotAlreadyAdmitted) return coalesce();
+      record.artifacts[slotKey] ??= { cycleId, seedDecisionId: seed.id, slot: slot.toString(), policyRevisionId: record.policy.id };
+    }
+    record.events[event.id] = event;
+    if (capturedAccount) {
+      record.evidence[capturedAccount.evidence.id] = capturedAccount.evidence;
+      record.artifacts[capturedAccount.evidence.objectKey] = capturedAccount.artifact;
+    }
     const old = record.latestCycleId ? record.cycles[record.latestCycleId] : null;
     if (old && !['CONCLUDED', 'FAILED', 'SUPERSEDED'].includes(old.state)) { revise(old); old.state = 'SUPERSEDED'; old.supersededByCycleId = cycleId; old.reasonCodes.push('newer_business_basis'); }
     if (record.currentDecisionId) {
@@ -87,19 +154,19 @@ export function createPmPlatform(config: ServiceConfig) {
     }
     const cycle: Pm.DecisionCycle = { ...fact(cycleId, atNs), mandateRevisionId: record.mandate.id,
       runtime: { conversationId: record.conversationId, taskId: null }, state: 'PENDING', triggerEventIds: [event.id], basisRevision,
-      datasetRevisionIds: [...record.datasets], accountBasis, policyRevisionId: record.policy.id, strategyVersionId: record.latestStrategyId,
+      datasetRevisionIds: [...record.datasets], accountBasis, policyRevisionId: record.policy.id, strategyVersionId: seed?.strategyVersionId ?? record.latestStrategyId,
       asOfNs: atNs, availableCutoffNs: atNs, dependencyRevisionRefs: [record.policy.id, record.latestStrategyId, ...record.datasets, event.sourceRevisionRef],
       outputDecisionId: null, supersededByCycleId: null, reasonCodes: [] };
-    const campaign = Object.values(record.campaigns).at(-1)!;
     const research = campaign.state !== 'PLANNED' && campaign.runtime.conversationId !== record.conversationId ? await tx.doc(Study, campaign.runtime.conversationId as ConversationId) : null;
     // Freeze the exact observed research revision, never read a later trial in this cycle.
-    record.artifacts[cycleId] = json({ research, campaignId: campaign.id, configured: state.datasets[record.datasets.at(-1)!], incumbentDecisionId: record.currentDecisionId });
+    record.artifacts[cycleId] = json({ research, campaignId: campaign.id, configured: state.datasets[record.datasets.at(-1)!], incumbentDecisionId: record.currentDecisionId,
+      operatingForward: forward, forwardSeedDecisionId: seed?.id ?? null, operatingSlotAlreadyAdmitted });
     cycle.runtime.taskId = await tx.createTask(ComputeCycle, { mandateId: record.mandate.id, cycleId }, { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
     record.cycles[cycleId] = cycle; record.latestCycleId = cycleId; record.basisRevision = basisRevision;
     return cycle;
   }
 
-  const ComputeCycle = defineTask<{ mandateId: string; cycleId: string }, { phase: 'compute' }, null>({
+  const ComputeCycle = defineTask<{ mandateId: string; cycleId: string }, { phase: 'compute' | 'offer' }, null>({
     name: 'qz.pm.decision-cycle', version: 1, initial: () => ({ phase: 'compute' }),
     phases: { async compute(task, runtime, ctx) {
       await ready;
@@ -116,12 +183,13 @@ export function createPmPlatform(config: ServiceConfig) {
       if (stale) return;
       try {
         const frozen = captured.artifacts[cycle.id]!;
+        const isForward = frozen.operatingForward === true;
         const study = frozen.research ? object(frozen.research) : null;
         const final = study?.final ? object(study.final) : null;
         const trials = Array.isArray(study?.trials) ? study.trials.map(item => object(item)) : [];
         const selected = final && trials.find(item => item.taskId === final.trialId);
         const selectedResult = selected?.result ? object(selected.result) : null;
-        if (selectedResult?.kind === 'FITTED_ENSEMBLE_REPLAY' && typeof selectedResult.evidenceTaskId === 'number') {
+        if (!isForward && selectedResult?.kind === 'FITTED_ENSEMBLE_REPLAY' && typeof selectedResult.evidenceTaskId === 'number') {
           const source = await runtime.getTask(selectedResult.evidenceTaskId as TaskId<JsonObject>, ctx);
           if (!source || source.state.status !== 'terminal' || source.state.outcome.status !== 'completed') throw new Problem('native_evidence_unavailable');
           const output = object(source.state.outcome.result, 'native_evidence_result');
@@ -191,13 +259,18 @@ export function createPmPlatform(config: ServiceConfig) {
             return undefined;
           }, ctx);
         }
-        const result = await computePmDecision(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-science', ctx));
-        const retainedArtifacts = await retainPmArtifacts(runtime, result.artifacts, ctx);
+        const result = isForward
+          ? await computePmForward(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-forward', ctx), (reference, stored) => readPmArtifact(runtime, reference, stored, ctx))
+          : await computePmDecision(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-science', ctx));
+        const inlineRefs = isForward ? ['nativeTargetEvidenceRef', 'executionQualificationEvidenceRef']
+          .map(field => object(result.decision.explanationFacts)[field]).filter((value): value is string => typeof value === 'string') : [];
+        const retainedArtifacts = await retainPmArtifacts(runtime, result.artifacts, ctx, inlineRefs);
         await runtime.commit(async tx => {
           const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, task.input.mandateId); const current = record.cycles[cycle.id]!;
           // Completed scientific evidence is retained even if a later basis wins.
           Object.assign(record.evidence, result.evidence); Object.assign(record.artifacts, retainedArtifacts);
           Object.assign(record.capacities, result.capacities); Object.assign(record.ensembles, result.ensembles);
+          if ('assessments' in result) Object.assign(record.assessments, result.assessments);
           Object.assign(record.derivedTrials, result.trials); Object.assign(record.budgetMovements, result.budgetMovements);
           const admitted = Object.values(record.derivedTrials).filter(item => item.proposalRef === cycle.id);
           for (const [index, trial] of admitted.entries()) {
@@ -215,7 +288,7 @@ export function createPmPlatform(config: ServiceConfig) {
           }
           record.comparisons[result.comparison.id] = result.comparison;
           const decision = result.decision;
-          if (decision.action === 'REBALANCE' && decision.ensembleRevisionId) {
+          if (!isForward && decision.action === 'REBALANCE' && decision.ensembleRevisionId) {
             const ensemble = record.ensembles[decision.ensembleRevisionId]!; const strategy = record.strategies[decision.strategyVersionId]!;
             strategy.fittedEvidenceRefs = [...new Set([...strategy.fittedEvidenceRefs, ...ensemble.trainingEvidenceRefs])];
             strategy.modelRefs = ensemble.members.map(item => item.factorVersionId);
@@ -225,17 +298,34 @@ export function createPmPlatform(config: ServiceConfig) {
           if (record.basisRevision !== cycle.basisRevision || current.state === 'SUPERSEDED') {
             decision.status = 'SUPERSEDED'; decision.reasonCodes.push('newer_business_basis'); current.state = 'SUPERSEDED';
           } else {
+            if (isForward && cycle.accountBasis && record.mandate.capitalSource.kind === 'ACCOUNT') {
+              const currentAccount = captureAccount(await tx.doc(Application), record.mandate.capitalSource.accountBindingId);
+              if (currentAccount.basis.positionsEvidenceRef !== cycle.accountBasis.positionsEvidenceRef
+                || currentAccount.basis.outstandingCommandsRef !== cycle.accountBasis.outstandingCommandsRef) {
+                decision.status = 'SUPERSEDED'; decision.reasonCodes.push('account_changed_during_current_inference'); current.state = 'SUPERSEDED';
+                revise(current); current.outputDecisionId = decision.id; record.decisions[decision.id] = decision;
+                return { status: 'terminal', outcome: { status: 'completed', result: null } };
+              }
+            }
             if (record.currentDecisionId) { const old = record.decisions[record.currentDecisionId]!; revise(old); old.status = 'SUPERSEDED'; }
             decision.status = 'CURRENT'; record.currentDecisionId = decision.id;
+            if ('assessments' in result) {
+              const assessment = Object.values(result.assessments as Record<string, Pm.PipelineAssessment>).find(item => item.strategyVersionId === decision.strategyVersionId);
+              if (assessment) record.strategies[decision.strategyVersionId]!.pipelineAssessmentId = assessment.id;
+            }
             current.state = ['NEEDS_EVIDENCE', 'NO_FEASIBLE_SOLUTION'].includes(decision.action) ? 'WAITING_EVIDENCE' : 'CONCLUDED';
           }
           revise(current); current.outputDecisionId = decision.id; current.reasonCodes = [...decision.reasonCodes]; record.decisions[decision.id] = decision;
           for (const reason of result.gaps) gap(record, reason.capability, reason.reason, reason.remedy, decision.id);
-          if (decision.status === 'CURRENT' && result.scienceCompleted && decision.action === 'REBALANCE' && decision.capital) {
+          if (!isForward && decision.status === 'CURRENT' && result.scienceCompleted && decision.action === 'REBALANCE' && decision.capital) {
             current.state = 'EVALUATING';
             const taskId = await tx.createTask(IndependentEvaluation, { mandateId: record.mandate.id, cycleId: cycle.id, decisionId: decision.id },
               { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
             record.artifacts[`independent-task:${decision.id}`] = { taskId };
+          }
+          if (isForward && decision.status === 'CURRENT' && decision.action === 'REBALANCE' && record.mandate.operatingAuthority === 'AUTHORIZED_TARGETS'
+            && 'assessments' in result && Object.values(result.assessments as Record<string, Pm.PipelineAssessment>).some(item => item.outcome === 'READY')) {
+            return { status: 'running', checkpoint: { phase: 'offer' } };
           }
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, ctx);
@@ -253,6 +343,16 @@ export function createPmPlatform(config: ServiceConfig) {
           return { status: 'terminal', outcome: { status: 'failed', error: { message: reason } } };
         }, ctx);
       }
+    }, async offer(task, runtime, ctx) {
+      await ready;
+      const record = pmRecord(pmState(await runtime.snapshot(PmDocument, ctx)), task.input.mandateId);
+      const decisionId = record.cycles[task.input.cycleId]!.outputDecisionId;
+      if (decisionId) {
+        try { await offerTarget(record.mandate.id, { requestId: identity('auto-forward-target', decisionId), expectedRevision: record.mandate.revision, decisionId }); }
+        catch (error) { await runtime.commit(async tx => { const current = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
+          gap(current, 'target_delivery', error instanceof Error ? error.message : 'current_target_delivery_rejected', 'REFRESH_SOURCE', decisionId); return undefined; }, ctx); }
+      }
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
     } },
     async abort(task, runtime, ctx) { await runtime.commit(async tx => {
       const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const cycle = record.cycles[task.input.cycleId]!;
@@ -278,6 +378,9 @@ export function createPmPlatform(config: ServiceConfig) {
         if (suspended) return;
         const state = pmState(await runtime.snapshot(PmDocument, ctx)); const record = pmRecord(state, task.input.mandateId);
         const campaign = Object.values(record.campaigns).at(-1)!;
+        if (campaign.state === 'PAUSED' && campaign.conclusionReason === 'intent_revision_requires_new_unexposed_data') {
+          await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } }), ctx); return;
+        }
         const consumed = Object.values(record.derivedTrials).filter(item => item.countedAttempt).length;
         const researchAllowance = record.budget.maximumTrials - consumed - downstreamTrialReservation(record.budget.maximumTrials);
         if (researchAllowance < 1) {
@@ -301,6 +404,8 @@ export function createPmPlatform(config: ServiceConfig) {
         const researchSettings = configured.strategy?.simulationSettings ? object(configured.strategy.simulationSettings) : raw.settings ? object(raw.settings) : null;
         const binding: ResearchCampaignBinding = { campaignId: campaign.id, mandateRevisionId: record.mandate.id,
           policy: json(record.policy) as unknown as ResearchCampaignBinding['policy'], intakeRequired: true, independentConsumer: 'PM_PORTFOLIO',
+          ownerBoundaries: json(record.mandate.ownerBoundaries) as unknown as NonNullable<ResearchCampaignBinding['ownerBoundaries']>,
+          ownerClarificationStatements: (object(record.policy.validDomain).ownerClarificationStatements ?? []) as string[],
           budget: json({ ...record.budget, maximumTrials: researchAllowance }) as unknown as ResearchCampaignBinding['budget'],
           scopes: [{ id: identity('scope', [campaign.id, 'SELECTION']), allowedUniverseRef: record.mandate.allowedUniverseRef, datasetRevisionIds: [...record.datasets],
             interval: { startNs: trainEnd, endExclusiveNs: validationEnd }, role: 'SELECTION', calendarId: 'UTC_COMPLETE_DAYS', labelDefinitionId: null,
@@ -358,6 +463,9 @@ export function createPmPlatform(config: ServiceConfig) {
         const original = campaign.runtime.conversationId !== record.conversationId ? await host.state(campaign.runtime.conversationId) : null;
         await runtime.commit(async tx => {
           const latest = pmState(await tx.doc(PmDocument)); const stored = pmRecord(latest, task.input.mandateId); const current = stored.campaigns[campaign.id]!;
+          // An owner clarification may replace the campaign while this task was
+          // reading its original conversation. Older intake cannot restore it.
+          if (Object.values(stored.campaigns).at(-1)!.id !== campaign.id) return { status: 'running', checkpoint: { phase: 'observe' } };
           const maintenance = maintenanceState(await tx.doc(Application)); maintenanceOnly = !!maintenance && maintenance.state !== 'RUNNING';
           if (maintenanceOnly && !Object.values(stored.commands).some(item => ['PENDING', 'UNCERTAIN'].includes(item.state)) && !Object.values(stored.retirements).some(item => item.reconciliationRequired)) {
             return await maintenancePark(tx, runtime.taskId, 'qz.pm.mandate-monitor', { phase: 'observe' } as const) ?? { status: 'running', checkpoint: { phase: 'observe' } };
@@ -397,6 +505,16 @@ export function createPmPlatform(config: ServiceConfig) {
             for (const movement of scientific.budgetMovements) stored.budgetMovements[movement.id] = movement;
             if (scientific.intake) {
               if (scientific.intake.sourceGoal !== stored.mandate.ownerGoal) throw new Problem('intake_owner_goal_mismatch');
+              const intakeEvidenceId = identity('strategy-intake', current.id);
+              retainIntentEvidence(stored, intakeEvidenceId, json(scientific.intake), nowNs(), 'qz.pm.strategy-intake/1');
+              const acceptedBoundaries = mergeOwnerBoundaries(stored.mandate.ownerBoundaries, scientific.intake.ownerBoundaries as Pm.OwnerBoundary[]);
+              if (canonical(json(acceptedBoundaries)) !== canonical(json(stored.mandate.ownerBoundaries))) reviseOwnerIntent(stored, acceptedBoundaries,
+                (object(stored.policy.validDomain).ownerClarificationStatements ?? []) as string[], intakeEvidenceId, nowNs());
+              const currentReasons = new Set(scientific.intake.missingCapabilities);
+              if (scientific.intake.support === 'NEEDS_CLARIFICATION') currentReasons.add('strategy_intake_needs_clarification');
+              if (scientific.intake.support === 'UNSUPPORTED') currentReasons.add('strategy_archetype_unsupported');
+              for (const priorGap of Object.values(stored.gaps)) if ((['owner_boundary_normalization_required', 'strategy_intake_needs_clarification', 'strategy_archetype_unsupported', 'pm_account_consumer_not_requested'].includes(priorGap.reasonCode) || priorGap.reasonCode.startsWith('strategy_archetype:'))
+                && !currentReasons.has(priorGap.reasonCode) && priorGap.state !== 'RESOLVED') { revise(priorGap); priorGap.state = 'RESOLVED'; priorGap.resolutionEvidenceRefs = [intakeEvidenceId]; }
               stored.definition = scientific.intake.strategy; current.strategyDefinitionId = stored.definition.id;
               if (currentStrategy(stored).definitionId !== stored.definition.id) {
                 const version: Pm.StrategyVersion = { ...currentStrategy(stored), ...fact(identity('strategy', [stored.mandate.id, stored.datasets, stored.definition.id])), definitionId: stored.definition.id };
@@ -406,7 +524,6 @@ export function createPmPlatform(config: ServiceConfig) {
               if (scientific.intake.support === 'UNSUPPORTED') gap(stored, 'strategy_archetype', 'strategy_archetype_unsupported', 'UNSUPPORTED');
               if (scientific.intake.support === 'NEEDS_CLARIFICATION') gap(stored, 'strategy_intake', 'strategy_intake_needs_clarification', 'CLARIFY_INTENT');
               for (const missing of scientific.intake.missingCapabilities) gap(stored, missing, missing, ['owner_boundary_normalization_required', 'pm_account_consumer_not_requested'].includes(missing) ? 'CLARIFY_INTENT' : 'UNSUPPORTED');
-              stored.artifacts[identity('strategy-intake', current.id)] = json(scientific.intake);
             }
           }
           if (!maintenanceOnly && research?.final && current.state !== 'PAUSED' && stored.artifacts[`strategy-control:${stored.latestStrategyId}`]?.action !== 'pause' && !retired && (!scientific?.binding || scientific.state === 'CONCLUDED')) {
@@ -419,6 +536,7 @@ export function createPmPlatform(config: ServiceConfig) {
             try {
               const account = captureAccount(await tx.doc(Application), stored.mandate.capitalSource.accountBindingId);
               observePmOutcome(stored, account);
+              await trackAcknowledgedRetirement(tx, stored);
               for (const command of Object.values(stored.commands)) if (['PENDING', 'UNCERTAIN'].includes(command.state)) {
                 const reference = stored.artifacts[`target-task:${command.id}`];
                 const prior = typeof reference?.taskId === 'number' ? await tx.task(reference.taskId as TaskId) : undefined;
@@ -431,14 +549,57 @@ export function createPmPlatform(config: ServiceConfig) {
               if (!retired && !maintenanceOnly) await enqueue(tx, latest, stored, { id: identity('event', account.evidence.sourceRevision), kind: 'ACCOUNT_CHANGED', sourceRevisionRef: account.evidence.sourceRevision,
                 availableAtNs: account.basis.availableAtNs, affectedMandateIds: [stored.mandate.id], supersedesEventId: null });
               else {
-                stored.evidence[account.evidence.id] = account.evidence; stored.artifacts[account.evidence.objectKey] = account.artifact;
+                // Read-only reconciliation still observes every authoritative
+                // receipt, but a heartbeat alone is not another historical
+                // retirement event. Keep the latest pending capture bounded.
+                stored.artifacts['latest-account-pending'] = json({ capture: account, eventKind: retired ? 'RETIREMENT_RECONCILIATION' : 'MAINTENANCE_RECONCILIATION' });
+                const snapshot = object(account.artifact.snapshot), native = snapshot.nativeObservation ? object(object(snapshot.nativeObservation).snapshot) : null;
+                const flatness = retirementAccountFlat(account);
+                const outstanding = retirementOutstandingTargets(Object.values(stored.commands), account, nowNs(), stored.artifacts);
+                const application = await tx.doc(Application);
+                const connection = observation(application.observations[account.basis.accountBindingId]).connection;
+                const physicalAccount = accountKey(connection, application.accountControls);
+                const legacyReceipts = Object.values(application.observations).map(value => observation(value))
+                  .filter(value => accountKey(value.connection, application.accountControls) === physicalAccount)
+                  .flatMap(value => [value.view.receipt, value.view.allocation?.receipt]).filter(value => value != null)
+                  .filter(receipt => ['PENDING', 'UNCERTAIN'].includes(receipt.status)
+                    || activeAcknowledgedReceipt(receipt) || activeAcknowledgedReceipt(receipt, account.basis.observedAtNs)
+                    || activeAcknowledgedReceipt(receipt, account.basis.availableAtNs));
+                const retirementBasis = digest(json({ accountSourceId: account.basis.accountSourceId,
+                  nativeAccountId: native?.account_id ?? null,
+                  positions: Array.isArray(snapshot.positions) ? snapshot.positions.map(value => { const row = object(value); return { instrumentId: row.instrumentId ?? null, quantity: row.quantity ?? null }; }) : null,
+                  balances: native?.balances ?? null,
+                  orderCount: snapshot.openOrders ? object(snapshot.openOrders).count ?? null : null,
+                  flat: flatness.flat, flatnessReasons: flatness.reasonCodes, reserved: account.basis.reserved, outstanding,
+                  legacyReceipts: legacyReceipts.map(receipt => ({ id: receipt.id, status: receipt.status, expiresAt: receipt.expiresAt })) }));
                 for (const disposition of Object.values(stored.retirements)) if (disposition.reconciliationRequired) {
-                  disposition.residualPositionsEvidenceRef = account.evidence.id;
-                  const flatness = retirementAccountFlat(account);
+                  const markerKey = `retirement-observation:${disposition.id}`;
+                  if (stored.artifacts[markerKey]?.basis !== retirementBasis) {
+                    stored.evidence[account.evidence.id] = account.evidence; stored.artifacts[account.evidence.objectKey] = account.artifact;
+                    revise(disposition); disposition.residualPositionsEvidenceRef = account.evidence.id;
+                    disposition.outstandingTargetCommandIds = outstanding;
+                    stored.artifacts[markerKey] = { basis: retirementBasis, evidenceRef: account.evidence.id, legacyReceipts: json(legacyReceipts) };
+                  }
                   for (const reason of flatness.flat === null ? flatness.reasonCodes : []) gap(stored, 'retirement_account_flatness', reason, 'REFRESH_SOURCE', disposition.id);
-                  disposition.outstandingTargetCommandIds = Object.values(stored.commands).filter(item => ['PENDING', 'UNCERTAIN'].includes(item.state)).map(item => item.id);
-                  if (flatness.flat === true && disposition.outstandingTargetCommandIds.length === 0) {
-                    revise(disposition); disposition.positionDisposition = 'FLAT_CONFIRMED'; disposition.reconciliationRequired = false; disposition.closureEvidenceRefs.push(account.evidence.id);
+                  if (flatness.flat === true && disposition.outstandingTargetCommandIds.length === 0 && legacyReceipts.length === 0) {
+                    // A final closure always names an immutable original
+                    // receipt, even if the economic values were unchanged.
+                    stored.evidence[account.evidence.id] = account.evidence; stored.artifacts[account.evidence.objectKey] = account.artifact;
+                    revise(disposition); disposition.positionDisposition = 'FLAT_CONFIRMED'; disposition.reconciliationRequired = false;
+                    disposition.residualPositionsEvidenceRef = account.evidence.id; disposition.closureEvidenceRefs.push(account.evidence.id);
+                  }
+                }
+              }
+              if (!retired && !maintenanceOnly) {
+                const seed = forwardSeedDecision(stored);
+                if (seed) {
+                  const explanation = object(seed.explanationFacts); const anchor = BigInt(String(explanation.forwardAnchorNs));
+                  const ttl = BigInt(String(explanation.forwardTtlSeconds)) * 1_000_000_000n; const atNs = nowNs();
+                  if (BigInt(atNs) >= anchor) {
+                    const slot = ((BigInt(atNs) - anchor) / ttl).toString();
+                    if (!stored.artifacts[`forward-slot:${seed.id}:${slot}`]) await enqueue(tx, latest, stored, {
+                      id: identity('forward-clock-event', [seed.id, slot]), kind: 'FRESHNESS_DEADLINE', sourceRevisionRef: `${seed.id}:${slot}`,
+                      availableAtNs: atNs, affectedMandateIds: [stored.mandate.id], supersedesEventId: null });
                   }
                 }
               }
@@ -456,6 +617,7 @@ export function createPmPlatform(config: ServiceConfig) {
               stored.strategies[fresh.id] = fresh; stored.latestStrategyId = fresh.id; stored.assessments[assessment.id] = assessment;
               stored.campaigns[nextId] = { ...current, ...fact(nextId), runtime: { conversationId: stored.conversationId, taskId: stored.monitorTaskId }, state: 'PLANNED', datasetRevisionIds: [...stored.datasets],
                 hypothesisIds: [], trialIds: [], latestComparisonId: null, selectedStrategyVersionId: null, conclusionReason: null };
+              admitCampaignAccount(stored, stored.campaigns[nextId]!, await tx.doc(Application));
               stored.searchFamily.campaignIds.push(nextId);
               return { status: 'running', checkpoint: { phase: 'start' } };
             }
@@ -481,7 +643,13 @@ export function createPmPlatform(config: ServiceConfig) {
       assertBusinessAdmission(await tx.doc(Application));
       const atNs = nowNs(); const id = identity('mandate', input.requestId); const policyId = identity('policy', [id, 'pm-method/1']);
       const dataset = captureDataset(configured, state, atNs, source); let currency: string;
-      if (input.funding.kind === 'ACCOUNT') currency = captureAccount(await tx.doc(Application), input.funding.accountBindingId, atNs).basis.currency;
+      let initialAccount: ReturnType<typeof captureAccount> | null = null;
+      if (input.funding.kind === 'ACCOUNT') {
+        const application = await tx.doc(Application);
+        initialAccount = captureAccount(application, input.funding.accountBindingId, atNs); currency = initialAccount.basis.currency;
+        if (input.operatingAuthority === 'AUTHORIZED_TARGETS') assertAccountTargetControl(application, state,
+          observation(application.observations[input.funding.accountBindingId]).connection, { kind: 'PM', mandateId: id });
+      }
       else currency = input.funding.capital.currency;
       if (configured.currency !== currency) throw new Problem('mandate_currency_mismatch');
       const selection = selectionRule(input.businessPreference);
@@ -493,7 +661,7 @@ export function createPmPlatform(config: ServiceConfig) {
         unresolvedIntent: selection.mode === 'FRONTIER_ONLY' ? ['investment_tradeoff_not_selected'] : [] });
       const policy: Pm.DecisionPolicyRevision = { ...fact(policyId, atNs), mandateRevisionId: id, methodFamily: 'qz.pm.train-only-ensemble-shared-account/1',
         nativeImplementationVersion: 'qz-job/1', learnedParametersRef: null, trainingProtocolRef: 'qz.pm.expanding-train-purged-oof/1', validationEvidenceRefs: [],
-        applicableCapabilityIds: [PM_CAPABILITY_ID], validDomain: { data: 'BAR', accounting: 'single-currency-fresh-research-account', strategy: configured.strategy?.kind ?? null, jointAllocationMethod: json(pmAllocationMethod()), qualificationProtocol: pmQualificationProtocol(selection) },
+        applicableCapabilityIds: [PM_CAPABILITY_ID], validDomain: { data: 'BAR', accounting: 'single-currency-fresh-research-account', strategy: configured.strategy?.kind ?? null, ownerBoundaries: [], ownerClarificationStatements: [], jointAllocationMethod: json(pmAllocationMethod()), qualificationProtocol: pmQualificationProtocol(selection), operatingRule: pmOperatingRule() },
         numericalToleranceRef: 'qz.native.solver-tolerances/1', selectionRule: selection,
         limitations: ['historical_replay_is_not_economic_capacity', 'no_real_orders', 'unverified_receive_clock', 'account_operation_requires_matched_live_evidence'] };
       const definition: Pm.StrategyDefinition = { ...fact(identity('strategy-definition', id), atNs), name: input.goal.slice(0, 120), archetype: 'FACTOR_RESEARCH', economicMechanism: input.goal,
@@ -515,6 +683,7 @@ export function createPmPlatform(config: ServiceConfig) {
         currentDecisionId: null, latestCycleId: null, latestStrategyId: strategy.id, basisRevision: 'initial', monitorTaskId: null, derivedTrials: {}, budgetMovements: {},
         searchFamily: { ...fact(identity('search-family', id), atNs), economicFamilyId: definition.id, campaignIds: [campaignId], trialIds: [], methodVariantRefs: [policyId],
           countedAttempts: '0', failedAttempts: '0', costEvidenceRefs: [], selectionExposureRefs: [], effectiveTrialEstimate: null } };
+      if (initialAccount) freezeCampaignAccount(record, campaign, initialAccount);
       const reservationId = budget.reservationForClosureRef;
       const reserve = downstreamTrialReservation(input.maxTrials);
       if (reserve > 0) record.budgetMovements[reservationId] = { ...fact(reservationId, atNs), budgetId: budget.id, campaignId, hypothesisId: null, trialId: null,
@@ -528,6 +697,64 @@ export function createPmPlatform(config: ServiceConfig) {
   }
   async function get(id: string) { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return pmView(pmRecord(state, id), state); }
   async function list() { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return Object.values(state?.mandates ?? {}).map(record => pmView(record, state)); }
+  async function clarifyIntent(id: string, value: unknown) {
+    await ready; const input = clarificationInput(value); const original = json(value);
+    await dependencies.host.harness.commit(async tx => {
+      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id);
+      const key = `${id}:intent-clarification:${input.requestId}`; const replay = state.commands[key];
+      if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
+      assertBusinessAdmission(await tx.doc(Application)); ensureRevision(record, input.expectedRevision);
+      if (Object.values(record.retirements).some(item => item.strategyVersionId === record.latestStrategyId)) throw new Problem('strategy_retired', 409);
+      const previous = Object.values(record.campaigns).at(-1)!;
+      if (!['CONCLUDED', 'PAUSED'].includes(previous.state)) throw new Problem('intent_clarification_requires_concluded_or_paused_campaign', 409);
+      const conversations = Object.values(record.campaigns).map(item => item.runtime.conversationId).filter(item => item !== record.conversationId);
+      for (const conversationId of conversations) {
+        const research = await tx.doc(CampaignResearchDoc, conversationId as ConversationId);
+        if (conversationId === previous.runtime.conversationId && research.state !== 'CONCLUDED') throw new Problem('intent_clarification_requires_research_conclusion', 409);
+        for (const trial of research.trials) record.derivedTrials[trial.id] = trial;
+        for (const movement of research.budgetMovements) record.budgetMovements[movement.id] = movement;
+      }
+      const previousIntake = record.artifacts[identity('strategy-intake', previous.id)];
+      const ambiguityList = Array.isArray(previousIntake?.ambiguities) ? previousIntake.ambiguities as string[] : [];
+      if (input.resolvedAmbiguities.some(item => !ambiguityList.includes(item))) throw new Problem('intent_ambiguity_not_recorded');
+      const oldStatements = (object(record.policy.validDomain).ownerClarificationStatements ?? []) as string[];
+      const statements = [...new Set([...oldStatements, input.statement])];
+      const sourceStatements = [record.mandate.ownerGoal, ...statements]; const atNs = nowNs();
+      const proposed = input.boundaries.map(boundary => {
+        if (!sourceStatements.some(source => source.includes(boundary.sourceStatement))) throw new Problem('owner_boundary_source_not_in_owner_statement');
+        return canonicalOwnerBoundary({ ...boundary, id: identity('owner-boundary', [id, boundary.kind, boundary.sourceStatement, boundary.value]), effectiveFromNs: atNs });
+      });
+      const boundaries = mergeOwnerBoundaries(record.mandate.ownerBoundaries, proposed);
+      const evidenceId = identity('intent-clarification', [id, input.requestId]);
+      const priorMandateRevision = record.mandate.revision; const priorPolicyId = record.policy.id;
+      const priorRevisionEvidenceRef = reviseOwnerIntent(record, boundaries, statements, evidenceId, atNs);
+      retainIntentEvidence(record, evidenceId, json({ ...input, priorMandateRevision, priorPolicyId, priorRevisionEvidenceRef }), atNs);
+      // The owner can add information, but only a new structured intake resolves
+      // earlier ambiguity. No command string erases missing scientific evidence.
+      const allRelated = new Set([...conversations, record.conversationId]);
+      const exposure = await tx.doc(Exposures);
+      const hasExposure = exposure.windows.some(item => allRelated.has(Number(item.conversationId)));
+      const consumed = Object.values(record.derivedTrials).filter(item => item.countedAttempt).length;
+      const canRestart = consumed === 0 && !hasExposure;
+      const campaignId = identity('campaign', [id, record.mandate.revision, record.policy.id, record.datasets]);
+      record.campaigns[campaignId] = { ...previous, ...fact(campaignId, atNs), supersedesId: previous.id, state: canRestart ? 'PLANNED' : 'PAUSED',
+        runtime: { conversationId: record.conversationId, taskId: record.monitorTaskId }, datasetRevisionIds: [...record.datasets], hypothesisIds: [], trialIds: [],
+        latestComparisonId: null, selectedStrategyVersionId: null, conclusionReason: canRestart ? null : 'intent_revision_requires_new_unexposed_data' };
+      admitCampaignAccount(record, record.campaigns[campaignId]!, await tx.doc(Application), atNs);
+      record.searchFamily.campaignIds.push(campaignId); record.searchFamily.trialIds = Object.keys(record.derivedTrials);
+      record.searchFamily.countedAttempts = String(consumed);
+      if (!canRestart) gap(record, 'owner_intent_research_window', 'intent_revision_requires_new_unexposed_data', 'COLLECT_AUTHORIZED_DATA', campaignId);
+      const event: Pm.BusinessEvent = { id: identity('event', evidenceId), kind: 'MANDATE_CHANGED', sourceRevisionRef: evidenceId, availableAtNs: atNs,
+        affectedMandateIds: [id], supersedesEventId: null };
+      record.events[event.id] = event;
+      const priorMonitor = record.monitorTaskId ? await tx.task(record.monitorTaskId as TaskId) : null;
+      if (!priorMonitor || priorMonitor.state.status === 'terminal') record.monitorTaskId = await tx.createTask(MonitorMandate, { mandateId: id },
+        { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
+      record.campaigns[campaignId]!.runtime.taskId = record.monitorTaskId;
+      state.commands[key] = { original, mandateId: id, resourceId: campaignId };
+    }, context);
+    return get(id);
+  }
   async function command(id: string, kind: 'recompute' | 'retire' | 'refresh-data', value: unknown) {
     await ready; const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = json(value);
     const before = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); const existing = before.commands[`${id}:${kind}:${requestId}`];
@@ -548,9 +775,10 @@ export function createPmPlatform(config: ServiceConfig) {
         record.assessments[assessment.id] = assessment;
         const disposition: Pm.RetirementDisposition = { ...fact(identity('retirement', [strategyId, requestId])), strategyVersionId: strategyId, pipelineAssessmentId: assessment.id,
           signalGeneration: 'STOPPED', positionDisposition: record.mandate.capitalSource.kind === 'ACCOUNT' ? 'MONITORING_EXISTING' : 'NONE', residualPositionsEvidenceRef: null,
-          outstandingTargetCommandIds: Object.values(record.commands).filter(item => ['PENDING', 'UNCERTAIN'].includes(item.state)).map(item => item.id), exitDecisionId: null,
+          outstandingTargetCommandIds: retirementOutstandingTargets(Object.values(record.commands)), exitDecisionId: null,
           reconciliationRequired: record.mandate.capitalSource.kind === 'ACCOUNT', closureEvidenceRefs: [] };
         record.retirements[disposition.id] = disposition;
+        await trackAcknowledgedRetirement(tx, record);
         if (record.currentDecisionId && record.decisions[record.currentDecisionId]!.strategyVersionId === strategyId) { const current = record.decisions[record.currentDecisionId]!; revise(current); current.status = 'REVOKED'; current.reasonCodes.push('strategy_retired_not_position_liquidation'); record.currentDecisionId = null; }
         if (record.latestCycleId && record.cycles[record.latestCycleId]!.strategyVersionId === strategyId) { const cycle = record.cycles[record.latestCycleId]!; if (!['CONCLUDED', 'FAILED', 'SUPERSEDED'].includes(cycle.state)) { revise(cycle); cycle.state = 'SUPERSEDED'; cycle.reasonCodes.push('strategy_retired'); } }
         if (record.latestStrategyId === strategyId) record.basisRevision = digest([record.basisRevision, 'retired', strategyId]);
@@ -562,7 +790,7 @@ export function createPmPlatform(config: ServiceConfig) {
           if (record.datasets.includes(captured.revision.id)) { state.commands[key] = { original, mandateId: id, resourceId: record.latestCycleId ?? id }; return; }
           record.datasets = [captured.revision.id]; sourceRevisionRef = captured.revision.id;
         }
-        await enqueue(tx, state, record, { id: identity('event', [id, kind, requestId]), kind: kind === 'refresh-data' ? 'DATA_REVISION' : 'RESEARCH_EVIDENCE',
+        await enqueue(tx, state, record, { id: identity('event', [id, kind, requestId]), kind: kind === 'refresh-data' ? 'DATA_REVISION' : forwardSeedDecision(record) ? 'FRESHNESS_DEADLINE' : 'RESEARCH_EVIDENCE',
           sourceRevisionRef, availableAtNs: nowNs(), affectedMandateIds: [id], supersedesEventId: null });
       }
       state.commands[key] = { original, mandateId: id, resourceId: record.latestCycleId ?? id };
@@ -582,13 +810,17 @@ export function createPmPlatform(config: ServiceConfig) {
       if (record.mandate.capitalSource.kind !== 'ACCOUNT') throw new Problem('target_account_binding_required', 409);
       const account = captureAccount(await tx.doc(Application), record.mandate.capitalSource.accountBindingId);
       if (decision.targetCommandId) throw new Problem('target_decision_already_offered', 409);
-      targetEligibility(record, decision, account.basis);
+      const application = await tx.doc(Application); const source = observation(application.observations[account.basis.accountBindingId]);
+      assertAccountTargetControl(application, state, source.connection, { kind: 'PM', mandateId: id });
+      targetEligibility(record, decision, account.basis, source.connection.mode);
       const targetId = identity('target-command', [id, requestId]); const payloadRef = identity('target-payload', targetId);
-      const target: JsonObject = { schema_version: 1, asof_ns: decision.accountBasis!.observedAtNs, valid_until_ns: decision.validUntilNs!,
-        targets: decision.assetTargets.map(item => ({ instrument_id: item.instrumentId, currency: item.targetNotional.currency, weight: item.navWeight })),
-        cash_weight: String(object(decision.explanationFacts).nativeCashWeight ?? '') };
-      decimal(target.cash_weight, 'native_cash_weight');
+      const target = pmTargetPayload(record, decision);
+      const allocation = pmTargetAllocation(record, decision, source, application.accountControls);
       record.artifacts[payloadRef] = target;
+      const allocationRef = `target-allocation:${targetId}`;
+      record.artifacts[allocationRef] = allocation;
+      record.evidence[allocationRef] = { id: allocationRef, sourceKind: 'DERIVED', role: 'CONTROL', runtime: { conversationId: record.conversationId, taskId: null }, objectKey: allocationRef,
+        contentDigest: digest(allocation), mediaType: 'application/json', sourceRevision: decision.basisRevision, eventInterval: null, availableAtNs: nowNs(), clockPrecision: 'NANOSECOND', schemaId: 'qz.revision-bound-allocation/1', visibility: 'OWNER_ONLY' };
       record.evidence[payloadRef] = { id: payloadRef, sourceKind: 'DERIVED', role: 'CONTROL', runtime: { conversationId: record.conversationId, taskId: null }, objectKey: payloadRef, contentDigest: digest(target), mediaType: 'application/json', sourceRevision: decision.basisRevision, eventInterval: null, availableAtNs: nowNs(), clockPrecision: 'NANOSECOND', schemaId: 'qz.target-payload/1', visibility: 'OWNER_ONLY' };
       record.commands[targetId] = { ...fact(targetId), decisionId, idempotencyKey: targetId, accountBindingId: account.basis.accountBindingId, basisRevision: decision.basisRevision,
         controlRevision: account.basis.controlRevision, payloadEvidenceRef: payloadRef, validUntilNs: decision.validUntilNs!, state: 'PENDING', externalReceiptRef: null };
@@ -600,7 +832,7 @@ export function createPmPlatform(config: ServiceConfig) {
   }
   return { extension: defineExtension({ name: 'qz.pm', tasks: [MonitorMandate, ComputeCycle, IndependentEvaluation, PmTargetTask, controls.task] }), connect,
     work: { start, get, list, readResource: controls.readResource, campaignCommand: controls.campaignCommand, strategyCommand: controls.strategyCommand, startCampaign: controls.startCampaign, recompute: (id: string, value: unknown) => command(id, 'recompute', value), retire: (id: string, value: unknown) => command(id, 'retire', value),
-      refreshData: (id: string, value: unknown) => command(id, 'refresh-data', value), offerTarget,
+      refreshData: (id: string, value: unknown) => command(id, 'refresh-data', value), offerTarget, clarifyIntent,
       events: async (id: string) => Object.values(pmRecord(pmState(await dependencies.host.harness.snapshot(PmDocument, context)), id).events),
       snapshot: () => dependencies.host.harness.snapshot(PmDocument, context) } };
 }

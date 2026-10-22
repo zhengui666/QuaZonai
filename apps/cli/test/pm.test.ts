@@ -36,6 +36,7 @@ test('PM commands retain original revisions and bytes across uncertain writes; b
       ['pm', 'capabilities'], ['pm', 'list'], ['pm', 'get', 'mandate:one'], ['pm', 'decision', 'mandate:one'], ['pm', 'history', 'mandate:one'],
       ['pm', 'cycle', 'cycle:one'], ['pm', 'capacity', 'capacity:one'], ['campaign', 'compare', 'campaign:one'],
       ['pm', 'targets', 'mandate:one', '--file', file], ['pm', 'refresh-data', 'mandate:one', '--file', file],
+      ['pm', 'clarify-intent', 'mandate:one', '--file', file],
       ['maintenance', 'status'], ['maintenance', 'enter', '--file', file],
       ['campaign', 'close', 'campaign:one', '--file', file], ['strategy', 'assessments', 'strategy:one'], ['strategy', 'pause', 'strategy:one', '--file', file],
     ]) await run(args, () => {});
@@ -43,6 +44,7 @@ test('PM commands retain original revisions and bytes across uncertain writes; b
       ['GET', '/api/v3/capabilities'], ['GET', '/api/v3/mandates'], ['GET', '/api/v3/mandates/mandate%3Aone'], ['GET', '/api/v3/mandates/mandate%3Aone/decision'], ['GET', '/api/v3/mandates/mandate%3Aone/decisions'],
       ['GET', '/api/v3/cycles/cycle%3Aone'], ['GET', '/api/v3/capacity-estimates/capacity%3Aone'], ['GET', '/api/v3/campaigns/campaign%3Aone/decision'],
       ['POST', '/api/v3/mandates/mandate%3Aone/targets'], ['POST', '/api/v3/mandates/mandate%3Aone/refresh-data'],
+      ['POST', '/api/v3/mandates/mandate%3Aone/intent-clarifications'],
       ['GET', '/api/v3/maintenance'], ['POST', '/api/v3/maintenance/enter'],
       ['POST', '/api/v3/campaigns/campaign%3Aone/close'], ['GET', '/api/v3/strategies/strategy%3Aone/assessments'], ['POST', '/api/v3/strategies/strategy%3Aone/pause'],
     ]);

@@ -1,7 +1,7 @@
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { counter, decimal, json, nowNs, object, observation, Problem } from './facts.ts';
-import { accountKey, capitalStatus, control } from './capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, physicalCapitalState, transportBindingKey, transportCapability, transportControlFailure } from './capital-exit.ts';
 import { identity } from './pm-facts.ts';
 
 export interface CapturedAccount { basis: Pm.AccountBasis; evidence: Pm.EvidenceRef; artifact: JsonObject }
@@ -11,7 +11,9 @@ export function captureAccount(application: { observations: Record<string, JsonO
   const observed = observation(value); if (!observed.snapshot) throw new Problem('account_snapshot_required', 409);
   const snapshot = object(observed.snapshot);
   const storedControl = application.accountControls?.[accountKey(observed.connection, application.accountControls)];
-  const originalControl = control(storedControl); const status = capitalStatus(originalControl);
+  const originalControl = control(storedControl); const status = capitalStatusForBinding(originalControl, observed.connection, atNs);
+  const capability = transportCapability(originalControl, observed.connection, atNs);
+  const sourceFailure = transportControlFailure(originalControl, observed.connection);
   // /account.currency is the transport's declared reporting currency. A native
   // account base currency (possibly null) is a different field and cannot
   // silently replace the report unit in the captured decision basis.
@@ -27,16 +29,24 @@ export function captureAccount(application: { observations: Record<string, JsonO
   // conservative first capture of a legacy fact so polling cannot create a new
   // scientific revision for the very same source sequence.
   observed.snapshotReceivedAtNs ??= snapshotReceivedAtNs;
-  const statusDigest = identity('capital-status', status);
-  const previousStatus = storedControl?.pmStatusCapture ? object(storedControl.pmStatusCapture) : null;
+  const statusDigest = identity('capital-status', physicalCapitalState(status));
+  const bindingKey = transportBindingKey(observed.connection);
+  const captures = storedControl?.pmStatusCaptures ? object(storedControl.pmStatusCaptures) : {};
+  const previousStatus = captures[bindingKey] ? object(captures[bindingKey]) : null;
   const hasLocalReservation = Object.values(originalControl.commands).some(command => ['UNCERTAIN', 'PENDING', 'ACCEPTED'].includes(command.state));
-  const capitalControlReceivedAtNs = previousStatus?.statusDigest === statusDigest ? counter(previousStatus.availableAtNs, 'capital_status_received')
+  const capitalControlReceivedAtNs = sourceFailure ? counter(sourceFailure.receivedAtNs, 'capital_control_failure_received')
+    : previousStatus?.statusDigest === statusDigest ? counter(previousStatus.availableAtNs, 'capital_status_received')
     : previousStatus === null && !hasLocalReservation && originalControl.receivedAtNs !== undefined ? counter(originalControl.receivedAtNs, 'capital_control_received')
       : storedControl ? atNs : snapshotReceivedAtNs;
   if (BigInt(capitalControlReceivedAtNs) > BigInt(atNs)) throw new Problem('capital_control_receipt_clock_invalid', 409);
-  if (storedControl) storedControl.pmStatusCapture = { statusDigest, availableAtNs: capitalControlReceivedAtNs };
-  const availableAtNs = BigInt(snapshotReceivedAtNs) > BigInt(capitalControlReceivedAtNs) ? snapshotReceivedAtNs : capitalControlReceivedAtNs;
+  if (storedControl) { captures[bindingKey] = { statusDigest, availableAtNs: capitalControlReceivedAtNs }; storedControl.pmStatusCaptures = captures; }
+  const capabilitiesReceivedAtNs = capability?.receivedAtNs ?? null;
+  if (capabilitiesReceivedAtNs !== null && BigInt(capabilitiesReceivedAtNs) > BigInt(atNs)) throw new Problem('capital_capabilities_receipt_clock_invalid', 409);
+  const availableAtNs = [snapshotReceivedAtNs, capitalControlReceivedAtNs, ...(capabilitiesReceivedAtNs ? [capabilitiesReceivedAtNs] : [])]
+    .reduce((latest, value) => BigInt(value) > BigInt(latest) ? value : latest);
   const artifact = json({ snapshot, snapshotReceivedAtNs, capitalControlReceivedAtNs, capitalControl: status,
+    ...(capability ? { capitalCapabilities: capability } : {}),
+    ...(sourceFailure ? { capitalControlFailure: sourceFailure } : {}),
     observation: { id, connectionId: observed.connection.id, clientId: observed.connection.clientId, accountId: observed.connection.accountId, mode: observed.connection.mode } });
   const sourceRevision = identity('account-source', artifact);
   const evidence: Pm.EvidenceRef = { id: identity('evidence', sourceRevision), sourceKind: 'ACCOUNT', role: 'OBSERVED', runtime: null,

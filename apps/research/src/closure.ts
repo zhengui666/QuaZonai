@@ -30,7 +30,7 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'clos
           ? campaign.trials.find(item => item.id === comparison.recommendedTrialId)?.runtime.taskId ?? null : null
           : study.input ? legacySelection(study.input, study.trials) : null;
         // Technical lack of progress never authorizes consuming independent data.
-        const allowIndependent = !['research_no_new_evidence', 'orchestration_budget_exhausted', 'continuation_requires_trial_budget'].includes(task.input.reason);
+        const allowIndependent = !['research_no_new_evidence', 'orchestration_budget_exhausted', 'continuation_requires_trial_budget', 'strategy_intake_needs_clarification', 'strategy_intake_unsupported'].includes(task.input.reason);
         if (selected !== null && study.input?.data.sealed && allowIndependent && campaign.binding?.independentConsumer !== 'PM_PORTFOLIO') {
           campaign.state = 'EVALUATING_INDEPENDENT';
           return { trialId: selected, proposal: JSON.parse(JSON.stringify(study.trials.find(item => item.taskId === selected)?.proposal ?? null)) as JsonObject | null };

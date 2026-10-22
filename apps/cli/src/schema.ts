@@ -13,12 +13,14 @@ async function installed(source: string, packed: string) {
 export async function schemas(name?: string, domain = false) {
   try {
     if (!domain) {
-      const [legacy, pm, maintenance] = await Promise.all([
+      const [legacy, pm, maintenance, intent, forward] = await Promise.all([
         installed('../../../packages/contracts/src/index.ts', '../schemas/contracts.ts.txt'),
         installed('../../../packages/contracts/src/pm.ts', '../schemas/pm.ts.txt'),
         installed('../../../packages/contracts/src/maintenance.ts', '../schemas/maintenance.ts.txt'),
+        installed('../../../packages/contracts/src/pm-intent.ts', '../schemas/pm-intent.ts.txt'),
+        installed('../../../packages/contracts/src/pm-forward.ts', '../schemas/pm-forward.ts.txt'),
       ]);
-      const source = `${legacy}\n\n// PM business contracts\n${pm}\n\n// Maintenance contracts\n${maintenance}`;
+      const source = `${legacy}\n\n// PM business contracts\n${pm}\n\n// Maintenance contracts\n${maintenance}\n\n// Intent clarification contracts\n${intent}\n\n// Current execution evidence contracts\n${forward}`;
       const names = [...source.matchAll(/export (?:interface|type) (\w+)/g)].map((match) => match[1]!);
       if (name && !names.includes(name)) throw new CliError('schema_not_found');
       return name ? { format: 'typescript', entry: name, source } : { format: 'typescript', names };

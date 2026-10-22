@@ -16,9 +16,12 @@ export type ResearchCampaignBinding = {
   datasetRevisionIds: string[];
   protocolRef: string;
   intakeRequired?: boolean;
+  ownerBoundaries?: JsonFact<OwnerBoundary>[];
+  ownerClarificationStatements?: string[];
   independentConsumer?: 'RESEARCH' | 'PM_PORTFOLIO';
 };
 export type StrategyIntake = {
+  normalizationVersion?: string;
   strategy: JsonFact<StrategyDefinition>; ownerBoundaries: JsonFact<OwnerBoundary>[]; sourceGoal: string;
   ownerBoundaryStatements: { kind: OwnerBoundary['kind']; sourceStatement: string }[];
   support: 'CONDITIONAL' | 'UNSUPPORTED' | 'NEEDS_CLARIFICATION'; missingCapabilities: string[]; ambiguities: string[]; taskId: number;
@@ -59,6 +62,9 @@ export function researchCampaignBinding(value: unknown): ResearchCampaignBinding
   const binding = value as ResearchCampaignBinding;
   if (binding.independentConsumer !== undefined && !['RESEARCH', 'PM_PORTFOLIO'].includes(binding.independentConsumer)) throw new Error('campaign_independent_consumer_invalid');
   for (const key of ['campaignId', 'mandateRevisionId', 'protocolRef'] as const) if (typeof binding[key] !== 'string' || !binding[key].trim()) throw new Error(`campaign_${key}_required`);
+  if (binding.ownerBoundaries !== undefined && !Array.isArray(binding.ownerBoundaries)) throw new Error('campaign_owner_boundaries_required');
+  if (binding.ownerClarificationStatements !== undefined && (!Array.isArray(binding.ownerClarificationStatements) || !binding.ownerClarificationStatements.every(item => typeof item === 'string' && item.trim()))) throw new Error('campaign_owner_clarifications_invalid');
+  const ownerBoundaries = binding.ownerBoundaries?.map(boundary => validatePmEntity('OwnerBoundary', boundary));
   const policy = validatePmEntity('DecisionPolicyRevision', binding.policy);
   const budget = validatePmEntity('ResearchBudget', binding.budget);
   if (policy.mandateRevisionId !== binding.mandateRevisionId) throw new Error('campaign_mandate_mismatch');
@@ -74,5 +80,5 @@ export function researchCampaignBinding(value: unknown): ResearchCampaignBinding
   // Measured per-attempt wall seconds are evidence, not a cross-restart hard
   // timer. Unsupported hard caps must never silently become admission hints.
   if (budget.nativeComputeSeconds !== null || budget.modelSpend !== null || budget.dataBytes !== null) throw new Error('campaign_resource_meter_unavailable');
-  return structuredClone({ ...binding, policy, budget, scopes, definitions });
+  return structuredClone({ ...binding, ...(ownerBoundaries ? { ownerBoundaries } : {}), policy, budget, scopes, definitions });
 }

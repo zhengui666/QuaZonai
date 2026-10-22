@@ -151,6 +151,11 @@ pub struct PortfolioConstraintsV1 {
     pub long_only: bool,
     pub min_cash_weight: DecimalValue,
     pub max_cash_weight: DecimalValue,
+    /// Opt-in CASH method. Cash remains the pre-fee residual divided by original
+    /// NAV; this policy additionally preserves min_cash_weight after linear fees.
+    /// Absence retains the original allocation semantics, including MARGIN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_funding: Option<NativeCashFundingPolicyV1>,
     pub min_asset_weight: DecimalValue,
     pub max_asset_weight: DecimalValue,
     pub max_gross_exposure: DecimalValue,
@@ -166,6 +171,14 @@ pub struct PortfolioConstraintsV1 {
     pub asset_overrides: Vec<AssetBoundV1>,
     pub transaction_costs_ref: crate::Id,
     pub liquidity_ref: Option<crate::Id>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCashFundingPolicyV1 {
+    /// sum(rate_i * abs(target_i - current_i)) + min_cash_weight <= cash_weight.
+    /// Linear turnover estimates do not establish executable market capacity.
+    PreserveMinCashAfterLinearTurnoverV1,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

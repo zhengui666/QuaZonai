@@ -14,30 +14,76 @@ function knownUnpricedSnapshot(artifact: CapturedAccount['artifact'] | null): bo
   return native.is_stale === true || ['stale_instruments', 'stale_currencies', 'unpriced_instruments'].some(key => Array.isArray(native[key]) && native[key].length > 0);
 }
 
+/** Only the original registered cadence or original target expiry supplies a
+ * maturity boundary. Unknown schedules do not become an invented five-second
+ * financial observation window. */
+function observationWindow(record: PmRecord, decision: Pm.PortfolioDecision, atNs: string): string | null {
+  const explanation = object(decision.explanationFacts ?? {});
+  const seed = typeof explanation.forwardSeedDecisionId === 'string' ? record.decisions[explanation.forwardSeedDecisionId] : null;
+  const source = seed ? object(seed.explanationFacts) : explanation;
+  if (typeof source.forwardAnchorNs === 'string' && typeof source.forwardTtlSeconds === 'string'
+    && /^\d+$/.test(source.forwardAnchorNs) && /^\d+$/.test(source.forwardTtlSeconds)) {
+    const ttl = BigInt(source.forwardTtlSeconds) * 1_000_000_000n, anchor = BigInt(source.forwardAnchorNs);
+    if (ttl > 0n && BigInt(atNs) >= anchor) return `registered:${(BigInt(atNs) - anchor) / ttl}`;
+  }
+  return typeof decision.validUntilNs === 'string' && BigInt(atNs) >= BigInt(decision.validUntilNs) ? 'original_target_window_matured' : null;
+}
+
 /** Actual account events are a separate evidence stream from modeled replays.
- * A cash-flow-adjusted currency delta is neither strategy PnL nor a TWR. */
+ * A cash-flow-adjusted currency delta is neither strategy PnL nor a TWR.
+ * Sampling history does not gate source acceptance or target invalidation:
+ * Application retains the latest account snapshot, and the PM admission path
+ * immediately fences a changed account basis while coalescing its latest
+ * pending capture. A NAV tick need not append every historical attribution. */
 export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
-  record.evidence[account.evidence.id] = account.evidence; record.artifacts[account.evidence.objectKey] = account.artifact;
   const ledgerKey = `account-event-ledger:${account.basis.accountBindingId}`;
   const ledger = record.artifacts[ledgerKey] ? object(record.artifacts[ledgerKey]) : {};
   const prior = Array.isArray(ledger.identities) ? ledger.identities as unknown as AccountEventIdentity[] : [];
-  let events: CapturedAccountEvents | null = null;
+  let events: CapturedAccountEvents | null = null; let integrityFailure: string | null = null;
   try {
     events = projectAccountEvents(account, prior);
-    if (events) {
-      record.evidence[events.evidence.id] = events.evidence; record.artifacts[events.evidence.objectKey] = events.artifact;
+    if (events?.newEventKeys.length) {
       const merged = new Map(prior.map(item => [accountEventKey(item), item]));
       for (const item of events.identities) merged.set(accountEventKey(item), item);
       record.artifacts[ledgerKey] = json({ identities: [...merged.values()], evidenceRefs: [...new Set([...(Array.isArray(ledger.evidenceRefs) ? ledger.evidenceRefs as string[] : []), events.evidence.id])] });
     }
   } catch (error) {
-    gap(record, 'account_event_integrity', error instanceof Problem ? error.message : 'account_event_projection_failed', 'REFRESH_SOURCE');
+    integrityFailure = error instanceof Problem ? error.message : 'account_event_projection_failed';
+    gap(record, 'account_event_integrity', integrityFailure, 'REFRESH_SOURCE');
   }
-  const decisions = Object.values(record.decisions).filter(item => item.accountBasis?.accountBindingId === account.basis.accountBindingId);
+  const retainSource = () => {
+    record.evidence[account.evidence.id] = account.evidence; record.artifacts[account.evidence.objectKey] = account.artifact;
+    if (events) { record.evidence[events.evidence.id] = events.evidence; record.artifacts[events.evidence.objectKey] = events.artifact; }
+  };
+  // Real source events remain durable even when no strategy was delivered.
+  // Advancing an empty coverage envelope alone is not a new account event.
+  if (events?.newEventKeys.length) retainSource();
+  const completeness = digest(json({ complete: events?.complete ?? null, integrityFailure }));
+  const decisions = Object.values(record.decisions).filter(item => item.accountBasis?.accountBindingId === account.basis.accountBindingId
+    && item.targetCommandId !== null && item.targetCommandId !== undefined && record.commands[item.targetCommandId]
+    && record.commands[item.targetCommandId]!.state !== 'NOT_OFFERED');
+  const latest = decisions.at(-1);
   for (const decision of decisions) {
     const original = decision.accountBasis!;
     if (BigInt(account.basis.observedAtNs) <= BigInt(original.observedAtNs)) continue;
+    const command = record.commands[decision.targetCommandId!]!;
+    const key = `outcome-sampling:${decision.id}`; const previous = record.artifacts[key] ? object(record.artifacts[key]) : null;
+    const window = observationWindow(record, decision, account.basis.observedAtNs);
+    const matchedNewExecution = !!events?.executions.some(event => event.clientTargetId === command.idempotencyKey
+      && events!.newEventKeys.includes(accountEventKey({ accountSourceId: events!.accountSourceId, nativeAccountId: events!.nativeAccountId, kind: 'EXECUTION', id: event.id })));
+    const unresolved = ['PENDING', 'UNCERTAIN'].includes(command.state)
+      || Object.values(record.retirements ?? {}).some(item => item.reconciliationRequired && item.outstandingTargetCommandIds.includes(command.id));
+    const matured = window !== null && previous?.window !== window;
+    const receiptChanged = previous !== null && previous.receiptState !== command.state;
+    // Older settled commands get their pending maturity or actual matched fill;
+    // they do not accumulate every future account heartbeat or later strategy's
+    // account delta. Never-offered research candidates are not attributed.
+    if (decision !== latest && !unresolved && !matchedNewExecution && !receiptChanged && !(matured && previous?.matured !== true)) continue;
+    const sampleRequired = previous === null || matchedNewExecution || !!events?.newEventKeys.length
+      || previous.completeness !== completeness || receiptChanged || matured;
+    if (!sampleRequired) continue;
     const id = identity('outcome', [decision.id, account.evidence.sourceRevision]); if (record.outcomes[id]) continue;
+    retainSource();
     const interval = { startNs: original.observedAtNs, endExclusiveNs: (BigInt(account.basis.observedAtNs) + 1n).toString() };
     const makeMetric = (key: string, label: string, value: string | null, reasons: string[], refs: string[]): Pm.MetricObservation => ({
       definition: { id: `qz.metric.${key}/1`, key: `account.${key}`, definitionVersion: '1', label, unit: 'CURRENCY',
@@ -51,7 +97,6 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
     const metric = makeMetric('observed_equity', 'Observed account equity', closingUnpriced ? null : account.basis.equity?.amount ?? null,
       closingUnpriced ? ['native_account_valuation_stale_or_unpriced'] : account.basis.equity ? [] : ['authoritative_equity_unavailable'], [account.evidence.id]);
     const metrics = [metric];
-    const command = decision.targetCommandId ? record.commands[decision.targetCommandId] : null;
     const reasons = ['observed_account_changes_are_not_identified_strategy_pnl'];
     const normalizationRef = identity('cashflow-normalization', id);
     const coverage = !!events && events.complete.cashFlows && BigInt(events.interval.startNs) <= BigInt(original.observedAtNs) + 1n
@@ -108,5 +153,7 @@ export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
       aggregation: 'NON_ADDITIVE_COUNTERFACTUAL', residual: null, limitations: reasons };
     else outcome.attributionEvidenceRef = null;
     record.outcomes[id] = outcome;
+    record.artifacts[key] = { sourceRevision: account.evidence.sourceRevision, completeness,
+      receiptState: command.state, window, matured: previous?.matured === true || matured, observedAtNs: account.basis.observedAtNs };
   }
 }

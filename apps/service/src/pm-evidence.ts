@@ -40,11 +40,11 @@ async function load(reader: DocumentReader, marker: JsonObject, ctx: Context): P
 
 /** One final artifact bundle per official decision task. Original keys and raw
  * content remain owner-readable; no additional store or task identity exists. */
-export async function retainPmArtifacts<I, S, R, H extends object>(runtime: Runtime<I, S, R, H>, artifacts: Record<string, JsonObject>, ctx: Context): Promise<Record<string, JsonObject>> {
+export async function retainPmArtifacts<I, S, R, H extends object>(runtime: Runtime<I, S, R, H>, artifacts: Record<string, JsonObject>, ctx: Context, inlineKeys: readonly string[] = []): Promise<Record<string, JsonObject>> {
   if (!Object.keys(artifacts).length) return artifacts;
   const namespace = 'pm-result-artifacts'; const native = await save(runtime, namespace, artifacts, ctx);
   if (native.format !== 'qz.native-evidence/gzip-json/v1') return artifacts;
-  return Object.fromEntries(Object.keys(artifacts).map(key => [key, { kind: 'PM_NATIVE_ARTIFACT_BUNDLE', conversationId: runtime.conversationId,
+  return Object.fromEntries(Object.keys(artifacts).map(key => [key, inlineKeys.includes(key) ? artifacts[key]! : { kind: 'PM_NATIVE_ARTIFACT_BUNDLE', conversationId: runtime.conversationId,
     taskId: runtime.taskId, namespace, native, key }]));
 }
 export async function readPmArtifact(reader: DocumentReader, reference: EvidenceRef, payload: JsonObject, ctx: Context): Promise<JsonObject> {

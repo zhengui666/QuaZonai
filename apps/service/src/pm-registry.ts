@@ -4,7 +4,7 @@ import { nowNs } from './facts.ts';
 
 export const PM_CAPABILITY_ID = 'qz.native.pm/1';
 export function pmCapabilities(): Pm.CapabilityDescriptor[] {
-  const operations = ['fit-ensemble', 'freeze-ensemble-calibrations', 'capital-curve', 'study-portfolio', 'simulate', 'value-observed-spot', 'study-observed-spot', 'compare-observed-spot'];
+  const operations = ['fit-ensemble', 'freeze-ensemble-calibrations', 'capital-curve', 'study-portfolio', 'simulate', 'value-observed-spot', 'study-observed-spot', 'compare-observed-spot', 'build-observed-spot'];
   return [{ ...fact(PM_CAPABILITY_ID, '0'), provider: 'QuaZonai native scientific adapter', providerVersion: '1',
     strategyArchetypes: ['PREDICTIVE_ALPHA', 'FACTOR_RESEARCH', 'PORTFOLIO_OVERLAY'], dataKinds: ['BAR'],
     predictionUnits: ['RETURN_PER_HORIZON'], accountingModels: ['SINGLE_CURRENCY_SHARED_ACCOUNT', 'MULTI_CURRENCY_SPOT_CASH'],
@@ -14,9 +14,14 @@ export function pmCapabilities(): Pm.CapabilityDescriptor[] {
       requiredCapabilityIds: [], effect: 'NATIVE_COMPUTE' as const, replayPolicy: 'REQUEST_BOUND' as const, incompatibleCapabilityIds: [] })),
     boundaries: [
       { operation: 'fit-ensemble', state: 'CONDITIONAL', requiredEvidence: ['aligned_training_predictions', 'mature_labels', 'frozen_label_definition'], reasonCodes: ['training_only_fitted_coefficients'] },
+      { operation: 'freeze-ensemble-calibrations', state: 'CONDITIONAL', requiredEvidence: ['original_fit_result', 'complete_original_training_panels', 'actual_native_artifact_identities'], reasonCodes: ['frozen_training_calibration_not_a_new_fit'] },
       { operation: 'capital-curve', state: 'CONDITIONAL', requiredEvidence: ['native_simulation_request', 'original_catalog', 'registered_cost_rules'], reasonCodes: ['historical_replay_is_not_economic_capacity'] },
       { operation: 'simulate', state: 'CONDITIONAL', requiredEvidence: ['original_catalog', 'registered_cost_rules', 'matched_account_starting_state'], reasonCodes: ['fresh_historical_account_is_not_current_holdings'] },
       { operation: 'study-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['lossless_original_cash_account_snapshot', 'same_account_known_zero_open_orders', 'no_locked_or_borrowed_balances', 'point_in_time_price_valuation', 'explicit_spot_execution_policy'], reasonCodes: ['historical_paired_hold_rebalance_is_not_realized_pnl', 'margin_and_betting_accounts_unsupported'] },
+      { operation: 'study-portfolio', state: 'CONDITIONAL', requiredEvidence: ['frozen_native_models_and_method', 'original_catalog', 'registered_cost_rules', 'shared_account_starting_state'], reasonCodes: ['joint_historical_reoptimization_and_account_replay_not_live_qualification'] },
+      { operation: 'value-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['lossless_original_cash_account_snapshot', 'original_cutoff_available_price_marks', 'explicit_spot_reporting_currency'], reasonCodes: ['derived_inventory_value_does_not_replace_raw_source_equity'] },
+      { operation: 'compare-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['same_original_spot_balances', 'known_zero_open_orders', 'matched_selection_and_cost_policy'], reasonCodes: ['historical_hold_rebalance_counterfactual_not_realized_outcome'] },
+      { operation: 'build-observed-spot', state: 'CONDITIONAL', requiredEvidence: ['pre_registered_operating_rule', 'independent_frozen_method_evidence', 'original_native_object_and_training_prefix_identity', 'one_native_hyperliquid_spot_currency_pair_cash_account', 'original_hyperliquid_public_rest_candle_snapshot_receipts', 'current_observed_spot_inventory', 'cutoff_available_marks', 'registered_cadence'], reasonCodes: ['multiple_frozen_factors_supported_on_the_registered_single_spot_pair', 'multi_asset_and_cross_venue_current_execution_not_supported', 'forward_model_estimate_not_realized_return', 'rounded_hold_proposed_comparison', 'paper_delivery_requires_separate_current_source_proofs_and_paper_assessment', 'shadow_method_does_not_authorize_live_operation'] },
       { operation: 'TARGET_OPERATION', state: 'CONDITIONAL', requiredEvidence: ['independent_strategy_evidence', 'authoritative_account_basis', 'live_execution_capacity', 'authorized_target_transport'], reasonCodes: ['historical_replay_does_not_authorize_live_target'] },
       { operation: 'MICROSTRUCTURE', state: 'UNSUPPORTED', requiredEvidence: ['historical_order_book', 'validated_queue_and_impact_model'], reasonCodes: ['bar_data_cannot_establish_microstructure_execution'] },
       { operation: 'EVENT_DRIVEN', state: 'UNSUPPORTED', requiredEvidence: ['point_in_time_event_relations', 'settlement_and_cashflow_rules'], reasonCodes: ['event_settlement_semantics_not_integrated'] },

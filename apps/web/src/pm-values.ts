@@ -52,6 +52,11 @@ const reasons: Record<string, string> = {
   basis_superseded: '计算期间依据发生变化，结果已由新一轮取代',
   dataset_not_ready: '数据尚未达到本轮研究的可用条件',
   no_authorized_execution: '当前授权范围只用于研究与观察',
+  no_borrow_boundary_requires_native_cash_account: '当前账户无法证明禁止借款，需要原生现金账户及相应执行设置',
+  owner_boundary_normalization_required: '原要求的含义尚未明确，请补充投资意图',
+  owner_boundary_execution_unavailable: '已保留这条约束，当前计算适配尚不能执行',
+  intent_revision_requires_new_unexposed_data: '意图已经修订，下一轮研究需要新的未暴露数据',
+  owner_intent_revision_requires_new_evaluation: '投资意图已经修订，需要按新版本重新评估',
 };
 export function pmAssumption(value: string): string { return reasons[value] ?? value; }
 export function pmReason(code: string): string {

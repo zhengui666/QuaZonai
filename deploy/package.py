@@ -124,10 +124,24 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
         if run('--version') != f'quazonai {version}':
             raise ValueError('Extracted CLI version differs from the release tag.')
         help_text = run('--help')
-        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance')):
+        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance', 'pm clarify-intent')):
             raise ValueError('Extracted CLI lacks workbench commands.')
-        json.loads(run('schema', 'list'))
-        json.loads(run('schema', 'list', '--domain'))
+        schemas = json.loads(run('schema', 'list'))
+        for name in ('PmIntentClarification', 'PmExecutionEvidence', 'PmExecutionQualification', 'AssetTarget'):
+            if name not in schemas.get('names', []):
+                raise ValueError(f'Extracted CLI lacks the {name} contract.')
+            contract = json.loads(run('schema', 'show', name))
+            if contract.get('entry') != name or f'interface {name}' not in contract.get('source', ''):
+                raise ValueError(f'Extracted CLI cannot read its original {name} contract.')
+            if name == 'AssetTarget' and not re.search(r'export interface AssetTarget\s*\{[^}]*\bexecutionEstimate\?:', contract.get('source', '')):
+                raise ValueError('Extracted CLI lacks the separate rounded execution estimate contract.')
+        domain = json.loads(run('schema', 'list', '--domain'))
+        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1'):
+            if name not in domain.get('names', []):
+                raise ValueError(f'Extracted CLI lacks the native {name} contract.')
+            contract = json.loads(run('schema', 'show', name, '--domain'))
+            if name not in contract.get('components', {}).get('schemas', {}):
+                raise ValueError(f'Extracted CLI cannot resolve its native {name} contract.')
 
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())

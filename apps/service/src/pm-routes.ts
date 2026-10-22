@@ -27,6 +27,7 @@ export function registerPmRoutes(app: FastifyInstance, work: ReturnType<typeof c
   app.get<{ Params: { id: string } }>(`${API}/mandates/:id`, request => work.get(request.params.id));
   app.get<{ Params: { id: string } }>(`${API}/mandates/:id/events`, request => work.events(request.params.id));
   app.post<{ Params: { id: string } }>(`${API}/mandates/:id/targets`, async (request, reply) => reply.code(202).send(await work.offerTarget(request.params.id, request.body)));
+  app.post<{ Params: { id: string } }>(`${API}/mandates/:id/intent-clarifications`, async (request, reply) => reply.code(202).send(await work.clarifyIntent(request.params.id, request.body)));
   for (const [suffix, action] of [['recompute', work.recompute], ['retire', work.retire], ['refresh-data', work.refreshData]] as const) {
     app.post<{ Params: { id: string } }>(`${API}/mandates/:id/${suffix}`, async (request, reply) => reply.code(202).send(await action(request.params.id, request.body)));
   }

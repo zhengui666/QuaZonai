@@ -45,6 +45,7 @@ pub fn mandate(settings: &NativeSimulationSettingsV1) -> StrategyMandateContentV
             long_only: true,
             min_cash_weight: "0".parse().unwrap(),
             max_cash_weight: "1".parse().unwrap(),
+            cash_funding: None,
             min_asset_weight: "0".parse().unwrap(),
             max_asset_weight: "1".parse().unwrap(),
             max_gross_exposure: "1".parse().unwrap(),

@@ -7,6 +7,8 @@ use nautilus_model::instruments::{Instrument, InstrumentAny};
 use std::{collections::BTreeSet, path::Path};
 
 const BASIS: &str = "HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES";
+mod forward;
+pub use forward::build;
 
 /// Exact valuation of original balances, distinct from an account observation
 /// and from either leg's subsequent simulated performance.
@@ -15,12 +17,27 @@ pub fn value_with_closed_rows(
     request: &NativeObservedSpotValuationRequestV1,
     rows: &[ClosedBarSourceRow],
 ) -> Result<NativeObservedSpotValuationResultV1> {
+    value_with_closed_rows_at(
+        catalog,
+        request,
+        rows,
+        request.initial_state.snapshot.ts_event,
+    )
+}
+
+// Forward builds may revalue the unchanged observed quantities at a later
+// cutoff. The raw snapshot stays untouched and is never a newly observed NAV.
+fn value_with_closed_rows_at(
+    catalog: &Path,
+    request: &NativeObservedSpotValuationRequestV1,
+    rows: &[ClosedBarSourceRow],
+    asof: contracts::DbCounter,
+) -> Result<NativeObservedSpotValuationResultV1> {
     use nautilus_model::types::Money;
     use std::str::FromStr;
     let initial = &request.initial_state;
-    let available = initial.available_ns.max(initial.open_orders_available_ns);
+    let mut available = initial.available_ns.max(initial.open_orders_available_ns);
     let balances = domain::observed_spot::starting_balances(initial, &request.settings, available)?;
-    let asof = initial.snapshot.ts_event;
     ensure!(
         request.selection.decision_cutoff_ns == asof && request.selection.event_end_ns <= asof,
         "OBSERVED_SPOT_VALUATION_CUTOFF_MISMATCH"
@@ -100,6 +117,12 @@ pub fn value_with_closed_rows(
             .map(|row| row.native.close.as_decimal().to_string().parse())
             .transpose()
             .map_err(anyhow::Error::msg)?;
+        if let Some(row) = row {
+            available = available.max(
+                contracts::DbCounter::new(row.native.ts_init.as_u64())
+                    .map_err(anyhow::Error::msg)?,
+            );
+        }
         let report_value =
             domain::spot_cash::inventory_report_value(&balance.amount, price.as_ref())
                 .map_err(|reason| anyhow!("OBSERVED_SPOT_VALUE_UNAVAILABLE: {reason:?}"))?;

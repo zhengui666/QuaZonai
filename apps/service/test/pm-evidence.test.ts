@@ -4,11 +4,12 @@ import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
-import type { EvidenceRef, PmMandateView } from '../../../packages/contracts/src/pm.ts';
+import type { EvidenceRef, PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
 import { object } from '../src/facts.ts';
 import { digest, PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
 import { pmArtifactDigest, pmScienceCheckpoint, readPmArtifact, retainPmArtifacts } from '../src/pm-evidence.ts';
 import { context, setup } from './support.ts';
+import { pmTargetPayload } from '../src/pm-target.ts';
 
 test('streamed PM artifact digest preserves canonical JSON identity', () => {
   const values: JsonObject[] = [{ z: '0.000000000000000001', a: ['原值', null, { b: 2, a: -0 }] },
@@ -22,6 +23,7 @@ test('original PM evidence and scientific checkpoint survive official task resta
   const tape: JsonObject = { scope: 'TEST_ONLY_STORAGE', decimal: '3000.000000000000000001',
     text: '原始证据', bytes: randomBytes(1_200_000).toString('hex') };
   const calibration: JsonObject = { schema_version: 1, actual_test_object_id: 'test-calibration', coefficient: '0.000000000000000001' };
+  const originalTarget: JsonObject = { schema_version: 1, asof_ns: '1', valid_until_ns: '100', targets: [], cash_weight: '1' };
   const checkpoint: JsonObject = { fingerprint: 'original-frozen-basis', native: tape, kind: 'original-checkpoint' };
   let wrote = 0; let reached!: () => void; const suspended = new Promise<void>(resolve => { reached = resolve; });
   let release!: () => void; const resumed = new Promise<void>(resolve => { release = resolve; });
@@ -33,12 +35,13 @@ test('original PM evidence and scientific checkpoint survive official task resta
         const science = pmScienceCheckpoint(runtime, 'pm-science', ctx);
         await science.write('capital:3000', checkpoint);
         await science.write('preparation', { ...checkpoint, fingerprint: 'different-preparation-basis' });
-        const retained = await retainPmArtifacts(runtime, { 'test-native': tape, 'test-calibration': calibration }, ctx);
+        const retained = await retainPmArtifacts(runtime, { 'test-native': tape, 'test-calibration': calibration, 'test-original-target': originalTarget }, ctx, ['test-original-target']);
         assert.equal(retained['test-native']!.kind, 'PM_NATIVE_ARTIFACT_BUNDLE');
+        assert.deepEqual(retained['test-original-target'], originalTarget, 'small authoritative delivery input remains inline while scientific tape is compressed');
         assert.ok(Number(object(retained['test-native']!.native).parts) >= 2, 'exercise multiple existing evidence parts');
         await runtime.commit(async tx => {
           const record = pmRecord(pmState(await tx.doc(PmDocument)), input.input.mandateId);
-          for (const [id, artifact] of Object.entries({ 'test-native': tape, 'test-calibration': calibration })) {
+          for (const [id, artifact] of Object.entries({ 'test-native': tape, 'test-calibration': calibration, 'test-original-target': originalTarget })) {
             record.evidence[id] = { id, sourceKind: 'NATIVE_RESULT', role: 'SELECTION', runtime: { conversationId: runtime.conversationId, taskId: runtime.taskId },
               objectKey: id, contentDigest: pmArtifactDigest(artifact), mediaType: 'application/json', sourceRevision: 'test-original', eventInterval: null,
               availableAtNs: '1', clockPrecision: 'NANOSECOND', schemaId: 'test.storage/1', visibility: 'OWNER_ONLY' };
@@ -82,6 +85,9 @@ test('original PM evidence and scientific checkpoint survive official task resta
     assert.equal(completed!.state.status, 'terminal'); assert.equal(completed!.state.outcome!.status, 'completed');
     assert.equal(wrote, 1, 'restart resumes original checkpoint rather than recomputing scientific work');
     const record = pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), mandateId);
+    assert.deepEqual(pmTargetPayload(record, { explanationFacts: { nativeTargetEvidenceRef: 'test-original-target' }, basisRevision: 'test-original',
+      validUntilNs: '90', assetTargets: [] } as unknown as PortfolioDecision), { ...originalTarget, valid_until_ns: '90' },
+    'restart keeps original native target bytes usable by the real delivery consumer without renewing TTL; this is storage, not qualification');
     assert.ok(JSON.stringify(record.artifacts).length < 20_000, 'large native tapes stay outside the main PM document');
     for (const [id, raw] of Object.entries({ 'test-native': tape, 'test-calibration': calibration })) {
       const path = `/api/v3/pm-evidence/${id}`;

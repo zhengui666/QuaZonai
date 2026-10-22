@@ -12,6 +12,8 @@ use contracts::{
 use nautilus_model::events::PortfolioSnapshot;
 use spot::{count, money, MINUTE, START};
 use std::collections::BTreeMap;
+#[path = "support/observed_spot_forward.rs"]
+mod forward_tests;
 #[cfg(feature = "catalog-prepare")]
 #[path = "support/observed_spot_pm.rs"]
 mod multi_day;
@@ -54,6 +56,16 @@ fn fixture(
 }
 
 fn original_initial_state(produced: &NativeSimulationResultV1) -> NativeObservedSpotStartV1 {
+    let initial_state = projected_initial_state(produced);
+    assert!(initial_state
+        .snapshot
+        .balances
+        .iter()
+        .any(|balance| balance.total.currency == "BTC" && balance.total.amount.is_positive()));
+    initial_state
+}
+
+fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObservedSpotStartV1 {
     let report = produced.spot_cash_report.as_ref().unwrap();
     let raw = report
         .observations
@@ -78,11 +90,6 @@ fn original_initial_state(produced: &NativeSimulationResultV1) -> NativeObserved
         open_orders_count: produced.summary["orders.open"].parse().unwrap(),
         snapshot,
     };
-    assert!(initial_state
-        .snapshot
-        .balances
-        .iter()
-        .any(|balance| balance.total.currency == "BTC" && balance.total.amount.is_positive()));
     initial_state
 }
 
@@ -372,6 +379,137 @@ fn study_solves_from_actual_inventory_and_preserves_native_state_witness() {
     assert!(
         job::study::evaluate(root.path(), &request.study, |id| Ok(objects[&id].clone())).is_err()
     );
+}
+
+#[test]
+fn observed_study_cash_funding_reoptimizes_real_cash_and_pays_native_fees() {
+    use contracts::portfolio::NativeCashFundingPolicyV1;
+    let (root, mut source) = spot::source_fixture_with_rows(30, true);
+    let dataset = Id::new();
+    let mut origin = source.clone();
+    origin.selection.event_end_ns = count(START + 5 * MINUTE);
+    origin.selection.decision_cutoff_ns = count(START + 5 * MINUTE + 500_000_000);
+    origin.target_points.truncate(1);
+    origin.target_points[0].targets[0].weight = money("0");
+    origin.target_points[0].cash_weight = money("1");
+    let actual_cash =
+        job::simulation::simulate_explicit(root.path(), &origin, Some(dataset)).unwrap();
+    assert_eq!(actual_cash.orders.get(), 0);
+    source.selection.event_start_ns = count(START + 6 * MINUTE);
+    let comparison = NativeObservedSpotComparisonRequestV1 {
+        schema_version: SchemaV1,
+        dataset_revision_id: dataset,
+        initial_state: projected_initial_state(&actual_cash),
+        simulation: source,
+    };
+    let (mut request, objects) = study_request(&comparison);
+    let constraints = &mut request.study.mandate.constraints;
+    constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    constraints.min_cash_weight = money("0");
+    constraints.max_cash_weight = money("1");
+    constraints.min_net_exposure = money("0");
+    constraints.max_net_exposure = money("1");
+    let result =
+        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
+    assert_eq!(completed(&result.hold).orders.get(), 0);
+    assert_eq!(
+        result.rebalance.status,
+        NativeObservedSpotLegStatusV1::Completed,
+        "{:?}",
+        result.rebalance.reason
+    );
+    let study = result.rebalance.result.as_ref().unwrap();
+    assert_eq!(study.frames[0].input.current_cash_weight, money("1"));
+    assert_eq!(study.frames[0].input.assets[0].current_weight, money("0"));
+    assert!(study.frames[1].input.assets[0].current_weight.is_positive());
+    for frame in &study.frames {
+        assert_eq!(
+            frame.input.constraints.cash_funding,
+            request.study.mandate.constraints.cash_funding
+        );
+        domain::portfolio::allocation_result(&frame.input, &frame.allocation).unwrap();
+        let actual_fee: bigdecimal::BigDecimal = frame
+            .allocation
+            .targets
+            .as_ref()
+            .unwrap()
+            .iter()
+            .zip(&frame.input.assets)
+            .map(|(target, asset)| {
+                (target.weight.as_decimal() - asset.current_weight.as_decimal()).abs()
+                    * asset.transaction_cost_rate.as_decimal()
+            })
+            .sum();
+        assert!(
+            frame.allocation.cash_weight.as_ref().unwrap().as_decimal()
+                + frame.input.exposure_tolerance.as_decimal()
+                >= actual_fee
+        );
+    }
+    let simulation = study.simulation.as_ref().unwrap();
+    assert!(simulation.orders.get() > 0);
+    let account = &simulation.canonical_result["accounts"][0]["Cash"]["base"];
+    assert_eq!(
+        account["balances_starting"],
+        completed(&result.hold).canonical_result["accounts"][0]["Cash"]["base"]
+            ["balances_starting"]
+    );
+    assert!(!account["commissions"].as_object().unwrap().is_empty());
+    assert!(account["commissions"].to_string().contains("BTC"));
+    // The source type, not a leverage number, enables the new funding method.
+    assert!(domain::execution::portfolio_study_cutoffs(&request.study).is_err());
+}
+
+#[test]
+fn observed_study_cash_funding_sells_pay_native_quote_fees() {
+    use contracts::portfolio::NativeCashFundingPolicyV1;
+    let (root, comparison, _) = fixture(30, true);
+    let (mut request, objects) = study_request(&comparison);
+    let constraints = &mut request.study.mandate.constraints;
+    constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    constraints.min_cash_weight = money("0.8");
+    constraints.max_cash_weight = money("1");
+    constraints.min_net_exposure = money("0");
+    constraints.max_net_exposure = money("1");
+    let result =
+        job::observed_spot::study(root.path(), &request, |id| Ok(objects[&id].clone())).unwrap();
+    assert_eq!(completed(&result.hold).orders.get(), 0);
+    assert_eq!(
+        result.rebalance.status,
+        NativeObservedSpotLegStatusV1::Completed,
+        "{:?}",
+        result.rebalance.reason
+    );
+    let study = result.rebalance.result.as_ref().unwrap();
+    for frame in &study.frames {
+        domain::portfolio::allocation_result(&frame.input, &frame.allocation).unwrap();
+        let target = &frame.allocation.targets.as_ref().unwrap()[0];
+        let asset = &frame.input.assets[0];
+        let cost = (target.weight.as_decimal() - asset.current_weight.as_decimal()).abs()
+            * asset.transaction_cost_rate.as_decimal();
+        let cash_after = frame.allocation.cash_weight.as_ref().unwrap().as_decimal() - cost;
+        assert!(
+            cash_after + frame.input.exposure_tolerance.as_decimal() >= *money("0.8").as_decimal()
+        );
+    }
+    let first = &study.frames[0];
+    assert!(
+        first.allocation.targets.as_ref().unwrap()[0]
+            .weight
+            .as_decimal()
+            < first.input.assets[0].current_weight.as_decimal()
+    );
+    let simulation = study.simulation.as_ref().unwrap();
+    assert!(simulation.canonical_result["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|order| order.to_string().contains("SELL")));
+    let commissions = &simulation.canonical_result["accounts"][0]["Cash"]["base"]["commissions"];
+    assert!(!commissions.as_object().unwrap().is_empty());
+    assert!(commissions.to_string().contains("USDC"));
 }
 
 #[test]

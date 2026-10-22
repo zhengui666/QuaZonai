@@ -3,29 +3,36 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView, PortfolioDecision, TargetCommand } from '../../../packages/contracts/src/pm.ts';
+import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import { Application, json, nowNs, nsTime, object, observation } from '../src/facts.ts';
 import type { ObservationFact, PortfolioFact } from '../src/facts.ts';
-import { accountKey } from '../src/capital-exit.ts';
+import { readCapitalControl, recordCapitalControl } from '../src/capital-exit.ts';
 import { captureAccount } from '../src/pm-account.ts';
-import { PmDocument, fact, pmRecord, pmState } from '../src/pm-facts.ts';
+import { PmDocument, digest, fact, pmRecord, pmState } from '../src/pm-facts.ts';
 import { context, setup } from './support.ts';
 
 // Protocol acceptance only: real HTTP, official Durable tasks and SQLite, with
 // explicit controlled account/eligibility facts. No scientific result is
 // synthesized by these tests or promoted into investment evidence. The full
 // native research/qualification path has a separate acceptance suite.
-async function fixture(keepMonitor = false) {
+async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['mandate']['operatingAuthority'] = 'AUTHORIZED_TARGETS') {
   const state = await setup();
   const remote = Fastify();
   try {
-    const posts: JsonObject[] = []; const gets: string[] = [];
+    const posts: JsonObject[] = []; const accepted: JsonObject[] = []; const gets: string[] = [];
     let receive: 'UNAVAILABLE' | 'PENDING' | 'ACKNOWLEDGED' = 'UNAVAILABLE';
     let externalId = 'controlled-external-original';
     let receiptOverride: JsonObject = {};
     let remoteAccount: JsonObject = {};
-    const priorExpiry = nsTime((BigInt(nowNs()) + 120_000_000_000n).toString());
+    const priorExpiry = nsTime((BigInt(nowNs()) - 1_000_000_000n).toString());
     remote.post('/targets', (request, reply) => {
-      posts.push(json(request.body));
+      const body = json(request.body); posts.push(body);
+      const allocation = object(body.allocation);
+      for (const [field, sourceField] of Object.entries({ accountSourceId: 'accountSourceId', observationId: 'observationId', snapshotSequence: 'sequence', nativeClockNs: 'nativeClockNs', controlRevision: 'controlRevision' })) {
+        if (allocation[field] !== remoteAccount[sourceField]) return reply.code(409).send({ error: 'controlled_receiver_snapshot_changed' });
+      }
+      if (typeof allocation.reserved !== 'string' || compareDecimal(allocation.reserved, '0') !== 0) return reply.code(409).send({ error: 'controlled_receiver_reservation_changed' });
+      accepted.push(body);
       return reply.code(503).send({ error: 'received_but_response_lost' });
     });
     remote.get<{ Params: { id: string } }>('/targets/:id', (request, reply) => {
@@ -33,9 +40,15 @@ async function fixture(keepMonitor = false) {
       if (request.params.id === 'controlled-prior-target') return { id: request.params.id, clientId: 'controlled-client', accountId: 'controlled-account',
         expiresAt: priorExpiry, status: 'ACKNOWLEDGED', externalId: 'controlled-prior-external' };
       if (receive === 'UNAVAILABLE') return reply.code(503).send({ error: 'receipt_not_yet_readable' });
-      return { ...posts[0], status: receive, externalId, ...receiptOverride };
+      const original = accepted.find(body => body.id === request.params.id);
+      if (!original) return reply.code(404).send({ error: 'original_request_not_accepted' });
+      return { ...original, status: receive, externalId, ...receiptOverride };
     });
     remote.get('/account', () => remoteAccount);
+    remote.get('/capabilities', () => ({ clientId: connection.clientId, accountId: connection.accountId, mode: connection.mode, currency: 'USD',
+      capitalExit: { version: 1, supported: keepMonitor, readable: true }, automaticTargets: { supported: true, revisionBound: true, snapshotBound: true } }));
+    remote.get('/capital-exits', () => ({ clientId: connection.clientId, accountId: connection.accountId, mode: connection.mode, currency: 'USD',
+      accountSourceId: remoteAccount.accountSourceId, observationId: remoteAccount.observationId, controlRevision: remoteAccount.controlRevision, reserved: '0', exits: [] }));
     const url = await remote.listen({ host: '127.0.0.1', port: 0 });
     const connection = { id: 'pm-controlled-account', name: 'PM operations protocol only', mode: 'paper' as const,
       url, clientId: 'controlled-client', accountId: 'controlled-account' };
@@ -51,21 +64,21 @@ async function fixture(keepMonitor = false) {
         positions: [{ instrumentId: 'TEST.SIM', quantity: '10', value: '100', pnl: null }], curve: [], receipt: null, error: null },
       connection, target: {}, taskId: 0, snapshotReceivedAtNs: nowNs(),
       snapshot: { clientId: connection.clientId, accountId: connection.accountId, accountSourceId: 'controlled-source', observationId: 'controlled-observation',
-        sequence: '9007199254740995', nativeClockNs: observedAtNs, currency: 'USD', equity: '1000.000000000000000001', cash: '900.000000000000000001',
+        sequence: '9007199254740995', nativeClockNs: observedAtNs, controlRevision: '3', currency: 'USD', equity: '1000.000000000000000001', cash: '900.000000000000000001',
         positions: [{ instrumentId: 'TEST.SIM', quantity: '10', value: '100', pnl: null }] },
     };
     if (keepMonitor) account.view.receipt = { id: 'controlled-prior-target', status: 'ACKNOWLEDGED', externalId: 'controlled-prior-external', expiresAt: priorExpiry, acknowledgedAt: null };
     remoteAccount = json(account.snapshot);
+    const initialControl = await readCapitalControl(connection, 'USD');
     await state.service.research.harness.commit(async tx => {
       const application = await tx.doc(Application); application.observations[connection.id] = json(account);
       application.accountControls ??= {};
-      application.accountControls[accountKey(connection)] = { commands: {}, status: { capability: keepMonitor ? 'SUPPORTED' : 'UNSUPPORTED', reason: 'controlled_readable_account',
-        accountSourceId: 'controlled-source', observationId: 'controlled-observation', controlRevision: '3', reserved: '0', exits: [] } };
+      recordCapitalControl(application.accountControls, connection, initialControl);
     }, context);
     const input = {
       requestId: 'controlled-target-mandate', goal: 'Controlled target receipt operations; no investment qualification is asserted.', datasetId: 'controlled',
       funding: { kind: 'ACCOUNT', accountBindingId: connection.id }, model: state.model, maxTrials: 1,
-      businessPreference: 'NET_RETURN', operatingAuthority: 'AUTHORIZED_TARGETS',
+      businessPreference: 'NET_RETURN', operatingAuthority,
     };
     const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: input });
     assert.equal(admitted.statusCode, 202, admitted.body);
@@ -98,9 +111,18 @@ async function fixture(keepMonitor = false) {
           committedCapital: money('0'), uncommittedCash: money('1000.000000000000000001'), projectedTradingCash: money('0'), capacityEstimateIds: [], sizingEvidenceRef: 'controlled-sizing' },
         comparisonRef: 'controlled-comparison', solverEvidenceRef: null, jointReplayEvidenceRef: null, reasonCodes: ['TEST_ONLY_CONTROLLED_ELIGIBILITY'],
         explanationFacts: { nativeCashWeight: '1' }, validUntilNs: (BigInt(nowNs()) + 120_000_000_000n).toString(), nextInvalidationDependencies: [], targetCommandId: null };
+      // Explicitly controlled transport source; not a scientific native proof.
+      const originalTargetRef = 'TEST_ONLY_CONTROLLED_NATIVE_TARGET';
+      const originalTarget = { schema_version: 1, asof_ns: nowNs(), valid_until_ns: decision.validUntilNs!,
+        targets: [{ instrument_id: 'TEST.SIM', currency: 'USD', weight: '0' }], cash_weight: '1' };
+      decision.explanationFacts = { nativeCashWeight: '1', nativeTargetEvidenceRef: originalTargetRef };
+      record.artifacts[originalTargetRef] = originalTarget;
+      record.evidence[originalTargetRef] = { id: originalTargetRef, sourceKind: 'NATIVE_RESULT', role: 'CONTROL', runtime: null,
+        objectKey: originalTargetRef, contentDigest: digest(originalTarget), sourceRevision: decision.basisRevision,
+        mediaType: 'application/json', eventInterval: null, availableAtNs: nowNs(), clockPrecision: 'NANOSECOND', schemaId: 'TEST_ONLY_CONTROLLED_NATIVE_TARGET', visibility: 'OWNER_ONLY' };
       record.decisions[decisionId] = decision; record.currentDecisionId = decisionId; record.gaps = {};
       record.assessments['controlled-target-assessment'] = { ...fact('controlled-target-assessment'), strategyVersionId: record.latestStrategyId,
-        stage: 'TARGET_OPERATION', outcome: 'READY', evaluatedAtNs: nowNs(), requirementsVersion: 'TEST_ONLY_CONTROLLED_ELIGIBILITY',
+        stage: 'PAPER', outcome: 'READY', evaluatedAtNs: nowNs(), requirementsVersion: 'qz.pm.paper-shadow-source-target-qualification/1',
         evidenceRefs: [], reasonCodes: ['TEST_ONLY_CONTROLLED_ELIGIBILITY'], nextPermittedActions: [] };
       record.strategies[record.latestStrategyId]!.pipelineAssessmentId = 'controlled-target-assessment';
       if (keepMonitor) {
@@ -122,7 +144,7 @@ async function fixture(keepMonitor = false) {
         payload: { requestId, expectedRevision: '0', decisionId } });
     }
     async function record() { return pmRecord(pmState(await state.service.research.harness.snapshot(PmDocument, context)), id); }
-    return { state, remote, posts, gets, id, connection, decisionId, read, offer, record,
+    return { state, remote, posts, accepted, gets, id, connection, decisionId, read, offer, record,
       receipt(status: typeof receive, overrides: JsonObject = {}) { receive = status; receiptOverride = overrides; },
       external(value: string) { externalId = value; },
       accountSnapshot(value: JsonObject) { remoteAccount = structuredClone(value); },
@@ -144,6 +166,7 @@ async function delivered(f: Awaited<ReturnType<typeof fixture>>): Promise<Target
     const taskId = record.artifacts[`target-task:${command.id}`]!.taskId as TaskId;
     assert.fail(`${String(error)} ${JSON.stringify({ posts: f.posts.length, command, task: await f.state.service.research.harness.getTask(taskId, context), error: record.artifacts[`target-error:${command.id}`] })}`);
   }
+  assert.equal(f.accepted.length, 1, 'The actual receiver must have accepted the complete original snapshot group before losing its response.');
   return (await f.read()).targetCommands[0]!;
 }
 
@@ -152,8 +175,12 @@ test('PM operations: uncertain delivery reopens the original task and receipt; a
   try {
     const command = await delivered(f); const originalPayload = structuredClone(f.posts[0]);
     assert.equal(originalPayload!.id, command.idempotencyKey);
-    assert.deepEqual(originalPayload!.target, { schema_version: 1, asof_ns: (await f.read()).currentDecision!.accountBasis!.observedAtNs,
+    assert.deepEqual(originalPayload!.target, { schema_version: 1, asof_ns: (await f.record()).artifacts.TEST_ONLY_CONTROLLED_NATIVE_TARGET!.asof_ns,
       valid_until_ns: command.validUntilNs, targets: [{ instrument_id: 'TEST.SIM', currency: 'USD', weight: '0' }], cash_weight: '1' });
+    assert.equal(object(originalPayload!.allocation).snapshotSequence, '9007199254740995');
+    assert.equal(object(originalPayload!.allocation).accountSourceId, 'controlled-source');
+    assert.equal(object(originalPayload!.allocation).controlRevision, '3');
+    assert.deepEqual(originalPayload!.allocation, (await f.record()).artifacts[`target-allocation:${command.id}`]);
     const taskId = (await f.record()).artifacts[`target-task:${command.id}`]!.taskId as TaskId;
     assert.equal((await f.offer()).statusCode, 202, 'Original request replay must be accepted.');
     const duplicate = await f.offer('different-request-same-decision');
@@ -312,8 +339,80 @@ test('PM operations: the real retirement monitor requires a zero-count native or
 });
 
 
-test('PM operations: maintenance parks original automatic sizing while retirement continues read-only account reconciliation', { timeout: 35_000 }, async () => {
+test('PM operations: retired and draining monitors coalesce ten transport heartbeats but preserve original residual and flat-closure evidence', { timeout: 90_000 }, async () => {
   const f = await fixture(true);
+  try {
+    const retired = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/mandates/${encodeURIComponent(f.id)}/retire`, headers: f.state.headers,
+      payload: { requestId: 'retire-before-heartbeats', expectedRevision: '0' } });
+    assert.equal(retired.statusCode, 202, retired.body);
+    const original = observation((await f.state.service.research.harness.snapshot(Application, context))!.observations[f.connection.id]).snapshot!;
+    let sequence = BigInt(String(original.sequence));
+    // Actual HTTP ingestion of unchanged cash balances and one working order:
+    // this is still an unresolved retirement, never a synthetic flat closure.
+    const economicSnapshot = flatSnapshot(original, (++sequence).toString(), 1);
+    async function observedByMonitor(value: JsonObject) {
+      f.accountSnapshot(value);
+      await eventually(async () => {
+        const application = (await f.state.service.research.harness.snapshot(Application, context))!;
+        if (observation(application.observations[f.connection.id]).snapshot?.sequence !== value.sequence) return false;
+        const latest = object((await f.record()).artifacts['latest-account-pending']);
+        return object(object(latest.capture).basis).sequence === value.sequence;
+      }, 'The actual periodic MonitorMandate must consume each new HTTP transport sequence.');
+    }
+    await observedByMonitor(economicSnapshot);
+    const before = await f.record();
+    const disposition = Object.values(before.retirements)[0]!;
+    assert.equal(disposition.reconciliationRequired, true);
+    assert.equal(disposition.positionDisposition, 'MONITORING_EXISTING');
+    const residualRef = disposition.residualPositionsEvidenceRef!;
+    const residual = await f.state.service.app.inject({ url: `/api/v3/pm-evidence/${encodeURIComponent(residualRef)}`, headers: f.state.headers });
+    assert.equal(residual.statusCode, 200, residual.body);
+    const immutableSource = residual.json();
+    const history = (record: typeof before) => ({ evidence: Object.keys(record.evidence).sort(), artifacts: Object.keys(record.artifacts).sort(),
+      cycles: Object.keys(record.cycles).sort(), events: Object.keys(record.events).sort(), outcomes: Object.keys(record.outcomes).sort() });
+    const initialHistory = history(before);
+    for (let heartbeat = 0; heartbeat < 10; heartbeat++) {
+      if (heartbeat === 5) {
+        const entered = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/maintenance/enter', headers: f.state.headers,
+          payload: { requestId: 'drain-between-heartbeats' } });
+        assert.equal(entered.statusCode, 202, entered.body);
+        assert.equal((await f.state.service.app.inject({ url: '/api/v3/maintenance', headers: f.state.headers })).json().state, 'DRAINING');
+      }
+      const next = structuredClone(economicSnapshot);
+      next.sequence = (++sequence).toString();
+      object(next.nativeObservation).sequence = next.sequence;
+      await observedByMonitor(next);
+      const current = await f.record();
+      assert.deepEqual(history(current), initialHistory, 'Transport sequence changes cannot append PM evidence/artifact/cycle/event/outcome history.');
+      assert.deepEqual(current.retirements[disposition.id], disposition, 'Unchanged economic responsibility cannot rewrite its original immutable evidence reference.');
+      assert.deepEqual(current.evidence[residualRef], before.evidence[residualRef]);
+      assert.equal(f.posts.length, 0);
+    }
+    // A later authoritative zero-order report is a material source change and
+    // must still create immutable closure evidence while DRAINING.
+    await observedByMonitor(flatSnapshot(original, (++sequence).toString(), 0));
+    await eventually(async () => (await f.read()).retirements[0]?.positionDisposition === 'FLAT_CONFIRMED', 'Actual zero-order HTTP evidence must close the retirement.');
+    await eventually(async () => (await f.state.service.app.inject({ url: '/api/v3/maintenance', headers: f.state.headers })).json().state === 'QUIESCED', 'Only the actual closure may release the maintenance obligation.');
+    const closure = (await f.read()).retirements[0]!;
+    assert.equal(closure.reconciliationRequired, false);
+    assert.ok(closure.closureEvidenceRefs.length > 0);
+    assert.notEqual(closure.residualPositionsEvidenceRef, residualRef);
+    const finalEvidence = await f.state.service.app.inject({ url: `/api/v3/pm-evidence/${encodeURIComponent(closure.residualPositionsEvidenceRef!)}`, headers: f.state.headers });
+    assert.equal(finalEvidence.statusCode, 200, finalEvidence.body);
+    assert.equal(object(object(finalEvidence.json().payload).snapshot).sequence, sequence.toString());
+    await f.state.restart();
+    assert.deepEqual((await f.read()).retirements[0], closure);
+    const recoveredResidual = await f.state.service.app.inject({ url: `/api/v3/pm-evidence/${encodeURIComponent(residualRef)}`, headers: f.state.headers });
+    assert.equal(recoveredResidual.statusCode, 200, recoveredResidual.body);
+    assert.deepEqual(recoveredResidual.json(), immutableSource, 'Restart retains the original unresolved-order source alongside the later closure.');
+    assert.equal(f.posts.length, 0, 'Read-only retirement and maintenance never create a target or liquidation request.');
+  } finally { await f.cleanup(); }
+});
+
+test('PM operations: maintenance parks original automatic sizing while retirement continues read-only account reconciliation', { timeout: 35_000 }, async () => {
+  // This PM observes retirement responsibility without claiming target
+  // control of the independently enabled legacy automatic controller.
+  const f = await fixture(true, 'RESEARCH_ONLY');
   try {
     const automatic = await f.state.service.app.inject({ method: 'POST', url: `/api/v3/observations/${encodeURIComponent(f.connection.id)}/automatic`, headers: f.state.headers,
       payload: { enabled: true, cashBuffer: '0', maximumSnapshotAgeSeconds: 60 } });
@@ -354,5 +453,54 @@ test('PM operations: maintenance parks original automatic sizing while retiremen
     assert.deepEqual((await f.state.service.research.harness.getTask(automaticTaskId, context))?.state, parked.state);
     assert.equal((await f.read()).retirements[0]!.reconciliationRequired, false);
     assert.equal(f.posts.length, 0, 'Draining does not send new targets or liquidation requests.');
+  } finally { await f.cleanup(); }
+});
+
+for (const mismatched of ['missing', 'changed'] as const) {
+  test(`PM operations: ${mismatched} allocation echo cannot settle an original revision-bound command`, { timeout: 35_000 }, async () => {
+    const f = await fixture();
+    try {
+      const command = await delivered(f);
+      const original = structuredClone(f.posts[0]!);
+      f.receipt('ACKNOWLEDGED', { allocation: mismatched === 'missing' ? null : { ...object(original.allocation), controlRevision: '4' } });
+      await f.state.restart();
+      await eventually(async () => (await f.record()).artifacts[`target-error:${command.id}`]?.reason === 'target_receipt_allocation_mismatch', 'Revision-bound receipts must echo the original complete allocation.');
+      assert.equal((await f.read()).targetCommands[0]!.state, 'UNCERTAIN');
+      f.receipt('ACKNOWLEDGED');
+      await eventually(async () => (await f.read()).targetCommands[0]!.state === 'ACKNOWLEDGED', 'The actual original receipt remains reconcilable.');
+      assert.equal(f.posts.length, 1); assert.deepEqual(f.posts[0], original);
+    } finally { await f.cleanup(); }
+  });
+}
+
+test('PM operations: a legacy uncertain command without an allocation envelope still reconciles only its original receipt', { timeout: 30_000 }, async () => {
+  const f = await fixture();
+  try {
+    const command = await delivered(f);
+    // Controlled stored v1 shape from before revision-bound PM delivery. Do not
+    // retrofit new source evidence onto a request which may already be remote.
+    await f.state.service.research.harness.commit(async tx => {
+      const record = pmRecord(pmState(await tx.doc(PmDocument)), f.id);
+      delete record.artifacts[`target-allocation:${command.id}`];
+      delete record.evidence[`target-allocation:${command.id}`];
+    }, context);
+    f.receipt('ACKNOWLEDGED', { allocation: null });
+    await f.state.restart();
+    await eventually(async () => (await f.read()).targetCommands[0]!.state === 'ACKNOWLEDGED', 'Legacy uncertain requests retain their original read-only reconciliation path.');
+    assert.equal(f.posts.length, 1);
+    assert.ok(f.gets.length > 0 && f.gets.every(id => id === command.idempotencyKey));
+  } finally { await f.cleanup(); }
+});
+
+test('PM operations: a paused strategy cannot offer its retained target while original uncertain receipts remain independent', { timeout: 15_000 }, async () => {
+  const f = await fixture();
+  try {
+    await f.state.service.research.harness.commit(async tx => {
+      const record = pmRecord(pmState(await tx.doc(PmDocument)), f.id);
+      record.artifacts[`strategy-control:${record.decisions[f.decisionId]!.strategyVersionId}`] = { action: 'pause', requestId: 'original-pause' };
+    }, context);
+    const response = await f.offer();
+    assert.equal(response.statusCode, 409, response.body); assert.match(response.body, /target_strategy_paused/);
+    assert.equal(f.posts.length, 0); assert.equal((await f.read()).targetCommands.length, 0);
   } finally { await f.cleanup(); }
 });

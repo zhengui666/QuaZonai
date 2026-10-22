@@ -330,6 +330,15 @@ pub fn ensemble_weights<'a>(
 /// Structural mandate checks shared with actual allocation and publication.
 /// Asset/group membership and feasibility still require the frozen native input.
 pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {
+    if constraints.cash_funding.is_some()
+        && (!constraints.long_only
+            || !constraints.min_cash_weight.is_nonnegative()
+            || constraints.max_gross_exposure.as_decimal() > &BigDecimal::from(1))
+    {
+        return Err(DomainError::Invalid(
+            "cash_funding_requires_unlevered_long_only",
+        ));
+    }
     if !constraints.max_gross_exposure.is_nonnegative()
         || !constraints.max_turnover_per_rebalance.is_nonnegative()
         || constraints
@@ -426,6 +435,11 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     fixed_ensemble(&content.alpha_ensemble)?;
     sample_covariance_parameters(&content.covariance_estimator)?;
     portfolio_constraints(&content.constraints)?;
+    cash_funding_method(
+        &content.constraints,
+        content.objective,
+        content.risk_measure,
+    )?;
     rebalance_schedule(&content.rebalance_schedule)?;
     if !content.capital_assumption.is_positive()
         || !content.exposure_tolerance.is_positive()
@@ -438,6 +452,19 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     Ok(())
 }
 
+fn cash_funding_method(
+    constraints: &PortfolioConstraintsV1,
+    objective: AllocationObjective,
+    risk: AllocationRisk,
+) -> Result<(), DomainError> {
+    if constraints.cash_funding.is_some()
+        && (objective != AllocationObjective::MaxUtility || risk != AllocationRisk::Variance)
+    {
+        return Err(DomainError::Invalid("cash_funding_method_unsupported"));
+    }
+    Ok(())
+}
+
 /// Does not authorize an Alpha, infer a quote, or fit an estimator.
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     optimizer_settings(&input.optimizer)?;
@@ -447,6 +474,18 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     portfolio_return_history(&input.return_history, &input.forecasts)?;
     let count = input.assets.len();
     let constraints = &input.constraints;
+    cash_funding_method(constraints, input.objective, input.risk)?;
+    if constraints.cash_funding.is_some()
+        && (!input.current_cash_weight.is_nonnegative()
+            || input
+                .assets
+                .iter()
+                .any(|asset| !asset.current_weight.is_nonnegative()))
+    {
+        return Err(DomainError::Invalid(
+            "cash_funding_current_borrowing_or_shorting",
+        ));
+    }
     if let Some(budget) = risk_budgeting(input.objective, &input.optimizer, constraints)? {
         if budget.assets.len() != input.assets.len()
             || budget.assets.iter().any(|b| {
@@ -686,6 +725,7 @@ pub fn allocation_result(
     let mut net = BigDecimal::from(0);
     let mut gross = BigDecimal::from(0);
     let mut turnover = BigDecimal::from(0);
+    let mut linear_cost = BigDecimal::from(0);
     let mut group_weights = BTreeMap::<&str, BigDecimal>::new();
     for (target, asset) in targets.iter().zip(&input.assets) {
         if target.instrument_id != asset.instrument_id || target.currency != asset.currency {
@@ -718,6 +758,7 @@ pub fn allocation_result(
         }
         net += weight;
         gross += weight.abs();
+        linear_cost += &change * asset.transaction_cost_rate.as_decimal();
         turnover += change;
         for group in &asset.groups {
             *group_weights
@@ -750,6 +791,13 @@ pub fn allocation_result(
         )
     {
         return Err(DomainError::Invalid("portfolio_exposure_bound"));
+    }
+    if constraints.cash_funding.is_some()
+        && cash - linear_cost < constraints.min_cash_weight.as_decimal() - tolerance
+    {
+        // Validate the actual target deltas, independently of the solver's
+        // auxiliary epigraph values. The allowance is the frozen weight tolerance.
+        return Err(DomainError::Invalid("cash_funding_bound"));
     }
     for group in &constraints.group_bounds {
         let total = group_weights

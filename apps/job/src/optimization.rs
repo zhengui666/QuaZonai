@@ -284,6 +284,16 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         &[(cash, -1.0)],
         -native_number(&constraints.min_cash_weight)?,
     );
+    if constraints.cash_funding.is_some() {
+        // Reuse the same L1 turnover epigraph as the objective. This single
+        // linear budget reserves the modeled fees inside the original NAV;
+        // it neither changes NAV nor repairs a solved target after the fact.
+        let mut terms = vec![(cash, -1.0)];
+        for (i, asset) in input.assets.iter().enumerate() {
+            terms.push((traded + i, native_number(&asset.transaction_cost_rate)?));
+        }
+        add(&terms, -native_number(&constraints.min_cash_weight)?);
+    }
     let overrides: BTreeMap<_, _> = constraints
         .asset_overrides
         .iter()

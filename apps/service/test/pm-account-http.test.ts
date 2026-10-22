@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
+import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 import research from '../../research/plugins/research.ts';
 import factors from '../../research/plugins/factor-wasm.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
@@ -32,7 +34,8 @@ function script(state: Awaited<ReturnType<typeof setup>>, source: JsonObject) {
     call('strategy_intake', { name: 'Original spot inventory and causal signals', archetype: 'PREDICTIVE_ALPHA',
       economicMechanism: 'Compare calibrated causal bar predictions against retaining original spot inventory in a shared account.',
       falsificationConditions: ['Net joint account path is not preferred to the matched original inventory HOLD.'], requiredCapabilities: [],
-      intendedHoldingHorizonRef: 'REGISTERED_NATIVE_LABEL_HORIZON', knownFailureModes: ['fees', 'selection_bias'], ambiguities: [], ownerBoundaries: [] }),
+      intendedHoldingHorizonRef: 'REGISTERED_NATIVE_LABEL_HORIZON', knownFailureModes: ['fees', 'selection_bias'], ambiguities: [],
+      ownerBoundaries: [{ kind: 'LEVERAGE', sourceStatement: 'No leverage.', normalizedValue: { maximumGrossNavRatio: '1', borrowingAllowed: false } }] }),
     call('research_hypothesis', { economicFamilyId: 'native-test:spot-price-prediction', mechanism: 'Causal price factors predict the registered future return.',
       prediction: 'A frozen fitted ensemble may improve matched net account outcomes.', falsification: 'Shared-account evidence does not improve the registered objective.',
       requiredDataCapabilities: ['BAR'], incrementalQuestion: 'Do calibrated signals improve the account beyond retaining original quantities?' }),
@@ -112,7 +115,7 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
     assert.deepEqual(retainedArchive.snapshot, archival.snapshot);
     script(state, source);
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers, payload: {
-      requestId: 'original-observed-native-account', goal: 'Research predictive alpha from causal bar factors; compare complete net daily account outcomes with retaining original spot quantities.',
+      requestId: 'original-observed-native-account', goal: 'Research predictive alpha from causal bar factors; compare complete net daily account outcomes with retaining original spot quantities. No leverage.',
       datasetId: dataset.id, funding: { kind: 'ACCOUNT', accountBindingId: f.connection.id }, model: state.model,
       maxTrials: 12, businessPreference: 'NET_RETURN', operatingAuthority: 'RESEARCH_ONLY' } });
     assert.equal(response.statusCode, 202, response.body); let view = response.json<PmMandateView>(); const id = view.mandate.id; mandateId = id;
@@ -152,11 +155,16 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
     assert.ok(view.capacityEstimates.some(capacity => capacity.curve.length >= 2));
     assert.ok(view.researchTrials.filter(trial => trial.countedAttempt).length <= 12);
     const comparison = view.comparisons.find(item => item.id === decision.comparisonRef)!;
+    const leverage = view.mandate.ownerBoundaries.filter(boundary => boundary.kind === 'LEVERAGE');
+    assert.equal(leverage.length, 1); assert.equal(leverage[0]!.sourceStatement, 'No leverage.');
+    assert.deepEqual(leverage[0]!.value, { maximumGrossNavRatio: '1', borrowingAllowed: false });
+    assert.deepEqual(object(view.activePolicy.validDomain).ownerBoundaries, view.mandate.ownerBoundaries);
     assert.equal(comparison.evaluationContext, 'HISTORICAL_JOINT_REPLAY'); assert.deepEqual(comparison.scope.capital, nav);
     assert.ok(BigInt(comparison.scope.interval.startNs) >= BigInt(decision.accountBasis!.availableAtNs));
     assert.ok(comparison.candidates.some(candidate => candidate.kind === 'HOLD_CURRENT' && candidate.status === 'AVAILABLE'));
     assert.ok(comparison.candidates.some(candidate => candidate.kind === 'REBALANCE' && candidate.status === 'AVAILABLE'));
     assert.ok(view.budgetMovements.some(movement => movement.reasonCode === 'same_observed_state_hold_replay'));
+    assert.ok(comparison.candidates.every(candidate => candidate.status === 'AVAILABLE'));
     const objectiveValues = comparison.candidates.map(candidate => ({ id: candidate.id, kind: candidate.kind, values: view.activePolicy.selectionRule.objectives.map(objective => {
       const metrics = [...candidate.netOutcome, ...candidate.downside].filter(metric => metric.definition.id === objective.metricDefinitionId);
       assert.equal(metrics.length, 1); assert.equal(metrics[0]!.status, 'AVAILABLE');
@@ -178,6 +186,8 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
     }
     // Read complete native bodies through the owner API, including compressed
     // Durable evidence. Their actual outcomes are independent of selecting a winner.
+    let baselineSimulation: JsonObject | null = null;
+    const pairedHoldSimulations: JsonObject[] = [];
     for (const candidate of comparison.candidates) {
       const endpoint = `/api/v3/pm-evidence/${encodeURIComponent(candidate.configurationEvidenceRef)}`;
       const response = await state.service.app.inject({ url: endpoint, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);
@@ -187,10 +197,55 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
       const selection = object(object(body.payload.simulationRequest).selection);
       assert.equal(selection.event_start_ns, comparison.scope.interval.startNs); assert.equal(selection.event_end_ns, comparison.scope.interval.endExclusiveNs);
       const simulation = object(body.payload.simulation);
-      assert.equal(object(object(simulation.spot_cash_report).daily_returns).report_currency, nav.currency);
-      if (candidate.kind === 'HOLD_CURRENT') { assert.equal(simulation.orders, '0'); assert.deepEqual(object(body.payload.simulationRequest).target_points, []); }
+      const report = object(simulation.spot_cash_report);
+      assert.equal(object(report.daily_returns).report_currency, nav.currency);
+      const accounts = object(simulation.canonical_result).accounts as JsonObject[];
+      assert.equal(accounts.length, 1); assert.equal(object(accounts[0]!.Cash).allow_borrowing, false);
+      const frames = (report.observations as JsonObject[]).filter(observation => observation.frame != null).map(observation => object(object(observation.frame).snapshot));
+      assert.ok(frames.length > 0);
+      for (const frame of frames) {
+        assert.equal(frame.account_kind, 'CASH'); assert.equal(frame.balances_complete, true);
+        for (const balance of frame.balances as JsonObject[]) for (const field of ['total', 'free', 'locked']) assert.ok(compareDecimal(String(balance[field]), '0') >= 0);
+      }
+      // This oracle reads original native rows directly. It must not reuse the
+      // production projector, which could otherwise manufacture a false tie.
+      const nativeValue = (key: string) => {
+        const rows = (report.statistics as JsonObject[]).filter(row => row.native_key === key);
+        assert.equal(rows.length, 1, key); const row = rows[0]!;
+        assert.ok(row.status === undefined || row.status === 'AVAILABLE', key);
+        assert.equal(typeof row.value, 'number', key); assert.ok(Number.isFinite(row.value), key); return row.value as number;
+      };
+      const observed = nativeValue('Calendar Observed Return Days');
+      assert.ok(observed > 0); assert.equal(observed, nativeValue('Calendar Expected Days')); assert.equal(nativeValue('Calendar Coverage Ratio'), 1);
+      const expected = new Map([
+        ['qz.metric.daily_geometric_net_return/1', nativeValue('Calendar Geometric Daily Return')],
+        ['qz.metric.maximum_drawdown/1', -nativeValue('Max Drawdown')],
+        ['qz.metric.negative_day_fraction/1', nativeValue('Calendar Negative Days') / observed],
+      ]);
+      // JSON does not retain the sign of zero; numeric equality is exact and
+      // accepts +0/-0 without introducing a tolerance for nonzero observations.
+      for (const metric of objectiveValues.find(row => row.id === candidate.id)!.values) assert.ok(metric.value === expected.get(metric.definitionId), metric.definitionId);
+      if (candidate.kind === 'HOLD_CURRENT') {
+        baselineSimulation = simulation; assert.equal(simulation.orders, '0'); assert.deepEqual(object(body.payload.simulationRequest).target_points, []);
+      } else {
+        const paired = object(body.payload.comparison); const sent = object(paired.request); const initial = object(sent.initial_state);
+        assert.deepEqual(initial.snapshot, f.native);
+        assert.equal(initial.snapshot_evidence_ref, decision.accountBasis!.positionsEvidenceRef);
+        assert.equal(initial.available_ns, decision.accountBasis!.availableAtNs);
+        assert.deepEqual(object(paired.original).request, sent);
+        const study = object(sent.study); const settings = object(study.execution_settings);
+        assert.equal(settings.account_kind, 'CASH'); assert.ok(compareDecimal(String(settings.leverage), '1') <= 0);
+        const constraints = object(object(study.mandate).constraints);
+        assert.equal(constraints.long_only, true);
+        for (const field of ['max_gross_exposure', 'max_net_exposure', 'max_asset_weight']) assert.ok(compareDecimal(String(constraints[field]), '1') <= 0);
+        const hold = object(paired.hold); assert.equal(hold.status, 'COMPLETED'); pairedHoldSimulations.push(object(hold.result));
+        assert.deepEqual(object(object(paired.rebalance).result).simulation, simulation);
+      }
       assert.equal((await state.service.app.inject({ url: endpoint })).statusCode, 401);
     }
+    assert.ok(baselineSimulation && pairedHoldSimulations.length);
+    assert.ok(pairedHoldSimulations.some(hold => isDeepStrictEqual(hold, baselineSimulation)),
+      'The baseline is an actual paired native HOLD leg; separate executions retain distinct native run identities.');
     for (const evidenceId of [decision.accountBasis!.positionsEvidenceRef, decision.accountBasis!.valuation!.valuationEvidenceRef]) {
       const endpoint = `/api/v3/pm-evidence/${encodeURIComponent(evidenceId)}`;
       const response = await state.service.app.inject({ url: endpoint, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);

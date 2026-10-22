@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type {
-  CapacityEstimate, CapitalPlan, ComparisonScope, DecisionPolicyRevision, EnsembleRevision,
+  AccountBasis, CapacityEstimate, CapitalPlan, ComparisonScope, DecisionPolicyRevision, EnsembleRevision, ModeledOperatingComparison,
   MetricDefinition, MetricObservation, OperatingComparison, PortfolioDecision, ResearchTrial,
 } from '../../../packages/contracts/src/pm.ts';
 import {
@@ -264,7 +264,7 @@ test('PM allocation: one account cannot fund duplicated strategy budgets or inco
 
 test('PM operating comparison: neither a different account basis nor a nonexistent candidate can inherit the selected action', () => {
   const comparison: OperatingComparison = { ...fact('comparison:operating'), cycleId: 'cycle:original', basisRevision: 'basis:original',
-    policyRevisionId: 'policy:original', scope, incumbentDecisionId: 'decision:previous', evaluationContext: 'FORWARD_MODEL_ESTIMATE',
+    policyRevisionId: 'policy:original', scope, incumbentDecisionId: 'decision:previous', evaluationContext: 'HISTORICAL_JOINT_REPLAY',
     candidates: [{ id: 'candidate:hold', kind: 'HOLD_CURRENT', configurationEvidenceRef: 'configuration:held', status: 'AVAILABLE',
       transitionCost: [], netOutcome: [metric(daily, 0.01)], downside: [metric(drawdown, 0.02)], capacityEstimateIds: ['capacity:original'], reasonCodes: [] }],
     pairedDifferenceEvidenceRefs: ['comparison:paired'], selectedCandidateId: 'candidate:hold', conclusion: 'SELECTED', reasonCodes: [] };
@@ -385,4 +385,95 @@ test('PM independent evidence: the owner can read a frozen final result without 
   assert.notEqual(attemptToReselect.recommendedTrialId, 'trial:a');
   assert.equal(attemptToReselect.candidates.find(item => item.trialId === 'trial:a')!.metrics.length, 0,
     'The newly supported final-data reader cannot make final values available to selection feedback.');
+});
+
+test('PM current valuation: new price evidence revalues inventory without rewriting the original account receipt', () => {
+  // One BTC plus 100 cash changes from 200 to 300 NAV when the available BTC
+  // mark changes 100 -> 200. This is a derived mark, never a new account event.
+  const source: AccountBasis = { accountBindingId: 'account:bound', accountSourceId: 'source:cash', observationId: 'observation:original',
+    sequence: '17', observedAtNs: '100', availableAtNs: '105', controlRevision: '3', currency: 'USD', equity: null, reserved: money('0'),
+    positionsEvidenceRef: 'native:original-btc-and-cash', outstandingCommandsRef: 'native:zero-open-orders' };
+  const valuation: NonNullable<AccountBasis['valuation']> = { origin: 'DERIVED', timeBasis: 'DECISION_CUTOFF', priceEvidenceRef: 'marks:200-received-at-149',
+    reportValue: money('300'), valuationEvidenceRef: 'native:cutoff-valuation', methodRef: 'method:original-quantities-current-marks', asOfNs: '150', availableAtNs: '149' };
+  const accepted = validatePmEntity('AccountBasis', { ...source, valuation });
+  assert.equal(accepted.equity, null); assert.equal(accepted.observedAtNs, '100'); assert.equal(accepted.availableAtNs, '105');
+  assert.deepEqual(accepted.valuation, valuation); assert.equal(accepted.sequence, source.sequence);
+  for (const invalid of [{ ...valuation, timeBasis: undefined }, { ...valuation, priceEvidenceRef: undefined },
+    { ...valuation, asOfNs: '99' }, { ...valuation, availableAtNs: '151' }, { ...valuation, availableAtNs: '104' },
+    { ...valuation, reportValue: { amount: '300', currency: 'EUR' } }]) {
+    assert.throws(() => validatePmEntity('AccountBasis', { ...source, valuation: invalid }));
+  }
+  const oldClock = { ...valuation, timeBasis: 'SNAPSHOT_TIME' as const, asOfNs: '100', availableAtNs: '105', reportValue: money('200') };
+  assert.deepEqual(validatePmEntity('AccountBasis', { ...source, valuation: oldClock }).valuation, oldClock,
+    'The new forward contract must preserve the meaning of existing snapshot-time valuations.');
+});
+
+function modeledComparison(): ModeledOperatingComparison {
+  return { method: 'MATCHED_LINEAR_RETURN_VARIANCE_V1', basis: 'FORWARD_MODEL_ESTIMATE', forecastUnit: 'RETURN_PER_HORIZON',
+    methodPolicyRef: 'policy:original', horizonRef: 'label:original-two-bars', riskAversion: '1', nativeEvidenceRef: 'native:current-solve',
+    startingStateRef: scope.startingStateRef!, asOfNs: '150', availableAtNs: '149',
+    hold: { grossExpectedReturn: 0.01, linearTurnoverCost: 0, netExpectedReturn: 0.01, variance: 0.02, objectiveValue: 0.01 },
+    proposed: { grossExpectedReturn: 0.05, linearTurnoverCost: 0.01, netExpectedReturn: 0.04, variance: 0.03, objectiveValue: -0.01 },
+    targetBlockReason: null, limitations: ['Conditional model expectations; no observed daily outcome or exit-capacity proof.'] };
+}
+function forwardComparison(model = modeledComparison()): OperatingComparison {
+  return { ...fact('comparison:current'), cycleId: 'cycle:current', basisRevision: 'basis:current', policyRevisionId: 'policy:original',
+    scope, incumbentDecisionId: 'decision:previous', evaluationContext: 'FORWARD_MODEL_ESTIMATE', modeledComparison: model,
+    candidates: [{ id: 'candidate:hold', kind: 'HOLD_CURRENT', configurationEvidenceRef: 'native:current-hold', status: 'AVAILABLE',
+      transitionCost: [], netOutcome: [], downside: [], capacityEstimateIds: [], reasonCodes: [] },
+    { id: 'candidate:proposed', kind: 'REBALANCE', configurationEvidenceRef: model.nativeEvidenceRef, status: 'AVAILABLE',
+      transitionCost: [], netOutcome: [], downside: [], capacityEstimateIds: [], reasonCodes: [] }],
+    pairedDifferenceEvidenceRefs: [model.nativeEvidenceRef], selectedCandidateId: null, conclusion: 'NEEDS_EVIDENCE',
+    reasonCodes: ['owner_daily_objectives_are_not_observed_by_a_two_bar_forecast'] };
+}
+
+test('PM modeled economics: turnover costs and variance cannot be dropped to make the proposed trade more attractive', () => {
+  const model = modeledComparison(); assert.deepEqual(validatePmEntity('ModeledOperatingComparison', model), model);
+  assert.ok(model.proposed!.netExpectedReturn > model.hold.netExpectedReturn);
+  assert.ok(model.proposed!.variance > model.hold.variance, 'This proposal has a genuine return/risk tradeoff, not dominance.');
+  for (const proposed of [{ ...model.proposed!, netExpectedReturn: 0.05 }, { ...model.proposed!, objectiveValue: -0.05 },
+    { ...model.proposed!, variance: -0.03 }, { ...model.proposed!, linearTurnoverCost: -0.01 }]) {
+    assert.throws(() => validatePmEntity('ModeledOperatingComparison', { ...model, proposed }));
+  }
+  assert.throws(() => validatePmEntity('ModeledOperatingComparison', { ...model, hold: { ...model.hold, linearTurnoverCost: 0.001 } }));
+});
+
+test('PM forward comparison: a forecast cannot inherit observed daily metrics or an unavailable current basis', () => {
+  const comparison = forwardComparison(); const context = { cycleId: comparison.cycleId, basisRevision: comparison.basisRevision, asOfNs: '160' };
+  assert.deepEqual(validateOperatingComparison(comparison, context), comparison);
+  const ownerChoice = compareOperatingCandidates({ comparison, selection: policy([daily, drawdown]).selectionRule,
+    definitions: [daily, drawdown], asOfNs: context.asOfNs }).comparison;
+  assert.equal(ownerChoice.conclusion, 'NEEDS_EVIDENCE', 'A better native scalar objective does not automatically replace the owner daily objective.');
+  assert.equal(ownerChoice.selectedCandidateId, null);
+  assert.throws(() => validateOperatingComparison(comparison, { ...context, asOfNs: '148' }), 'A mark received at 149 is unavailable to the 148 decision.');
+  assert.throws(() => validateOperatingComparison({ ...comparison, modeledComparison: { ...comparison.modeledComparison!, availableAtNs: '151' } }, context),
+    'A later source receipt cannot enter an earlier cutoff merely because the report was computed afterward.');
+  assert.throws(() => validateOperatingComparison({ ...comparison, modeledComparison: { ...comparison.modeledComparison!, startingStateRef: 'account:different' } }, context));
+  for (const evaluationContext of ['HISTORICAL_JOINT_REPLAY', 'OBSERVED_FORWARD'] as const) {
+    assert.throws(() => validateOperatingComparison({ ...comparison, evaluationContext }, context));
+  }
+  for (const modeled of [comparison.modeledComparison, undefined]) {
+    const mixed = structuredClone(comparison); mixed.modeledComparison = modeled;
+    mixed.candidates[0]!.netOutcome = [metric(daily, 0.5)];
+    assert.throws(() => validateOperatingComparison(mixed, { ...context, asOfNs: '300' }),
+      'Removing an optional modeled payload cannot make a projected current comparison an observed daily track record.');
+  }
+});
+
+test('PM forward feasibility: a continuous model proposal survives a native lot rejection only as blocked evidence', () => {
+  const model = { ...modeledComparison(), targetBlockReason: 'FORWARD_NOTIONAL_BELOW_MINIMUM' };
+  assert.deepEqual(validatePmEntity('ModeledOperatingComparison', model), model,
+    'Retain the original model estimate even when no executable target can be produced.');
+  const comparison = forwardComparison(model);
+  comparison.candidates[1]!.status = 'UNAVAILABLE'; comparison.candidates[1]!.reasonCodes = [model.targetBlockReason];
+  comparison.candidates[1]!.feasibility = { status: 'INFEASIBLE', evidenceRefs: [model.nativeEvidenceRef], reasonCodes: [model.targetBlockReason] };
+  assert.deepEqual(validateOperatingComparison(comparison), comparison);
+  assert.equal(validateOperatingComparison({ ...comparison, selectedCandidateId: 'candidate:hold', conclusion: 'SELECTED' }).selectedCandidateId,
+    'candidate:hold', 'A blocked change may still preserve the same observed holdings.');
+  const claimed = structuredClone(comparison); claimed.candidates[1]!.status = 'AVAILABLE';
+  delete claimed.candidates[1]!.feasibility;
+  claimed.selectedCandidateId = 'candidate:proposed'; claimed.conclusion = 'SELECTED';
+  assert.throws(() => validateOperatingComparison(claimed), 'A renamed AVAILABLE candidate cannot erase the native target block.');
+  assert.throws(() => validateOperatingComparison({ ...claimed, modeledComparison: { ...model, proposed: null } }),
+    'An absent native allocation cannot be recreated solely by labeling an active candidate available.');
 });

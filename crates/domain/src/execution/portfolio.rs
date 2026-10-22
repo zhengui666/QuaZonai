@@ -267,6 +267,46 @@ fn portfolio_settings(
     portfolio_settings_mode(mandate, costs, assets, false)
 }
 
+/// Source quantities and capital are derived by the native observed adapter.
+pub fn observed_spot_build_request(
+    request: &contracts::observed_spot::NativeObservedSpotBuildRequestV1,
+) -> Result<(), DomainError> {
+    selection(&request.selection)?;
+    portfolio_settings_mode(
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+        true,
+    )?;
+    portfolio_members(&request.selection, &request.assets, &request.members)?;
+    let constraints = &request.mandate.constraints;
+    if request.assets.iter().any(|asset| {
+        asset.current_weight.as_decimal() != &bigdecimal::BigDecimal::from(0)
+            || asset.available_notional.is_some()
+    }) {
+        return Err(bad("observed_build.supplied_inventory_or_liquidity"));
+    }
+    match &request.rolling_liquidity {
+        Some(policy)
+            if constraints.liquidity_ref.is_some()
+                && constraints.max_participation.as_ref() == Some(&policy.participation_limit) =>
+        {
+            crate::portfolio::rolling_liquidity_policy(policy)?;
+        }
+        None if constraints.liquidity_ref.is_none() && constraints.max_participation.is_none() => {}
+        _ => return Err(bad("observed_build.liquidity_policy")),
+    }
+    if request.mandate.objective != contracts::portfolio::AllocationObjective::MaxUtility
+        || request.mandate.risk_measure != contracts::portfolio::AllocationRisk::Variance
+        || !constraints.long_only
+        || constraints.max_gross_exposure.as_decimal() > &bigdecimal::BigDecimal::from(1)
+        || constraints.min_cash_weight.as_decimal() < &bigdecimal::BigDecimal::from(0)
+    {
+        return Err(bad("observed_build.method_unsupported"));
+    }
+    Ok(())
+}
+
 fn portfolio_settings_mode(
     mandate: &contracts::portfolio::MandateContentV1,
     costs: &NativeSimulationSettingsV1,
@@ -274,6 +314,9 @@ fn portfolio_settings_mode(
     observed_spot: bool,
 ) -> Result<(), DomainError> {
     crate::portfolio::mandate(mandate)?;
+    if mandate.constraints.cash_funding.is_some() && !observed_spot {
+        return Err(bad("portfolio.cash_funding_requires_observed_spot"));
+    }
     if observed_spot {
         crate::spot_cash::execution_settings(costs)?;
     } else {

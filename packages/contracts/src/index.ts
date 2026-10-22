@@ -1,7 +1,9 @@
 export type * from './pm.ts';
 export type * from './maintenance.ts';
+export type * from './pm-intent.ts';
 export * from './decision.ts';
 export * from './pm-validation.ts';
+export * from './pm-forward.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
 import type { LiteratureView } from './literature.ts';

@@ -19,8 +19,11 @@ import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
+import { assertAccountTargetControl } from './account-target-control.ts';
+import { PmDocument, pmState } from './pm-facts.ts';
 import { assertBusinessAdmission, maintenanceState } from './pm-maintenance.ts';
-import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
+import { acceptSnapshot, downstreamRequest } from './downstream.ts';
 import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy } from '../../../packages/contracts/src/index.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -285,8 +288,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
       assertBusinessAdmission(facts);
       const accountControl = facts.accountControls?.[accountKey(connection, facts.accountControls)];
+      assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), connection, { kind: 'LEGACY' });
       if (!input.automatic?.enabled) {
-        const state = capitalStatus(control(accountControl));
+        const state = capitalStatusForBinding(control(accountControl), connection);
         if (state.reserved === null) throw new Problem('account_reservation_unknown', 409);
         if (decimalUnits(state.reserved) > 0n || state.exits.some(exit => exit.remaining_trading !== 'BUDGET_AWARE')) throw new Problem('account_capital_exit_requires_budget_aware_target', 409);
       }
@@ -312,6 +316,40 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     // still need a fresh, GET-only account observation to establish flatness.
     const maintenance = maintenanceState((await snapshot())!);
     if ((!maintenance || maintenance.state === 'RUNNING') && original.view.automaticPolicy?.enabled && original.view.status !== 'STOPPED' && !['PENDING', 'UNCERTAIN'].includes(original.view.receipt?.status ?? '') && !unsettledAdjustment(original)) return original.view;
+    const retainReadFailure = async (error: unknown) => {
+      const code = error instanceof Problem ? error.message : 'account_control_refresh_failed';
+      await host.harness.commit(async tx => {
+        const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) return;
+        const fact = observation(value); fact.view.error = code; facts.observations[id] = json(fact);
+        facts.accountControls ??= {}; recordCapitalControlFailure(facts.accountControls, fact.connection, code);
+      }, context);
+    };
+    const refreshControl = async () => {
+      try {
+        const fresh = await readCapitalControl(original.connection, original.view.currency);
+        for (const exit of fresh.status.exits) await validateCapitalDocument(config, 'VIEW', exit);
+        await host.harness.commit(async tx => {
+          const facts = await tx.doc(Application); facts.accountControls ??= {};
+          recordCapitalControl(facts.accountControls, original.connection, fresh);
+        }, context);
+      } catch (error) { await retainReadFailure(error); throw error; }
+    };
+    // A retained account-only source has no prior target receipt or legacy
+    // portfolio to reconcile. Read it within the existing caller/PM monitor;
+    // do not invent a target, receipt, portfolio or a second scheduler.
+    if (!original.view.receipt && !unsettledAdjustment(original)) {
+      if (maintenance?.state === 'QUIESCED') throw new Problem('service_maintenance', 503);
+      try {
+        const fresh = await downstreamRequest(original.connection, 'account', 'GET');
+        await host.harness.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = observation(facts.observations[id]);
+          const key = accountKey(fact.connection, facts.accountControls);
+          const bindings = Object.values(facts.observations).map(observation).filter(item => accountKey(item.connection, facts.accountControls) === key);
+          acceptSnapshot(fact, fresh, bindings); fact.view.error = null; facts.observations[id] = json(fact);
+        }, context);
+      } catch (error) { await retainReadFailure(error); throw error; }
+      await refreshControl(); return (await getObservation(id)).view;
+    }
     const taskId = await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) throw new Problem('observation_not_found', 404);
       if (maintenanceState(facts)?.state === 'QUIESCED') throw new Problem('service_maintenance', 503);
@@ -326,7 +364,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (!previous || previous.state.status === 'terminal') fact.taskId = refreshId;
       facts.observations[id] = json(fact); return refreshId;
     }, context);
-    await host.harness.waitForTask(taskId as TaskId, context); return (await getObservation(id)).view;
+    await host.harness.waitForTask(taskId as TaskId, context);
+    // Reconcile the original receipt first, including UNCERTAIN responses. A
+    // failed capability read must not suppress that existing responsibility.
+    await refreshControl(); return (await getObservation(id)).view;
   }
   function validateAutomatic(value: AutomaticPolicy) {
     if (typeof value.enabled !== 'boolean' || decimalUnits(decimal(value.cashBuffer, 'cash_buffer')) < 0n || !Number.isSafeInteger(value.maximumSnapshotAgeSeconds) || value.maximumSnapshotAgeSeconds < 1) throw new Problem('automatic_policy_invalid', 422);
@@ -339,6 +380,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       assertBusinessAdmission(facts);
       const fact = observation(found);
       if (input.enabled && fact.view.status === 'STOPPED') throw new Problem('observation_stopped', 409);
+      if (input.enabled) assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
+        { kind: 'LEGACY', observationId: id, ...(fact.view.automaticPolicy?.enabled && fact.view.allocation?.receipt ? { commandId: fact.view.allocation.receipt.id } : {}) });
       if (input.enabled && Object.values(facts.observations).map(observation).some(other => other.view.id !== id && accountKey(other.connection, facts.accountControls) === accountKey(fact.connection, facts.accountControls) && other.view.automaticPolicy?.enabled && other.view.status !== 'STOPPED')) throw new Problem('account_automatic_binding_already_enabled', 409);
       if (input.enabled && Object.values(facts.observations).map(observation).some(other => accountKey(other.connection, facts.accountControls) === accountKey(fact.connection, facts.accountControls)
         && (['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== id && unsettledAdjustment(other)))) throw new Problem('target_delivery_requires_reconciliation', 409);
