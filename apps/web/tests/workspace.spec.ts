@@ -59,6 +59,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     }
     if (path.startsWith('/models/providers/') && method === 'DELETE') { providers.find(provider => provider.id === path.split('/').at(-1))!.configured = false; return reply({ configured: false }); }
     if (path === '/datasets') return reply([dataset]);
+    if (path === '/mandates') return reply([]);
     if (path === '/factors') return reply([]);
     if (path === '/usage') return reply(usage);
     if (path === '/research') {
@@ -94,6 +95,28 @@ async function audit(page: BrowserPage) {
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
 }
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.study-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
+
+test('research explicitly selects 365-day Sharpe and preserves its original criterion through retry', async ({ page }) => {
+  const state = await contract(page);
+  const dataset: DatasetView = { id: 'test-data', name: '测试数据', assetClass: 'equity', currency: 'CNY', source: 'test', start: null, end: null, ready: true,
+    researchSettings: { instruments: ['TEST.CN'], inputFamily: 'price-volume', horizon: 1, partitions: null, strategy: { kind: 'threshold' } } };
+  await page.route('**/api/v3/datasets', route => route.fulfill({ json: [dataset] }));
+  await page.goto('/#/research/new'); await mandate(page, '显式年化周期'); await choose(page, '数据集', '测试数据 / CNY');
+  await choose(page, '搜索范围', '原生共享账户因子组合');
+  const criterion = page.locator('.form-section-heading').filter({ has: page.getByRole('heading', { name: '评价标准', exact: true }) });
+  await expect(criterion).toContainText('夏普比率（252 天年化）');
+  await choose(page, '评价指标', '夏普比率（365 天年化，原生账户）');
+  const explanation = criterion.getByRole('button', { name: '解释：夏普比率（365 天年化）', exact: true });
+  await explanation.hover(); await expect(page.getByRole('tooltip')).toContainText('365 天'); await page.mouse.move(0, 0);
+  await page.getByLabel('试验预算', { exact: true }).fill('3'); await page.getByRole('button', { name: '开始研究' }).click();
+  await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
+  const original = state.writes.find(write => write.path === '/research')!.raw!;
+  expect(JSON.parse(original).specification).toMatchObject({ evaluation: { metric: 'Sharpe Ratio (365 days)' }, search: { scope: 'ensemble', maxMembers: 2 } });
+  await page.reload(); await expect(criterion).toContainText('夏普比率（365 天年化）');
+  await page.getByRole('button', { name: '核对提交', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '显式年化周期', exact: true, level: 1 })).toBeVisible();
+  expect(state.writes.filter(write => write.path === '/research').map(write => write.raw)).toEqual([original, original]);
+});
 
 test('owner setup/login and uncertain research preserve the exact body after changed defaults and reload', async ({ page }, info) => {
   const state = await contract(page, true); await page.goto('/');
@@ -245,7 +268,7 @@ test('390px keyboard navigation, reduced motion and distinct loading/empty/missi
   await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ reducedMotion: 'reduce' }); const state = await contract(page); const release = state.hold(); await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(page.getByRole('status', { name: '加载中' }).first()).toBeVisible(); release(); await expect(page.locator('.study-row')).toHaveCount(3);
   await page.getByRole('link', { name: '跳到内容' }).focus(); await expect(page.getByRole('link', { name: '跳到内容' })).toHaveCSS('outline-style', 'solid'); await page.keyboard.press('Enter'); await expect(page.locator('#main-content')).toBeFocused(); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-390.png'), fullPage: true });
   await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究名称', { exact: true })).toBeFocused(); await page.keyboard.press('Tab'); await expect(page.getByLabel('研究问题', { exact: true })).toBeFocused(); await page.keyboard.press('Escape'); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-form-390.png'), fullPage: true }); await page.getByRole('button', { name: '取消', exact: true }).click();
-  for (const [label, image] of [['数据', 'data'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['模型设置', 'settings'], ['扩展', 'extensions']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(7); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
+  for (const [label, image] of [['投资决策', 'pm'], ['数据', 'data'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['模型设置', 'settings'], ['扩展', 'extensions']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(8); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
   state.empty(); for (const [path, text] of [['research', '尚无研究'], ['portfolios', '尚无策略组合'], ['observations', '尚无观测'], ['extensions', '没有已发现扩展']]) { await page.goto('/#/' + path); await page.reload(); await expect(page.getByRole('heading', { name: text!, exact: true })).toBeVisible(); await fits(page, 390); }
   state.missing(); await page.getByRole('button', { name: '刷新目录', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('记录不存在'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.locator('pre')).toHaveCount(0); expect(state.writes).toEqual([]);
 });
@@ -263,11 +286,11 @@ test('navigation opened after cancel survives publication of the pending route a
   await page.evaluate(() => { (window as Window & { holdNavigation?: boolean }).holdNavigation = true; });
   await page.getByRole('button', { name: '取消', exact: true }).click(); await expect(page).toHaveURL(/#\/research$/); await expect(page.getByRole('heading', { name: '新建研究', exact: true })).toBeVisible();
   const trigger = page.getByRole('button', { name: '打开导航', exact: true }); const menu = page.getByRole('dialog'); const data = menu.getByRole('link', { name: '数据', exact: true });
-  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.focus(); await expect(data).toBeFocused();
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(8); await data.focus(); await expect(data).toBeFocused();
   await page.evaluate(() => { const browser = window as Window & { publishNavigation?: () => void }; browser.publishNavigation!(); delete browser.publishNavigation; });
-  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(menu.getByRole('link')).toHaveCount(7); await expect(data).toBeFocused();
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(menu.getByRole('link')).toHaveCount(8); await expect(data).toBeFocused();
   await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();
-  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('#main-content')).toBeFocused();
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(8); await data.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('#main-content')).toBeFocused();
   await fits(page, 390); await audit(page); expect(state.writes).toEqual([]);
 });
 

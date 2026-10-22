@@ -19,6 +19,7 @@ import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
+import { assertBusinessAdmission, maintenanceState } from './pm-maintenance.ts';
 import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
 import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy } from '../../../packages/contracts/src/index.ts';
 
@@ -150,6 +151,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
+      if (!current) assertBusinessAdmission(facts);
       facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) };
     }, context);
     return host.start(requestId, validated);
@@ -244,6 +246,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const facts = await tx.doc(Application);
         const existing = Object.values(facts.portfolios).map(portfolio).find((item) => item.input.requestId === input.requestId);
         if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
+        assertBusinessAdmission(facts);
         const fact: PortfolioFact = { input: structuredClone(input), evidence, weights, policy: json(configured.strategy), native: null, target: null,
           view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', capital, currency: configured.currency,
             createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null } };
@@ -280,6 +283,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const facts = await tx.doc(Application);
       const existing = Object.values(facts.observations).map(observation).find((item) => item.input.requestId === input.requestId);
       if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
+      assertBusinessAdmission(facts);
       const accountControl = facts.accountControls?.[accountKey(connection, facts.accountControls)];
       if (!input.automatic?.enabled) {
         const state = capitalStatus(control(accountControl));
@@ -304,9 +308,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   }
   async function refreshObservation(id: string) {
     const original = await getObservation(id);
-    if (original.view.automaticPolicy?.enabled && original.view.status !== 'STOPPED' && !['PENDING', 'UNCERTAIN'].includes(original.view.receipt?.status ?? '') && !unsettledAdjustment(original)) return original.view;
+    // The automatic loop parks during maintenance. Outstanding PM exit duties
+    // still need a fresh, GET-only account observation to establish flatness.
+    const maintenance = maintenanceState((await snapshot())!);
+    if ((!maintenance || maintenance.state === 'RUNNING') && original.view.automaticPolicy?.enabled && original.view.status !== 'STOPPED' && !['PENDING', 'UNCERTAIN'].includes(original.view.receipt?.status ?? '') && !unsettledAdjustment(original)) return original.view;
     const taskId = await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const value = facts.observations[id]; if (!value) throw new Problem('observation_not_found', 404);
+      if (maintenanceState(facts)?.state === 'QUIESCED') throw new Problem('service_maintenance', 503);
       const fact = observation(value);
       const previous = await tx.task(fact.taskId as TaskId);
       if (!fact.view.automaticPolicy && previous && previous.state.status !== 'terminal') return fact.taskId;
@@ -328,6 +336,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     let abortId: number | undefined;
     await host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const found = facts.observations[id]; if (!found) throw new Problem('observation_not_found', 404);
+      assertBusinessAdmission(facts);
       const fact = observation(found);
       if (input.enabled && fact.view.status === 'STOPPED') throw new Problem('observation_stopped', 409);
       if (input.enabled && Object.values(facts.observations).map(observation).some(other => other.view.id !== id && accountKey(other.connection, facts.accountControls) === accountKey(fact.connection, facts.accountControls) && other.view.automaticPolicy?.enabled && other.view.status !== 'STOPPED')) throw new Problem('account_automatic_binding_already_enabled', 409);

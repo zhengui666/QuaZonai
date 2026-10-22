@@ -34,6 +34,33 @@ QuaZonai 是单人、本机、可扩展的无人值守研究工作台。核心�
 
 十进制、超出 JS 安全整数范围的计数与纳秒不能先转 `Number`。正式指标拒绝 NaN／Infinity，未知值保持 null，缺口不补零。计算成功、研究完成、独立证据和下游 ACK 是不同事实。
 
+<a id="pm-platform"></a>
+## 自动量化 PM 业务
+
+PM 是既有研究与共享账户科学计算的业务消费者。所有者提供目标、登记数据、资金来源、模型和总试验预算，并可明确收益优先、下行优先或保留 Pareto 权衡；系统记录 `MandateRevision`、冻结 `DecisionPolicyRevision`，产生研究、训练组合与账户配置证据。使用方案和验收边界见[实现任务](tasks/pm-adaptive-platform/task.md)及[评审合同](tasks/quant-pipeline-integrity/design/contracts.md)。当前运行时 DTO 与校验以 [pm.ts](../packages/contracts/src/pm.ts)、[pm-validation.ts](../packages/contracts/src/pm-validation.ts) 为入口；`ResearchTrial.id` 是业务字符串，原数字 Task ID 只在 `runtime` 中保存。
+
+[研究扩展](../apps/research/src/pm-campaign.ts)在原官方 Durable 中记录假设、全部尝试、资源消费、比较及收束。训练拟合和可选择的联合账户试验有不同用途；`candidateTrialIds` 明确选择集合，训练尝试继续可见但不冒充账户候选。相同比较范围要求原数据修订、评价协议、角色、实际区间、日历、资金、费用及起始状态相容。试验成功或研究候选胜出不等于新组合已获得独立评价、经济容量或投资资格。
+
+[共享决策方法](../packages/contracts/src/decision.ts)按不可变 `MetricDefinition.id` 与原定义读取证据。原生 Validation 投影仅接受明确分区，排除独立评价和组合中的单成员诊断；252／365 日 Sharpe 精确区分。原生负号回撤转换成有版本的正损失，费用保留十进制与币种，缺失／冲突／晚到数据不补零。负收益日比例覆盖全部完整日，包含现金日，缺日不能得到完整日绩效。经验 Pareto 前沿是点估计描述，不是显著性结论；诊断前沿不能改写冻结的目标排序，未解权衡保留多个候选。
+
+独立指标通过单独的 `projectNativeIndependentMetrics` 读取原 HELDOUT 分区，角色固定为 `INDEPENDENT`，不能重新标成 Validation 或返回研究选择反馈。所有者通过 [PM 资源路由](../apps/service/src/pm-routes.ts)读取原证据引用与正文、周期、研究账本和历史决策；计算失败也保留原错误证据。[预注册配对经济反证](../apps/service/src/pm-qualification.ts)只检查已冻结配置在独立区间是否按原偏好严格优于同起始状态基准，最高晋级到 SHADOW；不宣称统计显著、实盘资格或因独立失败重新选择。
+
+[原生组合拟合](../apps/job/src/ensemble_fit.rs)只使用训练截止前已经成熟的标签，交叉拟合校准任意分数后，用 Clarabel 计算非负、和为一的组合系数。系数连接的是实际因子模型与原报告，并非虚构可交易因子标的；资产配置与其后的共享账户回放是不同操作。`freeze-ensemble-calibrations` 保留同一模型、校准、截止和来源关系；每次新拟合、联合回放、资金配置测试与现金基准均属于可追踪的科学工作，不因失败免费重试。
+
+[服务 PM 周期](../apps/service/src/pm-platform.ts)由原官方 Task 驱动，捕获 mandate、policy、dataset、account 和 incumbent 的版本依据，旧依据完成的结果仅保留证据，不能覆盖新决策。研究用 `CandidateComparison`；运行配置用 `OperatingComparison`，明确历史联合回放、前瞻模型估计或实际观测，不能伪造 `ResearchTrial` 充当账户配置。已证明的原生硬约束不可行候选可退出偏好排名；进程错误、编译失败和缺指标保留未知，不能当作科学否证或经济不可行。
+
+[历史账户科学适配](../apps/service/src/pm-science.ts)在每个资金部署上限重新执行原生 `study-portfolio` 配置与账户回放，保持所有者完整初始 NAV 和同起始现金状态，余款保留现金；资金点 K 表示初始 NAV 下的配置比例，后续权益按该比例再投资，不冒充整个存续期的绝对名义金额上限。共同现金基准使用同一实际回放区间、费用和币种。[原生资金点计算](../apps/job/src/capital_curve.rs)保留实际测试点和非单调缺口，最大测试本金不是已支持容量，未经验证的区间不插值。资产配置方法的风险厌恶参数来自版本化方法；固定参数不声称由所有者偏好或数据自动学得。缺少冲击、退出与原生参与率证据时，不给出经济容量上界。
+
+既有账户通过[原始账户捕获](../apps/service/src/pm-account.ts)保留完整 `nativeObservation`、明确零未完成订单报告、原生账号与传输别名映射及账户级资金预留；同来源的新序列不能更换真正原生账户。经济状态 `ts_event`、原生发布 `ts_init`、producer heartbeat 与本机首次收到时刻各自保留，后到控制事实和本机预留不能沿用更早可得时刻。缺少原生余额、显式订单数量、连续性或真实接收时间时不从单一权益反推持仓／现金。
+
+[既有现货科学适配](../apps/service/src/pm-account-native.ts)调用 `value-observed-spot`、`compare-observed-spot` 和 `study-observed-spot`。只接受已证明无锁定、借款和在途委托的多币 CASH 状态及原生支持的显式现货政策；相同原始数量分别进入零主动订单的 HOLD 和重新配置回放。原生价格按账户经济时点估值，派生 report NAV 位于独立 `AccountBasis.valuation` 并保留原证据、方法、时点和可得时间，不回写原 source equity。PM 数据摘要与 native UUID 使用持久桥接证据，恢复不生成另一映射。每个 HOLD 和 REBALANCE 均消耗科学尝试，原约束不可行时保留原 solver frames 和已完成基准；历史对照不当作真实账户收益或未来预测。现金现货每日证据读取原 `spot_cash_report`，不能把预测分数或未覆盖整日的路径当每日收益。
+
+历史配置输出中的目标金额是明确初始 NAV 下的情景表达，不是当前持仓或当前账户换仓额；无对应持仓事实时 `currentNotional` 和 `netTradeNotional` 成对为 null。资金计划与各策略归属使用精确十进制守恒；不可有限十进制表示的派生资本比例可为 null，真钱金额仍精确守恒。正式目标交付还要求权威账户依据、当前资格及已知差额。PM 目标消费者已接入资格核验、原回执交付与对账，ACK 不当作成交；历史成功或 SHADOW 不自动产生已获资格的当前账户决策，也不自动续期或授权下游交易。研究、配置、独立评价、目标交付、成交观测和退出责任分别保留。
+
+[账户事件适配](../apps/service/src/pm-account-events.ts)只读取受信传输的显式区间、完整性声明、原现金流和成交 ID；缺失来源与来源确认的空区间不同。金额、币种、未知手续费及 source／receiver 时钟保留，重复原事件只记一次，同 ID 改正文拒绝。后续账户现金流调整权益差必须具备完整覆盖与同币种，不自动称作策略 PnL 或 TWR。退休还检查原多币余额与零在途订单，不能因为归一化 positions 为空就宣布没有敞口。
+
+Web 的 PM 工作区与 `quazonai pm` 读取同一服务事实，展示自动组合、比较、资本点、证据缺口和历史。版本化请求、未知响应核对、预算与暴露账本沿用原协议；浏览器关闭不会形成第二个调度器。受控协议验收、真实原生科学验收及实际部署运行证据分别记录，不以其中一种冒充另外两种。
+
 <a id="cycle-startup"></a>
 <a id="codex"></a>
 ## 原生 Agent 与无人值守
@@ -56,6 +83,8 @@ Provider 与模型来自实际配置的官方目录，无静默模型回退。�
 保留原数据目录、Instrument 定义、Universe 历史、来源、许可、质量、可得时间和研究版本。`event_at`、`available_at`、`decision_at` 不可互换；PIT 要求 `available_at <= decision_at`。抓取成功、当前成分或重述后的数值不冒充历史可得。
 
 [公开行情准备](../runtimes/data/hyperliquid.md)按声明式文件/字段映射导入来源中全部市场的 BAR、逐笔、盘口快照与资金费率观测；下载和转换不按交易所或币种分支。合约与历史标识解析复用官方适配器，不用标识补造合约参数。币种原生属性随目录保留，通用读入/分区准备恢复它们。可选官方高精度格式保留十位小数，既有目录及默认科学构建不变；新格式消费者必须使用同一精度构建。原始文件与许可留在操作边界；当前参数、事件时间代理、快照盘口和本地读回不建立历史覆盖、PIT 或永续资金费结算能力。缺失映射或拒绝行产生不完整报告和失败退出；可确定标识但历史定义缺失则单独计数。科学入口仍使用原 BAR 合同。
+
+受信任来源可通过配置 `revisionManifest` 发布不可变文件修订。[来源消费者](../apps/service/src/pm-source.ts)核对实际文件字节／SHA-256、全部目录覆盖、来源可得时间及包含修订性质的清单摘要，拒绝未登记文件、路径越界与符号链接别名。[修订准入](../apps/service/src/pm-datasets.ts)保存原清单快照和修订关系，同一来源修订不得改正文，后续修订不得复用或覆盖任何已准入历史目录。APPEND、CORRECTION、RETRACTION 触发各自版本事实；静态旧来源不补造清单或文件不可变资格。该消费者验证文件输入与时钟约束，来源接收时钟的 PIT 品质和实际市场覆盖仍需独立证据。
 
 Discovery／Validation／Sealed／Forward 的原用途与暴露账本保持隔离。研究员不能读 Sealed，最终评价不反馈模型继续调参；复制目录、改标签或重启不能重置暴露与预算。失败、取消、无效及已比较试验继续留在账本。缺数据、来源不合格或原生接口不支持时保留具体失败，不生成假指标或假资格。
 

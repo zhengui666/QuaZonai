@@ -40,6 +40,21 @@ enum Operation {
     },
     /// Solve one frozen allocation request read from stdin.
     Allocate,
+    /// Fit causal fold-local score calibrations and nonnegative simplex weights.
+    FitEnsemble,
+    /// Apply an immutable fitted signal ensemble to later original forecasts.
+    ApplyEnsemble,
+    /// Verify original fit evidence and emit frozen native study calibrations.
+    FreezeEnsembleCalibrations,
+    /// Rerun the original account at automatically selected real capital points.
+    CapitalCurve {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long, value_parser = parse_id)]
+        dataset_revision_id: Option<contracts::Id>,
+        #[arg(long)]
+        plan_only: bool,
+    },
     /// Blend explicit aligned native target rows using exact decimal member weights.
     BlendTargets,
     /// Conditional historical capacity from original causal BAR liquidity and targets.
@@ -150,6 +165,28 @@ enum Operation {
         #[arg(long)]
         objects: PathBuf,
     },
+    /// Matched no-trade HOLD and target replay from original observed spot balances.
+    CompareObservedSpot {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Value original observed spot balances using only original already available marks.
+    ValueObservedSpot {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Digest actual original native instruments, history and BARs at a frozen cutoff.
+    CatalogPrefixDigest {
+        #[arg(long)]
+        catalog: PathBuf,
+    },
+    /// Optimize inside the observed spot inventory at every causal decision cutoff.
+    StudyObservedSpot {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        objects: PathBuf,
+    },
 }
 
 fn parse_id(value: &str) -> std::result::Result<contracts::Id, &'static str> {
@@ -222,6 +259,21 @@ fn run(operation: Operation) -> Result<()> {
             Ok(())
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
+        Operation::FitEnsemble => output(&job::ensemble_fit::fit(&input()?)?),
+        Operation::ApplyEnsemble => output(&job::ensemble_fit::apply(&input()?)?),
+        Operation::FreezeEnsembleCalibrations => output(&job::ensemble_fit::freeze(&input()?)?),
+        Operation::CapitalCurve {
+            catalog,
+            dataset_revision_id,
+            plan_only,
+        } => {
+            let request = input()?;
+            output(&if plan_only {
+                job::capital_curve::plan_only(&catalog, &request, dataset_revision_id)?
+            } else {
+                job::capital_curve::evaluate(&catalog, &request, dataset_revision_id)?
+            })
+        }
         Operation::BlendTargets => output(&domain::execution::strategy::blend_targets(&input()?)?),
         Operation::AssessCapacity { catalog } => {
             output(&job::capacity::assess(&catalog, &input()?)?)
@@ -348,6 +400,20 @@ fn run(operation: Operation) -> Result<()> {
         )?),
         Operation::StudyPortfolio { catalog, objects } => {
             output(&job::study::evaluate(&catalog, &input()?, |id| {
+                model_bytes(&objects.join(id.to_string()))
+            })?)
+        }
+        Operation::CompareObservedSpot { catalog } => {
+            output(&job::observed_spot::compare(&catalog, &input()?)?)
+        }
+        Operation::ValueObservedSpot { catalog } => {
+            output(&job::observed_spot::value(&catalog, &input()?)?)
+        }
+        Operation::CatalogPrefixDigest { catalog } => {
+            output(&job::catalog_prefix::digest(&catalog, &input()?)?)
+        }
+        Operation::StudyObservedSpot { catalog, objects } => {
+            output(&job::observed_spot::study(&catalog, &input()?, |id| {
                 model_bytes(&objects.join(id.to_string()))
             })?)
         }

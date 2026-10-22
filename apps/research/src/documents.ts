@@ -6,6 +6,7 @@ export type ResearchInput = JsonObject & {
   goal: string;
   specification?: import('../../../packages/contracts/src/index.ts').ResearchSpecification;
   publicLiteratureQueries?: string[];
+  campaign?: import('./pm-campaign.ts').ResearchCampaignBinding;
   model: { provider: string; modelId: string };
   thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
   serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier;

@@ -183,12 +183,16 @@ fn nullable(
 }
 
 pub(super) fn shape(value: &NativeSimulationResultV1) -> Result<(), DomainError> {
+    shape_mode(value, false)
+}
+
+fn shape_mode(value: &NativeSimulationResultV1, observed_hold: bool) -> Result<(), DomainError> {
     if let Some(report) = &value.spot_cash_report {
         spot_cash_report::shape(report)?;
     }
     if value.native_version != "0.63.0"
         || value.iterations.get() == 0
-        || value.consumed_target_points.get() == 0
+        || (value.consumed_target_points.get() == 0 && !observed_hold)
         || value.returns_kind != NativeReturnsKind::PortfolioDaily
         || value.summary.get("venues.total").map(String::as_str) != Some("1")
         || value.summary.get("orders.open").map(String::as_str) != Some("0")
@@ -293,13 +297,43 @@ pub(crate) fn binding(
     request: &NativeSimulationRequestV1,
     value: &NativeSimulationResultV1,
 ) -> Result<(), DomainError> {
-    shape(value)?;
+    binding_with_balances(request, value, None)
+}
+
+pub fn observed_binding(
+    request: &NativeSimulationRequestV1,
+    value: &NativeSimulationResultV1,
+    start: &contracts::observed_spot::NativeObservedSpotStartV1,
+) -> Result<(), DomainError> {
+    let balances = crate::observed_spot::starting_balances(
+        start,
+        &request.settings,
+        request.selection.event_start_ns,
+    )?;
+    if request.target_points.is_empty()
+        && (value.orders != contracts::DbCounter::ZERO
+            || value.positions != contracts::DbCounter::ZERO)
+    {
+        return Err(bad("observed_spot.hold_traded"));
+    }
+    binding_with_balances(request, value, Some(&balances))
+}
+
+fn binding_with_balances(
+    request: &NativeSimulationRequestV1,
+    value: &NativeSimulationResultV1,
+    observed_balances: Option<&[contracts::spot_cash::NativeSpotCashMoneyV1]>,
+) -> Result<(), DomainError> {
+    shape_mode(
+        value,
+        observed_balances.is_some() && request.target_points.is_empty(),
+    )?;
     if request.settings.multi_currency_spot_cash.is_some() != value.spot_cash_report.is_some() {
         return Err(bad("native_output.spot_report_mode"));
     }
     crate::portfolio::simulation_models(&request.settings)?;
     let ids = instruments(&request.selection)?;
-    if request.target_points.is_empty()
+    if (request.target_points.is_empty() && observed_balances.is_none())
         || value.consumed_target_points.get() != request.target_points.len() as u64
         || !request.settings.starting_capital.is_positive()
     {
@@ -344,21 +378,29 @@ pub(crate) fn binding(
     let canonical = &value.canonical_result;
     let start = native_count(&canonical["run"]["backtest_start_ns"])?;
     let end = native_count(&canonical["run"]["backtest_end_ns"])?;
-    if start < request.selection.event_start_ns.get()
-        || start > end
-        || end
-            > crate::execution::strategy::scoped_replay_end(request)
-                .unwrap_or(request.selection.decision_cutoff_ns.get())
-    {
+    let allowed_end = crate::execution::strategy::scoped_replay_end(request)
+        .or_else(|| {
+            request.settings.multi_currency_spot_cash.as_ref().map(|_| {
+                request
+                    .target_points
+                    .iter()
+                    .map(|point| point.valid_until_ns.get())
+                    .chain(std::iter::once(request.selection.decision_cutoff_ns.get()))
+                    .max()
+                    .unwrap()
+            })
+        })
+        .unwrap_or(request.selection.decision_cutoff_ns.get());
+    if start < request.selection.event_start_ns.get() || start > end || end > allowed_end {
         return Err(bad("native_output.simulation_interval"));
     }
     if value.settled_replay_ns.is_some()
-        && (request.settings.multi_currency_spot_cash.is_some()
-            || (crate::execution::strategy::scoped_replay_end(request).is_none()
-                && !matches!(
-                    request.settings.fill_model,
-                    contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedLiquidity { .. }
-                )))
+        && (request.settings.multi_currency_spot_cash.is_none()
+            && crate::execution::strategy::scoped_replay_end(request).is_none()
+            && !matches!(
+                request.settings.fill_model,
+                contracts::portfolio::NativeModelRefV1::PolymarketV2RecordedLiquidity { .. }
+            ))
     {
         return Err(bad("native_output.simulation_completion"));
     }
@@ -375,14 +417,31 @@ pub(crate) fn binding(
         .and_then(|a| a.get("base"))
         .ok_or_else(|| bad("native_output.account"))?;
     if let Some(report) = &value.spot_cash_report {
+        let balances = observed_balances
+            .map(|balances| balances.to_vec())
+            .unwrap_or_else(|| {
+                vec![contracts::spot_cash::NativeSpotCashMoneyV1 {
+                    currency: currency.clone(),
+                    amount: request.settings.starting_capital.clone(),
+                }]
+            });
+        if base["balances_starting"].as_object().map(|o| o.len()) != Some(balances.len()) {
+            return Err(bad("native_output.spot_starting_balances"));
+        }
+        for balance in &balances {
+            if spot_cash_report::money(
+                &base["balances_starting"][&balance.currency],
+                &balance.currency,
+            )? != balance.amount
+            {
+                return Err(bad("native_output.spot_starting_balances"));
+            }
+        }
         if request.settings.account_kind != NativeAccountKind::Cash
             || account["Cash"]["allow_borrowing"].as_bool() != Some(false)
             || base["account_type"].as_str() != Some("CASH")
             || base.get("base_currency") != Some(&Value::Null)
             || base["id"].as_str() != Some(report.session.account_id.as_str())
-            || base["balances_starting"].as_object().map(|o| o.len()) != Some(1)
-            || spot_cash_report::money(&base["balances_starting"][currency], currency)?
-                != request.settings.starting_capital
             || !value.returns.is_empty()
             || value
                 .statistics
@@ -391,7 +450,7 @@ pub(crate) fn binding(
         {
             return Err(bad("native_output.spot_starting_account"));
         }
-        return spot_cash_report::binding(request, value, report);
+        return spot_cash_report::binding_with_balances(request, value, report, &balances);
     }
     if base["account_type"].as_str() != Some(account_type)
         || base["base_currency"].as_str() != Some(currency)

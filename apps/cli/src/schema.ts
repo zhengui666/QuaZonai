@@ -13,7 +13,12 @@ async function installed(source: string, packed: string) {
 export async function schemas(name?: string, domain = false) {
   try {
     if (!domain) {
-      const source = await installed('../../../packages/contracts/src/index.ts', '../schemas/contracts.ts.txt');
+      const [legacy, pm, maintenance] = await Promise.all([
+        installed('../../../packages/contracts/src/index.ts', '../schemas/contracts.ts.txt'),
+        installed('../../../packages/contracts/src/pm.ts', '../schemas/pm.ts.txt'),
+        installed('../../../packages/contracts/src/maintenance.ts', '../schemas/maintenance.ts.txt'),
+      ]);
+      const source = `${legacy}\n\n// PM business contracts\n${pm}\n\n// Maintenance contracts\n${maintenance}`;
       const names = [...source.matchAll(/export (?:interface|type) (\w+)/g)].map((match) => match[1]!);
       if (name && !names.includes(name)) throw new CliError('schema_not_found');
       return name ? { format: 'typescript', entry: name, source } : { format: 'typescript', names };

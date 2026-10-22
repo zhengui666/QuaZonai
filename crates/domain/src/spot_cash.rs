@@ -24,6 +24,22 @@ fn decimal(value: BigDecimal) -> Result<DecimalValue, ReportValuationFailureV1> 
         .map_err(|_| ReportValuationFailureV1::ArithmeticOutOfRange)
 }
 
+/// Shared exact inventory-value rule. Source/clock/currency validation belongs
+/// to the calling observed valuation context; this never posts a cash movement.
+pub fn inventory_report_value(
+    total: &DecimalValue,
+    price: Option<&DecimalValue>,
+) -> Result<DecimalValue, ReportValuationFailureV1> {
+    if !total.is_nonnegative() {
+        return Err(ReportValuationFailureV1::InvalidBalance);
+    }
+    match price {
+        Some(price) if price.is_positive() => decimal(total.as_decimal() * price.as_decimal()),
+        Some(_) => Err(ReportValuationFailureV1::NonPositivePrice),
+        None => Ok(total.clone()),
+    }
+}
+
 // The same evidence checks protect both individual valuations and daily series.
 fn validate_replay<'a>(
     frames: impl IntoIterator<Item = &'a NativeSpotValuationFrameV1>,
@@ -352,7 +368,7 @@ impl SpotCashContext {
                     return Err(F::NonPositivePrice);
                 }
                 (
-                    decimal(balance.total.as_decimal() * price.price.as_decimal())?,
+                    inventory_report_value(&balance.total, Some(&price.price))?,
                     Some(price.clone()),
                 )
             };

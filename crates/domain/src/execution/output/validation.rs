@@ -503,15 +503,23 @@ pub fn freeze_calibration(
 pub fn frozen_calibration(model: &NativeFrozenCalibrationV1) -> Result<(), DomainError> {
     if model.estimator_kind != "linregress.affine_ols"
         || model.estimator_version != "0.5.4"
-        || model.selection_rule != "LAST_NATIVE_FOLD"
+        || !matches!(
+            model.selection_rule.as_str(),
+            "LAST_NATIVE_FOLD" | "TEMPORAL_OOF_FULL_TRAIN_REFIT_V1"
+        )
         || model.horizon_observations.get() == 0
         || model.assets.is_empty()
-        || model
+        || match model
             .assets
             .iter()
             .map(|a| a.training_end_available_ns)
             .max()
-            != Some(model.fit_end_available_ns)
+        {
+            Some(end) if model.selection_rule == "TEMPORAL_OOF_FULL_TRAIN_REFIT_V1" => {
+                end >= model.fit_end_available_ns
+            }
+            end => end != Some(model.fit_end_available_ns),
+        }
     {
         return Err(bad("calibration.model"));
     }

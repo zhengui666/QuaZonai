@@ -12,6 +12,28 @@ pub fn market(fee: &str, rows_per_asset: u32) -> (tempfile::TempDir, NativeSimul
     market_direction(fee, rows_per_asset, 1.0, "10000000", false)
 }
 
+/// Separate synthetic market domain with an explicitly registered 0.0001 lot.
+/// The default integer-lot market remains available for small-capital rejection tests.
+pub fn micro_lot_market(
+    fee: &str,
+    rows_per_asset: u32,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    market_catalog::market_direction_with_size(
+        fee,
+        rows_per_asset,
+        1.0,
+        "10000000.0000",
+        false,
+        [
+            execution_models::fill(),
+            execution_models::fee(),
+            execution_models::latency(1_000_000),
+        ],
+        4,
+        "0.0001",
+    )
+}
+
 pub fn equity_market(
     fee: &str,
     rows_per_asset: u32,

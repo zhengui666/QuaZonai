@@ -20,6 +20,12 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 | Change | Command at repository root | Actual scope |
 | --- | --- | --- |
 | Service, Harness, CLI and Skill | `make check-ts` | Types and concise HTTP/core, durable recovery and client checks; official upstream packages |
+| PM decision contracts | `node --experimental-strip-types --test apps/service/test/pm-contract-acceptance.test.ts` | Exact metric identity, empirical comparison, unavailable evidence, funds, nonmonotonic capacity and operating candidate semantics; synthetic counterexamples, not performance evidence |
+| PM source revisions and resource reads | `node --experimental-strip-types --test apps/service/test/pm-source.test.ts apps/service/test/pm-routes.test.ts` | Actual file digests, append/correction history and immutable paths; real HTTP authentication, typed resource identity, durable decisions and restart |
+| PM original account source and outcomes | `node --experimental-strip-types --test apps/service/test/pm-account.test.ts apps/service/test/pm-outcomes.test.ts` | Original native identity, balances, availability, zero-order proof, derived NAV, retirement, exact cash-flow/execution events and retry conflict semantics; complete cash-flow coverage before account-only adjusted changes |
+| PM native methods | `cargo test --locked -p job --features hyperliquid-offline --test ensemble_fit --test capital_curve --test observed_spot -- --test-threads=1` | Training-only calibration/combination, original native replay at tested capital points and observed cash-spot valuation/HOLD/rebalance |
+| PM observed account adapter | `QZ_PM_OBSERVED_FIXTURE_DIR=/path/to/export QZ_JOB_BINARY=/path/to/matching/job node --experimental-strip-types --test apps/service/test/pm-account-native.test.ts` | Three actual CLI consumers using original exported catalog, balances and study objects; missing fixture/binary skips and is not a passed native check |
+| PM observed account service | `QZ_PM_OBSERVED_FIXTURE_DIR=/path/to/export QZ_JOB_BINARY=/path/to/matching/job node --experimental-strip-types --test apps/service/test/pm-account-http.test.ts` | Multi-day native FIT, matched original-inventory HOLD/rebalance, owner-only evidence and Durable restart through actual HTTP; requires the `science/source.json` fixture and its original archived receipt |
 | Web | `make check-web` | Types, small unit check, production build |
 | Original native capital-exit owner | `cargo test --locked -p job --features native-sandbox-test --test native_capital_exit -- --test-threads=1` | Existing native owner phases, old-target fencing, reservation, withdrawability and reconciliation; not a real-money operation |
 | Workbench browser behavior | `npm --prefix apps/web run test:e2e` | Build Web first; install Web, Service and Research dependencies plus Playwright Chromium. Includes production assets on disposable real HTTP/Durable SQLite, controlled failure/race cases, themes, mobile and axe checks |
@@ -46,6 +52,32 @@ node --experimental-strip-types apps/cli/src/main.ts --help
 ```
 
 Vite proxies the real API at port 8080. The application opens the official durable host programmatically; do not also start the standalone research host against the same SQLite database. The [research guide](../apps/research/README.md) describes public Harness tuning, provider registration, bounded continuation and recovery.
+
+### Quantitative PM workflow
+
+The PM workspace adds owner goals, registered data, funding and one scientific trial budget to the original research pipeline. It records planned selection candidates separately from training operations, learns factor combinations from matured training evidence, compares actual native Validation account statistics, and evaluates capital configurations against a matched cash baseline. See the [implementation task](tasks/pm-adaptive-platform/task.md), [reviewed contracts](tasks/quant-pipeline-integrity/design/contracts.md) and [architecture boundary](architecture.md#pm-platform).
+
+```sh
+quazonai pm capabilities
+quazonai pm start --file MANDATE.json
+quazonai pm list
+quazonai pm get MANDATE_ID
+quazonai pm decision MANDATE_ID
+quazonai pm history MANDATE_ID
+quazonai pm recompute MANDATE_ID --file ORIGINAL_COMMAND.json
+```
+
+`MANDATE.json` uses `PmMandateStart`: original `requestId`, `goal`, configured `datasetId`, `funding`, `model`, `maxTrials`, and optional explicit `businessPreference` / `operatingAuthority`. Recompute and retirement use the original `PmCommand` body with `requestId` and `expectedRevision`; an uncertain response is reconciled with the original identity. `quazonai schema show PmMandateStart` exposes the source wire definition. Service admission binds configured dataset snapshots and their provenance; users do not upload replacement performance metrics through these commands.
+
+Pure methods are in [decision.ts](../packages/contracts/src/decision.ts), DTOs and cross-field guards in [PM contracts](../packages/contracts/src/pm.ts), durable business transitions in [service PM](../apps/service/src/pm-platform.ts), research ledgers in [research PM](../apps/research/src/pm-campaign.ts), and required numerical work in the native kernel. `PmMandateView.comparisons` contains operating configuration comparisons, separate from research candidate comparisons. Full paths, evidence and unsupported behavior are part of the public result.
+
+The owner-authenticated [PM routes](../apps/service/src/pm-routes.ts) expose `/api/v3/capabilities`, `/mandates/:id/decision`, `/mandates/:id/decisions`, `/cycles/:id`, `/capacity-estimates/:id`, `/campaigns/:id` (including `/trials` and `/decision`), `/strategies/:id/versions` and `/strategies/:id/assessments`. All paths use the `/api/v3` prefix. `/pm-evidence/:id` returns the original evidence reference and stored payload to the owner; independent observations are never passed back as selection feedback. Missing resources return 404, and a resource of another entity type cannot stand in for the requested identity.
+
+An ACCOUNT mandate can consume original, continuous native multi-currency CASH balances plus explicit zero open orders when the declared native spot policy is supported. [Observed-account adapters](../apps/service/src/pm-account-native.ts) value inventory using marks at the original economic time, retain derived NAV separately from reported equity, and compare HOLD with recomputed allocations from the same original balances. Original snapshot receipt and later capital reservations fence availability. Locked balances, debt, margin, unknown orders and incomplete source histories remain explicit gaps. Each paired replay leg consumes the shared scientific budget. The short native fixture establishes inventory/order/cost behavior; complete daily evidence requires the separate multi-day source, not extrapolation from a short path.
+
+The ACCOUNT service acceptance uses explicitly archived, already-received software source facts. Its separate current-receipt check rejects using a snapshot first received today in an earlier historical decision; it does not change the production clock or establish broker/PIT provenance. A selected HOLD keeps the original inventory and has no new strategy allocation: its derived NAV remains in `accountBasis.valuation` and the comparison scope, while `capital` stays null. A genuine tie retains complete native evidence and derived NAV without inventing a winner or independent qualification. A selected rebalance must retain the completed original independent task and owner evidence; an exception is not a passed evaluation.
+
+A research winner is not investment authorization. Historical configurations retain the same original NAV; actual interval/currency/cost/state must match their cash or HOLD baseline. The registered frozen paired independent assessment can promote research to SHADOW only, without statistical-significance or live-authorization claims. Unknown evidence is not zero; empirical frontiers are not statistical significance; untested capital gaps are not feasible regions. Fixed method risk aversion is not a learned owner preference. PM target admission and transport consume an already qualified current-account decision and reconcile the original downstream receipt; ACK is not a fill. Historical selection or independent economic evidence alone does not create a deliverable current target. Applicable checks establish their stated software/native behavior, not profitability, market/PIT quality, a live deployment or unattended elapsed time.
 
 ### Source contracts
 

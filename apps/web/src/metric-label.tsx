@@ -5,8 +5,11 @@ import { factMetricKey, metricDefinition } from './metric-glossary';
 
 export function MetricLabel({ metricKey, label }: { metricKey: string; label?: string }) {
   const metric = metricDefinition(metricKey); const [open, setOpen] = useState(false);
+  // Touch browsers emulate sticky hover/focus after a tap; combining those
+  // triggers can reopen an explanation immediately after the closing tap.
+  const touch = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
   const name = label ?? metric.label;
-  return <span className="explained-metric"><span>{name}</span><Tooltip open={open} onOpenChange={setOpen} trigger={['hover', 'focus', 'click']} destroyOnHidden classNames={{ root: 'metric-tooltip' }} title={<span className="metric-explanation"><strong>{name}</strong><span>{metric.explanation}</span></span>}><button type="button" className="metric-info" aria-label={`解释：${name}`} onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); event.stopPropagation(); } }}><InfoIcon size={15} aria-hidden /></button></Tooltip></span>;
+  return <span className="explained-metric"><span>{name}</span><Tooltip open={open} onOpenChange={setOpen} trigger={touch ? ['click'] : ['hover', 'focus', 'click']} destroyOnHidden classNames={{ root: 'metric-tooltip' }} title={<span className="metric-explanation"><strong>{name}</strong><span>{metric.explanation}</span></span>}><button type="button" className="metric-info" aria-label={`解释：${name}`} onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); event.stopPropagation(); } }}><InfoIcon size={15} aria-hidden /></button></Tooltip></span>;
 }
 export function FactLabel({ label }: { label: string }) {
   const key = factMetricKey(label);

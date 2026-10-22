@@ -293,7 +293,15 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
             return Err(invalid());
         }
     }
-    if alphas.len() < 2 {
+    if alphas.is_empty()
+        || (input
+            .members
+            .iter()
+            .filter(|m| m.ensemble_weight.is_positive())
+            .count()
+            > 1
+            && alphas.len() < 2)
+    {
         return Err(invalid());
     }
     Ok(())
@@ -313,7 +321,7 @@ pub fn ensemble_weights<'a>(
         positive += usize::from(weight.is_positive());
         sum += weight.as_decimal();
     }
-    if count < 2 || positive < 2 || sum != BigDecimal::from(1) {
+    if count < 2 || positive == 0 || sum != BigDecimal::from(1) {
         return Err(DomainError::Invalid("ensemble_weights"));
     }
     Ok(())

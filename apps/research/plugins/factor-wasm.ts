@@ -11,12 +11,13 @@ export default defineExtension({
   tools: [defineTool({
     name: 'factor_evaluate',
     description: 'Evaluate an arbitrary factor, not a position: Wasm text exports predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Values may have any finite sign or scale. Native validation statistics are feedback, not profitability or qualification.',
-    parameters: Type.Object({ hypothesis: Type.String(), model: Type.String() }), replay: 'safe', executionMode: 'sequential',
+    parameters: Type.Object({ hypothesis: Type.String(), model: Type.String(), hypothesisId: Type.Optional(Type.String()), parentTrialIds: Type.Optional(Type.Array(Type.String())) }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
       // Record the proposal before input preparation, so missing/invalid data is
       // a disclosed failed attempt, not an erased experiment or free retry.
-      const proposal = { hypothesis: args.hypothesis, model: args.model, request: input.data.catalog_scan_request ?? input.data.request ?? null };
+      const proposal = { hypothesis: args.hypothesis, model: args.model, request: input.data.catalog_scan_request ?? input.data.request ?? null,
+        ...(args.hypothesisId ? { hypothesisId: args.hypothesisId } : {}), ...(args.parentTrialIds ? { parentTrialIds: args.parentTrialIds } : {}) };
       return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
         const request = iterationRequest(input.data);
         const catalog = input.data.catalog_scan_request !== undefined;

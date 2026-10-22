@@ -1,8 +1,8 @@
-import { useRef, useState, useSyncExternalStore } from 'react';
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api } from './api';
 import { clearResearchIntent, readResearchIntent } from './request-intent';
 
-type Kind = 'research' | 'portfolios' | 'observations' | `capital:${string}` | `capital-preview:${string}`;
+type Kind = 'research' | 'portfolios' | 'observations' | 'mandates' | `pm:${string}` | `capital:${string}` | `capital-preview:${string}`;
 interface Envelope { raw: string; persisted: boolean }
 const key = (kind: Kind) => `quazonai.command.${kind}.v3`;
 interface CommandState { pending?: Envelope; error?: unknown }
@@ -65,7 +65,8 @@ export function useCommand<T>(kind: Kind, accepted: (result: T) => void, path = 
     saveDraft(previousKey, command.raw); setPreviousRaw(command.raw); clear(kind, command);
   }
   const rawValues = pending?.raw ?? initialRaw.current;
-  return { pending, busy, error, submit, abandon, canAbandon, previousRaw, previousPersisted: draftIsPersisted(previousKey), values: rawValues ? JSON.parse(rawValues) as Record<string, unknown> : undefined };
+  const values = useMemo(() => rawValues ? JSON.parse(rawValues) as Record<string, unknown> : undefined, [rawValues]);
+  return { pending, busy, error, submit, abandon, canAbandon, previousRaw, previousPersisted: draftIsPersisted(previousKey), values };
 }
 export function readDraft<T>(key: string): T | undefined { if (drafts.has(key)) return drafts.get(key)!.value as T; try { const raw = sessionStorage.getItem(`quazonai.draft.${key}`); if (!raw) return; const value = JSON.parse(raw) as T; drafts.set(key, { value, persisted: true }); return value; } catch { return; } }
 export function draftIsPersisted(key: string) { return drafts.get(key)?.persisted ?? true; }

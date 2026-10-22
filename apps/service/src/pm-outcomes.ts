@@ -1,0 +1,112 @@
+import type * as Pm from '../../../packages/contracts/src/pm.ts';
+import type { CapturedAccount } from './pm-account.ts';
+import type { PmRecord } from './pm-facts.ts';
+import { digest, fact, gap, identity } from './pm-facts.ts';
+import { json, object, Problem } from './facts.ts';
+import { addDecimal, subtractDecimal } from '../../../packages/contracts/src/pm-validation.ts';
+import { accountEventKey, projectAccountEvents } from './pm-account-events.ts';
+import type { AccountEventIdentity, CapturedAccountEvents } from './pm-account-events.ts';
+
+function knownUnpricedSnapshot(artifact: CapturedAccount['artifact'] | null): boolean {
+  if (!artifact?.snapshot) return false;
+  const snapshot = object(artifact.snapshot); if (!snapshot.nativeObservation) return false;
+  const native = object(object(snapshot.nativeObservation).snapshot);
+  return native.is_stale === true || ['stale_instruments', 'stale_currencies', 'unpriced_instruments'].some(key => Array.isArray(native[key]) && native[key].length > 0);
+}
+
+/** Actual account events are a separate evidence stream from modeled replays.
+ * A cash-flow-adjusted currency delta is neither strategy PnL nor a TWR. */
+export function observePmOutcome(record: PmRecord, account: CapturedAccount) {
+  record.evidence[account.evidence.id] = account.evidence; record.artifacts[account.evidence.objectKey] = account.artifact;
+  const ledgerKey = `account-event-ledger:${account.basis.accountBindingId}`;
+  const ledger = record.artifacts[ledgerKey] ? object(record.artifacts[ledgerKey]) : {};
+  const prior = Array.isArray(ledger.identities) ? ledger.identities as unknown as AccountEventIdentity[] : [];
+  let events: CapturedAccountEvents | null = null;
+  try {
+    events = projectAccountEvents(account, prior);
+    if (events) {
+      record.evidence[events.evidence.id] = events.evidence; record.artifacts[events.evidence.objectKey] = events.artifact;
+      const merged = new Map(prior.map(item => [accountEventKey(item), item]));
+      for (const item of events.identities) merged.set(accountEventKey(item), item);
+      record.artifacts[ledgerKey] = json({ identities: [...merged.values()], evidenceRefs: [...new Set([...(Array.isArray(ledger.evidenceRefs) ? ledger.evidenceRefs as string[] : []), events.evidence.id])] });
+    }
+  } catch (error) {
+    gap(record, 'account_event_integrity', error instanceof Problem ? error.message : 'account_event_projection_failed', 'REFRESH_SOURCE');
+  }
+  const decisions = Object.values(record.decisions).filter(item => item.accountBasis?.accountBindingId === account.basis.accountBindingId);
+  for (const decision of decisions) {
+    const original = decision.accountBasis!;
+    if (BigInt(account.basis.observedAtNs) <= BigInt(original.observedAtNs)) continue;
+    const id = identity('outcome', [decision.id, account.evidence.sourceRevision]); if (record.outcomes[id]) continue;
+    const interval = { startNs: original.observedAtNs, endExclusiveNs: (BigInt(account.basis.observedAtNs) + 1n).toString() };
+    const makeMetric = (key: string, label: string, value: string | null, reasons: string[], refs: string[]): Pm.MetricObservation => ({
+      definition: { id: `qz.metric.${key}/1`, key: `account.${key}`, definitionVersion: '1', label, unit: 'CURRENCY',
+        valueEncoding: 'DECIMAL', direction: 'DIAGNOSTIC', aggregation: key === 'observed_equity' ? 'LAST_AUTHORITATIVE_SNAPSHOT' : 'EXACT_ACCOUNT_INTERVAL_CURRENCY_DELTA',
+        calendarId: null, annualizationDays: null, horizonRef: 'OBSERVED_ACCOUNT_INTERVAL', requiredInputs: key === 'observed_equity' ? ['authoritative_account_equity'] : ['matched_original_equity_snapshots', 'source_confirmed_complete_external_cash_flows'] },
+      status: value !== null ? 'AVAILABLE' : 'UNAVAILABLE', value, currency: account.basis.currency, reasonCodes: reasons, role: 'OBSERVED', interval,
+      asOfNs: account.basis.observedAtNs, availableAtNs: account.basis.availableAtNs, origin: key === 'observed_equity' ? 'ACCOUNT' : 'DERIVED',
+      methodRef: key === 'observed_equity' ? null : 'qz.account-flow-adjusted-currency-delta/1', evidenceRefs: refs, sampleCount: null, expectedCount: null,
+      uncertainty: null, raw: null });
+    const closingUnpriced = knownUnpricedSnapshot(account.artifact);
+    const metric = makeMetric('observed_equity', 'Observed account equity', closingUnpriced ? null : account.basis.equity?.amount ?? null,
+      closingUnpriced ? ['native_account_valuation_stale_or_unpriced'] : account.basis.equity ? [] : ['authoritative_equity_unavailable'], [account.evidence.id]);
+    const metrics = [metric];
+    const command = decision.targetCommandId ? record.commands[decision.targetCommandId] : null;
+    const reasons = ['observed_account_changes_are_not_identified_strategy_pnl'];
+    const normalizationRef = identity('cashflow-normalization', id);
+    const coverage = !!events && events.complete.cashFlows && BigInt(events.interval.startNs) <= BigInt(original.observedAtNs) + 1n
+      && BigInt(events.interval.endExclusiveNs) >= BigInt(interval.endExclusiveNs);
+    const flows = events?.cashFlows.filter(flow => BigInt(flow.eventAtNs) > BigInt(original.observedAtNs) && BigInt(flow.eventAtNs) <= BigInt(account.basis.observedAtNs)) ?? [];
+    const priorEvidence = record.evidence[original.positionsEvidenceRef]; const priorArtifact = priorEvidence ? record.artifacts[priorEvidence.objectKey] : null;
+    const binding = (artifact: typeof account.artifact | null) => {
+      const snapshot = artifact?.snapshot && object(artifact.snapshot); const native = snapshot && snapshot.nativeObservation && object(snapshot.nativeObservation);
+      return native && native.binding ? object(native.binding) : null;
+    };
+    const beforeBinding = binding(priorArtifact ?? null); const afterBinding = binding(account.artifact);
+    const sameAccount = original.accountSourceId === account.basis.accountSourceId && original.accountBindingId === account.basis.accountBindingId
+      && beforeBinding !== null && afterBinding !== null && ['project_id', 'environment', 'native_account_id', 'native_trader_id'].every(key => beforeBinding[key] !== undefined && beforeBinding[key] === afterBinding[key]);
+    const currencyMatches = original.currency === account.basis.currency && flows.every(flow => flow.currency === account.basis.currency);
+    const pricingKnownInvalid = closingUnpriced || knownUnpricedSnapshot(priorArtifact ?? null);
+    const available = coverage && sameAccount && currencyMatches && !pricingKnownInvalid && original.equity !== null && account.basis.equity !== null;
+    const totalFlows = available ? flows.reduce((total, flow) => addDecimal(total, flow.amount), '0') : null;
+    const adjustedChange = available ? subtractDecimal(subtractDecimal(account.basis.equity!.amount, original.equity!.amount), totalFlows!) : null;
+    const normalizationReasons = available ? ['account_currency_delta_not_strategy_pnl_or_time_weighted_return']
+      : [!coverage ? 'complete_external_cashflow_coverage_unavailable' : !sameAccount ? 'matched_original_native_account_binding_unavailable' : pricingKnownInvalid ? 'native_account_valuation_stale_or_unpriced' : !currencyMatches ? 'cashflow_currency_conversion_unavailable' : 'matched_reported_equity_unavailable'];
+    const refs = [original.positionsEvidenceRef, account.evidence.id, ...(events ? [events.evidence.id] : [])];
+    const normalization = json({ method: 'qz.account-flow-adjusted-currency-delta/1', interval, status: available ? 'AVAILABLE' : 'UNAVAILABLE',
+      accountSourceId: account.basis.accountSourceId, sourceEvidenceRefs: refs, originalEquity: original.equity, closingEquity: account.basis.equity,
+      externalNetCashFlow: totalFlows, adjustedEquityChange: adjustedChange, currency: account.basis.currency, reasonCodes: normalizationReasons,
+      scope: 'WHOLE_ACCOUNT_NOT_STRATEGY_ATTRIBUTION', returnMethod: null });
+    record.artifacts[normalizationRef] = normalization;
+    record.evidence[normalizationRef] = { id: normalizationRef, sourceKind: 'DERIVED', role: 'OBSERVED', runtime: null, objectKey: normalizationRef,
+      contentDigest: digest(normalization), mediaType: 'application/json', sourceRevision: account.evidence.sourceRevision, eventInterval: interval,
+      availableAtNs: account.basis.availableAtNs, clockPrecision: 'NANOSECOND', schemaId: 'qz.account-cashflow-normalization/1', visibility: 'OWNER_ONLY' };
+    const adjusted = makeMetric('external_flow_adjusted_equity_change', 'Account equity change excluding external cash flows', adjustedChange,
+      adjustedChange !== null ? [] : normalizationReasons, [normalizationRef]);
+    metrics.push(adjusted); reasons.push(...normalizationReasons);
+    const actualExecutions = events?.executions.filter(event => BigInt(event.eventAtNs) > BigInt(original.observedAtNs)
+      && BigInt(event.eventAtNs) <= BigInt(account.basis.observedAtNs)) ?? [];
+    const matchedExecutions = command ? actualExecutions.filter(event => event.clientTargetId === command.idempotencyKey) : [];
+    reasons.push(events ? events.complete.executions ? 'source_execution_coverage_declared' : 'partial_source_execution_coverage' : 'actual_executions_not_provided');
+    const executionRef = identity('execution-attribution', id);
+    record.artifacts[executionRef] = json({ decisionId: decision.id, commandId: command?.id ?? null, sourceEvidenceRef: events?.evidence.id ?? null,
+      matchedExecutionIds: matchedExecutions.map(event => event.id), unmatchedExecutionIds: actualExecutions.filter(event => !matchedExecutions.includes(event)).map(event => event.id),
+      completeness: events?.complete.executions ?? null, identification: 'REPORTED_TARGET_ID_ONLY_NOT_PNL_CAUSALITY' });
+    record.evidence[executionRef] = { ...record.evidence[normalizationRef]!, id: executionRef, objectKey: executionRef,
+      contentDigest: digest(record.artifacts[executionRef]), schemaId: 'qz.account-execution-attribution/1' };
+    const attributionId = identity('attribution', id);
+    const outcome: Pm.ObservedOutcome = { ...fact(id), decisionId: decision.id, targetCommandId: decision.targetCommandId,
+      accountBasis: account.basis, interval, availableAtNs: account.basis.availableAtNs, receiptState: command?.state ?? 'NOT_OFFERED',
+      reconciliationStatus: matchedExecutions.length || command?.state === 'ACKNOWLEDGED' ? 'PARTIAL' : 'UNMATCHED', realizedMetrics: metrics, attributionEvidenceRef: attributionId,
+      matureLabelEvidenceRef: null, reasonCodes: reasons };
+    const comparison = record.comparisons[decision.comparisonRef];
+    if (comparison) record.attributions[attributionId] = { ...fact(attributionId), observedOutcomeId: id, decisionId: decision.id,
+      scope: { ...comparison.scope, id: identity('observed-scope', id), interval, role: 'OBSERVED', capital: account.basis.equity },
+      cashFlowNormalizationRef: normalizationRef, actualObservationRefs: [...refs, executionRef], counterfactualEvidenceRefs: [],
+      components: [{ kind: 'DATA', metric, identification: 'UNIDENTIFIED', methodRef: null },
+        { kind: 'CAPITAL', metric: adjusted, identification: 'UNIDENTIFIED', methodRef: 'qz.account-flow-adjusted-currency-delta/1' }],
+      aggregation: 'NON_ADDITIVE_COUNTERFACTUAL', residual: null, limitations: reasons };
+    else outcome.attributionEvidenceRef = null;
+    record.outcomes[id] = outcome;
+  }
+}

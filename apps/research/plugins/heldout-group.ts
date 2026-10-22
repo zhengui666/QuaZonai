@@ -25,6 +25,9 @@ export const finalizeGroup = defineTool({
         if (!await tx.conversation(id)) throw new Error('research_not_found');
         const study = await tx.doc(Study, id);
         if (!study.input) throw new Error('research_input_missing');
+        // This legacy grouping protocol has no shared typed comparison basis or
+        // downstream consumer binding. Campaigns use their registered finalizer.
+        if (study.input.campaign) throw new Error('campaign_group_finalization_unsupported');
         if (study.final && (study.final.taskId !== api.taskId || study.final.trialId !== selection.trialId)) throw new Error('research_already_final');
         const trial = study.trials.find((trial) => trial.taskId === selection.trialId);
         if (trial?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');

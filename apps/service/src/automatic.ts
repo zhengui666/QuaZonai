@@ -10,9 +10,12 @@ import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalCo
 import { factorId } from './factors.ts';
 import type { AutomaticAllocation, TargetReceipt } from '../../../packages/contracts/src/index.ts';
 import type { ObservationFact } from './facts.ts';
+import { maintenancePark, resumeMaintenance } from './pm-maintenance.ts';
+import type { MaintenanceCheckpoint } from './pm-maintenance.ts';
 
 export interface AutomaticInput { id: string; binary: string; dataDir: string }
-type Checkpoint = { phase: 'snapshot' } | { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number };
+type RegularCheckpoint = { phase: 'snapshot' } | { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number };
+type Checkpoint = RegularCheckpoint | MaintenanceCheckpoint<{ phase: 'snapshot' }>;
 function emptyAllocation(fact: ObservationFact): AutomaticAllocation {
   return { status: 'BLOCKED', reason: 'awaiting_authoritative_account', updatedAt: null, sequence: null, nativeClockNs: null,
     equity: null, reserved: null, cashBuffer: fact.view.automaticPolicy!.cashBuffer, budget: null, capital: null, capacity: null, residualCash: null,
@@ -25,8 +28,12 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
   name: 'qz.account-adjustment', version: 1, initial: () => ({ phase: 'snapshot' }),
   phases: {
     async snapshot(task, runtime, context) {
-      let read!: JsonObject;
-      await runtime.commit(async tx => { const facts = await tx.doc(Application); read = json({ fact: facts.observations[task.input.id], portfolio: facts.portfolios[observation(facts.observations[task.input.id]).input.portfolioId], controls: facts.accountControls ?? {} }); return undefined; }, context);
+      let read!: JsonObject; let parked = false;
+      await runtime.commit(async tx => { const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
+        if (!unsettledAdjustment(fact)) { const next = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (next) { parked = true; return next; } }
+        read = json({ fact, portfolio: facts.portfolios[fact.input.portfolioId], controls: facts.accountControls ?? {} }); return undefined;
+      }, context);
+      if (parked) return;
       const fact = observation(read.fact); const source = portfolio(read.portfolio); const policy = fact.view.automaticPolicy;
       if (unsettledAdjustment(fact)) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: fact.view.allocation?.status === 'SIZED' ? 'deliver' : 'reconcile' } }), context); return; }
       if (!policy?.enabled || fact.view.status === 'STOPPED') {
@@ -105,6 +112,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         } finally { await rm(directory, { recursive: true, force: true }); }
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const latest = observation(facts.observations[task.input.id]);
+          const parked = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (parked) return parked;
           if (!latest.view.automaticPolicy?.enabled || latest.view.status === 'STOPPED') return { status: 'terminal', outcome: { status: 'completed', result: null } };
           if (latest.view.automaticPolicy.cashBuffer !== policy.cashBuffer || latest.view.automaticPolicy.maximumSnapshotAgeSeconds !== policy.maximumSnapshotAgeSeconds) return { status: 'running', checkpoint: { phase: 'snapshot' } };
           const latestStatus = capitalStatus(control(facts.accountControls?.[key]));
@@ -218,9 +226,17 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       }
     },
     async wait(task, runtime, context) {
+      let parked = false;
+      await runtime.commit(async tx => {
+        const fact = observation((await tx.doc(Application)).observations[task.input.id]);
+        if (!unsettledAdjustment(fact)) { const next = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (next) { parked = true; return next; } }
+        return undefined;
+      }, context);
+      if (parked) return;
       await runtime.sleep(task.state.checkpoint.wakeAt, context);
       await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'snapshot' } }), context);
     },
+    async maintenance(task, runtime, context) { await runtime.commit(tx => resumeMaintenance(tx, task.id, 'qz.account-adjustment', task.state.checkpoint), context); },
   },
   async abort(task, runtime, context) {
     await runtime.commit(async tx => {

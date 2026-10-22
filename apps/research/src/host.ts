@@ -3,7 +3,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { configure, createRegistry, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
-import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId } from '@earendil-works/pi-durable';
+import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -16,7 +16,9 @@ import type { ResearchInput } from './documents.ts';
 import { configuredModels, subscriptionSpeed, supportsServiceTier } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
-import { researchContinuation } from './continuation.ts';
+import { Continuation, researchContinuation } from './continuation.ts';
+import { CampaignResearchDoc } from './pm-campaign.ts';
+import { settleCampaignTrial } from './pm-ledger.ts';
 
 import { isRecoveryRequestId, modelErrorCode, recoveryInput, recoveryRequestId, submissionView } from './recovery.ts';
 const context = BACKGROUND_CONTEXT;
@@ -85,6 +87,11 @@ export async function openResearch(options: {
   try {
     const requests = await harness.snapshot(Requests, context);
     await Promise.all(Object.values(requests?.requests ?? {}).map(request => rememberTier(request.conversationId, request.input)));
+    // Repair a persisted owner-stop intent before submitting any new work.
+    for (const id of new Set(Object.values(requests?.requests ?? {}).map(request => request.conversationId))) {
+      const campaign = await harness.snapshot(CampaignResearchDoc, id, context);
+      if (campaign?.binding && campaign.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
+    }
     for (const [key, request] of Object.entries(requests?.requests ?? {})) {
       const requestId = key.slice('request:'.length);
       const missing = await harness.commit(async (tx) => {
@@ -125,15 +132,25 @@ export async function openResearch(options: {
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
       (await tx.doc(Study, created.id)).input = input;
+      if (input.campaign) {
+        const campaign = await tx.doc(CampaignResearchDoc, created.id);
+        campaign.binding = input.campaign;
+        // Versioned technical allowance, not a market or scientific threshold.
+        campaign.orchestration = { policyVersion: 'qz.research.resources/1', maximumModelTurns: Math.min(Number.MAX_SAFE_INTEGER, Math.max(24, input.campaign.budget.maximumTrials * 12)), generationTaskIds: [] };
+      }
       requests.requests[key] = { input, conversationId: created.id };
       return created.id;
     }, context);
     await rememberTier(id, input);
-    const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
-    if (previous) return { conversationId: id, submissionId: previous.id };
-    if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
-    const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
-    return { conversationId: id, submissionId: submission.id };
+    // Admission and owner stop share the same original Conversation boundary.
+    // A final-state read alone cannot fence a later native submit after abort.
+    return ownerChange(id, async () => {
+      const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
+      if (previous) return { conversationId: id, submissionId: previous.id };
+      if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
+      const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
+      return { conversationId: id, submissionId: submission.id };
+    });
   }
   async function submissionFor(id: number) {
     const requests = await harness.snapshot(Requests, context);
@@ -152,9 +169,30 @@ export async function openResearch(options: {
     } while (cursor);
     return null;
   }
+  async function settleOwnerStop(id: ConversationId) {
+    await (await conversation(id)).abort(context, { background: true });
+    await harness.commit(async tx => {
+      const campaign = await tx.doc(CampaignResearchDoc, id);
+      if (!campaign.binding) return;
+      const study = await tx.doc(Study, id);
+      for (const trial of study.trials.filter(item => item.status === 'STARTED')) {
+        const task = await tx.task(trial.taskId as TaskId);
+        if (!task || task.state.status !== 'terminal') throw new Error('owner_stop_task_not_settled');
+        trial.status = 'FAILED'; trial.error = 'owner_stop';
+        trial.errorDetail = { operation: 'research_trial', stage: 'owner_stop', taskOutcome: task.state.outcome.status };
+        await settleCampaignTrial(tx, { conversationId: id, taskId: task.id }, null, 'owner_stop', null);
+      }
+      if (study.final?.status === 'STARTED') {
+        study.final.status = 'FAILED'; study.final.error = 'owner_stop';
+        study.final.errorDetail = { operation: 'independent_evaluation', stage: 'owner_stop' };
+      }
+      campaign.state = 'CONCLUDED';
+    }, context);
+  }
   async function state(id: number) {
     await conversation(id);
     return { research: await harness.snapshot(Study, id as ConversationId, context),
+      campaignResearch: await harness.snapshot(CampaignResearchDoc, id as ConversationId, context),
       literature: await harness.snapshot(LiteratureDoc, id as ConversationId, context),
       submission: await latestSubmission(id), originalSubmission: await submissionFor(id) };
   }
@@ -196,7 +234,12 @@ export async function openResearch(options: {
       if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
       const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
       if (!intent) {
+        const campaign = await tx.doc(CampaignResearchDoc, handle.id);
+        if (campaign.orchestration && campaign.orchestration.generationTaskIds.length >= campaign.orchestration.maximumModelTurns) throw new Error('orchestration_budget_exhausted');
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
+        if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
+        campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null;
+        delete (await tx.doc(Continuation, handle.id)).evidenceSignature;
         requests.requests[key] = { input: study.input, conversationId: handle.id, recovery: { previousSubmissionId: previousId, mode } };
       }
       return mode;
@@ -226,6 +269,7 @@ export async function openResearch(options: {
       const watch = await (await conversation(id)).watch(context);
       try {
         return { ...watch.value, research: await harness.snapshot(Study, watch.value.conversation.id, context),
+          campaignResearch: await harness.snapshot(CampaignResearchDoc, watch.value.conversation.id, context),
           literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context), submission: await submissionFor(id) };
       } finally { await watch.stop(); }
     },
@@ -243,8 +287,10 @@ export async function openResearch(options: {
         await harness.commit(async (tx) => {
           const facts = await tx.doc(Study, study.id);
           facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
+          const campaign = await tx.doc(CampaignResearchDoc, study.id);
+          if (campaign.binding && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
         }, context);
-        await study.abort(context, { background: true });
+        await settleOwnerStop(study.id);
         return this.view(id);
       });
     },

@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
-import { Application, counter, decimal, decimalUnits, json, object, Problem, text } from './facts.ts';
+import { Application, counter, decimal, decimalUnits, json, nowNs, object, Problem, text } from './facts.ts';
 import { connectionBase, downstreamRequest } from './downstream.ts';
 
 export async function validateCapitalDocument(config: Pick<ServiceConfig, 'dataDir' | 'jobBinary'>, kind: string, value: unknown) {
@@ -22,7 +22,7 @@ export function accountKey(connection: ConnectionConfig, records?: Record<string
   return Object.entries(records ?? {}).find(([, value]) => control(value).bindings?.includes(key))?.[0] ?? key;
 }
 export interface CapitalCommand { original: JsonObject; body: JsonObject; path: string; reserved: string; state: string; result: JsonObject | null; error: string | null; taskId: number }
-export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[] }
+export interface AccountControl { status?: CapitalExitStatus; native?: JsonObject; commands: Record<string, CapitalCommand>; bindings?: string[]; receivedAtNs?: string }
 export function control(value: unknown): AccountControl { return value as AccountControl ?? { commands: {} }; }
 export function moneyString(units: bigint): string {
   const sign = units < 0n ? '-' : ''; const value = units < 0n ? -units : units;
@@ -124,7 +124,7 @@ export function reconcileControl(previous: AccountControl, fresh: Awaited<Return
   const oldRevision = previous.status?.controlRevision; const revision = fresh.status.controlRevision;
   if (oldRevision && revision && BigInt(revision) < BigInt(oldRevision)) throw new Problem('capital_control_out_of_order', 409);
   if (oldRevision && revision === oldRevision && previous.status && (previous.status.reserved !== null && fresh.status.reserved !== null && previous.status.reserved !== fresh.status.reserved || canonical(json(previous.status.exits)) !== canonical(json(fresh.status.exits)))) throw new Problem('capital_control_conflict', 409);
-  if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, status: { ...previous.status, capability: fresh.status.capability, reason: fresh.status.reason, reserved: null } };
+  if (!fresh.status.accountSourceId && previous.status?.accountSourceId) return { ...previous, receivedAtNs: nowNs(), status: { ...previous.status, capability: fresh.status.capability, reason: fresh.status.reason, reserved: null } };
   const commands = previous.commands;
   for (const command of Object.values(commands)) {
     if (command.state === 'ACCEPTED' && command.reserved !== '0') {
@@ -133,7 +133,9 @@ export function reconcileControl(previous: AccountControl, fresh: Awaited<Return
       command.reserved = '0';
     }
   }
-  return { ...previous, status: fresh.status, native: fresh.native, commands };
+  const unchanged = previous.status && canonical(json(previous.status)) === canonical(json(fresh.status));
+  const receivedAtNs = unchanged ? previous.receivedAtNs ?? nowNs() : nowNs();
+  return { ...previous, status: fresh.status, native: fresh.native, commands, receivedAtNs };
 }
 export function recordCapitalControl(records: Record<string, JsonObject>, connection: ConnectionConfig, fresh: Awaited<ReturnType<typeof readCapitalControl>>): string {
   const original = accountKey(connection, records); const prior = control(records[original]);

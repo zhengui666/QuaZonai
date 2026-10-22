@@ -20,7 +20,7 @@ export function researchSpecification(value: unknown): ResearchSpecification {
   if ((spec.name as string).length > 120 || (spec.name as string).includes('\n')) throw new Error('research_short_name_required');
   if (spec.exclusions !== undefined && typeof spec.exclusions !== 'string') throw new Error('research_exclusions_invalid');
   const evaluation = object(spec.evaluation); fields(evaluation, ['metric', 'direction', 'target', 'scheme']);
-  if (!['pearson_ic', 'Sharpe Ratio (252 days)'].includes(String(evaluation.metric)) || evaluation.direction !== 'maximize' || evaluation.scheme !== 'registered-partitions') throw new Error('research_evaluation_unsupported');
+  if (!['pearson_ic', 'Sharpe Ratio (252 days)', 'Sharpe Ratio (365 days)'].includes(String(evaluation.metric)) || evaluation.direction !== 'maximize' || evaluation.scheme !== 'registered-partitions') throw new Error('research_evaluation_unsupported');
   if (evaluation.target !== undefined && (typeof evaluation.target !== 'number' || !Number.isFinite(evaluation.target))) throw new Error('research_target_invalid');
   const search = object(spec.search); fields(search, ['scope', 'maxMembers', 'stop']);
   if (!['single-factor', 'ensemble'].includes(String(search.scope)) || !Number.isSafeInteger(search.maxMembers) || Number(search.maxMembers) < 1 || search.scope === 'single-factor' && search.maxMembers !== 1 || search.stop !== 'budget-or-selection') throw new Error('research_search_unsupported');
@@ -47,11 +47,21 @@ export function researchInstructions(input: { goal: string; specification?: Rese
 export function researchCriterion(spec: ResearchSpecification | undefined, status: string, metrics: Metric[], partition = 'HELDOUT'): CriterionView | undefined {
   if (!spec) return;
   const metric = spec.evaluation.metric;
-  const selected = metrics.find(item => (item.partition === partition || item.key.startsWith(`${partition}.`)) && (metric === 'pearson_ic' ? item.component === undefined && item.key === `${partition}.pearson_ic` : item.key === `${partition}.portfolio.${metric}`));
-  const value = typeof selected?.value === 'number' && Number.isFinite(selected.value) ? selected.value : null;
+  const key = metric === 'pearson_ic' ? `${partition}.pearson_ic` : `${partition}.portfolio.${metric}`;
+  const candidates = metrics.filter(item => item.component === undefined && item.key === key);
+  const selected = candidates.length === 1 ? candidates[0] : undefined;
+  // Native factor IC uses AVAILABLE. Older scalar projections and native
+  // account statistics omit status; retain those without overriding an explicit
+  // unavailable/unknown status. Duplicate or contradictory bindings are not a
+  // license to pick whichever value happens to appear first.
+  const reason = candidates.length > 1 ? 'metric_ambiguous' : !selected ? 'metric_unavailable'
+    : selected.partition !== undefined && selected.partition !== partition ? 'metric_partition_mismatch'
+      : selected.status !== undefined && selected.status !== 'AVAILABLE' ? selected.status || 'metric_status_unavailable'
+        : typeof selected.value !== 'number' || !Number.isFinite(selected.value) ? 'metric_unavailable' : null;
+  const value = reason === null ? selected!.value as number : null;
   const target = spec.evaluation.target ?? null;
   const state = status === 'FAILED' ? 'failed' : status !== 'COMPUTED' || value === null ? 'insufficient' : target === null ? 'computed' : (spec.evaluation.direction === 'maximize' ? value >= target : value <= target) ? 'met' : 'not_met';
-  return { status: state, metric, value, target, partition, reason: value === null ? selected?.status ?? 'metric_unavailable' : null };
+  return { status: state, metric, value, target, partition, reason };
 }
 
 export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject) {

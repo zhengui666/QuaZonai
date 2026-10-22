@@ -9,6 +9,12 @@ import { promisify } from 'node:util';
 import { exportDataset } from '../src/dataset-export.ts';
 import { loadConfig } from '../src/config.ts';
 import { setup } from './support.ts';
+import { context } from './support.ts';
+import { setTimeout as delay } from 'node:timers/promises';
+import { readSourceRevision } from '../src/pm-source.ts';
+import { PmDocument, pmState } from '../src/pm-facts.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { dirname } from 'node:path';
 
 const token = '102936224134271070189104847090829839924697394514566827387181305960175107677216';
 const instrument = `condition-${token}.POLYMARKET`;
@@ -74,6 +80,63 @@ async function fixture(partition: 'DISCOVERY' | 'SEALED' = 'DISCOVERY', fullPrim
     saveMetadata, saveReceipt, saveRequest, options, async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+test('a publication conflict removes only its new configuration output and the original export request can be retried', async () => {
+  const f = await fixture('DISCOVERY', true);
+  try {
+    const first = await exportDataset(f.options); const before = await readFile(first.revisionManifest!);
+    const next = { ...f.options, output: join(f.directory, 'next.json') };
+    const lock = new DatabaseSync(join(dirname(first.revisionManifest!), 'publication-lock.sqlite'));
+    try { lock.exec('BEGIN IMMEDIATE'); await assert.rejects(exportDataset(next), /locked|busy/i); }
+    finally { lock.exec('ROLLBACK'); lock.close(); }
+    await assert.rejects(access(next.output), { code: 'ENOENT' });
+    assert.deepEqual(await readFile(first.revisionManifest!), before);
+    const replay = await exportDataset(next); assert.equal(replay.revisionManifest, first.revisionManifest);
+    assert.deepEqual(await readFile(first.revisionManifest!), before, 'unchanged completion replays the same source revision');
+  } finally { await f.cleanup(); }
+});
+
+test('native prepared export publishes immutable revisions and an original PM monitor consumes completed updates without a handwritten manifest', { timeout: 25_000 }, async () => {
+  const f = await fixture('DISCOVERY', true); const state = await setup();
+  try {
+    const first = await exportDataset({ ...f.options, ready: true });
+    assert.ok(first.revisionManifest);
+    const revision = (await readSourceRevision(first))!;
+    assert.equal(revision.revisionKind, 'APPEND');
+    assert.deepEqual(revision.configured.data.request, f.request);
+    assert.notEqual(revision.configured.data.catalog, f.catalog, 'published snapshot must not alias mutable producer bytes');
+    const retainedFile = join(String(revision.configured.data.catalog), 'data/bar/fixture.parquet');
+    const retained = await readFile(retainedFile);
+    state.options.config.datasets = [first]; await state.restart();
+    const admitted = await state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: state.headers,
+      payload: { requestId: 'export-source-monitor', goal: 'Observe complete source revisions within the original one-trial budget', datasetId: first.id,
+        model: state.model, maxTrials: 1, funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'pUSD' } } } });
+    assert.equal(admitted.statusCode, 202, admitted.body);
+    const id = admitted.json().mandate.id;
+    const initial = pmState(await state.service.research.harness.snapshot(PmDocument, context)).mandates[id]!;
+    // A new complete producer output, not an edit of the published snapshot.
+    await writeFile(f.parquet, 'PAR1new-complete-native-envelope-not-market-evidencePAR1');
+    const second = await exportDataset({ ...f.options, output: join(f.directory, 'dataset-next.json'), ready: true });
+    assert.equal(second.revisionManifest, first.revisionManifest);
+    const updated = (await readSourceRevision(first))!;
+    assert.notEqual(updated.sourceRevision, revision.sourceRevision); assert.equal(updated.revisionKind, 'CORRECTION');
+    assert.notEqual(updated.configured.data.catalog, revision.configured.data.catalog);
+    assert.deepEqual(await readFile(retainedFile), retained, 'old revision remains byte-for-byte unchanged');
+    const deadline = Date.now() + 12_000;
+    for (;;) {
+      const stored = pmState(await state.service.research.harness.snapshot(PmDocument, context)); const record = stored.mandates[id]!;
+      if (Object.values(record.events).some(event => event.kind === 'DATA_REVISION' && stored.datasets[event.sourceRevisionRef]?.revision.sourceRevision === updated.sourceRevision)) {
+        assert.equal(record.monitorTaskId, initial.monitorTaskId); assert.equal(record.searchFamily.countedAttempts, '0'); break;
+      }
+      assert.ok(Date.now() < deadline, 'original official monitor consumed exported source revision'); await delay(20);
+    }
+    const alias = await readFile(first.revisionManifest!);
+    await writeFile(f.parquet, 'incomplete');
+    await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'dataset-broken.json') }), /incomplete_prepared_catalog/);
+    assert.deepEqual(await readFile(first.revisionManifest!), alias, 'failed producer completion cannot publish an alias');
+    assert.deepEqual(await readFile(retainedFile), retained);
+  } finally { await state.cleanup(); await f.cleanup(); }
+});
 
 
 test('offline export preserves original requests and exact decimal strings, without qualification or raw evidence', async () => {

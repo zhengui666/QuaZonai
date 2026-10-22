@@ -74,6 +74,11 @@ export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bind
     if (sequence < oldSequence || clock < oldClock) throw new Problem('account_snapshot_out_of_order');
     if (sequence === oldSequence && physical(snapshot) !== physical(previous)) throw new Problem('account_snapshot_conflict');
     if (typeof previous.accountSourceId === 'string' && snapshot.accountSourceId !== previous.accountSourceId) throw new Problem('account_identity_mismatch');
+    if (previous.nativeObservation && typeof previous.nativeObservation === 'object' && !Array.isArray(previous.nativeObservation)) {
+      const originalBinding = object(object(previous.nativeObservation).binding, 'original_native_binding');
+      const currentBinding = object(object(snapshot.nativeObservation, 'native_observation').binding, 'native_binding');
+      for (const key of ['project_id', 'environment', 'native_account_id', 'native_trader_id']) if (originalBinding[key] !== currentBinding[key]) throw new Problem('native_account_identity_mismatch');
+    }
     if (binding === fact && sequence === oldSequence) repeated = true;
   }
   if (repeated) return;
@@ -83,7 +88,7 @@ export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bind
     return { instrumentId: text(position.instrumentId, 'instrument'), quantity: decimal(position.quantity, 'quantity'),
       value: optionalMoney(position.value, 'position_value'), pnl: optionalMoney(position.pnl, 'position_pnl') };
   }) : [];
-  fact.snapshot = snapshot;
+  fact.snapshot = snapshot; fact.snapshotReceivedAtNs = nowNs();
   fact.view.equity = optionalMoney(snapshot.equity, 'equity'); fact.view.cash = optionalMoney(snapshot.cash, 'cash');
   fact.view.updatedAt = nsTime(clock.toString()); fact.view.positions = positions;
   fact.view.curve.push({ at: fact.view.updatedAt, value: fact.view.equity });

@@ -264,8 +264,21 @@ fn portfolio_settings(
     costs: &NativeSimulationSettingsV1,
     assets: &[contracts::portfolio::AllocationAssetV1],
 ) -> Result<(), DomainError> {
+    portfolio_settings_mode(mandate, costs, assets, false)
+}
+
+fn portfolio_settings_mode(
+    mandate: &contracts::portfolio::MandateContentV1,
+    costs: &NativeSimulationSettingsV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+    observed_spot: bool,
+) -> Result<(), DomainError> {
     crate::portfolio::mandate(mandate)?;
-    crate::portfolio::simulation_settings(costs)?;
+    if observed_spot {
+        crate::spot_cash::execution_settings(costs)?;
+    } else {
+        crate::portfolio::simulation_settings(costs)?;
+    }
     if costs.base_currency != mandate.base_currency
         || costs.starting_capital != mandate.capital_assumption
         || costs.fee_rates.len() != assets.len()
@@ -308,7 +321,14 @@ fn portfolio_members(
             alphas.insert(member.alpha_id);
         }
     }
-    if alphas.len() < 2 {
+    if alphas.is_empty()
+        || (members
+            .iter()
+            .filter(|m| m.ensemble_weight.is_positive())
+            .count()
+            > 1
+            && alphas.len() < 2)
+    {
         return Err(bad("portfolio.distinct_alphas"));
     }
     Ok(())
@@ -317,11 +337,26 @@ fn portfolio_members(
 pub fn portfolio_study_cutoffs(
     request: &NativePortfolioStudyRequestV1,
 ) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    portfolio_study_cutoffs_mode(request, false)
+}
+
+/// Explicit observed spot adapter only; legacy study remains single-currency.
+pub fn observed_spot_study_cutoffs(
+    request: &NativePortfolioStudyRequestV1,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    portfolio_study_cutoffs_mode(request, true)
+}
+
+fn portfolio_study_cutoffs_mode(
+    request: &NativePortfolioStudyRequestV1,
+    observed_spot: bool,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
     selection(&request.source_selection)?;
-    portfolio_settings(
+    portfolio_settings_mode(
         &request.mandate,
         &request.execution_settings,
         &request.assets,
+        observed_spot,
     )?;
     portfolio_members(&request.source_selection, &request.assets, &request.members)?;
     let schedule = &request.mandate.rebalance_schedule;

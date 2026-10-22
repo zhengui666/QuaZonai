@@ -55,7 +55,7 @@ use std::{
     sync::Arc,
 };
 
-mod calendar_returns;
+pub(crate) mod calendar_returns;
 
 fn native_decimal(value: &DecimalValue) -> Result<Decimal> {
     Decimal::from_str(&value.as_decimal().to_plain_string())
@@ -1002,7 +1002,12 @@ impl TargetReplay {
                     side,
                     quantity,
                     time_in_force,
-                    Some(reduce_only),
+                    // Native reduce-only is a position restriction. A CASH
+                    // base-currency balance can predate this strategy without
+                    // any position; its real free inventory was checked above.
+                    // Keep sell-before-buy sequencing without inventing a
+                    // position or an opening fill for observed spot inventory.
+                    Some(reduce_only && spot_snapshot.is_none()),
                     None,
                     None,
                     None,
@@ -1534,13 +1539,14 @@ fn validate_settings(
         "SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
     );
     let currency = execution_market(data, &request.settings)?;
-    validate_settings_with_currency(data, request, currency)
+    validate_settings_with_currency(data, request, currency, false)
 }
 
 fn validate_settings_with_currency(
     data: &NativeMarketData,
     request: &NativeSimulationRequestV1,
     currency: Currency,
+    allow_observed_hold: bool,
 ) -> Result<Currency> {
     ensure!(
         data.series
@@ -1555,7 +1561,7 @@ fn validate_settings_with_currency(
         .map(|s| s.instrument.clone())
         .collect::<Vec<_>>();
     ensure!(
-        !request.target_points.is_empty(),
+        !request.target_points.is_empty() || allow_observed_hold,
         "SIMULATION_TARGET_COUNT_LIMIT"
     );
     for (index, point) in request.target_points.iter().enumerate() {
@@ -1759,10 +1765,46 @@ pub fn simulate_spot_cash_candidate(
         Some(crate::spot_cash_runtime::SpotReplayInputs {
             dataset_revision_id,
             closed_rows,
+            observed_start: None,
         }),
     )?
     .0
     .ok_or_else(|| anyhow::anyhow!("SIMULATION_RESULT_MISSING"))
+}
+
+/// Explicit observed-inventory runner. Empty points mean no submitted orders,
+/// never repeated target weights or liquidation. Only this wrapper permits it.
+pub(crate) fn run_observed_spot(
+    root: &Path,
+    request: &NativeSimulationRequestV1,
+    dataset_revision_id: contracts::Id,
+    closed_rows: Vec<crate::spot_cash_capture::ClosedBarSourceRow>,
+    initial_state: &contracts::observed_spot::NativeObservedSpotStartV1,
+    study_inputs: Vec<StudyInput>,
+) -> Result<(
+    Option<NativeSimulationResultV1>,
+    Vec<NativePortfolioStudyFrameV1>,
+)> {
+    domain::observed_spot::starting_balances(
+        initial_state,
+        &request.settings,
+        request.selection.event_start_ns,
+    )?;
+    ensure!(
+        request.settlements.is_empty(),
+        "SPOT_SETTLEMENT_INPUT_UNSUPPORTED"
+    );
+    run_with_strategy_and_spot(
+        root,
+        request,
+        study_inputs,
+        None,
+        Some(crate::spot_cash_runtime::SpotReplayInputs {
+            dataset_revision_id,
+            closed_rows,
+            observed_start: Some(initial_state.clone()),
+        }),
+    )
 }
 
 fn run_with_strategy(
@@ -1808,23 +1850,38 @@ fn run_with_strategy_and_spot(
         "TARGET_SCOPE_BACKTEST_ONLY"
     );
     let (fill, latency) = domain::portfolio::simulation_models(&request.settings)?;
+    let observed_balances = spot_inputs
+        .as_ref()
+        .and_then(|input| input.observed_start.as_ref())
+        .map(|start| {
+            domain::observed_spot::starting_balances(
+                start,
+                &request.settings,
+                request.selection.event_start_ns,
+            )
+        })
+        .transpose()?;
+    let is_spot = spot_inputs.is_some();
     let scoped_end = domain::execution::strategy::scoped_replay_end(request);
     let scoped_replay = scoped_end.is_some();
-    let wake_order_arrivals = recorded_liquidity(&request.settings) || scoped_replay;
-    let market = if request
-        .target_points
-        .iter()
-        .all(|point| point.rebalance_instrument_ids.is_some())
+    let spot_end = is_spot
+        .then(|| crate::spot_cash_runtime::execution_horizon(request))
+        .transpose()?;
+    let wake_order_arrivals = recorded_liquidity(&request.settings) || scoped_replay || is_spot;
+    let market = if !request.target_points.is_empty()
+        && request
+            .target_points
+            .iter()
+            .all(|point| point.rebalance_instrument_ids.is_some())
     {
         crate::catalog::load_scoped_catalog(root, &request.selection)?
     } else {
         load_catalog(root, &request.selection)?
     };
-    let is_spot = spot_inputs.is_some();
     let currency = if is_spot {
         domain::spot_cash::execution_settings(&request.settings)?;
         let currency = Currency::from_str(&request.settings.base_currency)?;
-        validate_settings_with_currency(&market, request, currency)?
+        validate_settings_with_currency(&market, request, currency, observed_balances.is_some())?
     } else {
         validate_settings(&market, request)?
     };
@@ -1836,6 +1893,21 @@ fn run_with_strategy_and_spot(
         .collect::<BTreeMap<_, _>>();
     let settled_ids = settlement_events.keys().copied().collect::<Vec<_>>();
     let venue = market.series[0].instrument.venue();
+    if let Some(balances) = &observed_balances {
+        let allowed: BTreeSet<_> = market
+            .series
+            .iter()
+            .filter_map(|s| s.instrument.base_currency())
+            .map(|currency| currency.to_string())
+            .chain(std::iter::once(request.settings.base_currency.clone()))
+            .collect();
+        ensure!(
+            balances
+                .iter()
+                .all(|balance| allowed.contains(&balance.currency)),
+            "OBSERVED_SPOT_UNVALUED_CURRENCY"
+        );
+    }
     let status = Rc::new(RefCell::new(ReplayStatus::default()));
     let mut strategy = TargetReplay {
         core: StrategyCore::new_checked(
@@ -1962,12 +2034,26 @@ fn run_with_strategy_and_spot(
                 .book_type(BookType::L1_MBP)
                 .maybe_base_currency((!is_spot).then_some(currency))
                 .allow_cash_borrowing(false)
-                .starting_balances(vec![Money::from_str(&format!(
-                    "{} {}",
-                    settings.starting_capital.as_decimal().to_plain_string(),
-                    settings.base_currency
-                ))
-                .map_err(anyhow::Error::msg)?])
+                .starting_balances(if let Some(balances) = &observed_balances {
+                    balances
+                        .iter()
+                        .map(|balance| {
+                            Money::from_str(&format!(
+                                "{} {}",
+                                balance.amount.as_decimal().to_plain_string(),
+                                balance.currency
+                            ))
+                            .map_err(anyhow::Error::msg)
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                } else {
+                    vec![Money::from_str(&format!(
+                        "{} {}",
+                        settings.starting_capital.as_decimal().to_plain_string(),
+                        settings.base_currency
+                    ))
+                    .map_err(anyhow::Error::msg)?]
+                })
                 .default_leverage(native_decimal(&settings.leverage)?)
                 .fee_model(
                     if domain::prediction::uses_native_fee(&settings.fee_model)
@@ -2018,6 +2104,9 @@ fn run_with_strategy_and_spot(
                 None,
                 Some(crate::spot_cash_runtime::execution_horizon(request)?),
             )?;
+            if let Some(balances) = &observed_balances {
+                capture.expect_observed_balances(balances.clone())?;
+            }
             strategy.spot_cash = Some(capture.handle(&engine)?);
             Some(capture)
         } else {
@@ -2035,6 +2124,7 @@ fn run_with_strategy_and_spot(
         // their original expiry bounds execution, while settled-final-BAR
         // shutdown still prevents manufacturing an empty account-return tail.
         let replay_end = scoped_end
+            .or(spot_end.map(|end| end.get()))
             .or_else(|| {
                 recorded_liquidity(&request.settings)
                     .then(|| request.selection.event_end_ns.get() - 1)

@@ -109,8 +109,41 @@ pub(crate) fn prepare(
     models: &[NativePortfolioAlphaV1],
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<Prepared> {
+    prepare_mode(
+        market, selection, mandate, settings, assets, models, &mut read, false,
+    )
+}
+
+pub(crate) fn prepare_observed_spot(
+    market: &crate::catalog::NativeMarketData,
+    selection: &NativeBarSelectionV1,
+    mandate: &MandateContentV1,
+    settings: &NativeSimulationSettingsV1,
+    assets: &[AllocationAssetV1],
+    models: &[NativePortfolioAlphaV1],
+    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+) -> Result<Prepared> {
+    prepare_mode(
+        market, selection, mandate, settings, assets, models, &mut read, true,
+    )
+}
+
+fn prepare_mode(
+    market: &crate::catalog::NativeMarketData,
+    selection: &NativeBarSelectionV1,
+    mandate: &MandateContentV1,
+    settings: &NativeSimulationSettingsV1,
+    assets: &[AllocationAssetV1],
+    models: &[NativePortfolioAlphaV1],
+    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+    observed_spot: bool,
+) -> Result<Prepared> {
     ensure!(models.len() >= 2, "PORTFOLIO_MEMBERS");
-    crate::simulation::execution_market(market, settings)?;
+    if observed_spot {
+        crate::observed_spot::validate_market(market, settings)?;
+    } else {
+        crate::simulation::execution_market(market, settings)?;
+    }
     let until = selection
         .decision_cutoff_ns
         .get()

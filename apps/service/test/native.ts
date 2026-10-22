@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import './capital-native.ts';
+import './pm-science-native.ts';
+import './pm-account-native.test.ts';
+import './pm-account-http.test.ts';
+import './pm-business-acceptance.test.ts';
 import { test } from 'node:test';
 import { readFile, mkdtemp, mkdir, rm, cp, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';

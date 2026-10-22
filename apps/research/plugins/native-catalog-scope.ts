@@ -1,5 +1,6 @@
+import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId, TaskRuntime, ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId, TaskRuntime } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -72,7 +73,7 @@ export async function readCatalogScope(runtime: Pick<TaskRuntime<unknown, unknow
   return readNativeEvidence(runtime, original.conversationId, original.id, object(original.state.outcome.result.native, 'scope_native'), context);
 }
 
-export async function catalogScope(api: ToolExecutionApi, context: Context, data: JsonObject): Promise<JsonObject> {
+export async function catalogScope(api: ResearchRuntime, context: Context, data: JsonObject): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const catalog = await realpath(data.catalog);
   // Reuse only an immutable admitted root's identity set, never its freshness.

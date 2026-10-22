@@ -74,3 +74,82 @@ test('a colliding owner request cannot be returned as its own recovery receipt',
     assert.equal(state.faux.state.callCount, 1);
   } finally { await state.close(); }
 });
+
+async function unsubmittedStudy() {
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-start-race-'));
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  const options = { database: join(directory, 'original.sqlite'), models };
+  const host = await openResearch(options);
+  const input = { goal: 'Original bounded research', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: {}, policy: { max_trials: 2 } };
+  faux.setResponses([fauxAssistantMessage('Original research response')]);
+  return { directory, faux, host, input, options };
+}
+
+test('owner stop waits for an overlapping original start; replay never submits after stop', { timeout: 10_000 }, async () => {
+  const state = await unsubmittedStudy(); const entered = deferred(); const release = deferred(); let host = state.host;
+  let conversationId = -1;
+  try {
+    const original = host.harness.conversation.bind(host.harness);
+    host.harness.conversation = async (id, ctx) => {
+      const handle = await original(id, ctx); if (!handle) return handle;
+      const submit = handle.submit.bind(handle);
+      handle.submit = async (draft, inner) => { if (draft.requestId === 'original-start') { conversationId = id; entered.resolve(); await release.promise; } return submit(draft, inner); };
+      return handle;
+    };
+    const starting = host.start('original-start', state.input);
+    await entered.promise;
+    let stopped = false; const stopping = host.stop(conversationId).then(() => { stopped = true; });
+    await turn(); const stoppedBeforeAdmission = stopped;
+    release.resolve(); const receipt = await starting; await stopping;
+    assert.equal(stoppedBeforeAdmission, false, 'stop must fence the original submit before reporting completion');
+    assert.equal((await host.state(conversationId)).research!.final!.reason, 'owner_stop');
+    const calls = state.faux.state.callCount;
+    assert.deepEqual(await host.start('original-start', state.input), receipt);
+    await assert.rejects(host.start('original-start', { ...state.input, goal: 'changed' }), /request_id_conflict/);
+    await host.close(); host = await openResearch(state.options);
+    assert.deepEqual(await host.start('original-start', state.input), receipt);
+    assert.equal(state.faux.state.callCount, calls, 'stopped original requests are receipts, not fresh model submissions');
+    assert.equal((await host.list()).items.length, 1);
+  } finally { release.resolve(); await host.close(); await rm(state.directory, { recursive: true, force: true }); }
+});
+
+test('close drains an original start waiting at native admission', { timeout: 10_000 }, async () => {
+  const state = await unsubmittedStudy(); const entered = deferred(); const release = deferred();
+  try {
+    const original = state.host.harness.conversation.bind(state.host.harness);
+    state.host.harness.conversation = async (id, ctx) => {
+      const handle = await original(id, ctx); if (!handle) return handle;
+      const submit = handle.submit.bind(handle);
+      handle.submit = async (draft, inner) => { entered.resolve(); await release.promise; return submit(draft, inner); };
+      return handle;
+    };
+    const starting = state.host.start('start-before-close', state.input); await entered.promise;
+    let closed = false; const closing = state.host.close().then(() => { closed = true; });
+    await turn(); const closedBeforeAdmission = closed;
+    await assert.rejects(state.host.start('late-start', state.input), /research_closing/);
+    release.resolve(); await starting; await closing;
+    assert.equal(closedBeforeAdmission, false, 'host storage stays open until its admitted start settles');
+  } finally { release.resolve(); await state.host.close(); await rm(state.directory, { recursive: true, force: true }); }
+});
+
+test('an owner stop before missing original admission prevents retry and startup repair', { timeout: 10_000 }, async () => {
+  const state = await unsubmittedStudy(); let host = state.host; let conversationId = -1;
+  try {
+    const original = host.harness.conversation.bind(host.harness);
+    host.harness.conversation = async (id, ctx) => {
+      const handle = await original(id, ctx); if (!handle) return handle;
+      handle.submit = async () => { conversationId = id; throw new Error('controlled_admission_gap'); };
+      return handle;
+    };
+    await assert.rejects(host.start('interrupted-start', state.input), /controlled_admission_gap/);
+    host.harness.conversation = original;
+    await host.stop(conversationId);
+    await assert.rejects(host.start('interrupted-start', state.input), /research_already_final/);
+    await host.close(); host = await openResearch(state.options);
+    await assert.rejects(host.start('interrupted-start', state.input), /research_already_final/);
+    assert.equal(await host.submissionFor(conversationId), null);
+    const study = (await host.state(conversationId)).research!;
+    assert.deepEqual(study.input, state.input); assert.deepEqual(study.trials, []);
+    assert.equal(study.final!.reason, 'owner_stop'); assert.equal(state.faux.state.callCount, 0);
+  } finally { await host.close(); await rm(state.directory, { recursive: true, force: true }); }
+});

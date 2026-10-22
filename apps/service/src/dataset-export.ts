@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
-import { link, lstat, mkdtemp, open, readFile, readdir, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { link, lstat, mkdtemp, open, readFile, readdir, rm, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +11,7 @@ import { validateNumbers as safeNumbers } from '../../research/src/input.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { thresholdPolicy } from '../../research/src/strategy.ts';
+import { datasetRevisionManifest, prepareDatasetRevision } from './dataset-revision-publish.ts';
 
 export interface DatasetExportOptions {
   prepared: string; request: string; output: string; id: string; name: string;
@@ -108,7 +110,8 @@ function within(path: string, root: string): boolean {
   return path === root || path.startsWith(root + sep);
 }
 
-/** Offline configuration handoff, not native decoding, source certification or service registration. */
+/** Offline configuration and immutable revision handoff; existing registered
+ * monitors may consume it. No native decoding or source qualification is implied. */
 export async function exportDataset(options: DatasetExportOptions): Promise<DatasetConfig> {
   const observed = new Map<string, string>();
   const checkedAncestors = new Set<string>();
@@ -120,12 +123,12 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     if (observed.has(path) && observed.get(path) !== identity) throw new Error('dataset_export_input_changed');
     observed.set(path, identity);
   }
-  async function jsonFile(path: string): Promise<{ value: JsonObject; bytes: number }> {
+  async function jsonFile(path: string): Promise<{ value: JsonObject; bytes: number; sha256: string }> {
     path = resolve(path);
     await observe(path);
     const bytes = await readFile(path);
     await observe(path);
-    return { value: object(parseOriginalJson(bytes.toString('utf8')), 'original_json'), bytes: bytes.length };
+    return { value: object(parseOriginalJson(bytes.toString('utf8')), 'original_json'), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
   }
   async function catalog(path: string): Promise<void> {
     let parquet = 0;
@@ -163,7 +166,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     if (!isAbsolute(root) || root !== resolve(root) || catalogPath !== join(root, 'catalog')
       || metadataPath !== join(root, 'catalog-metadata.json')
       || registration.root !== catalogPath || registration.metadata_file !== metadataPath) throw new Error('prepared_path_mismatch');
-    const { value: metadata, bytes } = await jsonFile(metadataPath);
+    const { value: metadata, bytes, sha256: metadataSha256 } = await jsonFile(metadataPath);
     const hints = object(receipt.identity_hints, 'identity_hints');
     const quality = object(metadata.quality, 'native_quality');
     if (bytes !== receipt.metadata_bytes || metadata.schema_version !== 1 || metadata.provider_kind !== 'NAUTILUS_CATALOG' || metadata.data_kind !== 'BAR'
@@ -215,7 +218,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     const effective = heldout ? request : iterationRequest({ request }, clippedStrategy);
     contained(selection(object(effective.forecast).selection), measuredSelection);
     await catalog(catalogPath);
-    return { catalog: catalogPath, request, metadata, selection: measuredSelection, instrumentIds: [...instruments.keys()],
+    return { catalog: catalogPath, request, metadata, metadataSha256, nativeDatasetRevisionId: native.dataset_revision_id!, selection: measuredSelection, instrumentIds: [...instruments.keys()],
       window, definitionJson, firstEvent: ns(measured.first_event_ns), source: receipt.source_reference as string, tokens: source.tokens };
   }
 
@@ -265,15 +268,29 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     result.strategy = strategy as unknown as ThresholdPolicy;
   }
   // An exclusive hard link publishes only the complete document, never replacing an existing output.
+  result.revisionManifest = datasetRevisionManifest(output, result.id);
+  const revision = await prepareDatasetRevision(result, { kind: 'NATIVE_PREPARED_DATASET_EXPORT',
+    primary: { source: primary.source, metadataSha256: primary.metadataSha256, nativeDatasetRevisionId: primary.nativeDatasetRevisionId },
+    sealed: sealed ? { source: sealed.source, metadataSha256: sealed.metadataSha256, nativeDatasetRevisionId: sealed.nativeDatasetRevisionId } : null,
+    limitations: ['LOCAL_PUBLICATION_AVAILABILITY_NOT_HISTORICAL_PIT', 'NATIVE_PREPARATION_NOT_INVESTMENT_QUALIFICATION'] });
   const temporary = await mkdtemp(join(dirname(output), '.qz-dataset-'));
   try {
     const file = join(temporary, 'dataset.json');
     const handle = await open(file, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify(result, null, 2) + '\n'); await handle.sync(); } finally { await handle.close(); }
+    const contents = Buffer.from(JSON.stringify(result, null, 2) + '\n');
+    try { await handle.writeFile(contents); await handle.sync(); } finally { await handle.close(); }
     checkedAncestors.clear();
     for (const path of observed.keys()) await observe(path);
     await noSymlinks(output);
     await link(file, output);
+    try { await revision.publish(); }
+    catch (error) {
+      // A failed alias CAS leaves this export retryable. Remove ONLY the exact
+      // new hard link we created; preserve an independently replaced/edited file.
+      const own = await lstat(file); const current = await lstat(output).catch(() => null);
+      if (current?.dev === own.dev && current.ino === own.ino && (await readFile(output)).equals(contents)) await unlink(output);
+      throw error;
+    }
   } finally { await rm(temporary, { recursive: true, force: true }); }
   return result;
 }
@@ -285,12 +302,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     'sealed-prepared': { type: 'string' }, 'sealed-request': { type: 'string' }, policy: { type: 'string' }, strategy: { type: 'string' },
     help: { type: 'boolean' },
   } });
-  if (values.help) { console.log('Offline DatasetConfig export: --prepared preparation.json --request ORIGINAL_FACTOR.json --id ID --name NAME --output NEW.json [--sealed-prepared RECEIPT --sealed-request ORIGINAL.json] [--policy FILE] [--strategy FILE] [--ready]. Does not register, start research or establish qualification.'); return; }
+  if (values.help) { console.log('Offline DatasetConfig and source revision export: --prepared preparation.json --request ORIGINAL_FACTOR.json --id ID --name NAME --output NEW.json [--sealed-prepared RECEIPT --sealed-request ORIGINAL.json] [--policy FILE] [--strategy FILE] [--ready]. Existing registered monitors may consume completed revisions; this does not register a new source or establish qualification.'); return; }
   const result = await exportDataset({ prepared: text(values.prepared, 'prepared'), request: text(values.request, 'request'),
     output: text(values.output, 'output'), id: text(values.id, 'id'), name: text(values.name, 'name'),
     assetClass: values['asset-class'], ready: values.ready, sealedPrepared: values['sealed-prepared'], sealedRequest: values['sealed-request'],
     policy: values.policy, strategy: values.strategy });
-  console.log(JSON.stringify({ status: 'DATASET_CONFIG_EXPORTED', file: resolve(values.output!), dataset_id: result.id,
+  console.log(JSON.stringify({ status: 'DATASET_CONFIG_EXPORTED', file: resolve(values.output!), dataset_id: result.id, revision_manifest: result.revisionManifest,
+    source_revision_published: true, existing_registered_monitors_may_consume_revision: true,
     ready: result.ready, registered_in_service: false, research_started: false, historical_availability: 'UNVERIFIED' }));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -156,7 +156,7 @@ test('default factor input preparation failure remains a disclosed scientific tr
   } finally { await host.close(); await setup_.cleanup(); }
 });
 
-test('unfinished yields have no technical count cap; original policy and reasoning survive restart', async () => {
+test('repeating an unchanged scientific ledger closes technically and preserves original policy on restart', async () => {
   const setup_ = await setup(true);
   setup_.faux.setResponses([
     ...Array.from({ length: 6 }, () => fauxAssistantMessage('This study is still unfinished.')),
@@ -166,19 +166,21 @@ test('unfinished yields have no technical count cap; original policy and reasoni
   try {
     const original = input(setup_.model);
     const receipt = await host.start('uncapped-yields', original);
+    await host.harness.waitForIdle(context);
     assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.deepEqual(facts.input, original);
     assert.equal(facts.trials.length, 0);
-    assert.equal(facts.final!.reason, 'Original criteria cannot be evaluated with missing data');
+    assert.equal(facts.final!.reason, 'research_no_new_evidence');
+    assert.equal(facts.final!.conclusion, 'NEEDS_EVIDENCE');
     const continuation = await host.harness.snapshot(Continuation, receipt.conversationId, context);
-    assert.equal(continuation!.yields, 6);
-    assert.equal(setup_.faux.state.callCount, 7);
+    assert.equal(continuation!.yields, 2);
+    assert.equal(setup_.faux.state.callCount, 2);
     await host.close();
     host = await openResearch({ ...setup_, extensions: [research], thinkingLevel: 'high' });
     assert.deepEqual(await host.start('uncapped-yields', original), receipt);
-    assert.equal(setup_.faux.state.callCount, 7);
+    assert.equal(setup_.faux.state.callCount, 2);
     assert.deepEqual(await host.harness.snapshot(Continuation, receipt.conversationId, context), continuation);
     assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
   } finally { await host.close(); await setup_.cleanup(); }

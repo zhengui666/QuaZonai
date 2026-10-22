@@ -124,7 +124,7 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
         if run('--version') != f'quazonai {version}':
             raise ValueError('Extracted CLI version differs from the release tag.')
         help_text = run('--help')
-        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions')):
+        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance')):
             raise ValueError('Extracted CLI lacks workbench commands.')
         json.loads(run('schema', 'list'))
         json.loads(run('schema', 'list', '--domain'))

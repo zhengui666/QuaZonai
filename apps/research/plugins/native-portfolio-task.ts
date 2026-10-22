@@ -1,5 +1,6 @@
+import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { evaluatePortfolio } from './native-portfolio.ts';
 import type { PortfolioEvaluationInput } from './native-portfolio.ts';
@@ -41,7 +42,7 @@ const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   kind: 'qz.strategy-portfolio-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 
-export async function runPortfolio(api: ToolExecutionApi, context: Context, input: PortfolioEvaluationInput): Promise<JsonObject> {
+export async function runPortfolio(api: ResearchRuntime, context: Context, input: PortfolioEvaluationInput): Promise<JsonObject> {
   const id = await api.commit(async (tx) => {
     const binding = await tx.doc(Child, api.taskId);
     if (binding.taskId !== null) return binding.taskId;

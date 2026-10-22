@@ -31,6 +31,29 @@ pub fn market_direction(
     equities: bool,
     models: [NativeModelRefV1; 3],
 ) -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    market_direction_with_size(
+        fee,
+        rows_per_asset,
+        direction,
+        volume,
+        equities,
+        models,
+        0,
+        "1",
+    )
+}
+
+/// Explicit TEST instrument specification; never change the existing integer-lot fixtures.
+pub fn market_direction_with_size(
+    fee: &str,
+    rows_per_asset: u32,
+    direction: f64,
+    volume: &str,
+    equities: bool,
+    models: [NativeModelRefV1; 3],
+    size_precision: u8,
+    size_increment: &str,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     let [fill_model, fee_model, latency_model] = models;
     let directory = tempfile::tempdir().unwrap();
     let catalog = ParquetDataCatalog::from_uri(
@@ -78,9 +101,9 @@ pub fn market_direction(
                     .base_currency(Currency::from_str(base).unwrap())
                     .quote_currency(usd)
                     .price_precision(5)
-                    .size_precision(0)
+                    .size_precision(size_precision)
                     .price_increment(Price::from("0.00001"))
-                    .size_increment(Quantity::from("1"))
+                    .size_increment(Quantity::from(size_increment))
                     .maker_fee(Decimal::ZERO)
                     .taker_fee(Decimal::from_str(fee).unwrap())
                     .margin_init(Decimal::ONE)

@@ -1,5 +1,6 @@
+import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { realpath } from 'node:fs/promises';
 import { object } from '../src/trials.ts';
@@ -37,7 +38,7 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
     start: ensemble ? data.validation_end_ns! : request.validation_end_ns!, end: selection.event_end_ns! };
 }
 
-export async function checkExposure(api: ToolExecutionApi, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT'): Promise<void> {
+export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT'): Promise<void> {
   const window = await footprint(data);
   const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
   const kind = historical ? (reserve ? 'HISTORICAL_FINAL' : 'HISTORICAL_ITERATION') : (reserve ? 'FINAL' : 'ITERATION');

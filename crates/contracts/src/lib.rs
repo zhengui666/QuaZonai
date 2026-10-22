@@ -4,11 +4,14 @@
 pub mod account_observation;
 pub mod brief;
 pub mod capacity;
+pub mod capital_curve;
 pub mod capital_exit;
 pub mod catalog_ensemble;
+pub mod catalog_prefix;
 pub mod catalogs;
 pub mod data;
 pub mod delivery;
+pub mod ensemble_fit;
 pub mod equity_curve;
 pub mod evidence;
 pub mod execution;
@@ -18,6 +21,7 @@ pub mod experiment_summary;
 pub mod factors;
 pub mod forward;
 pub mod lifecycle;
+pub mod observed_spot;
 pub mod portfolio;
 pub mod portfolio_history;
 pub mod recorded_fees;
@@ -42,6 +46,7 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(components(schemas(
+    catalog_prefix::NativeCatalogPrefixResultV1,
     evidence::MetricValueV1,
     evidence::MetricRequirementV1,
     execution::NativeTaskParametersV1,
@@ -52,6 +57,20 @@ use utoipa::OpenApi;
     catalogs::RuntimeCatalogMetadataV1,
     portfolio::AllocationInputV1,
     portfolio::AllocationResultV1,
+    ensemble_fit::NativeEnsembleFitRequestV1,
+    ensemble_fit::NativeEnsembleFitResultV1,
+    ensemble_fit::NativeEnsembleApplyRequestV1,
+    ensemble_fit::NativeEnsembleApplyResultV1,
+    ensemble_fit::NativeEnsembleFreezeRequestV1,
+    ensemble_fit::NativeEnsembleFreezeResultV1,
+    capital_curve::NativeCapitalCurveRequestV1,
+    capital_curve::NativeCapitalCurveResultV1,
+    observed_spot::NativeObservedSpotComparisonRequestV1,
+    observed_spot::NativeObservedSpotComparisonResultV1,
+    observed_spot::NativeObservedSpotStudyRequestV1,
+    observed_spot::NativeObservedSpotStudyResultV1,
+    observed_spot::NativeObservedSpotValuationRequestV1,
+    observed_spot::NativeObservedSpotValuationResultV1,
     science::NativeForecastRequestV1,
     science::NativeForecastResultV1,
     factors::NativeFactorEvaluationRequestV1,

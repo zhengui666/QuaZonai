@@ -85,6 +85,91 @@ fn native_minimum_risk_uses_the_whole_covariance_not_equal_weights() {
 }
 
 #[test]
+fn ordinary_variance_qp_accepts_correlated_assets_without_changing_the_estimator() {
+    let mut request = input();
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    // Sigma = [[1,1],[1,1]]: every fully invested portfolio has variance one.
+    // The minimum is nonunique, so verify its objective and mandate, not a tie-break.
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 1.0);
+    let weights = result.targets.unwrap();
+    let total: f64 = weights
+        .iter()
+        .map(|target| target.weight.as_decimal().to_f64().unwrap())
+        .sum();
+    near(total, 1.0);
+    assert!(weights.iter().all(|target| {
+        let weight = target.weight.as_decimal().to_f64().unwrap();
+        (-1e-6..=1.0 + 1e-6).contains(&weight)
+    }));
+
+    // With fixed risk and forecasts [0.1,0.2], maximum utility selects asset two.
+    request.objective = AllocationObjective::MaxUtility;
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 0.8);
+    let targets = result.targets.unwrap();
+    near(targets[0].weight.as_decimal().to_f64().unwrap(), 0.0);
+    near(targets[1].weight.as_decimal().to_f64().unwrap(), 1.0);
+}
+
+#[test]
+fn ordinary_variance_qp_accepts_rank_deficient_small_samples() {
+    let mut request = input();
+    request.return_history.end_ns.truncate(2);
+    request.return_history.available_ns.truncate(2);
+    request.return_history.asset_returns = vec![vec![0.0, 1.0], vec![0.0, 2.0]];
+    // Two observations and two assets give Sigma=[[0.5,1],[1,2]]. For w2=1-w1,
+    // variance=0.5*(2-w1)^2, minimized at w1=1 on the frozen long-only simplex.
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 0.5);
+    let targets = result.targets.unwrap();
+    near(targets[0].weight.as_decimal().to_f64().unwrap(), 1.0);
+    near(targets[1].weight.as_decimal().to_f64().unwrap(), 0.0);
+}
+
+#[test]
+fn variance_cone_adapters_still_require_positive_definite_covariance() {
+    let mut request = input();
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    request.constraints.max_ex_ante_risk = Some(decimal("2"));
+    assert_eq!(
+        job::allocate(&request).unwrap_err().to_string(),
+        "NONPOSITIVE_DEFINITE_COVARIANCE"
+    );
+    request.constraints.max_ex_ante_risk = None;
+    request.objective = AllocationObjective::RiskBudgeting;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .map(|asset| RiskBudgetAssetV1 {
+                instrument_id: asset.instrument_id.clone(),
+                share: decimal("0.5"),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    for returns in [vec![0.0, 2.0, 0.0, 2.0, 1.0], vec![0.1; 5]] {
+        request.return_history.asset_returns = vec![returns.clone(), returns];
+        assert_eq!(
+            job::allocate(&request).unwrap_err().to_string(),
+            "NONPOSITIVE_DEFINITE_COVARIANCE"
+        );
+    }
+}
+
+#[test]
 fn native_covariance_requires_original_causal_aligned_return_history() {
     let original = input();
     for mutation in 0..10 {
@@ -240,7 +325,6 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
     for weights in [
         vec!["1"],
         vec!["1", "1"],
-        vec!["1", "0"],
         vec!["-1", "2"],
         vec!["0.5", "0.500000000000000001"],
     ] {
@@ -250,6 +334,10 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         )
         .is_err());
     }
+    assert_eq!(
+        mix(&forecasts, &[decimal("1"), decimal("0")]).unwrap(),
+        forecasts[0]
+    );
     let weights = [decimal("0.5"), decimal("0.5")];
     for forecasts in [
         vec![],
@@ -411,9 +499,6 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
     assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
     let mut request = input();
     request.return_history.asset_returns[0].pop();
-    assert!(job::allocate(&request).is_err());
-    request = input();
-    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
     assert!(job::allocate(&request).is_err());
     request = input();
     request.return_history.asset_returns[0][0] = f64::NAN;
