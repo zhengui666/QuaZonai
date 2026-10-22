@@ -44,8 +44,7 @@ Operational work in this session covers reproducible disposable service operatio
 
 ## Status
 
-The implementation candidate is undergoing its final business acceptance checks. The owner's
-goal and funding feed registered strategy intake, a shared search ledger, native
+The owner's goal and funding drive registered strategy intake, a shared search ledger, native
 training-only ensemble fitting, fresh optimization at each automatically planned
 capital point, and a matched account comparison. A new admitted market revision
 starts a new campaign without resetting the budget or reusing the previous sealed
@@ -106,10 +105,18 @@ independent protocol authorizing that use, qualified PIT and current execution
 sources; the current SHADOW-only protocol cannot pass that live gate. Targets keep
 the original native cutoff and may only shorten their deadline. Delivery carries
 the original revision-bound allocation and requires its exact receipt echo.
-Historical target weights retain no renewed delivery TTL. Current forward HTTP,
-long-run coalescing and final revision checks are being completed; isolated native
-or transport tests do not substitute for that positive chain. Real model evaluation
-is separately blocked by missing provider authorization.
+Historical target weights retain no renewed delivery TTL. The complete RO and
+PAPER HTTP chains passed on frozen `3f4c8a0f` with the matching bb9 native program,
+official Node 22.19.0 and seven newly exported fixtures. They exercised original
+receipt recovery, bounded heartbeats and unchanged source recovery without
+renewing price deadlines or target TTL. That full core run passed 90/91 tests,
+zero skipped; the remaining ACCOUNT oracle incorrectly required every planned
+capital point to be feasible. Retained original frames and independent exact
+arithmetic prove its tiny capital point cannot fund the registered liquidation
+fees. The corrected oracle passed the same native ACCOUNT case, retains all
+failed points and financial constraints, and preserves the eight original attempts.
+The subsequent exact-Head CI and reviews remain separate acceptance records.
+Real model evaluation is separately blocked by missing provider authorization.
 
 Source publication now runs through the existing prepared-data export path and
 preserves immutable revisions, original metadata bytes, a parent chain and atomic

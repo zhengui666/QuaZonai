@@ -2,6 +2,16 @@
 
 本表对应 [46 个业务反例](../quant-pipeline-integrity/design/acceptance.md)，以它们要求的业务结论为验收单位。开发基线为 `ea1a900171c93e37cf7de5576d9c6acc09553fb4`；工作区内实现、局部回归、最终提交 CI、合并及部署分别记录。旧分支测试、方案审阅通过和合成数据结果都不升级为本轮业务验收通过。
 
+## 最新完整运行的实际范围
+
+冻结提交 `3f4c8a0f7f07b6aa8880b1ecb5935eb934994f6d` 的完整科学检查通过 676 项、50 组，零失败或忽略；272 个原生源文件与七份新导出 fixture 在 core 前后逐 SHA256 不变。原生 job SHA256 为 `bb9f7dfc7f3f04b80952226145132397aec01b6ce9accb3cf836aa97d5e00ee4`。官方 Node 22.19.0 的完整 core 执行 91 项：90 通过、1 失败、零跳过；该结果不能记为全套通过。
+
+已通过的完整链路包括 RO（314.907 秒）、PAPER（343.675 秒）、原账户回执响应丢失后的原身份恢复、300 次心跳合并、两个数据修订自动重拟合，以及真实 RESEARCH_SCENARIO 的原 manifest 损坏／同字节恢复／重启。来源恢复保留原决策、comparison、试验、预算与 FINAL 暴露，只重新核对原生前缀；后续 P2 政策不能借同源恢复复活 P1。
+
+唯一失败是 ACCOUNT fixture 强制所有自动资本点均 AVAILABLE。保留原 SQLite 与原生完整报告重现后，独立精确有理数复核证明：自动点 K=0.02864 的原资金约束至多允许约 0.028643532 USDC 部署加费用，而原仓位在该配置下至少需约 0.500919111 USDC，登记 QP 严格无解。该资金上限限制可用部署及费用，账户仍保留原现金；原生 INFEASIBLE、无目标和配对 HOLD 成功均保留。测试应逐原报告核对可行和不可行点，对原 frame 的预算矛盾给出独立精确证明；只有可用点进入偏好比较，原试验和失败费用仍记账。最终提交的单例回归、独立审阅及完整远程 CI 以 [PR #233](https://github.com/zhengui666/QuaZonai/pull/233) 的实际记录为准。
+
+修正后的同一 ACCOUNT 单例已在官方 Node22、bb9 程序和七份原 SHA 输入下实际通过，1/1、零跳过，总耗时 103.251 秒。可用 REBALANCE 与 HOLD 的三项原生指标实际并列；不可行点逐 frame 的独立 BigInt 资金反证、无目标／绩效、失败扣账、容量未测洞、OWNER_ONLY／401 及重启原值都通过，8 次原尝试保留。原生产科学源及金融参数未改；此定向回归不将先前 90/91 的完整运行改记为全套通过。
+
 ## D1–D5 的可交付边界
 
 | 分期 | 实现及验证入口 | 必须证明的结果 | 当前证据边界 |
@@ -58,7 +68,7 @@
 | A24 历史修订不倒写 | 原 DatasetRevision/decision 仍可重现 | 真实文件修订/旧快照/冲突身份已验证；HTTP 修订使旧 basis 失效且不重置预算已验证；双修订真实 HTTP/native 验收已通过，训练截止由3天推进到13天，数值校准、组合和决策重新计算，旧决定标记 SUPERSEDED |
 | A25 耗尽预算仍结项 | 不新增试验，失败保留且解释选择/不选择 | T1 all failed→NEEDS_EVIDENCE；T4 每失败点计费；官方研究任务已验证最后预算后自动结项、超预算拒绝及恢复不重复消费 |
 | A26 退役不等于平仓 | 剩余仓位与未决回执仍需对账 | T2 已验证真实退休HTTP、原任务重启后只GET对账，保留现仓及reconciliationRequired；T6 未决retirement阻止维护。实际退出需 T7 |
-| A27 数据恢复后继续研究 | 原身份恢复，不重建预算或读未来资料 | 官方 recovery 基础 + PM gap/event；待 T2/T5 |
+| A27 数据恢复后继续研究 | 原身份恢复，不重建预算或读未来资料 | T2 两轮故障／恢复去重与重启；T5 原生同源恢复完整正链已通过，原 comparison、预算与 FINAL 不变，P2 拒绝复活 P1；ACCOUNT 保留原已消耗 slot，不重复计算或续 TTL |
 | A28 因子单位不同 | 原始信号必须合法校准，不直接拼权重 | T3 折内标准化与 calibration；不同策略原型不强行当 alpha |
 | A29 重算与信息变化 | 幂等 event/request，同 basis 不重复消耗 | T2 原请求 replay/重启、同decision换requestId不重复目标 POST 及原receipt身份；T5 正链重启保留决策/费用/科学预算，双修订自动重拟合/独立更新已通过，原尝试数10→20/32且FINAL暴露不复用 |
 | A30 无解不等权 fallback | 显式不可行/缺证据，保留原求解原因 | T3 allocation + T4 native failed；T5 不得吞错误换默认配置 |
@@ -82,7 +92,7 @@
 ## 本验证分工已取得的实际结果
 
 - 独立执行的双修订 HTTP/native 链路通过（184.97秒）：无需手动 refresh，原 Monitor 消费新修订并重新生成因子面板、数值校准、资产配置和资金决定；旧决定 supersede，共享预算10→20/32且两段 FINAL 原值保留。单修订压缩证据/原校准 owner 读回链路另通过（101.4秒），重启后原 ID、内容与独立结果稳定。两项均是受控原生历史软件验收。
-- 最终 ACCOUNT HTTP/Durable/native 链路通过（145.86秒、1项、零跳过），匹配 venue/prefix 修复后的原生 SHA256 `802397c74070df5e27853dfdf86808e829d6837875b8df50259d026a4d227550`。原 goal 的 `No leverage.` 冻结为 LEVERAGE 1/禁止借款并落实于原生 CASH；逐 published frame 非负、原始 rawEquity=null、派生 NAV=1215.448835。逐候选三项业务指标与原 native report 独立相等，所有候选与 HOLD 共享精确原快照/证据/时钟；8次尝试留账。高资金候选和 HOLD 的三个目标实际并列，正确保留 NEEDS_EVIDENCE，不强选赢家、不执行虚假 independent。OWNER_ONLY/401 与重启读回通过。这不建立券商来源或真实市场 PIT。
+- 历史 ACCOUNT HTTP/Durable/native 链路通过（145.86秒、1项、零跳过），匹配 venue/prefix 修复后的原生 SHA256 `802397c74070df5e27853dfdf86808e829d6837875b8df50259d026a4d227550`。原 goal 的 `No leverage.` 冻结为 LEVERAGE 1/禁止借款并落实于原生 CASH；逐 published frame 非负、原始 rawEquity=null、派生 NAV=1215.448835。逐候选三项业务指标与原 native report 独立相等，所有候选与 HOLD 共享精确原快照/证据/时钟；8次尝试留账。高资金候选和 HOLD 的三个目标实际并列，正确保留 NEEDS_EVIDENCE，不强选赢家、不执行虚假 independent。OWNER_ONLY/401 与重启读回通过。这不建立券商来源或真实市场 PIT。
 - 新意图澄清的 Web 丢响应/刷新/原正文重放、精确 revision 及已说明歧义三项浏览器验收通过；CLI 8项通过，Web 类型检查通过。当前 as-of forward 切片正在补充开发，其新增原生/服务资格不由以上历史验收覆盖。
 - 历史 6cced 候选（费用后现金硬非负校验阶段）完整 `make check-science` 通过 666 项、50 组，零失败、零忽略：contracts/domain 216 项与 job 450 项。七份必需原生 fixture 全部在新目录实际生成、逐 SHA256 记录，精确官方 schema 与格式检查通过；shared target 与固定科学程序 SHA 相同。此前 648 项旧范围及 4556 程序的 664 项结果仅保留为原版本证据，不叠加为本轮通过数。后续原 NAV 残余、正现金下限及 long-only 硬边界已经改变原生源；上述结果不代表最终源通过。最终新 SHA 的科学/七份新 fixture、完整 HTTP/core 与 CI 以 PR #233 对应实际运行记录确认，不预报新通过数。
 - 上述历史科学套件包括现仓/forward 20 项、allocation 32 项、spot cash 13 项与 study 3 项：同一当前价重估原库存；未来/陈旧/未知来源拒绝；资金方法 v2 在原单次 QP 中纳入买卖线性费用并守住最小现金；domain 无条件拒绝负费用后现金，新增负 0.0005/负 5e-19 反例与精确零边界；原生真实买入/卖出费用与无解反例；连续目标与取整后交易事实分离；零持仓/零目标仍有完整原价格证据；实际 23 位小数乘积不舍入且使用独立有界类型。旧无该能力的 fixed-target consumer 明确拒绝新选项。cash-heavy 与事前注册 hour 科学域都实际导出，原短域合法 HOLD 并列证据保留。固定 job SHA256 为 `6cced4b8262f3db95069730f98895824fa5f3bba01b9c02a1e412d6d6ff567d6`；这些均属于上述 666 项，不另加总。

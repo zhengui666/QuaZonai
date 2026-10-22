@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -38,6 +39,65 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(release.ci_ready(REVISION)); self.assertEqual(release.ci_run_id(REVISION), 1)
         with patch.object(release, 'api', return_value=[{'workflow_runs': [item(4, 'push', 'failure')]}]):
             with self.assertRaisesRegex(ValueError, 'exact-push'): release.ci_run_id(REVISION)
+
+    def test_wait_cli_preserves_the_verified_success_snapshot(self):
+        successful = {'id': 42, 'event': 'push', 'head_sha': REVISION,
+                      'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': 'success'}
+        # A second list read can be missing or older than the already verified
+        # success. Do not discard its run identity before writing the output.
+        for subsequent in [[], [{**successful, 'status': 'in_progress', 'conclusion': None}]]:
+            with self.subTest(subsequent=subsequent), tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as temporary:
+                output = Path(temporary) / 'github-output'
+                snapshots = [{'workflow_runs': [successful]}], [{'workflow_runs': subsequent}]
+                with patch.object(release, 'api', side_effect=snapshots) as api, \
+                     patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}), \
+                     patch.object(sys, 'argv', ['release.py', 'wait-ci', '--revision', REVISION]):
+                    release.main()
+                self.assertEqual(output.read_text(), 'ci_run_id=42\n')
+                self.assertEqual(api.call_count, 1)
+
+    def test_wait_ci_polls_and_returns_the_latest_exact_push_across_pages(self):
+        successful = {'id': 42, 'event': 'push', 'head_sha': REVISION,
+                      'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': 'success'}
+        unrelated = [{**successful, 'id': 43, 'event': 'pull_request'},
+                     {**successful, 'id': 44, 'head_sha': 'b' * 40}]
+        snapshots = [
+            [{'workflow_runs': [*unrelated, {**successful, 'status': 'in_progress', 'conclusion': None}]}],
+            [{'workflow_runs': [{**successful, 'id': 41}]}, {'workflow_runs': [*unrelated, successful]}],
+        ]
+        with patch.object(release, 'api', side_effect=snapshots), \
+             patch.object(release.time, 'sleep') as sleep, patch('builtins.print'):
+            self.assertEqual(release.wait_ci(REVISION), 42)
+        sleep.assert_called_once_with(30)
+
+    def test_wait_ci_does_not_replace_a_newer_failure_with_an_older_success(self):
+        successful = {'id': 41, 'event': 'push', 'head_sha': REVISION,
+                      'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': 'success'}
+        with patch.object(release, 'api', return_value=[{'workflow_runs': [
+                successful, {**successful, 'id': 42, 'conclusion': 'failure'}]}]), \
+             patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, 'Exact-source checks failed'):
+                release.wait_ci(REVISION)
+        sleep.assert_not_called()
+
+    def test_wait_ci_keeps_its_deadline_for_missing_or_nonqualifying_runs(self):
+        successful = {'id': 42, 'event': 'push', 'head_sha': REVISION,
+                      'path': '.github/workflows/ci.yml', 'status': 'completed', 'conclusion': 'success'}
+        for runs in [[], [{**successful, 'event': 'pull_request'}],
+                     [{**successful, 'head_sha': 'b' * 40}],
+                     [{**successful, 'path': '.github/workflows/dev-release.yml'}]]:
+            with self.subTest(runs=runs), patch.object(release, 'api', return_value=[{'workflow_runs': runs}]), \
+                 patch.object(release.time, 'monotonic', side_effect=[0, 1, 85 * 60 + 1]), \
+                 patch.object(release.time, 'sleep'), patch('builtins.print'):
+                with self.assertRaisesRegex(TimeoutError, 'Exact-source CI did not complete'):
+                    release.wait_ci(REVISION)
+
+    def test_build_ci_run_still_requires_a_fresh_successful_source_read(self):
+        with patch.object(release, 'api', return_value=[{'workflow_runs': [{
+                'id': 42, 'event': 'push', 'head_sha': REVISION, 'path': '.github/workflows/ci.yml',
+                'status': 'in_progress', 'conclusion': None}]}]):
+            with self.assertRaisesRegex(ValueError, 'Successful exact-push core CI is required'):
+                release.ci_run_id(REVISION)
 
     def test_original_main_dev_tag_policy_and_schema4_bundle(self):
         self.assertEqual(version('v2.0.0-dev.20260930123456.123'), 'v2.0.0-dev.20260930123456.123')

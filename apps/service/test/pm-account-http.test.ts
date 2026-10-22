@@ -22,6 +22,34 @@ import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts
 const nativeOptions = { timeout: 240_000, skip: !process.env.QZ_PM_OBSERVED_FIXTURE_DIR || !process.env.QZ_JOB_BINARY
   ? 'Requires the native multi-day observed-spot source and matching job; this is not a protocol-only scientific check.' : false };
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
+function assertExactFundingInfeasibility(frame: JsonObject) {
+  // Independent exact arithmetic for this single-asset native fixture. This
+  // checks the original QP's funding row, without using its status as proof or
+  // treating output exposure tolerance as permission to finance the shortfall.
+  const exact = (value: unknown) => {
+    assert.equal(typeof value, 'string'); assert.match(value as string, /^\d+(?:\.\d+)?$/);
+    const [whole, fraction = ''] = (value as string).split('.');
+    return { n: BigInt(`${whole}${fraction}`), d: 10n ** BigInt(fraction.length) };
+  };
+  const less = (a: ReturnType<typeof exact>, b: ReturnType<typeof exact>) => a.n * b.d < b.n * a.d;
+  const input = object(frame.input), constraints = object(input.constraints), allocation = object(frame.allocation);
+  assert.equal(allocation.solver_status, 'INFEASIBLE'); assert.equal(allocation.reason_code, 'NATIVE_PRIMAL_INFEASIBLE');
+  assert.equal(allocation.targets, null); assert.equal(allocation.cash_weight, null); assert.equal(allocation.objective_value, null);
+  assert.equal(constraints.cash_funding, 'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1');
+  assert.equal(constraints.long_only, true); assert.equal(constraints.min_asset_weight, '0');
+  assert.deepEqual(constraints.asset_overrides, []);
+  const assets = input.assets as JsonObject[]; assert.equal(assets.length, 1);
+  const current = exact(assets[0]!.current_weight), cost = exact(assets[0]!.transaction_cost_rate);
+  const maximum = exact(constraints.max_asset_weight), floor = exact(constraints.min_cash_weight);
+  assert.ok(cost.n > 0n && cost.n < cost.d); assert.ok(less(maximum, current));
+  assert.ok(floor.n >= 0n && floor.n <= floor.d);
+  // With 0 <= w <= cap < current and cost < 1, w + cost*(current-w)
+  // is minimized at w=0. Even this deployed-plus-fee minimum exceeds
+  // 1-minCash, so no point can satisfy sum(w)+cash=1 and cash-fee>=minCash.
+  const minimumDeployedPlusFee = { n: cost.n * current.n, d: cost.d * current.d };
+  const fundingLimit = { n: floor.d - floor.n, d: floor.d };
+  assert.ok(less(fundingLimit, minimumDeployedPlusFee), 'The original registered QP must be independently proven funding-infeasible.');
+}
 function result(transcript: { messages: readonly unknown[] }, name: string, offset = -1): JsonObject {
   const message = (transcript.messages.filter(value => (value as { role?: string; toolName?: string }).role === 'toolResult'
     && (value as { toolName?: string }).toolName === name) as { isError?: boolean; content: { type: string; text?: string }[] }[]).at(offset);
@@ -56,6 +84,7 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
   const f = await observedSpotFixture(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science'));
   const state = await setup();
   let mandateId: string | undefined;
+  let preserveFailure = false;
   const diagnostic = async () => {
     if (!mandateId) return { stage: 'before_mandate_admission' };
     const record = pmRecord(pmState(await state.service.pm.snapshot()), mandateId);
@@ -180,8 +209,13 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
     assert.ok(comparison.candidates.some(candidate => candidate.kind === 'HOLD_CURRENT' && candidate.status === 'AVAILABLE'));
     assert.ok(comparison.candidates.some(candidate => candidate.kind === 'REBALANCE' && candidate.status === 'AVAILABLE'));
     assert.ok(view.budgetMovements.some(movement => movement.reasonCode === 'same_observed_state_hold_replay'));
-    assert.ok(comparison.candidates.every(candidate => candidate.status === 'AVAILABLE'));
-    const objectiveValues = comparison.candidates.map(candidate => ({ id: candidate.id, kind: candidate.kind, values: view.activePolicy.selectionRule.objectives.map(objective => {
+    const infeasible = comparison.candidates.filter(candidate => candidate.feasibility?.status === 'INFEASIBLE');
+    const comparable = comparison.candidates.filter(candidate => candidate.feasibility?.status !== 'INFEASIBLE');
+    assert.ok(infeasible.length > 0, 'The original inventory fixture must retain its funding-infeasible automatic capital point.');
+    assert.ok(comparable.every(candidate => candidate.status === 'AVAILABLE'), 'Unknown or ordinary failed candidates cannot be silently excluded.');
+    assert.ok(comparison.reasonCodes.includes('proven_infeasible_configurations_excluded_from_preference'));
+    assert.ok(infeasible.every(candidate => candidate.id !== comparison.selectedCandidateId));
+    const objectiveValues = comparable.map(candidate => ({ id: candidate.id, kind: candidate.kind, values: view.activePolicy.selectionRule.objectives.map(objective => {
       const metrics = [...candidate.netOutcome, ...candidate.downside].filter(metric => metric.definition.id === objective.metricDefinitionId);
       assert.equal(metrics.length, 1); assert.equal(metrics[0]!.status, 'AVAILABLE');
       assert.equal(typeof metrics[0]!.value, 'number'); assert.ok(Number.isFinite(metrics[0]!.value));
@@ -209,6 +243,50 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
       const response = await state.service.app.inject({ url: endpoint, headers: state.headers }); assert.equal(response.statusCode, 200, response.body);
       const body = response.json<{ reference: { role: string; visibility: string }; payload: JsonObject }>();
       assert.equal(body.reference.role, 'SELECTION'); assert.equal(body.reference.visibility, 'OWNER_ONLY');
+      assert.equal((await state.service.app.inject({ url: endpoint })).statusCode, 401);
+      if (candidate.kind === 'REBALANCE') {
+        const paired = object(body.payload.comparison), sent = object(paired.request), initial = object(sent.initial_state);
+        assert.deepEqual(initial.snapshot, f.native);
+        assert.equal(initial.snapshot_evidence_ref, decision.accountBasis!.positionsEvidenceRef);
+        assert.equal(initial.available_ns, decision.accountBasis!.availableAtNs);
+        assert.deepEqual(object(paired.original).request, sent);
+        const study = object(sent.study), settings = object(study.execution_settings);
+        assert.equal(settings.account_kind, 'CASH'); assert.ok(compareDecimal(String(settings.leverage), '1') <= 0);
+        assert.equal(study.evaluation_start_ns, comparison.scope.interval.startNs);
+        assert.equal(object(study.source_selection).event_end_ns, comparison.scope.interval.endExclusiveNs);
+        const constraints = object(object(study.mandate).constraints);
+        assert.equal(constraints.long_only, true);
+        for (const field of ['max_gross_exposure', 'max_net_exposure', 'max_asset_weight']) assert.ok(compareDecimal(String(constraints[field]), '1') <= 0);
+        const hold = object(paired.hold); assert.equal(hold.status, 'COMPLETED'); pairedHoldSimulations.push(object(hold.result));
+        const holdSelection = object(object(object(body.payload.hold).simulationRequest).selection);
+        assert.equal(holdSelection.event_start_ns, comparison.scope.interval.startNs);
+        assert.equal(holdSelection.event_end_ns, comparison.scope.interval.endExclusiveNs);
+      }
+      if (candidate.feasibility?.status === 'INFEASIBLE') {
+        assert.equal(candidate.kind, 'REBALANCE'); assert.equal(candidate.status, 'UNAVAILABLE');
+        assert.deepEqual(candidate.netOutcome, []); assert.deepEqual(candidate.downside, []);
+        assert.ok(candidate.feasibility.evidenceRefs.includes(candidate.configurationEvidenceRef));
+        assert.equal(body.payload.status, 'FAILED'); assert.equal(body.payload.reason, 'OBSERVED_SPOT_STUDY_INFEASIBLE');
+        assert.equal(body.payload.simulation, null); assert.equal(body.payload.simulationRequest, null);
+        const paired = object(body.payload.comparison), rebalance = object(paired.rebalance), allocation = object(body.payload.allocation);
+        assert.equal(rebalance.status, 'FAILED'); assert.equal(rebalance.reason, 'OBSERVED_SPOT_STUDY_INFEASIBLE');
+        assert.deepEqual(rebalance.result, allocation); assert.equal(allocation.simulation, null); assert.equal(allocation.simulation_request, null);
+        const frames = allocation.frames as JsonObject[];
+        assert.ok(frames.length > 0 && frames.some(frame => object(frame.allocation).solver_status === 'INFEASIBLE'));
+        for (const frame of frames) {
+          const status = object(frame.allocation).solver_status;
+          assert.ok(['OPTIMAL', 'ACCEPTABLE_INACCURATE', 'INFEASIBLE'].includes(String(status)));
+          if (status === 'INFEASIBLE') assertExactFundingInfeasibility(frame);
+        }
+        const attempts = view.researchTrials.filter(trial => trial.evidenceRefs.includes(candidate.configurationEvidenceRef));
+        assert.equal(attempts.length, 1); assert.equal(attempts[0]!.state, 'FAILED'); assert.equal(attempts[0]!.countedAttempt, true);
+        assert.ok(view.budgetMovements.some(movement => movement.trialId === attempts[0]!.id && movement.kind === 'CONSUME'));
+        const capacity = view.capacityEstimates.find(item => candidate.capacityEstimateIds.includes(item.id))!;
+        const point = capacity.curve.find(item => item.capital.amount === body.payload.capital)!;
+        assert.equal(point.status, 'UNAVAILABLE'); assert.equal(point.replayEvidenceRef, null); assert.deepEqual(point.netPerformance, []);
+        assert.ok(!capacity.feasibleRegions.some(region => region.lower.amount === point.capital.amount));
+        continue;
+      }
       assert.equal(body.payload.status, 'COMPLETED');
       const selection = object(object(body.payload.simulationRequest).selection);
       assert.equal(selection.event_start_ns, comparison.scope.interval.startNs); assert.equal(selection.event_end_ns, comparison.scope.interval.endExclusiveNs);
@@ -244,20 +322,9 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
       if (candidate.kind === 'HOLD_CURRENT') {
         baselineSimulation = simulation; assert.equal(simulation.orders, '0'); assert.deepEqual(object(body.payload.simulationRequest).target_points, []);
       } else {
-        const paired = object(body.payload.comparison); const sent = object(paired.request); const initial = object(sent.initial_state);
-        assert.deepEqual(initial.snapshot, f.native);
-        assert.equal(initial.snapshot_evidence_ref, decision.accountBasis!.positionsEvidenceRef);
-        assert.equal(initial.available_ns, decision.accountBasis!.availableAtNs);
-        assert.deepEqual(object(paired.original).request, sent);
-        const study = object(sent.study); const settings = object(study.execution_settings);
-        assert.equal(settings.account_kind, 'CASH'); assert.ok(compareDecimal(String(settings.leverage), '1') <= 0);
-        const constraints = object(object(study.mandate).constraints);
-        assert.equal(constraints.long_only, true);
-        for (const field of ['max_gross_exposure', 'max_net_exposure', 'max_asset_weight']) assert.ok(compareDecimal(String(constraints[field]), '1') <= 0);
-        const hold = object(paired.hold); assert.equal(hold.status, 'COMPLETED'); pairedHoldSimulations.push(object(hold.result));
+        const paired = object(body.payload.comparison);
         assert.deepEqual(object(object(paired.rebalance).result).simulation, simulation);
       }
-      assert.equal((await state.service.app.inject({ url: endpoint })).statusCode, 401);
     }
     assert.ok(baselineSimulation && pairedHoldSimulations.length);
     assert.ok(pairedHoldSimulations.some(hold => isDeepStrictEqual(hold, baselineSimulation)),
@@ -306,9 +373,26 @@ test('PM ACCOUNT native HTTP: archived original receipts drive learned HOLD/reba
       countedAttempts: counted.length, conclusion: comparison.conclusion, objectiveValues,
       scope: 'CONTROLLED_ARCHIVED_NATIVE_ACCOUNT_SOFTWARE_COUNTERFACTUAL_NOT_BROKER_OR_LIVE_PIT_EVIDENCE' }));
   } catch (error) {
+    preserveFailure = true;
     const details = await diagnostic();
+    const retained = { scope: 'OWNER_ONLY_NATIVE_TEST_FAILURE_EVIDENCE',
+      serviceDirectory: state.directory, database: join(state.directory, 'original-research.sqlite'),
+      observedWorkingDirectory: f.common.dataDir,
+      immutableFixtureDirectory: join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science'),
+      originalCatalog: f.common.catalog, jobBinary: process.env.QZ_JOB_BINARY,
+      mandateId, datasets: state.options.config.datasets };
+    await writeFile(join(state.directory, 'failed-account-inputs.json'), JSON.stringify(retained, null, 2));
+    await writeFile(join(state.directory, 'failed-account-diagnostic.json'), JSON.stringify(details, null, 2));
     await writeFile('/tmp/qz-pm-account-http-diagnostic.json', JSON.stringify(details, null, 2));
-    t.diagnostic(JSON.stringify(details));
+    t.diagnostic(JSON.stringify({ ...retained, diagnostic: details }));
     throw error;
-  } finally { await state.cleanup(); await f.cleanup(); }
+  } finally {
+    if (preserveFailure) {
+      // Close the official runtime before inspecting its original SQLite and
+      // compressed NativeEvidencePart records. Retain both working directories;
+      // source catalogs remain the immutable fixture paths recorded above.
+      await state.service.close();
+      t.diagnostic(`Original failed native evidence retained at ${state.directory}`);
+    } else { await state.cleanup(); await f.cleanup(); }
+  }
 });

@@ -112,7 +112,7 @@ def dev_tag(revision: str, run_id: str) -> str:
     return tag
 
 
-def wait_ci(revision: str) -> None:
+def wait_ci(revision: str) -> int:
     deadline = time.monotonic() + 85 * 60
     while time.monotonic() < deadline:
         latest = ci_runs(revision)
@@ -121,7 +121,9 @@ def wait_ci(revision: str) -> None:
         if failed:
             raise ValueError(f"Exact-source checks failed; fix/rerun those checks, then retry this release: {failed}")
         if all(path in latest and latest[path]["status"] == "completed" for path in CI_PATHS):
-            return
+            # Preserve the run from this verified snapshot. A second list read
+            # can be older; the build still independently revalidates ci-run.
+            return latest[".github/workflows/ci.yml"]["id"]
         print(f"Waiting for exact-source CI: {revision}", flush=True)
         time.sleep(30)
     raise TimeoutError("Exact-source CI did not complete; retry the release after the checks pass.")
@@ -307,8 +309,7 @@ def main() -> None:
             with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
                 stream.write(f"version={tag}\n")
     elif args.command == "wait-ci":
-        wait_ci(args.revision)
-        run_id = ci_run_id(args.revision)
+        run_id = wait_ci(args.revision)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
                 stream.write(f"ci_run_id={run_id}\n")

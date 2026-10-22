@@ -64,6 +64,8 @@ node --experimental-strip-types --test apps/service/test/pm-operations.test.ts
 
 数值输出协议对应的安装包还须实际导出可按类型查询的 `AllocatorSettingsV1.cash_numerical_output`、`VALIDATED_FEASIBLE_SEGMENT_V1`、`AllocationResultV1.numerical_output` 及精确 `objective_delta_exact` 字段。正式根注册与原 `CLARABEL_QP.parameters` 内联 schema 必须完全一致，不能手改生成文件。增强后的 smoke 已实际拒绝缺少该类型入口的旧 qa.7；后续新归档、原源 SHA 和实际安装结果按 PR #233 对应最终提交记录，不能沿用 qa.7 的旧成功。
 
+后续 qa.8 已实际完成增强 schema smoke 和安装／重复安装，2/2 通过、零跳过；20 个打包源文件与冻结提交 `3f4c8a0f` 的相应源字节一致。归档为 43,344,998 字节，SHA256 `d4241c80a43e915fb5a569c6ae8932475ca7e2b511a5d87233b86ef7ad683590`。这是包含新数值协议正式 schema 的本地 CLI 快照，不包含科学 job，不是已发布 release。
+
 `make check-science` 将专用原生多日测试数据导出至 `QZ_PM_NATIVE_FIXTURE_DIR`（默认位于 PI_SCRATCH_DIR/RUNNER_TEMP/TMPDIR 下）。`make check-core` 要求该目录存在原 `source.json` 与独立生成的下一修订 `source-next.json`，同时传递 `QZ_PM_NATIVE_FIXTURE=.../source.json` 文件路径与 `QZ_PM_NATIVE_FIXTURE_DIR` 目录路径，不允许因缺少 fixture 跳过科学核心验收。实际 catalog 路径以导出文档的 `source.catalog` 为准；不能把多日报告与旧短 catalog 混用。现仓原生验收另要求 `QZ_PM_OBSERVED_FIXTURE_DIR/source.json` 以及该目录下 `science/source.json`，分别绑定短现仓适配反例与完整多日科学路径；缺任何原生导出不得靠跳过获得 core 通过。新增当前时点建仓要求 `QZ_PM_FORWARD_FIXTURE_DIR/source.json`；完整当前建仓 HTTP 验收另要求 `QZ_PM_OBSERVED_FIXTURE_DIR/science/cash-heavy/source.json` 与 `science/cash-heavy-hour/source.json` 的两个独立事前注册测试域，总计七个必需文件。原 2-bar 域合法产生 HOLD 并列；独立 60-bar 域用于正向软件链路，不能覆盖或改写原并列证据，不能手改历史帧时钟代替。科学测试直接导出真实原生请求/结果/目录，core 前置检查与环境透传必须同时存在。
 
 此前仅增加费用后现金硬非负校验的 6cced 候选，其完整 `make check-science` 实际通过 666 项、50 组，零失败、零忽略（contracts/domain 216 项、job 450 项）。七份必需 fixture 全部在全新目录实际导出并记录 SHA256；官方 schema、精确快照和格式检查通过。该历史候选四程序同轮构建后固定 job SHA256 为 `6cced4b8262f3db95069730f98895824fa5f3bba01b9c02a1e412d6d6ff567d6`，完整科学检查结束时再次确认 shared target 与固定程序字节完全一致。此前 648 项旧范围、17 项精度定向、4556 程序的 664 项资金方法回归均保留原日志与适用范围，不与本轮 666 项相加。旧 `0ea174400d66`/`631722199a37` 程序已留逐 SHA 校验的可恢复压缩副本。独立复核随后发现自报现金总和容差仍可掩盖原 NAV 亏空；新增原 NAV 残余、正现金下限及 long-only 硬边界后，6cced 与上述 666 项只保留历史范围，不能代表最终源通过。最终新 SHA 的完整科学检查、七份新 fixture、HTTP/core 和 CI 结果以 PR #233 对应实际提交与运行记录为准，不预报通过数，也不以科学单元范围替代业务验收。最终 core 强制官方 Node 22.19.0 并记录实际 execPath；此前系统 Node 24 的 RO 运行仅为诊断，正式 RO/PAPER 双场必须在新程序和最终提交上重新执行，不得跳过。
@@ -83,3 +85,7 @@ node --experimental-strip-types --test apps/service/test/pm-operations.test.ts
 ## 交付及后续测量
 
 使用一致 SCIENCE_FEATURES 构建并复用同一 binary，运行 [覆盖映射](acceptance-coverage.md) 的适用验收。最终 PR exact head 需要 CI 和 Codex review；合并与发布/部署分别由实际远端记录确认。时效/SLO 需在真实工作量、源更新、模型调用及原生求解下测量，不用 fixture 的毫秒耗时编造生产承诺。
+
+自动 dev 发布等待同一 SHA、`push` 事件及正式 CI 路径的成功运行，并从同一次验证快照传递原 run ID，避免随后的独立列表读取丢失已确认结果。构建阶段仍独立复验该 SHA 的最新成功 CI，下载原测试产物并核对 `tested-revision`，不重建科学程序。成功快照后返回旧／缺失列表的反例已经过真实红绿回归；错误 SHA、PR 事件、更新的失败、缺失运行及原截止时间仍不能放行。
+
+合并后记录实际 merge SHA、该 SHA 的 push CI 和 Dev release 两个运行编号；复用的 `release-version` jobs 位于 Dev release 内。须读回整体成功、标签解析到原 SHA、release 的 `target_commitish`／版本／非 draft 状态，以及 12 项 uploaded 且非空的正式资产。`release.json` 的 schema4、version、revision 和三个固定镜像 digest 须与发布时读回相同。只有标签或 CI 成功不足以证明发布成功；正式发布也不代表用户安装已升级。
