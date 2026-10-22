@@ -27,7 +27,7 @@ function textResult(transcript: { messages: readonly unknown[] }, name: string):
 }
 
 test('native exit status persists from the original child to the failed trial and reopen', { timeout: 15_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'qz-exit-diagnostic-')); const binary = join(directory, 'job');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-exit-diagnostic-')); const binary = join(directory, 'job.mjs');
   const previous = process.env.QZ_JOB_BINARY;
   await writeFile(binary, `#!${process.execPath}\nfor await (const chunk of process.stdin) {}\nprocess.stderr.write('catalog_ensemble: partition=2/909 observations=20 markets=3\\n'); process.exit(137);\n`, { mode: 0o700 });
   process.env.QZ_JOB_BINARY = binary;

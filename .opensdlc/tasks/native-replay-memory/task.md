@@ -36,6 +36,8 @@ The kernel kill, original failed trial and new running trial have been read dire
 
 Three focused exit/error regressions failed before the TypeScript fix. After it, the relevant research tests passed 31/31, service projection tests passed 4/4, and research/service type checks passed. Native changes were formatted and `git diff --check` passed. Existing native tests now compare logging-analysis modes and retain complete canonical histories, multi-day returns, PnL/general statistics, fees and scope rejection. Native compilation/tests run through the remote CI linked below; no local native compilation was attempted alongside the live replay. Full-scale memory reduction remains unverified at source preparation. The host has 14 GiB RAM and heavily used swap, so no competing large local build or replay is planned.
 
+The first Node 22 CI run exposed an extensionless test child relying on newer Node module detection: it exited 1 before the requested exit 137. Its path now explicitly ends in `.mjs`, matching the existing native-child tests; the affected local test file passes 4/4. Independent source review found no issues. Current-head CI and GitHub Codex review remain recorded in PR 232.
+
 <a id="delivery"></a>
 ## Delivery
 
