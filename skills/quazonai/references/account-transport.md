@@ -24,4 +24,14 @@ Optional `observation automatic ID --file POLICY.json` accepts `{enabled,cashBuf
 
 `capital status OBSERVATION_ID` reads original native funds/progress. With compatible advertised V1 capability, `capital preview OBSERVATION_ID --file FILE` uses an original `{requestId,amount,currency,policy?}`; `capital command OBSERVATION_ID --file FILE` explicitly starts the approved preview or submits a native pause/cancel/resume/external-withdrawal-reconciliation action. Preserve original bytes, preview/plan/source observation/control and intent revisions. Preview is not authorization to start. Only initiate the user-requested amount/action; QZ never performs the external transfer. Pause/cancel does not release reserved money. Unknown command outcomes reconcile the same original identity without another unsafe POST.
 
-See the concrete [downstream protocol](../../../apps/service/account-transport.md). Existing reservation/progress can remain readable when initiation is unsupported. Missing adapters and unknown reservation evidence are explicit limitations, not zero funds or success. The retired native-envelope relay is still not exposed; original history identities are not rewritten.
+The capital CLI accepts these camelCase file bodies. Every operation retains its own original `requestId`; read actual IDs, revisions and currency from the original observation/status/preview, never from placeholders:
+
+| Operation | Required file fields |
+| --- | --- |
+| `capital preview` | `requestId`, positive decimal-string `amount`, matching `currency`; optional native `policy` (omission uses `{"kind":"CASH_ONLY"}`) |
+| `capital command`, `action: "START"` | `requestId`, `action`, `previewId` from the authorized, supported, unexpired preview; its original observation/control revision must still match |
+| `capital command`, `action: "PAUSE"` or `"CANCEL"` | `requestId`, `action`, `exitId`, current decimal-string `expectedRevision` |
+| `capital command`, `action: "RESUME"` | The same exit/revision fields plus `previewId` from the authorized, supported, unexpired preview |
+| `capital command`, `action: "RECONCILE_WITHDRAWAL"` | The same exit/revision fields plus positive decimal-string `amount`, matching `currency` and the real `externalTransferRef` for the externally completed transfer |
+
+The TypeScript schema catalog exposes capital response views, not these command wrappers. Use this table for CLI file bodies. A supplied nondefault `policy` must follow an actual supported native contract; inspect installed `schema list --domain` for availability and report a missing contract rather than inventing a schema name. Native snake_case downstream envelopes are not CLI file bodies. No repository checkout is required. Existing reservation/progress can remain readable when initiation is unsupported. Missing adapters and unknown reservation evidence are explicit limitations, not zero funds or success. The retired native-envelope relay is still not exposed; original history identities are not rewritten.
