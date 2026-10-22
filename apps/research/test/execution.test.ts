@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { FactorTask } from '../plugins/native-factor-task.ts';
 import { executeNative } from '../plugins/native-portfolio.ts';
+import { CatalogScopeTask } from '../plugins/native-catalog-scope.ts';
 import { classifyExecutionError, ExecutionFailure } from '../src/execution-errors.ts';
 import { researchSettings } from '../src/settings.ts';
 
@@ -65,6 +66,39 @@ test('native stderr takes precedence over broken stdout, while a successful proc
       });
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('native runners retain the normalized status for killed and explicitly exited children', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-native-exit-')); const binary = join(directory, 'job.mjs');
+  const previous = process.env.QZ_JOB_BINARY;
+  const data = { catalog: directory, request: { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { event_start_ns: '0', event_end_ns: '30' }, parameters: {} } } };
+  try {
+    process.env.QZ_JOB_BINARY = binary;
+    for (const termination of ['process.exit(137)', "process.kill(process.pid, 'SIGKILL')"]) {
+      await writeFile(binary, `#!${process.execPath}\nfor await (const chunk of process.stdin) {}\nprocess.stderr.write('catalog_ensemble: partition=2/909 observations=20 markets=3\\n');\n${termination};\n`, { mode: 0o700 });
+      for (const compute of [
+        () => executeNative(binary, 'simulate', {}, [], directory, BACKGROUND_CONTEXT),
+        () => evaluateWasm('(module)', data, BACKGROUND_CONTEXT),
+      ]) await assert.rejects(compute(), (error: unknown) => {
+        assert.ok(error instanceof ExecutionFailure);
+        const detail = classifyExecutionError(error)!;
+        assert.equal(detail.exitCode, 137); assert.equal(detail.stage, 'execute');
+        assert.match(detail.message, /可能/); assert.doesNotMatch(detail.message, /OOM|内存不足|内存耗尽/);
+        return true;
+      });
+      const read = CatalogScopeTask.definition.phases.read;
+      let outcome: any;
+      const task = { input: { catalog: directory } } as Parameters<typeof read>[0];
+      const runtime = { signal: new AbortController().signal, async commit(operation: () => unknown) { outcome = operation(); } } as unknown as Parameters<typeof read>[1];
+      await read(task, runtime, BACKGROUND_CONTEXT);
+      assert.equal(outcome.status, 'terminal');
+      assert.equal(outcome.outcome.status, 'failed'); assert.equal(outcome.outcome.error.detail.exitCode, 137);
+      assert.equal(outcome.outcome.error.detail.operation, 'catalog-factor-scope');
+    }
+  } finally {
+    if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('execution accepts the retained native serializer omitting null fuel without changing admitted input', async () => {

@@ -18,6 +18,8 @@ export const CatalogScopes = defineDoc<{ roots: JsonObject[] }>({
 async function readScope(catalog: string, context: Context): Promise<string[]> {
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-catalog-scope-'));
   const env = new NodeExecutionEnv({ cwd: directory });
+  let exitCode: number | undefined;
+  let stage: 'execute' | 'decode' = 'execute';
   try {
     const parser = new JsonReader(); let stderr = '';
     const result = getOrThrow(await env.exec([
@@ -26,10 +28,14 @@ async function readScope(catalog: string, context: Context): Promise<string[]> {
     ], { inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TMPDIR: directory },
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') parser.write(text); else stderr += text; },
     }, context));
-    if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_catalog_scope_exit_${result.exitCode}`);
+    exitCode = result.exitCode;
+    if (exitCode !== 0) throw new Error(stderr.trim() || `native_catalog_scope_exit_${exitCode}`);
+    stage = 'decode';
     const barTypes = parser.finish();
     if (!Array.isArray(barTypes) || !barTypes.length || !barTypes.every((type) => typeof type === 'string')) throw new Error('native_catalog_scope_invalid');
     return barTypes;
+  } catch (error) {
+    throw new ExecutionFailure(error, { operation: 'catalog-factor-scope', stage, exitCode });
   } finally {
     await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });

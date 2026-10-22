@@ -10,7 +10,7 @@ import { classifyExecutionError } from '../../research/src/execution-errors.ts';
 
 function publicExecutionError(value: unknown, fallback: 'scientific_execution_failed' | 'backtest_failed', operation: string, stored?: unknown) {
   const context = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
-  const detail = classifyExecutionError(value, fallback, { operation: context.operation ?? operation, stage: context.stage });
+  const detail = classifyExecutionError(value, fallback, { operation: context.operation ?? operation, stage: context.stage, exitCode: context.exitCode });
   return { error: detail?.code ?? null, errorDetail: detail };
 }
 

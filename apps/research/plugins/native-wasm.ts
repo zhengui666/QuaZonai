@@ -70,6 +70,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
   const env = new NodeExecutionEnv({ cwd: directory });
   let stage: 'execute' | 'decode' | 'validate' = 'execute';
+  let exitCode: number | undefined;
   try {
     await writeFile(join(directory, 'model.wasm'), compileWasm(model, 'factor.wat', operation));
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
@@ -85,7 +86,8 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
       inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TMPDIR: directory },
       onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
     }, context));
-    if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${result.exitCode}`);
+    exitCode = result.exitCode;
+    if (exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${exitCode}`);
     stage = 'decode';
     const output = object(JSON.parse(stdout), 'native_result');
     stage = 'validate';
@@ -94,7 +96,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     return output;
   } catch (error) {
     if (error instanceof ExecutionFailure) throw error;
-    throw new ExecutionFailure(error, { operation, stage });
+    throw new ExecutionFailure(error, { operation, stage, exitCode });
   } finally {
     await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });

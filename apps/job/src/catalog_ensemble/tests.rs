@@ -1,10 +1,11 @@
 //! Small actual official-engine replay; this is synthetic regression data.
+use bigdecimal::BigDecimal;
 use contracts::{
     catalog_ensemble::*, portfolio::*, recorded_fees::*, science::*, DbCounter, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},
-    types::{Price, Quantity},
+    types::{Money, Price, Quantity},
 };
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde_json::json;
@@ -224,6 +225,87 @@ fn native_stream_retains_one_account_and_fees_while_dynamic_market_changes() {
         .iter()
         .any(|fill| fill.instrument_id == "200.POLYMARKET" && fill.order_side == "BUY"));
     assert!(fills.iter().all(|fill| fill.commission.is_positive()));
+    let canonical = &result.simulation.canonical_result;
+    let official = nautilus_backtest::result::CanonicalBacktestResult::from_slice(
+        &serde_json::to_vec(canonical).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(official.as_value(), canonical);
+    for field in [
+        "accounts",
+        "orders",
+        "fills",
+        "positions",
+        "portfolio_snapshots",
+    ] {
+        assert!(!canonical[field].as_array().unwrap().is_empty(), "{field}");
+    }
+    assert!(canonical["position_snapshots"].is_array());
+    assert_eq!(
+        canonical["summary"],
+        serde_json::to_value(&result.simulation.summary).unwrap()
+    );
+    assert_eq!(
+        canonical["run"]["backtest_end_ns"],
+        result
+            .simulation
+            .settled_replay_ns
+            .unwrap()
+            .get()
+            .to_string()
+    );
+    for group in [NativeStatisticGroup::Pnl, NativeStatisticGroup::General] {
+        let values = result
+            .simulation
+            .statistics
+            .iter()
+            .filter(|stat| stat.group == group)
+            .collect::<Vec<_>>();
+        assert!(!values.is_empty(), "{group:?}");
+        for stat in values {
+            let official = match group {
+                NativeStatisticGroup::Pnl => {
+                    &canonical["statistics"]["pnls"][stat.currency.as_ref().unwrap()]
+                        [&stat.native_key]
+                }
+                NativeStatisticGroup::General => {
+                    &canonical["statistics"]["general"][&stat.native_key]
+                }
+                NativeStatisticGroup::Returns => unreachable!(),
+            }
+            .as_str()
+            .unwrap();
+            if let Some(value) = stat.value {
+                assert_eq!(format!("{:016x}", value.to_bits()), official);
+            } else {
+                assert!(["nan", "+inf", "-inf"].contains(&official));
+            }
+        }
+    }
+    assert!(result
+        .simulation
+        .statistics
+        .iter()
+        .any(|stat| stat.native_key == "Sharpe Ratio (252 days)"));
+    let native_fills = canonical["fills"].as_array().unwrap();
+    assert_eq!(native_fills.len(), fills.len());
+    let native_fees: BigDecimal = native_fills
+        .iter()
+        .map(|fill| {
+            Money::from_str(fill["event"]["Filled"]["commission"].as_str().unwrap())
+                .unwrap()
+                .as_decimal()
+                .to_string()
+                .parse::<BigDecimal>()
+                .unwrap()
+        })
+        .sum();
+    let recorded_fees: BigDecimal = fills.iter().map(|fill| fill.commission.as_decimal()).sum();
+    assert_eq!(native_fees, recorded_fees);
+    assert!(fills
+        .iter()
+        .flat_map(|fill| &fill.allocations)
+        .all(|allocation| allocation.original.id.starts_with("original-")));
 }
 
 #[test]
