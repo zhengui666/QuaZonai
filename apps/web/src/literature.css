@@ -1,0 +1,22 @@
+.literature-content { padding: 26px 30px 40px; }
+.literature-search + .literature-search { margin-top: 30px; padding-top: 26px; border-top: 1px solid var(--line); }
+.literature-search-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 18px; }
+.literature-search-heading h3 { font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
+.literature-status, .literature-meta, .literature-authors, .literature-sources { font-size: 12px; color: var(--secondary); }
+.literature-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; overflow-wrap: anywhere; }
+.literature-sources { display: flex; flex-wrap: wrap; gap: 5px 18px; list-style: none; padding: 0; margin: 14px 0 20px; }
+.literature-sources li { display: flex; gap: 7px; }
+.literature-source-error { color: var(--warning, var(--secondary)); }
+.literature-paper { padding: 19px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.literature-paper h4 { font-size: 14px; line-height: 1.7; }
+.literature-paper h4 a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.literature-authors { margin: 6px 0; line-height: 1.7; }
+.literature-doi { display: inline-block; font-size: 12px; margin-bottom: 8px; }
+.literature-abstract { margin-top: 8px; font-size: 13px; line-height: 1.8; }
+.literature-abstract summary { cursor: pointer; color: var(--secondary); }
+.literature-abstract p, .literature-note p { margin-top: 8px; white-space: pre-wrap; }
+.literature-notes { display: grid; gap: 15px; margin-top: 17px; }
+.literature-note { padding-left: 14px; border-left: 2px solid var(--line); font-size: 13px; line-height: 1.8; }
+.literature-note h5 { font-size: 12px; font-weight: 550; }
+.literature-note blockquote { margin: 10px 0; padding-left: 12px; color: var(--secondary); border-left: 1px solid var(--line); white-space: pre-wrap; }
+@media (max-width: 720px) { .literature-content { padding-inline: 20px; } }

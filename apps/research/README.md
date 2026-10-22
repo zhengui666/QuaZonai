@@ -58,6 +58,22 @@ Cross-market target frames follow the union of actual BAR availability clocks. M
 
 `research_brief({afterTrialId?,limit?})` returns the original objective/data/policy and a compact trial ledger page (10 records by default, at most20 per response). Follow `nextAfterTrialId` as the next `afterTrialId` until null to disclose every trial, including failures and rejections. This is response pagination, not a trial-budget limit. `research_trial({trialId})` reads one original current-conversation trial's status/error and validation feedback without computing or consuming another attempt. It applies the same portfolio projection to old stored results; full diagnostics remain owner-visible. Neither tool returns final held-out results, raw forecast/return/equity arrays or native child evidence. Recover a result through this read tool rather than submitting the same candidate again.
 
+## Literature context
+
+The built-in `qz.research` extension gives the Agent three literature tools through official Pi Durable tool execution:
+
+- `research_literature_search` queries the public Crossref, arXiv and Semantic Scholar APIs for paper metadata and available abstracts. Queries use public academic concepts derived from the question; private input, data, account details and credentials must not be sent as search text. No additional literature-provider key is required, but the host must be able to reach these services.
+- `research_literature_note` binds a claim, its `supports` / `contradicts` / `background` relation, limitations and an optional excerpt to an existing search and paper. Notes interpret retrieved material; they do not replace or rewrite the original source record.
+- `research_literature` reads the saved searches and notes for the original research. Inspection does not call a paper provider or repeat research work.
+
+The separate `qz.literature` fact document lives in the same official Durable storage and retains the original tool-task identity, source receipts and outcomes. Committed results survive close/reopen and are reused on replay and repeated reads. This does not introduce a second task database, alter scientific trial records or grant access to final held-out values.
+
+The search tool's optional `limit` is 1–8 papers across the sources, defaulting to five for a new query. Repeating the normalized query reuses its latest saved receipt, including failures. A new tool task with `retryFailed:true` can explicitly retry a latest `partial` or `unavailable` result and save a new receipt while retaining the old failure. Completed/empty results stay reused, and replaying an original task always returns its original receipt. Changing `limit` alone does not cause a fresh search. The Agent instruction suggests about three focused searches when useful; that is guidance under the original study constraints, not a separate backend search-budget limit. Retrieval failure does not create a new admission gate for an otherwise admitted scientific hypothesis.
+
+Search states distinguish `completed`, `partial`, `unavailable` and `no_results`, preserving each source's errors. A successful empty response is different from an unavailable API; neither proves that no relevant literature exists. Missing metadata and abstracts stay absent. The tools do not fetch or read full-text PDFs, bypass paywalls or validate the scientific truth of a citation. Excerpts must come from retrieved material and notes must state the limits of applying it to the proposed study. Literature supports hypothesis development; independent science and profitability remain separate claims.
+
+The service exposes the saved literature with research detail and the Web workbench presents it in the literature tab. Official Faux-provider tests can verify tool protocol, persistence and recovery, while a real-model evaluation must separately establish that the Agent searches, cites and qualifies sources appropriately under an authenticated provider and reachable paper APIs.
+
 ## Scientific isolation
 
 The Wasm adapter uses a prepared `data.catalog` and original native request, with optional `data.sealed` for independent final evaluation. Preserve original licensing, source/PIT and availability facts; an existing directory establishes none of them. Iteration truncates the native selection at validation end, including labels. Shared half-open causal partitions use canonical decimal-string boundaries satisfying `start < train < validation <= end`.

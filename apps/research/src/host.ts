@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { canonical, Requests, Study } from './documents.ts';
+import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
 import type { ResearchInput } from './documents.ts';
@@ -154,6 +155,7 @@ export async function openResearch(options: {
   async function state(id: number) {
     await conversation(id);
     return { research: await harness.snapshot(Study, id as ConversationId, context),
+      literature: await harness.snapshot(LiteratureDoc, id as ConversationId, context),
       submission: await latestSubmission(id), originalSubmission: await submissionFor(id) };
   }
   async function diagnostics(id: number) {
@@ -223,7 +225,8 @@ export async function openResearch(options: {
     async view(id: number) {
       const watch = await (await conversation(id)).watch(context);
       try {
-        return { ...watch.value, research: await harness.snapshot(Study, watch.value.conversation.id, context), submission: await submissionFor(id) };
+        return { ...watch.value, research: await harness.snapshot(Study, watch.value.conversation.id, context),
+          literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context), submission: await submissionFor(id) };
       } finally { await watch.stop(); }
     },
     async watch(id: number): Promise<ConversationWatch> {

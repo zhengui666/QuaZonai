@@ -41,6 +41,8 @@ HTTP 只用于可信网络；公网使用 HTTPS。登录保存原有连接配置
 
 私有 `data/service.json` 登记数据集、显式策略政策、连接和官方 Extension；`data/research/provider.env` 保存 Provider 环境配置。凭据不进入研究正文、浏览器表单或日志。没有模型、数据或证据时明确失败，不使用演示数据补齐。宿主配置与恢复见[研究指南](apps/research/README.md)。
 
+研究 Agent 可围绕公开学术关键词自动查询 Crossref、arXiv 和 Semantic Scholar，并保存论文元数据、可用摘要及支持／反对论点的笔记。研究详情的「文献」标签展示来源链接、适用限制和检索失败；已保存结果随原研究恢复，重复查看不会再次检索。论文接口无需额外密钥，但需要宿主能访问相应服务；没有摘要、服务限流或检索失败会如实显示。文献帮助形成假设，不代表已阅读全文、完成独立评价或证明策略盈利。
+
 ```sh
 quazonai datasets
 quazonai research start --file research-request.json

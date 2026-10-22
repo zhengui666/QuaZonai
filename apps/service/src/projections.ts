@@ -124,6 +124,7 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
   return {
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
     input: study.input as ResearchInput, submission: submissionView(view.submission),
+    ...(view.literature ? { literature: view.literature } : {}),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),
     ...(study.input.specification ? { criterion: researchCriterion(study.input.specification, String(final?.status ?? 'PENDING'), metrics(final?.result)) } : {}),
     trialRecords: study.trials.map((trial) => ({
