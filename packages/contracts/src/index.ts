@@ -1,5 +1,7 @@
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
+import type { LiteratureView } from './literature.ts';
+export type { LiteratureSource, LiteraturePaper, LiteratureSearchResult, LiteratureSearch, LiteratureNote, LiteratureView } from './literature.ts';
 export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type JsonObject = { [key: string]: Json };
@@ -31,9 +33,9 @@ export interface ResearchSpecification {
   search: { scope: 'single-factor' | 'ensemble'; maxMembers: number; stop: 'budget-or-selection' };
   capital?: CapitalAssumptions;
 }
-export interface ResearchInput { goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
+export interface ResearchInput { goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
 export type ResearchStart = { requestId: string; input: ResearchInput } | {
-  requestId: string; goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
+  requestId: string; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
@@ -55,6 +57,7 @@ export interface TaskView { id: number; name: string; status: string; error: str
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null }
 export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
+  literature?: LiteratureView;
   dataset?: RecordedDataset | null; datasetId?: string | null;
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];

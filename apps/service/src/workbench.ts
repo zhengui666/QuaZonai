@@ -14,7 +14,7 @@ import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
 import { factorViews } from './factors.ts';
-import { researchCriterion } from '../../../packages/contracts/src/research.ts';
+import { publicLiteratureQueries, researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
@@ -68,6 +68,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       }
       input = structuredClone(submission.input);
       object(input, 'research_input'); text(input.goal, 'goal');
+      publicLiteratureQueries(input.publicLiteratureQueries);
       const data = object(input.data, 'dataset');
       const registered = config.datasets.find((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data));
       if (!registered) throw new Problem('dataset_input_unregistered');
@@ -77,6 +78,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         capturedDataset = captureDataset(registered);
       }
     } else {
+      const publicQueries = publicLiteratureQueries(submission.publicLiteratureQueries);
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       capturedDataset = captureDataset(configured);
       if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
@@ -85,7 +87,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const preferredModel = preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId;
       const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
       const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
-      input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
+      input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
         policy: { ...configured.policy, max_trials: submission.maxTrials, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');

@@ -3,10 +3,13 @@ import { defineExtension, defineTool, hook, section, ToolTask } from '@earendil-
 import { Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
+import { LiteratureDoc } from '../src/literature-document.ts';
+import { literatureInstructions, literatureTools } from '../src/literature-tools.ts';
 
-export default defineExtension({
+export function researchExtension(search?: Parameters<typeof literatureTools>[0]) {
+  return defineExtension({
   name: 'qz.research',
-  sections: [section('research', () => `Research factors or the owner's explicitly admitted strategy, not a mandatory downstream consumer. Read research_brief; follow nextAfterTrialId using afterTrialId for the trial ledger. For cross-market policy use research_markets(offset,limit) and nextOffset to read the complete original training-market universe and fee reserves; pages are response bounds, never market/trial caps. Use research_trial(trialId) to recover validation feedback instead of reevaluating. Propose falsifiable complete candidates and preserve failed/compared trials. Never tune against final results, look ahead, invent data or call computation qualification. Respect original criteria, budget and stop rule. The running native host supplies successor generations when an unfinished response yields; a response boundary, tool-call count or finite invocation is not a scientific stop rule and requires no separate loop. Do not claim execution after host closure. Use research_finish only at an actual original stop condition. Use the registered final evaluator when requested; finalize alone without other reads/computations in that round. Target delivery remains optional.`)],
+  sections: [section('research', () => `Research factors or the owner's explicitly admitted strategy, not a mandatory downstream consumer. Read research_brief; follow nextAfterTrialId using afterTrialId for the trial ledger. For cross-market policy use research_markets(offset,limit) and nextOffset to read the complete original training-market universe and fee reserves; pages are response bounds, never market/trial caps. Use research_trial(trialId) to recover validation feedback instead of reevaluating. Propose falsifiable complete candidates and preserve failed/compared trials. Never tune against final results, look ahead, invent data or call computation qualification. Respect original criteria, budget and stop rule. The running native host supplies successor generations when an unfinished response yields; a response boundary, tool-call count or finite invocation is not a scientific stop rule and requires no separate loop. Do not claim execution after host closure. Use research_finish only at an actual original stop condition. Use the registered final evaluator when requested; finalize alone without other reads/computations in that round. Target delivery remains optional.\n${literatureInstructions}`)],
   // Native terminate is unanimous per round, not an immediate global stop.
   // Mark subsequent read/error results terminal after a recorded final; never
   // return final metrics to the model or permit more scientific computation.
@@ -16,6 +19,7 @@ export default defineExtension({
     },
   })],
   tools: [
+    ...literatureTools(search),
     defineTool({
       name: 'research_brief', description: 'Original objective, available research data and fixed policy with a compact trial ledger page. Follow nextAfterTrialId with afterTrialId for complete disclosure. research_trial reads original validation feedback without computing. No final held-out values.',
       parameters: Type.Object({ afterTrialId: Type.Optional(Type.Integer({ minimum: 1 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }), replay: 'safe',
@@ -23,6 +27,7 @@ export default defineExtension({
         const input = await studyInput(api, context);
         const { data, policy } = modelBriefInput(input);
         const study = await api.snapshot(Study, api.conversationId, context);
+        const literature = await api.snapshot(LiteratureDoc, api.conversationId, context);
         const trials = study?.trials ?? [];
         const available = trials.filter((trial) => (trial.taskId as number) > (args.afterTrialId ?? 0)).sort((a, b) => (a.taskId as number) - (b.taskId as number));
         const page = available.slice(0, args.limit ?? 10);
@@ -36,6 +41,9 @@ export default defineExtension({
             memberCount: Array.isArray(proposal.members) ? proposal.members.length : null,
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
           goal: input.goal, specification: input.specification ?? null, data, policy, stopped: study?.final !== null,
+          literature: { searchCount: literature?.searches.length ?? 0, noteCount: literature?.notes.length ?? 0,
+            publicQueries: (input.publicLiteratureQueries ?? []).map((query, queryIndex) => ({ queryIndex, query })),
+            latestSearchId: literature?.searches.at(-1)?.id ?? null, latestStatus: literature?.searches.at(-1)?.status ?? null, readTool: 'research_literature' },
         }) }] };
       },
     }),
@@ -83,4 +91,7 @@ export default defineExtension({
       },
     }),
   ],
-});
+  });
+}
+
+export default researchExtension();
