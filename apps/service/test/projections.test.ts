@@ -202,6 +202,21 @@ test('public research failures retain codes but do not expose native stderr', { 
     const response = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers }); const view = response.json();
     assert.equal(view.final.error, 'scientific_execution_failed'); assert.equal(view.trialRecords[0].error, 'scientific_execution_failed'); assert.ok(!response.body.includes('/private/test-only'));
     const stored = await state.service.research.harness.snapshot(Study, receipt.conversationId as ConversationId, context); assert.equal(stored!.final!.error, diagnostic); assert.equal(stored!.trials[0]!.error, diagnostic);
+    for (const exitCode of [137, 0, -1, '137']) {
+      await state.service.research.harness.commit(async tx => {
+        const study = await tx.doc(Study, receipt.conversationId as ConversationId);
+        study.final!.errorDetail = study.trials[0]!.errorDetail = { operation: 'replay-catalog-ensemble', stage: 'execute', exitCode,
+          code: 'synthetic-secret', message: '/private/test-only' };
+      }, context);
+      const projected = await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers });
+      for (const detail of [projected.json().final.errorDetail, projected.json().trialRecords[0].errorDetail]) {
+        assert.equal(detail.exitCode, typeof exitCode === 'number' && exitCode >= 0 ? exitCode : undefined);
+        assert.equal(detail.operation, 'replay-catalog-ensemble'); assert.equal(detail.stage, 'execute');
+        if (exitCode === 137) { assert.match(detail.message, /可能/); assert.match(detail.message, /显式/); }
+        assert.equal('signal' in detail, false);
+      }
+      assert.doesNotMatch(projected.body, /\/private\/test-only|synthetic-secret/);
+    }
   } finally { await state.cleanup(); }
 });
 

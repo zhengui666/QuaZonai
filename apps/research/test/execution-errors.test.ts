@@ -64,3 +64,26 @@ test('execution context retains the original diagnostic and distinguishes decodi
   assert.equal(detail.code, 'native_result_invalid'); assert.equal(detail.operation, 'simulate'); assert.equal(detail.stage, 'decode');
   assert.doesNotMatch(JSON.stringify(detail), /private-source/);
 });
+
+test('progress lines preserve fixed native codes and specific causes', () => {
+  const progress = 'catalog_ensemble: partition=2/909 observations=20 markets=3\n';
+  assert.equal(classifyExecutionError(`${progress}QZ_NATIVE_JOB_FAILED\nprivate cause`)!.code, 'QZ_NATIVE_JOB_FAILED');
+  const specific = classifyExecutionError(`${progress}QZ_NATIVE_JOB_FAILED\nCATALOG_EMPTY_SELECTION: /private/catalog`, 'scientific_execution_failed', { exitCode: 137 })!;
+  assert.equal(specific.code, 'CATALOG_EMPTY_SELECTION'); assert.equal(specific.category, 'data');
+  assert.equal(specific.stage, 'execute'); assert.equal(specific.exitCode, 137); assert.doesNotMatch(specific.message, /SIGKILL/);
+});
+
+test('native exit status survives child context without asserting a signal or OOM', () => {
+  const raw = 'catalog_ensemble: partition=2/909 observations=20 markets=3';
+  const error = new ExecutionFailure(raw, { operation: 'replay-catalog-ensemble', stage: 'execute', exitCode: 137 });
+  const child = classifyExecutionError(error)!;
+  const restored = classifyExecutionError(new ExecutionFailure(raw, child))!;
+  assert.equal(child.exitCode, 137);
+  assert.deepEqual(restored, child); assert.equal(child.category, 'unknown');
+  assert.match(child.message, /137/); assert.match(child.message, /可能/); assert.match(child.message, /显式/);
+  assert.doesNotMatch(child.message, /OOM|内存不足|内存耗尽/);
+  assert.equal('signal' in child, false);
+  for (const exitCode of [-1, 1.5, NaN, Infinity, '137']) {
+    assert.equal('exitCode' in classifyExecutionError(raw, 'scientific_execution_failed', { exitCode })!, false);
+  }
+});
