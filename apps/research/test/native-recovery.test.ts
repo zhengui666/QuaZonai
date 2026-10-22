@@ -102,9 +102,13 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
     const input = { goal: 'Protocol-only native suspension', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
     const receipt = await host.start('original-interrupted-factor', input);
     let pid: number;
+    const nativeStartDeadline = Date.now() + 5000;
     for (;;) {
       try { pid = Number(await readFile(pidPath, 'utf8')); if (pid > 0) break; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const child = (await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context)).items[0];
+      if (child?.state.status === 'terminal') assert.fail(`Original native child settled before its execution checkpoint: ${JSON.stringify(child.state.outcome)}`);
+      assert.ok(Date.now() < nativeStartDeadline, 'original native child did not publish its process checkpoint within 5000 ms');
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     const original = (await host.state(receipt.conversationId)).research!.trials[0]!;

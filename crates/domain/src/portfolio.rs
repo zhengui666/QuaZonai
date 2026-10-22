@@ -8,8 +8,13 @@ pub use covariance::sample_covariance;
 mod risk;
 pub use risk::{cvar_confidence, cvar_tail_coefficient, risk_budgeting};
 mod liquidity;
+mod numerical;
 pub use liquidity::{
     bar_liquidity_age, bar_liquidity_assumption, bar_liquidity_values, rolling_liquidity_policy,
+};
+pub use numerical::{
+    cash_numerical_anchor, cash_numerical_objective, cash_numerical_objective_delta,
+    cash_numerical_segment, cash_numerical_weight,
 };
 
 fn invalid() -> DomainError {
@@ -293,7 +298,15 @@ pub fn portfolio_forecast_alignment(input: &PortfolioForecastInputV1) -> Result<
             return Err(invalid());
         }
     }
-    if alphas.len() < 2 {
+    if alphas.is_empty()
+        || (input
+            .members
+            .iter()
+            .filter(|m| m.ensemble_weight.is_positive())
+            .count()
+            > 1
+            && alphas.len() < 2)
+    {
         return Err(invalid());
     }
     Ok(())
@@ -313,7 +326,7 @@ pub fn ensemble_weights<'a>(
         positive += usize::from(weight.is_positive());
         sum += weight.as_decimal();
     }
-    if count < 2 || positive < 2 || sum != BigDecimal::from(1) {
+    if count < 2 || positive == 0 || sum != BigDecimal::from(1) {
         return Err(DomainError::Invalid("ensemble_weights"));
     }
     Ok(())
@@ -322,6 +335,15 @@ pub fn ensemble_weights<'a>(
 /// Structural mandate checks shared with actual allocation and publication.
 /// Asset/group membership and feasibility still require the frozen native input.
 pub fn portfolio_constraints(constraints: &PortfolioConstraintsV1) -> Result<(), DomainError> {
+    if constraints.cash_funding.is_some()
+        && (!constraints.long_only
+            || !constraints.min_cash_weight.is_nonnegative()
+            || constraints.max_gross_exposure.as_decimal() > &BigDecimal::from(1))
+    {
+        return Err(DomainError::Invalid(
+            "cash_funding_requires_unlevered_long_only",
+        ));
+    }
     if !constraints.max_gross_exposure.is_nonnegative()
         || !constraints.max_turnover_per_rebalance.is_nonnegative()
         || constraints
@@ -418,6 +440,12 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     fixed_ensemble(&content.alpha_ensemble)?;
     sample_covariance_parameters(&content.covariance_estimator)?;
     portfolio_constraints(&content.constraints)?;
+    cash_funding_method(
+        &content.constraints,
+        content.objective,
+        content.risk_measure,
+        optimizer_settings(&content.optimizer)?,
+    )?;
     rebalance_schedule(&content.rebalance_schedule)?;
     if !content.capital_assumption.is_positive()
         || !content.exposure_tolerance.is_positive()
@@ -430,6 +458,25 @@ pub fn mandate(content: &MandateContentV1) -> Result<(), DomainError> {
     Ok(())
 }
 
+fn cash_funding_method(
+    constraints: &PortfolioConstraintsV1,
+    objective: AllocationObjective,
+    risk: AllocationRisk,
+    settings: &AllocatorSettingsV1,
+) -> Result<(), DomainError> {
+    if settings.cash_numerical_output.is_some() && constraints.cash_funding.is_none() {
+        return Err(DomainError::Invalid(
+            "cash_numerical_output_requires_cash_funding",
+        ));
+    }
+    if constraints.cash_funding.is_some()
+        && (objective != AllocationObjective::MaxUtility || risk != AllocationRisk::Variance)
+    {
+        return Err(DomainError::Invalid("cash_funding_method_unsupported"));
+    }
+    Ok(())
+}
+
 /// Does not authorize an Alpha, infer a quote, or fit an estimator.
 pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     optimizer_settings(&input.optimizer)?;
@@ -439,6 +486,23 @@ pub fn allocation_input(input: &AllocationInputV1) -> Result<(), DomainError> {
     portfolio_return_history(&input.return_history, &input.forecasts)?;
     let count = input.assets.len();
     let constraints = &input.constraints;
+    cash_funding_method(
+        constraints,
+        input.objective,
+        input.risk,
+        optimizer_settings(&input.optimizer)?,
+    )?;
+    if constraints.cash_funding.is_some()
+        && (!input.current_cash_weight.is_nonnegative()
+            || input
+                .assets
+                .iter()
+                .any(|asset| !asset.current_weight.is_nonnegative()))
+    {
+        return Err(DomainError::Invalid(
+            "cash_funding_current_borrowing_or_shorting",
+        ));
+    }
     if let Some(budget) = risk_budgeting(input.objective, &input.optimizer, constraints)? {
         if budget.assets.len() != input.assets.len()
             || budget.assets.iter().any(|b| {
@@ -634,6 +698,7 @@ pub fn allocation_result(
         result.solver_status,
         SolverStatus::Optimal | SolverStatus::AcceptableInaccurate
     );
+    numerical::validate_result(input, result)?;
     if !successful {
         if result.targets.is_some()
             || result.cash_weight.is_some()
@@ -660,11 +725,25 @@ pub fn allocation_result(
         return Err(invalid());
     }
     let targets = result.targets.as_ref().ok_or_else(invalid)?;
-    let cash = result
-        .cash_weight
-        .as_ref()
-        .ok_or_else(invalid)?
-        .as_decimal();
+    let cash = result.cash_weight.as_ref().ok_or_else(invalid)?;
+    allocation_point_feasibility(
+        input,
+        targets,
+        cash,
+        result.cvar_risk_budget_witness.as_ref(),
+    )
+}
+
+/// Complete original point constraints, without inventing a solver status.
+/// Used by result publication and numerical-anchor/candidate certification.
+pub fn allocation_point_feasibility(
+    input: &AllocationInputV1,
+    targets: &[AllocationTargetV1],
+    cash_weight: &DecimalValue,
+    cvar_witness: Option<&CvarRiskBudgetWitnessV1>,
+) -> Result<(), DomainError> {
+    allocation_input(input)?;
+    let cash = cash_weight.as_decimal();
     if targets.len() != input.assets.len() {
         return Err(invalid());
     }
@@ -678,12 +757,16 @@ pub fn allocation_result(
     let mut net = BigDecimal::from(0);
     let mut gross = BigDecimal::from(0);
     let mut turnover = BigDecimal::from(0);
+    let mut linear_cost = BigDecimal::from(0);
     let mut group_weights = BTreeMap::<&str, BigDecimal>::new();
     for (target, asset) in targets.iter().zip(&input.assets) {
         if target.instrument_id != asset.instrument_id || target.currency != asset.currency {
             return Err(invalid());
         }
         let weight = target.weight.as_decimal();
+        if constraints.cash_funding.is_some() && !target.weight.is_nonnegative() {
+            return Err(DomainError::Invalid("cash_funding_shorting"));
+        }
         let (low, high) = overrides
             .get(asset.instrument_id.as_str())
             .map(|v| (v.min.as_decimal(), v.max.as_decimal()))
@@ -710,6 +793,7 @@ pub fn allocation_result(
         }
         net += weight;
         gross += weight.abs();
+        linear_cost += &change * asset.transaction_cost_rate.as_decimal();
         turnover += change;
         for group in &asset.groups {
             *group_weights
@@ -742,6 +826,27 @@ pub fn allocation_result(
         )
     {
         return Err(DomainError::Invalid("portfolio_exposure_bound"));
+    }
+    if constraints.cash_funding.is_some() {
+        // Validate the actual target deltas, independently of the solver's
+        // auxiliary epigraph values. A CASH account cannot borrow even within
+        // the exposure tolerance; only the positive reserve floor has allowance.
+        let post_fee_cash = cash - &linear_cost;
+        if post_fee_cash < BigDecimal::from(0) {
+            return Err(DomainError::Invalid("cash_funding_borrowing"));
+        }
+        // The reported cash variable and original NAV must both fund the
+        // trade. Capital-equality tolerance cannot mint cash or be reused as
+        // an additional reserve-floor allowance. These are checks only: the
+        // original solved weights and cash are never clamped or rewritten.
+        let nav_residual = BigDecimal::from(1) - &net - linear_cost;
+        if nav_residual < BigDecimal::from(0) {
+            return Err(DomainError::Invalid("cash_funding_nav_shortfall"));
+        }
+        let minimum = constraints.min_cash_weight.as_decimal() - tolerance;
+        if post_fee_cash < minimum || nav_residual < minimum {
+            return Err(DomainError::Invalid("cash_funding_bound"));
+        }
     }
     for group in &constraints.group_bounds {
         let total = group_weights
@@ -778,9 +883,7 @@ pub fn allocation_result(
                 &weights,
                 confidence,
             )?;
-            let marginal = result
-                .cvar_risk_budget_witness
-                .as_ref()
+            let marginal = cvar_witness
                 .map(|witness| {
                     risk::cvar_marginal(
                         &input.return_history.asset_returns,

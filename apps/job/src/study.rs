@@ -12,7 +12,37 @@ pub fn evaluate(
     request: &NativePortfolioStudyRequestV1,
     mut read: impl FnMut(Id) -> Result<Vec<u8>>,
 ) -> Result<NativePortfolioStudyResultV1> {
-    let cutoffs = domain::execution::portfolio_study_cutoffs(request)?;
+    evaluate_mode(catalog, request, &mut read, None)
+}
+
+pub(crate) fn evaluate_observed_spot(
+    catalog: &Path,
+    request: &NativePortfolioStudyRequestV1,
+    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+    inputs: crate::spot_cash_runtime::SpotReplayInputs,
+) -> Result<NativePortfolioStudyResultV1> {
+    ensure!(
+        inputs.observed_start.is_some(),
+        "OBSERVED_SPOT_START_REQUIRED"
+    );
+    evaluate_mode(catalog, request, &mut read, Some(inputs))
+}
+
+fn evaluate_mode(
+    catalog: &Path,
+    request: &NativePortfolioStudyRequestV1,
+    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+    observed_spot: Option<crate::spot_cash_runtime::SpotReplayInputs>,
+) -> Result<NativePortfolioStudyResultV1> {
+    let initial = observed_spot
+        .as_ref()
+        .and_then(|input| input.observed_start.as_ref())
+        .cloned();
+    let cutoffs = if initial.is_some() {
+        domain::execution::observed_spot_study_cutoffs(request)?
+    } else {
+        domain::execution::portfolio_study_cutoffs(request)?
+    };
     let mut objects = BTreeMap::new();
     for id in request
         .members
@@ -73,7 +103,12 @@ pub fn evaluate(
         selection.event_end_ns = cutoff;
         selection.decision_cutoff_ns = cutoff;
         let market = crate::catalog::load_catalog(catalog, &selection)?;
-        let prepared = crate::portfolio::prepare(
+        let prepare = if initial.is_some() {
+            crate::portfolio::prepare_observed_spot
+        } else {
+            crate::portfolio::prepare
+        };
+        let prepared = prepare(
             &market,
             &selection,
             &request.mandate,
@@ -162,7 +197,18 @@ pub fn evaluate(
         settings: request.execution_settings.clone(),
         target_points: points,
     };
-    let (simulation, frames) = crate::simulation::run(catalog, &replay, frames)?;
+    let (simulation, frames) = if let Some(input) = observed_spot {
+        crate::simulation::run_observed_spot(
+            catalog,
+            &replay,
+            input.dataset_revision_id,
+            input.closed_rows,
+            initial.as_ref().expect("observed start required"),
+            frames,
+        )?
+    } else {
+        crate::simulation::run(catalog, &replay, frames)?
+    };
     let simulation_request = if simulation.is_some() {
         replay.target_points = frames
             .iter()
@@ -196,6 +242,10 @@ pub fn evaluate(
         simulation_request,
         simulation,
     };
-    domain::execution::check_portfolio_study(request, &result)?;
+    if let Some(initial) = &initial {
+        domain::execution::check_observed_spot_study(request, &result, initial)?;
+    } else {
+        domain::execution::check_portfolio_study(request, &result)?;
+    }
     Ok(result)
 }

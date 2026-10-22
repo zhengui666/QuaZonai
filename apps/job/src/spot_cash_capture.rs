@@ -107,7 +107,7 @@ struct State {
     latest: BTreeMap<String, NativeSpotPriceV1>,
     context: Option<SpotCashContext>,
     account_id: Option<String>,
-    expected_initial_balance: Option<NativeSpotCashMoneyV1>,
+    expected_initial_balances: Vec<NativeSpotCashMoneyV1>,
     sequence: u64,
     last_clock: Option<u64>,
     capacity: Option<usize>,
@@ -225,7 +225,7 @@ impl State {
             latest: BTreeMap::new(),
             context: None,
             account_id: None,
-            expected_initial_balance: None,
+            expected_initial_balances: Vec::new(),
             sequence: 0,
             last_clock: None,
             capacity,
@@ -331,19 +331,24 @@ impl State {
         );
         let sequence = self.next(clock)?;
         if self.context.is_none() {
-            if let Some(expected) = &self.expected_initial_balance {
+            if !self.expected_initial_balances.is_empty() {
                 ensure!(
-                    snapshot.balances.len() == 1,
+                    snapshot.balances.len() == self.expected_initial_balances.len(),
                     "SPOT_CAPTURE_INITIAL_CURRENCIES_MISMATCH"
                 );
-                let initial = &snapshot.balances[0];
-                ensure!(
-                    initial.total.currency.to_string() == expected.currency
-                        && exact(initial.total.as_decimal())? == expected.amount
-                        && initial.free == initial.total
-                        && initial.locked.as_decimal() == rust_decimal::Decimal::ZERO,
-                    "SPOT_CAPTURE_INITIAL_CAPITAL_MISMATCH"
-                );
+                for expected in &self.expected_initial_balances {
+                    let initial = snapshot
+                        .balances
+                        .iter()
+                        .find(|balance| balance.total.currency.to_string() == expected.currency)
+                        .ok_or_else(|| anyhow!("SPOT_CAPTURE_INITIAL_CURRENCY_MISSING"))?;
+                    ensure!(
+                        exact(initial.total.as_decimal())? == expected.amount
+                            && initial.free == initial.total
+                            && initial.locked.as_decimal() == rust_decimal::Decimal::ZERO,
+                        "SPOT_CAPTURE_INITIAL_CAPITAL_MISMATCH"
+                    );
+                }
             }
             self.context = Some(SpotCashContext::new(
                 &self.settings,
@@ -643,11 +648,23 @@ impl Capture {
             );
             state.period_end_ns = end;
         }
-        state.expected_initial_balance = domain::spot_cash::account_plan(settings)?
-            .starting_balances
-            .into_iter()
-            .next();
+        state.expected_initial_balances =
+            domain::spot_cash::account_plan(settings)?.starting_balances;
         Self::attach(state, engine.kernel().clock())
+    }
+    /// The owned caller installs exactly these observed balances via the official
+    /// engine constructor, before the first account publication. No postings occur here.
+    pub(crate) fn expect_observed_balances(
+        &self,
+        balances: Vec<NativeSpotCashMoneyV1>,
+    ) -> Result<()> {
+        let mut state = self.state.borrow_mut();
+        ensure!(
+            state.context.is_none() && state.records.is_empty(),
+            "SPOT_CAPTURE_ALREADY_STARTED"
+        );
+        state.expected_initial_balances = balances;
+        Ok(())
     }
     pub(crate) fn handle(&self, engine: &BacktestEngine) -> Result<SpotCashCaptureHandle> {
         ensure!(

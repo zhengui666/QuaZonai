@@ -25,7 +25,7 @@ fn metric(key: &str, value: Option<f64>) -> NativeStatisticV1 {
     }
 }
 
-pub(super) fn statistics(
+pub(crate) fn statistics(
     start_ns: u64,
     end_ns: u64,
     fully_priced: bool,

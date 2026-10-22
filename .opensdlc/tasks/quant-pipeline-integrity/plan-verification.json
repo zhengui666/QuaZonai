@@ -1,0 +1,947 @@
+{
+  "schemaVersion": 1,
+  "validationDate": "2026-10-22",
+  "scope": "Design documentation only; no implementation or business performance acceptance",
+  "tools": {
+    "node": "24.19.0",
+    "typescript": "5.9.3",
+    "mermaid": "12.2.0",
+    "markdownIt": "15.0.3",
+    "chromium": "154.0.8037.57"
+  },
+  "sources": [
+    {
+      "file": "design/README.md",
+      "sha256": "3b40f52b44694f1f2e2f5d746be4015cff20b9816ca01fcd91addd81bd520116",
+      "diagrams": 5
+    },
+    {
+      "file": "design/business.md",
+      "sha256": "1e42605e3a8d703a6e527f81f5a85bf7f8c1ef7ab8bf7c5db73d2a2a64cd0f29",
+      "diagrams": 1
+    },
+    {
+      "file": "design/platform-pipeline.md",
+      "sha256": "097b486f5b1f131c6130f03ae5a31695da765d80812637792048c507d7165ecb",
+      "diagrams": 2
+    },
+    {
+      "file": "design/contracts.md",
+      "sha256": "43b4c60373a8b26e1810f3929385959e0c18add8d66fa1754c445ddaf94664a3",
+      "diagrams": 0
+    },
+    {
+      "file": "design/research-decision.md",
+      "sha256": "ce30e9be4a2e5176ac28513d99cdcc26a71dd77f845fdc04e6a0059001a4393a",
+      "diagrams": 2
+    },
+    {
+      "file": "design/portfolio-capacity.md",
+      "sha256": "2bd292e11543fbfadd1014788f8f0f79fba7ab688d8f23809231b1f8a5c7c39d",
+      "diagrams": 2
+    },
+    {
+      "file": "design/continuous-workflow.md",
+      "sha256": "04578e531933e31bd107448becd34c9f33dc4e45920c1d41bc43b7c3dddda929",
+      "diagrams": 5
+    },
+    {
+      "file": "design/architecture-api.md",
+      "sha256": "1e50c25cf948e6f4b16295fc66fbdafe72f797894b20cb780eb021c090ce1199",
+      "diagrams": 2
+    },
+    {
+      "file": "design/acceptance.md",
+      "sha256": "9797ea1a5024bbf888f5a2e3e0a21458646e07b66159eb7bd2dff138e88267d9",
+      "diagrams": 1
+    },
+    {
+      "file": "design/review.md",
+      "sha256": "0964c55a4d6a56047f4fb0a60a8978a818c5e299b25c79610027d146f7d920d7",
+      "diagrams": 0
+    },
+    {
+      "file": "design/verification.md",
+      "sha256": "fe599ec867458ca20fb70e0f83ac4e186c90e55c1acaae098a659aa6be536409",
+      "diagrams": 0
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "business-technical-plan.md",
+      "bytes": 462755,
+      "sha256": "a4404573962e83633353f72a05b351a0eaac08b7e7cd45b0bfbe9d6f3356cf33"
+    },
+    {
+      "file": "business-technical-plan.html",
+      "bytes": 1683281,
+      "sha256": "685362e390e8edc918e046ba674204c8a0d68010a3ed26e10968bd6523c37dfb"
+    }
+  ],
+  "sourceLinks": {
+    "root": "/workspace/QuaZonai/.opensdlc/tasks/quant-pipeline-integrity/design",
+    "files": 11,
+    "mermaidCount": 20,
+    "tsCount": 1,
+    "localLinks": 66,
+    "externalLinks": 38,
+    "summaries": [
+      {
+        "file": "README.md",
+        "links": 21,
+        "diagrams": 5,
+        "tsSnippets": 0
+      },
+      {
+        "file": "acceptance.md",
+        "links": 5,
+        "diagrams": 1,
+        "tsSnippets": 0
+      },
+      {
+        "file": "architecture-api.md",
+        "links": 9,
+        "diagrams": 2,
+        "tsSnippets": 0
+      },
+      {
+        "file": "business.md",
+        "links": 13,
+        "diagrams": 1,
+        "tsSnippets": 0
+      },
+      {
+        "file": "continuous-workflow.md",
+        "links": 4,
+        "diagrams": 5,
+        "tsSnippets": 0
+      },
+      {
+        "file": "contracts.md",
+        "links": 0,
+        "diagrams": 0,
+        "tsSnippets": 1
+      },
+      {
+        "file": "platform-pipeline.md",
+        "links": 26,
+        "diagrams": 2,
+        "tsSnippets": 0
+      },
+      {
+        "file": "portfolio-capacity.md",
+        "links": 7,
+        "diagrams": 2,
+        "tsSnippets": 0
+      },
+      {
+        "file": "research-decision.md",
+        "links": 5,
+        "diagrams": 2,
+        "tsSnippets": 0
+      },
+      {
+        "file": "review.md",
+        "links": 11,
+        "diagrams": 0,
+        "tsSnippets": 0
+      },
+      {
+        "file": "verification.md",
+        "links": 3,
+        "diagrams": 0,
+        "tsSnippets": 0
+      }
+    ],
+    "findings": []
+  },
+  "combinedLinks": {
+    "root": "/workspace/QuaZonai/.opensdlc/tasks/quant-pipeline-integrity",
+    "files": 2,
+    "mermaidCount": 20,
+    "tsCount": 1,
+    "localLinks": 110,
+    "externalLinks": 46,
+    "summaries": [
+      {
+        "file": "business-technical-plan.md",
+        "links": 115,
+        "diagrams": 20,
+        "tsSnippets": 1
+      },
+      {
+        "file": "task.md",
+        "links": 41,
+        "diagrams": 0,
+        "tsSnippets": 0
+      }
+    ],
+    "findings": []
+  },
+  "mermaid": [
+    {
+      "file": "README-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 40231
+    },
+    {
+      "file": "README-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 26247
+    },
+    {
+      "file": "README-3.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 64371
+    },
+    {
+      "file": "README-4.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 44735
+    },
+    {
+      "file": "README-5.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 35497
+    },
+    {
+      "file": "acceptance-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 144941
+    },
+    {
+      "file": "architecture-api-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 70175
+    },
+    {
+      "file": "architecture-api-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 27844
+    },
+    {
+      "file": "business-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 78252
+    },
+    {
+      "file": "continuous-workflow-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 27207
+    },
+    {
+      "file": "continuous-workflow-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 28541
+    },
+    {
+      "file": "continuous-workflow-3.mmd",
+      "status": "rendered",
+      "bytes": 122862
+    },
+    {
+      "file": "continuous-workflow-4.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 33216
+    },
+    {
+      "file": "continuous-workflow-5.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 30022
+    },
+    {
+      "file": "platform-pipeline-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 99382
+    },
+    {
+      "file": "platform-pipeline-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 27574
+    },
+    {
+      "file": "portfolio-capacity-1.mmd",
+      "status": "rendered",
+      "bytes": 125808
+    },
+    {
+      "file": "portfolio-capacity-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 32543
+    },
+    {
+      "file": "research-decision-1.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 38366
+    },
+    {
+      "file": "research-decision-2.mmd",
+      "status": "rendered",
+      "reusedVerifiedSvg": true,
+      "bytes": 67732
+    }
+  ],
+  "contractTypecheck": {
+    "status": "PASSED",
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "canonicalSourceSha256": "43b4c60373a8b26e1810f3929385959e0c18add8d66fa1754c445ddaf94664a3"
+  },
+  "diagramFields": {
+    "interfaceCount": 60,
+    "checkedClassOccurrences": 54,
+    "checkedFields": 178,
+    "nonDtoClasses": [
+      "DataRevisionService",
+      "ResearchCampaignService",
+      "EvidenceService",
+      "EnsembleFitService",
+      "CapacityService",
+      "PortfolioDecisionService",
+      "DecisionCycleTask",
+      "OutcomeService",
+      "NativeScienceAdapter"
+    ],
+    "mismatches": [],
+    "details": [
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "MandateRevision",
+        "fields": [
+          "id",
+          "ownerGoal",
+          "selection"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "DatasetRevision",
+        "fields": [
+          "id",
+          "availableThroughNs",
+          "sourceRevision"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "ResearchCampaign",
+        "fields": [
+          "id",
+          "state",
+          "mandateRevisionId"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "Hypothesis",
+        "fields": [
+          "id",
+          "mechanism",
+          "falsification"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "ResearchTrial",
+        "fields": [
+          "id",
+          "state",
+          "proposalRef"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "FactorVersion",
+        "fields": [
+          "id",
+          "economicFamilyId",
+          "modelRef"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "CalibrationModel",
+        "fields": [
+          "id",
+          "labelDefinitionId",
+          "fitEvidenceRefs"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "EnsembleRevision",
+        "fields": [
+          "id",
+          "members",
+          "fitProtocolRef"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "CapacityEstimate",
+        "fields": [
+          "id",
+          "level",
+          "curve"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "PortfolioDecision",
+        "fields": [
+          "id",
+          "action",
+          "assetTargets",
+          "capital"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "DecisionCycle",
+        "fields": [
+          "id",
+          "state",
+          "basisRevision"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "ObservedOutcome",
+        "fields": [
+          "id",
+          "decisionId",
+          "availableAtNs"
+        ]
+      },
+      {
+        "file": "README.md",
+        "diagram": 3,
+        "class": "EvidenceRef",
+        "fields": [
+          "id",
+          "role",
+          "availableAtNs"
+        ]
+      },
+      {
+        "file": "architecture-api.md",
+        "diagram": 1,
+        "class": "RuntimeRef",
+        "fields": [
+          "conversationId",
+          "taskId"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "MandateRevision",
+        "fields": [
+          "ownerGoal",
+          "selection",
+          "capitalSource",
+          "operatingAuthority"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "ResearchCampaign",
+        "fields": [
+          "state",
+          "budgetId",
+          "latestComparisonId"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "ResearchTrial",
+        "fields": [
+          "hypothesisId",
+          "purpose",
+          "parentTrialIds",
+          "evidenceRefs"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "StrategyVersion",
+        "fields": [
+          "policyRevisionId",
+          "modelRefs",
+          "fittedEvidenceRefs",
+          "componentStrategyVersionIds"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "StrategyAllocation",
+        "fields": [
+          "strategyVersionId",
+          "committedCapital",
+          "capitalFraction"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "DecisionPolicyRevision",
+        "fields": [
+          "learnedParametersRef",
+          "trainingProtocolRef",
+          "selectionRule"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "EnsembleRevision",
+        "fields": [
+          "members",
+          "fitCutoffNs",
+          "jointValidationEvidenceRefs"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "CandidateComparison",
+        "fields": [
+          "scopes",
+          "candidates",
+          "recommendedTrialId",
+          "recommendationStatus"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "CapacityEstimate",
+        "fields": [
+          "level",
+          "curve",
+          "supportedCapitalUpperBound"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "DecisionCycle",
+        "fields": [
+          "triggerEventIds",
+          "basisRevision",
+          "availableCutoffNs"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "PortfolioDecision",
+        "fields": [
+          "action",
+          "assetTargets",
+          "strategyAllocations",
+          "capital",
+          "validUntilNs"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "TargetCommand",
+        "fields": [
+          "state",
+          "idempotencyKey",
+          "externalReceiptRef"
+        ]
+      },
+      {
+        "file": "business.md",
+        "diagram": 1,
+        "class": "ObservedOutcome",
+        "fields": [
+          "accountBasis",
+          "realizedMetrics",
+          "attributionEvidenceRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "MandateRevision",
+        "fields": [
+          "ownerGoal",
+          "selection",
+          "capitalSource",
+          "operatingAuthority"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "CapabilityDescriptor",
+        "fields": [
+          "strategyArchetypes",
+          "predictionUnits",
+          "supportedOperations",
+          "boundaries"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "StrategyDefinition",
+        "fields": [
+          "archetype",
+          "economicMechanism",
+          "requiredCapabilities",
+          "falsificationConditions"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "DatasetRevision",
+        "fields": [
+          "sourceRevision",
+          "availableThroughNs",
+          "instrumentRulesRef",
+          "qualityStatus"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "ResearchCampaign",
+        "fields": [
+          "evaluationProtocolRef",
+          "state",
+          "trialIds",
+          "selectedStrategyVersionId"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "ResearchTrial",
+        "fields": [
+          "purpose",
+          "parentTrialIds",
+          "evidenceRefs"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "StrategyVersion",
+        "fields": [
+          "definitionId",
+          "policyRevisionId",
+          "signalContractRef",
+          "stateSchemaRef",
+          "componentStrategyVersionIds",
+          "exitRuleRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "StrategyStateContract",
+        "fields": [
+          "stateSchemaId",
+          "transitionRuleRef",
+          "multiLegProtocolRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "StrategyAllocation",
+        "fields": [
+          "strategyVersionId",
+          "committedCapital",
+          "capitalFraction",
+          "nettingGroupId"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "DecisionPolicyRevision",
+        "fields": [
+          "methodFamily",
+          "learnedParametersRef",
+          "trainingProtocolRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "PipelineAssessment",
+        "fields": [
+          "stage",
+          "outcome",
+          "evidenceRefs"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "EnsembleRevision",
+        "fields": [
+          "members",
+          "predictionUnit",
+          "jointValidationEvidenceRefs"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "DecisionCycle",
+        "fields": [
+          "triggerEventIds",
+          "basisRevision",
+          "availableCutoffNs"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "PortfolioDecision",
+        "fields": [
+          "action",
+          "assetTargets",
+          "strategyAllocations",
+          "capital",
+          "validUntilNs"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "TargetCommand",
+        "fields": [
+          "idempotencyKey",
+          "state",
+          "externalReceiptRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "ObservedOutcome",
+        "fields": [
+          "realizedMetrics",
+          "attributionEvidenceRef",
+          "matureLabelEvidenceRef"
+        ]
+      },
+      {
+        "file": "platform-pipeline.md",
+        "diagram": 1,
+        "class": "EvidenceGap",
+        "fields": [
+          "requiredCapability",
+          "permittedRemedy",
+          "state"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "ResearchCampaign",
+        "fields": [
+          "id",
+          "state"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "ResearchTrial",
+        "fields": [
+          "id",
+          "runtime",
+          "state"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "CandidateComparison",
+        "fields": [
+          "id",
+          "policyRevisionId",
+          "recommendationStatus"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "ComparisonScope",
+        "fields": [
+          "id",
+          "interval",
+          "role"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "CandidateScorecard",
+        "fields": [
+          "trialId",
+          "status",
+          "metrics"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "MetricObservation",
+        "fields": [
+          "definition",
+          "status",
+          "role"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "EvidenceRef",
+        "fields": [
+          "id",
+          "runtime",
+          "schemaId"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "EnsembleRevision",
+        "fields": [
+          "id",
+          "members",
+          "fitProtocolRef"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "PortfolioDecision",
+        "fields": [
+          "id",
+          "action"
+        ]
+      },
+      {
+        "file": "research-decision.md",
+        "diagram": 2,
+        "class": "OperatingComparison",
+        "fields": [
+          "id",
+          "cycleId",
+          "basisRevision",
+          "evaluationContext"
+        ]
+      }
+    ]
+  },
+  "officialVersionReferences": [
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/durable/README.md",
+      "httpStatus": "200",
+      "exitCode": 0
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/durable/src/types.ts",
+      "httpStatus": "200",
+      "exitCode": 0
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/durable/src/documents.ts",
+      "httpStatus": "200",
+      "exitCode": 0
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/durable/src/tasks.ts",
+      "httpStatus": "200",
+      "exitCode": 0
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/chord/README.md",
+      "httpStatus": "200",
+      "exitCode": 0
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/v1.1.0/packages/chord/src/index.ts",
+      "httpStatus": "200",
+      "exitCode": 0
+    }
+  ],
+  "html": {
+    "views": [
+      {
+        "name": "desktop",
+        "title": "QuaZonai：自主研究与动态投资决策 — 完整业务技术方案",
+        "chapters": 11,
+        "diagrams": 20,
+        "missingAnchors": [],
+        "duplicateIds": [],
+        "viewportWidth": 1440,
+        "documentWidth": 1440,
+        "bodyHeight": 182931,
+        "scripts": 0,
+        "externalStyleLinks": 0
+      },
+      {
+        "name": "mobile",
+        "title": "QuaZonai：自主研究与动态投资决策 — 完整业务技术方案",
+        "chapters": 11,
+        "diagrams": 20,
+        "missingAnchors": [],
+        "duplicateIds": [],
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "bodyHeight": 319613,
+        "scripts": 0,
+        "externalStyleLinks": 0
+      }
+    ],
+    "externalAssetRequests": [],
+    "pageErrors": []
+  }
+}

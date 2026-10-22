@@ -10,6 +10,8 @@ export interface DatasetConfig extends DatasetView {
   data: JsonObject;
   policy?: JsonObject;
   strategy?: StrategyPolicy;
+  /** Trusted source producer atomically publishes immutable catalog revisions here. */
+  revisionManifest?: string;
 }
 export interface ConnectionConfig {
   id: string; name: string; mode: ObservationMode;
@@ -48,6 +50,7 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
   if (config.staticDir) config.staticDir = resolve(base, config.staticDir);
   // Native catalogs are trusted immutable server-side inputs, not browser paths.
   for (const dataset of config.datasets) {
+    if (dataset.revisionManifest) dataset.revisionManifest = resolve(base, dataset.revisionManifest);
     for (const data of [dataset.data, dataset.data.sealed]) {
       if (data && typeof data === 'object' && !Array.isArray(data)) {
         for (const key of ['catalog', 'catalog_partitions']) if (typeof data[key] === 'string') data[key] = resolve(base, data[key]);

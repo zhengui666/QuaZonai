@@ -124,10 +124,43 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
         if run('--version') != f'quazonai {version}':
             raise ValueError('Extracted CLI version differs from the release tag.')
         help_text = run('--help')
-        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions')):
+        if not all(name in help_text for name in ('research', 'portfolio', 'observation', 'settings', 'extensions', 'pm list', 'campaign', 'strategy', 'maintenance', 'pm clarify-intent')):
             raise ValueError('Extracted CLI lacks workbench commands.')
-        json.loads(run('schema', 'list'))
-        json.loads(run('schema', 'list', '--domain'))
+        schemas = json.loads(run('schema', 'list'))
+        for name in ('PmIntentClarification', 'PmExecutionEvidence', 'PmExecutionQualification', 'AssetTarget'):
+            if name not in schemas.get('names', []):
+                raise ValueError(f'Extracted CLI lacks the {name} contract.')
+            contract = json.loads(run('schema', 'show', name))
+            if contract.get('entry') != name or f'interface {name}' not in contract.get('source', ''):
+                raise ValueError(f'Extracted CLI cannot read its original {name} contract.')
+            if name == 'AssetTarget' and not re.search(r'export interface AssetTarget\s*\{[^}]*\bexecutionEstimate\?:', contract.get('source', '')):
+                raise ValueError('Extracted CLI lacks the separate rounded execution estimate contract.')
+        if 'DecisionTrigger' not in schemas.get('names', []):
+            raise ValueError('Extracted CLI lacks the DecisionTrigger contract.')
+        trigger = json.loads(run('schema', 'show', 'DecisionTrigger'))
+        definition = re.search(r'export type DecisionTrigger\s*=([^;]+);', trigger.get('source', ''))
+        if trigger.get('entry') != 'DecisionTrigger' or not definition or "'SOURCE_RECOVERED'" not in definition.group(1):
+            raise ValueError('Extracted CLI lacks the source recovery decision trigger contract.')
+        domain = json.loads(run('schema', 'list', '--domain'))
+        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1', 'AllocatorSettingsV1', 'AllocationResultV1'):
+            if name not in domain.get('names', []):
+                raise ValueError(f'Extracted CLI lacks the native {name} contract.')
+            contract = json.loads(run('schema', 'show', name, '--domain'))
+            native = contract.get('components', {}).get('schemas', {})
+            if name not in native:
+                raise ValueError(f'Extracted CLI cannot resolve its native {name} contract.')
+            if name == 'AllocatorSettingsV1':
+                protocol = 'NativeCashNumericalOutputProtocolV1'
+                field = native[name].get('properties', {}).get('cash_numerical_output', {})
+                if f'#/components/schemas/{protocol}' not in json.dumps(field) or 'VALIDATED_FEASIBLE_SEGMENT_V1' not in native.get(protocol, {}).get('enum', []):
+                    raise ValueError('Extracted CLI lacks the registered CASH numerical output protocol.')
+            if name == 'AllocationResultV1':
+                trace = 'NativeCashNumericalOutputV1'
+                field = native[name].get('properties', {}).get('numerical_output', {})
+                exact = native.get(trace, {}).get('properties', {}).get('objective_delta_exact', {})
+                value_type = exact.get('type')
+                if f'#/components/schemas/{trace}' not in json.dumps(field) or not (value_type == 'string' or isinstance(value_type, list) and 'string' in value_type):
+                    raise ValueError('Extracted CLI lacks the exact numerical objective trace contract.')
 
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())

@@ -381,6 +381,23 @@ fn fixture(gap: bool) -> (NativeSimulationRequestV1, NativeSimulationResultV1) {
 fn report_mut(result: &mut NativeSimulationResultV1) -> &mut NativeSpotCashReportV1 {
     result.spot_cash_report.as_mut().unwrap()
 }
+// These original fixtures start from the frozen single cash balance. Keep that
+// evidence explicit when exercising the shared fresh/observed balance checker.
+fn binding(
+    request: &NativeSimulationRequestV1,
+    result: &NativeSimulationResultV1,
+    report: &NativeSpotCashReportV1,
+) -> Result<(), DomainError> {
+    binding_with_balances(
+        request,
+        result,
+        report,
+        &[NativeSpotCashMoneyV1 {
+            currency: request.settings.base_currency.clone(),
+            amount: request.settings.starting_capital.clone(),
+        }],
+    )
+}
 #[test]
 fn complete_report_binds_all_observations_and_preserves_native_canonical() {
     let (request, result) = fixture(false);

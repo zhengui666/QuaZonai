@@ -352,6 +352,32 @@ each intended Discovery/Validation/Sealed partition requires its own explicit
 declaration, selection and new output. Owner service configuration, immutable
 catalog handling, source-rights/evidence review and independent evaluation remain
 separate steps; `ready` and successful computation do not establish qualification.
+
+The existing `export-dataset polymarket-v2-hf` completion now also publishes a
+service source revision. The exporter copies the complete native catalogs into
+new immutable directories, records exact file hashes and the original metadata
+byte digests, and writes `revisionManifest` into the exported DatasetConfig.
+Success atomically advances that dataset's fixed manifest alias; no manifest
+fields need to be written by the owner. Export the next completed preparation
+under the same dataset ID to a new configuration filename in the same directory.
+An already registered service monitor reads the new revision through the same
+alias, retains prior revisions and runs its existing invalidation/research rules.
+This does not rewrite the running service configuration or reset research budgets
+and Sealed exposure. The adapter retains the supplied research request boundaries;
+`prepare` without an original research request cannot invent future partitions.
+
+Concurrent exports compare their original published revision. A stale producer
+fails with a publication conflict and must prepare again against the new head;
+it never silently overwrites a newer completion. A short process-safe SQLite
+write lock protects only the filesystem publication operation, and automatically
+releases after a process exits. Failed publication removes only its unchanged,
+newly created configuration output so the same export can be retried. Complete
+old snapshots remain available. Replaying a completed prepared publication returns
+its original receipt and clock. An unpublished attempt whose alias write failed
+may be finalized again; its complete historical manifest and alias are published
+with identical bytes, without rewriting any previously published revision.
+The local publication clock is actual source
+availability to this service, not proof of historical PIT or market coverage.
 Consult the [history guide](README.md) and
 [acquisition provider guide](providers.md) for original evidence requirements and
 unsupported source coverage.

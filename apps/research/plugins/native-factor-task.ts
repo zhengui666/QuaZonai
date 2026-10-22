@@ -1,5 +1,6 @@
+import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
-import type { JsonObject, TaskId, ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
 import { evaluateWasm } from './native-wasm.ts';
 import { readNativeEvidence } from './native-evidence.ts';
@@ -39,7 +40,7 @@ const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({
   kind: 'qz.factor-child', version: 1, scope: 'task', initial: () => ({ taskId: null }),
 });
 
-export async function runFactor(api: ToolExecutionApi, context: Context, model: string, data: JsonObject): Promise<JsonObject> {
+export async function runFactor(api: ResearchRuntime, context: Context, model: string, data: JsonObject): Promise<JsonObject> {
   const id = await api.commit(async (tx) => {
     const binding = await tx.doc(Child, api.taskId);
     if (binding.taskId !== null) return binding.taskId;

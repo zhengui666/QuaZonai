@@ -2,6 +2,48 @@ use contracts::portfolio::*;
 use utoipa::PartialSchema;
 
 #[test]
+fn official_export_registers_cash_numerical_request_and_trace_contracts() {
+    let document: serde_json::Value =
+        serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
+    let schemas = &document["components"]["schemas"];
+    let settings = &schemas["AllocatorSettingsV1"];
+    assert!(
+        settings.is_object(),
+        "allocator settings must be a named official component"
+    );
+    assert!(settings["properties"]["cash_numerical_output"]
+        .to_string()
+        .contains("#/components/schemas/NativeCashNumericalOutputProtocolV1"));
+    assert!(!settings["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "cash_numerical_output"));
+    assert_eq!(
+        schemas["NativeCashNumericalOutputProtocolV1"]["enum"],
+        serde_json::json!(["VALIDATED_FEASIBLE_SEGMENT_V1"])
+    );
+    let native = schemas["NativeModelRefV1"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| {
+            model["properties"]["adapter_kind"]["enum"] == serde_json::json!(["CLARABEL_QP"])
+        })
+        .unwrap();
+    assert_eq!(native["properties"]["parameters"], *settings);
+    assert!(
+        schemas["AllocationResultV1"]["properties"]["numerical_output"]
+            .to_string()
+            .contains("#/components/schemas/NativeCashNumericalOutputV1")
+    );
+    assert_eq!(
+        schemas["NativeCashNumericalOutputV1"]["properties"]["objective_delta_exact"]["maxLength"],
+        2048
+    );
+}
+
+#[test]
 fn model_schema_preserves_exact_native_identity_and_closed_parameters() {
     let schema = serde_json::to_value(NativeModelRefV1::schema()).unwrap();
     let variants = schema["oneOf"].as_array().unwrap();

@@ -1,3 +1,9 @@
+export type * from './pm.ts';
+export type * from './maintenance.ts';
+export type * from './pm-intent.ts';
+export * from './decision.ts';
+export * from './pm-validation.ts';
+export * from './pm-forward.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
 import type { LiteratureView } from './literature.ts';
@@ -29,7 +35,7 @@ export interface SessionView { setupRequired: boolean; authenticated: boolean }
 export interface CapitalAssumptions { scenarios: string[]; participation: string; maximumAgeSeconds: number }
 export interface ResearchSpecification {
   version: 1; name: string; question: string; rationale: string; exclusions?: string;
-  evaluation: { metric: 'pearson_ic' | 'Sharpe Ratio (252 days)'; direction: 'maximize'; target?: number; scheme: 'registered-partitions' };
+  evaluation: { metric: 'pearson_ic' | 'Sharpe Ratio (252 days)' | 'Sharpe Ratio (365 days)'; direction: 'maximize'; target?: number; scheme: 'registered-partitions' };
   search: { scope: 'single-factor' | 'ensemble'; maxMembers: number; stop: 'budget-or-selection' };
   capital?: CapitalAssumptions;
 }

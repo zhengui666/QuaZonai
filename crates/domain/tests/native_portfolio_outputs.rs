@@ -16,6 +16,227 @@ use domain::execution::output_bindings;
 use serde_json::json;
 use std::collections::BTreeMap;
 
+fn cash_funding_contract_fixture() -> (AllocationInputV1, AllocationResultV1) {
+    let mut input: AllocationInputV1 = serde_json::from_str(include_str!(
+        "../../../tests/contracts/allocation-input.json"
+    ))
+    .unwrap();
+    input.objective = AllocationObjective::MaxUtility;
+    input.exposure_tolerance = "0.001".parse().unwrap();
+    input.current_cash_weight = "1".parse().unwrap();
+    input.constraints.min_net_exposure = "0".parse().unwrap();
+    input.constraints.max_cash_weight = "1".parse().unwrap();
+    input.constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    for asset in &mut input.assets {
+        asset.current_weight = "0".parse().unwrap();
+        asset.transaction_cost_rate = "0.0005".parse().unwrap();
+    }
+    let targets = input
+        .assets
+        .iter()
+        .zip(["1", "0"])
+        .map(|(asset, weight)| AllocationTargetV1 {
+            instrument_id: asset.instrument_id.clone(),
+            currency: asset.currency.clone(),
+            weight: weight.parse().unwrap(),
+        })
+        .collect();
+    let result = AllocationResultV1 {
+        schema_version: SchemaV1,
+        solver_status: SolverStatus::Optimal,
+        reason_code: None,
+        targets: Some(targets),
+        cash_weight: Some("0".parse().unwrap()),
+        cvar_risk_budget_witness: None,
+        numerical_output: None,
+        iterations: 1,
+        objective_value: Some(0.0),
+        primal_residual: Some(0.0),
+        dual_residual: Some(0.0),
+    };
+    (input, result)
+}
+
+#[test]
+fn cash_numerical_absolute_budget_cannot_disappear_in_large_float_objectives() {
+    let (mut input, mut result) = cash_funding_contract_fixture();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut input.optimizer else {
+        panic!("unexpected optimizer")
+    };
+    parameters.cash_numerical_output =
+        Some(NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1);
+    parameters.solver_tolerance = "0.0000000001".parse().unwrap();
+    for asset in &mut input.assets {
+        asset.transaction_cost_rate = "0".parse().unwrap();
+    }
+    for rows in &mut input.return_history.asset_returns {
+        rows.fill(0.0);
+    }
+    for member in &mut input.forecasts.members {
+        member.forecasts = vec![1e10, 0.0];
+    }
+    let mut raw = result.targets.take().unwrap();
+    raw[0].weight = "0.999999999999999900".parse().unwrap();
+    let raw_cash = "-0.000000000000000001".parse().unwrap();
+    let anchor =
+        domain::portfolio::cash_numerical_anchor(&input, NativeCashAnchorKindV1::AllCash).unwrap();
+    let fraction = "0.000000000000000001".parse().unwrap();
+    let (targets, cash) =
+        domain::portfolio::cash_numerical_segment(&raw, &anchor, &fraction).unwrap();
+    assert_eq!(targets[0].weight, "0.999999999999999899".parse().unwrap());
+    let raw_objective = domain::portfolio::cash_numerical_objective(&input, &raw).unwrap();
+    let final_objective = domain::portfolio::cash_numerical_objective(&input, &targets).unwrap();
+    assert_eq!(raw_objective, final_objective); // IEEE-754 cancellation is the counterexample.
+    let raw_error = domain::portfolio::allocation_point_feasibility(&input, &raw, &raw_cash, None)
+        .unwrap_err()
+        .to_string();
+    result.targets = Some(targets);
+    result.cash_weight = Some(cash);
+    result.objective_value = Some(final_objective);
+    result.numerical_output = Some(NativeCashNumericalOutputV1 {
+        protocol: NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1,
+        outcome: NativeCashNumericalOutcomeV1::Corrected,
+        raw_x: vec![
+            0.9999999999999999,
+            0.0,
+            -1e-18,
+            0.9999999999999999,
+            0.0,
+            0.9999999999999999,
+            0.0,
+        ],
+        raw_native_status: "Solved".into(),
+        raw_objective_value: raw_objective,
+        raw_point_objective_value: raw_objective,
+        raw_primal_residual: 0.0,
+        raw_dual_residual: 0.0,
+        raw_targets: raw,
+        raw_cash_weight: raw_cash,
+        raw_constraint_error: Some(raw_error),
+        anchor: Some(anchor),
+        segment_fraction: Some(fraction),
+        objective_delta: Some(0.0),
+        objective_delta_exact: Some("0".into()),
+        objective_change_limit: "0.0000000001".parse().unwrap(),
+        search_steps: 1,
+        reason_code: None,
+    });
+    // The exact original point difference is 1e10 * 1e-18 = 1e-8, larger
+    // than 1e-10. A zero difference between large f64 reports is not proof.
+    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
+    let trace = result.numerical_output.as_mut().unwrap();
+    let exact_delta = domain::portfolio::cash_numerical_objective_delta(
+        &input,
+        &trace.raw_targets,
+        result.targets.as_ref().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        exact_delta,
+        "0.00000001".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    trace.objective_delta = Some(1e-8);
+    trace.objective_delta_exact = Some("0.00000001".into());
+    // Even a truthful delta must be rejected when it exceeds the original limit.
+    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
+}
+
+#[test]
+fn cash_funding_cannot_use_weight_tolerance_to_authorize_negative_post_fee_cash() {
+    let (input, result) = cash_funding_contract_fixture();
+    domain::portfolio::allocation_input(&input).unwrap();
+    // A structural malformed-success counterexample, not a fabricated solver
+    // run: cash=0, actual linear cost=.0005, min cash=0, tolerance=.001.
+    // The original relaxed floor admits -.0005; CASH no-borrow must not.
+    assert_eq!(
+        domain::portfolio::allocation_result(&input, &result),
+        Err(domain::DomainError::Invalid("cash_funding_borrowing"))
+    );
+}
+
+#[test]
+fn cash_funding_cannot_inflate_reported_cash_with_capital_tolerance() {
+    for (weight, fee, reported_cash) in [
+        ("1", "0.0005", "0.0005"),
+        ("1", "0.000000000000000001", "0.000000000000000001"),
+        ("1.000000000000000001", "0", "0"),
+    ] {
+        let (mut input, mut result) = cash_funding_contract_fixture();
+        input.assets[0].transaction_cost_rate = fee.parse().unwrap();
+        result.targets.as_mut().unwrap()[0].weight = weight.parse().unwrap();
+        result.cash_weight = Some(reported_cash.parse().unwrap());
+        domain::portfolio::allocation_input(&input).unwrap();
+        // The reported cash pays all declared fees, and capital equality is
+        // within the registered .001 tolerance. But original NAV minus actual
+        // target weights and fees is strictly negative: no borrowed cash exists.
+        assert_eq!(
+            domain::portfolio::allocation_result(&input, &result),
+            Err(domain::DomainError::Invalid("cash_funding_nav_shortfall")),
+            "weight={weight}, fee={fee}, reported_cash={reported_cash}",
+        );
+    }
+}
+
+#[test]
+fn cash_funding_cannot_spend_capital_tolerance_a_second_time_on_cash_floor() {
+    let (mut input, mut result) = cash_funding_contract_fixture();
+    input.constraints.min_cash_weight = "0.2".parse().unwrap();
+    input.assets[0].transaction_cost_rate = "0.002".parse().unwrap();
+    input.assets[1].transaction_cost_rate = "0".parse().unwrap();
+    let targets = result.targets.as_mut().unwrap();
+    targets[0].weight = "0.5".parse().unwrap();
+    targets[1].weight = "0.301".parse().unwrap();
+    result.cash_weight = Some("0.2".parse().unwrap());
+    // net=.801, cash=.2 is within capital tolerance; cost=.001.
+    // Reported post-fee cash .199 meets minimum(.2)-tolerance(.001),
+    // but the original NAV funds only .198. The same allowance is not spent twice.
+    assert_eq!(
+        domain::portfolio::allocation_result(&input, &result),
+        Err(domain::DomainError::Invalid("cash_funding_bound")),
+    );
+}
+
+#[test]
+fn cash_funding_cannot_use_long_only_tolerance_to_short_unowned_assets() {
+    let (mut input, mut result) = cash_funding_contract_fixture();
+    result.targets.as_mut().unwrap()[0].weight = "-0.0005".parse().unwrap();
+    result.cash_weight = Some("1.0005".parse().unwrap());
+    // The old general allocation protocol permits bounded numerical exposure
+    // residuals. The opt-in CASH method cannot authorize borrowing the asset.
+    input.constraints.cash_funding = None;
+    domain::portfolio::allocation_result(&input, &result).unwrap();
+    input.constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    assert_eq!(
+        domain::portfolio::allocation_result(&input, &result),
+        Err(domain::DomainError::Invalid("cash_funding_shorting")),
+    );
+}
+
+#[test]
+fn cash_funding_zero_post_fee_cash_is_exact_and_positive_floor_retains_frozen_tolerance() {
+    let (mut input, mut result) = cash_funding_contract_fixture();
+    input.assets[0].transaction_cost_rate = "0.001".parse().unwrap();
+    input.assets[1].transaction_cost_rate = "0".parse().unwrap();
+    let targets = result.targets.as_mut().unwrap();
+    targets[0].weight = "0.5".parse().unwrap();
+    targets[1].weight = "0.4995".parse().unwrap();
+    result.cash_weight = Some("0.0005".parse().unwrap());
+    // Exact zero after fees is fundable. A positive minimum may use the
+    // registered weight tolerance, but that allowance cannot create borrowing.
+    for minimum in ["0", "0.001"] {
+        input.constraints.min_cash_weight = minimum.parse().unwrap();
+        domain::portfolio::allocation_result(&input, &result).unwrap();
+    }
+    input.constraints.min_cash_weight = "0".parse().unwrap();
+    input.assets[0].transaction_cost_rate = "0.001000000000000001".parse().unwrap();
+    assert_eq!(
+        domain::portfolio::allocation_result(&input, &result),
+        Err(domain::DomainError::Invalid("cash_funding_borrowing"))
+    );
+}
+
 #[test]
 fn native_portfolio_refuses_unbound_execution_costs() {
     let input: AllocationInputV1 = serde_json::from_str(include_str!(
@@ -250,6 +471,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         cash_weight: Some("0".parse().unwrap()),
         iterations: 10,
         cvar_risk_budget_witness: None,
+        numerical_output: None,
         objective_value: Some(0.8),
         primal_residual: Some(0.0),
         dual_residual: Some(0.0),

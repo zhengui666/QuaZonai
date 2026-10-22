@@ -4,6 +4,13 @@ use crate::DomainError;
 use contracts::{science::*, DbCounter};
 
 pub fn shape(value: &NativePortfolioStudyResultV1) -> Result<(), DomainError> {
+    shape_mode(value, None)
+}
+
+fn shape_mode(
+    value: &NativePortfolioStudyResultV1,
+    initial: Option<&contracts::observed_spot::NativeObservedSpotStartV1>,
+) -> Result<(), DomainError> {
     if value.frames.is_empty() || value.consumed_fuel == Some(DbCounter::ZERO) {
         return Err(bad("study.frames"));
     }
@@ -20,7 +27,11 @@ pub fn shape(value: &NativePortfolioStudyResultV1) -> Result<(), DomainError> {
             if request.target_points.len() != value.frames.len() {
                 return Err(bad("study.target_count"));
             }
-            simulation::binding(request, result)
+            if let Some(initial) = initial {
+                simulation::observed_binding(request, result, initial)
+            } else {
+                simulation::binding(request, result)
+            }
         }
         (None, None) if value.frames.last().unwrap().allocation.targets.is_none() => Ok(()),
         _ => Err(bad("study.simulation")),
@@ -31,8 +42,33 @@ pub fn binding(
     request: &NativePortfolioStudyRequestV1,
     value: &NativePortfolioStudyResultV1,
 ) -> Result<(), DomainError> {
-    shape(value)?;
-    let cutoffs = crate::execution::portfolio_study_cutoffs(request)?;
+    binding_mode(request, value, None)
+}
+
+pub fn observed_binding(
+    request: &NativePortfolioStudyRequestV1,
+    value: &NativePortfolioStudyResultV1,
+    initial: &contracts::observed_spot::NativeObservedSpotStartV1,
+) -> Result<(), DomainError> {
+    crate::observed_spot::starting_balances(
+        initial,
+        &request.execution_settings,
+        request.evaluation_start_ns,
+    )?;
+    binding_mode(request, value, Some(initial))
+}
+
+fn binding_mode(
+    request: &NativePortfolioStudyRequestV1,
+    value: &NativePortfolioStudyResultV1,
+    initial: Option<&contracts::observed_spot::NativeObservedSpotStartV1>,
+) -> Result<(), DomainError> {
+    shape_mode(value, initial)?;
+    let cutoffs = if initial.is_some() {
+        crate::execution::observed_spot_study_cutoffs(request)?
+    } else {
+        crate::execution::portfolio_study_cutoffs(request)?
+    };
     let maximum_fuel = request
         .members
         .iter()
@@ -121,7 +157,8 @@ pub fn binding(
                 return Err(bad("study.original_model"));
             }
         }
-        if index == 0
+        if initial.is_none()
+            && index == 0
             && (input.capital_assumption != mandate.capital_assumption
                 || input.current_cash_weight.as_decimal() != &1.into()
                 || input
@@ -130,6 +167,11 @@ pub fn binding(
                     .any(|a| a.current_weight.as_decimal() != &0.into()))
         {
             return Err(bad("study.initial_account"));
+        }
+        if initial.is_some() {
+            if let Some(simulation) = &value.simulation {
+                check_observed_weights(frame, simulation)?;
+            }
         }
         if let Some(replay) = &value.simulation_request {
             let point = &replay.target_points[index];
@@ -154,6 +196,63 @@ pub fn binding(
         {
             return Err(bad("study.simulation_source"));
         }
+    }
+    Ok(())
+}
+
+/// Every solved state binds to the original pre-trade native inventory valuation.
+/// This is exact account arithmetic, not a second risk or PnL model.
+fn check_observed_weights(
+    frame: &NativePortfolioStudyFrameV1,
+    simulation: &NativeSimulationResultV1,
+) -> Result<(), DomainError> {
+    use contracts::spot_cash::{NativeSpotSnapshotOriginV1, ReportCurrencyValuationOutcomeV1};
+    use contracts::spot_cash_report::NativeSpotCashObservationKindV1;
+    let report = simulation
+        .spot_cash_report
+        .as_ref()
+        .ok_or_else(|| bad("study.spot_report"))?;
+    let valuation = report
+        .observations
+        .iter()
+        .find_map(|observation| match &observation.record {
+            NativeSpotCashObservationKindV1::Snapshot {
+                origin, valuation, ..
+            } if *origin == NativeSpotSnapshotOriginV1::DecisionBuild
+                && observation.native_clock_ns == frame.input.forecasts.decision_asof_ns =>
+            {
+                Some(valuation)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| bad("study.observed_decision_snapshot"))?;
+    let ReportCurrencyValuationOutcomeV1::Complete { total, legs } = &valuation.outcome else {
+        return Err(bad("study.observed_valuation"));
+    };
+    if total != &frame.input.capital_assumption || !total.is_positive() {
+        return Err(bad("study.observed_nav"));
+    }
+    let tolerance = frame.input.exposure_tolerance.as_decimal();
+    let mut cash = bigdecimal::BigDecimal::from(1);
+    for asset in &frame.input.assets {
+        let instrument = report
+            .instruments
+            .iter()
+            .find(|instrument| instrument.instrument_id == asset.instrument_id)
+            .ok_or_else(|| bad("study.observed_asset"))?;
+        let notional = legs
+            .iter()
+            .find(|leg| leg.currency == instrument.base_currency)
+            .map(|leg| leg.report_value.as_decimal().clone())
+            .unwrap_or_else(|| 0.into());
+        let weight = notional / total.as_decimal();
+        if (&weight - asset.current_weight.as_decimal()).abs() > *tolerance {
+            return Err(bad("study.observed_weight"));
+        }
+        cash -= weight;
+    }
+    if (cash - frame.input.current_cash_weight.as_decimal()).abs() > *tolerance {
+        return Err(bad("study.observed_cash"));
     }
     Ok(())
 }

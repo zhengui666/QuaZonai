@@ -6,13 +6,18 @@ import { canonical } from '../../research/src/documents.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { Application, counter, json, nowNs, nsTime, object, observation, portfolio, Problem } from './facts.ts';
 import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } from './downstream.ts';
-import { accountKey, capitalStatus, control, readCapitalControl, recordCapitalControl, validateCapitalDocument } from './capital-exit.ts';
+import { accountKey, capitalStatusForBinding, control, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
 import { factorId } from './factors.ts';
 import type { AutomaticAllocation, TargetReceipt } from '../../../packages/contracts/src/index.ts';
 import type { ObservationFact } from './facts.ts';
+import { maintenancePark, resumeMaintenance } from './pm-maintenance.ts';
+import type { MaintenanceCheckpoint } from './pm-maintenance.ts';
+import { assertAccountTargetControl } from './account-target-control.ts';
+import { PmDocument, pmState } from './pm-facts.ts';
 
 export interface AutomaticInput { id: string; binary: string; dataDir: string }
-type Checkpoint = { phase: 'snapshot' } | { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number };
+type RegularCheckpoint = { phase: 'snapshot' } | { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number };
+type Checkpoint = RegularCheckpoint | MaintenanceCheckpoint<{ phase: 'snapshot' }>;
 function emptyAllocation(fact: ObservationFact): AutomaticAllocation {
   return { status: 'BLOCKED', reason: 'awaiting_authoritative_account', updatedAt: null, sequence: null, nativeClockNs: null,
     equity: null, reserved: null, cashBuffer: fact.view.automaticPolicy!.cashBuffer, budget: null, capital: null, capacity: null, residualCash: null,
@@ -25,8 +30,12 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
   name: 'qz.account-adjustment', version: 1, initial: () => ({ phase: 'snapshot' }),
   phases: {
     async snapshot(task, runtime, context) {
-      let read!: JsonObject;
-      await runtime.commit(async tx => { const facts = await tx.doc(Application); read = json({ fact: facts.observations[task.input.id], portfolio: facts.portfolios[observation(facts.observations[task.input.id]).input.portfolioId], controls: facts.accountControls ?? {} }); return undefined; }, context);
+      let read!: JsonObject; let parked = false;
+      await runtime.commit(async tx => { const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
+        if (!unsettledAdjustment(fact)) { const next = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (next) { parked = true; return next; } }
+        read = json({ fact, portfolio: facts.portfolios[fact.input.portfolioId], controls: facts.accountControls ?? {} }); return undefined;
+      }, context);
+      if (parked) return;
       const fact = observation(read.fact); const source = portfolio(read.portfolio); const policy = fact.view.automaticPolicy;
       if (unsettledAdjustment(fact)) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: fact.view.allocation?.status === 'SIZED' ? 'deliver' : 'reconcile' } }), context); return; }
       if (!policy?.enabled || fact.view.status === 'STOPPED') {
@@ -49,7 +58,14 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
             facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls!, fact.connection, fresh);
             return undefined;
           }, context);
-        } catch (error) { if (runtime.signal.aborted) throw error; reason = error instanceof Problem ? error.message : 'capital_exit_status_unavailable'; }
+        } catch (error) {
+          if (runtime.signal.aborted) throw error;
+          reason = error instanceof Problem ? error.message : 'capital_exit_status_unavailable';
+          await runtime.commit(async tx => {
+            const facts = await tx.doc(Application); facts.accountControls ??= {};
+            recordCapitalControlFailure(facts.accountControls, fact.connection, reason!); return undefined;
+          }, context);
+        }
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const current = observation(facts.observations[task.input.id]);
           if (!current.view.automaticPolicy?.enabled || current.view.status === 'STOPPED') return;
@@ -61,9 +77,10 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
             facts.observations[duplicate.view.id] = json(duplicate);
           }
           if (owner && owner.view.id !== current.view.id) return;
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), current.connection, { kind: 'LEGACY', observationId: current.view.id });
           if (bindings.some(item => ['PENDING', 'UNCERTAIN'].includes(item.view.receipt?.status ?? '') || item.view.id !== current.view.id && unsettledAdjustment(item))) throw new Problem('target_delivery_requires_reconciliation', 409);
           acceptSnapshot(current, snapshot, bindings); current.view.status = 'OBSERVING'; current.view.error = null;
-          const status = capitalStatus(control(facts.accountControls?.[key]));
+          const status = capitalStatusForBinding(control(facts.accountControls?.[key]), current.connection);
           current.view.capitalExit = status;
           current.view.allocation ??= emptyAllocation(current);
           facts.observations[task.input.id] = json(current);
@@ -71,7 +88,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         }, context);
         let state!: JsonObject;
         await runtime.commit(async tx => { const facts = await tx.doc(Application); state = json({ fact: facts.observations[task.input.id], control: facts.accountControls?.[key] ?? {} }); return undefined; }, context);
-        const current = observation(state.fact); const status = capitalStatus(control(state.control));
+        const current = observation(state.fact); const status = capitalStatusForBinding(control(state.control), current.connection);
         if (current.view.positions.some(position => position.value === null)) throw new Problem('account_position_valuation_unknown');
         if (!current.view.automaticPolicy?.enabled) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context); return; }
         const capacity = source.view.capacity;
@@ -105,9 +122,11 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         } finally { await rm(directory, { recursive: true, force: true }); }
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const latest = observation(facts.observations[task.input.id]);
+          const parked = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (parked) return parked;
           if (!latest.view.automaticPolicy?.enabled || latest.view.status === 'STOPPED') return { status: 'terminal', outcome: { status: 'completed', result: null } };
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), latest.connection, { kind: 'LEGACY', observationId: latest.view.id });
           if (latest.view.automaticPolicy.cashBuffer !== policy.cashBuffer || latest.view.automaticPolicy.maximumSnapshotAgeSeconds !== policy.maximumSnapshotAgeSeconds) return { status: 'running', checkpoint: { phase: 'snapshot' } };
-          const latestStatus = capitalStatus(control(facts.accountControls?.[key]));
+          const latestStatus = capitalStatusForBinding(control(facts.accountControls?.[key]), latest.connection);
           if (latestStatus.controlRevision !== status.controlRevision || latestStatus.reserved !== status.reserved) throw new Problem('capital_exit_changed_during_sizing');
           const previous = latest.view.allocation ?? emptyAllocation(latest);
           const target = sized.target ? object(sized.target) : null;
@@ -157,7 +176,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
           fact.view.allocation ??= emptyAllocation(fact); fact.view.allocation.status = 'BLOCKED'; fact.view.allocation.reason = error instanceof Problem ? error.message : 'automatic_adjustment_unavailable';
           fact.view.allocation.updatedAt = new Date().toISOString();
-          fact.view.capitalExit = capitalStatus(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]));
+          fact.view.capitalExit = capitalStatusForBinding(control(facts.accountControls?.[accountKey(fact.connection, facts.accountControls)]), fact.connection);
           facts.observations[task.input.id] = json(fact);
           return { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } };
         }, context);
@@ -171,10 +190,19 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           if (allocation.status === 'SIZED' && allocation.receipt?.status === 'PENDING') { allocation.receipt.status = 'NOT_OFFERED'; allocation.status = 'STOPPED'; facts.observations[task.input.id] = json(fact); }
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }
+        try {
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
+            { kind: 'LEGACY', observationId: fact.view.id, commandId: allocation.receipt?.id });
+        } catch (error) {
+          allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED';
+          allocation.reason = error instanceof Problem ? error.message : 'account_controller_unavailable';
+          facts.observations[task.input.id] = json(fact);
+          return { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } };
+        }
         const key = accountKey(fact.connection, facts.accountControls);
         const bindings = Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key);
         const unsettled = bindings.some(other => ['PENDING', 'UNCERTAIN'].includes(other.view.receipt?.status ?? '') || other.view.id !== fact.view.id && unsettledAdjustment(other));
-        const status = capitalStatus(control(facts.accountControls?.[key]));
+        const status = capitalStatusForBinding(control(facts.accountControls?.[key]), fact.connection);
         if (unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
         allocation.status = 'UNCERTAIN'; allocation.receipt!.status = 'UNCERTAIN';
         input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext }) as unknown as import('./downstream.ts').ObservationTaskInput;
@@ -185,10 +213,16 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       let checkingAccount = true;
       try {
         // A manual alias refresh can commit while the uncertainty checkpoint is awaited.
-        const facts = (await runtime.snapshot(Application, context))!; const fact = observation(facts.observations[input.id]);
-        if (!fact.snapshot || fact.snapshot.sequence !== input.allocation!.snapshotSequence || fact.snapshot.nativeClockNs !== input.allocation!.nativeClockNs) throw new Problem('account_snapshot_out_of_order');
-        const key = accountKey(fact.connection, facts.accountControls);
-        acceptSnapshot(fact, fact.snapshot, Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key));
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = observation(facts.observations[input.id]);
+          assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), fact.connection,
+            { kind: 'LEGACY', observationId: fact.view.id, commandId: input.receiptId });
+          if (!fact.view.automaticPolicy?.enabled || fact.view.status === 'STOPPED') throw new Problem('automatic_policy_changed_before_delivery', 409);
+          if (!fact.snapshot || fact.snapshot.sequence !== input.allocation!.snapshotSequence || fact.snapshot.nativeClockNs !== input.allocation!.nativeClockNs) throw new Problem('account_snapshot_out_of_order');
+          const key = accountKey(fact.connection, facts.accountControls);
+          acceptSnapshot(fact, fact.snapshot, Object.values(facts.observations).map(observation).filter(other => accountKey(other.connection, facts.accountControls) === key));
+          return undefined;
+        }, context);
         checkingAccount = false;
         await settle(await downstream(input, 'deliver', runtime.signal));
       } catch (error) {
@@ -218,9 +252,17 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
       }
     },
     async wait(task, runtime, context) {
+      let parked = false;
+      await runtime.commit(async tx => {
+        const fact = observation((await tx.doc(Application)).observations[task.input.id]);
+        if (!unsettledAdjustment(fact)) { const next = await maintenancePark(tx, task.id, 'qz.account-adjustment', { phase: 'snapshot' } as const); if (next) { parked = true; return next; } }
+        return undefined;
+      }, context);
+      if (parked) return;
       await runtime.sleep(task.state.checkpoint.wakeAt, context);
       await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'snapshot' } }), context);
     },
+    async maintenance(task, runtime, context) { await runtime.commit(tx => resumeMaintenance(tx, task.id, 'qz.account-adjustment', task.state.checkpoint), context); },
   },
   async abort(task, runtime, context) {
     await runtime.commit(async tx => {

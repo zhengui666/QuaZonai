@@ -1,6 +1,7 @@
 //! Native Clarabel allocation over frozen portfolio inputs.
 use anyhow::{ensure, Result};
 use clarabel::{algebra::CscMatrix, solver::*};
+mod cash_numerical_output;
 mod cvar_risk_budgeting;
 mod risk_budgeting;
 #[cfg(test)]
@@ -111,6 +112,7 @@ fn native_outcome(native: &DefaultSolution<f64>, accept_inaccurate: bool) -> All
         targets: None,
         cash_weight: None,
         cvar_risk_budget_witness: None,
+        numerical_output: None,
         iterations: native.iterations,
         objective_value: finite(native.obj_val),
         primal_residual: finite(native.r_prim),
@@ -133,14 +135,23 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         Vec::new()
     };
-    let cholesky = if input.risk == AllocationRisk::Variance {
-        let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
+    let risk_budget =
+        domain::portfolio::risk_budgeting(input.objective, &input.optimizer, &input.constraints)?;
+    if input.risk == AllocationRisk::Variance {
         // Exact symmetry is part of the native estimator output contract. Do not use
         // one triangle of an inconsistent matrix or hide it with averaging/jitter.
         ensure!(
-            (0..n).all(|i| (0..n).all(|j| covariance[(i, j)] == covariance[(j, i)])),
+            (0..n).all(|i| (0..n).all(|j| estimated[i][j] == estimated[j][i])),
             "ASYMMETRIC_COVARIANCE"
         );
+    }
+    // Clarabel accepts positive semidefinite quadratic objectives. Aligned sample
+    // covariance may be singular (e.g. correlated assets or few observations).
+    // Only the existing risk-budget and risk-bound cone adapters need Cholesky.
+    let cholesky = if input.risk == AllocationRisk::Variance
+        && (risk_budget.is_some() || input.constraints.max_ex_ante_risk.is_some())
+    {
+        let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
         Some(
             Cholesky::new(covariance)
                 .ok_or_else(|| anyhow::anyhow!("NONPOSITIVE_DEFINITE_COVARIANCE"))?,
@@ -148,8 +159,6 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         None
     };
-    let risk_budget =
-        domain::portfolio::risk_budgeting(input.objective, &input.optimizer, &input.constraints)?;
     let first = risk_budget
         .map(|budget| {
             if let Some(confidence) = confidence {
@@ -277,6 +286,16 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
         &[(cash, -1.0)],
         -native_number(&constraints.min_cash_weight)?,
     );
+    if constraints.cash_funding.is_some() {
+        // Reuse the same L1 turnover epigraph as the objective. This single
+        // linear budget reserves the modeled fees inside the original NAV;
+        // it neither changes NAV nor repairs a solved target after the fact.
+        let mut terms = vec![(cash, -1.0)];
+        for (i, asset) in input.assets.iter().enumerate() {
+            terms.push((traded + i, native_number(&asset.transaction_cost_rate)?));
+        }
+        add(&terms, -native_number(&constraints.min_cash_weight)?);
+    }
     let overrides: BTreeMap<_, _> = constraints
         .asset_overrides
         .iter()
@@ -437,6 +456,9 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
                         });
                 }
             }
+            if parameters.cash_numerical_output.is_some() {
+                cash_numerical_output::apply(input, native, &mut result)?;
+            }
             domain::portfolio::allocation_result(input, &result)?;
             Ok(())
         })();
@@ -446,6 +468,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             result.targets = None;
             result.cash_weight = None;
             result.cvar_risk_budget_witness = None;
+            result.numerical_output = None;
         }
     }
     domain::portfolio::allocation_result(input, &result)?;

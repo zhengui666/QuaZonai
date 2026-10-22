@@ -24,7 +24,8 @@ pub fn mandate(value: &StrategyMandateContentV1) -> Result<(), DomainError> {
     }
     // These need an explicit risk model, group dictionary or liquidity source;
     // a fixed target policy cannot manufacture those measurements.
-    if value.constraints.max_ex_ante_risk.is_some()
+    if value.constraints.cash_funding.is_some()
+        || value.constraints.max_ex_ante_risk.is_some()
         || value.constraints.max_participation.is_some()
         || value.constraints.liquidity_ref.is_some()
         || !value.constraints.group_bounds.is_empty()
@@ -431,7 +432,8 @@ pub fn target_bounds(
         return Err(DomainError::CapabilityUnavailable("strategy_target_scope"));
     }
     crate::portfolio::portfolio_constraints(c)?;
-    if c.max_ex_ante_risk.is_some()
+    if c.cash_funding.is_some()
+        || c.max_ex_ante_risk.is_some()
         || c.max_participation.is_some()
         || c.liquidity_ref.is_some()
         || !c.group_bounds.is_empty()

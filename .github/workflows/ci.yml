@@ -105,6 +105,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: '1.98.1'
       CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       PROFILE: ${{ github.event_name == 'push' && 'release' || 'debug' }}

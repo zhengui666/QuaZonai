@@ -43,6 +43,7 @@ use std::{
 pub(crate) struct SpotReplayInputs {
     pub dataset_revision_id: Id,
     pub closed_rows: Vec<ClosedBarSourceRow>,
+    pub observed_start: Option<contracts::observed_spot::NativeObservedSpotStartV1>,
 }
 fn count(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
@@ -345,6 +346,24 @@ fn reconcile(
 }
 
 fn report_statistics(returns: &ReportCurrencyDailyReturnsV1) -> Vec<NativeStatisticV1> {
+    let complete = !returns.days.is_empty()
+        && returns
+            .days
+            .iter()
+            .all(|day| day.value.is_some() && day.reason.is_none());
+    // Spot already owns the authoritative report-currency, fee-inclusive account
+    // returns. Reuse those exact days and clocks, never native position returns.
+    let calendar = crate::simulation::calendar_returns::statistics(
+        returns.flow_evidence.period_start_ns.get(),
+        returns.flow_evidence.period_end_ns.get(),
+        complete,
+        returns.days.iter().filter_map(|day| {
+            (day.reason.is_none())
+                .then_some(day.value)
+                .flatten()
+                .map(|value| (day.day_start_ns.get(), value))
+        }),
+    );
     // Any missing day invalidates aggregate statistics; never join the remaining
     // observations into a shorter invented series or call the position-return API.
     if returns.days.is_empty()
@@ -353,7 +372,7 @@ fn report_statistics(returns: &ReportCurrencyDailyReturnsV1) -> Vec<NativeStatis
             .iter()
             .any(|day| day.value.is_none() || day.reason.is_some())
     {
-        return Vec::new();
+        return calendar;
     }
     let mut analyzer = PortfolioAnalyzer::default();
     analyzer.register_statistic(Arc::new(MaxDrawdown::new()));
@@ -392,6 +411,7 @@ fn report_statistics(returns: &ReportCurrencyDailyReturnsV1) -> Vec<NativeStatis
             reason_code: (!value.is_finite()).then(|| "NATIVE_STATISTIC_UNAVAILABLE".into()),
         })
         .collect();
+    output.extend(calendar);
     output.sort_by(|a, b| a.native_key.cmp(&b.native_key));
     output
 }

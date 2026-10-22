@@ -83,9 +83,48 @@ pub(super) fn shape(report: &NativeSpotCashReportV1) -> Result<(), DomainError> 
             return Err(bad("spot_report.statistics"));
         }
     }
+    // Coverage is observable even when performance is unavailable. Verify these
+    // diagnostic counts against the original calendar, never whitelist a return
+    // statistic merely because its name begins with Calendar.
+    let day_ns = 86_400_000_000_000_u64;
+    let start = report.flow_evidence.period_start_ns.get();
+    let end = report.flow_evidence.period_end_ns.get();
+    let first = start.div_ceil(day_ns);
+    let last = end / day_ns;
+    let expected = (start < end && first < last).then(|| last - first);
+    let observed = report
+        .daily_returns
+        .days
+        .iter()
+        .filter(|day| {
+            day.value.is_some()
+                && day.reason.is_none()
+                && day.day_start_ns.get() / day_ns >= first
+                && day.day_start_ns.get() / day_ns < last
+        })
+        .count() as f64;
+    let diagnostic = |key: &str| -> Option<Option<f64>> {
+        Some(match key {
+            "Calendar Expected Days" => expected.map(|n| n as f64),
+            "Calendar Observed Return Days" => Some(observed),
+            "Calendar Coverage Ratio" => expected.map(|n| observed / n as f64),
+            "Calendar Partial Days" => (start < end)
+                .then(|| (end.div_ceil(day_ns) - start / day_ns - expected.unwrap_or(0)) as f64),
+            "Calendar Partial Return Days" => Some(0.0),
+            _ => return None,
+        })
+    };
+    for statistic in &report.statistics {
+        if diagnostic(&statistic.native_key).is_some_and(|expected| expected != statistic.value) {
+            return Err(bad("spot_report.calendar_coverage"));
+        }
+    }
     // A gap cannot disappear by passing just the usable days to a statistic.
     if returns_state(report).0 != MetricStatus::Ok
-        && report.statistics.iter().any(|s| s.value.is_some())
+        && report
+            .statistics
+            .iter()
+            .any(|s| s.value.is_some() && diagnostic(&s.native_key).is_none())
     {
         return Err(bad("spot_report.statistics_across_gap"));
     }
@@ -185,10 +224,11 @@ fn comparable_snapshot(value: &Value) -> Result<Vec<u8>, DomainError> {
     serde_json::to_vec(&value).map_err(|_| bad("spot_report.snapshot_document"))
 }
 
-pub(super) fn binding(
+pub(super) fn binding_with_balances(
     request: &NativeSimulationRequestV1,
     result: &NativeSimulationResultV1,
     report: &NativeSpotCashReportV1,
+    balances: &[NativeSpotCashMoneyV1],
 ) -> Result<(), DomainError> {
     shape(report)?;
     let session = &report.session;
@@ -392,11 +432,15 @@ pub(super) fn binding(
         .ok_or_else(|| bad("spot_report.opening_snapshot"))?;
     if opening.snapshot.binding.asof_ns != session.period_start_ns
         || opening.snapshot.binding.origin != NativeSpotSnapshotOriginV1::NativePublication
-        || opening.snapshot.balances.len() != 1
-        || opening.snapshot.balances[0].currency != request.settings.base_currency
-        || opening.snapshot.balances[0].total != request.settings.starting_capital
-        || opening.snapshot.balances[0].free != request.settings.starting_capital
-        || opening.snapshot.balances[0].locked != DecimalValue::zero()
+        || opening.snapshot.balances.len() != balances.len()
+        || balances.iter().any(|balance| {
+            !opening.snapshot.balances.iter().any(|actual| {
+                actual.currency == balance.currency
+                    && actual.total == balance.amount
+                    && actual.free == balance.amount
+                    && actual.locked == DecimalValue::zero()
+            })
+        })
     {
         return Err(bad("spot_report.fresh_opening_capital"));
     }

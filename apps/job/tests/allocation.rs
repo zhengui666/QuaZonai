@@ -3,6 +3,9 @@
 use bigdecimal::ToPrimitive;
 use contracts::{portfolio::*, DecimalValue, Id};
 
+#[path = "support/allocation_numerical.rs"]
+mod allocation_numerical;
+
 fn input() -> AllocationInputV1 {
     serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"
@@ -71,6 +74,128 @@ fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() <= 1e-5, "{actual} != {expected}");
 }
 
+fn cash_funding_input(current: &str, cash: &str, fee: &str) -> AllocationInputV1 {
+    let mut request = input();
+    request.objective = AllocationObjective::MaxUtility;
+    request.assets.truncate(1);
+    request.assets[0].current_weight = decimal(current);
+    request.assets[0].transaction_cost_rate = decimal(fee);
+    request.current_cash_weight = decimal(cash);
+    request.forecasts.instrument_ids.truncate(1);
+    request.forecasts.bar_types.truncate(1);
+    for member in &mut request.forecasts.members {
+        member.instrument_ids.truncate(1);
+        member.bar_types.truncate(1);
+        member.forecasts = vec![0.2];
+    }
+    request.return_history.instrument_ids.truncate(1);
+    request.return_history.bar_types.truncate(1);
+    request.return_history.asset_returns = vec![vec![0.0, 0.02, 0.0, 0.02, 0.01]];
+    request.constraints.min_net_exposure = decimal("0");
+    request.constraints.max_cash_weight = decimal("1");
+    request.constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    request
+}
+
+#[test]
+fn cash_funding_single_qp_reserves_actual_buy_cost_without_changing_nav() {
+    let mut request = cash_funding_input("0", "1", "0.1");
+    request.constraints.min_cash_weight = decimal("0.2");
+    let result = job::allocate(&request).unwrap();
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    let w = result.targets.as_ref().unwrap()[0]
+        .weight
+        .as_decimal()
+        .to_f64()
+        .unwrap();
+    // Monotone utility on [0,1]; the independent funded boundary is
+    // w + 0.1*w + 0.2 = 1. The estimator's scalar sample variance is 0.0001.
+    near(w, 0.8 / 1.1);
+    near(
+        result
+            .cash_weight
+            .as_ref()
+            .unwrap()
+            .as_decimal()
+            .to_f64()
+            .unwrap(),
+        1.0 - w,
+    );
+    near(
+        result.objective_value.unwrap(),
+        0.0001 * w * w + 0.1 * w - 0.2 * w,
+    );
+    assert_eq!(request.capital_assumption, decimal("1000000"));
+    let mut forged = result.clone();
+    forged.targets.as_mut().unwrap()[0].weight = decimal("0.8");
+    forged.cash_weight = Some(decimal("0.2"));
+    assert_eq!(
+        domain::portfolio::allocation_result(&request, &forged)
+            .unwrap_err()
+            .to_string(),
+        "invalid contract field: cash_funding_bound"
+    );
+}
+
+#[test]
+fn cash_funding_sell_proceeds_pay_cost_before_preserving_cash_floor() {
+    let mut request = cash_funding_input("1", "0", "0.1");
+    request.constraints.min_cash_weight = decimal("0.4");
+    let result = job::allocate(&request).unwrap();
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    let w = result.targets.as_ref().unwrap()[0]
+        .weight
+        .as_decimal()
+        .to_f64()
+        .unwrap();
+    // Selling x leaves x cash before fees, and 0.9*x after fees.
+    near(w, 1.0 - 0.4 / 0.9);
+    let cash = result.cash_weight.unwrap().as_decimal().to_f64().unwrap();
+    near(cash - 0.1 * (1.0 - w), 0.4);
+    near(
+        result.objective_value.unwrap(),
+        0.0001 * w * w + 0.1 * (1.0 - w) - 0.2 * w,
+    );
+}
+
+#[test]
+fn cash_funding_zero_fees_preserves_legacy_solution_and_fixed_full_investment_is_infeasible() {
+    let mut request = cash_funding_input("0", "1", "0");
+    let funded = weights(&request);
+    request.constraints.cash_funding = None;
+    let legacy = weights(&request);
+    near(funded[0], legacy[0]);
+    near(funded[0], 1.0);
+    // The old absent field still admits a fee-unfunded allocation. Opting in
+    // must report the incompatible frozen constraints, never reduce fees or NAV.
+    request.assets[0].transaction_cost_rate = decimal("0.1");
+    request.constraints.min_net_exposure = decimal("1");
+    request.constraints.max_cash_weight = decimal("0");
+    near(weights(&request)[0], 1.0);
+    request.constraints.cash_funding =
+        Some(NativeCashFundingPolicyV1::PreserveMinCashAfterLinearTurnoverV1);
+    let infeasible = job::allocate(&request).unwrap();
+    assert_eq!(infeasible.solver_status, SolverStatus::Infeasible);
+    assert!(infeasible.targets.is_none());
+}
+
+#[test]
+fn cash_funding_rejects_unregistered_objectives_leverage_and_borrowed_current_state() {
+    let request = cash_funding_input("0", "1", "0.1");
+    for mutation in 0..5 {
+        let mut bad = request.clone();
+        match mutation {
+            0 => bad.objective = AllocationObjective::MinRisk,
+            1 => bad.constraints.long_only = false,
+            2 => bad.constraints.max_gross_exposure = decimal("1.1"),
+            3 => bad.current_cash_weight = decimal("-0.1"),
+            _ => bad.assets[0].current_weight = decimal("-0.1"),
+        }
+        assert!(job::allocate(&bad).is_err(), "mutation {mutation}");
+    }
+}
+
 #[test]
 fn native_minimum_risk_uses_the_whole_covariance_not_equal_weights() {
     let request = input();
@@ -82,6 +207,91 @@ fn native_minimum_risk_uses_the_whole_covariance_not_equal_weights() {
     let changed = weights(&changed);
     near(changed[0], 0.2);
     near(changed[1], 0.8);
+}
+
+#[test]
+fn ordinary_variance_qp_accepts_correlated_assets_without_changing_the_estimator() {
+    let mut request = input();
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    // Sigma = [[1,1],[1,1]]: every fully invested portfolio has variance one.
+    // The minimum is nonunique, so verify its objective and mandate, not a tie-break.
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 1.0);
+    let weights = result.targets.unwrap();
+    let total: f64 = weights
+        .iter()
+        .map(|target| target.weight.as_decimal().to_f64().unwrap())
+        .sum();
+    near(total, 1.0);
+    assert!(weights.iter().all(|target| {
+        let weight = target.weight.as_decimal().to_f64().unwrap();
+        (-1e-6..=1.0 + 1e-6).contains(&weight)
+    }));
+
+    // With fixed risk and forecasts [0.1,0.2], maximum utility selects asset two.
+    request.objective = AllocationObjective::MaxUtility;
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 0.8);
+    let targets = result.targets.unwrap();
+    near(targets[0].weight.as_decimal().to_f64().unwrap(), 0.0);
+    near(targets[1].weight.as_decimal().to_f64().unwrap(), 1.0);
+}
+
+#[test]
+fn ordinary_variance_qp_accepts_rank_deficient_small_samples() {
+    let mut request = input();
+    request.return_history.end_ns.truncate(2);
+    request.return_history.available_ns.truncate(2);
+    request.return_history.asset_returns = vec![vec![0.0, 1.0], vec![0.0, 2.0]];
+    // Two observations and two assets give Sigma=[[0.5,1],[1,2]]. For w2=1-w1,
+    // variance=0.5*(2-w1)^2, minimized at w1=1 on the frozen long-only simplex.
+    let result = job::allocate(&request).unwrap();
+    assert_eq!(result.solver_status, SolverStatus::Optimal);
+    domain::portfolio::allocation_result(&request, &result).unwrap();
+    near(result.objective_value.unwrap(), 0.5);
+    let targets = result.targets.unwrap();
+    near(targets[0].weight.as_decimal().to_f64().unwrap(), 1.0);
+    near(targets[1].weight.as_decimal().to_f64().unwrap(), 0.0);
+}
+
+#[test]
+fn variance_cone_adapters_still_require_positive_definite_covariance() {
+    let mut request = input();
+    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
+    request.constraints.max_ex_ante_risk = Some(decimal("2"));
+    assert_eq!(
+        job::allocate(&request).unwrap_err().to_string(),
+        "NONPOSITIVE_DEFINITE_COVARIANCE"
+    );
+    request.constraints.max_ex_ante_risk = None;
+    request.objective = AllocationObjective::RiskBudgeting;
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut request.optimizer else {
+        unreachable!()
+    };
+    parameters.risk_budgeting = Some(RiskBudgetSettingsV1 {
+        schema_version: contracts::SchemaV1,
+        risky_gross_exposure: decimal("1"),
+        assets: request
+            .assets
+            .iter()
+            .map(|asset| RiskBudgetAssetV1 {
+                instrument_id: asset.instrument_id.clone(),
+                share: decimal("0.5"),
+                sign: RiskBudgetSign::Long,
+            })
+            .collect(),
+    });
+    for returns in [vec![0.0, 2.0, 0.0, 2.0, 1.0], vec![0.1; 5]] {
+        request.return_history.asset_returns = vec![returns.clone(), returns];
+        assert_eq!(
+            job::allocate(&request).unwrap_err().to_string(),
+            "NONPOSITIVE_DEFINITE_COVARIANCE"
+        );
+    }
 }
 
 #[test]
@@ -240,7 +450,6 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
     for weights in [
         vec!["1"],
         vec!["1", "1"],
-        vec!["1", "0"],
         vec!["-1", "2"],
         vec!["0.5", "0.500000000000000001"],
     ] {
@@ -250,6 +459,10 @@ fn native_mixture_rejects_missing_predictions_and_never_repairs_weights() {
         )
         .is_err());
     }
+    assert_eq!(
+        mix(&forecasts, &[decimal("1"), decimal("0")]).unwrap(),
+        forecasts[0]
+    );
     let weights = [decimal("0.5"), decimal("0.5")];
     for forecasts in [
         vec![],
@@ -411,9 +624,6 @@ fn invalid_or_unsupported_inputs_are_not_silently_repaired() {
     assert!(serde_json::from_value::<AllocationInputV1>(missing).is_err());
     let mut request = input();
     request.return_history.asset_returns[0].pop();
-    assert!(job::allocate(&request).is_err());
-    request = input();
-    request.return_history.asset_returns[1] = request.return_history.asset_returns[0].clone();
     assert!(job::allocate(&request).is_err());
     request = input();
     request.return_history.asset_returns[0][0] = f64::NAN;

@@ -264,8 +264,64 @@ fn portfolio_settings(
     costs: &NativeSimulationSettingsV1,
     assets: &[contracts::portfolio::AllocationAssetV1],
 ) -> Result<(), DomainError> {
+    portfolio_settings_mode(mandate, costs, assets, false)
+}
+
+/// Source quantities and capital are derived by the native observed adapter.
+pub fn observed_spot_build_request(
+    request: &contracts::observed_spot::NativeObservedSpotBuildRequestV1,
+) -> Result<(), DomainError> {
+    selection(&request.selection)?;
+    portfolio_settings_mode(
+        &request.mandate,
+        &request.execution_settings,
+        &request.assets,
+        true,
+    )?;
+    portfolio_members(&request.selection, &request.assets, &request.members)?;
+    let constraints = &request.mandate.constraints;
+    if request.assets.iter().any(|asset| {
+        asset.current_weight.as_decimal() != &bigdecimal::BigDecimal::from(0)
+            || asset.available_notional.is_some()
+    }) {
+        return Err(bad("observed_build.supplied_inventory_or_liquidity"));
+    }
+    match &request.rolling_liquidity {
+        Some(policy)
+            if constraints.liquidity_ref.is_some()
+                && constraints.max_participation.as_ref() == Some(&policy.participation_limit) =>
+        {
+            crate::portfolio::rolling_liquidity_policy(policy)?;
+        }
+        None if constraints.liquidity_ref.is_none() && constraints.max_participation.is_none() => {}
+        _ => return Err(bad("observed_build.liquidity_policy")),
+    }
+    if request.mandate.objective != contracts::portfolio::AllocationObjective::MaxUtility
+        || request.mandate.risk_measure != contracts::portfolio::AllocationRisk::Variance
+        || !constraints.long_only
+        || constraints.max_gross_exposure.as_decimal() > &bigdecimal::BigDecimal::from(1)
+        || constraints.min_cash_weight.as_decimal() < &bigdecimal::BigDecimal::from(0)
+    {
+        return Err(bad("observed_build.method_unsupported"));
+    }
+    Ok(())
+}
+
+fn portfolio_settings_mode(
+    mandate: &contracts::portfolio::MandateContentV1,
+    costs: &NativeSimulationSettingsV1,
+    assets: &[contracts::portfolio::AllocationAssetV1],
+    observed_spot: bool,
+) -> Result<(), DomainError> {
     crate::portfolio::mandate(mandate)?;
-    crate::portfolio::simulation_settings(costs)?;
+    if mandate.constraints.cash_funding.is_some() && !observed_spot {
+        return Err(bad("portfolio.cash_funding_requires_observed_spot"));
+    }
+    if observed_spot {
+        crate::spot_cash::execution_settings(costs)?;
+    } else {
+        crate::portfolio::simulation_settings(costs)?;
+    }
     if costs.base_currency != mandate.base_currency
         || costs.starting_capital != mandate.capital_assumption
         || costs.fee_rates.len() != assets.len()
@@ -308,7 +364,14 @@ fn portfolio_members(
             alphas.insert(member.alpha_id);
         }
     }
-    if alphas.len() < 2 {
+    if alphas.is_empty()
+        || (members
+            .iter()
+            .filter(|m| m.ensemble_weight.is_positive())
+            .count()
+            > 1
+            && alphas.len() < 2)
+    {
         return Err(bad("portfolio.distinct_alphas"));
     }
     Ok(())
@@ -317,11 +380,26 @@ fn portfolio_members(
 pub fn portfolio_study_cutoffs(
     request: &NativePortfolioStudyRequestV1,
 ) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    portfolio_study_cutoffs_mode(request, false)
+}
+
+/// Explicit observed spot adapter only; legacy study remains single-currency.
+pub fn observed_spot_study_cutoffs(
+    request: &NativePortfolioStudyRequestV1,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
+    portfolio_study_cutoffs_mode(request, true)
+}
+
+fn portfolio_study_cutoffs_mode(
+    request: &NativePortfolioStudyRequestV1,
+    observed_spot: bool,
+) -> Result<Vec<contracts::DbCounter>, DomainError> {
     selection(&request.source_selection)?;
-    portfolio_settings(
+    portfolio_settings_mode(
         &request.mandate,
         &request.execution_settings,
         &request.assets,
+        observed_spot,
     )?;
     portfolio_members(&request.source_selection, &request.assets, &request.members)?;
     let schedule = &request.mandate.rebalance_schedule;

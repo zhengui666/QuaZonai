@@ -11,6 +11,7 @@ pub mod execution;
 pub mod execution_limits;
 pub mod factors;
 pub mod forward;
+pub mod observed_spot;
 pub mod portfolio;
 pub mod prediction;
 pub mod research;

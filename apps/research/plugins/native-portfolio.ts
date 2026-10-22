@@ -13,7 +13,7 @@ import type { StrategyMember, StrategyPartition, StrategyPolicy, ThresholdPolicy
 import { compileWasm, iterationRequest, normalizedRequest } from './native-wasm.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
 
-const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit']);
+const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest']);
 
 /** Original JSON stdin and official process cleanup/cancellation; no provider environment or deadline. */
 export async function executeNative(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {

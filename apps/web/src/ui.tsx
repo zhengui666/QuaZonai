@@ -8,6 +8,11 @@ import { FactLabel, MetricLabel } from './metric-label';
 export { MetricLabel } from './metric-label';
 
 const labels: Record<string, string> = {
+  PLANNED: '计划中', SEARCHING: '研究中', CLOSING: '形成结论', EVALUATING_INDEPENDENT: '独立评估中', CONCLUDED: '已结项', PAUSED: '已暂停',
+  CAPTURING: '汇集当前依据', COMPUTING: '计算中', EVALUATING: '比较决策', SUPERSEDED: '已由新依据取代', WAITING_EVIDENCE: '等待证据',
+  AVAILABLE: '证据可用', INSUFFICIENT: '证据不足', UNAVAILABLE: '尚不可用', STALE: '依据过期', INCOMPARABLE: '口径不可比较', AMBIGUOUS: '证据存在歧义', INVALID: '证据无效',
+  IDEA: '经济假设', RESEARCH: '研究', SELECTION: '候选选择', INDEPENDENT_EVALUATION: '独立评估', SHADOW: '影子观察', PAPER: '模拟运行', TARGET_OPERATION: '目标运行', MONITORING: '持续观测', RETIRED: '已退役',
+  READY: '具备本阶段依据', NOT_READY: '条件尚未满足', NEEDS_EVIDENCE: '需要补证据', CURRENT: '当前版本', OPEN: '待补齐', IN_PROGRESS: '补证据中', RESOLVED: '已补齐', UNRESOLVABLE: '当前无法补齐',
   RUNNING: '研究中', IDLE: '当前无执行', STARTED: '计算中', COMPUTED: '已计算', FAILED: '失败', STOPPED: '已停止', REJECTED: '已拒绝',
   QUEUED: '待执行', OBSERVING: '观测中', UNCERTAIN: '待核对', PENDING: '待接收', ACKNOWLEDGED: '已接收', EXPIRED: '已过期', REVOKED: '已撤销', NOT_OFFERED: '未交付',
   loaded: '已加载', disabled: '已停用', pending_restart: '待重启', error: '加载失败', running: '执行中', pending: '待执行', waiting: '等待中', completing: '收尾中',

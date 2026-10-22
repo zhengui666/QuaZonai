@@ -60,6 +60,24 @@ export function acceptReceipt(fact: ObservationFact, receipt: JsonObject): void 
   original.acknowledgedAt ??= typeof receipt.acknowledgedAt === 'string' ? receipt.acknowledgedAt : null;
   if (fact.view.status !== 'STOPPED') fact.view.status = status === 'ACKNOWLEDGED' ? 'OBSERVING' : status;
 }
+
+/** Rendering cache only. Scientific observations, original source receipts and
+ * execution/cash-flow ledgers do not read this curve. Keep a bounded recent
+ * window without turning missing equity into zero or duplicate heartbeats
+ * into additional account events. Same-clock value changes remain visible. */
+const observationCurveLimit = 1024;
+function appendObservationCurve(fact: ObservationFact): void {
+  const points = fact.view.curve, point = { at: fact.view.updatedAt!, value: fact.view.equity };
+  const last = points.at(-1);
+  if (last?.at !== point.at || last.value !== point.value) {
+    // Preserve the beginning and latest end of an unknown interval so the
+    // chart still has an explicit break, without one null point per poll.
+    if (point.value === null && last?.value === null && points.at(-2)?.value === null) points[points.length - 1] = point;
+    else points.push(point);
+  }
+  if (points.length > observationCurveLimit) points.splice(0, points.length - observationCurveLimit);
+}
+
 export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bindings: ObservationFact[] = []): void {
   if (snapshot.clientId !== fact.connection.clientId || snapshot.accountId !== fact.connection.accountId || snapshot.currency !== fact.view.currency || snapshot.mode !== undefined && snapshot.mode !== fact.connection.mode) throw new Problem('account_identity_mismatch');
   const sequence = BigInt(counter(snapshot.sequence, 'account_sequence'));
@@ -74,6 +92,11 @@ export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bind
     if (sequence < oldSequence || clock < oldClock) throw new Problem('account_snapshot_out_of_order');
     if (sequence === oldSequence && physical(snapshot) !== physical(previous)) throw new Problem('account_snapshot_conflict');
     if (typeof previous.accountSourceId === 'string' && snapshot.accountSourceId !== previous.accountSourceId) throw new Problem('account_identity_mismatch');
+    if (previous.nativeObservation && typeof previous.nativeObservation === 'object' && !Array.isArray(previous.nativeObservation)) {
+      const originalBinding = object(object(previous.nativeObservation).binding, 'original_native_binding');
+      const currentBinding = object(object(snapshot.nativeObservation, 'native_observation').binding, 'native_binding');
+      for (const key of ['project_id', 'environment', 'native_account_id', 'native_trader_id']) if (originalBinding[key] !== currentBinding[key]) throw new Problem('native_account_identity_mismatch');
+    }
     if (binding === fact && sequence === oldSequence) repeated = true;
   }
   if (repeated) return;
@@ -83,8 +106,8 @@ export function acceptSnapshot(fact: ObservationFact, snapshot: JsonObject, bind
     return { instrumentId: text(position.instrumentId, 'instrument'), quantity: decimal(position.quantity, 'quantity'),
       value: optionalMoney(position.value, 'position_value'), pnl: optionalMoney(position.pnl, 'position_pnl') };
   }) : [];
-  fact.snapshot = snapshot;
+  fact.snapshot = snapshot; fact.snapshotReceivedAtNs = nowNs();
   fact.view.equity = optionalMoney(snapshot.equity, 'equity'); fact.view.cash = optionalMoney(snapshot.cash, 'cash');
   fact.view.updatedAt = nsTime(clock.toString()); fact.view.positions = positions;
-  fact.view.curve.push({ at: fact.view.updatedAt, value: fact.view.equity });
+  appendObservationCurve(fact);
 }

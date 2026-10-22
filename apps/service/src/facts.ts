@@ -15,6 +15,8 @@ export const Application = defineDoc<{
   portfolios: Record<string, JsonObject>;
   observations: Record<string, JsonObject>;
   accountControls?: Record<string, JsonObject>;
+  /** Service maintenance intent; execution checkpoints remain official Tasks. */
+  maintenance?: JsonObject;
 }>({
   kind: 'qz.application', version: 1, scope: 'session',
   initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
@@ -26,6 +28,8 @@ export interface PortfolioFact {
 export interface ObservationFact {
   input: ObservationStart; view: ObservationView; connection: ConnectionConfig;
   target: JsonObject; taskId: number; snapshot: JsonObject | null;
+  /** First local receipt of this exact native snapshot; never producer event time. */
+  snapshotReceivedAtNs?: string;
   automaticTaskId?: number;
   capitalPreviews?: Record<string, JsonObject>;
   allocationTarget?: JsonObject;

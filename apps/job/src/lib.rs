@@ -3,10 +3,13 @@ pub mod account_observation_cli;
 pub mod account_observer;
 pub mod bounded;
 pub mod capacity;
+pub mod capital_curve;
 pub mod capital_exit_gate;
 pub mod catalog;
 pub mod catalog_ensemble;
 mod catalog_ensemble_policy;
+pub mod catalog_prefix;
+pub mod ensemble_fit;
 pub mod experiment;
 pub mod factors;
 pub mod feature_model;
@@ -17,6 +20,7 @@ pub mod managed;
 pub mod native_capital_exit;
 #[cfg(feature = "native-node-observer")]
 pub mod native_node_observer;
+pub mod observed_spot;
 #[cfg(any(feature = "catalog-prepare", feature = "polymarket-history"))]
 pub mod operator;
 mod optimization;

@@ -13,6 +13,15 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   identity | logout | forget
   schema list [--domain] | schema show NAME [--domain]
   datasets | usage
+  maintenance status | enter --file ORIGINAL_REQUEST.json | resume --file ORIGINAL_REQUEST.json
+  pm list | get ID | decision ID | history ID | events ID | capabilities
+  pm start --file MANDATE.json | recompute ID --file ORIGINAL_COMMAND.json
+  pm retire ID --file ORIGINAL_COMMAND.json | cycle ID | capacity ID
+  pm targets ID --file ORIGINAL_COMMAND.json | refresh-data ID --file ORIGINAL_COMMAND.json
+  pm clarify-intent ID --file ORIGINAL_COMMAND.json
+  campaign start --file REQUEST.json | get ID | trials ID | compare ID
+  campaign close ID --file COMMAND.json | pause ID --file COMMAND.json | resume ID --file COMMAND.json
+  strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   research models | list [--cursor JSON] | get ID | stop ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
   research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
@@ -59,6 +68,9 @@ async function fileBody(path?: string) {
 function requestId(body: Record<string, unknown>, expected?: string) {
   if (typeof body.requestId !== 'string' || !body.requestId) throw new CliError('original_request_id_required');
   if (expected !== undefined && body.requestId !== expected) throw new CliError('request_id_conflict');
+}
+function pmRevision(body: Record<string, unknown>) {
+  if (typeof body.expectedRevision !== 'string' || !/^\d+$/.test(body.expectedRevision)) throw new CliError('expected_revision_required');
 }
 function researchId(value?: string): number {
   if (!value || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new CliError('native_numeric_research_id_required');
@@ -110,6 +122,36 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     }
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);
     method = 'POST'; path = '/research';
+  } else if (group === 'pm') {
+    if (action === 'list') path = '/mandates';
+    else if (action === 'capabilities') path = '/capabilities';
+    else if (action === 'start') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      method = 'POST'; path = '/mandates'; body = file.bytes;
+    } else if (['get', 'decision', 'history', 'events'].includes(action)) {
+      path = `/mandates/${resourceId(id)}${action === 'get' ? '' : action === 'history' ? '/decisions' : `/${action}`}`;
+    } else if (action === 'cycle') path = `/cycles/${resourceId(id)}`;
+    else if (action === 'capacity') path = `/capacity-estimates/${resourceId(id)}`;
+    else if (['recompute', 'retire', 'targets', 'refresh-data', 'clarify-intent'].includes(action)) {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
+      method = 'POST'; path = `/mandates/${resourceId(id)}/${action === 'clarify-intent' ? 'intent-clarifications' : action}`; body = file.bytes;
+    } else throw new CliError('unknown_pm_command');
+  } else if (group === 'campaign') {
+    if (action === 'start') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      method = 'POST'; path = '/campaigns'; body = file.bytes;
+    } else if (['get', 'trials', 'compare'].includes(action)) {
+      path = `/campaigns/${resourceId(id)}${action === 'get' ? '' : action === 'compare' ? '/decision' : '/trials'}`;
+    } else if (['close', 'pause', 'resume'].includes(action)) {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
+      method = 'POST'; path = `/campaigns/${resourceId(id)}/${action}`; body = file.bytes;
+    } else throw new CliError('unknown_campaign_command');
+  } else if (group === 'strategy') {
+    if (action === 'versions' || action === 'assessments') path = `/strategies/${resourceId(id)}/${action}`;
+    else if (action === 'pause' || action === 'resume') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']); pmRevision(file.body);
+      method = 'POST'; path = `/strategies/${resourceId(id)}/${action}`; body = file.bytes;
+    } else throw new CliError('unknown_strategy_command');
   } else if (group === 'research') {
     if (action === 'models') path = '/research/models';
     else if (action === 'list') {
@@ -125,6 +167,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
         method = 'POST'; path += '/resume'; body = JSON.stringify({ submissionId });
       }
     } else throw new CliError('unknown_research_command');
+  } else if (group === 'maintenance') {
+    path = '/maintenance';
+    if (action === 'enter' || action === 'resume') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      if (action === 'resume' && (typeof file.body.epoch !== 'string' || !file.body.epoch)) throw new CliError('maintenance_epoch_required');
+      method = 'POST'; path += `/${action}`; body = file.bytes;
+    } else if (action !== 'status') throw new CliError('unknown_maintenance_command');
   } else if (group === 'factor') {
     if (action === 'list') path = '/factors';
     else if (action === 'get' || action === 'capacity') path = `/factors/${resourceId(id)}${action === 'capacity' ? '/capacity' : ''}`;

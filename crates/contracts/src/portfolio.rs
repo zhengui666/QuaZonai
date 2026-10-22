@@ -151,6 +151,11 @@ pub struct PortfolioConstraintsV1 {
     pub long_only: bool,
     pub min_cash_weight: DecimalValue,
     pub max_cash_weight: DecimalValue,
+    /// Opt-in CASH method. Cash remains the pre-fee residual divided by original
+    /// NAV; this policy additionally preserves min_cash_weight after linear fees.
+    /// Absence retains the original allocation semantics, including MARGIN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_funding: Option<NativeCashFundingPolicyV1>,
     pub min_asset_weight: DecimalValue,
     pub max_asset_weight: DecimalValue,
     pub max_gross_exposure: DecimalValue,
@@ -166,6 +171,14 @@ pub struct PortfolioConstraintsV1 {
     pub asset_overrides: Vec<AssetBoundV1>,
     pub transaction_costs_ref: crate::Id,
     pub liquidity_ref: Option<crate::Id>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCashFundingPolicyV1 {
+    /// sum(rate_i * abs(target_i - current_i)) + min_cash_weight <= cash_weight.
+    /// Linear turnover estimates do not establish executable market capacity.
+    PreserveMinCashAfterLinearTurnoverV1,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -206,6 +219,78 @@ pub struct AllocatorSettingsV1 {
     /// Numerical stopping tolerance, not permission to violate the mandate.
     pub solver_tolerance: DecimalValue,
     pub accept_inaccurate: bool,
+    /// Explicit numerical output protocol for the observed CASH funding method.
+    /// Absence preserves strict rejection of the original converted solver point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_numerical_output: Option<NativeCashNumericalOutputProtocolV1>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCashNumericalOutputProtocolV1 {
+    ValidatedFeasibleSegmentV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCashNumericalOutcomeV1 {
+    Unchanged,
+    Corrected,
+    Rejected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeCashAnchorKindV1 {
+    /// Numerical point from the input asset weights and exact capital identity;
+    /// not a new account observation or an assumed feasible HOLD decision.
+    CurrentWeights,
+    AllCash,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCashFeasibleAnchorV1 {
+    pub kind: NativeCashAnchorKindV1,
+    pub targets: Vec<AllocationTargetV1>,
+    pub cash_weight: DecimalValue,
+}
+
+/// Original native solution versus the final published numerical point.
+/// This protocol changes neither the optimization problem nor its stopping tolerances.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCashNumericalOutputV1 {
+    pub protocol: NativeCashNumericalOutputProtocolV1,
+    pub outcome: NativeCashNumericalOutcomeV1,
+    /// Clarabel coordinates in original order: assets, cash, gross epigraph, turnover epigraph.
+    pub raw_x: Vec<f64>,
+    pub raw_native_status: String,
+    /// Original Clarabel reply, not independently reproduced bit-for-bit by
+    /// point validation; native artifact provenance establishes its origin.
+    pub raw_objective_value: f64,
+    /// Original objective recomputed from the converted raw weights and actual
+    /// absolute turnover, distinct from Clarabel's epigraph objective above.
+    pub raw_point_objective_value: f64,
+    pub raw_primal_residual: f64,
+    pub raw_dual_residual: f64,
+    pub raw_targets: Vec<AllocationTargetV1>,
+    pub raw_cash_weight: DecimalValue,
+    pub raw_constraint_error: Option<String>,
+    pub anchor: Option<NativeCashFeasibleAnchorV1>,
+    /// Fraction towards the validated anchor, on the exact 10^-18 protocol grid.
+    pub segment_fraction: Option<DecimalValue>,
+    /// Approximate display of objective_delta_exact; never the budget proof.
+    pub objective_delta: Option<f64>,
+    /// Exact final-minus-raw objective difference, using original P/2 and
+    /// forecast IEEE-754 coefficients and exact decimal turnover fees.
+    /// Canonical bounded plain decimal in objective units, not money/return.
+    #[schema(max_length = 2048, pattern = r"^-?[0-9]+(?:\.[0-9]+)?$")]
+    pub objective_delta_exact: Option<String>,
+    /// Original tol_gap_abs (= solver_tolerance), in original objective units.
+    pub objective_change_limit: DecimalValue,
+    pub search_steps: u32,
+    pub reason_code: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -514,6 +599,8 @@ pub struct AllocationResultV1 {
     pub targets: Option<Vec<AllocationTargetV1>>,
     pub cash_weight: Option<DecimalValue>,
     pub cvar_risk_budget_witness: Option<CvarRiskBudgetWitnessV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numerical_output: Option<NativeCashNumericalOutputV1>,
     #[schema(minimum = 0, maximum = 4294967295u64)]
     pub iterations: u32,
     #[serde(

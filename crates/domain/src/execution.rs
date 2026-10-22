@@ -20,15 +20,16 @@ pub mod validation;
 pub use output::{
     alpha_sealed_metrics, alpha_sealed_policy, alpha_sealed_request, alpha_validation_metrics,
     alpha_validation_policy, check_alpha_calibration, check_alpha_sealed,
-    check_experiment_evaluation, check_portfolio_study, equity_curve_query, experiment_summary,
-    freeze_alpha_calibration, output_bindings, output_shape, portfolio_equity_curve,
-    portfolio_simulation_metrics, strategy_portfolio_summary,
+    check_experiment_evaluation, check_observed_spot_simulation, check_observed_spot_study,
+    check_portfolio_study, equity_curve_query, experiment_summary, freeze_alpha_calibration,
+    output_bindings, output_shape, portfolio_equity_curve, portfolio_simulation_metrics,
+    strategy_portfolio_summary,
 };
 pub use portfolio::{
-    candidate_simulation, portfolio_build_liquidity, portfolio_build_request,
-    portfolio_build_result, portfolio_costs, portfolio_execution_costs,
-    portfolio_rolling_liquidity_assets, portfolio_sequence, portfolio_study_cutoffs,
-    portfolio_study_liquidity_assets,
+    candidate_simulation, observed_spot_build_request, observed_spot_study_cutoffs,
+    portfolio_build_liquidity, portfolio_build_request, portfolio_build_result, portfolio_costs,
+    portfolio_execution_costs, portfolio_rolling_liquidity_assets, portfolio_sequence,
+    portfolio_study_cutoffs, portfolio_study_liquidity_assets,
 };
 
 fn bad(field: &str) -> DomainError {

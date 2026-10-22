@@ -23,6 +23,11 @@ import { factorCapacity, portfolioCapacity } from './capacity.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
 import { accountKey, capitalStatus, control } from './capital-exit.ts';
+import { createPmPlatform } from './pm-platform.ts';
+import { registerPmRoutes } from './pm-routes.ts';
+import { maintenanceExtension, createMaintenance } from './pm-maintenance.ts';
+import { registerMaintenanceRoutes } from './pm-maintenance-routes.ts';
+import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 
 const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
@@ -35,7 +40,8 @@ export async function createService(options: ServiceOptions) {
     const saved = JSON.parse(await readFile(extensionFile, 'utf8'));
     desired = saved.enabled ?? saved; moduleNames = saved.modules ?? {};
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const installed: Extension[] = [science];
+  const pm = createPmPlatform(config);
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -61,6 +67,8 @@ export async function createService(options: ServiceOptions) {
       } else extensions.set(configured.name, { name: configured.name, version: configured.version ?? null, enabled: false, kind: configured.kind ?? 'research', state: 'disabled', error: null });
     } catch { extensions.set(configured.name, { name: configured.name, version: configured.version ?? null, enabled, kind: configured.kind ?? 'research', state: 'error', error: 'extension_load_failed' }); }
   }
+  if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
+  requiredExtensions.add(fittedEnsemble.name);
   const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage });
   for (const extension of research.registry.snapshot().installed()) if (!extensions.has(extension.name)) {
     requiredExtensions.add(extension.name);
@@ -80,11 +88,15 @@ export async function createService(options: ServiceOptions) {
   });
   await app.register(cookie);
   registerAuth(app, research, config);
+  const maintenance = createMaintenance(research);
+  registerMaintenanceRoutes(app, maintenance);
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
     facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });
   }, context);
   const work = workbench(research, config);
+  pm.connect({ host: research, work });
+  registerPmRoutes(app, pm.work);
   const capital = capitalWorkbench(research, config);
   await work.recoverResearch();
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
@@ -177,7 +189,7 @@ export async function createService(options: ServiceOptions) {
     app.setNotFoundHandler((request, reply) => request.url.startsWith('/api/') ? reply.code(404).send({ error: 'not_found' }) : reply.sendFile('index.html'));
   } else app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   await app.ready();
-  return { app, research, config, work, close: () => app.close() };
+  return { app, research, config, work, pm: pm.work, maintenance, close: () => app.close() };
   } catch (error) { await research.close(); await archive?.end(); throw error; }
 }
 export const buildService = createService;
