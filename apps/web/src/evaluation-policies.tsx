@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { uuidPattern } from './api';
 import { counterRules } from './budget-fields';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { DataDetails } from './data-details';
 
 type Policy = Schema['EvaluationPolicyView'];
 type Request = Schema['EvaluationPolicyCreate'];
@@ -18,6 +19,23 @@ const countRules = [required, { validator: async (_: unknown, value: unknown) =>
 const optionalCount = [{ validator: async (_: unknown, value: unknown) => { if (value != null && value !== '' && (typeof value !== 'string' || !isCounter(value, true))) throw new Error('需要正整数字符串，或留空。'); } }];
 const optionalDecimal = [{ validator: async (_: unknown, value: unknown) => { if (value != null && value !== '' && !isDecimal(value)) throw new Error('需要精确十进制字符串，或留空。'); } }];
 const blank = (value: string | null | undefined) => value == null || value === '' ? null : value;
+const policyLabels = {
+  maximum_missing_fraction: '最大缺失比例', maximum_sealed_uses_per_lineage: '每血缘最多 Sealed 使用次数',
+  metric_requirements: '选择评估指标要求', minimum_observations: '最少样本数',
+  portfolio_metric_requirements: '独立组合指标要求', portfolio_study_plan: '组合研究计划',
+  question: '研究问题', require_real_data: '要求真实数据', required_capabilities: '必需能力',
+  sealed_metric_requirements: 'Sealed 指标要求', selection_rule: '选择规则', split_policy: '样本切分政策',
+  validity_seconds: '证据有效期（秒）', evaluation_kind: '选择评估类型', metric_scope: '指标范围',
+  method_id: '方法编号', method_version: '方法版本', unit: '单位', frequency: '频率', direction: '选择方向',
+  candidate_count: '候选数', comparison_input_set_id: '冻结比较输入编号', execution_assumptions_id: '执行假设编号',
+  comparable_scope: '可比范围', family_id: '策略族编号', root_lineage_id: '根血缘编号',
+  missing_required_metric: '必需指标缺失处理', tie_break: '同分处理规则',
+  kind: '切分方法', train_size: '训练样本数', test_size: '测试样本数', step_size: '窗口步长',
+  group_count: '总组数', test_group_count: '测试组数', purge_observations: '清除观察数',
+  embargo_observations: '隔离观察数', interval_validation_required: '要求区间验证',
+  label_horizon_observations: '标签固定跨度', sealed_revision_id: 'Sealed 数据版本编号',
+  input_set_id: '组合研究输入编号', evaluation_start: '组合研究起点', manual_cutoffs: '手动调仓时点',
+};
 
 function request(project: string, values: Fields): Request {
   const { use_portfolio, use_study, use_manual_study, ...value } = values;
@@ -75,7 +93,7 @@ function Detail({ id, project, close }: { id: string; project: string; close: ()
   return <Drawer title="不可变评估政策" open width={850} onClose={close}>
     
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
-      {query.data && <pre tabIndex={0} aria-label="原完整评估政策" className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data, null, 2)}</pre>}
+      {query.data && <DataDetails value={query.data} label="原完整评估政策" labels={policyLabels} />}
     </QueryPanel>
   </Drawer>;
 }

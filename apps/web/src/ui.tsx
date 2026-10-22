@@ -2,6 +2,7 @@ import { Alert, Button, Descriptions, Empty, Skeleton, Space, Tag, Typography } 
 import { createContext, useCallback, useContext, useEffect, useId, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { ApiFailure, displayTime } from './api';
+import { readableMessage } from './readable-message';
 
 export const GuardContext = createContext({
   blocked: false,
@@ -67,9 +68,9 @@ export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => vo
   return <Alert type="error" showIcon title={failure?.message ?? '请求失败，请重试'}
     description={<Space orientation="vertical" size="small">
       {failure?.problem && <>
-        <Typography.Text>{failure.code} · {failure.problem.request_id}</Typography.Text>
+        <Typography.Text>{readableMessage(failure.code)} · {readableMessage(failure.problem.request_id)}</Typography.Text>
         {failure.problem.current_revision !== undefined && <Typography.Text>当前版本：{failure.problem.current_revision}，请重新载入</Typography.Text>}
-        {failure.problem.field_errors.map(field => <Typography.Text key={`${field.field}:${field.code}`}>{field.field}：{field.message}</Typography.Text>)}
+        {failure.problem.field_errors.map(field => <Typography.Text key={`${field.field}:${field.code}`}>{readableMessage(field.field)}：{readableMessage(field.message)}</Typography.Text>)}
       </>}
       {wait > 0 && <Typography.Text>{wait} 秒后可重试</Typography.Text>}
       {retry && <Button disabled={wait > 0} onClick={retry}>重新载入</Button>}

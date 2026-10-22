@@ -7,6 +7,7 @@ import { uuidPattern } from './api';
 import { validateBaseCurrency } from '@quazonai/web/response-contract';
 import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { DataDetails } from './data-details';
 
 type View = Schema['ExecutionAssumptionsViewV1'];
 type Settings = Schema['NativeSimulationSettingsV1'];
@@ -22,6 +23,14 @@ const required = { required: true, message: '请填写此项。' };
 const ids = [required, { pattern: uuidPattern, message: '请输入现有记录的完整 UUIDv7。' }];
 const decimals = [required, { validator: async (_: unknown, value: unknown) => { if (!isDecimal(value)) throw new Error('请输入精确十进制字符串。'); } }];
 const counts = [required, { validator: async (_: unknown, value: unknown) => { if (typeof value !== 'string' || !isCounter(value)) throw new Error('请输入非负整数字符串。'); } }];
+const simulationLabels = {
+  account_kind: '模拟账户模型', base_currency: '基础币种', exposure_tolerance: '敞口容差', fee_model: '费用模型',
+  fee_rates: '资产费率', fill_model: '成交模型', latency_model: '延迟模型', leverage: '杠杆上限',
+  snapshot_interval_ms: '快照间隔（毫秒）', starting_capital: '资本假设', instrument_id: '资产标识',
+  maker: '挂单费率', taker: '吃单费率', prob_fill_on_limit: '限价成交概率', prob_slippage: '滑点概率',
+  random_seed: '随机种子', base_latency_ns: '基础延迟（纳秒）', insert_latency_ns: '插入附加延迟（纳秒）',
+  update_latency_ns: '更新附加延迟（纳秒）', cancel_latency_ns: '取消附加延迟（纳秒）',
+};
 
 export function ExecutionAssumptions({ project }: { project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]);
@@ -65,7 +74,7 @@ function Detail({ id, close }: { id: string; close: () => void }) {
         { key: 'age', label: '每步历史 BAR 最长年龄（秒）', children: query.data.rolling_liquidity.maximum_age_seconds },
         { key: 'participation', label: '滚动单 BAR 参与率上限', children: query.data.rolling_liquidity.participation_limit },
       ]} />}
-      <Typography.Title level={2}>服务器保存的原生模型配置</Typography.Title><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data.settings, null, 2)}</pre></>}
+      <Typography.Title level={2}>原生模型配置</Typography.Title><DataDetails value={query.data.settings} label="原生模型配置" labels={simulationLabels} /></>}
     </QueryPanel>
   </Drawer>;
 }

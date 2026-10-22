@@ -8,6 +8,7 @@ import { responseKind } from '@quazonai/web/response-contract';
 import type { Schema } from './api';
 import { decodeRunEvent } from './run-events';
 import { ErrorNotice, NoData, Pager, QueryPanel, StateTag, useGuard, useOnline } from './ui';
+import { DataDetails } from './data-details';
 
 type Run = Schema['RunSnapshotV1'];
 // Keep the native table keyboard-reachable even when no row contains an action.
@@ -178,7 +179,11 @@ function RunRebalance({ id }: { id: string }) {
           { key: 'release', label: '新 Release', children: origin.release_id ?? '尚未登记' },
           { key: 'runtime', label: '原 Runtime / 版本', children: `${origin.request.runtime_id} / ${origin.request.expected_runtime_revision}` },
         ]} />
-        <details><summary>原 Build 请求（成员、权重来源与限额）</summary><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(origin.request, null, 2)}</pre></details>
+        <details><summary>原 Build 请求（成员、权重来源与限额）</summary><DataDetails label="原组合构建请求" value={origin.request} labels={{
+          schema_version: '格式版本', cycle_id: '周期编号', mandate_id: '组合配置编号', input_set_id: '输入集编号', runtime_id: '运行环境编号', expected_runtime_revision: '运行环境版本',
+          members: '组合成员', qualification_id: '资格编号', ensemble_weight: '组合权重', current_weights_source: '当前权重来源', kind: '来源类型', snapshot_id: '快照编号', candidate_id: '候选编号',
+          environment: '执行环境', limits: '运行限额', experiments: '试验次数', cpu_seconds: '处理器时间（秒）', wall_seconds: '总时长（秒）', memory_mib: '内存（MiB）', output_bytes: '输出字节数',
+        }} /></details>
       </> : query.data && <NoData text="无自动再平衡关联" />}
     </QueryPanel>
   </Card>;

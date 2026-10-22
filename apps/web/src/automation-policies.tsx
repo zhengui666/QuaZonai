@@ -9,8 +9,17 @@ import { Requirements } from './evaluation-policies';
 import { PolicyRevoke } from './approval-revoke';
 import { counterRules } from './budget-fields';
 import { ErrorNotice, Pager, QueryPanel, useGuard, useOnline } from './ui';
+import { DataDetails } from './data-details';
 
 type Content = Schema['AutomationPolicyContentV1'];
+const automationLabels = {
+  authorized_at: '授权于', content: '自动化政策', degradation_metric_requirements: '维持指标要求',
+  downstream_id: '下游编号', enabled_for_new_rebalances: '允许新的自动再平衡', mandate_id: '组合配置编号',
+  max_feedback_age_seconds: '反馈最大年龄（秒）', max_rebalances_per_day: '每日最多候选再平衡数',
+  minimum_paper_elapsed_seconds: 'Paper 最少经过时间（秒）', mode: '自动化模式',
+  promotion_metric_requirements: '晋级指标要求', required_paper_observations: '每流最少 Paper 观察数',
+  valid_until: '授权截止时间',
+};
 export function AutomationPolicies({ project }: { project: string }) {
   const [history, setHistory] = useState<(string | undefined)[]>([undefined]); const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<Schema['AutomationPolicyViewV1']>();
@@ -26,7 +35,7 @@ export function AutomationPolicies({ project }: { project: string }) {
       <Table<Schema['AutomationPolicyViewV1']> rowKey="id" dataSource={query.data?.items} pagination={false} scroll={{ x: 700 }} onHeaderRow={() => ({ tabIndex: 0 })} columns={[
         { title: '原政策', dataIndex: 'id' }, { title: '管理', key: 'revoke', render: (_, item) => <Button danger disabled={query.isError || query.isFetching} onClick={() => setRevoking(item)}>撤销政策</Button> }, { title: '模式', key: 'mode', render: (_, item) => item.content.mode },
         { title: '原期限', key: 'until', render: (_, item) => displayTime(item.content.valid_until) }, { title: '授权于', dataIndex: 'authorized_at', render: displayTime },
-      ]} expandable={{ expandedRowRender: item => <pre tabIndex={0} aria-label="原自动化政策" className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(item, null, 2)}</pre> }} />
+      ]} expandable={{ expandedRowRender: item => <DataDetails value={item} label="原自动化政策" labels={automationLabels} /> }} />
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_cursor} loading={query.isFetching} move={setHistory} />
     {revoking && <PolicyRevoke policy={revoking} close={() => setRevoking(undefined)} />}

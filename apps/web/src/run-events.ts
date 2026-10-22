@@ -28,7 +28,7 @@ export function decodeRunEvent(frame: { id: string; event: string; data: string 
   if (!frame.data) return null;
   if (new TextEncoder().encode(frame.data).length > 100_000) throw new ApiFailure('CONTRACT_VERSION_UNSUPPORTED', '事件体超出合同限制。');
   let value: unknown;
-  try { value = JSON.parse(frame.data); } catch { throw new ApiFailure('CONTRACT_VERSION_UNSUPPORTED', '事件不是有效 JSON。'); }
+  try { value = JSON.parse(frame.data); } catch { throw new ApiFailure('CONTRACT_VERSION_UNSUPPORTED', '事件内容无法读取。'); }
   if (!envelope(value) || value.run_id !== run || frame.id !== `${run}:${value.seq}` || frame.event !== value.event_type) {
     throw new ApiFailure('CONTRACT_VERSION_UNSUPPORTED', '事件合同、运行编号或事件游标不一致。');
   }

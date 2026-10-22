@@ -1,6 +1,7 @@
 import createClient from 'openapi-fetch';
 import type { components, paths } from './generated/api';
 import { responseKind, validateDecimal, validateProblem, validateResponse } from '@quazonai/web/response-contract';
+import { readableMessage } from './readable-message';
 
 export type Schema = components['schemas'];
 export type Problem = Schema['Problem'];
@@ -14,7 +15,7 @@ export class ApiFailure extends Error {
     readonly problem?: Problem,
     readonly retryAt = 0,
   ) {
-    super(message);
+    super(readableMessage(message));
     this.name = 'ApiFailure';
   }
 }
@@ -54,7 +55,7 @@ export async function validateSuccessfulResponse(response: Response, schemaPath:
   let value: unknown;
   if (kind === 'json') {
     try { value = await response.clone().json(); }
-    catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', 'JSON 响应无效'); }
+    catch { throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应内容无法读取'); }
   }
   if (!validateResponse(schemaPath, method, response.status, value, response.headers.get('content-type'))) {
     throw new ApiFailure('HTTP_CONTRACT_ERROR', '响应数据不兼容');

@@ -29,6 +29,11 @@ body { margin: 0; min-width: 320px; }
 .ant-drawer-content-wrapper { max-width: 100vw; }
 .ant-descriptions-item-content { overflow-wrap: anywhere; }
 .ant-typography { overflow-wrap: anywhere; }
+.data-details { min-width: 0; max-width: 100%; }
+.data-details .ant-descriptions { width: 100%; }
+.data-details .ant-descriptions-item-content { min-width: 0; }
+.data-details-list { margin: 0; padding-inline-start: 24px; }
+.data-details-list > li + li { margin-block-start: 8px; }
 @media (max-width: 767px) {
   .console-content { padding: 20px 12px; }
   .console-header { padding-inline: 12px; gap: 8px; }

@@ -6,6 +6,7 @@ import type { Schema } from './api';
 import { uuidPattern } from './api';
 import { ErrorNotice, NoData, Pager, QueryPanel, useOnline } from './ui';
 import { setSettingsWork } from './settings-work';
+import { DataDetails } from './data-details';
 
 type Report = Schema['HistoricalImportReportV1'];
 type Import = Schema['HistoricalImportRequestV1'];
@@ -120,7 +121,11 @@ function ImportDetail({ id, close }: { id: string; close: () => void }) {
           { title: '结构', key: 'schema', render: (_, row) => row.unsupported_schema ? '不支持' : '已核对' },
           { title: '排除字段及原因', key: 'excluded', render: (_, row) => row.excluded_columns.map(c => `${c.column}：${c.reason}`).join('；') || '无' },
         ]} />
-        <Collapse items={[{ key: 'relations', label: '原外键与类型检查元数据', children: <pre tabIndex={0} className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(value.source.inspection, null, 2)}</pre> }]} />
+        <Collapse items={[{ key: 'relations', label: '原外键与类型检查', children: <DataDetails label="原外键与类型检查" value={value.source.inspection} labels={{
+          schema_version: '格式版本', source_schema_version: '原库版本', inspected_at: '检查时间', tables: '原表结构', table: '表名', rows: '行数', primary_key: '主键字段', columns: '字段列表',
+          name: '字段名', postgres_type: '数据库类型', nullable: '允许空值', identity: '身份字段', generated: '生成字段', foreign_keys: '外键检查', match_type: '匹配方式', constraint: '约束名称',
+          source_table: '来源表', target_table: '目标表', source_columns: '来源字段', target_columns: '目标字段', orphan_rows: '孤立行数',
+        }} /> }]} />
         <Collapse items={[{ key: 'artifacts', label: '历史附件与覆盖情况', children: <HistoricalArtifacts report={value.report} /> }]} />
         <Typography.Title level={3}>原身份映射</Typography.Title>
         <Mappings report={value.report} />
@@ -139,7 +144,7 @@ function Mappings({ report }: { report: Report }) {
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       <Table<Schema['HistoricalMappingViewV1']> rowKey="id" expandable={{ expandedRowRender: row => <RecordFields report={report.id} record={row.id} /> }} dataSource={query.isError ? [] : query.data?.items} pagination={false} onHeaderRow={() => ({ tabIndex: 0 })} scroll={{ x: 1000 }} locale={{ emptyText: <NoData text={report.dry_run ? '试运行没有创建历史映射。' : '本报告没有历史映射。'} /> }} columns={[
         { title: '新追溯编号', dataIndex: 'id' }, { title: '原表', key: 'table', render: (_, row) => row.key.source_table },
-        { title: '完整原主键', key: 'key', render: (_, row) => <span className="break-word">{JSON.stringify(row.key.values)}</span> },
+        { title: '完整原主键', key: 'key', render: (_, row) => <DataDetails label="完整原主键" value={row.key.values} /> },
         { title: '首次导入报告', dataIndex: 'first_import_id' }, { title: '处置', key: 'disposition', render: (_, row) => row.disposition === 'LEGACY_REVALIDATION_REQUIRED' ? '旧证据须重新验证' : '只读历史' },
       ]} />
     </QueryPanel>
@@ -168,6 +173,8 @@ function RecordFields({ report, record }: { report: string; record: string }) {
 }
 function FieldContent({ report, record, field }: { report: string; record: string; field: Schema['HistoricalFieldSummaryV1'] }) {
   const [history, setHistory] = useState<(string | undefined)[]>(['0']); const offset = history.at(-1) ?? '0';
+  const downloadUrl = useRef<string | undefined>(undefined);
+  useEffect(() => () => { if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current); }, []);
   const query = useQuery({ queryKey: ['historical-field', report, record, field.name, offset], queryFn: async ({ signal }) => {
     const value = dataOf(await api.GET('/api/v2/migrations/reports/{id}/records/{record}/field', { params: { path: { id: report, record }, query: { name: field.name, offset } }, signal }));
     const end = BigInt(offset) + BigInt(Array.from(value.text ?? '').length);
@@ -177,13 +184,27 @@ function FieldContent({ report, record, field }: { report: string; record: strin
     return value;
   } });
   const value = query.isError ? undefined : query.data;
+  function downloadText() {
+    if (value?.text == null) return;
+    if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
+    downloadUrl.current = URL.createObjectURL(new Blob([value.text], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = downloadUrl.current;
+    anchor.download = `${record}-${field.name}-${value.offset}.txt`;
+    anchor.click();
+  }
   return <Space orientation="vertical" className="full-width">
     <Typography.Title level={4}>原字段：{field.name}</Typography.Title>
     <QueryPanel pending={query.isPending} error={query.error} stale={!!query.data} reload={() => { void query.refetch(); }}>
       {value && <>
         <Typography.Text>字符位置（从0起）：{value.offset}；总字符数：{value.total_characters ?? 'NULL'}</Typography.Text>
         {value.text === null ? <Typography.Text>SQL NULL（无值）</Typography.Text> : value.text === '' ? <Typography.Text>空字符串（0字符）</Typography.Text>
-          : <pre aria-label="原字段内容" tabIndex={0} className="break-word" style={{ whiteSpace: 'pre-wrap', maxHeight: 360, overflow: 'auto' }}>{value.text}</pre>}
+          : <>
+            {value.offset === '0' && value.next_offset === null
+              ? <DataDetails label="原字段内容" value={value.text} />
+              : <Alert showIcon type="info" title="字段内容较长，请下载当前段查看" description="可切换前后段并分别下载；每份下载只包含当前字符位置的原文。" />}
+            <Button onClick={downloadText}>{value.offset === '0' && value.next_offset === null ? '下载字段原文' : '下载此段原文'}</Button>
+          </>}
       </>}
     </QueryPanel>
     <Pager history={history} next={query.isError ? undefined : query.data?.next_offset} loading={query.isFetching} move={setHistory} />

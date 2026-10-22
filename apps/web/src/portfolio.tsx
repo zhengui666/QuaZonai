@@ -12,6 +12,7 @@ import { ResourceSelect } from './resource-select';
 import { useSettingsWorkKey, useSettingsWorkVersion } from './settings-work';
 import { ErrorNotice, GuardContext, NoData, Pager, QueryPanel, useGuard, useOnline } from './ui';
 import { validateBaseCurrency } from '@quazonai/web/response-contract';
+import { DataDetails } from './data-details';
 
 type Mandate = Schema['MandateViewV1'];
 type Content = Schema['MandateContentV1'];
@@ -23,6 +24,21 @@ const decimalRules = [required, { validator: async (_: unknown, value: unknown) 
 const optionalDecimal = [{ validator: async (_: unknown, value: unknown) => { if (value != null && value !== '' && !isDecimal(value)) throw new Error('请输入十进制字符串，或留空。'); } }];
 const exposures = [['min_cash_weight', '现金下限'], ['max_cash_weight', '现金上限'], ['min_asset_weight', '资产默认下限'], ['max_asset_weight', '资产默认上限'], ['max_gross_exposure', '总敞口上限'], ['min_net_exposure', '净敞口下限'], ['max_net_exposure', '净敞口上限'], ['max_turnover_per_rebalance', '单次换手上限']] as const;
 const blank = (value: string | null | undefined) => value === '' || value == null ? null : value;
+const mandateLabels = {
+  alpha_ensemble: 'Alpha 集成模型', base_currency: '基础币种', capital_assumption: '资本假设',
+  constraints: '组合约束', covariance_estimator: '协方差估计', execution_assumptions_id: '执行假设编号',
+  exposure_tolerance: '发布敞口容差', objective: '优化目标', optimizer: '优化器', rebalance_schedule: '调仓计划',
+  required_evaluation_policy_id: '评估政策编号', risk_measure: '风险度量', universe_version_id: '投资域版本编号',
+  ...Object.fromEntries(exposures), long_only: '仅做多', asset_overrides: '资产权重约束', group_bounds: '组权重约束',
+  instrument_id: '资产标识', group_id: '组编号', min: '权重下限', max: '权重上限',
+  max_ex_ante_risk: '每决策周期风险上限', max_participation: '参与率上限', liquidity_ref: '流动性产物编号',
+  transaction_costs_ref: '费用依据产物编号', kind: '调仓方式', timezone: '时区', interval_seconds: '间隔（秒）',
+  calendar_ref: '日历引用', session_offset_seconds: '相对时段偏移（秒）', max_input_age_seconds: '输入最大年龄（秒）',
+  target_ttl_seconds: '目标有效期（秒）', ddof: '自由度修正', cvar_confidence: 'CVaR 置信水平',
+  risk_aversion: '风险厌恶系数', solver_tolerance: '求解停止容差', max_iterations: '最大迭代次数',
+  accept_inaccurate: '允许原生非精确成功状态', risk_budgeting: '风险预算', risky_gross_exposure: '风险资产总敞口',
+  assets: '风险份额分配', share: '风险份额', sign: '目标方向',
+};
 
 function mandateRequest(project: string, values: Fields, runtimeRevision: string): Schema['MandateCreateV1'] {
   const c = values.content; const schedule = c.rebalance_schedule;
@@ -86,7 +102,7 @@ function MandateDetail({ id, project, close }: { id: string; project: string; cl
         { key: 'version', label: '版本', children: query.data.version },
         { key: 'created', label: '创建于', children: displayTime(query.data.created_at) },
         { key: 'capital', label: '资本假设（非真实账户）', children: `${query.data.content.capital_assumption} ${query.data.content.base_currency}` },
-      ]} /><Typography.Title level={2}>服务器保存的完整配置</Typography.Title><pre className="break-word" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(query.data.content, null, 2)}</pre></>}
+      ]} /><Typography.Title level={2}>组合配置详情</Typography.Title><DataDetails value={query.data.content} label="组合配置详情" labels={mandateLabels} /></>}
     </QueryPanel>
     {building && query.data && <PortfolioBuild mandate={query.data} close={() => setBuilding(false)} />}
   </Drawer>;
