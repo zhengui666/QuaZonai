@@ -305,7 +305,7 @@ test('HTTP rejects out-of-native-range capacity scenarios before research, facto
 test('structured factor qualification requires an actual requested heldout metric with or without a threshold; legacy remains readable', () => {
   for (const target of [undefined, 0.1]) for (const value of [null, 0.2]) {
     const spec = { ...specification, evaluation: { ...specification.evaluation, ...(target === undefined ? {} : { target }) } };
-    const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value, status: value === null ? 'CONSTANT_SCORE' : 'DEFINED' } } }] };
+    const result = { partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value, status: value === null ? 'CONSTANT_SCORE' : 'AVAILABLE' } } }] };
     const trial = { taskId: 17, status: 'COMPUTED', proposal: { hypothesis: 'TEST_ONLY qualification protocol, not science', model: wat }, result };
     const study = { input: { goal: spec.question, specification: spec, model: { provider: 'test', modelId: 'test' }, data: {}, policy: { max_trials: 1, strategy: { simulationSettings: { base_currency: 'USD' } } } }, trials: [trial], final: { status: 'COMPUTED', trialId: 17, result } };
     const input = researchInput(study.input); const factor = factorViews(3, { ...study, input })[0]!; assert.equal(factor.combinable, value !== null); assert.equal(factor.reason, value === null ? 'research_criterion_insufficient' : null);
@@ -325,4 +325,71 @@ test('deterministic criterion never substitutes component diagnostics or missing
     trials: [{ taskId: 17, status: 'COMPUTED', proposal: { hypothesis: 'Controlled projection, not scientific evidence', members: [{ model: wat, weight: '0.25' }, { model: wat, weight: '0.75' }] }, result: {} }], final: { status: 'COMPUTED', trialId: 17, result: {} } };
   const factors = factorViews(3, { ...study, input: researchInput(study.input) }); assert.deepEqual(factors.map(row => row.id), ['r3.t17.m0', 'r3.t17.m1']);
   assert.ok(factors.every(row => row.evidence === 'component_only' && !row.combinable && row.metrics.length === 0));
+});
+
+test('criterion requires an unambiguous available metric and preserves legacy statusless observations', () => {
+  const spec = { ...specification, evaluation: { ...specification.evaluation, target: 0.1 } };
+  const metric = { key: 'HELDOUT.pearson_ic', label: 'Pearson IC', partition: 'HELDOUT', value: 0.9 };
+  for (const status of ['INSUFFICIENT_SAMPLES', 'CONSTANT_SCORE', 'CONSTANT_LABEL', 'NONFINITE_DATA', 'NONFINITE_RESULT', 'FAILED', 'UNSUPPORTED', 'DEFINED']) {
+    const actual = researchCriterion(spec, 'COMPUTED', [{ ...metric, status }])!;
+    assert.equal(actual.status, 'insufficient', status); assert.equal(actual.value, null); assert.equal(actual.reason, status);
+  }
+  assert.equal(researchCriterion(spec, 'COMPUTED', [{ ...metric, status: 'AVAILABLE' }])!.status, 'met');
+  assert.equal(researchCriterion(spec, 'COMPUTED', [metric])!.status, 'met');
+  for (const duplicate of [metric, { ...metric, value: 0.01 }, { ...metric, status: 'INSUFFICIENT_SAMPLES' }]) {
+    const actual = researchCriterion(spec, 'COMPUTED', [metric, duplicate])!;
+    assert.equal(actual.status, 'insufficient'); assert.equal(actual.value, null); assert.equal(actual.reason, 'metric_ambiguous');
+  }
+  const conflict = researchCriterion(spec, 'COMPUTED', [{ ...metric, partition: 'VALIDATION' }])!;
+  assert.equal(conflict.status, 'insufficient'); assert.equal(conflict.reason, 'metric_partition_mismatch');
+  for (const value of [NaN, Infinity, -Infinity, null]) assert.equal(researchCriterion(spec, 'COMPUTED', [{ ...metric, value }])!.status, 'insufficient');
+  assert.equal(researchCriterion(spec, 'FAILED', [{ ...metric, status: 'AVAILABLE' }])!.status, 'failed');
+  const account = researchSpecification({ ...spec, evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', target: 1, scheme: 'registered-partitions' }, search: { scope: 'ensemble', maxMembers: 2, stop: 'budget-or-selection' } });
+  const sharpe = { key: 'HELDOUT.portfolio.Sharpe Ratio (252 days)', label: 'Sharpe', partition: 'HELDOUT', value: 1.2 };
+  assert.equal(researchCriterion(account, 'COMPUTED', [sharpe])!.status, 'met');
+  assert.equal(researchCriterion(account, 'COMPUTED', [{ ...sharpe, component: 0 }])!.status, 'insufficient');
+  assert.equal(researchCriterion(account, 'COMPUTED', [sharpe, { ...sharpe, value: 0.1 }])!.status, 'insufficient');
+});
+
+test('unavailable or duplicate retained evidence cannot qualify factors or admit a portfolio', async () => {
+  const state = await setup();
+  try {
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
+    const spec = { ...specification, evaluation: { ...specification.evaluation, target: 0.1 } };
+    const receipt = await state.service.work.startResearch({ requestId: 'criterion-status-evidence', goal: spec.question, specification: spec, model: state.model, datasetId: 'controlled', maxTrials: 1 });
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const original = (await state.service.research.state(receipt.conversationId)).research!;
+    for (const [index, statuses] of [['INSUFFICIENT_SAMPLES'], ['CONSTANT_SCORE'], ['UNSUPPORTED'], ['AVAILABLE', 'AVAILABLE']].entries()) {
+      // Deliberately inconsistent retained protocol bytes, not market evidence.
+      const result = { request: original.input!.data.request!, partitions: statuses.map(status => ({ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: 0.9, status } } })) };
+      await state.service.research.harness.commit(async tx => {
+        const study = await tx.doc(Study, receipt.conversationId); study.final!.result = result;
+      }, context);
+      const detail = (await state.service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers: state.headers })).json();
+      assert.equal(detail.criterion.status, 'insufficient'); assert.equal(detail.criterion.value, null);
+      const study = (await state.service.research.state(receipt.conversationId)).research!;
+      const factor = factorViews(receipt.conversationId, study)[0]!;
+      assert.equal(factor.combinable, false); assert.equal(factor.reason, 'research_criterion_insufficient');
+      const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers,
+        payload: { requestId: `invalid-criterion-${index}`, name: 'Must not admit', researchIds: [receipt.conversationId], datasetId: 'controlled', capital: '1000' } });
+      assert.equal(response.statusCode, 422, response.body); assert.equal(response.json().error, 'research_criterion_insufficient');
+    }
+  } finally { await state.cleanup(); }
+});
+
+test('registered annualization selects only its exact native 252-day or 365-day Sharpe statistic', () => {
+  for (const days of [252, 365]) {
+    const metric = `Sharpe Ratio (${days} days)`;
+    const other = `Sharpe Ratio (${days === 252 ? 365 : 252} days)`;
+    const spec = researchSpecification({ ...specification,
+      evaluation: { metric, direction: 'maximize', target: 1, scheme: 'registered-partitions' },
+      search: { scope: 'ensemble', maxMembers: 2, stop: 'budget-or-selection' } });
+    assert.equal(spec.evaluation.metric, metric);
+    const own = { key: `HELDOUT.portfolio.${metric}`, label: metric, partition: 'HELDOUT', value: 1.2 };
+    const different = { key: `HELDOUT.portfolio.${other}`, label: other, partition: 'HELDOUT', value: 2 };
+    assert.equal(researchCriterion(spec, 'COMPUTED', [own])!.status, 'met');
+    assert.equal(researchCriterion(spec, 'COMPUTED', [different])!.status, 'insufficient');
+    const exact = researchCriterion(spec, 'COMPUTED', [{ ...own, value: 0.9 }, different])!;
+    assert.equal(exact.status, 'not_met'); assert.equal(exact.value, 0.9);
+  }
 });

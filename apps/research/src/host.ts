@@ -128,11 +128,15 @@ export async function openResearch(options: {
       return created.id;
     }, context);
     await rememberTier(id, input);
-    const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
-    if (previous) return { conversationId: id, submissionId: previous.id };
-    if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
-    const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
-    return { conversationId: id, submissionId: submission.id };
+    // Admission and owner stop share the same original Conversation boundary.
+    // A final-state read alone cannot fence a later native submit after abort.
+    return ownerChange(id, async () => {
+      const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
+      if (previous) return { conversationId: id, submissionId: previous.id };
+      if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
+      const submission = await (await conversation(id)).submit({ type: 'input', content: researchInstructions(input), requestId }, context);
+      return { conversationId: id, submissionId: submission.id };
+    });
   }
   async function submissionFor(id: number) {
     const requests = await harness.snapshot(Requests, context);

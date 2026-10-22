@@ -133,14 +133,23 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         Vec::new()
     };
-    let cholesky = if input.risk == AllocationRisk::Variance {
-        let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
+    let risk_budget =
+        domain::portfolio::risk_budgeting(input.objective, &input.optimizer, &input.constraints)?;
+    if input.risk == AllocationRisk::Variance {
         // Exact symmetry is part of the native estimator output contract. Do not use
         // one triangle of an inconsistent matrix or hide it with averaging/jitter.
         ensure!(
-            (0..n).all(|i| (0..n).all(|j| covariance[(i, j)] == covariance[(j, i)])),
+            (0..n).all(|i| (0..n).all(|j| estimated[i][j] == estimated[j][i])),
             "ASYMMETRIC_COVARIANCE"
         );
+    }
+    // Clarabel accepts positive semidefinite quadratic objectives. Aligned sample
+    // covariance may be singular (e.g. correlated assets or few observations).
+    // Only the existing risk-budget and risk-bound cone adapters need Cholesky.
+    let cholesky = if input.risk == AllocationRisk::Variance
+        && (risk_budget.is_some() || input.constraints.max_ex_ante_risk.is_some())
+    {
+        let covariance = DMatrix::from_fn(n, n, |row, col| estimated[row][col]);
         Some(
             Cholesky::new(covariance)
                 .ok_or_else(|| anyhow::anyhow!("NONPOSITIVE_DEFINITE_COVARIANCE"))?,
@@ -148,8 +157,6 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
     } else {
         None
     };
-    let risk_budget =
-        domain::portfolio::risk_budgeting(input.objective, &input.optimizer, &input.constraints)?;
     let first = risk_budget
         .map(|budget| {
             if let Some(confidence) = confidence {
