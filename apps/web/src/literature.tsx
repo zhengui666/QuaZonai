@@ -36,9 +36,11 @@ function Paper({ paper, search, value }: { paper: LiteraturePaper; search: Liter
     </section>)}</div>}
   </article>;
 }
-export function Literature({ value }: { value?: LiteratureView }) {
-  if (!value?.searches.length) return <Empty title="尚未检索文献" />;
+export function Literature({ value, publicQueries }: { value?: LiteratureView; publicQueries?: string[] }) {
+  const topics = <section className="literature-topics"><h3>公开检索主题</h3>{publicQueries?.length ? <ol>{publicQueries.map((query, index) => <li key={index}>{query}</li>)}</ol> : <p className="quiet">未设置公开检索主题</p>}</section>;
+  if (!value?.searches.length) return <div className="literature-content">{topics}{publicQueries?.length ? <Empty title="尚未检索文献" /> : null}</div>;
   return <div className="literature-content">
+    {topics}
     {value.searches.map(search => <section className="literature-search" key={search.id}>
       <header className="literature-search-heading"><h3>{search.query}</h3><span className="literature-status">{statuses[search.status]}</span></header>
       <div className="literature-meta"><span>检索于 <Timestamp value={search.searchedAt} /></span><span>{search.papers.length} 篇</span></div>

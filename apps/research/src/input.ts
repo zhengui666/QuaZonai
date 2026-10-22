@@ -1,5 +1,5 @@
 import type { ResearchInput } from './documents.ts';
-import { researchSpecification } from '../../../packages/contracts/src/research.ts';
+import { publicLiteratureQueries, researchSpecification } from '../../../packages/contracts/src/research.ts';
 
 export function record(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
@@ -19,6 +19,7 @@ export function researchInput(value: unknown): ResearchInput {
   if (typeof model.provider !== 'string' || !model.provider || typeof model.modelId !== 'string' || !model.modelId) throw new Error('model_required');
   if (input.thinkingLevel !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(String(input.thinkingLevel))) throw new Error('invalid_thinking_level');
   if (input.serviceTier !== undefined && input.serviceTier !== 'default' && input.serviceTier !== 'priority') throw new Error('invalid_service_tier');
+  publicLiteratureQueries(input.publicLiteratureQueries);
   if (input.specification !== undefined) {
     const specification = researchSpecification(input.specification);
     if (input.goal !== specification.question) throw new Error('research_question_mismatch');

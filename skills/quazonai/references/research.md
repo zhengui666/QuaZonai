@@ -29,13 +29,15 @@ Retain the original policy, budget, source identity and selection/evaluation cri
 
 ## Literature during research
 
-The installed research Agent can search Crossref, arXiv and Semantic Scholar through its bound literature tools and record supporting, contrary or background claims against saved paper records. These providers return metadata and available abstracts; they do not establish that full text was read. Search uses public academic keywords, never private datasets, account information, credentials or the complete research request. No additional paper-provider key is required; the service host still needs access to the public APIs.
+The owner can specify `publicLiteratureQueries` in the original request: place it inside native `input`, or beside `goal` in the configured-dataset form. It is an optional list of 1–3 nonblank public topics, each at most 500 characters with no control characters. In Web, fill “公开论文检索主题（可选）” one topic per line. Use only the owner's intended public topics; do not derive external queries from private study text or add topics merely to enable search. The system does not determine whether entered text is sensitive.
+
+The installed research Agent selects only a `queryIndex` from that frozen list and automatically searches Crossref, arXiv and Semantic Scholar through its bound tool. The trusted tool supplies the query; the model cannot submit arbitrary search text. It can record supporting, contrary or background claims against saved papers. Providers return metadata and available abstracts, not proof that full text was read. No additional paper-provider key is required; the service host still needs access to the public APIs.
 
 Use `research get CONVERSATION_ID` or the research detail's literature tab to inspect saved sources, links, notes, limitations and source failures. Repeated reads reuse the original facts and do not trigger a new search. The CLI has no separate paper-search command; do not invent one or switch credentials to bypass a missing capability.
 
 The bound Agent search tool normally reuses the latest saved receipt for the same normalized query. It can explicitly retry a `partial` or `unavailable` result with `retryFailed:true` in a new tool task, preserving the old failure. An original task replay returns its original receipt; successful results, including empty ones, are not searched again by that flag.
 
-Distinguish no search, no results, partial results and unavailable providers. Limits, absent abstracts and access errors are research limitations, not evidence that literature does not exist. Report only metadata and excerpts actually returned, keep the paper separate from the Agent's interpretation, and never present a citation as independent evaluation, verified PIT or proven profitability.
+With no configured topics, `public_queries_not_configured` and an empty source list report that no external search capability was configured. The study can continue scientifically; old studies and their receipts remain readable. Do not misreport this as a source outage or quietly expand the original input to enable retrieval. Distinguish that state from no search, no results, partial results and unavailable providers. Limits, absent abstracts and access errors are research limitations, not evidence that literature does not exist. Report only metadata and excerpts actually returned, keep the paper separate from the Agent's interpretation, and never present a citation as independent evaluation, verified PIT or proven profitability.
 
 ## Follow the original study
 

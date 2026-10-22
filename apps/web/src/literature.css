@@ -1,4 +1,7 @@
 .literature-content { padding: 26px 30px 40px; }
+.literature-topics { margin-bottom: 26px; overflow-wrap: anywhere; }
+.literature-topics h3 { font-size: 14px; }
+.literature-topics ol { margin: 10px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
 .literature-search + .literature-search { margin-top: 30px; padding-top: 26px; border-top: 1px solid var(--line); }
 .literature-search-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 18px; }
 .literature-search-heading h3 { font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }

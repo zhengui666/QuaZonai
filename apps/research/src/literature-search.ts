@@ -1,5 +1,6 @@
 import { EnvHttpProxyAgent, fetch } from 'undici';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { LiteraturePaper, LiteratureSearchResult, LiteratureSource } from '../../../packages/contracts/src/literature.ts';
 
 type ResponseBody = { ok: boolean; status: number; headers: { get(name: string): string | null }; body: {
@@ -7,10 +8,46 @@ type ResponseBody = { ok: boolean; status: number; headers: { get(name: string):
 } | null };
 type Fetcher = (url: URL, options: { signal: AbortSignal; headers: Record<string, string>; redirect: 'error' }) => Promise<ResponseBody>;
 type Candidate = { paper: LiteraturePaper; keys: string[] };
-type SearchOptions = { fetcher: Fetcher; timeoutMs?: number; maxResponseBytes?: number };
+type ArxivQueue = <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
+type SearchOptions = { fetcher: Fetcher; timeoutMs?: number; maxResponseBytes?: number; arxivQueue?: ArxivQueue };
 const SOURCES: LiteratureSource[] = ['crossref', 'arxiv', 'semanticscholar'];
 const xml = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false, trimValues: true });
 class SourceError extends Error {}
+
+function cancellable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(value => { signal.removeEventListener('abort', abort); resolve(value); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+  });
+}
+
+/** One process-wide arXiv lane: hold it through response consumption, not only headers. */
+export function createArxivQueue(options: { intervalMs?: number; now?: () => number; wait?: (ms: number, signal?: AbortSignal) => Promise<void> } = {}): ArxivQueue {
+  const interval = options.intervalMs ?? 3000; const now = options.now ?? (() => performance.now());
+  const wait = options.wait ?? (async (ms, signal) => { await sleep(ms, undefined, { signal }); });
+  if (!Number.isFinite(interval) || interval < 0) throw new Error('literature_pacing_invalid');
+  let tail = Promise.resolve(); let started: number | undefined;
+  return async <T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
+    signal?.throwIfAborted();
+    const previous = tail; let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    // A cancelled waiter releases its own slot, but cannot let successors pass
+    // the request that still owns the preceding slot.
+    tail = previous.then(() => current);
+    try {
+      await cancellable(previous, signal);
+      while (started !== undefined && started + interval > now()) await wait(started + interval - now(), signal);
+      signal?.throwIfAborted();
+      const result = operation(); started = now();
+      return await result;
+    } finally { release(); }
+  };
+}
+const sharedArxivQueue = createArxivQueue();
+let arxivDispatcher: EnvHttpProxyAgent | undefined;
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -109,9 +146,16 @@ function semanticScholar(value: unknown): Candidate[] {
 function endpoint(source: LiteratureSource, query: string, limit: number): URL {
   const url = new URL(source === 'crossref' ? 'https://api.crossref.org/works' : source === 'arxiv' ? 'https://export.arxiv.org/api/query' : 'https://api.semanticscholar.org/graph/v1/paper/search');
   const params: Record<string, string> = source === 'crossref' ? { 'query.bibliographic': query, rows: String(limit), select: 'DOI,title,author,published,container-title,abstract' }
-    : source === 'arxiv' ? { search_query: `all:${query}`, start: '0', max_results: String(limit), sortBy: 'relevance', sortOrder: 'descending' }
+    : source === 'arxiv' ? { search_query: arxivQuery(query), start: '0', max_results: String(limit), sortBy: 'relevance', sortOrder: 'descending' }
       : { query, limit: String(limit), fields: 'paperId,title,authors,year,venue,url,externalIds,abstract,publicationDate' };
   url.search = new URLSearchParams(params).toString(); return url;
+}
+function arxivQuery(query: string): string {
+  // User punctuation separates literal keywords; no field, group, wildcard or
+  // Boolean syntax is copied into the upstream query language.
+  const terms = query.match(/[\p{L}\p{N}]+(?:[-_.][\p{L}\p{N}]+)*/gu);
+  if (!terms?.length) throw new SourceError('invalid_query');
+  return terms.map(term => `all:"${term.replace(/["\\]/g, '\\$&')}"`).join(' AND ');
 }
 async function boundedBody(response: ResponseBody, maximum: number, signal: AbortSignal): Promise<string> {
   if (Number(response.headers.get('content-length')) > maximum) { await response.body?.cancel(); throw new SourceError('response_too_large'); }
@@ -152,8 +196,8 @@ function balanced(groups: Candidate[][], limit: number): LiteraturePaper[] {
     for (const [index, group] of groups.entries()) {
       while (positions[index]! < group.length) {
         const candidate = group[positions[index]!]!; positions[index]!++;
-        const identity = root(candidate.keys[0]!); if (seen.has(identity) || representatives.get(identity) !== candidate) continue;
-        seen.add(identity); result.push(candidate.paper); break;
+        const identity = root(candidate.keys[0]!); if (seen.has(identity)) continue;
+        seen.add(identity); result.push(representatives.get(identity)!.paper); break;
       }
       if (result.length === limit) break;
     }
@@ -171,7 +215,7 @@ export function createLiteratureSearcher(options: SearchOptions) {
     if (typeof query !== 'string' || !query.trim() || query.trim().length > 500 || /[\u0000-\u001f\u007f]/.test(query)) throw new Error('literature_query_invalid');
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error('literature_limit_invalid');
     query = query.trim(); const searchedAt = new Date().toISOString();
-    const results = await Promise.all(SOURCES.map(async source => {
+    const sourceSearch = async (source: LiteratureSource) => {
       const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), timeoutMs);
       const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
       try {
@@ -191,7 +235,12 @@ export function createLiteratureSearcher(options: SearchOptions) {
         signal?.throwIfAborted();
         return { source, status: 'error' as const, error: timeout.signal.aborted ? 'timeout' : error instanceof SourceError ? error.message : 'network_unavailable', candidates: [] };
       } finally { clearTimeout(timer); }
-    }));
+    };
+    // Queue time is not an upstream request timeout. Other sources remain
+    // parallel while arXiv waits its turn, and cancellation removes queued work.
+    const results = await Promise.all(SOURCES.map(source => source === 'arxiv'
+      ? (options.arxivQueue ?? sharedArxivQueue)(() => sourceSearch(source), signal)
+      : sourceSearch(source)));
     signal?.throwIfAborted();
     const papers = balanced(results.map(result => result.candidates), limit); const succeeded = results.filter(result => result.status === 'ok').length;
     return { query, searchedAt, sources: results.map(({ source, status, error }) => ({ source, status, error })), papers,
@@ -201,6 +250,8 @@ export function createLiteratureSearcher(options: SearchOptions) {
 
 export async function searchLiterature(query: string, limit = 5, signal?: AbortSignal): Promise<LiteratureSearchResult> {
   const dispatcher = new EnvHttpProxyAgent();
-  try { return await createLiteratureSearcher({ fetcher: (url, options) => fetch(url, { ...options, dispatcher }) })(query, limit, signal); }
+  try { return await createLiteratureSearcher({ fetcher: (url, options) => fetch(url, { ...options,
+    dispatcher: url.hostname === 'export.arxiv.org' ? arxivDispatcher ??= new EnvHttpProxyAgent({ connections: 1 }) : dispatcher,
+  }) })(query, limit, signal); }
   finally { await dispatcher.close(); }
 }

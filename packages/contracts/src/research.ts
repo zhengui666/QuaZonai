@@ -7,6 +7,12 @@ function object(value: unknown): Record<string, unknown> {
 function fields(value: Record<string, unknown>, names: string[]) {
   if (Object.keys(value).some(key => !names.includes(key))) throw new Error('research_override_unsupported');
 }
+/** The owner explicitly selects the only query text that may leave the study. */
+export function publicLiteratureQueries(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3 || value.some(query => typeof query !== 'string' || !query.trim() || query.length > 500 || /[\u0000-\u001f\u007f]/.test(query))) throw new Error('research_public_literature_queries_invalid');
+  return [...value];
+}
 export function researchSpecification(value: unknown): ResearchSpecification {
   const spec = object(value); fields(spec, ['version', 'name', 'question', 'rationale', 'exclusions', 'evaluation', 'search', 'capital']);
   if (spec.version !== 1) throw new Error('research_specification_version_unsupported');

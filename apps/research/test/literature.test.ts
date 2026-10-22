@@ -9,7 +9,9 @@ import type { TranscriptContext } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { LiteratureSearch, LiteratureSearchResult, LiteratureView } from '../../../packages/contracts/src/literature.ts';
+import { researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { openResearch } from '../src/host.ts';
+import { researchInput } from '../src/input.ts';
 import { LiteratureDoc } from '../src/literature-document.ts';
 import { literatureTools } from '../src/literature-tools.ts';
 import { researchExtension } from '../plugins/research.ts';
@@ -33,7 +35,7 @@ async function setup() {
   const models = createModels(); models.setProvider(faux.provider);
   const model = { provider: faux.provider.id, modelId: faux.getModel().id };
   return { directory, faux, models, database: join(directory, 'research.sqlite'),
-    input: { goal: 'Investigate a public factor hypothesis.', model, data: { sealed: { private: 'HELDOUT_PRIVATE_SENTINEL' } }, policy: { max_trials: 1 } },
+    input: { goal: 'Investigate a public factor hypothesis.', publicLiteratureQueries: ['momentum transaction costs', '  MOMENTUM   transaction costs ', 'new configured query'], model, data: { sealed: { private: 'HELDOUT_PRIVATE_SENTINEL' } }, policy: { max_trials: 1 } },
     async cleanup() { await rm(directory, { recursive: true, force: true }); } };
 }
 
@@ -44,13 +46,13 @@ test('official durable research saves retrieved sources and attributed notes, re
     limitations: 'Protocol fixture; no full-text or financial evidence.', excerpt: 'may reverse after costs' });
   state.faux.setResponses([
     call('research_brief', {}),
-    call('research_literature_search', { query: 'momentum transaction costs', limit: 2 }),
+    call('research_literature_search', { queryIndex: 0, limit: 2 }),
     transcript => {
       const receipt = JSON.parse(latest(transcript, 'research_literature_search').text) as LiteratureSearch;
       searchId = receipt.id; assert.deepEqual(receipt.papers, [paper]);
       return call('research_literature_note', note());
     },
-    call('research_literature_search', { query: '  MOMENTUM   transaction costs ', limit: 8 }),
+    call('research_literature_search', { queryIndex: 1, limit: 8 }),
     transcript => {
       assert.equal(JSON.parse(latest(transcript, 'research_literature_search').text).id, searchId);
       return call('research_literature_note', note());
@@ -87,7 +89,7 @@ test('official durable research saves retrieved sources and attributed notes, re
 
     // Even direct native tool dispatch after a final cannot fetch or append notes.
     state.faux.setResponses([fauxAssistantMessage([
-      fauxToolCall('research_literature_search', { query: 'new search after final' }),
+      fauxToolCall('research_literature_search', { queryIndex: 2 }),
       fauxToolCall('research_literature_note', { ...note(), claim: 'Late new claim' }),
     ], { stopReason: 'toolUse' })]);
     const conversation = (await host.harness.conversation(receipt.conversationId, context))!;
@@ -108,8 +110,8 @@ test('unavailable literature is retained without blocking or qualifying a scient
   const extension = researchExtension(async query => { searches++; return { ...result(query), status: 'unavailable', papers: [],
     sources: [{ source: 'crossref', status: 'error', error: 'http_429' }, { source: 'arxiv', status: 'error', error: 'timeout' }] }; });
   state.faux.setResponses([
-    call('research_literature_search', { query: 'conditional reversal' }),
-    call('research_literature_search', { query: 'conditional reversal' }),
+    call('research_literature_search', { queryIndex: 0 }),
+    call('research_literature_search', { queryIndex: 0 }),
     transcript => {
       const receipt = JSON.parse(latest(transcript, 'research_literature_search').text) as LiteratureSearch;
       assert.equal(receipt.status, 'unavailable'); assert.deepEqual(receipt.papers, []);
@@ -137,7 +139,7 @@ test('owner cancellation propagates to retrieval and does not store a successful
     assert.ok(signal); signal.throwIfAborted(); entered();
     return await new Promise<LiteratureSearchResult>((_resolve, reject) => signal.addEventListener('abort', () => { aborted = true; reject(signal.reason); }, { once: true }));
   });
-  state.faux.setResponses([call('research_literature_search', { query: 'cancellation fixture' })]);
+  state.faux.setResponses([call('research_literature_search', { queryIndex: 0 })]);
   const host = await openResearch({ ...state, extensions: [extension] });
   try {
     const receipt = await host.start('cancel-literature', state.input); await running;
@@ -159,24 +161,24 @@ test('explicit retry retains the failed receipt and original-task reentry still 
   const replay = defineExtension({ name: 'test-literature-reentry', tools: [defineTool({
     name: 'original_search_reentry', description: 'TEST_ONLY reenter the original committed tool identity.', parameters: Type.Object({}), replay: 'safe',
     async execute(_args, api, ctx) {
-      return searchTool.execute({ query: 'temporary source failure', retryFailed: true }, { ...api, taskId: originalId as TaskId }, ctx);
+      return searchTool.execute({ queryIndex: 0, retryFailed: true }, { ...api, taskId: originalId as TaskId }, ctx);
     },
   })] });
   state.faux.setResponses([
-    call('research_literature_search', { query: 'temporary source failure' }),
+    call('research_literature_search', { queryIndex: 0 }),
     transcript => {
       const receipt = JSON.parse(latest(transcript, 'research_literature_search').text) as LiteratureSearch;
       originalId = receipt.id; assert.equal(receipt.status, 'unavailable');
-      return call('research_literature_search', { query: 'temporary source failure' });
+      return call('research_literature_search', { queryIndex: 0 });
     },
     transcript => {
       assert.equal(JSON.parse(latest(transcript, 'research_literature_search').text).id, originalId); assert.equal(searches, 1);
-      return call('research_literature_search', { query: 'temporary source failure', retryFailed: true });
+      return call('research_literature_search', { queryIndex: 0, retryFailed: true });
     },
     transcript => {
       const receipt = JSON.parse(latest(transcript, 'research_literature_search').text) as LiteratureSearch;
       recoveredId = receipt.id; assert.notEqual(recoveredId, originalId); assert.equal(receipt.status, 'completed');
-      return call('research_literature_search', { query: 'temporary source failure', retryFailed: true });
+      return call('research_literature_search', { queryIndex: 0, retryFailed: true });
     },
     transcript => {
       assert.equal(JSON.parse(latest(transcript, 'research_literature_search').text).id, recoveredId); assert.equal(searches, 2);
@@ -198,5 +200,98 @@ test('explicit retry retains the failed receipt and original-task reentry still 
     assert.deepEqual(await host.start('retry-literature', state.input), receipt);
     assert.deepEqual(await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context), saved);
     assert.equal(searches, 2);
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('only frozen owner queries leave private research; model text and out-of-range indexes cannot reach the search adapter', { timeout: 15_000 }, async () => {
+  const state = await setup(); const sent: string[] = [];
+  const extension = researchExtension(async query => { sent.push(query); return result(query); });
+  const queries = ['  public momentum  costs  ', 'public reversal'];
+  const specification = researchSpecification({ version: 1, name: 'Private research', question: 'GOAL_PRIVATE_SENTINEL', rationale: 'RATIONALE_PRIVATE_SENTINEL',
+    evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' } });
+  const input = researchInput({ ...state.input, goal: specification.question, specification, publicLiteratureQueries: queries,
+    data: { ...state.input.data, confidential: 'DATA_PRIVATE_SENTINEL' } });
+  const withQueries = (value: string[]) => { const changed = structuredClone(input); changed.publicLiteratureQueries = value; return changed; };
+  state.faux.setResponses([
+    call('research_brief', {}),
+    transcript => {
+      const brief = JSON.parse(latest(transcript, 'research_brief').text);
+      assert.deepEqual(brief.literature.publicQueries, queries.map((query, queryIndex) => ({ queryIndex, query })));
+      return call('research_literature_search', { queryIndex: 0, query: 'MODEL_PRIVATE_SENTINEL' });
+    },
+    transcript => {
+      assert.ok(latest(transcript, 'research_literature_search').error); assert.deepEqual(sent, []);
+      return call('research_literature_search', { queryIndex: 2 });
+    },
+    transcript => {
+      assert.match(latest(transcript, 'research_literature_search').text, /literature_query_index_invalid/); assert.deepEqual(sent, []);
+      return call('research_literature_search', { queryIndex: -1 });
+    },
+    transcript => {
+      assert.ok(latest(transcript, 'research_literature_search').error); assert.deepEqual(sent, []);
+      return call('research_literature_search', { queryIndex: 0 });
+    },
+    transcript => {
+      assert.equal(JSON.parse(latest(transcript, 'research_literature_search').text).query, queries[0]);
+      return call('research_literature_search', { queryIndex: 1 });
+    },
+    () => {
+      assert.deepEqual(sent, queries); assert.equal(sent.some(query => query.includes('PRIVATE_SENTINEL')), false);
+      return call('factor_evaluate', { hypothesis: 'Original private hypothesis with public literature context.', model: '(module)' });
+    },
+    call('research_finish', { reason: 'Original single scientific attempt exhausted.' }),
+  ]);
+  let host = await openResearch({ ...state, extensions: [extension, wasm] });
+  try {
+    await assert.rejects(host.start('invalid-query-admission', withQueries(['invalid\nquery'])), /research_public_literature_queries_invalid/);
+    const receipt = await host.start('frozen-public-queries', input);
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
+    assert.deepEqual(sent, queries);
+    await assert.rejects(host.start('frozen-public-queries', withQueries(['changed public query'])), /request_id_conflict/);
+    await host.close(); host = await openResearch({ ...state, extensions: [extension, wasm] });
+    assert.deepEqual(await host.start('frozen-public-queries', input), receipt);
+    assert.deepEqual((await host.state(receipt.conversationId)).research!.input!.publicLiteratureQueries, queries);
+    await assert.rejects(host.start('frozen-public-queries', withQueries([...queries].reverse())), /request_id_conflict/);
+    assert.deepEqual(sent, queries);
+  } finally { await host.close(); await state.cleanup(); }
+});
+
+test('legacy input without public queries exposes capability absence, keeps old receipts readable and still runs science', { timeout: 15_000 }, async () => {
+  const state = await setup(); let requests = 0;
+  const extension = researchExtension(async query => { requests++; return result(query); });
+  const { publicLiteratureQueries: _queries, ...input } = state.input;
+  state.faux.setResponses([
+    call('research_brief', {}),
+    transcript => {
+      assert.deepEqual(JSON.parse(latest(transcript, 'research_brief').text).literature.publicQueries, []);
+      return call('research_literature_search', { queryIndex: 0 });
+    },
+    transcript => {
+      const response = latest(transcript, 'research_literature_search'); assert.equal(response.error, false);
+      assert.deepEqual(JSON.parse(response.text), { status: 'unavailable', reason: 'public_queries_not_configured', sources: [], papers: [] });
+      return call('factor_evaluate', { hypothesis: 'No public query configured; retain scientific attempt.', model: '(module)' });
+    },
+    call('research_finish', { reason: 'Original scientific attempt exhausted without public queries.' }),
+  ]);
+  const host = await openResearch({ ...state, extensions: [extension, wasm] });
+  try {
+    const receipt = await host.start('legacy-no-public-queries', input);
+    assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
+    assert.equal(requests, 0);
+    assert.equal(await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context), undefined);
+    const study = (await host.state(receipt.conversationId)).research!;
+    assert.equal(study.trials.length, 1); assert.equal(study.trials[0]!.status, 'FAILED'); assert.equal(study.final!.status, 'STOPPED');
+    const oldReceipt = { ...result('original historical query'), id: 700 };
+    await host.harness.commit(async tx => { (await tx.doc(LiteratureDoc, receipt.conversationId)).searches.push(oldReceipt); }, context);
+    state.faux.setResponses([fauxAssistantMessage([
+      fauxToolCall('research_literature', {}), fauxToolCall('research_literature_search', { queryIndex: 0, retryFailed: true }),
+    ], { stopReason: 'toolUse' })]);
+    const conversation = (await host.harness.conversation(receipt.conversationId, context))!;
+    const read = await conversation.submit({ type: 'input', content: 'TEST_ONLY read original historical receipt', requestId: 'legacy-literature-read' }, context);
+    await (await host.harness.submission(read.id, context))!.wait(context);
+    const entries = JSON.stringify((await host.view(receipt.conversationId)).entries);
+    assert.ok(entries.includes('original historical query')); assert.ok(entries.includes('public_queries_not_configured'));
+    assert.deepEqual((await host.harness.snapshot(LiteratureDoc, receipt.conversationId, context))!.searches, [oldReceipt]);
+    assert.equal(requests, 0);
   } finally { await host.close(); await state.cleanup(); }
 });

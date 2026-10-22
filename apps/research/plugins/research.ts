@@ -42,6 +42,7 @@ export function researchExtension(search?: Parameters<typeof literatureTools>[0]
           }; }), totalTrials: trials.length, nextAfterTrialId: available.length > page.length ? page.at(-1)!.taskId : null,
           goal: input.goal, specification: input.specification ?? null, data, policy, stopped: study?.final !== null,
           literature: { searchCount: literature?.searches.length ?? 0, noteCount: literature?.notes.length ?? 0,
+            publicQueries: (input.publicLiteratureQueries ?? []).map((query, queryIndex) => ({ queryIndex, query })),
             latestSearchId: literature?.searches.at(-1)?.id ?? null, latestStatus: literature?.searches.at(-1)?.status ?? null, readTool: 'research_literature' },
         }) }] };
       },

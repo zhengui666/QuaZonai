@@ -109,6 +109,24 @@ test('owner setup/login and uncertain research preserve the exact body after cha
   await page.getByRole('button', { name: '研究操作' }).click(); await page.getByRole('menuitem', { name: '停止研究' }).click(); await page.getByRole('dialog').getByRole('button', { name: '停止研究', exact: true }).click(); await expect(page.locator('.document-identity')).toContainText('已停止'); await fits(page, 1440); await page.screenshot({ path: info.outputPath('research-detail-1440.png'), fullPage: true });
 });
 
+test('only explicit public literature topics survive draft and uncertain request recovery', async ({ page }) => {
+  const state = await contract(page); await page.goto('/#/research/new');
+  const topics = page.getByLabel('公开论文检索主题（可选）', { exact: true });
+  await expect(topics).toHaveValue('');
+  await mandate(page, 'Private strategy objective'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('1');
+  await topics.fill('one\ntwo\nthree\nfour'); await page.getByRole('button', { name: '开始研究', exact: true }).click();
+  await expect(page.getByText('请输入最多 3 个公开主题，每行 1 个、最多 500 字，不含控制字符', { exact: true })).toBeVisible();
+  expect(state.writes.filter(write => write.path === '/research')).toEqual([]);
+  const approved = '  public momentum  \ntransaction costs'; await topics.fill(approved); await page.reload(); await expect(topics).toHaveValue(approved);
+  await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
+  const original = state.writes.find(write => write.path === '/research')!.raw!;
+  expect(JSON.parse(original).publicLiteratureQueries).toEqual(['  public momentum  ', 'transaction costs']);
+  expect(JSON.parse(original).publicLiteratureQueries).not.toContain('Private strategy objective');
+  await page.reload(); await expect(topics).toHaveValue(approved); await expect(topics).toBeDisabled();
+  await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Private strategy objective', level: 1, exact: true })).toBeVisible();
+  expect(state.writes.filter(write => write.path === '/research').map(write => write.raw)).toEqual([original, original]);
+});
+
 test('an idle unanswered study cannot be relabelled as an owner stop', async ({ page }) => {
   const state = await contract(page); state.idle(); await page.goto('/#/research/7'); await expect(page.locator('.document-identity')).toContainText('当前无执行'); await page.getByRole('button', { name: '研究操作', exact: true }).click(); await expect(page.getByRole('menuitem', { name: '停止研究', exact: true })).toHaveCount(0); expect(state.writes).toEqual([]);
 });

@@ -5,6 +5,7 @@ import type { JsonObject, ConversationId } from '@earendil-works/pi-durable';
 export type ResearchInput = JsonObject & {
   goal: string;
   specification?: import('../../../packages/contracts/src/index.ts').ResearchSpecification;
+  publicLiteratureQueries?: string[];
   model: { provider: string; modelId: string };
   thinkingLevel?: import('@earendil-works/pi-ai').ModelThinkingLevel;
   serviceTier?: import('../../../packages/contracts/src/index.ts').ServiceTier;

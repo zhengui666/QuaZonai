@@ -33,9 +33,9 @@ export interface ResearchSpecification {
   search: { scope: 'single-factor' | 'ensemble'; maxMembers: number; stop: 'budget-or-selection' };
   capital?: CapitalAssumptions;
 }
-export interface ResearchInput { goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
+export interface ResearchInput { goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
 export type ResearchStart = { requestId: string; input: ResearchInput } | {
-  requestId: string; goal: string; specification?: ResearchSpecification; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
+  requestId: string; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }

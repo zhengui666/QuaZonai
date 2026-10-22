@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createLiteratureSearcher } from '../src/literature-search.ts';
+import { createArxivQueue, createLiteratureSearcher as createSearcher } from '../src/literature-search.ts';
+
+const createLiteratureSearcher = (options: Parameters<typeof createSearcher>[0]) => createSearcher({ ...options, arxivQueue: options.arxivQueue ?? createArxivQueue({ intervalMs: 0 }) });
 
 const atom = (entries = '') => `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">${entries}</feed>`;
 const entry = (id: string, extra = '') => `<entry><id>http://arxiv.org/abs/${id}</id><title>Momentum &amp; risk</title><author><name>Jane Doe</name></author><summary>Observed &lt;signal&gt; effects.</summary><published>2023-06-01T12:00:00Z</published>${extra}</entry>`;
@@ -40,7 +42,7 @@ test('deduplicates verified DOI/arXiv identities across sources without collapsi
   } });
   const result = await search('momentum', 10);
   assert.equal(result.papers.length, 2);
-  assert.deepEqual(result.papers.map(paper => paper.id), ['doi:10.1234/different', 'arxiv:2306.00001']);
+  assert.deepEqual(result.papers.map(paper => paper.id), ['arxiv:2306.00001', 'doi:10.1234/different']);
 });
 
 test('missing fields stay null and metadata is bounded without inventing publication dates', async () => {
@@ -65,6 +67,65 @@ test('identifier duplicates retain the original source record that actually cont
   assert.equal(result.papers[0]!.title, 'Momentum & risk');
   assert.equal(result.papers[0]!.year, 2023);
   assert.equal(result.papers[0]!.url, 'https://arxiv.org/abs/2306.00001v2');
+});
+
+test('a richer low-ranked duplicate keeps the first identity position when the result limit is one', async () => {
+  const search = createLiteratureSearcher({ fetcher: async url => {
+    if (url.hostname === 'api.crossref.org') return response({ message: { items: [cross('important'), cross('lower')] } });
+    if (url.hostname === 'api.semanticscholar.org') return response({ data: [semantic('a'), semantic('b', { externalIds: { DOI: '10.1234/important' }, abstract: 'Original relevant evidence.' })] });
+    return empty(url);
+  } });
+  const result = await search('important result', 1);
+  assert.equal(result.papers.length, 1); assert.equal(result.papers[0]!.doi, '10.1234/important');
+  assert.equal(result.papers[0]!.source, 'semanticscholar'); assert.equal(result.papers[0]!.abstract, 'Original relevant evidence.');
+});
+
+test('arXiv receives independently quoted literal terms without caller field or Boolean syntax', async () => {
+  let observed = '';
+  const query = 'momentum: "high-frequency" (OR risk) ANDNOT ti:alpha \\beta 中文';
+  await createLiteratureSearcher({ fetcher: async url => {
+    if (url.hostname === 'export.arxiv.org') observed = url.searchParams.get('search_query')!;
+    else assert.equal(url.searchParams.get(url.hostname === 'api.crossref.org' ? 'query.bibliographic' : 'query'), query);
+    return empty(url);
+  } })(query);
+  assert.equal(observed, 'all:"momentum" AND all:"high-frequency" AND all:"OR" AND all:"risk" AND all:"ANDNOT" AND all:"ti" AND all:"alpha" AND all:"beta" AND all:"中文"');
+});
+
+test('a shared arXiv queue holds response bodies, paces starts, cancels queued work and starts timeouts after waiting', async () => {
+  let clock = 0; const waits: number[] = []; const starts: number[] = []; let release!: () => void; let entered!: () => void;
+  const firstEntered = new Promise<void>(resolve => { entered = resolve; });
+  const queue = createArxivQueue({ now: () => clock, wait: async ms => { waits.push(ms); clock += ms; } });
+  const fetcher: Parameters<typeof createSearcher>[0]['fetcher'] = async url => {
+    if (url.hostname !== 'export.arxiv.org') return empty(url);
+    starts.push(clock);
+    if (starts.length !== 1) return empty(url);
+    return new Response(new ReadableStream({ start(controller) {
+      release = () => { controller.enqueue(new TextEncoder().encode(atom())); controller.close(); };
+      entered();
+    } }));
+  };
+  const first = createSearcher({ fetcher, arxivQueue: queue })('first'); await firstEntered;
+  const controller = new AbortController(); const reason = new Error('queued owner cancellation');
+  const second = createSearcher({ fetcher, arxivQueue: queue })('cancelled', 5, controller.signal);
+  const third = createSearcher({ fetcher, arxivQueue: queue, timeoutMs: 5 })('third');
+  controller.abort(reason); await assert.rejects(second, error => error === reason);
+  clock = 5000;
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.deepEqual(starts, [0], 'neither the cancellation nor elapsed spacing releases an unread first response');
+  release(); const results = await Promise.all([first, third]);
+  assert.ok(results.every(result => result.status === 'no_results'));
+  await createSearcher({ fetcher, arxivQueue: queue })('fourth');
+  assert.deepEqual(starts, [0, 5000, 8000]); assert.deepEqual(waits, [3000]);
+});
+
+test('independent searcher instances use the same default process arXiv queue', async () => {
+  const starts: number[] = []; const fetcher: Parameters<typeof createSearcher>[0]['fetcher'] = async url => {
+    if (url.hostname === 'export.arxiv.org') starts.push(performance.now());
+    return empty(url);
+  };
+  const results = await Promise.all([createSearcher({ fetcher })('one'), createSearcher({ fetcher })('two')]);
+  assert.ok(results.every(result => result.status === 'no_results'));
+  assert.equal(starts.length, 2); assert.ok(starts[1]! - starts[0]! >= 3000);
 });
 
 test('partial failures, all failures and genuine empty successful results remain distinct', async () => {

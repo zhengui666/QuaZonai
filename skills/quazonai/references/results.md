@@ -2,7 +2,7 @@
 
 Start with `quazonai research get ID`: preserve original data/policy, every failed/rejected/computed trial, the compared set, selection and final assessment or stop reason. No final evidence, null IC or failed evaluation is a limitation, not zero or PASS.
 
-Saved literature is a separate source of research context: preserve paper/source links, returned metadata or abstracts, the Agent's supporting/contrary/background notes and their limitations. The research detail's literature tab also shows source errors and partial/unavailable searches. A citation, excerpt or retrieved abstract does not establish full-text review or alter the original scientific assessment. Reading the literature again does not perform a new search.
+Saved literature is a separate source of research context: preserve paper/source links, returned metadata or abstracts, the Agent's supporting/contrary/background notes and their limitations. The research detail's literature tab also shows source errors and partial/unavailable searches. No owner-configured public topics means new retrieval was not enabled; `public_queries_not_configured` is not evidence of a provider outage or absence of papers. Existing receipts remain readable. A citation, excerpt or retrieved abstract does not establish full-text review or alter the original scientific assessment. Reading the literature again does not perform a new search.
 
 Only build a portfolio when requested and when the installed native adapter accepts the original evidence and strategy policy:
 
