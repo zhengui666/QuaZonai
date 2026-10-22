@@ -49,12 +49,97 @@ fn cash_funding_contract_fixture() -> (AllocationInputV1, AllocationResultV1) {
         targets: Some(targets),
         cash_weight: Some("0".parse().unwrap()),
         cvar_risk_budget_witness: None,
+        numerical_output: None,
         iterations: 1,
         objective_value: Some(0.0),
         primal_residual: Some(0.0),
         dual_residual: Some(0.0),
     };
     (input, result)
+}
+
+#[test]
+fn cash_numerical_absolute_budget_cannot_disappear_in_large_float_objectives() {
+    let (mut input, mut result) = cash_funding_contract_fixture();
+    let NativeModelRefV1::ClarabelQp { parameters, .. } = &mut input.optimizer else {
+        panic!("unexpected optimizer")
+    };
+    parameters.cash_numerical_output =
+        Some(NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1);
+    parameters.solver_tolerance = "0.0000000001".parse().unwrap();
+    for asset in &mut input.assets {
+        asset.transaction_cost_rate = "0".parse().unwrap();
+    }
+    for rows in &mut input.return_history.asset_returns {
+        rows.fill(0.0);
+    }
+    for member in &mut input.forecasts.members {
+        member.forecasts = vec![1e10, 0.0];
+    }
+    let mut raw = result.targets.take().unwrap();
+    raw[0].weight = "0.999999999999999900".parse().unwrap();
+    let raw_cash = "-0.000000000000000001".parse().unwrap();
+    let anchor =
+        domain::portfolio::cash_numerical_anchor(&input, NativeCashAnchorKindV1::AllCash).unwrap();
+    let fraction = "0.000000000000000001".parse().unwrap();
+    let (targets, cash) =
+        domain::portfolio::cash_numerical_segment(&raw, &anchor, &fraction).unwrap();
+    assert_eq!(targets[0].weight, "0.999999999999999899".parse().unwrap());
+    let raw_objective = domain::portfolio::cash_numerical_objective(&input, &raw).unwrap();
+    let final_objective = domain::portfolio::cash_numerical_objective(&input, &targets).unwrap();
+    assert_eq!(raw_objective, final_objective); // IEEE-754 cancellation is the counterexample.
+    let raw_error = domain::portfolio::allocation_point_feasibility(&input, &raw, &raw_cash, None)
+        .unwrap_err()
+        .to_string();
+    result.targets = Some(targets);
+    result.cash_weight = Some(cash);
+    result.objective_value = Some(final_objective);
+    result.numerical_output = Some(NativeCashNumericalOutputV1 {
+        protocol: NativeCashNumericalOutputProtocolV1::ValidatedFeasibleSegmentV1,
+        outcome: NativeCashNumericalOutcomeV1::Corrected,
+        raw_x: vec![
+            0.9999999999999999,
+            0.0,
+            -1e-18,
+            0.9999999999999999,
+            0.0,
+            0.9999999999999999,
+            0.0,
+        ],
+        raw_native_status: "Solved".into(),
+        raw_objective_value: raw_objective,
+        raw_point_objective_value: raw_objective,
+        raw_primal_residual: 0.0,
+        raw_dual_residual: 0.0,
+        raw_targets: raw,
+        raw_cash_weight: raw_cash,
+        raw_constraint_error: Some(raw_error),
+        anchor: Some(anchor),
+        segment_fraction: Some(fraction),
+        objective_delta: Some(0.0),
+        objective_delta_exact: Some("0".into()),
+        objective_change_limit: "0.0000000001".parse().unwrap(),
+        search_steps: 1,
+        reason_code: None,
+    });
+    // The exact original point difference is 1e10 * 1e-18 = 1e-8, larger
+    // than 1e-10. A zero difference between large f64 reports is not proof.
+    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
+    let trace = result.numerical_output.as_mut().unwrap();
+    let exact_delta = domain::portfolio::cash_numerical_objective_delta(
+        &input,
+        &trace.raw_targets,
+        result.targets.as_ref().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        exact_delta,
+        "0.00000001".parse::<bigdecimal::BigDecimal>().unwrap()
+    );
+    trace.objective_delta = Some(1e-8);
+    trace.objective_delta_exact = Some("0.00000001".into());
+    // Even a truthful delta must be rejected when it exceeds the original limit.
+    assert!(domain::portfolio::allocation_result(&input, &result).is_err());
 }
 
 #[test]
@@ -386,6 +471,7 @@ fn allocation_success_requires_exact_instruments_currency_weights_and_solver_con
         cash_weight: Some("0".parse().unwrap()),
         iterations: 10,
         cvar_risk_budget_witness: None,
+        numerical_output: None,
         objective_value: Some(0.8),
         primal_residual: Some(0.0),
         dual_residual: Some(0.0),

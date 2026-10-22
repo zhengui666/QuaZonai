@@ -11,6 +11,7 @@ import { projectNativeIndependentMetrics } from '../../../packages/contracts/src
 import { assessStage, pmMetricDefinitions, pmDiagnosticDefinitions } from './pm-registry.ts';
 import { assertPmDataAvailable } from './pm-datasets.ts';
 import { evaluatePmQualification } from './pm-qualification.ts';
+import { validatePmAllocationMethod } from './pm-method.ts';
 import { pmArtifactDigest, pmScienceCheckpoint, retainPmArtifacts } from './pm-evidence.ts';
 import type { CapturedAccount } from './pm-account.ts';
 import { campaignAccount } from './pm-campaign-account.ts';
@@ -66,11 +67,12 @@ export function pmIndependentTask(config: ServiceConfig) {
         if (frozen.decisionId !== originalDecision.id || frozen.cycle !== frozenCycle.id || frozen.basisRevision !== frozenCycle.basisRevision
           || policy.id !== originalDecision.policyRevisionId || policy.id !== frozenCycle.policyRevisionId
           || policy.mandateRevisionId !== originalDecision.mandateRevisionId) throw new Problem('independent_frozen_policy_identity_mismatch');
+        const allocationMethod = validatePmAllocationMethod(object(policy.validDomain).jointAllocationMethod);
         assertPmDataAvailable(heldout, frozenCycle.availableCutoffNs);
         await checkExposure(researchRuntime(runtime), ctx, heldout, true);
         const result = await evaluatePmIndependent({ source: object(frozen.source), capital: frozen.capital as unknown as Pm.Money,
           currency: String(object(frozen.capital).currency), catalog: String(heldout.catalog), dataDir: config.dataDir, binary: config.jobBinary,
-          cycleId: task.input.cycleId, allocationMethod: object(object(policy.validDomain).jointAllocationMethod),
+          cycleId: task.input.cycleId, allocationMethod,
           ownerBoundaries: (object(policy.validDomain).ownerBoundaries ?? []) as unknown as Pm.OwnerBoundary[],
           selectedCapital: String(frozen.selectedCapital), heldoutData: heldout,
           ...(frozen.capture ? { capture: frozen.capture as unknown as CapturedAccount,

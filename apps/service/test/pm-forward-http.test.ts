@@ -23,7 +23,11 @@ import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts
 const available = !!process.env.QZ_PM_OBSERVED_FIXTURE_DIR && !!process.env.QZ_JOB_BINARY;
 const child = process.env.QZ_PM_FORWARD_HTTP_CHILD === '1';
 const paper = process.env.QZ_PM_FORWARD_HTTP_MODE === 'PAPER';
-const options = { timeout: paper ? 420_000 : 360_000, skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false };
+// The measured full-environment RO run took 321.50 seconds and began current
+// computation around second 212, close to its former 220-second phase limit.
+// Use the existing PAPER technical bounds for both modes. This is a finite
+// test watchdog, not a source freshness extension or a throughput guarantee.
+const options = { timeout: 420_000, skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false };
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 function result(transcript: { messages: readonly unknown[] }, name: string, offset = -1): JsonObject {
   const entry = (transcript.messages.filter(value => (value as { role?: string; toolName?: string }).role === 'toolResult'
@@ -52,7 +56,7 @@ function script(state: Awaited<ReturnType<typeof setup>>, source: JsonObject) {
 }
 async function exists(path: string) { try { await access(path); return true; } catch { return false; } }
 
-if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, { ...options, timeout: mode === 'PAPER' ? 420_000 : 360_000 }, async () => {
+if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, options, async () => {
   console.log(JSON.stringify({ scope: 'ORIGINAL_FORWARD_HTTP_RUNTIME', mode, node: process.version, execPath: process.execPath }));
   await access(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science', 'cash-heavy-hour', 'source.json'));
   const output = await new Promise<{ code: number | null; log: string }>((resolve, reject) => {
@@ -64,9 +68,10 @@ if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${
       env: environment, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let log = ''; processChild.stdout.on('data', value => { log += value; }); processChild.stderr.on('data', value => { log += value; });
-    // PAPER includes at most one additional original one-minute source wait;
-    // only the test watchdog changes, never a financial freshness deadline.
-    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, mode === 'PAPER' ? 410_000 : 350_000);
+    // PAPER includes at most one additional original one-minute source wait.
+    // Both modes share a finite process watchdog; financial deadlines remain
+    // the original source facts and are independently asserted below.
+    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, 410_000);
     processChild.on('error', error => { clearTimeout(timer); reject(error); });
     processChild.on('close', code => { clearTimeout(timer); resolve({ code, log }); });
   });
@@ -188,9 +193,10 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     };
     let currentPublished = false; let sourceEpoch: string | null = null; let sourceResumed = false;
     let expectedFreshPriceNs: string | null = null;
-    // PAPER also waits at most one original one-minute source interval. This
-    // technical wait does not change the native 65-second price-age policy.
-    const deadline = realNow() + (paper ? 290_000 : 220_000);
+    // Share the existing PAPER receipt watchdog: the measured RO solve began
+    // at approximately 212 seconds. PAPER may also wait one original source
+    // interval; neither mode changes the native 65-second price-age policy.
+    const deadline = realNow() + 290_000;
     while (!(await exists(reachedPath)) && realNow() < deadline) {
       const stored = await record(); const view = await read();
       if (!currentPublished && view.cycles.some(cycle => cycle.state === 'COMPUTING')) {
@@ -284,6 +290,8 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
       for (const request of [object(seedEvidence.study), object(object(object(independentStudy.paired).request).study)]) {
         assert.equal(object(object(request.mandate).constraints).cash_funding, 'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1',
           'Both selection and actual native independent request must use the original funding method.');
+        assert.equal(object(object(object(request.mandate).optimizer).parameters).cash_numerical_output, 'VALIDATED_FEASIBLE_SEGMENT_V1',
+          'Selection and independent evaluation must register the same numerical output protocol before observing their outcomes.');
       }
     };
     const trials = json(stored.derivedTrials), movements = json(stored.budgetMovements);
@@ -323,6 +331,8 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     assert.equal(object(object(object(artifact.result).request).mandate).constraints
       && object(object(object(object(artifact.result).request).mandate).constraints).cash_funding,
     'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1');
+    assert.equal(object(object(object(object(object(artifact.result).request).mandate).optimizer).parameters).cash_numerical_output,
+      'VALIDATED_FEASIBLE_SEGMENT_V1', 'Current execution must retain the numerical protocol of the original independently evaluated method.');
     if (paper) {
       assert.ok(remote);
       const offeredDeadline = realNow() + 15_000;

@@ -142,12 +142,25 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
         if trigger.get('entry') != 'DecisionTrigger' or not definition or "'SOURCE_RECOVERED'" not in definition.group(1):
             raise ValueError('Extracted CLI lacks the source recovery decision trigger contract.')
         domain = json.loads(run('schema', 'list', '--domain'))
-        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1'):
+        for name in ('NativeObservedSpotBuildRequestV1', 'NativeObservedSpotBuildResultV1', 'AllocatorSettingsV1', 'AllocationResultV1'):
             if name not in domain.get('names', []):
                 raise ValueError(f'Extracted CLI lacks the native {name} contract.')
             contract = json.loads(run('schema', 'show', name, '--domain'))
-            if name not in contract.get('components', {}).get('schemas', {}):
+            native = contract.get('components', {}).get('schemas', {})
+            if name not in native:
                 raise ValueError(f'Extracted CLI cannot resolve its native {name} contract.')
+            if name == 'AllocatorSettingsV1':
+                protocol = 'NativeCashNumericalOutputProtocolV1'
+                field = native[name].get('properties', {}).get('cash_numerical_output', {})
+                if f'#/components/schemas/{protocol}' not in json.dumps(field) or 'VALIDATED_FEASIBLE_SEGMENT_V1' not in native.get(protocol, {}).get('enum', []):
+                    raise ValueError('Extracted CLI lacks the registered CASH numerical output protocol.')
+            if name == 'AllocationResultV1':
+                trace = 'NativeCashNumericalOutputV1'
+                field = native[name].get('properties', {}).get('numerical_output', {})
+                exact = native.get(trace, {}).get('properties', {}).get('objective_delta_exact', {})
+                value_type = exact.get('type')
+                if f'#/components/schemas/{trace}' not in json.dumps(field) or not (value_type == 'string' or isinstance(value_type, list) and 'string' in value_type):
+                    raise ValueError('Extracted CLI lacks the exact numerical objective trace contract.')
 
 def read_manifest(destination: Path) -> dict:
     manifest = json.loads((destination / 'release.json').read_text())

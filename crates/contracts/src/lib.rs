@@ -57,6 +57,7 @@ use utoipa::OpenApi;
     catalogs::RuntimeCatalogMetadataV1,
     portfolio::AllocationInputV1,
     portfolio::AllocationResultV1,
+    portfolio::AllocatorSettingsV1,
     ensemble_fit::NativeEnsembleFitRequestV1,
     ensemble_fit::NativeEnsembleFitResultV1,
     ensemble_fit::NativeEnsembleApplyRequestV1,

@@ -79,11 +79,19 @@ The supported current native domain is one Hyperliquid spot instrument in the sa
 venue CASH account, with multiple fitted factors and original REST receipt proofs.
 Other domains retain explicit capability gaps.
 
-The v2 method registers the original linear turnover costs inside the same native
+The funding method registers the original linear turnover costs inside the same native
 QP's CASH funding constraint before research. Allocation plus fees must fit the
 original deployment budget while preserving the cash floor. Observed study,
 independent evaluation and current build use the same frozen field; old methods
-do not inherit the new qualification. Actual buying/selling and zero-fee native
+do not inherit the new qualification. Method/rule v3 additionally registers the
+explicit `VALIDATED_FEASIBLE_SEGMENT_V1` output protocol. A rejected decimal
+representation may move toward a fully validated numerical anchor without a
+second QP; every original constraint is rechecked and the exact added objective
+change is bounded against the original tolerance. Raw solution and final point
+remain separate evidence. The captured original funding-boundary input and the
+floating-point cancellation counterexample have actual native regressions; the
+protocol does not upgrade earlier methods or independent qualifications.
+Actual buying/selling and zero-fee native
 counterexamples passed within 68 affected regressions. The earlier 6cced native
 candidate passed 666 scientific tests and exported seven fixtures, but that scope
 predates the subsequent original-NAV residual, positive cash-floor and strict

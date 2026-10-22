@@ -12,7 +12,7 @@ import { compileWasm, iterationRequest, normalizedRequest } from '../../research
 import { jsonChunks } from '../../research/src/native-json.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { object } from './facts.ts';
-import { pmAllocationMethod } from './pm-method.ts';
+import { pmNativeOptimizer, validatePmAllocationMethod } from './pm-method.ts';
 import type { CapturedAccount } from './pm-account.ts';
 import { compareObservedSpotAccount, valueObservedSpotAccount } from './pm-account-native.ts';
 import type { ObservedSpotLeg, ObservedSpotValuationResult } from './pm-account-native.ts';
@@ -249,7 +249,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   account?: { capture: CapturedAccount; datasetRevision: { id: string; contentRef: string }; bridge: JsonObject; valuation: ObservedSpotValuationResult }): Promise<PmScienceResult | PmIndependentResult | PmAccountScienceResult> {
   if (!Number.isSafeInteger(input.maximumTrials) || input.maximumTrials < (independent ? 1 : 2) || input.maximumTrials > 65) throw new Error('pm_science_budget_invalid');
   if (input.currency !== input.capital.currency || compareDecimal(input.capital.amount, '0') <= 0) throw new Error('pm_science_capital_invalid');
-  if (canonical(input.allocationMethod) !== canonical(pmAllocationMethod())) throw new Error('pm_unregistered_allocation_method');
+  validatePmAllocationMethod(input.allocationMethod);
   const source = input.source; const fit = object(source.fit, 'frozen_fit');
   const verifiedPrefix = await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context);
   const fitRequest = object(source.fitRequest, 'original_fit_request');
@@ -384,7 +384,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
           universe_version_id: universeId,
           covariance_estimator: { schema_version: 1, adapter_kind: 'SAMPLE_COVARIANCE', upstream_class: 'ndarray_stats::CorrelationExt::cov', upstream_version: '0.7.0', parameters: { ddof: 1 } },
           alpha_ensemble: { schema_version: 1, adapter_kind: 'FIXED_WEIGHTED_FORECAST', upstream_class: 'ndarray::ArrayBase::dot', upstream_version: '0.17.1', parameters: {} },
-          optimizer: input.allocationMethod.optimizer!,
+          optimizer: pmNativeOptimizer(input.allocationMethod, account !== undefined),
           constraints: { schema_version: 1, long_only: true, min_cash_weight: subtractDecimal('1', exposure), max_cash_weight: '1', min_asset_weight: '0', max_asset_weight: exposure,
             ...(account ? { cash_funding: object(input.allocationMethod.cashFunding).nativeConstraint! } : {}),
             max_gross_exposure: exposure, min_net_exposure: '0', max_net_exposure: exposure, max_turnover_per_rebalance: '2',

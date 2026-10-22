@@ -1,6 +1,7 @@
 //! Native Clarabel allocation over frozen portfolio inputs.
 use anyhow::{ensure, Result};
 use clarabel::{algebra::CscMatrix, solver::*};
+mod cash_numerical_output;
 mod cvar_risk_budgeting;
 mod risk_budgeting;
 #[cfg(test)]
@@ -111,6 +112,7 @@ fn native_outcome(native: &DefaultSolution<f64>, accept_inaccurate: bool) -> All
         targets: None,
         cash_weight: None,
         cvar_risk_budget_witness: None,
+        numerical_output: None,
         iterations: native.iterations,
         objective_value: finite(native.obj_val),
         primal_residual: finite(native.r_prim),
@@ -454,6 +456,9 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
                         });
                 }
             }
+            if parameters.cash_numerical_output.is_some() {
+                cash_numerical_output::apply(input, native, &mut result)?;
+            }
             domain::portfolio::allocation_result(input, &result)?;
             Ok(())
         })();
@@ -463,6 +468,7 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             result.targets = None;
             result.cash_weight = None;
             result.cvar_risk_budget_witness = None;
+            result.numerical_output = None;
         }
     }
     domain::portfolio::allocation_result(input, &result)?;

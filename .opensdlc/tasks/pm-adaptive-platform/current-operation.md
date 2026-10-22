@@ -19,7 +19,7 @@ campaign 自己的原始非 forward cycle 和相同数据版本恢复；有歧�
 
 ## 单次原生优化中的费用资金
 
-完整方法身份为 `qz.pm.owner-nav-constrained-mean-variance/2`，通过 `jointAllocationMethod` 在研究前冻结，并原样保存在 forward seed。连续配置沿用原 Clarabel QP，不增加第二个求解器或任意现金缓冲。
+完整方法身份为 `qz.pm.owner-nav-constrained-mean-variance/3`，通过 `jointAllocationMethod` 在研究前冻结，并原样保存在 forward seed。连续配置沿用原 Clarabel QP，不增加第二个求解器或任意现金缓冲。
 
 令 `w_i` 为原 NAV 下的目标资产权重，`w0_i` 为原持仓同价估值权重，`r_i` 为原线性交易成本率，`c` 为原 NAV 下的扣费前现金残余，`m` 为原最小现金权重。原生已有的辅助变量满足 `t_i >= abs(w_i - w0_i)`。新约束为：
 
@@ -34,11 +34,23 @@ sum(r_i * t_i) - c <= -m
 
 `risk_aversion` 属于事前登记的方法参数；它不是自动推断的 owner 效用，也不保证未来回撤。当前期限的预期收益、线性成本、方差和目标值保留其原始量纲，不标作日收益或已实现收益。
 
+### 精确资金可行性的数值输出协议
+
+原生依赖已核对为官方 Clarabel 0.11.1，tag 指向 `25540f559592068d0c8a80e46ded1b21760212a1`。其 [停止参数](https://github.com/oxfordcontrol/Clarabel.rs/blob/25540f559592068d0c8a80e46ded1b21760212a1/src/solver/implementations/default/settings.rs) 分别定义绝对目标间隙、相对目标间隙与可行性容差；[收敛判断和相对残差](https://github.com/oxfordcontrol/Clarabel.rs/blob/25540f559592068d0c8a80e46ded1b21760212a1/src/solver/implementations/default/info.rs) 允许在该数值标准内返回 `Solved`。因此 `Solved` 本身不能证明十进制费用后现金严格非负。本项目另外登记下述输出适配协议；它不是上游求解器提供的严格资金保证，也不把所加的目标误差预算称为整体最优误差或统计置信度。
+
+方法第 3 版在 `numericalOutput` 事前注册 `VALIDATED_FEASIBLE_SEGMENT_V1`，当前运营规则同样升为 `qz.pm.frozen-current-spot-operating/3`。只有上述已注册 CASH 资金域的原生请求才设置 `optimizer.parameters.cash_numerical_output`；其他账户域保持原参数和严格输出校验。缺省该字段的旧请求继续原严格行为，不能由当前消费者补成新协议。
+
+每次资产配置只求解原 QP 一次，先保留原状态、浮点解、目标和残差。只有转为合同十进制后不能通过原约束验证时，才按固定规则从原始点沿已证明可行的 current 或 all-cash anchor 线段进行有界数值可行化；anchor 自身必须通过完整原约束且有资金余量。最终十进制结果重新验证全部原约束，费用后现金必须严格非负；相对原 `raw_targets` 合同点，校正引入的额外目标函数绝对变化不得超过原 `solver_tolerance`，其预算参考点事前登记为 `ORIGINAL_18_DECIMAL_RAW_TARGETS`。这不包括原浮点解转换为 18 位合同点的既有表示误差。没有合格 anchor、修正超过原目标误差预算或无法同时证明则 FAILED。此过程不改变费率、NAV、资本比例、TTL、风险厌恶、`solver_tolerance` 或经济目标，不另求 QP，也不是重新选择投资方案。原 `numerical_output` 诊断分别保留 raw 解与目标、最终表示与重新计算的目标、约束错误、anchor、线段比例和目标变化，服务不将其改写为经济收益。有限线段检查属于该次已注册求解的数值表示协议，不新增策略试验或扩大研究预算；没有 opt-in 的旧方法继续保持原严格输出，不进行这类修正。
+
+研究资金比较、独立评价和当前应用使用同一注册参数。当前应用逐项核对 seed 中的原 native optimizer，不会为旧 seed 添加协议。原 method/rule 第 2 版不能继承新资格；旧记录保留历史，Monitor 将其视为无当前合格 seed。原 native 二进制 SHA 与 checkpoint 指纹防护继续生效；独立任务在读取 FINAL 之前核对冻结方法，不能把升级后的数值输出归属旧方法。
+
 ## 字段及表示
 
 | 字段 | 类型与来源 | 业务含义 |
 | --- | --- | --- |
 | `PortfolioConstraintsV1.cash_funding` | 可选 `NativeCashFundingPolicyV1` | 事前冻结的现金费用约束；缺省不追溯升级 |
+| `AllocatorSettingsV1.cash_numerical_output` | 可选原生 enum；当前注册 `VALIDATED_FEASIBLE_SEGMENT_V1` | 仅注册 CASH 域的有界数值可行化；缺省不采用该协议 |
+| `AllocationResultV1.numerical_output` | 可选原生诊断 trace | 原求解与数值输出的完整依据；不冒充额外试验、收益或成交 |
 | `AccountBasis.equity` | `Money \| null`，原账户报告 | 原源未报告共同币种净值时保持 null |
 | `AccountBasis.valuation` | 独立派生估值与 `timeBasis` | `DECISION_CUTOFF` 使用本次可得价格；不改原源时钟 |
 | `NativeForwardSpotTradeEstimateV1.target_notional` | `NativeForwardExactNotionalV1` | 原 NAV × 连续权重，完整精确乘积 |
@@ -58,6 +70,30 @@ sum(r_i * t_i) - c <= -m
 | `target-receipt-observation:<commandId>:<digest>` | 不可变原回执、`commandId` 与 `availableAtNs` | 同一账户快照上的回执结算也有独立身份；重复读取不新增结果 |
 
 连续乘积最多保留 40 位整数、36 位小数。原 NAV、实际余额、原生权重、交易数量及取整后估算保留其原有原生 decimal 约束；不静默舍入资金事实。所有派生目标金额都不是实际成交金额。
+
+数值诊断的正式 DTO 位于 `crates/contracts/src/portfolio.rs`，纯校验位于 `crates/domain/src/portfolio/numerical.rs`。`AllocationResultV1` 的 `targets`、`cash_weight` 和 `objective_value` 表示最终输出点；原求解器回执分别保留如下，不能混为同一组数值。
+
+| `NativeCashNumericalOutputV1` 字段 | 类型 | 口径 |
+| --- | --- | --- |
+| `protocol` | `NativeCashNumericalOutputProtocolV1` | 当前唯一值 `VALIDATED_FEASIBLE_SEGMENT_V1`，须与原请求一致 |
+| `outcome` | `NativeCashNumericalOutcomeV1` | `UNCHANGED`、`CORRECTED` 或 `REJECTED` |
+| `raw_x` | `Vec<f64>` | 原 Clarabel 坐标，依次为资产、现金、gross 辅助量和 turnover 辅助量；本域维度为 `3*n+1` |
+| `raw_native_status` | `String` | 原上游状态；不能把已拒绝的不精确求解伪装为成功 |
+| `raw_objective_value` | `f64` | 原上游目标值，真实性来自原 native artifact，不宣称独立逐位复现 |
+| `raw_point_objective_value` | `f64` | 按原 18 位 `raw_targets` 与真实绝对换仓量重算的目标显示值 |
+| `raw_primal_residual`、`raw_dual_residual` | `f64` | 原上游相对残差；不冒称最终十进制点的新残差 |
+| `raw_targets` | `Vec<AllocationTargetV1>` | 原唯一 18 位转换；每项保留 instrument、currency 与 weight |
+| `raw_cash_weight` | `DecimalValue` | 原转换现金，不被后续可行化覆盖 |
+| `raw_constraint_error` | `Option<String>` | 原合同点的具体校验拒绝；未拒绝时为 null |
+| `anchor` | `Option<NativeCashFeasibleAnchorV1>` | `kind` 为 `CURRENT_WEIGHTS` 或 `ALL_CASH`；另含 `targets` 与 `cash_weight`，须独立通过原完整校验及资金余量条件 |
+| `segment_fraction` | `Option<DecimalValue>` | 朝该 anchor 的比例，使用 `10^-18` 网格；非投资资金比例 |
+| `objective_delta_exact` | `Option<String>` | 精确 `final-minus-raw_targets` 目标差，规范 plain decimal、最多 2048 字符；原 `P/2` 与 forecast 的 IEEE-754 系数精确转 decimal，费用使用原 decimal rate 和实际绝对换仓量 |
+| `objective_delta` | `Option<f64>` | 上述精确差的近似显示，不能充当预算证明 |
+| `objective_change_limit` | `DecimalValue` | 原 `solver_tolerance`；精确比较 `abs(objective_delta_exact)`，单位为原目标值，非资金或收益 |
+| `search_steps` | `u32` | 实际有界候选检查计数，不伪装成新试验或另一次 QP |
+| `reason_code` | `Option<String>` | 本次数值输出的实际理由；失败仍没有可交付目标 |
+
+原 QP 最小化风险惩罚减预测收益再加线性换仓成本，因此正的目标差表示该目标增加，不能展示为正收益。报告用浮点目标值可能丢失极小差；预算证明使用精确点差，不能用两个大浮点目标相减代替。`REJECTED` 的诊断只保留失败证据，不授予决策、独立资格或交付权限。
 
 ## 对象和执行关系
 
@@ -108,12 +144,32 @@ classDiagram
     reconcile()
     wait()
   }
+  class AllocationResultV1 {
+    SolverStatus solver_status
+    AllocationTargetV1[] targets
+    DecimalValue cash_weight
+    float objective_value
+    NativeCashNumericalOutputV1 numerical_output
+  }
+  class NativeCashNumericalOutputV1 {
+    Protocol protocol
+    Outcome outcome
+    float[] raw_x
+    AllocationTargetV1[] raw_targets
+    NativeCashFeasibleAnchorV1 anchor
+    DecimalValue segment_fraction
+    String objective_delta_exact
+    DecimalValue objective_change_limit
+    uint search_steps
+  }
   PmRecord *-- PortfolioDecision
   PmRecord *-- TargetCommand
   PmRecord *-- RetirementDisposition
   PortfolioDecision --> TargetCommand
   PmTargetTask --> TargetCommand
   RetirementDisposition --> TargetCommand
+  PortfolioDecision --> AllocationResultV1 : solverEvidenceRef
+  AllocationResultV1 *-- NativeCashNumericalOutputV1
 ```
 
 这些业务事实位于原官方 Durable 文档；运行检查点和恢复仍由官方 Task 持有。图中 Map 是原 Id 到实体的索引，不是新增数据库或调度器。

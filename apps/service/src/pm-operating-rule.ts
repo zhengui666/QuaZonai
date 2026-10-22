@@ -3,7 +3,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { pmCanonical } from '../../../packages/contracts/src/pm-validation.ts';
 import { pmAllocationMethod } from './pm-method.ts';
 
-export const PM_OPERATING_RULE_ID = 'qz.pm.frozen-current-spot-operating/2';
+export const PM_OPERATING_RULE_ID = 'qz.pm.frozen-current-spot-operating/3';
 
 /** Must be registered in the original policy before its research/independent
  * evidence is produced. This permits applying a fixed learned method to fresh
@@ -24,12 +24,14 @@ export function pmOperatingRule(): JsonObject {
     fixedInputs: ['FACTOR_MEMBERS_AND_MODEL_BYTES', 'FROZEN_CALIBRATION_COEFFICIENTS', 'LEARNED_ENSEMBLE_WEIGHTS',
       'ORIGINAL_OPTIMIZER_PARAMETERS_INCLUDING_RISK_AVERSION', 'SELECTED_CAPITAL_TO_NAV_RATIO', 'EXECUTION_AND_COST_POLICY',
       'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1',
+      'VALIDATED_FEASIBLE_SEGMENT_V1',
       'ORIGINAL_SCHEDULE_ANCHOR_AND_TARGET_TTL'],
     cashFunding: { protocol: 'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1',
       domain: 'OBSERVED_CASH_LONG_ONLY_MAX_UTILITY_VARIANCE',
       solver: 'SAME_ORIGINAL_SINGLE_QP_WITH_LINEAR_TURNOVER_CASH_CONSTRAINT',
       requirement: 'HISTORICAL_SELECTION_INDEPENDENT_AND_CURRENT_APPLICATION_USE_IDENTICAL_FUNDING_RULE',
       legacyEvidence: 'PRE_FUNDING_METHOD_EVIDENCE_CANNOT_QUALIFY_THIS_RULE' },
+    numericalOutput: method.numericalOutput!,
     variableInputs: ['CURRENT_ORIGINAL_OBSERVED_BALANCES', 'CURRENT_MATCHED_CAPITAL_CONTROL', 'CUTOFF_AVAILABLE_MARKET_FACTS'],
     clockRule: {
       cadence: 'ORIGINAL_SELECTION_ANCHOR_PLUS_INTEGER_TARGET_TTL',

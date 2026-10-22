@@ -6,7 +6,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 // Contract validation only: no fabricated model, native economic evidence,
 // qualification, account state or execution authorization is introduced.
 test('a missing historical operating rule cannot acquire current qualification through a default', () => {
-  for (const value of [undefined, null, {}, { id: 'qz.pm.frozen-current-spot-operating/1' }]) {
+  for (const value of [undefined, null, {}, { id: 'qz.pm.frozen-current-spot-operating/1' }, { id: 'qz.pm.frozen-current-spot-operating/2' }]) {
     assert.throws(() => validatePmOperatingRule(value), /original_operating_rule_missing_or_changed/);
     assert.throws(() => pmOperatingRuleIdentity(value), /original_operating_rule_missing_or_changed/);
   }
@@ -19,6 +19,9 @@ test('operating rule identity preserves its original timing, fixed inputs and ec
   assert.equal(pmOperatingRuleIdentity(new Proxy(original, {})), identity, 'transaction JSON proxies retain their original rule identity');
   const invalid = [
     { ...original, id: 'qz.pm.frozen-current-spot-operating/1' },
+    { ...original, id: 'qz.pm.frozen-current-spot-operating/2' },
+    { ...original, numericalOutput: null },
+    { ...original, numericalOutput: { ...(original.numericalOutput as JsonObject), acceptance: 'ALLOW_NEGATIVE_POST_FEE_CASH' } },
     { ...original, cashFunding: null },
     { ...original, cashFunding: { ...(original.cashFunding as JsonObject), solver: 'SCALE_TARGET_AFTER_SOLVE' } },
     { ...original, fixedInputs: ['FIT_A_NEW_ENSEMBLE'] },

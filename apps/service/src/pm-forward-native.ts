@@ -12,6 +12,7 @@ import type { CapturedAccount } from './pm-account.ts';
 import { implementationIdentity, verifyOriginalPrefix } from './pm-science.ts';
 import type { PmScienceCheckpoint } from './pm-science.ts';
 import { pmArtifactDigest } from './pm-evidence.ts';
+import { pmNativeOptimizer } from './pm-method.ts';
 
 export interface PmForwardNativeInput {
   seed: JsonObject;
@@ -24,15 +25,23 @@ export interface PmForwardNativeInput {
   basisRevision: string;
 }
 
-/** Exactly one inference/solve of the original selected method. No trial,
- * fit, parameter sweep, historical return projection or synthetic account. */
-export async function buildPmForward(input: PmForwardNativeInput, context: Context, checkpoint: PmScienceCheckpoint): Promise<JsonObject> {
-  const source = object(input.seed.source, 'frozen_forward_source');
-  const study = object(input.seed.study, 'frozen_forward_study');
-  const funding = object(object(input.seed.allocationMethod, 'frozen_forward_allocation_method').cashFunding, 'frozen_forward_cash_funding');
+/** Never add a new numerical protocol to an independently evaluated old seed. */
+export function assertPmForwardMethod(seed: JsonObject) {
+  const study = object(seed.study, 'frozen_forward_study');
+  const method = object(seed.allocationMethod, 'frozen_forward_allocation_method');
+  const funding = object(method.cashFunding, 'frozen_forward_cash_funding');
   if (funding.applicableDomain !== 'OBSERVED_SPOT_CASH_LONG_ONLY_MAX_UTILITY_VARIANCE'
     || funding.nativeConstraint !== 'PRESERVE_MIN_CASH_AFTER_LINEAR_TURNOVER_V1'
     || object(object(study.mandate).constraints).cash_funding !== funding.nativeConstraint) throw new Problem('forward_original_cash_funding_method_missing_or_changed');
+  if (canonical(object(object(study.mandate).optimizer)) !== canonical(pmNativeOptimizer(method, true))) throw new Problem('forward_original_numerical_output_method_missing_or_changed');
+}
+
+/** Exactly one inference/solve of the original selected method. No trial,
+ * fit, parameter sweep, historical return projection or synthetic account. */
+export async function buildPmForward(input: PmForwardNativeInput, context: Context, checkpoint: PmScienceCheckpoint): Promise<JsonObject> {
+  assertPmForwardMethod(input.seed);
+  const source = object(input.seed.source, 'frozen_forward_source');
+  const study = object(input.seed.study, 'frozen_forward_study');
   const originalObjects = object(input.seed.objects, 'frozen_forward_objects');
   const cutoff = String(input.selection.decision_cutoff_ns);
   if (!/^\d+$/.test(cutoff)) throw new Problem('forward_cutoff_invalid');

@@ -3,6 +3,9 @@
 use bigdecimal::ToPrimitive;
 use contracts::{portfolio::*, DecimalValue, Id};
 
+#[path = "support/allocation_numerical.rs"]
+mod allocation_numerical;
+
 fn input() -> AllocationInputV1 {
     serde_json::from_str(include_str!(
         "../../../tests/contracts/allocation-input.json"

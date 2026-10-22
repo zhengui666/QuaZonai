@@ -20,7 +20,8 @@ import { readSourceRevision } from './pm-source.ts';
  * current policy. A newer unqualified research candidate cannot replace it. */
 export function forwardSeedDecision(record: PmRecord): Pm.PortfolioDecision | null {
   if (record.mandate.capitalSource.kind !== 'ACCOUNT' || !object(record.policy.validDomain).operatingRule) return null;
-  validatePmOperatingRule(object(record.policy.validDomain).operatingRule);
+  try { validatePmOperatingRule(object(record.policy.validDomain).operatingRule); }
+  catch { return null; } // Older methods remain historical evidence, not a faulting monitor or an upgraded operating seed.
   return Object.values(record.decisions).reverse().find(decision => {
     const explanation = object(decision.explanationFacts);
     const control = record.artifacts[`strategy-control:${decision.strategyVersionId}`];
