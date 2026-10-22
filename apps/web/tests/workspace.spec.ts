@@ -95,6 +95,28 @@ async function audit(page: BrowserPage) {
 }
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.study-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
 
+test('research explicitly selects 365-day Sharpe and preserves its original criterion through retry', async ({ page }) => {
+  const state = await contract(page);
+  const dataset: DatasetView = { id: 'test-data', name: '测试数据', assetClass: 'equity', currency: 'CNY', source: 'test', start: null, end: null, ready: true,
+    researchSettings: { instruments: ['TEST.CN'], inputFamily: 'price-volume', horizon: 1, partitions: null, strategy: { kind: 'threshold' } } };
+  await page.route('**/api/v3/datasets', route => route.fulfill({ json: [dataset] }));
+  await page.goto('/#/research/new'); await mandate(page, '显式年化周期'); await choose(page, '数据集', '测试数据 / CNY');
+  await choose(page, '搜索范围', '原生共享账户因子组合');
+  const criterion = page.locator('.form-section-heading').filter({ has: page.getByRole('heading', { name: '评价标准', exact: true }) });
+  await expect(criterion).toContainText('夏普比率（252 天年化）');
+  await choose(page, '评价指标', '夏普比率（365 天年化，原生账户）');
+  const explanation = criterion.getByRole('button', { name: '解释：夏普比率（365 天年化）', exact: true });
+  await explanation.hover(); await expect(page.getByRole('tooltip')).toContainText('365 天'); await page.mouse.move(0, 0);
+  await page.getByLabel('试验预算', { exact: true }).fill('3'); await page.getByRole('button', { name: '开始研究' }).click();
+  await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
+  const original = state.writes.find(write => write.path === '/research')!.raw!;
+  expect(JSON.parse(original).specification).toMatchObject({ evaluation: { metric: 'Sharpe Ratio (365 days)' }, search: { scope: 'ensemble', maxMembers: 2 } });
+  await page.reload(); await expect(criterion).toContainText('夏普比率（365 天年化）');
+  await page.getByRole('button', { name: '核对提交', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '显式年化周期', exact: true, level: 1 })).toBeVisible();
+  expect(state.writes.filter(write => write.path === '/research').map(write => write.raw)).toEqual([original, original]);
+});
+
 test('owner setup/login and uncertain research preserve the exact body after changed defaults and reload', async ({ page }, info) => {
   const state = await contract(page, true); await page.goto('/');
   await expect(page.getByRole('heading', { name: '设置工作台密码', exact: true })).toBeVisible(); expect(state.writes).toEqual([]); await audit(page);
