@@ -38,3 +38,7 @@ Independent read-only review found no actionable P1/P2 issues after correcting t
 ## Delivery
 
 [PR #224](https://github.com/zhengui666/QuaZonai/pull/224) is the authoritative merge and CI record for the requested `dev` endpoint. No production deployment or real account entitlement/latency check is included. Fast is an explicit request; actual service and quota consumption remain OpenAI's decision.
+
+## Presentation follow-up
+
+The owner requested plain labels with no explanatory copy. Restore `最高` in settings and research, remove the parenthesized `max` annotation and update the existing browser expectations. No explanatory UI copy is added; model and speed behavior is unchanged. `make check-web` and the existing settings/research browser case passed against production assets; the initial dev-server run timed out during its first select click. The follow-up PR owns final review, CI and merge into `dev`.

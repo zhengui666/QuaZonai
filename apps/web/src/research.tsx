@@ -16,7 +16,7 @@ import { shortTitle } from './titles';
 import { partitionLabel } from './metric-glossary';
 import { ExecutionFailure, Reason } from './diagnostics';
 
-const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高（max）' };
+const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
 export default function Research({ route }: { route: Route }) { return route.creating ? <NewStudy route={route} /> : <ResearchWorkspace route={route} />; }
 function ResearchWorkspace({ route }: { route: Route }) {
