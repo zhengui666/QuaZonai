@@ -120,7 +120,7 @@ def smoke_cli(path: Path, platform: str, version: str) -> None:
         command = [str(node), '--experimental-strip-types', str(directory / 'app/launch.mjs')]
         env = {**os.environ, 'QUAZONAI_VERSION': version, 'QZ_CLI_VERSION': version}
         def run(*args):
-            return subprocess.run([*command, *args], env=env, check=True, capture_output=True, text=True).stdout.strip()
+            return subprocess.run([*command, *args], env=env, check=True, capture_output=True, text=True, encoding='utf-8', errors='strict').stdout.strip()
         if run('--version') != f'quazonai {version}':
             raise ValueError('Extracted CLI version differs from the release tag.')
         help_text = run('--help')
