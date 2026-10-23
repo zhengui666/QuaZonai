@@ -87,7 +87,7 @@ class ReleaseTests(unittest.TestCase):
                      [{**successful, 'head_sha': 'b' * 40}],
                      [{**successful, 'path': '.github/workflows/dev-release.yml'}]]:
             with self.subTest(runs=runs), patch.object(release, 'api', return_value=[{'workflow_runs': runs}]), \
-                 patch.object(release.time, 'monotonic', side_effect=[0, 1, 85 * 60 + 1]), \
+                 patch.object(release.time, 'monotonic', side_effect=[0, 1, 115 * 60 + 1]), \
                  patch.object(release.time, 'sleep'), patch('builtins.print'):
                 with self.assertRaisesRegex(TimeoutError, 'Exact-source CI did not complete'):
                     release.wait_ci(REVISION)
