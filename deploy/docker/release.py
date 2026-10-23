@@ -113,7 +113,7 @@ def dev_tag(revision: str, run_id: str) -> str:
 
 
 def wait_ci(revision: str) -> int:
-    deadline = time.monotonic() + 85 * 60
+    deadline = time.monotonic() + 115 * 60
     while time.monotonic() < deadline:
         latest = ci_runs(revision)
         failed = [path for path, item in latest.items()
