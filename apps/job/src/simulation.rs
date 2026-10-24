@@ -1213,8 +1213,9 @@ pub(crate) fn catalog_target_strategy(
     Ok((strategy, status, inbox))
 }
 
+/// Captures the complete result, then disposes the settled engine before copying its JSON.
 pub(crate) fn catalog_simulation_result(
-    engine: &BacktestEngine,
+    engine: &mut BacktestEngine,
     settings: &NativeSimulationSettingsV1,
     start_ns: u64,
     end_ns: u64,
@@ -1291,27 +1292,37 @@ pub(crate) fn catalog_simulation_result(
     } else {
         (contracts::evidence::MetricStatus::Ok, None)
     };
+    let settled_replay_ns = Some(
+        DbCounter::new(engine.kernel().clock.borrow().timestamp_ns().as_u64())
+            .map_err(anyhow::Error::msg)?,
+    );
+    let recorded_fee_replay = Some(fees.report());
+    let iterations = count(native.iterations)?;
+    let events = count(native.total_events)?;
+    let orders = count(native.total_orders)?;
+    let positions = count(native.total_positions)?;
+    let consumed_target_points = count(consumed)?;
+    let canonical = engine.get_canonical_result()?;
+    // The complete official result owns its history before the second JSON tree is copied.
+    engine.dispose();
     Ok(NativeSimulationResultV1 {
-        settled_replay_ns: Some(
-            DbCounter::new(engine.kernel().clock.borrow().timestamp_ns().as_u64())
-                .map_err(anyhow::Error::msg)?,
-        ),
+        settled_replay_ns,
         spot_cash_report: None,
-        recorded_fee_replay: Some(fees.report()),
+        recorded_fee_replay,
         schema_version: SchemaV1,
         native_version: "0.63.0".into(),
-        iterations: count(native.iterations)?,
-        events: count(native.total_events)?,
-        orders: count(native.total_orders)?,
-        positions: count(native.total_positions)?,
-        consumed_target_points: count(consumed)?,
+        iterations,
+        events,
+        orders,
+        positions,
+        consumed_target_points,
         summary: native.summary.into_iter().collect(),
         statistics,
         returns_kind: NativeReturnsKind::PortfolioDaily,
         returns_status,
         returns_reason,
         returns,
-        canonical_result: serde_json::from_slice(&engine.get_canonical_result()?.to_bytes()?)?,
+        canonical_result: canonical.as_value().clone(),
     })
 }
 
@@ -2277,7 +2288,7 @@ fn run_with_strategy_and_spot(
             returns_status,
             returns_reason,
             returns,
-            canonical_result: serde_json::from_slice(&engine.get_canonical_result()?.to_bytes()?)?,
+            canonical_result: engine.get_canonical_result()?.as_value().clone(),
         }))
     })();
     engine.dispose();
@@ -2343,8 +2354,9 @@ mod replay_error_tests {
         }
     }
 
-    #[test]
-    fn original_early_close_cancels_resting_remainder_before_another_native_fill() {
+    fn early_close_result(
+        run_analysis: bool,
+    ) -> nautilus_backtest::result::CanonicalBacktestResult {
         let original = replay_fixture::instruments("0", 18 * replay_fixture::STEP).remove(0);
         let id = original.id();
         let mut engine = BacktestEngine::new(BacktestEngineConfig {
@@ -2354,6 +2366,7 @@ mod replay_error_tests {
                 .unwrap(),
             shutdown_on_error: true,
             bypass_logging: true,
+            run_analysis,
             ..Default::default()
         })
         .unwrap();
@@ -2414,6 +2427,7 @@ mod replay_error_tests {
             )],
         );
         events.push(quote(10 * replay_fixture::STEP, "0.2000"));
+        events.push(quote((2 * 1440 + 10) * replay_fixture::STEP, "0.2000"));
         engine.add_data(events, None, true, true).unwrap();
         engine.run(None, None, None, false).unwrap();
         let cache = engine.kernel().cache.borrow();
@@ -2455,7 +2469,23 @@ mod replay_error_tests {
         for key in ["positions.open", "orders.open", "orders.inflight"] {
             assert_eq!(result.summary[key], "0");
         }
+        let canonical = engine.get_canonical_result().unwrap();
         engine.dispose();
+        canonical
+    }
+
+    #[test]
+    fn original_early_close_cancels_resting_remainder_before_another_native_fill() {
+        let analyzed = early_close_result(true);
+        let without_logging_analysis = early_close_result(false);
+        assert_eq!(analyzed, without_logging_analysis);
+        let statistics = &without_logging_analysis.as_value()["statistics"];
+        assert!(!statistics["pnls"]["pUSD"].as_object().unwrap().is_empty());
+        assert!(!statistics["general"].as_object().unwrap().is_empty());
+        assert!(statistics["returns"]
+            .get("Sharpe Ratio (252 days)")
+            .is_some());
+        assert!(statistics["returns_series"].as_array().unwrap().len() >= 2);
     }
 
     #[test]

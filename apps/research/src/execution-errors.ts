@@ -1,9 +1,9 @@
 import type { ExecutionErrorCategory, ExecutionErrorDetail } from '../../../packages/contracts/src/execution.ts';
 
-type ExecutionContext = { operation?: unknown; stage?: unknown };
+type ExecutionContext = { operation?: unknown; stage?: unknown; exitCode?: unknown };
 type Fallback = 'scientific_execution_failed' | 'backtest_failed' | 'operation_failed';
 const operations = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
-  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest', 'replay-catalog-ensemble']);
+  'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest', 'replay-catalog-ensemble', 'scan-factor-catalog', 'catalog-factor-scope']);
 const stages = new Set(['compile', 'execute', 'decode', 'validate']);
 
 export function executionDiagnostic(error: unknown, fallback = 'scientific_execution_failed'): string {
@@ -14,10 +14,12 @@ export function executionDiagnostic(error: unknown, fallback = 'scientific_execu
 export class ExecutionFailure extends Error {
   readonly operation?: string;
   readonly stage?: ExecutionErrorDetail['stage'];
+  readonly exitCode?: number;
   constructor(error: unknown, context: ExecutionContext = {}) {
     super(executionDiagnostic(error), { cause: error });
     if (typeof context.operation === 'string' && operations.has(context.operation)) this.operation = context.operation;
     if (typeof context.stage === 'string' && stages.has(context.stage)) this.stage = context.stage as ExecutionErrorDetail['stage'];
+    if (typeof context.exitCode === 'number' && Number.isSafeInteger(context.exitCode) && context.exitCode >= 0) this.exitCode = context.exitCode;
   }
 }
 
@@ -86,8 +88,9 @@ export function classifyExecutionError(value: unknown, fallback: Fallback = 'sci
   if (!(value instanceof Error) && typeof value !== 'string' || !executionDiagnostic(value, '')) return null;
   const raw = executionDiagnostic(value);
   const publicCode = /^[a-z][a-z0-9_]{0,127}$/.test(raw) ? raw : undefined;
-  const metadata = value instanceof ExecutionFailure ? { operation: value.operation ?? context.operation, stage: value.stage ?? context.stage } : context;
+  const metadata = value instanceof ExecutionFailure ? { operation: value.operation ?? context.operation, stage: value.stage ?? context.stage, exitCode: value.exitCode ?? context.exitCode } : context;
   const operation = typeof metadata.operation === 'string' && operations.has(metadata.operation) ? metadata.operation : undefined;
+  const exitCode = typeof metadata.exitCode === 'number' && Number.isSafeInteger(metadata.exitCode) && metadata.exitCode >= 0 ? metadata.exitCode : undefined;
   let stage = typeof metadata.stage === 'string' && stages.has(metadata.stage) ? metadata.stage as ExecutionErrorDetail['stage'] : undefined;
   const found = knownReasons.find(reason => reason.pattern.test(raw));
   let detail: ExecutionErrorDetail;
@@ -104,9 +107,10 @@ export function classifyExecutionError(value: unknown, fallback: Fallback = 'sci
   } else if (/^qz-(?:native|factor):.*(?:No such file or directory|not found|Permission denied)/m.test(raw)) {
     detail = { code: 'native_executable_unavailable', category: 'runtime', message: '配置的原生科学程序无法启动。', action: '检查科学程序是否已安装、配置正确且可执行；不要以替代输出伪造成功。' };
   } else {
-    detail = { code: publicCode ?? (/^QZ_NATIVE_JOB_FAILED(?:\s|$)/.test(raw) ? 'QZ_NATIVE_JOB_FAILED' : fallback), category: 'unknown',
-      message: '科学执行失败，现有记录无法确定具体原因。', action: '请凭原研究、试验或任务编号检查私有诊断；不要另建身份自动重算。' };
+    detail = { code: publicCode ?? (/^QZ_NATIVE_JOB_FAILED(?:\s|$)/m.test(raw) ? 'QZ_NATIVE_JOB_FAILED' : fallback), category: 'unknown',
+      message: exitCode === 137 ? '原生进程以状态 137 结束，可能被 SIGKILL 终止，也可能显式返回 137；现有接口无法区分具体原因。' : '科学执行失败，现有记录无法确定具体原因。',
+      action: '请凭原研究、试验或任务编号检查私有诊断；不要另建身份自动重算。' };
   }
-  if (!stage && (found || detail.code === 'QZ_NATIVE_JOB_FAILED') && /^(?:QZ_|[A-Z][A-Z_]+(?:\s|:|$))/.test(raw)) stage = 'execute';
-  return { ...detail, ...(operation ? { operation } : {}), ...(stage ? { stage } : {}) };
+  if (!stage && (found || detail.code === 'QZ_NATIVE_JOB_FAILED') && /^(?:QZ_|[A-Z][A-Z_]+(?:\s|:|$))/m.test(raw)) stage = 'execute';
+  return { ...detail, ...(operation ? { operation } : {}), ...(stage ? { stage } : {}), ...(exitCode !== undefined ? { exitCode } : {}) };
 }

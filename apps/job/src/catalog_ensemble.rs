@@ -524,6 +524,8 @@ pub fn replay(
             .build()?,
         shutdown_on_error: true,
         bypass_logging: true,
+        // Formal statistics are collected below; skip the duplicate logging analyzer.
+        run_analysis: false,
         ..Default::default()
     };
     let mut engine = BacktestEngine::new(config)?;
@@ -814,7 +816,19 @@ pub fn replay(
                 cursor = end;
             }
         }
+        let catalog_series = counter(u64::try_from(scope.len())?)?;
+        let observed_markets = counter(u64::try_from(policy.observed_markets())?)?;
+        let bars = counter(policy.observations())?;
+        let source_records = counter(records)?;
+        let consumed_fuel = policy
+            .consumed_fuel()
+            .into_iter()
+            .map(|fuel| fuel.map(counter).transpose())
+            .collect::<Result<Vec<_>>>()?;
+        drop(policy);
+        drop(registered);
         complete_scope(&root, &scope, request, covered)?;
+        drop(scope);
         ensure!(native_started, "CATALOG_ENSEMBLE_EVALUATION_EMPTY");
         // Only pending native commands advance beyond the final observed frame.
         // Clock events provide no extra prices, quantities or fee observations.
@@ -841,7 +855,7 @@ pub fn replay(
             .check()?;
         let consumed = inbox.borrow().consumed + status.borrow().consumed;
         let simulation = crate::simulation::catalog_simulation_result(
-            &engine,
+            &mut engine,
             settings,
             request.evaluation_start_ns.get(),
             request.event_end_ns.get(),
@@ -849,9 +863,7 @@ pub fn replay(
             fees.as_ref().context("CATALOG_ENSEMBLE_SOURCE_REQUIRED")?,
         )?;
         Ok(NativeCatalogEnsembleResultV1 { schema_version: SchemaV1, source: request.source.clone(), revision: request.revision.clone(),
-            catalog_series: counter(u64::try_from(scope.len())?)?,
-            observed_markets: counter(u64::try_from(policy.observed_markets())?)?, bars: counter(policy.observations())?, source_records: counter(records)?,
-            consumed_fuel: policy.consumed_fuel().into_iter().map(|fuel| fuel.map(counter).transpose()).collect::<Result<_>>()?, simulation,
+            catalog_series, observed_markets, bars, source_records, consumed_fuel, simulation,
             assumptions: vec![
                 "CONDITIONAL_RESEARCH_NOT_VERIFIED_HISTORICAL_EXECUTION".into(),
                 "CurrencyPair share-price proxy; one native MARGIN account, leverage 1, long-only and target gross bounded by original request; no physical cash-token inventory claim".into(),
@@ -864,6 +876,8 @@ pub fn replay(
                 "All positive current scores participate in dynamic normalization; only markets with current real BARs can rebalance, and other native holdings retain their original last real marks".into(),
             ] })
     })();
-    engine.dispose();
+    if result.is_err() {
+        engine.dispose();
+    }
     result
 }

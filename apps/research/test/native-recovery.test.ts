@@ -26,6 +26,43 @@ function textResult(transcript: { messages: readonly unknown[] }, name: string):
   return JSON.parse(toolText(transcript, name)) as JsonObject;
 }
 
+test('native exit status persists from the original child to the failed trial and reopen', { timeout: 15_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-exit-diagnostic-')); const binary = join(directory, 'job.mjs');
+  const previous = process.env.QZ_JOB_BINARY;
+  await writeFile(binary, `#!${process.execPath}\nfor await (const chunk of process.stdin) {}\nprocess.stderr.write('catalog_ensemble: partition=2/909 observations=20 markets=3\\n'); process.exit(137);\n`, { mode: 0o700 });
+  process.env.QZ_JOB_BINARY = binary;
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  const data = { catalog: directory, request }; const model = '(module)';
+  const compute = defineExtension({ name: 'test.exit-failure', tasks: [FactorTask], tools: [defineTool({
+    name: 'compute', description: 'Controlled original process exit', parameters: Type.Object({}), replay: 'safe',
+    execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model, hypothesis: 'Original failed process' }, () => runFactor(api, ctx, model, data))); },
+  })] });
+  const options = { database: join(directory, 'original.sqlite'), models, extensions: [compute] };
+  faux.setResponses([tool('compute'), fauxAssistantMessage('Original failure retained.')]);
+  let host = await openResearch(options);
+  try {
+    const input = { goal: 'Protocol-only process exit', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
+    const receipt = await host.start('original-process-exit', input);
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const study = (await host.state(receipt.conversationId)).research!;
+    assert.equal(study.trials.length, 1); assert.equal(study.trials[0]!.status, 'FAILED');
+    const detail = study.trials[0]!.errorDetail as JsonObject;
+    assert.equal(detail.exitCode, 137); assert.equal(detail.operation, 'evaluate-factor'); assert.equal(detail.stage, 'execute');
+    const children = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context);
+    assert.equal(children.items.length, 1);
+    const child = children.items[0]!;
+    assert.equal(child.state.outcome!.status, 'failed');
+    if (child.state.outcome?.status === 'failed') assert.deepEqual(child.state.outcome.error.detail, detail);
+    await host.close(); host = await openResearch(options);
+    assert.deepEqual((await host.state(receipt.conversationId)).research, study);
+    assert.deepEqual(await host.start('original-process-exit', input), receipt);
+    assert.equal(faux.state.callCount, 2);
+  } finally {
+    await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('actual WABT parser detail reaches model failure feedback and original-trial reads without another attempt', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-wat-diagnostic-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);

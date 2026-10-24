@@ -7,4 +7,5 @@ export interface ExecutionErrorDetail {
   action: string;
   operation?: string;
   stage?: 'compile' | 'execute' | 'decode' | 'validate';
+  exitCode?: number;
 }

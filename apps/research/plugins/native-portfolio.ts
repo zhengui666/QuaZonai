@@ -23,6 +23,7 @@ export async function executeNative(binary: string, command: string, input: Json
   const env = new NodeExecutionEnv({ cwd: directory });
   const stdout = new JsonReader(); let parseError: unknown; let stderr = '';
   let stage: 'execute' | 'decode' = 'execute';
+  let exitCode: number | undefined;
   try {
     const result = getOrThrow(await env.exec([
       'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
@@ -32,11 +33,12 @@ export async function executeNative(binary: string, command: string, input: Json
         else if (parseError === undefined) { try { stdout.write(chunk); } catch (error) { parseError = error; } }
       },
     }, context));
-    if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
+    exitCode = result.exitCode;
+    if (exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
     stage = 'decode';
     if (parseError !== undefined) throw parseError;
     return object(stdout.finish(), 'native_result');
-  } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
+  } catch (error) { throw new ExecutionFailure(error, { operation: command, stage, exitCode }); }
   finally { await env.cleanup(withoutAbortSignal(context)); }
 }
 
