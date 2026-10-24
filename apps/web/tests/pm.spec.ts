@@ -1,8 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { ModelView } from '../../../packages/contracts/src/index.ts';
 
 // Controlled HTTP presentation and original-command protocol. These fixtures
 // deliberately establish no investment performance, model quality or capacity.
-async function pmTransport(page: Page, needsClarification = false, forward = false) {
+async function pmTransport(page: Page, needsClarification = false, forward = false, fast = false) {
+  const standard: ModelView = { provider: 'test', modelId: 'test-model', name: '测试模型', reasoning: true, thinkingLevels: ['max'], effectiveThinkingLevel: 'max', serviceTiers: [] };
+  const subscription: ModelView = { provider: 'openai-codex', modelId: 'test-subscription', name: '订阅模型', reasoning: true, thinkingLevels: ['medium', 'high', 'max'], effectiveThinkingLevel: 'medium', serviceTiers: ['default', 'priority'] };
+  const preferred = fast ? subscription : standard;
   const writes: { path: string; raw: string }[] = []; let starts = 0; let revision = '9007199254740993'; let clarified = !needsClarification; let clarifications = 0;
   const view = () => ({
     mandate: { id: 'mandate:test/opaque', revision, ownerGoal: '测试目标：比较净收益与下行风险', baseCurrency: 'USD', operatingAuthority: forward ? 'AUTHORIZED_TARGETS' : 'RESEARCH_ONLY', unresolvedIntent: clarified ? [] : ['请明确杠杆边界'] },
@@ -22,8 +26,8 @@ async function pmTransport(page: Page, needsClarification = false, forward = fal
     if (req.method() === 'POST') writes.push({ path, raw: req.postData()! });
     if (path === '/session') return reply({ setupRequired: false, authenticated: true });
     if (path === '/datasets') return reply([{ id: 'data:test', name: '测试数据', currency: 'USD', assetClass: 'equity', source: 'test', start: null, end: null, ready: true }]);
-    if (path === '/research/models') return reply([{ provider: 'test', modelId: 'test-model', name: '测试模型', reasoning: true, thinkingLevels: ['max'] }]);
-    if (path === '/settings') return reply({ defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'max', serviceTier: null });
+    if (path === '/research/models') return reply(fast ? [standard, subscription] : [standard]);
+    if (path === '/settings') return reply({ defaultModel: { provider: preferred.provider, modelId: preferred.modelId }, thinkingLevel: 'max', serviceTier: fast ? 'priority' : null });
     if (path === '/observations') return reply([]);
     if (path === '/mandates') {
       if (req.method() === 'POST') { if (++starts === 1) return route.abort('failed'); return reply(view(), 202); }
@@ -41,22 +45,49 @@ async function pmTransport(page: Page, needsClarification = false, forward = fal
 }
 
 test('PM intake preserves one original request after a lost response, without asking for factor weights or capital grids', async ({ page }) => {
-  const state = await pmTransport(page); await page.goto('/#/pm/new');
+  const state = await pmTransport(page, false, false, true); await page.goto('/#/pm/new');
   await page.getByLabel('投资目标', { exact: true }).fill('希望按净收益优先比较，不虚构流动性。');
   await page.getByLabel('研究本金', { exact: true }).fill('3000.000000000000000001');
   await page.getByLabel('研究试验预算', { exact: true }).fill('12');
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast');
+  await choose(page, '推理强度', '高'); await choose(page, '推理速度', '标准');
+  await page.reload();
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('高');
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('标准');
   await page.getByRole('button', { name: '开始研究' }).click();
   await expect(page.getByRole('button', { name: '核对原提交' })).toBeVisible();
   expect(state.writes).toHaveLength(1);
   const original = JSON.parse(state.writes[0]!.raw);
   expect(original.funding.capital.amount).toBe('3000.000000000000000001');
   expect(original.businessPreference).toBe('FRONTIER');
+  expect(original).toMatchObject({ model: { provider: 'openai-codex', modelId: 'test-subscription' }, thinkingLevel: 'high', serviceTier: 'default' });
   expect(original).not.toHaveProperty('weights'); expect(original).not.toHaveProperty('capitalGrid');
   await page.reload();
   await expect(page.getByLabel('投资目标', { exact: true })).toHaveValue(original.goal);
+  await expect(page.getByLabel('推理强度', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '核对原提交' }).click();
   await expect(page.getByRole('heading', { name: '当前研究结论' })).toBeVisible();
   expect(state.writes).toHaveLength(2); expect(state.writes[1]!.raw).toBe(state.writes[0]!.raw);
+});
+
+async function choose(page: Page, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
+
+test('PM switching model clears unsupported speed and resets strength before freezing the command', async ({ page }) => {
+  const state = await pmTransport(page, false, false, true); await page.goto('/#/pm/new');
+  await choose(page, '推理强度', '高'); await choose(page, '研究模型', '测试模型 / test');
+  await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled();
+  await expect(page.getByText('当前模型服务不支持速度配置', { exact: true })).toBeVisible();
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
+  await page.getByLabel('投资目标', { exact: true }).fill('使用当前模型的可用能力');
+  await page.getByLabel('研究本金', { exact: true }).fill('3000');
+  await page.getByLabel('研究试验预算', { exact: true }).fill('1');
+  await page.getByRole('button', { name: '开始研究' }).click();
+  await expect(page.getByRole('button', { name: '核对原提交' })).toBeVisible();
+  const original = JSON.parse(state.writes[0]!.raw);
+  expect(original).toMatchObject({ model: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'max' });
+  expect(original).not.toHaveProperty('serviceTier');
 });
 
 test('PM clarification retains the exact owner statement and original command through lost response and reload', async ({ page }) => {

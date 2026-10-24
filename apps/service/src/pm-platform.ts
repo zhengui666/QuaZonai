@@ -44,7 +44,7 @@ import { verifyOriginalPrefix } from './pm-science.ts';
 const context = BACKGROUND_CONTEXT;
 type Work = ReturnType<typeof workbench>;
 type Dependencies = { host: ResearchHost; work: Work };
-const supportedKeys = new Set(['requestId', 'goal', 'datasetId', 'funding', 'model', 'maxTrials', 'operatingAuthority', 'businessPreference']);
+const supportedKeys = new Set(['requestId', 'goal', 'datasetId', 'funding', 'model', 'thinkingLevel', 'serviceTier', 'maxTrials', 'operatingAuthority', 'businessPreference']);
 /** Two original factors, one fit and one joint validation must remain searchable. */
 export const downstreamTrialReservation = (total: number) => total >= 8 ? Math.min(6, Math.max(4, Math.floor(total / 2))) : 0;
 export function mandateStart(value: unknown): Pm.PmMandateStart {
@@ -53,6 +53,8 @@ export function mandateStart(value: unknown): Pm.PmMandateStart {
   text(body.requestId, 'request_id'); text(body.goal, 'goal'); text(body.datasetId, 'dataset_id');
   if (!Number.isSafeInteger(body.maxTrials) || Number(body.maxTrials) < 1) throw new Problem('max_trials_invalid');
   const model = object(body.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
+  if (body.thinkingLevel !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(String(body.thinkingLevel))) throw new Problem('invalid_thinking_level');
+  if (body.serviceTier !== undefined && !['default', 'priority'].includes(String(body.serviceTier))) throw new Problem('invalid_service_tier');
   if (body.businessPreference !== undefined && !['NET_RETURN', 'DOWNSIDE_FIRST', 'FRONTIER'].includes(String(body.businessPreference))) throw new Problem('business_preference_invalid');
   if (body.operatingAuthority !== undefined && !['RESEARCH_ONLY', 'SHADOW_TARGETS', 'AUTHORIZED_TARGETS'].includes(String(body.operatingAuthority))) throw new Problem('operating_authority_invalid');
   const funding = object(body.funding, 'funding');
@@ -420,6 +422,8 @@ export function createPmPlatform(config: ServiceConfig) {
         try {
           const receipt = await work.startResearch({ requestId: `pm:${campaign.id}`, input: {
             goal: record.input.goal, model: record.input.model, data: configured.data,
+            ...(record.input.thinkingLevel !== undefined ? { thinkingLevel: record.input.thinkingLevel } : {}),
+            ...(record.input.serviceTier !== undefined ? { serviceTier: record.input.serviceTier } : {}),
             policy: { ...configured.policy, max_trials: researchAllowance, ...(configured.strategy ? { strategy: configured.strategy } : {}) }, campaign: binding,
           } });
           await runtime.commit(async tx => {
@@ -657,6 +661,15 @@ export function createPmPlatform(config: ServiceConfig) {
     const replay = pmState(await dependencies.host.harness.snapshot(PmDocument, context)).commands[`mandate:${input.requestId}`];
     if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return get(replay.mandateId); }
     const configured = config.datasets.find(item => item.id === input.datasetId); if (!configured) throw new Problem('dataset_not_found', 404);
+    const selectedModel = (await dependencies.host.availableModels(input.model.provider)).find(model => model.modelId === input.model.modelId);
+    if (!selectedModel) throw new Problem('model_unavailable', 409);
+    const preferences = await dependencies.work.getSettings();
+    const preferredModel = preferences.defaultModel?.provider === input.model.provider && preferences.defaultModel?.modelId === input.model.modelId;
+    input.thinkingLevel ??= (preferredModel ? preferences.thinkingLevel : null) ?? selectedModel.effectiveThinkingLevel;
+    const serviceTier = input.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
+    if (serviceTier !== null && serviceTier !== undefined) input.serviceTier = serviceTier;
+    if (!selectedModel.thinkingLevels.includes(input.thinkingLevel)) throw new Problem('thinking_level_unsupported');
+    if (input.serviceTier !== undefined && !selectedModel.serviceTiers.includes(input.serviceTier)) throw new Problem('service_tier_unsupported');
     const source = await readSourceRevision(configured); if (source) configured.data = source.configured.data;
     const id = await dependencies.host.harness.commit(async tx => {
       const state = pmState(await tx.doc(PmDocument)); const key = `mandate:${input.requestId}`; const replay = state.commands[key];
