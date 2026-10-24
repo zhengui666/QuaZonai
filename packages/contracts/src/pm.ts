@@ -1,5 +1,5 @@
 /** PM domain contracts. Existing numeric research/runtime APIs retain their original identities. */
-import type { Json, ModelRef } from './index.ts';
+import type { Json, ModelRef, ServiceTier, ThinkingLevel } from './index.ts';
 
 export type Id = string;
 export type Decimal = string;
@@ -822,6 +822,8 @@ export interface PmMandateStart {
   datasetId: string;
   funding: MandateRevision['capitalSource'];
   model: ModelRef;
+  thinkingLevel?: ThinkingLevel;
+  serviceTier?: ServiceTier;
   maxTrials: number;
   operatingAuthority?: MandateRevision['operatingAuthority'];
   businessPreference?: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER';

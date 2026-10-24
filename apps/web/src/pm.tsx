@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Form, Input, InputNumber, Select, Table, Tabs } from 'antd';
 import { ArrowLeftIcon, ArrowRightIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { DatasetView, ModelView, ObservationView, SettingsView } from '../../../packages/contracts/src/index.ts';
+import type { DatasetView, ModelView, ObservationView, ServiceTier, SettingsView, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
 import type { AssetTarget, CapacityEstimate, MetricObservation, ModeledOperatingComparison, PmMandateStart, PmMandateView, PortfolioDecision } from '../../../packages/contracts/src/pm.ts';
 import { decimalUnits, draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
 import { useResource } from './data-hooks';
@@ -41,33 +41,46 @@ function Mandates() {
     ]} />}
   </div>;
 }
-interface MandateForm { goal: string; datasetId: string; fundingKind: 'RESEARCH_SCENARIO' | 'ACCOUNT'; capital: string; accountBindingId?: string; model: string; maxTrials: number; businessPreference: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER'; operatingAuthority: NonNullable<PmMandateStart['operatingAuthority']> }
+const thinkingLabels: Record<ThinkingLevel, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
+interface MandateForm { goal: string; datasetId: string; fundingKind: 'RESEARCH_SCENARIO' | 'ACCOUNT'; capital: string; accountBindingId?: string; model: string; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; maxTrials: number; businessPreference: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER'; operatingAuthority: NonNullable<PmMandateStart['operatingAuthority']> }
 function NewMandate() {
   const datasets = useResource<DatasetView[]>('/datasets'); const models = useResource<ModelView[]>('/research/models'); const settings = useResource<SettingsView>('/settings');
   const observations = useResource<ObservationView[]>('/observations'); const [form] = Form.useForm<MandateForm>(); const [saved, setSaved] = useState(draftIsPersisted('pm'));
   const command = useCommand<PmMandateView>('mandates', result => { removeDraft('pm'); navigate(`/pm/${encodeURIComponent(result.mandate.id)}`); }, '/mandates');
   const original = command.values as unknown as PmMandateStart | undefined;
+  const initialized = useRef(false); const [thinkingChanged, setThinkingChanged] = useState(false);
+  const [draft] = useState(() => readDraft<Partial<MandateForm>>('pm'));
   const datasetId = Form.useWatch('datasetId', form); const fundingKind = Form.useWatch('fundingKind', form);
+  const selectedModelKey = Form.useWatch('model', form); const thinkingLevel = Form.useWatch('thinkingLevel', form); const serviceTier = Form.useWatch('serviceTier', form);
+  const selectedModel = models.data?.find(row => `${row.provider}:${row.modelId}` === selectedModelKey);
+  const modelOptions = models.data?.map(row => ({ value: `${row.provider}:${row.modelId}`, label: `${row.name} / ${row.provider}` })) ?? [];
+  if (selectedModelKey && !modelOptions.some(row => row.value === selectedModelKey)) modelOptions.push({ value: selectedModelKey, label: `${selectedModelKey} / 当前不可用` });
   const dataset = datasets.data?.find(row => row.id === datasetId);
+  const preferences = (model: ModelView) => {
+    const isDefault = model.provider === settings.data?.defaultModel?.provider && model.modelId === settings.data.defaultModel.modelId;
+    return { thinkingLevel: isDefault ? settings.data?.thinkingLevel ?? model.effectiveThinkingLevel : model.effectiveThinkingLevel, serviceTier: isDefault ? settings.data?.serviceTier ?? undefined : undefined };
+  };
   useEffect(() => {
-    if (original) form.setFieldsValue({ goal: original.goal, datasetId: original.datasetId, model: `${original.model.provider}:${original.model.modelId}`, maxTrials: original.maxTrials,
+    if (initialized.current || !datasets.data || !models.data || !settings.data) return;
+    initialized.current = true;
+    if (original) form.setFieldsValue({ goal: original.goal, datasetId: original.datasetId, model: `${original.model.provider}:${original.model.modelId}`, thinkingLevel: original.thinkingLevel, serviceTier: original.serviceTier, maxTrials: original.maxTrials,
       fundingKind: original.funding.kind, businessPreference: original.businessPreference ?? 'FRONTIER', operatingAuthority: original.operatingAuthority ?? 'RESEARCH_ONLY', ...(original.funding.kind === 'RESEARCH_SCENARIO' ? { capital: original.funding.capital.amount } : { accountBindingId: original.funding.accountBindingId }) });
-    else { const draft = readDraft<Partial<MandateForm>>('pm'); if (draft) form.setFieldsValue(draft); }
-  }, [form, original]);
-  useEffect(() => {
-    if (!form.getFieldValue('datasetId') && datasets.data?.length === 1) form.setFieldValue('datasetId', datasets.data[0]!.id);
-    if (!form.getFieldValue('model') && models.data?.length) {
-      const preferred = models.data.find(row => row.provider === settings.data?.defaultModel?.provider && row.modelId === settings.data?.defaultModel?.modelId) ?? (models.data.length === 1 ? models.data[0] : undefined);
-      if (preferred) form.setFieldValue('model', `${preferred.provider}:${preferred.modelId}`);
+    else {
+      const preferred = draft?.model ? models.data.find(row => `${row.provider}:${row.modelId}` === draft.model) : models.data.find(row => row.provider === settings.data!.defaultModel?.provider && row.modelId === settings.data!.defaultModel?.modelId) ?? (models.data.length === 1 ? models.data[0] : undefined);
+      form.setFieldsValue({ ...(datasets.data.length === 1 ? { datasetId: datasets.data[0]!.id } : {}), ...(preferred ? { model: `${preferred.provider}:${preferred.modelId}`, ...preferences(preferred) } : {}), ...draft });
     }
-  }, [datasets.data, models.data, settings.data, form]);
+  }, [datasets.data, models.data, settings.data, original, form]);
+  useEffect(() => {
+    if (!command.pending && selectedModel && thinkingLevel && !selectedModel.thinkingLevels.includes(thinkingLevel)) { form.setFieldValue('thinkingLevel', undefined); setThinkingChanged(true); setSaved(saveDraft('pm', form.getFieldsValue())); }
+    if (!command.pending && selectedModel && serviceTier && !selectedModel.serviceTiers.includes(serviceTier)) { form.setFieldValue('serviceTier', undefined); setSaved(saveDraft('pm', form.getFieldsValue())); }
+  }, [selectedModel, thinkingLevel, serviceTier, command.pending, form]);
   return <div className="authoring-page pm-authoring"><a className="text-link back-link" href={href('/pm')}><ArrowLeftIcon size={14} />投资决策</a><div className="authoring-heading"><h1>创建投资目标</h1></div>
     <p className="pm-introduction">描述资金与账户配置希望实现的业务结果。因子成员、比例、资本试验点与容量由系统计算和记录。<a href={href('/research/new')}>独立因子研究</a>也可单独开展。</p>
     <ErrorNotice error={datasets.error ?? models.error ?? settings.error} retry={() => { void datasets.refetch(); void models.refetch(); void settings.refetch(); }} />
-    {datasets.isPending || models.isPending ? <Loading /> : <Form<MandateForm> form={form} layout="vertical" initialValues={{ fundingKind: 'RESEARCH_SCENARIO', businessPreference: 'FRONTIER', operatingAuthority: 'RESEARCH_ONLY' }} disabled={!!command.pending || command.busy}
+    {datasets.isPending || models.isPending || settings.isPending ? <Loading /> : !datasets.data || !models.data || !settings.data ? null : <Form<MandateForm> form={form} layout="vertical" initialValues={{ fundingKind: 'RESEARCH_SCENARIO', businessPreference: 'FRONTIER', operatingAuthority: 'RESEARCH_ONLY' }} disabled={!!command.pending || command.busy}
       onValuesChange={(_changed, value) => { if (!command.pending) setSaved(saveDraft('pm', value)); }} onFinish={value => {
         const split = value.model.indexOf(':'); if (split < 1 || !dataset) return;
-        void command.submit({ goal: value.goal, datasetId: value.datasetId, model: { provider: value.model.slice(0, split), modelId: value.model.slice(split + 1) }, maxTrials: value.maxTrials,
+        void command.submit({ goal: value.goal, datasetId: value.datasetId, model: { provider: value.model.slice(0, split), modelId: value.model.slice(split + 1) }, ...(value.thinkingLevel ? { thinkingLevel: value.thinkingLevel } : {}), ...(value.serviceTier ? { serviceTier: value.serviceTier } : {}), maxTrials: value.maxTrials,
           businessPreference: value.businessPreference, operatingAuthority: value.operatingAuthority, funding: value.fundingKind === 'ACCOUNT' ? { kind: 'ACCOUNT', accountBindingId: value.accountBindingId } : { kind: 'RESEARCH_SCENARIO', capital: { amount: value.capital, currency: dataset.currency } } });
       }}>
       <PendingCommand command={command} />
@@ -77,7 +90,9 @@ function NewMandate() {
       <Form.Item name="fundingKind" label="资金来源"><Select options={[{ value: 'RESEARCH_SCENARIO', label: '研究资金场景' }, { value: 'ACCOUNT', label: '已有观测账户' }]} /></Form.Item>
       <Form.Item name="operatingAuthority" label="运行范围" extra="目标更新需要独立评估、当前账户和执行证据全部满足；系统不会发送券商订单。"><Select options={[{ value: 'RESEARCH_ONLY', label: '研究与比较' }, { value: 'SHADOW_TARGETS', label: '研究并观察影子目标' }, { value: 'AUTHORIZED_TARGETS', label: '条件满足后更新已有账户目标' }]} /></Form.Item>
       {fundingKind === 'ACCOUNT' ? <><ErrorNotice error={observations.error} retry={() => { void observations.refetch(); }} /><Form.Item name="accountBindingId" label="观测账户" rules={[{ required: true, message: '请选择已有账户绑定' }]}><Select options={observations.data?.map(row => ({ value: row.id, label: `${row.name} / ${row.currency}` }))} /></Form.Item></> : <Form.Item name="capital" label="研究本金" rules={[{ required: true, message: '请输入研究本金' }, { validator: (_rule, value: string) => !value || (decimalUnits(value) ?? 0n) > 0n ? Promise.resolve() : Promise.reject(new Error('请输入精确正金额，最多18位小数')) }]}><Input inputMode="decimal" suffix={dataset?.currency} /></Form.Item>}
-      <Form.Item name="model" label="研究模型" rules={[{ required: true, message: '请选择可用模型' }]}><Select options={models.data?.map(row => ({ value: `${row.provider}:${row.modelId}`, label: row.name }))} /></Form.Item>
+      <Form.Item name="model" label="研究模型" rules={[{ required: true, message: '请选择可用模型' }, { validator: (_rule, value: string) => !value || models.data?.some(row => `${row.provider}:${row.modelId}` === value) ? Promise.resolve() : Promise.reject(new Error('所选模型不可用，请重新选择')) }]}><Select showSearch optionFilterProp="label" options={modelOptions} onChange={value => { const model = models.data?.find(row => `${row.provider}:${row.modelId}` === value); form.setFieldsValue(model ? preferences(model) : { thinkingLevel: undefined, serviceTier: undefined }); setThinkingChanged(false); setSaved(saveDraft('pm', form.getFieldsValue())); }} /></Form.Item>
+      <Form.Item name="thinkingLevel" label="推理强度" extra={thinkingChanged ? '原推理强度不可用，请重新选择' : undefined} rules={[{ required: !!selectedModel, message: '请选择推理强度' }]}><Select disabled={!selectedModel || !!command.pending || command.busy} options={selectedModel?.thinkingLevels.map(value => ({ value, label: thinkingLabels[value] }))} onChange={() => setThinkingChanged(false)} /></Form.Item>
+      <Form.Item name="serviceTier" label="推理速度" extra={selectedModel && !selectedModel.serviceTiers.length ? '当前模型服务不支持速度配置' : undefined}><Select allowClear disabled={!selectedModel?.serviceTiers.length || !!command.pending || command.busy} placeholder={!selectedModel ? '先选择模型' : selectedModel.serviceTiers.length ? '使用默认速度' : '由模型服务决定'} options={selectedModel?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : '标准' }))} /></Form.Item>
       <Form.Item name="maxTrials" label="研究试验预算" rules={[{ required: true, message: '请给出本轮可投入的试验次数' }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item>
       <ErrorNotice error={command.error} /><DraftNotice saved={saved || !!command.pending} />
       <div className="form-actions"><Button disabled={false} onClick={() => navigate('/pm')}>返回</Button>{command.pending ? <Button type="primary" loading={command.busy} disabled={command.busy} onClick={() => { void command.submit(); }}>核对原提交</Button> : <Button type="primary" htmlType="submit">开始研究 <ArrowRightIcon size={15} /></Button>}</div>

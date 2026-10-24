@@ -229,21 +229,21 @@ test('portfolio exact inputs, native curve data, target-only observation, explic
 
 test('subscription speed and max defaults are saved, inherited and preserved on research retry', async ({ page }) => {
   const state = await contract(page, false, true); await page.goto('/#/settings');
-  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('模型速度', { exact: true }) })).toContainText('Fast');
-  await choose(page, '推理强度', '最高'); await choose(page, '模型速度', '标准'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast');
+  await choose(page, '推理强度', '最高'); await choose(page, '推理速度', '标准'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
   expect(JSON.parse(state.writes.find(write => write.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.4' }, thinkingLevel: 'max', serviceTier: 'default' });
   await page.goto('/#/research/new'); await mandate(page, '订阅速度研究'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('3');
-  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('模型速度', { exact: true }) })).toContainText('标准'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
-  await choose(page, '模型速度', 'Fast'); await expect(page.locator('.submission-preview')).toContainText('Fast'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
+  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('标准'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
+  await choose(page, '推理速度', 'Fast'); await expect(page.locator('.submission-preview')).toContainText('Fast'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
   const original = state.writes.find(write => write.path === '/research')!.raw!; expect(JSON.parse(original)).toMatchObject({ thinkingLevel: 'max', serviceTier: 'priority' });
-  await page.reload(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('模型速度', { exact: true }) })).toContainText('Fast'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '订阅速度研究', exact: true, level: 1 })).toBeVisible();
+  await page.reload(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '订阅速度研究', exact: true, level: 1 })).toBeVisible();
   expect(state.writes.filter(write => write.path === '/research').map(write => write.raw)).toEqual([original, original]); await page.getByRole('tab', { name: '输入与执行', exact: true }).click(); await expect(page.locator('.input-content')).toContainText('Fast');
 });
 
 test('switching to a model without speed options clears subscription speed', async ({ page }) => {
-  const state = await contract(page, false, true); await page.goto('/#/settings'); await choose(page, '默认模型', '测试模型 / test'); await expect(page.getByLabel('模型速度', { exact: true })).toHaveCount(0);
+  const state = await contract(page, false, true); await page.goto('/#/settings'); await choose(page, '默认模型', '测试模型 / test'); await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled(); await expect(page.getByText('当前模型服务不支持速度配置', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/settings')!.raw!).serviceTier).toBeNull();
-  await page.goto('/#/research/new'); await choose(page, '模型', '订阅模型 / openai-codex'); await choose(page, '模型速度', 'Fast'); await choose(page, '模型', '测试模型 / test'); await expect(page.getByLabel('模型速度', { exact: true })).toHaveCount(0);
+  await page.goto('/#/research/new'); await choose(page, '模型', '订阅模型 / openai-codex'); await choose(page, '推理速度', 'Fast'); await choose(page, '模型', '测试模型 / test'); await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled(); await expect(page.getByText('当前模型服务不支持速度配置', { exact: true })).toBeVisible();
   await mandate(page, '标准模型研究'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('1'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/research')!.raw!)).not.toHaveProperty('serviceTier');
 });
 
