@@ -19,7 +19,9 @@ First classify the operation: a read, a locally rejected request, a server rejec
 
 For commands that carry `requestId` (such as research start, portfolio build or observation start), uncertain replay uses the unchanged original file and ID. `research resume` instead identifies the original conversation and preceding terminal submission: retain both numeric IDs and the returned `previousSubmissionId`/new `submissionId`; do not supply an invented recovery key or use the conversation ID as the submission ID. Inspect diagnostics before choosing which terminal submission to resume. Existing continuation authorization still applies; a recovered receipt does not require another confirmation.
 
-Commands without a request ID, such as stop, settings or extension changes, do not gain idempotency merely because the CLI can repeat them. Read the original resource/current state and reconcile the intended effect before another write. For a known rejected request that needs a changed body, explain the correction and treat it as a separate authorized operation; never mutate the preserved request used to resolve an unknown outcome.
+The delete commands are a separate idempotent contract: retain the original kind/ID and replay only that exact delete to recover its original receipt after an unknown response. See [deletion](deletion.md) for list/read-back and dependency checks.
+
+Other commands without a request ID, such as stop, settings or extension changes, do not gain idempotency merely because the CLI can repeat them. Read the original resource/current state and reconcile the intended effect before another write. For a known rejected request that needs a changed body, explain the correction and treat it as a separate authorized operation; never mutate the preserved request used to resolve an unknown outcome.
 
 Keep only approved nonsecret original requests, resource IDs and receipts. Never edit native SQLite, clear budgets/trials/exposures, rediscover credential files or create a replacement task loop.
 

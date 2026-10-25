@@ -13,8 +13,8 @@ export function factorReference(id: string) {
   if (!match || match.slice(1).some(value => !Number.isSafeInteger(Number(value)))) throw new Problem('factor_id_invalid');
   return { researchId: Number(match[1]), trialId: Number(match[2]), memberIndex: Number(match[3]) };
 }
-export function factorViews(id: number, study: { input: import('../../research/src/documents.ts').ResearchInput | null; trials: import('@earendil-works/pi-durable').JsonObject[]; final: import('@earendil-works/pi-durable').JsonObject | null }, admissions?: ResearchAdmissions, requestId?: string): FactorView[] {
-  const input = study.input; if (!input) return [];
+export function factorViews(id: number, study: { input: import('../../research/src/documents.ts').ResearchInput | null; deletedAt?: string; deletedFactors?: Record<string, string>; trials: import('@earendil-works/pi-durable').JsonObject[]; final: import('@earendil-works/pi-durable').JsonObject | null }, admissions?: ResearchAdmissions, requestId?: string): FactorView[] {
+  const input = study.input; if (!input || study.deletedAt) return [];
   const admission = requestId ? admissions?.[`request:${requestId}`] : undefined;
   const dataset = admission?.dataset;
   const strategy = input.policy.strategy ? object(input.policy.strategy) : null;
@@ -43,7 +43,7 @@ export function factorViews(id: number, study: { input: import('../../research/s
         datasetId: typeof dataset?.id === 'string' ? dataset.id : null, currency: typeof dataset?.currency === 'string' ? dataset.currency : typeof (simulationSettings as Record<string, unknown> | undefined)?.base_currency === 'string' ? String((simulationSettings as Record<string, unknown>).base_currency) : null,
         market: Array.isArray(proposal.allocations) ? proposal.allocations.map(item => String(object(item).instrumentId)) : [proposal.instrumentId ?? strategy?.instrumentId].filter((item): item is string => typeof item === 'string'),
         status: String(trial.status), ...(input.specification?.capital ? { capacityAssumptions: input.specification.capital } : {}), evidence, metrics: measured, criterion: criterion ?? null, combinable: reason === null, reason };
-    });
+    }).filter(member => !study.deletedFactors?.[member.id]);
   });
 }
 export async function listFactors(host: ResearchHost, admissions?: ResearchAdmissions) {

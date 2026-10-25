@@ -14,7 +14,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   schema list [--domain] | schema show NAME [--domain]
   datasets | usage
   maintenance status | enter --file ORIGINAL_REQUEST.json | resume --file ORIGINAL_REQUEST.json
-  pm list | get ID | decision ID | history ID | events ID | capabilities
+  pm list | get ID | delete ID | decision ID | history ID | events ID | capabilities
   pm start --file MANDATE.json | recompute ID --file ORIGINAL_COMMAND.json
   pm retire ID --file ORIGINAL_COMMAND.json | cycle ID | capacity ID
   pm targets ID --file ORIGINAL_COMMAND.json | refresh-data ID --file ORIGINAL_COMMAND.json
@@ -22,13 +22,13 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   campaign start --file REQUEST.json | get ID | trials ID | compare ID
   campaign close ID --file COMMAND.json | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
-  research models | list [--cursor JSON] | get ID | stop ID
+  research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
   research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
-  factor list | get ID | capacity ID [--file ASSUMPTIONS.json]
-  portfolio build --file REQUEST.json | list | get ID
+  factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
+  portfolio build --file REQUEST.json | list | get ID | delete ID
   portfolio capacity ID --file ASSUMPTIONS.json
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
@@ -37,6 +37,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
+Delete hides an inactive object; original evidence and receipts remain. It never cancels remote work or liquidates positions.
 Paper/live bind an observed account, never launch trading. 'client' is a thin alias.
 `;
 const options = {
@@ -125,6 +126,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
   } else if (group === 'pm') {
     if (action === 'list') path = '/mandates';
     else if (action === 'capabilities') path = '/capabilities';
+    else if (action === 'delete') { method = 'DELETE'; path = `/mandates/${resourceId(id)}`; }
     else if (action === 'start') {
       const file = await fileBody(values.file); requestId(file.body, values['request-id']);
       method = 'POST'; path = '/mandates'; body = file.bytes;
@@ -157,9 +159,10 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     else if (action === 'list') {
       if (values.cursor) object(JSON.parse(values.cursor));
       path = `/research${values.cursor ? `?cursor=${encodeURIComponent(values.cursor)}` : ''}`;
-    } else if (['get', 'watch', 'wait', 'stop', 'diagnostics', 'resume'].includes(action)) {
+    } else if (['get', 'watch', 'wait', 'stop', 'diagnostics', 'resume', 'delete'].includes(action)) {
       path = `/research/${researchId(id)}`;
       if (action === 'stop') { method = 'POST'; path += '/stop'; }
+      if (action === 'delete') method = 'DELETE';
       if (action === 'diagnostics') path += '/diagnostics';
       if (action === 'resume') {
         const submissionId = researchId(values['submission-id']);
@@ -176,8 +179,9 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     } else if (action !== 'status') throw new CliError('unknown_maintenance_command');
   } else if (group === 'factor') {
     if (action === 'list') path = '/factors';
-    else if (action === 'get' || action === 'capacity') path = `/factors/${resourceId(id)}${action === 'capacity' ? '/capacity' : ''}`;
+    else if (action === 'get' || action === 'capacity' || action === 'delete') path = `/factors/${resourceId(id)}${action === 'capacity' ? '/capacity' : ''}`;
     else throw new CliError('unknown_factor_command');
+    if (action === 'delete') method = 'DELETE';
     if (action === 'capacity' && values.file) {
       const file = await fileBody(values.file);
       try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
@@ -190,7 +194,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (typeof input.capital !== 'string') throw new CliError('capital_decimal_string_required');
       body = file.bytes; method = 'POST'; path = '/portfolios';
     } else if (action === 'list') path = '/portfolios';
-    else if (action === 'get') path = `/portfolios/${resourceId(id)}`;
+    else if (action === 'get' || action === 'delete') { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
     else if (action === 'capacity') {
       const file = await fileBody(values.file);
       try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }

@@ -22,6 +22,7 @@ export const Application = defineDoc<{
   initial: () => ({ passwordHash: null, modelDeviceId: null, sessions: {}, settings: null, extensionEnabled: {}, researchRequests: {}, portfolios: {}, observations: {} }),
 });
 export interface PortfolioFact {
+  deletedAt?: string;
   input: PortfolioStart; view: PortfolioView;
   evidence: JsonObject[]; weights?: string[]; policy: JsonObject; native: JsonObject | null; target: JsonObject | null;
 }

@@ -13,6 +13,7 @@ import { ExecutionFailure } from './diagnostics';
 import { PortfolioCapacity, CapitalFields, capitalFields, capitalInput, type CapitalFormFields } from './capacity';
 import { AtomicPortfolioBuilder } from './portfolio-builder';
 import { FactorIdentity } from './factors';
+import { DeleteRecord } from './delete-record';
 const EquityPlot = lazy(() => import('./equity-plot'));
 export default function Portfolios({ route }: { route: Route }) { return route.creating ? (route.params.has('research') ? <PortfolioBuilder route={route} /> : <AtomicPortfolioBuilder route={route} />) : route.id ? <PortfolioDetail id={route.id} /> : <PortfolioList />; }
 function PortfolioList() {
@@ -24,7 +25,7 @@ function PortfolioList() {
 }
 function PortfolioDetail({ id }: { id: string }) {
   const query = useResource<PortfolioView>(`/portfolios/${encodeURIComponent(id)}`, { poll: 3000 }); const value = query.data;
-  return <div className="portfolio-result"><a className="text-link back-link" href={href('/portfolios')}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <Status value={value.status} />}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
+  return <div className="portfolio-result"><a className="text-link back-link" href={href('/portfolios')}><ArrowLeftIcon size={14} />组合回测</a><article className="study-document"><header className="study-heading"><div className="document-toolbar">{value && <><Status value={value.status} /><DeleteRecord key={value.id} kind="portfolio" id={value.id} /></>}</div><RecordTitle name={value?.name} fallback="组合回测" /></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : value && <div className="result-content">
     <ExecutionFailure error={value.error} detail={value.errorDetail} identity={`组合 ${value.id}${value.taskId !== null ? ` / 计算任务 #${value.taskId}` : ''}`} title="回测未完成" />
     <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
     {value.factors && <section className="result-section"><h3>原子因子与权重</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: '因子来源', render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}

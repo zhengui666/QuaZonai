@@ -30,6 +30,8 @@ export interface ModelLoginView {
   prompt: ModelAuthPrompt | null; events: ModelAuthEvent[]; error: string | null;
 }
 export interface Page<T> { items: T[]; cursor?: JsonObject }
+/** Persistent owner-visible deletion; original evidence and receipts remain retained. */
+export interface DeletionReceipt { kind: 'mandate' | 'research' | 'factor' | 'portfolio'; id: string; deletedAt: string }
 export interface Problem { error: string; message?: string }
 export interface SessionView { setupRequired: boolean; authenticated: boolean }
 export interface CapitalAssumptions { scenarios: string[]; participation: string; maximumAgeSeconds: number }

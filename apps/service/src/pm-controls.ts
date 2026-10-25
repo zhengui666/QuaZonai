@@ -6,7 +6,7 @@ import { CampaignResearchDoc } from '../../research/src/pm-campaign.ts';
 import { closeResearch } from '../../research/src/closure.ts';
 import { researchRuntime } from '../../research/src/research-runtime.ts';
 import { canonical } from '../../research/src/documents.ts';
-import { PmDocument, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
+import { PmDocument, assertPmNotDeleted, visiblePmRecord, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
 import { json, object, Problem, text } from './facts.ts';
 import { pmCapabilities } from './pm-registry.ts';
 import { assertBusinessAdmission } from './pm-maintenance.ts';
@@ -61,8 +61,9 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
   async function readResource(kind: ResourceKind, id?: string) {
     const { host } = await ready; if (kind === 'capabilities') return pmCapabilities();
     const state = pmState(await host.harness.snapshot(PmDocument, context));
-    if (kind === 'decision' || kind === 'decisions') { const record = pmRecord(state, text(id, 'mandate_id')); return kind === 'decision' ? record.decisions[record.currentDecisionId ?? ''] ?? null : Object.values(record.decisions); }
+    if (kind === 'decision' || kind === 'decisions') { const record = visiblePmRecord(state, text(id, 'mandate_id')); return kind === 'decision' ? record.decisions[record.currentDecisionId ?? ''] ?? null : Object.values(record.decisions); }
     for (const record of Object.values(state.mandates)) {
+      if (record.deletedAt) continue;
       if (kind === 'evidence' && record.evidence[id!]) {
         const reference = record.evidence[id!]!; let payload = record.artifacts[reference.objectKey] ?? null;
         if (payload?.kind === 'PM_ORIGINAL_NATIVE_EVIDENCE_REFERENCE') {
@@ -97,6 +98,7 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
     const mandateId = await host.harness.commit(async tx => {
       const state = pmState(await tx.doc(PmDocument)); const record = Object.values(state.mandates).find(item => item.campaigns[id]);
       if (!record) throw new Problem('campaign_not_found', 404);
+      assertPmNotDeleted(record);
       const key = `campaign-command:${id}:${strategyId ?? ''}:${action}:${requestId}`; const replay = state.commands[key];
       if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return record.mandate.id; }
       assertBusinessAdmission(await tx.doc(Application));
@@ -121,18 +123,19 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
         { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
       record.artifacts[key]!.taskId = taskId; state.commands[key] = { original, mandateId: record.mandate.id, resourceId: id }; return record.mandate.id;
     }, context);
-    const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(pmRecord(state, mandateId), state);
+    const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(visiblePmRecord(state, mandateId), state);
   }
   async function strategyCommand(id: string, action: 'pause' | 'resume', value: unknown) {
     const { host } = await ready; const state = pmState(await host.harness.snapshot(PmDocument, context));
     const record = Object.values(state.mandates).find(item => item.strategies[id]); if (!record) throw new Problem('strategy_not_found', 404);
+    assertPmNotDeleted(record);
     if (record.latestStrategyId !== id) throw new Problem('strategy_version_not_current', 409);
     return campaignCommand(Object.values(record.campaigns).at(-1)!.id, action, value, id);
   }
   async function startCampaign(value: unknown) {
     const { host } = await ready; const body = object(value); const id = text(body.mandateId, 'mandate_id'); const requestId = text(body.requestId, 'request_id');
     await host.harness.commit(async tx => {
-      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); const key = `campaign-start:${id}:${requestId}`; const original = json(value);
+      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); assertPmNotDeleted(record); const key = `campaign-start:${id}:${requestId}`; const original = json(value);
       if (state.commands[key]) { if (canonical(state.commands[key]!.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
       assertBusinessAdmission(await tx.doc(Application));
       ensureRevision(record, body.expectedRevision); const previous = Object.values(record.campaigns).at(-1)!;
@@ -147,7 +150,7 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
       }
       state.commands[key] = { original, mandateId: id, resourceId: campaignId };
     }, context);
-    const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(pmRecord(state, id), state);
+    const state = pmState(await host.harness.snapshot(PmDocument, context)); return pmView(visiblePmRecord(state, id), state);
   }
   return { task: ControlCampaign, readResource, campaignCommand, strategyCommand, startCampaign };
 }

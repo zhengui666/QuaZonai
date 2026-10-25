@@ -1,7 +1,7 @@
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, TaskId, Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,18 +15,18 @@ import { iterationRequest, normalizedRequest } from '../../research/plugins/nati
 import type { ServiceConfig } from './config.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, nsTime, object, observation, portfolio, Problem, settings, text } from './facts.ts';
 import type { ObservationFact, PortfolioFact } from './facts.ts';
-import { factorViews } from './factors.ts';
+import { factorReference, factorViews } from './factors.ts';
 import { publicLiteratureQueries, researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
-import { PmDocument, pmState } from './pm-facts.ts';
+import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
 import { assertBusinessAdmission, maintenanceState } from './pm-maintenance.ts';
 import { accountKey, capitalStatusForBinding, control, readCapitalControl, recordCapitalControl, recordCapitalControlFailure, validateCapitalDocument } from './capital-exit.ts';
 import { acceptSnapshot, downstreamRequest } from './downstream.ts';
-import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy } from '../../../packages/contracts/src/index.ts';
+import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy, DeletionReceipt } from '../../../packages/contracts/src/index.ts';
 
 const context = BACKGROUND_CONTEXT;
 export function workbench(host: ResearchHost, config: ServiceConfig) {
@@ -49,6 +49,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
     const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
+    const priorInput = (old?.input ?? nativeAdmission?.input) as NativeResearchInput | undefined;
+    if (priorInput?.campaign) await host.harness.commit(async tx => assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), priorInput.campaign!.mandateRevisionId)), context);
     if (nativeAdmission?.recovery || !nativeAdmission && !old && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
@@ -67,6 +69,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         if (canonical(native.input) !== canonical(json(submission.input))) throw new Problem('request_id_conflict', 409);
         await host.harness.commit(async (tx) => {
           const facts = await tx.doc(Application); const existing = facts.researchRequests[`request:${requestId}`];
+          if ((native.input as NativeResearchInput).campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), (native.input as NativeResearchInput).campaign!.mandateRevisionId));
           if (existing && canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
           facts.researchRequests[`request:${requestId}`] ??= { original, input: json(native.input) };
         }, context);
@@ -156,21 +159,68 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     }
     await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
+      if (validated.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), validated.campaign.mandateRevisionId));
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
       if (!current) assertBusinessAdmission(facts);
       facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) };
     }, context);
     return host.start(requestId, validated);
   }
+  async function assertMembersAvailable(tx: Tx, researchIds: number[], input: PortfolioStart) {
+    for (const id of researchIds) {
+      const study = await tx.doc(Study, id as ConversationId);
+      if (study.deletedAt) throw new Problem('research_deleted', 409);
+      const selectedIds = input.factors?.filter(item => factorReference(item.factorId).researchId === id).map(item => item.factorId)
+        ?? Object.keys(study.deletedFactors ?? {}).filter(key => factorReference(key).trialId === study.final?.trialId);
+      if (selectedIds.some(key => study.deletedFactors?.[key])) throw new Problem('factor_deleted', 409);
+    }
+  }
+  async function removeResearch(id: number, factor?: string): Promise<DeletionReceipt> {
+    const deletedAt = await host.remove(id, async tx => {
+      const study = await tx.doc(Study, id as ConversationId);
+      if (factor && !factorViews(id, study).some(item => item.id === factor)) throw new Problem('factor_not_found', 404);
+      const facts = await tx.doc(Application);
+      const referenced = Object.values(facts.portfolios).map(portfolio).some(item => !item.deletedAt && (factor
+        ? item.input.factors ? item.input.factors.some(member => member.factorId === factor) : item.view.researchIds.includes(id)
+        : item.view.researchIds.includes(id)));
+      const kind = factor ? 'factor' : 'research';
+      if (referenced) throw new Problem(`${kind}_delete_portfolio_in_use`, 409);
+      const mandates = Object.values(pmState(await tx.doc(PmDocument)).mandates);
+      if (mandates.some(record => !record.deletedAt && (study.input?.campaign?.mandateRevisionId === record.mandate.id
+        || Object.values(record.campaigns).some(campaign => campaign.runtime.conversationId === id)))) throw new Problem(`${kind}_delete_pm_in_use`, 409);
+    }, factor);
+    return { kind: factor ? 'factor' : 'research', id: factor ?? String(id), deletedAt };
+  }
+  async function removeFactor(id: string) {
+    return removeResearch(factorReference(id).researchId, id);
+  }
+  async function removePortfolio(id: string): Promise<DeletionReceipt> {
+    return host.harness.commit(async tx => {
+      const facts = await tx.doc(Application); const raw = facts.portfolios[id];
+      if (!raw) throw new Problem('portfolio_not_found', 404);
+      const fact = portfolio(raw);
+      if (fact.deletedAt) return { kind: 'portfolio', id, deletedAt: fact.deletedAt };
+      if (fact.view.taskId !== null && (await tx.task(fact.view.taskId as TaskId))?.state.status !== 'terminal') throw new Problem('portfolio_delete_tasks_active', 409);
+      for (const observed of Object.values(facts.observations).map(observation).filter(item => item.input.portfolioId === id)) {
+        const receipt = observed.view.receipt;
+        if (observed.view.status !== 'STOPPED' || observed.view.automaticPolicy?.enabled || unsettledAdjustment(observed)
+          || ['PENDING', 'UNCERTAIN'].includes(receipt?.status ?? '')
+          || receipt?.status === 'ACKNOWLEDGED' && Date.parse(receipt.expiresAt) > Date.now()
+          || (await tx.task(observed.taskId as TaskId))?.state.status !== 'terminal') throw new Problem('portfolio_delete_observation_in_use', 409);
+      }
+      fact.deletedAt = new Date().toISOString(); facts.portfolios[id] = json(fact);
+      return { kind: 'portfolio', id, deletedAt: fact.deletedAt };
+    }, context);
+  }
   async function getPortfolio(id: string) {
-    const found = (await snapshot())!.portfolios[id]; if (!found) throw new Problem('portfolio_not_found', 404);
+    const found = (await snapshot())!.portfolios[id]; if (!found || portfolio(found).deletedAt) throw new Problem('portfolio_not_found', 404);
     return portfolio(found);
   }
   async function startPortfolio(value: unknown) {
     const input = object(value) as unknown as PortfolioStart;
     text(input.requestId, 'request_id'); text(input.name, 'name');
     const old = Object.values((await snapshot())!.portfolios).map(portfolio).find((item) => item.input.requestId === input.requestId);
-    if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return old.view; }
+    if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); if ('deletedAt' in old && old.deletedAt) throw new Problem('portfolio_deleted', 409); return old.view; }
     const configured = dataset(text(input.datasetId, 'dataset_id'));
     const capital = decimal(input.capital, 'capital'); if (decimalUnits(capital) <= 0n) throw new Problem('capital_invalid');
     let researchIds: number[]; let weights: string[];
@@ -202,6 +252,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const catalogEnsemble = configured.strategy.kind === 'catalog-ensemble';
     if (catalogEnsemble && (input.factors !== undefined || researchIds.length !== 1)) throw new Problem('catalog_ensemble_single_selection_required', 422);
     const evidence = await host.harness.commit(async (tx) => {
+      await assertMembersAvailable(tx, researchIds, input);
       const records = [];
       let selection: string | undefined;
       for (const [index, id] of researchIds.entries()) {
@@ -251,7 +302,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const admitted = await host.harness.commit(async (tx) => {
         const facts = await tx.doc(Application);
         const existing = Object.values(facts.portfolios).map(portfolio).find((item) => item.input.requestId === input.requestId);
-        if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
+        if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); if (existing.deletedAt) throw new Problem('portfolio_deleted', 409); return existing.view; }
+        await assertMembersAvailable(tx, researchIds, input);
         assertBusinessAdmission(facts);
         const fact: PortfolioFact = { input: structuredClone(input), evidence, weights, policy: json(configured.strategy), native: null, target: null,
           view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', capital, currency: configured.currency,
@@ -289,6 +341,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const facts = await tx.doc(Application);
       const existing = Object.values(facts.observations).map(observation).find((item) => item.input.requestId === input.requestId);
       if (existing) { if (canonical(json(existing.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
+      if (!facts.portfolios[input.portfolioId] || portfolio(facts.portfolios[input.portfolioId]).deletedAt) throw new Problem('portfolio_deleted', 409);
       assertBusinessAdmission(facts);
       const accountControl = facts.accountControls?.[accountKey(connection, facts.accountControls)];
       assertAccountTargetControl(facts, pmState(await tx.doc(PmDocument)), connection, { kind: 'LEGACY' });
@@ -399,5 +452,5 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (abortId !== undefined) { await host.harness.abortTask(abortId as TaskId, context); await host.harness.waitForTask(abortId as TaskId, context); }
     return (await getObservation(id)).view;
   }
-  return { snapshot, getSettings, recoverResearch, startResearch, startPortfolio, getPortfolio, startObservation, getObservation, refreshObservation, configureAutomatic };
+  return { snapshot, getSettings, recoverResearch, startResearch, removeResearch, removeFactor, removePortfolio, startPortfolio, getPortfolio, startObservation, getObservation, refreshObservation, configureAutomatic };
 }

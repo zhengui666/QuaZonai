@@ -19,10 +19,11 @@ import { captureAccount } from './pm-account.ts';
 import { admitCampaignAccount, campaignAccount, freezeCampaignAccount } from './pm-campaign-account.ts';
 import { retirementAccountFlat } from './pm-account-native.ts';
 import { captureDataset } from './pm-datasets.ts';
-import { PmDocument, currentStrategy, digest, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
+import { PmDocument, assertPmNotDeleted, visiblePmRecord, currentStrategy, digest, ensureRevision, fact, gap, identity, pmRecord, pmState, revise } from './pm-facts.ts';
 import type { PmRecord, PmState } from './pm-facts.ts';
 import { assessStage, PM_CAPABILITY_ID, pmMetricDefinitions, selectionRule } from './pm-registry.ts';
 import { pmView } from './pm-view.ts';
+import { deletePmMandate } from './pm-deletion.ts';
 import { computePmDecision } from './pm-native.ts';
 import { pmQualificationProtocol } from './pm-qualification.ts';
 import { pmAllocationMethod } from './pm-method.ts';
@@ -90,6 +91,7 @@ export function createPmPlatform(config: ServiceConfig) {
   }
 
   async function enqueue(tx: Tx, state: PmState, record: PmRecord, event: Pm.BusinessEvent) {
+    assertPmNotDeleted(record);
     if (record.events[event.id]) return record.cycles[record.latestCycleId ?? ''] ?? null;
     assertBusinessAdmission(await tx.doc(Application));
     const atNs = nowNs();
@@ -379,10 +381,12 @@ export function createPmPlatform(config: ServiceConfig) {
         const { work } = await ready;
         let suspended = false;
         await runtime.commit(async tx => {
+          const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
+          if (stored.deletedAt) { suspended = true; return { status: 'terminal', outcome: { status: 'completed', result: null } }; }
+          if (Object.values(stored.retirements).some(item => item.strategyVersionId === stored.latestStrategyId)) { suspended = true; return { status: 'running', checkpoint: { phase: 'observe' } }; }
           const app = await tx.doc(Application); const maintenance = maintenanceState(app);
           if (!maintenance || maintenance.state === 'RUNNING') return undefined;
           suspended = true;
-          const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
           const obligations = Object.values(stored.commands).some(item => ['PENDING', 'UNCERTAIN'].includes(item.state)) || Object.values(stored.retirements).some(item => item.reconciliationRequired);
           return obligations ? { status: 'running', checkpoint: { phase: 'observe' } } : await maintenancePark(tx, runtime.taskId, 'qz.pm.mandate-monitor', { phase: 'start' } as const) ?? undefined;
         }, ctx);
@@ -451,10 +455,11 @@ export function createPmPlatform(config: ServiceConfig) {
         const { host, work } = await ready;
         let parked = false; let maintenanceOnly = false;
         await runtime.commit(async tx => {
+          const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
+          if (stored.deletedAt) { parked = true; return { status: 'terminal', outcome: { status: 'completed', result: null } }; }
           const maintenance = maintenanceState(await tx.doc(Application));
           maintenanceOnly = !!maintenance && maintenance.state !== 'RUNNING';
           if (!maintenanceOnly) return undefined;
-          const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
           const obligations = Object.values(stored.commands).some(item => ['PENDING', 'UNCERTAIN'].includes(item.state)) || Object.values(stored.retirements).some(item => item.reconciliationRequired);
           if (obligations) return undefined;
           const waiting = await maintenancePark(tx, runtime.taskId, 'qz.pm.mandate-monitor', { phase: 'observe' } as const); parked = waiting !== null; return waiting ?? undefined;
@@ -499,7 +504,9 @@ export function createPmPlatform(config: ServiceConfig) {
         }
         const original = campaign.runtime.conversationId !== record.conversationId ? await host.state(campaign.runtime.conversationId) : null;
         await runtime.commit(async tx => {
-          const latest = pmState(await tx.doc(PmDocument)); const stored = pmRecord(latest, task.input.mandateId); const current = stored.campaigns[campaign.id]!;
+          const latest = pmState(await tx.doc(PmDocument)); const stored = pmRecord(latest, task.input.mandateId);
+          if (stored.deletedAt) return { status: 'terminal', outcome: { status: 'completed', result: null } };
+          const current = stored.campaigns[campaign.id]!;
           // An owner clarification may replace the campaign while this task was
           // reading its original conversation. Older intake cannot restore it.
           if (Object.values(stored.campaigns).at(-1)!.id !== campaign.id) return { status: 'running', checkpoint: { phase: 'observe' } };
@@ -661,8 +668,10 @@ export function createPmPlatform(config: ServiceConfig) {
           return { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } };
         }, ctx);
       },
-      async wait(task, runtime, ctx) { await runtime.sleep(task.state.checkpoint.wakeAt, ctx); await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'observe' } }), ctx); },
-      async maintenance(task, runtime, ctx) { await runtime.commit(tx => resumeMaintenance(tx, runtime.taskId, 'qz.pm.mandate-monitor', task.state.checkpoint), ctx); },
+      async wait(task, runtime, ctx) { await runtime.sleep(task.state.checkpoint.wakeAt, ctx); await runtime.commit(async tx => pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).deletedAt
+        ? { status: 'terminal', outcome: { status: 'completed', result: null } } : { status: 'running', checkpoint: { phase: 'observe' } }, ctx); },
+      async maintenance(task, runtime, ctx) { await runtime.commit(async tx => pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId).deletedAt
+        ? { status: 'terminal', outcome: { status: 'completed', result: null } } : resumeMaintenance(tx, runtime.taskId, 'qz.pm.mandate-monitor', task.state.checkpoint), ctx); },
     },
     async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); },
   });
@@ -684,7 +693,7 @@ export function createPmPlatform(config: ServiceConfig) {
     const source = await readSourceRevision(configured); if (source) configured.data = source.configured.data;
     const id = await dependencies.host.harness.commit(async tx => {
       const state = pmState(await tx.doc(PmDocument)); const key = `mandate:${input.requestId}`; const replay = state.commands[key];
-      if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return replay.mandateId; }
+      if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); assertPmNotDeleted(pmRecord(state, replay.mandateId)); return replay.mandateId; }
       assertBusinessAdmission(await tx.doc(Application));
       const atNs = nowNs(); const id = identity('mandate', input.requestId); const policyId = identity('policy', [id, 'pm-method/1']);
       const dataset = captureDataset(configured, state, atNs, source); let currency: string;
@@ -741,12 +750,12 @@ export function createPmPlatform(config: ServiceConfig) {
     }, context);
     return get(id);
   }
-  async function get(id: string) { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return pmView(pmRecord(state, id), state); }
-  async function list() { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return Object.values(state?.mandates ?? {}).map(record => pmView(record, state)); }
+  async function get(id: string) { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return pmView(visiblePmRecord(state, id), state); }
+  async function list() { await ready; const state = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); return Object.values(state?.mandates ?? {}).filter(record => !record.deletedAt).map(record => pmView(record, state)); }
   async function clarifyIntent(id: string, value: unknown) {
     await ready; const input = clarificationInput(value); const original = json(value);
     await dependencies.host.harness.commit(async tx => {
-      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id);
+      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); assertPmNotDeleted(record);
       const key = `${id}:intent-clarification:${input.requestId}`; const replay = state.commands[key];
       if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
       assertBusinessAdmission(await tx.doc(Application)); ensureRevision(record, input.expectedRevision);
@@ -803,14 +812,14 @@ export function createPmPlatform(config: ServiceConfig) {
   }
   async function command(id: string, kind: 'recompute' | 'retire' | 'refresh-data', value: unknown) {
     await ready; const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = json(value);
-    const before = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); const existing = before.commands[`${id}:${kind}:${requestId}`];
+    const before = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); assertPmNotDeleted(pmRecord(before, id)); const existing = before.commands[`${id}:${kind}:${requestId}`];
     if (existing) { if (canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); if (kind !== 'retire') return get(id); }
     const configuredSource = kind === 'refresh-data' ? config.datasets.find(item => item.id === pmRecord(before, id).input.datasetId)! : null;
     const revisionSource = configuredSource ? await readSourceRevision(configuredSource) : null;
     if (revisionSource && configuredSource) configuredSource.data = revisionSource.configured.data;
 
     await dependencies.host.harness.commit(async tx => {
-      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); const key = `${id}:${kind}:${requestId}`; const replay = state.commands[key];
+      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); assertPmNotDeleted(record); const key = `${id}:${kind}:${requestId}`; const replay = state.commands[key];
       if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
       assertBusinessAdmission(await tx.doc(Application));
       ensureRevision(record, body.expectedRevision);
@@ -847,7 +856,7 @@ export function createPmPlatform(config: ServiceConfig) {
   async function offerTarget(id: string, value: unknown) {
     await ready; const body = object(value); const requestId = text(body.requestId, 'request_id');
     await dependencies.host.harness.commit(async tx => {
-      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); const key = `${id}:target:${requestId}`;
+      const state = pmState(await tx.doc(PmDocument)); const record = pmRecord(state, id); assertPmNotDeleted(record); const key = `${id}:target:${requestId}`;
       const original = json(value); const replay = state.commands[key];
       if (replay) { if (canonical(replay.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); return; }
       assertBusinessAdmission(await tx.doc(Application));
@@ -876,9 +885,13 @@ export function createPmPlatform(config: ServiceConfig) {
       state.commands[key] = { original, mandateId: id, resourceId: targetId };
     }, context); return get(id);
   }
+  async function remove(id: string) {
+    await ready;
+    return dependencies.host.harness.commit(async tx => deletePmMandate(tx, pmState(await tx.doc(PmDocument)), id), context);
+  }
   return { extension: defineExtension({ name: 'qz.pm', tasks: [MonitorMandate, ComputeCycle, IndependentEvaluation, PmTargetTask, controls.task] }), connect,
-    work: { start, get, list, readResource: controls.readResource, campaignCommand: controls.campaignCommand, strategyCommand: controls.strategyCommand, startCampaign: controls.startCampaign, recompute: (id: string, value: unknown) => command(id, 'recompute', value), retire: (id: string, value: unknown) => command(id, 'retire', value),
+    work: { start, get, list, delete: remove, readResource: controls.readResource, campaignCommand: controls.campaignCommand, strategyCommand: controls.strategyCommand, startCampaign: controls.startCampaign, recompute: (id: string, value: unknown) => command(id, 'recompute', value), retire: (id: string, value: unknown) => command(id, 'retire', value),
       refreshData: (id: string, value: unknown) => command(id, 'refresh-data', value), offerTarget, clarifyIntent,
-      events: async (id: string) => Object.values(pmRecord(pmState(await dependencies.host.harness.snapshot(PmDocument, context)), id).events),
+      events: async (id: string) => Object.values(visiblePmRecord(pmState(await dependencies.host.harness.snapshot(PmDocument, context)), id).events),
       snapshot: () => dependencies.host.harness.snapshot(PmDocument, context) } };
 }
