@@ -29,6 +29,21 @@ import { acceptSnapshot, downstreamRequest } from './downstream.ts';
 import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy, DeletionReceipt } from '../../../packages/contracts/src/index.ts';
 
 const context = BACKGROUND_CONTEXT;
+function portfolioUsesFactor(fact: PortfolioFact, id: string): boolean {
+  if (fact.input.factors) return fact.input.factors.some(member => member.factorId === id);
+  const reference = factorReference(id);
+  if (!fact.view.researchIds.includes(reference.researchId)) return false;
+  const evidence = fact.evidence.filter(item => item.researchId === reference.researchId);
+  if (!evidence.length) return true; // Unexplained legacy lineage remains protected.
+  return evidence.some(item => {
+    try {
+      const selected = object(item.selected);
+      if (!Number.isSafeInteger(selected.taskId)) return true;
+      const members = strategyMembers(object(selected.proposal));
+      return selected.taskId === reference.trialId && reference.memberIndex < members.length;
+    } catch { return true; }
+  });
+}
 export function workbench(host: ResearchHost, config: ServiceConfig) {
   const snapshot = () => host.harness.snapshot(Application, context);
   const getSettings = async (): Promise<SettingsView> => settings((await snapshot())!.settings);
@@ -181,7 +196,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (factor && !factorViews(id, study).some(item => item.id === factor)) throw new Problem('factor_not_found', 404);
       const facts = await tx.doc(Application);
       const referenced = Object.values(facts.portfolios).map(portfolio).some(item => !item.deletedAt && (factor
-        ? item.input.factors ? item.input.factors.some(member => member.factorId === factor) : item.view.researchIds.includes(id)
+        ? portfolioUsesFactor(item, factor)
         : item.view.researchIds.includes(id)));
       const kind = factor ? 'factor' : 'research';
       if (referenced) throw new Problem(`${kind}_delete_portfolio_in_use`, 409);

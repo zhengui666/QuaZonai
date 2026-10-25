@@ -6,12 +6,13 @@ import { syncBuiltinESMExports } from 'node:module';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { awaitWithContext } from '@earendil-works/chord/context';
-import type { ConversationId } from '@earendil-works/pi-durable';
+import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
 import type { DeletionReceipt } from '../../../packages/contracts/src/index.ts';
 import { Study, Requests } from '../../research/src/documents.ts';
+import { evaluateTrial } from '../../research/src/trials.ts';
 import { Application, json, observation, portfolio } from '../src/facts.ts';
 import type { ObservationFact } from '../src/facts.ts';
-import { context, setup, studied, built, fauxAssistantMessage, fauxToolCall } from './support.ts';
+import { context, setup, studied, built, fauxAssistantMessage, fauxToolCall, wat } from './support.ts';
 
 const api = '/api/v3';
 type State = Awaited<ReturnType<typeof setup>>;
@@ -234,4 +235,52 @@ test('observation final admission rechecks a portfolio deleted during the real d
     release(); await expectError(await admission, 409, 'portfolio_deleted');
     assert.deepEqual((await state.service.work.snapshot())!.observations, {}); assert.equal(offers, 0);
   } finally { release(); await state.cleanup(); await downstream.close(); }
+});
+
+
+test('legacy portfolio freezes only its selected trial and does not prevent deletion of an unused trial factor', async () => {
+  const state = await setup();
+  const firstTrial = defineExtension({ name: 'test.unselected-factor', tools: [defineTool({
+    name: 'controlled_unselected_trial', description: 'TEST_ONLY unused original trial', parameters: Type.Object({}), replay: 'safe',
+    async execute(_args, api, ctx) {
+      const study = (await api.snapshot(Study, api.conversationId, ctx))!;
+      await evaluateTrial(api, ctx, { hypothesis: 'Original candidate which is not selected', model: wat }, async () => ({
+        request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }],
+      }));
+      return { content: [{ type: 'text', text: 'Original nonselected trial recorded; no final selection yet.' }] };
+    },
+  })] });
+  try {
+    state.options.extensions.push(firstTrial); await state.restart();
+    state.faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('controlled_unselected_trial', {}), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' }),
+    ]);
+    const started = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
+      payload: { requestId: 'two-trial-dependency', goal: 'Select one of two original protocol candidates', model: state.model, datasetId: 'controlled', maxTrials: 2 } });
+    assert.equal(started.statusCode, 202, started.body);
+    const receipt = started.json();
+    await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
+    const study = (await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!;
+    assert.equal(study.trials.length, 2); const [unselected, selected] = study.trials;
+    assert.notEqual(unselected!.taskId, selected!.taskId); assert.equal(study.final!.trialId, selected!.taskId);
+    const allFactors = await factors(state);
+    const unusedId = allFactors.find(item => item.id.includes(`.t${unselected!.taskId}.`))!.id;
+    const selectedId = allFactors.find(item => item.id.includes(`.t${selected!.taskId}.`))!.id;
+    const start = await state.service.app.inject({ method: 'POST', url: `${api}/portfolios`, headers: state.headers,
+      payload: { requestId: 'selected-original-trial', name: 'Original selected protocol only', researchIds: [receipt.conversationId], datasetId: 'controlled', capital: '1' } });
+    assert.equal(start.statusCode, 202, start.body);
+    const view = start.json(); await state.service.research.harness.waitForTask(view.taskId as TaskId, context);
+    const frozen = structuredClone(await state.service.work.getPortfolio(view.id));
+    assert.equal(frozen.evidence[0]!.selected && (frozen.evidence[0]!.selected as { taskId: number }).taskId, selected!.taskId);
+    const deleted = await expectReceipt(await remove(state, 'factors', unusedId), 'factor', unusedId);
+    await expectError(await remove(state, 'factors', selectedId), 409, 'factor_delete_portfolio_in_use');
+    assert.deepEqual(await state.service.work.getPortfolio(view.id), frozen);
+    assert.deepEqual((await factors(state)).map(item => item.id), [selectedId]);
+    await state.restart();
+    assert.deepEqual((await remove(state, 'factors', unusedId)).json(), deleted);
+    await expectError(await remove(state, 'factors', selectedId), 409, 'factor_delete_portfolio_in_use');
+    assert.deepEqual(await state.service.work.getPortfolio(view.id), frozen);
+    assert.deepEqual((await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!.trials, study.trials);
+  } finally { await state.cleanup(); }
 });

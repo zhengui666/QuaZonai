@@ -159,6 +159,7 @@ test('PM forward presentation separates current modeled targets from historical 
 
 
 test('PM deletion preserves an opaque identity, permits cancellation and explains an active-task refusal before retry', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   const state = await pmTransport(page);
   await page.goto('/#/pm/mandate%3Atest%2Fopaque');
   await page.getByRole('button', { name: '删除投资决策', exact: true }).click();

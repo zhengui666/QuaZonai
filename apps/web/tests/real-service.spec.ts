@@ -148,8 +148,19 @@ test('object deletion confirms the original resource, reconciles a lost response
       if (deletes.length === 1) return route.abort('failed'); return route.fulfill({ response });
     });
     await page.goto(`${url}/#/research/${study.id}`); await page.getByRole('button', { name: '删除研究', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
-    await expect(page.getByRole('dialog')).toContainText('连接失败'); await page.getByRole('dialog').getByRole('button', { name: '重试删除', exact: true }).click();
+    await expect(page.getByRole('dialog')).toContainText('连接失败');
+    const originalDeletion = await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'));
+    expect(JSON.parse(originalDeletion!)).toEqual([{ kind: 'research', id: String(study.id), path: `/research/${study.id}` }]);
+    await page.reload();
+    const recovery = page.getByRole('region', { name: '待核对删除' });
+    await expect(recovery).toContainText(String(study.id));
+    await expect(page.locator('.study-document .error-notice')).toContainText('服务或记录不存在');
+    expect(deletes).toHaveLength(1); // Reload and a 404 read never send another DELETE or claim its success.
+    expect(await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'))).toBe(originalDeletion);
+    await recovery.getByRole('button', { name: '核对删除研究', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '核对原删除', exact: true }).click();
     await expect(page).toHaveURL(`${url}/#/research`); expect(deletes).toHaveLength(2); expect(deletes[0]).toBe(deletes[1]); await expect(page.getByRole('heading', { name: '尚无研究', exact: true })).toBeVisible();
+    await expect(recovery).toHaveCount(0); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'))).toBeNull();
     await state.restart(); await page.reload(); await expect(page.getByRole('heading', { name: '尚无研究', exact: true })).toBeVisible();
     expect((await page.request.get(`${url}/api/v3/research/${study.id}`)).status()).toBe(404);
     expect(await (await page.request.get(`${url}/api/v3/factors`)).json()).toEqual([]); expect(await (await page.request.get(`${url}/api/v3/portfolios`)).json()).toEqual([]);

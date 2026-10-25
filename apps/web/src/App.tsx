@@ -11,6 +11,7 @@ import { Auth } from './auth';
 import { Empty, ErrorNotice, Loading } from './ui';
 import AppErrorBoundary from './AppErrorBoundary';
 import { Brand } from './brand';
+import { DeletionRecovery } from './delete-record';
 const Research = lazy(() => import('./research'));
 const Pm = lazy(() => import('./pm'));
 const Data = lazy(() => import('./data'));
@@ -55,7 +56,7 @@ function WorkspaceApp() {
   return <><a href="#main-content" className="skip-link" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus(); }}>跳到内容</a>
     <header className="app-topbar"><div className="topbar-inner"><a className="wordmark" href={href('/research')}><Brand /></a><nav className="primary-nav" aria-label="主要工作区">{links(false)}</nav><div className="topbar-right"><nav className="secondary-nav" aria-label="工作台设置">{links(true)}</nav><div className="topbar-divider" /><AppearanceControl /><Button className="icon-button logout-button" type="text" aria-label="退出登录" icon={<SignOutIcon size={19} />} onClick={() => { setLogoutError(undefined); void api<SessionView>('/session', { method: 'DELETE' }).then(changeSession, setLogoutError); }} /></div><Button className="mobile-menu icon-button" type="text" icon={<ListIcon size={21} />} aria-label="打开导航" onClick={() => setDrawer(true)} /></div></header>
     <Drawer title={<Brand />} placement="left" getContainer={false} open={drawer} onClose={() => setDrawer(false)} width={288}><nav className="drawer-nav" aria-label="工作区">{links(false)}<div className="drawer-divider" />{links(true)}</nav><div className="drawer-appearance"><AppearanceControl /><span>外观设置</span><Button type="text" onClick={() => { void api<SessionView>('/session', { method: 'DELETE' }).then(value => { setDrawer(false); changeSession(value); }, setLogoutError); }}>退出登录</Button></div></Drawer>
-    <main id="main-content" tabIndex={-1} className={route.page === 'research' && !route.creating ? 'research-main' : ''}><ErrorNotice error={logoutError} /><AppErrorBoundary key={`${route.page}/${route.creating}/${route.id ?? ''}/${route.creating ? route.params.toString() : ''}`}><Suspense fallback={<Loading />}>
+    <main id="main-content" tabIndex={-1} className={route.page === 'research' && !route.creating ? 'research-main' : ''}><ErrorNotice error={logoutError} /><DeletionRecovery /><AppErrorBoundary key={`${route.page}/${route.creating}/${route.id ?? ''}/${route.creating ? route.params.toString() : ''}`}><Suspense fallback={<Loading />}>
       {route.unknown ? <Empty title="未找到页面" action={<a className="text-link" href={href('/research')}>返回研究</a>} /> : route.page === 'pm' ? <Pm route={route} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'data' ? <Data /> : route.page === 'factors' ? <Factors route={route} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : route.page === 'settings' ? <Settings connect={setAuthRequest} /> : <Extensions />}
     </Suspense></AppErrorBoundary></main>
     {authRequest && <Suspense fallback={<Loading />}><ModelLogin key={authRequest.id} request={authRequest} changed={refreshModels} close={() => setAuthRequest(undefined)} /></Suspense>}
