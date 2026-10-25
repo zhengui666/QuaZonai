@@ -1,5 +1,6 @@
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import type { DatasetConfig } from './config.ts';
+import { scienceDataWithoutBinding } from './config.ts';
 import type { PmState } from './pm-facts.ts';
 import { digest, fact, identity } from './pm-facts.ts';
 import { counter, json, nowNs, object, Problem } from './facts.ts';
@@ -20,7 +21,9 @@ export function assertPmDataAvailable(data: import('@earendil-works/pi-durable')
 export function captureDataset(configured: DatasetConfig, state: PmState, atNs = nowNs(), source?: SourceRevision | null) {
   if (!configured.ready) throw new Problem('dataset_not_ready', 409);
   if (source && BigInt(source.availableAtNs) > BigInt(atNs)) throw new Problem('source_revision_not_available_asof', 409);
-  const data = json(configured.data);
+  // Worker configuration is frozen separately for each mandate. It must not
+  // change a source revision's identity or pin later mandates to an old host.
+  const data = scienceDataWithoutBinding(json(configured.data));
   const nativeCutoff = assertPmDataAvailable(data, atNs);
   const raw = object(data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request, 'native_dataset_request');
   const selection = raw.forecast ? object(object(raw.forecast).selection, 'native_selection') : raw;

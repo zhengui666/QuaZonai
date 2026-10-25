@@ -1,3 +1,4 @@
+import { nativeTargetForData } from '../src/native-execution.ts';
 import { finalizePortfolio } from './final-evaluation.ts';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
@@ -30,7 +31,7 @@ export default defineExtension({
         const request = iterationRequest(input.data, true);
         const data = policy.kind === 'catalog-ensemble' ? await catalogScope(api, context, input.data) : input.data;
         await checkExposure(api, context, data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
-        return runPortfolio(api, context, { members, policy, data: policy.kind === 'catalog-ensemble' ? data : { ...data, request }, partition: 'VALIDATION', binary: process.env.QZ_JOB_BINARY ?? 'job' });
+        return runPortfolio(api, context, { members, policy, data: policy.kind === 'catalog-ensemble' ? data : { ...data, request }, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
       }));
     },
   }), defineTool({

@@ -96,7 +96,7 @@ def completed(opener, origin, id, *, native=True):
     raise TimeoutError('Packaged controlled research did not complete')
 
 def scientific_smoke(image, directory):
-    run(['docker', 'run', '--rm', '--network=none', '--read-only', image, '--version'])
+    run(['docker', 'run', '--rm', '--network=none', '--read-only', '--entrypoint', '/opt/quazonai/bin/job', image, '--version'])
     run(['docker', 'run', '--rm', '--network=none', '--read-only', '--entrypoint', '/opt/rust/bin/rustc', image, '--version'])
     source = directory / 'compiler-input'; output = directory / 'compiler-output'
     source.mkdir(); output.mkdir()
@@ -162,14 +162,36 @@ def smoke(args):
             service['research']['providerModules'] = [str(provider)]
             service['datasets'] = [{'id': 'image-control', 'name': 'Controlled image protocol, unqualified',
                 'assetClass': 'TEST', 'currency': 'USD', 'source': 'FIXTURE', 'start': None, 'end': None, 'ready': True, 'data': data}]
-            path.write_text(json.dumps(service, indent=2) + '\n')
-            # Native input is an explicit immutable mount; all writer state remains
-            # in the original persistent data bind. Test provider is private sidecar.
+            # The deployed app has no native executable. A separately configured
+            # HTTP worker reads the original and frozen catalogs at the same paths.
+            # Its receipt state has its own writable volume; app state is read-only.
             if fixture:
-                (root / 'compose.override.yaml').write_text('services:\n  app:\n    volumes:\n      - type: bind\n        source: ' + json.dumps(str(catalog)) + '\n        target: ' + json.dumps(str(catalog)) + '\n        read_only: true\n')
+                worker_data = root / 'nautilus-state'; worker_data.mkdir()
+                captured_catalogs = root / 'data/catalogs'; captured_catalogs.mkdir(exist_ok=True)
+                worker_env = root / 'nautilus.env'
+                worker_token = secrets.token_urlsafe(32)
+                worker_env.write_text('QZ_NAUTILUS_TOKEN=' + worker_token + '\n')
+                worker_env.chmod(0o600)
+                with (root / 'data/research/provider.env').open('a') as env:
+                    env.write('QZ_SMOKE_NAUTILUS_TOKEN=' + worker_token + '\n')
+                service['nautilus'] = {'backtest': {'id': 'image-science', 'url': 'http://nautilus:8090', 'tokenEnv': 'QZ_SMOKE_NAUTILUS_TOKEN'}}
+                override = {'services': {
+                    'app': {'depends_on': {'nautilus': {'condition': 'service_healthy'}}},
+                    'nautilus': {'image': science, 'user': f'{os.getuid()}:{os.getgid()}',
+                        'read_only': True, 'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],
+                        'environment': {'QZ_NAUTILUS_CATALOG_ROOTS': json.dumps([str(catalog), str(captured_catalogs)])},
+                        'env_file': [str(worker_env)],
+                        'volumes': [
+                            {'type': 'bind', 'source': str(catalog), 'target': str(catalog), 'read_only': True},
+                            {'type': 'bind', 'source': str(captured_catalogs), 'target': str(captured_catalogs), 'read_only': True},
+                            {'type': 'bind', 'source': str(worker_data), 'target': '/data/nautilus'}],
+                        'tmpfs': ['/tmp:rw,nosuid,nodev,size=128m'], 'networks': ['application']}}}
+                # Compose accepts JSON as YAML; no credentials enter its content.
+                (root / 'compose.override.yaml').write_text(json.dumps(override, indent=2) + '\n')
             else:
                 with (root / 'data/research/provider.env').open('a') as env:
                     env.write('QZ_TEST_IMAGE_SERVICE_ONLY=1\n')
+            path.write_text(json.dumps(service, indent=2) + '\n')
             manage(bundle, root, 'start')
             models = api(opener, origin, 'research/models')
             model = next({key: item[key] for key in ('provider', 'modelId')} for item in models if item['provider'] == 'faux')
@@ -200,16 +222,20 @@ def smoke(args):
             assert api(opener, origin, 'settings') == original_settings
             assert api(opener, origin, 'research', command) == receipt
             scientific_smoke(science, directory)
-            inventory = json.loads(run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', app,
+            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app, '-e',
+                 "const fs = require('node:fs'); for (const path of ['/opt/quazonai/bin/job', '/opt/quazonai/operator/bin/source-tools']) if (fs.existsSync(path)) throw new Error('Application contains native execution: ' + path);"])
+            inventory = json.loads(run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', science,
                  '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'plugins'], capture=True))
             v2_source = next(item for item in inventory if item['id'] == 'polymarket-v2-hf')
             assert v2_source['public_network_operations'] == ['download', 'plan']
             assert v2_source['capabilities'] == ['convert', 'download', 'export-dataset', 'freeze', 'plan', 'prepare', 'verify']
-            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', app,
+            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', '/usr/bin/python3', science,
                  '-E', '-s', '-B', '/opt/quazonai/operator/source_plugins.py', 'export-dataset', 'polymarket-v2-hf', '--help'], capture=True)
+            run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', science,
+                 '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app,
                  '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
-            scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real controlled native factor/heldout'
+            scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real remote HTTP Nautilus factor/heldout'
             print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite/PG backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
         finally:
             if (root / 'installation.json').exists():

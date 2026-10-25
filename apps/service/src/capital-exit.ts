@@ -1,3 +1,6 @@
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { scienceTarget } from './config.ts';
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { CapitalExitStatus } from '../../../packages/contracts/src/index.ts';
@@ -6,14 +9,18 @@ import type { ConnectionConfig, ServiceConfig } from './config.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { Context } from '@earendil-works/chord';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, object, Problem, text } from './facts.ts';
 import { connectionBase, downstreamRequest } from './downstream.ts';
 
-export async function validateCapitalDocument(config: Pick<ServiceConfig, 'dataDir' | 'jobBinary'>, kind: string, value: unknown) {
+export async function validateCapitalDocument(config: Pick<ServiceConfig, 'dataDir' | 'nautilus'> & { jobBinary: NativeTarget }, kind: string, value: unknown, context: Context = BACKGROUND_CONTEXT) {
   const directory = await mkdtemp(join(config.dataDir, 'capital-contract-'));
-  try { await executeNative(config.jobBinary, 'validate-capital-exit', json({ kind, value }), [], directory, BACKGROUND_CONTEXT); }
-  catch { throw new Problem('native_capital_exit_contract_invalid', 422); }
+  try { await executeNative(scienceTarget(config), 'validate-capital-exit', json({ kind, value }), [], directory, context); }
+  catch (error) {
+    if (context.abortSignal?.aborted || typeof scienceTarget(config) !== 'string') throw error;
+    throw new Problem('native_capital_exit_contract_invalid', 422);
+  }
   finally { await rm(directory, { recursive: true, force: true }); }
 }
 const connectionKey = (connection: ConnectionConfig) => `${connectionBase(connection).href}|${connection.mode}|${connection.accountId}`;
@@ -126,7 +133,7 @@ export async function readCapitalControl(connection: ConnectionConfig, currency:
     accountSourceId: source, observationId: text(native.observationId, 'source_observation_id'), controlRevision: counter(native.controlRevision, 'account_control_revision'), reserved, exits: exits as unknown as CapitalExitStatus['exits'] } };
 }
 
-interface CommandInput { key: string; requestId: string; connection: ConnectionConfig; reconcile: boolean; binary: string; dataDir: string }
+interface CommandInput { key: string; requestId: string; connection: ConnectionConfig; reconcile: boolean; binary: NativeTarget; dataDir: string }
 export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number }, null>({
   name: 'qz.capital-exit-command', version: 1, initial: input => ({ phase: input.reconcile ? 'reconcile' : 'deliver' }),
   phases: {
@@ -169,6 +176,7 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
         const value = await downstreamRequest(task.input.connection, command.path, 'POST', { requestId: task.input.requestId, clientId: task.input.connection.clientId, accountId: task.input.connection.accountId, command: command.body }, runtime.signal);
         await settle(value);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]);
@@ -177,7 +185,7 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
         }, context);
       }
       async function settle(value: JsonObject) {
-        if (value.status === 'ACCEPTED') await validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result);
+        if (value.status === 'ACCEPTED') await withNativeRemoteTracking(runtime.taskId, runtime, context, () => validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result, context));
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); acceptCommand(task.input, state, value);
           facts.accountControls![task.input.key] = json(state);
@@ -188,13 +196,14 @@ export const CapitalExitCommand = defineTask<CommandInput, { phase: 'deliver' } 
     async reconcile(task, runtime, context) {
       try {
         const value = await downstreamRequest(task.input.connection, `capital-exits/commands/${encodeURIComponent(task.input.requestId)}`, 'GET', undefined, runtime.signal);
-        if (value.status === 'ACCEPTED') await validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result);
+        if (value.status === 'ACCEPTED') await withNativeRemoteTracking(runtime.taskId, runtime, context, () => validateCapitalDocument({ jobBinary: task.input.binary, dataDir: task.input.dataDir }, 'VIEW', value.result, context));
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const state = control(facts.accountControls?.[task.input.key]); acceptCommand(task.input, state, value);
           facts.accountControls![task.input.key] = json(state);
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } }), context);
       }

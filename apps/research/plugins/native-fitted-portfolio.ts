@@ -1,3 +1,4 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { object } from '../src/trials.ts';
 import { intervalTargets, simulationSelection, thresholdTargets } from '../src/strategy.ts';
 import type { StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
 
-async function readCatalogPrefix(binary: string, catalog: string, selection: JsonObject, directory: string, context: Context): Promise<JsonObject> {
+async function readCatalogPrefix(binary: NativeTarget, catalog: string, selection: JsonObject, directory: string, context: Context): Promise<JsonObject> {
   const prefix = await executeNative(binary, 'catalog-prefix-digest', selection, ['--catalog', catalog], directory, context);
   if (prefix.schema_version !== 1 || prefix.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V1' || canonical(prefix.selection!) !== canonical(selection)
     || typeof prefix.content_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(prefix.content_sha256)) throw new Error('native_catalog_prefix_evidence_invalid');
@@ -26,7 +27,7 @@ export function expandingTrainingFolds(request: JsonObject): JsonObject[] {
   return [1n, 2n, 3n].map(index => ({ train_end_ns: (start + span * index / 4n).toString(),
     validation_start_ns: (start + span * index / 4n).toString(), validation_end_ns: (start + span * (index + 1n) / 4n).toString() }));
 }
-export async function fitNativeEnsemble(input: { data: JsonObject; members: FittedMember[]; binary: string; evidenceIdentity: string }, context: Context) {
+export async function fitNativeEnsemble(input: { data: JsonObject; members: FittedMember[]; binary: NativeTarget; evidenceIdentity: string }, context: Context) {
   if (input.data.catalog_ensemble_request !== undefined || input.data.catalog_scan_request !== undefined) throw new Error('ensemble_full_prediction_panel_required');
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   if (input.members.length < 2) throw new Error('ensemble_two_registered_factors_required');
@@ -53,7 +54,7 @@ export async function fitNativeEnsemble(input: { data: JsonObject; members: Fitt
 }
 
 /** Reuse frozen calibration+weights; one calibrated ensemble forecast, one account. */
-export async function replayFittedEnsemble(input: { data: JsonObject; members: FittedMember[]; fit: JsonObject; catalogPrefix: JsonObject; policy: ThresholdPolicy; partition: StrategyPartition; binary: string; datasetBridge?: JsonObject }, context: Context) {
+export async function replayFittedEnsemble(input: { data: JsonObject; members: FittedMember[]; fit: JsonObject; catalogPrefix: JsonObject; policy: ThresholdPolicy; partition: StrategyPartition; binary: NativeTarget; datasetBridge?: JsonObject }, context: Context) {
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   const request = input.partition === 'VALIDATION' ? iterationRequest(input.data, true) : normalizedRequest(input.data);
   const forecastRequest = object(request.forecast, 'forecast_request');

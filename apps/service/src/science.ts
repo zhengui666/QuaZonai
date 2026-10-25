@@ -1,3 +1,4 @@
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
@@ -28,7 +29,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         }
         scope = await readCatalogScope(runtime, object(reference, 'catalog_scope'), context);
       }
-      const result = await computePortfolio(task.input, context, scope);
+      const result = await withNativeRemoteTracking(runtime.taskId, runtime, context, () => computePortfolio(task.input, context, scope));
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
@@ -39,7 +40,8 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         return { status: 'terminal', outcome: { status: 'completed', result: null } };
       }, context);
     } catch (error) {
-      if (runtime.signal.aborted) throw error; // suspend preserves the same admitted native input
+      await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
+        if (runtime.signal.aborted) throw error; // suspend preserves the same admitted native input
       const diagnostic = executionDiagnostic(error, 'operation_failed');
       const detail = classifyExecutionError(error, 'backtest_failed', { operation: 'portfolio-backtest' });
       await runtime.commit(async (tx) => {
@@ -99,6 +101,7 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
           return { status: 'running', checkpoint: { phase: 'observe' } };
         }, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
@@ -121,6 +124,7 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
           return { status: 'running', checkpoint: { phase: 'observe' } };
         }, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
@@ -140,6 +144,7 @@ export const ObserveAccount = defineTask<ObservationTaskInput & { refresh: boole
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async (tx) => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);

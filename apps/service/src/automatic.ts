@@ -1,3 +1,5 @@
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineTask, type ConversationId } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -15,7 +17,7 @@ import type { MaintenanceCheckpoint } from './pm-maintenance.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, pmState } from './pm-facts.ts';
 
-export interface AutomaticInput { id: string; binary: string; dataDir: string }
+export interface AutomaticInput { id: string; binary: NativeTarget; dataDir: string }
 type RegularCheckpoint = { phase: 'snapshot' } | { phase: 'deliver' } | { phase: 'reconcile' } | { phase: 'wait'; wakeAt: number };
 type Checkpoint = RegularCheckpoint | MaintenanceCheckpoint<{ phase: 'snapshot' }>;
 function emptyAllocation(fact: ObservationFact): AutomaticAllocation {
@@ -52,14 +54,15 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         let key = accountKey(fact.connection, read.controls as Record<string, JsonObject>);
         try {
           const fresh = await readCapitalControl(fact.connection, fact.view.currency, runtime.signal); capability = fresh.capabilities;
-          for (const exit of fresh.status.exits) await validateCapitalDocument({ dataDir: task.input.dataDir, jobBinary: task.input.binary }, 'VIEW', exit);
+          for (const exit of fresh.status.exits) await withNativeRemoteTracking(runtime.taskId, runtime, context, () => validateCapitalDocument({ dataDir: task.input.dataDir, jobBinary: task.input.binary }, 'VIEW', exit, context));
           await runtime.commit(async tx => {
             const facts = await tx.doc(Application);
             facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls!, fact.connection, fresh);
             return undefined;
           }, context);
         } catch (error) {
-          if (runtime.signal.aborted) throw error;
+          await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
+        if (runtime.signal.aborted) throw error;
           reason = error instanceof Problem ? error.message : 'capital_exit_status_unavailable';
           await runtime.commit(async tx => {
             const facts = await tx.doc(Application); facts.accountControls ??= {};
@@ -114,11 +117,11 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         const directory = await mkdtemp(join(task.input.dataDir, 'account-sizing-'));
         let sized: JsonObject;
         try {
-          sized = await executeNative(task.input.binary, 'size-account', json({ schemaVersion: 1, projectionOnly: !executable, equity: snapshot.equity, reserved: status.reserved, cashBuffer: policy.cashBuffer,
+          sized = await withNativeRemoteTracking(runtime.taskId, runtime, context, () => executeNative(task.input.binary, 'size-account', json({ schemaVersion: 1, projectionOnly: !executable, equity: snapshot.equity, reserved: status.reserved, cashBuffer: policy.cashBuffer,
             maximumCapital: capacity.maximumCapital, minimumCapital: capacity.minimumCapital, participation: capacity.assumptions.participation, maximumAgeSeconds: capacity.assumptions.maximumAgeSeconds,
             currency: current.view.currency, clockNs: now.toString(), target: fact.target,
             holdings: current.view.positions.filter(position => position.value !== null).map(position => ({ instrumentId: position.instrumentId, value: position.value })),
-            liquidity: executable ? execution!.liquidity : [], members }), [], directory, context);
+            liquidity: executable ? execution!.liquidity : [], members }), [], directory, context));
         } finally { await rm(directory, { recursive: true, force: true }); }
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const latest = observation(facts.observations[task.input.id]);
@@ -171,6 +174,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
           return { status: 'running', checkpoint: deliver ? { phase: 'deliver' } : { phase: 'wait', wakeAt: runtime.now() + 5000 } };
         }, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async tx => {
           const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]);
@@ -226,6 +230,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         checkingAccount = false;
         await settle(await downstream(input, 'deliver', runtime.signal));
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         const notOffered = checkingAccount || isPreTransportRejection(error);
         await runtime.commit(async tx => {
@@ -246,6 +251,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         const value = await downstream({ id: fact!.view.id, connection: fact!.connection, receiptId: allocation.receipt!.id, target: fact!.allocationTarget!, allocation: fact!.allocationContext }, 'receipt', runtime.signal);
         await settleAllocation(task.input.id, value, runtime, context);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, context);
         if (runtime.signal.aborted) throw error;
         // Keep the original uncertain identity. A refresh never offers a second POST.
         await runtime.commit(async tx => { const facts = await tx.doc(Application); const fact = observation(facts.observations[task.input.id]); fact.view.allocation!.reason = error instanceof Problem ? error.message : 'automatic_receipt_requires_reconciliation'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } }; }, context);

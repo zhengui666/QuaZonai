@@ -1,3 +1,4 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -20,7 +21,7 @@ export interface PmForwardNativeInput {
   datasetRevision: { id: string; contentRef: string };
   selection: JsonObject;
   catalog: string;
-  binary: string;
+  binary: NativeTarget;
   dataDir: string;
   basisRevision: string;
 }
@@ -46,7 +47,7 @@ export async function buildPmForward(input: PmForwardNativeInput, context: Conte
   const cutoff = String(input.selection.decision_cutoff_ns);
   if (!/^\d+$/.test(cutoff)) throw new Problem('forward_cutoff_invalid');
   const initialState = toNativeObservedSpotStart(input.capture, { selectionStartNs: cutoff });
-  const nativeImplementation = await implementationIdentity(input.binary);
+  const nativeImplementation = await implementationIdentity(input.binary, context);
   if (input.seed.nativeImplementation !== nativeImplementation) throw new Problem('forward_native_implementation_requires_method_requalification');
   const prefix = await verifyOriginalPrefix(source, input.catalog, input.binary, input.dataDir, context);
   const fingerprint = pmArtifactDigest({ seed: input.seed, capture: input.capture as unknown as JsonObject,

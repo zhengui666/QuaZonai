@@ -12,6 +12,5 @@ case "${1:-serve}" in
   cli) shift; exec node --experimental-strip-types /opt/quazonai/apps/cli/src/main.ts "$@" ;;
   configure) shift; exec node /opt/quazonai/deploy/docker/configure.mjs "$@" ;;
   maintenance) shift; exec node /opt/quazonai/deploy/docker/maintenance.mjs "$@" ;;
-  job) shift; exec /opt/quazonai/bin/job "$@" ;;
-  *) printf 'Use serve, cli, configure, maintenance or job.\n' >&2; exit 2 ;;
+  *) printf 'Use serve, cli, configure or maintenance. Configure a remote Nautilus instance for scientific execution.\n' >&2; exit 2 ;;
 esac

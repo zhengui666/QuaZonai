@@ -33,7 +33,7 @@ export function configure(root, origin) {
     modules: old?.modules ? old.modules.map(modulePath) : defaults.map((name) => `/opt/quazonai/apps/research/plugins/${name}`) };
   if (research.providerModules) research.providerModules = research.providerModules.map(modulePath);
   const config = { host: '0.0.0.0', port: 8080, dataDir: data, research,
-    jobBinary: '/opt/quazonai/bin/job', staticDir: '/opt/quazonai/web', publicOrigin: origin,
+    nautilus: {}, staticDir: '/opt/quazonai/web', publicOrigin: origin,
     datasets: [], connections: [], extensions: [], secureCookies: origin.startsWith('https:') };
   writeFileSync(servicePath, JSON.stringify(config, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   const provider = join(researchDir, 'provider.env');

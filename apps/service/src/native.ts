@@ -1,3 +1,4 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -14,12 +15,12 @@ import type { CapacityReport, Metric, ResearchSpecification } from '../../../pac
 import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
 
 export interface PortfolioTaskInput {
-  id: string; dataDir: string; catalog: string; binary: string;
+  id: string; dataDir: string; catalog: string; binary: NativeTarget;
   // Original v1 single-evidence inputs keep their kernel, whole interval and default weight 1.
   capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: StrategyPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }
 
-export async function nativeJob(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
+export async function nativeJob(binary: NativeTarget, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
   try { return await executeNative(binary, command, input, args, directory, context); }
   catch (error) { throw error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'native_job_failed'); }
 }

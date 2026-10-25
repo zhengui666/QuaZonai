@@ -1,3 +1,5 @@
+import { scienceTarget } from './config.ts';
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { access, mkdtemp, rm } from 'node:fs/promises';
@@ -38,7 +40,7 @@ export function capacityPolicy(evidence: JsonObject[]): Assumptions | undefined 
   const assumptions = evidence.map(source => (object(source.input).specification as unknown as ResearchSpecification | undefined)?.capital);
   return assumptions[0] && assumptions.every(value => canonical(json(value ?? null)) === canonical(json(assumptions[0]))) ? assumptions[0] : undefined;
 }
-export async function assessCapacity(binary: string, catalog: string, simulation: JsonObject, assumptions: Assumptions | undefined, directory: string, context: Context): Promise<CapacityReport> {
+export async function assessCapacity(binary: NativeTarget, catalog: string, simulation: JsonObject, assumptions: Assumptions | undefined, directory: string, context: Context): Promise<CapacityReport> {
   const currency = String(object(simulation.settings).base_currency);
   if (!assumptions) return unavailableCapacity(currency, 'explicit_capacity_policy_missing_or_incompatible');
   try {
@@ -64,7 +66,7 @@ export async function portfolioCapacity(fact: PortfolioFact, config: ServiceConf
   }
   const directory = await mkdtemp(join(config.dataDir, 'capacity-'));
   try {
-    const report = await assessCapacity(config.jobBinary, catalog, simulation, assumptions, directory, context);
+    const report = await assessCapacity(scienceTarget(config), catalog, simulation, assumptions, directory, context);
     return { ...report, scope: id };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
@@ -81,9 +83,9 @@ export async function factorCapacity(host: ResearchHost, config: ServiceConfig, 
   try {
     const catalog = input.data.sealed ? replayCatalog(input.data, request) : String(input.data.catalog);
     const policy = resolveStrategyPolicy(proposal, object(input.policy.strategy));
-    const targets = await forecastMembers(config.jobBinary, catalog, strategyMembers(proposal), request, policy, view.currency!, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
+    const targets = await forecastMembers(scienceTarget(config), catalog, strategyMembers(proposal), request, policy, view.currency!, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
     const simulation = { schema_version: 1, selection: targets.selection, settings: policy.simulationSettings, target_points: targets.points };
-    const report = await assessCapacity(config.jobBinary, catalog, simulation, capital, directory, context);
+    const report = await assessCapacity(scienceTarget(config), catalog, simulation, capital, directory, context);
     return { ...report, scope: id };
   } catch (error) {
     return capacityFailure(error, view.currency ?? '', id, capital);

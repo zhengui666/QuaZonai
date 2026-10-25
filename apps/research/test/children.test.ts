@@ -18,7 +18,7 @@ test('native scientific child failure remains an explicit failed task and tool r
   faux.setResponses([fauxAssistantMessage(fauxToolCall('compute', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('The native request was unavailable.')]);
   const plugin = defineExtension({ name: 'native-compute-test', tasks: [FactorTask], tools: [defineTool({
     name: 'compute', description: 'Invalid-request native task test', parameters: Type.Object({}), replay: 'safe',
-    async execute(_args, api, ctx) { await runFactor(api, ctx, '(module)', {}); return {}; },
+    async execute(_args, api, ctx) { await runFactor(api, ctx, '(module)', { nautilusTarget: { id: 'unused-validation-source', url: 'http://127.0.0.1:1' } }); return {}; },
   })] });
   const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [plugin] });
   try {

@@ -30,7 +30,7 @@ test('actual WABT parser detail reaches model failure feedback and original-tria
   const directory = await mkdtemp(join(tmpdir(), 'qz-wat-diagnostic-'));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const model = '(module\n  (func (export "predict") (result f64)\n    unknown_instruction))';
-  const data = { catalog: directory, request };
+  const data = { catalog: directory, request, nautilusTarget: { id: 'unused-compilation-source', url: 'http://127.0.0.1:1' } };
   const compute = defineExtension({ name: 'test.wat-failure', tasks: [FactorTask], tools: [defineTool({
     name: 'compute', description: 'Controlled invalid WAT protocol', parameters: Type.Object({}), replay: 'safe',
     execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model, hypothesis: 'Invalid original model' }, () => runFactor(api, ctx, model, data))); },

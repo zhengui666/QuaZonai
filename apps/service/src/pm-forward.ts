@@ -1,3 +1,4 @@
+import { boundScienceTarget } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -96,7 +97,7 @@ export async function computePmForward(record: PmRecord, cycle: Pm.DecisionCycle
   const sourceBefore = trustedConfig ? await readSourceRevision(trustedConfig) : null;
   if (sourceBefore && sourceBefore.contentDigest !== dataset.contentRef) return unavailable('current_source_revision_changed_before_inference', 'source_revision', 'REFRESH_SOURCE');
   const artifact = await buildPmForward({ seed, capture, datasetRevision: { id: dataset.id, contentRef: dataset.contentRef }, selection,
-    catalog: String(data.catalog), binary: config.jobBinary, dataDir: config.dataDir, basisRevision: cycle.basisRevision }, context, checkpoint);
+    catalog: String(data.catalog), binary: boundScienceTarget(config, data), dataDir: config.dataDir, basisRevision: cycle.basisRevision }, context, checkpoint);
   const sourceAfter = trustedConfig ? await readSourceRevision(trustedConfig) : null;
   if (sourceBefore?.contentDigest !== sourceAfter?.contentDigest) throw new Problem('current_source_revision_changed_during_inference');
   const native = object(artifact.result); const build = object(native.build); const valuation = object(native.valuation);

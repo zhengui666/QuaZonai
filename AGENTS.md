@@ -2,7 +2,7 @@
 
 ## 定位
 
-单人本机、可扩展、无人值守的 AI 研究与 target-only 交付。HTTP、配置、业务编排、CLI、Harness 与 React 前端使用 TypeScript；Rust 只承担必要科学计算、原生引擎与科学合同／校验。复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel 和 Arrow，保留 PostgreSQL 历史与迁移。组合与模拟是可选消费者，不是因子研究前置步骤。
+单人本机、可扩展、无人值守的 AI 研究与 target-only 交付。HTTP、配置、业务编排、CLI、Harness 与 React 前端使用 TypeScript；Rust 只承担远程 Nautilus Worker 的必要科学计算、原生引擎与科学合同／校验；应用不内置或启动 Nautilus，回测与模拟／实盘连接分别配置。复用官方 Pi Durable、pi-ai、Chord、NautilusTrader、Clarabel 和 Arrow，保留 PostgreSQL 历史与迁移。组合与模拟是可选消费者，不是因子研究前置步骤。
 
 ## 按任务定位
 

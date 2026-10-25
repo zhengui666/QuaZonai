@@ -1,46 +1,23 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import { executeNativeValue } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
-import { withoutAbortSignal } from '@earendil-works/chord/context';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonical } from '../src/documents.ts';
 import { object } from '../src/trials.ts';
 import { intervalTargets, nativeDecimal, simulationSelection, thresholdTargets } from '../src/strategy.ts';
-import { JsonReader, jsonChunks } from '../src/native-json.ts';
+import { jsonChunks } from '../src/native-json.ts';
 import type { StrategyMember, StrategyPartition, StrategyPolicy, ThresholdPolicy } from '../src/strategy.ts';
 import { compileWasm, iterationRequest, normalizedRequest } from './native-wasm.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
 
-const commands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest']);
-
-/** Original JSON stdin and official process cleanup/cancellation; no provider environment or deadline. */
-export async function executeNative(binary: string, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
-  if (!commands.has(command)) throw new Error('native_command_unsupported');
-  const inputPath = join(directory, 'request.json');
-  await writeFile(inputPath, jsonChunks(input));
-  const env = new NodeExecutionEnv({ cwd: directory });
-  const stdout = new JsonReader(); let parseError: unknown; let stderr = '';
-  let stage: 'execute' | 'decode' = 'execute';
-  try {
-    const result = getOrThrow(await env.exec([
-      'bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, binary, command, ...args,
-    ], { inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: directory },
-      onOutput: (chunk, _ctx, info) => {
-        if (info.stream === 'stderr') stderr += chunk;
-        else if (parseError === undefined) { try { stdout.write(chunk); } catch (error) { parseError = error; } }
-      },
-    }, context));
-    if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
-    stage = 'decode';
-    if (parseError !== undefined) throw parseError;
-    return object(stdout.finish(), 'native_result');
-  } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
-  finally { await env.cleanup(withoutAbortSignal(context)); }
+/** Preserve the native result contract across local science tests and remote instances. */
+export async function executeNative(binary: NativeTarget, command: string, input: JsonObject, args: string[], directory: string, context: Context): Promise<JsonObject> {
+  return object(await executeNativeValue(binary, command, input, args, directory, context), 'native_result');
 }
 
-export async function blendTargets(binary: string, memberRows: JsonObject[][], weights: string[], directory: string, context: Context, force = false) {
+export async function blendTargets(binary: NativeTarget, memberRows: JsonObject[][], weights: string[], directory: string, context: Context, force = false) {
   if (!memberRows.length || memberRows.some((row) => row.length !== memberRows[0]!.length)) throw new Error('strategy_target_alignment_mismatch');
   const rows = memberRows[0]!.map((_, index) => memberRows.map((row) => row[index]!));
   // Native validates exact weights, clocks, assets and currency. Never fill missing member decisions.
@@ -51,7 +28,7 @@ export async function blendTargets(binary: string, memberRows: JsonObject[][], w
 }
 
 /** One compiled original WAT per member, reused by diagnostics and causal-prefix forecasting. */
-export async function forecastMembers(binary: string, catalog: string, members: StrategyMember[], request: JsonObject, policy: ThresholdPolicy, currency: string,
+export async function forecastMembers(binary: NativeTarget, catalog: string, members: StrategyMember[], request: JsonObject, policy: ThresholdPolicy, currency: string,
   directory: string, context: Context, diagnostics = false, partition?: StrategyPartition, forceBlend = false) {
   const components: JsonObject[] = []; const memberRows: JsonObject[][] = [];
   const selection = simulationSelection(request, partition, policy);
@@ -82,7 +59,7 @@ export interface PortfolioEvaluationInput {
   members: StrategyMember[];
   policy: StrategyPolicy;
   partition: StrategyPartition;
-  binary: string;
+  binary: NativeTarget;
 }
 
 export async function evaluatePortfolio(input: PortfolioEvaluationInput, context: Context, scope?: JsonObject) {

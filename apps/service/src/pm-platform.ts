@@ -1,3 +1,5 @@
+import { boundScienceTarget, pmScienceData } from './science-binding.ts';
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, JsonObject, TaskId, Tx } from '@earendil-works/pi-durable';
@@ -166,7 +168,8 @@ export function createPmPlatform(config: ServiceConfig) {
       outputDecisionId: null, supersededByCycleId: null, reasonCodes: [] };
     const research = campaign.state !== 'PLANNED' && campaign.runtime.conversationId !== record.conversationId ? await tx.doc(Study, campaign.runtime.conversationId as ConversationId) : null;
     // Freeze the exact observed research revision, never read a later trial in this cycle.
-    record.artifacts[cycleId] = json({ research, campaignId: campaign.id, configured: state.datasets[record.datasets.at(-1)!], incumbentDecisionId: record.currentDecisionId,
+    const registered = state.datasets[record.datasets.at(-1)!]!;
+    record.artifacts[cycleId] = json({ research, campaignId: campaign.id, configured: { ...registered, data: pmScienceData(record, registered.data) }, incumbentDecisionId: record.currentDecisionId,
       operatingForward: forward, forwardSeedDecisionId: seed?.id ?? null, operatingSlotAlreadyAdmitted });
     cycle.runtime.taskId = await tx.createTask(ComputeCycle, { mandateId: record.mandate.id, cycleId }, { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
     record.cycles[cycleId] = cycle; record.latestCycleId = cycleId; record.basisRevision = basisRevision;
@@ -266,9 +269,9 @@ export function createPmPlatform(config: ServiceConfig) {
             return undefined;
           }, ctx);
         }
-        const result = isForward
+        const result = await withNativeRemoteTracking(runtime.taskId, runtime, ctx, async () => isForward
           ? await computePmForward(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-forward', ctx), (reference, stored) => readPmArtifact(runtime, reference, stored, ctx))
-          : await computePmDecision(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-science', ctx));
+          : await computePmDecision(captured, cycle, config, ctx, pmScienceCheckpoint(runtime, 'pm-science', ctx)));
         const inlineRefs = isForward ? ['nativeTargetEvidenceRef', 'executionQualificationEvidenceRef']
           .map(field => object(result.decision.explanationFacts)[field]).filter((value): value is string => typeof value === 'string') : [];
         const retainedArtifacts = await retainPmArtifacts(runtime, result.artifacts, ctx, inlineRefs);
@@ -337,6 +340,7 @@ export function createPmPlatform(config: ServiceConfig) {
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, ctx);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, ctx);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(async tx => {
           const record = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const current = record.cycles[task.input.cycleId]!;
@@ -404,7 +408,8 @@ export function createPmPlatform(config: ServiceConfig) {
         }
         if (record.artifacts[`campaign-control:${campaign.id}`]?.action === 'pause') { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'wait', wakeAt: runtime.now() + 5000 } }), ctx); return; }
         if (campaign.runtime.conversationId !== record.conversationId) { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'observe' } }), ctx); return; }
-        const configured = state.datasets[record.datasets.at(-1)!]!;
+        const registered = state.datasets[record.datasets.at(-1)!]!;
+        const configured = { ...registered, data: pmScienceData(record, registered.data) };
         const raw = object(configured.data.catalog_ensemble_request ?? configured.data.catalog_scan_request ?? configured.data.request);
         const trainEnd = counter(configured.data.train_end_ns ?? raw.train_end_ns, 'train_end');
         const validationEnd = counter(configured.data.validation_end_ns ?? raw.validation_end_ns, 'validation_end');
@@ -420,18 +425,20 @@ export function createPmPlatform(config: ServiceConfig) {
             capital: researchSettings && typeof researchSettings.starting_capital === 'string' && typeof researchSettings.base_currency === 'string' ? { amount: researchSettings.starting_capital, currency: researchSettings.base_currency } : null }],
           definitions: pmMetricDefinitions(), frontierDefinitionIds: pmMetricDefinitions().map(item => item.id), datasetRevisionIds: [...record.datasets], protocolRef: campaign.evaluationProtocolRef };
         try {
+          const target = boundScienceTarget(config, configured.data);
           const receipt = await work.startResearch({ requestId: `pm:${campaign.id}`, input: {
             goal: record.input.goal, model: record.input.model, data: configured.data,
             ...(record.input.thinkingLevel !== undefined ? { thinkingLevel: record.input.thinkingLevel } : {}),
             ...(record.input.serviceTier !== undefined ? { serviceTier: record.input.serviceTier } : {}),
             policy: { ...configured.policy, max_trials: researchAllowance, ...(configured.strategy ? { strategy: configured.strategy } : {}) }, campaign: binding,
-          } });
+          } }, typeof target === 'string' ? undefined : target);
           await runtime.commit(async tx => {
             const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const current = stored.campaigns[campaign.id]!;
             revise(current); current.runtime.conversationId = receipt.conversationId; current.state = 'SEARCHING';
             return { status: 'running', checkpoint: { phase: 'observe' } };
           }, ctx);
         } catch (error) {
+          await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, ctx);
           if (runtime.signal.aborted) throw error;
           await runtime.commit(async tx => { const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId);
             const reason = error instanceof Error && /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'campaign_start_failed';
@@ -474,11 +481,15 @@ export function createPmPlatform(config: ServiceConfig) {
           const registered = state.datasets[record.datasets.at(-1)!];
           const candidate = registered?.revision.contentRef === source.contentDigest ? historicalSourceRecovery(record, registered.revision) : null;
           if (candidate) try {
-            const prefix = await verifyOriginalPrefix(candidate.source, String(source.configured.data.catalog), config.jobBinary, config.dataDir, ctx);
+            const frozenData = object(object(record.artifacts[candidate.cycleId]!.configured).data);
+            const catalog = String(source.configured.data.catalog);
+            const prefix = await withNativeRemoteTracking(runtime.taskId, runtime, ctx,
+              () => verifyOriginalPrefix(candidate.source, catalog, boundScienceTarget(config, frozenData), config.dataDir, ctx));
             const checked = await readSourceRevision(configured);
             if (!checked || checked.contentDigest !== source.contentDigest) throw new Problem('source_changed_during_recovery_verification');
             verifiedRecovery = { signature: candidate.signature, prefix };
           } catch (error) {
+            await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, ctx);
             if (runtime.signal.aborted) throw error;
             sourceError = error instanceof Error && /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'source_recovery_prefix_verification_failed'; source = null;
           }
@@ -717,6 +728,7 @@ export function createPmPlatform(config: ServiceConfig) {
         currentDecisionId: null, latestCycleId: null, latestStrategyId: strategy.id, basisRevision: 'initial', monitorTaskId: null, derivedTrials: {}, budgetMovements: {},
         searchFamily: { ...fact(identity('search-family', id), atNs), economicFamilyId: definition.id, campaignIds: [campaignId], trialIds: [], methodVariantRefs: [policyId],
           countedAttempts: '0', failedAttempts: '0', costEvidenceRefs: [], selectionExposureRefs: [], effectiveTrialEstimate: null } };
+      if (config.nautilus?.backtest) record.artifacts['nautilus-binding'] = json({ target: config.nautilus.backtest });
       if (initialAccount) freezeCampaignAccount(record, campaign, initialAccount);
       const reservationId = budget.reservationForClosureRef;
       const reserve = downstreamTrialReservation(input.maxTrials);

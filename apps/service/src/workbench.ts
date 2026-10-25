@@ -1,3 +1,5 @@
+import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
+import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, TaskId } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +45,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput, true);
     }
   }
-  async function startResearch(value: unknown) {
+  async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
     const body = object(value); const requestId = text(body.requestId, 'request_id');
     const original = json(body); const old = (await snapshot())!.researchRequests[`request:${requestId}`];
     const nativeAdmission = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
@@ -74,8 +76,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       object(input, 'research_input'); text(input.goal, 'goal');
       publicLiteratureQueries(input.publicLiteratureQueries);
       const data = object(input.data, 'dataset');
-      const registered = config.datasets.find((dataset) => dataset.ready && canonical(json(dataset.data)) === canonical(data));
+      const registered = config.datasets.find((dataset) => dataset.ready && canonical(scienceDataWithoutBinding(json(dataset.data))) === canonical(scienceDataWithoutBinding(data)));
       if (!registered) throw new Problem('dataset_input_unregistered');
+      input.data = retainedNautilusTarget ? bindScienceData(registered.data, retainedNautilusTarget) : structuredClone(registered.data);
       if (input.specification) {
         const inherited = { ...registered.policy, max_trials: object(input.policy, 'policy').max_trials, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
         if (canonical(json(input.policy)) !== canonical(json(inherited))) throw new Problem('research_policy_unregistered');
@@ -205,7 +208,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const conversationId = id as ConversationId;
         if (!await tx.conversation(conversationId)) throw new Problem('research_not_found', 404);
         const study = await tx.doc(Study, conversationId);
-        if (!study.input || canonical(study.input.data) !== canonical(json(configured.data))) throw new Problem('research_dataset_mismatch', 422);
+        if (!study.input || canonical(scienceDataWithoutBinding(study.input.data)) !== canonical(scienceDataWithoutBinding(json(configured.data)))) throw new Problem('research_dataset_mismatch', 422);
         if (canonical(study.input.policy.strategy ?? null) !== canonical(json(configured.strategy))) throw new Problem('strategy_policy_not_admitted_with_research', 422);
         const final = study.final; const selected = study.trials.find((trial) => trial.taskId === final?.trialId);
         if (final?.status !== 'COMPUTED' || selected?.status !== 'COMPUTED' || !final.result) throw new Problem('independent_evidence_missing', 422);
@@ -254,7 +257,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', capital, currency: configured.currency,
             createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null } };
         const taskId = await tx.createTask(BuildPortfolio, { id, evidence, weights, policy: configured.strategy!, capital, currency: configured.currency,
-          dataDir: config.dataDir, catalog: capture, binary: config.jobBinary, ...(input.capacityPolicy ? { capacityPolicy: input.capacityPolicy } : {}) },
+          dataDir: config.dataDir, catalog: capture, binary: scienceTarget(config), ...(input.capacityPolicy ? { capacityPolicy: input.capacityPolicy } : {}) },
           { conversationId: researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
         fact.view.taskId = taskId; facts.portfolios[id] = json(fact); return fact.view;
       }, context);
@@ -300,7 +303,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (input.automatic?.enabled && Object.values(facts.observations).map(observation).some(fact => accountKey(fact.connection, facts.accountControls) === accountKey(connection, facts.accountControls) && fact.view.automaticPolicy?.enabled && fact.view.status !== 'STOPPED')) throw new Problem('account_automatic_binding_already_enabled', 409);
       const taskOptions = { conversationId: selected.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' as const } };
       const taskId = input.automatic?.enabled
-        ? await tx.createTask(AdjustAccount, { id, binary: config.jobBinary, dataDir: config.dataDir }, { ...taskOptions, background: true })
+        ? await tx.createTask(AdjustAccount, { id, binary: scienceTarget(config), dataDir: config.dataDir }, { ...taskOptions, background: true })
         : await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: selected.target!, receiptId, refresh: false }, taskOptions);
       const fact: ObservationFact = { input: structuredClone(input), connection: structuredClone(connection), target: selected.target!, taskId, snapshot: null,
         view: { id, name: selected.view.name, portfolioId: selected.view.id, mode: input.mode, status: 'QUEUED', currency: selected.view.currency,
@@ -389,7 +392,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       if (input.enabled && !fact.view.automaticPolicy?.enabled && prior && prior.state.status !== 'terminal') throw new Problem('original_observation_requires_reconciliation', 409);
       fact.view.automaticPolicy = structuredClone(input);
       if (!input.enabled && prior && prior.state.status !== 'terminal') abortId = fact.taskId;
-      if (input.enabled && (!prior || prior.state.status === 'terminal')) fact.taskId = await tx.createTask(AdjustAccount, { id, binary: config.jobBinary, dataDir: config.dataDir },
+      if (input.enabled && (!prior || prior.state.status === 'terminal')) fact.taskId = await tx.createTask(AdjustAccount, { id, binary: scienceTarget(config), dataDir: config.dataDir },
         { conversationId: portfolio(facts.portfolios[fact.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true });
       facts.observations[id] = json(fact);
     }, context);
