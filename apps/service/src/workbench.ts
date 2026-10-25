@@ -1,7 +1,7 @@
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ConversationId, TaskId, Tx } from '@earendil-works/pi-durable';
+import type { ConversationId, Cursor, TaskId, Tx } from '@earendil-works/pi-durable';
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ import { factorReference, factorViews } from './factors.ts';
 import { publicLiteratureQueries, researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
+import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
@@ -209,12 +210,38 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
   async function removeFactor(id: string) {
     return removeResearch(factorReference(id).researchId, id);
   }
+  async function portfolioDeletionTasks(tx: Tx, id: string) {
+    const facts = await tx.doc(Application); const raw = facts.portfolios[id];
+    if (!raw) throw new Problem('portfolio_not_found', 404);
+    const fact = portfolio(raw); const relatedIds = new Set([id]); const taskIds = new Set<number>();
+    if (fact.view.taskId !== null) taskIds.add(fact.view.taskId);
+    for (const observed of Object.values(facts.observations).map(observation).filter(item => item.input.portfolioId === id)) {
+      relatedIds.add(observed.view.id); taskIds.add(observed.taskId);
+      if (observed.automaticTaskId !== undefined) taskIds.add(observed.automaticTaskId);
+    }
+    const tasks = []; let cursor: Cursor | undefined;
+    do {
+      const page = await tx.scanTasks({}, 100, cursor);
+      for (const task of page.items) {
+        const input = task.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input : null;
+        if (taskIds.has(task.id) || typeof input?.id === 'string' && relatedIds.has(input.id)) tasks.push(task);
+      }
+      cursor = page.next;
+    } while (cursor);
+    return tasks;
+  }
   async function removePortfolio(id: string): Promise<DeletionReceipt> {
+    const tasks = await host.harness.commit(tx => portfolioDeletionTasks(tx, id), context);
+    await reconcileNativeRemoteTasks(host.harness, tasks, context);
     return host.harness.commit(async tx => {
       const facts = await tx.doc(Application); const raw = facts.portfolios[id];
       if (!raw) throw new Problem('portfolio_not_found', 404);
       const fact = portfolio(raw);
       if (fact.deletedAt) return { kind: 'portfolio', id, deletedAt: fact.deletedAt };
+      for (const task of await portfolioDeletionTasks(tx, id)) {
+        if (task.state.status !== 'terminal') throw new Problem('portfolio_delete_tasks_active', 409);
+        await assertNativeRemoteTaskSettled(tx, task.conversationId, task.id);
+      }
       if (fact.view.taskId !== null && (await tx.task(fact.view.taskId as TaskId))?.state.status !== 'terminal') throw new Problem('portfolio_delete_tasks_active', 409);
       for (const observed of Object.values(facts.observations).map(observation).filter(item => item.input.portfolioId === id)) {
         const receipt = observed.view.receipt;

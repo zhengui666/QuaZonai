@@ -9,6 +9,23 @@ import { externalMaintenanceBlockers } from './pm-maintenance.ts';
 import { pmRecord } from './pm-facts.ts';
 import type { PmState } from './pm-facts.ts';
 import { retirementOutstandingTargets } from './pm-retirement.ts';
+import { Requests, Study } from '../../research/src/documents.ts';
+import { assertNativeRemoteTaskSettled } from '../../research/src/native-remote-receipts.ts';
+
+export async function pmMandateTasks(tx: Tx, record: import('./pm-facts.ts').PmRecord) {
+  const conversations = new Set([record.conversationId, ...Object.values(record.campaigns).map(item => item.runtime.conversationId)]);
+  const tasks: Awaited<ReturnType<Tx['scanTasks']>>['items'][number][] = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await tx.scanTasks({}, 100, cursor);
+    for (const task of page.items) {
+      const input = task.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input : null;
+      if (conversations.has(task.conversationId) || input?.mandateId === record.mandate.id) tasks.push(task);
+    }
+    cursor = page.next;
+  } while (cursor);
+  return tasks;
+}
 
 export function idlePmDeleteMonitor(task: { id: number; kind: string; state: { status: string; checkpoint?: JsonValue } }, monitorTaskId: number | null) {
   const checkpoint = task.state.checkpoint;
@@ -43,20 +60,21 @@ export async function deletePmMandate(tx: Tx, state: PmState, id: string): Promi
     || externalMaintenanceBlockers(json(relevant), json({ mandates: { [id]: record } })).length) throw new Problem('pm_delete_external_obligations', 409);
 
   const conversations = new Set([record.conversationId, ...Object.values(record.campaigns).map(item => item.runtime.conversationId)]);
-  for (const status of ['pending', 'running', 'waiting', 'completing'] as const) {
-    let cursor: Cursor | undefined;
-    do {
-      const page = await tx.scanTasks({ status }, 100, cursor);
-      for (const task of page.items) {
-        const input = task.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input : null;
-        if (!conversations.has(task.conversationId) && input?.mandateId !== id) continue;
-        // A retired, responsibility-free monitor may finish on its next native
-        // wake. No external command or scientific work is aborted by deletion.
-        if (idlePmDeleteMonitor(task, record.monitorTaskId)) continue;
-        throw new Problem('pm_delete_tasks_active', 409);
-      }
-      cursor = page.next;
-    } while (cursor);
+  const requests = await tx.doc(Requests);
+  for (const [key, request] of Object.entries(requests.requests)) {
+    if (!conversations.has(request.conversationId)) continue;
+    const submission = await tx.submissionByRequest(request.conversationId, key.slice('request:'.length));
+    if (submission && ['queued', 'placed'].includes(submission.status)
+      || !submission && !(await tx.doc(Study, request.conversationId)).final) throw new Problem('pm_delete_tasks_active', 409);
+  }
+  for (const task of await pmMandateTasks(tx, record)) {
+    // Keep checking original receipt families after the local Task is terminal.
+    await assertNativeRemoteTaskSettled(tx, task.conversationId, task.id);
+    if (task.state.status === 'terminal') continue;
+    // Only an idle monitor may finish on its next native wake. No external
+    // command or scientific work is aborted by deletion.
+    if (idlePmDeleteMonitor(task, record.monitorTaskId)) continue;
+    throw new Problem('pm_delete_tasks_active', 409);
   }
   record.deletedAt = new Date().toISOString();
   return { kind: 'mandate', id, deletedAt: record.deletedAt };

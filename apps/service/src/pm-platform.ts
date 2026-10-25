@@ -23,7 +23,8 @@ import { PmDocument, assertPmNotDeleted, visiblePmRecord, currentStrategy, diges
 import type { PmRecord, PmState } from './pm-facts.ts';
 import { assessStage, PM_CAPABILITY_ID, pmMetricDefinitions, selectionRule } from './pm-registry.ts';
 import { pmView } from './pm-view.ts';
-import { deletePmMandate } from './pm-deletion.ts';
+import { deletePmMandate, pmMandateTasks } from './pm-deletion.ts';
+import { reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { computePmDecision } from './pm-native.ts';
 import { pmQualificationProtocol } from './pm-qualification.ts';
 import { pmAllocationMethod } from './pm-method.ts';
@@ -887,7 +888,26 @@ export function createPmPlatform(config: ServiceConfig) {
   }
   async function remove(id: string) {
     await ready;
-    return dependencies.host.harness.commit(async tx => deletePmMandate(tx, pmState(await tx.doc(PmDocument)), id), context);
+    const host = dependencies.host;
+    const record = pmRecord(pmState(await host.harness.snapshot(PmDocument, context)), id);
+    const conversations = [...new Set([record.conversationId, ...Object.values(record.campaigns).map(item => item.runtime.conversationId)])].sort((left, right) => left - right);
+    function assertLockedConversations(current: PmRecord) {
+      const ids = [...new Set([current.conversationId, ...Object.values(current.campaigns).map(item => item.runtime.conversationId)])].sort((left, right) => left - right);
+      if (ids.length !== conversations.length || ids.some((value, index) => value !== conversations[index])) throw new Problem('pm_delete_tasks_active', 409);
+    }
+    async function locked(index: number): Promise<import('../../../packages/contracts/src/index.ts').DeletionReceipt> {
+      if (index < conversations.length) return host.withOwnerChange(conversations[index]!, () => locked(index + 1));
+      const tasks = await host.harness.commit(async tx => {
+        const current = pmRecord(pmState(await tx.doc(PmDocument)), id); assertLockedConversations(current);
+        return pmMandateTasks(tx, current);
+      }, context);
+      await reconcileNativeRemoteTasks(host.harness, tasks, context);
+      return host.harness.commit(async tx => {
+        const state = pmState(await tx.doc(PmDocument)); assertLockedConversations(pmRecord(state, id));
+        return deletePmMandate(tx, state, id);
+      }, context);
+    }
+    return locked(0);
   }
   return { extension: defineExtension({ name: 'qz.pm', tasks: [MonitorMandate, ComputeCycle, IndependentEvaluation, PmTargetTask, controls.task] }), connect,
     work: { start, get, list, delete: remove, readResource: controls.readResource, campaignCommand: controls.campaignCommand, strategyCommand: controls.strategyCommand, startCampaign: controls.startCampaign, recompute: (id: string, value: unknown) => command(id, 'recompute', value), retire: (id: string, value: unknown) => command(id, 'retire', value),

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -7,6 +8,8 @@ import type { TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView } from '../../../packages/contracts/src/pm.ts';
 import { fact, PmDocument, pmRecord, pmState } from '../src/pm-facts.ts';
 import { idlePmDeleteMonitor } from '../src/pm-deletion.ts';
+import { executeNativeValue, NativeRemoteUncertainty, retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import type { NativeExecutionRequest, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { context, setup } from './support.ts';
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
@@ -147,4 +150,69 @@ test('only the original idle monitor checkpoint can be ignored by PM deletion', 
   assert.equal(idlePmDeleteMonitor(task('wait'), 8), false);
   assert.equal(idlePmDeleteMonitor(task('wait', 'another-task'), 7), false);
   assert.equal(idlePmDeleteMonitor(task('wait', 'qz.pm.mandate-monitor', 'completing'), 7), false);
+});
+
+test('PM deletion retains unknown remote work across restart until GET confirms the original terminal receipt', { timeout: 30_000 }, async t => {
+  const f = await fixture();
+  const requests: string[] = []; const failures: unknown[] = [];
+  let original: NativeExecutionRequest | undefined;
+  let mode: 'UNKNOWN' | 'RUNNING' | 'MISMATCH' | 'UNAVAILABLE' | 'HANG' | 'COMPLETED' = 'UNKNOWN';
+  const realTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return realTimeout(milliseconds === 5000 && mode === 'HANG' ? 20 : milliseconds); });
+  const server = createServer((request, response) => { void (async () => {
+    requests.push(`${request.method} ${request.url}`);
+    const reply = (value: unknown) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value)); };
+    if (request.url === '/v1/capabilities') return reply({ schemaVersion: 1, implementationDigest: `sha256:${'d'.repeat(64)}`, commands: ['simulate'] });
+    if (request.method === 'POST' && request.url === '/v1/execute') {
+      const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      original = JSON.parse(Buffer.concat(chunks).toString('utf8')) as NativeExecutionRequest;
+      return reply({ schemaVersion: 1, requestId: original.requestId, status: 'UNKNOWN', error: 'controlled_original_outcome_unknown' });
+    }
+    assert.equal(request.method, 'GET'); assert.equal(request.url, `/v1/executions/${original!.requestId}`);
+    if (mode === 'HANG') return;
+    if (mode === 'UNAVAILABLE') { response.statusCode = 503; response.end(); return; }
+    return reply({ schemaVersion: 1, requestId: mode === 'MISMATCH' ? '0'.repeat(64) : original!.requestId,
+      status: mode === 'MISMATCH' ? 'COMPLETED' : mode, ...(mode === 'UNKNOWN' ? { error: 'controlled_original_outcome_unknown' } : {}),
+      ...(mode === 'COMPLETED' || mode === 'MISMATCH' ? { result: { protocolOnly: true } } : {}) });
+  })().catch(error => { failures.push(error); response.statusCode = 500; response.end(); }); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const target: RemoteNativeTarget = { id: 'original-pm-deletion-worker', url: `http://127.0.0.1:${address.port}` };
+  const child = defineTask<{ mandateId: string }, { phase: 'compute' }, null>({ name: 'test.pm-delete-remote-child', version: 1,
+    initial: () => ({ phase: 'compute' }), phases: { async compute(task, runtime, ctx) {
+      try {
+        await withNativeRemoteTracking(task.id, runtime, ctx, () => executeNativeValue(target, 'simulate', {}, [], f.state.directory, ctx));
+        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx);
+      } catch (error) { await retainNativeRemoteUncertainty(error, task.id, runtime, ctx); throw error; }
+    } }, async abort(_task, runtime, ctx) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx); } });
+  try {
+    f.state.options.extensions.push(defineExtension({ name: 'test.pm-delete-remote-child', tasks: [child] })); await f.state.restart();
+    await retire(f);
+    const taskId = await f.state.service.research.harness.commit(async tx => {
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      return tx.createTask(child, { mandateId: f.id }, { conversationId: conversation.id, ownership: { kind: 'conversation' }, background: true });
+    }, context);
+    const task = await f.state.service.research.harness.waitForTask(taskId, context);
+    assert.equal(task.state.outcome?.status, 'faulted', 'local failure does not establish remote cancellation');
+    const family = async () => f.state.service.research.harness.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), context);
+    const before = await family(); assert.equal(before!.requests[0]!.status, 'UNKNOWN');
+    const denied = async () => {
+      const response = await remove(f); assert.equal(response.statusCode, 409, response.body); assert.equal(response.json().error, 'native_remote_execution_unsettled');
+      assert.equal((await record(f.state, f.id)).deletedAt, undefined); assert.deepEqual(await family(), before);
+    };
+    await denied();
+    f.state.options.config.nautilus = { backtest: { id: 'changed-configuration-must-not-replace-original', url: 'http://127.0.0.1:1' } };
+    await f.state.restart(); await denied();
+    for (const next of ['RUNNING', 'MISMATCH', 'UNAVAILABLE', 'HANG'] as const) { mode = next; await denied(); }
+    assert.ok(deadlines.includes(5000), 'receipt GETs use a bounded total deadline');
+    mode = 'COMPLETED';
+    const deleted = await remove(f); assert.equal(deleted.statusCode, 200, deleted.body);
+    const settled = await family(); assert.equal(settled!.requests[0]!.status, 'COMPLETED');
+    assert.equal(settled!.requests[0]!.requestId, original!.requestId); assert.deepEqual(settled!.requests[0]!.target, target);
+    await f.state.restart(); assert.equal((await record(f.state, f.id)).deletedAt, deleted.json().deletedAt);
+    assert.deepEqual(await family(), settled);
+    assert.equal(requests.filter(item => item.startsWith('POST ')).length, 1);
+    assert.equal(requests.filter(item => item.startsWith('DELETE ')).length, 0, 'deletion never issues remote cancellation or resubmission');
+    assert.deepEqual(failures, []);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await f.state.cleanup(); }
 });

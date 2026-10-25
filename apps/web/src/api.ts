@@ -7,6 +7,8 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  native_remote_execution_unsettled: '远端科学执行的原始回执仍未确认终态，暂时不能删除；请恢复原连接后按同一身份核对',
+  mandate_deleted: '所属投资决策已删除，不能恢复其研究',
   research_delete_tasks_active: '请先停止研究并等待原始任务结束，再删除',
   research_delete_portfolio_in_use: '研究仍被组合使用，请先删除相关组合',
   research_delete_pm_in_use: '研究仍被投资决策使用，请先处理相关投资决策',

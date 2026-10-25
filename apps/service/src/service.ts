@@ -27,6 +27,8 @@ import { createPmPlatform } from './pm-platform.ts';
 import { registerPmRoutes } from './pm-routes.ts';
 import { maintenanceExtension, createMaintenance } from './pm-maintenance.ts';
 import { registerMaintenanceRoutes } from './pm-maintenance-routes.ts';
+import { Study } from '../../research/src/documents.ts';
+import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -69,7 +71,12 @@ export async function createService(options: ServiceOptions) {
   }
   if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
   requiredExtensions.add(fittedEnsemble.name);
-  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage });
+  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage,
+    authorizeResume: async (tx, id) => {
+      const parent = (await tx.doc(Study, id)).input?.campaign?.mandateRevisionId;
+      if (parent) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), parent));
+    },
+  });
   for (const extension of research.registry.snapshot().installed()) if (!extensions.has(extension.name)) {
     requiredExtensions.add(extension.name);
     extensions.set(extension.name, { name: extension.name, version: null, enabled: true, kind: 'host', state: 'loaded', error: null });
