@@ -1,3 +1,5 @@
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
@@ -19,11 +21,12 @@ export const ResearchDatasetBridge = defineDoc<{ artifact: JsonObject | null }>(
   kind: 'qz.ensemble.dataset-bridge', version: 1, scope: 'task', initial: () => ({ artifact: null }),
 });
 
-type Input = { mode: 'FIT'; data: JsonObject; members: FittedMember[]; binary: string }
-  | { mode: 'REPLAY'; data: JsonObject; fitTaskId: number; policy: ThresholdPolicy; partition: StrategyPartition; binary: string };
+type Input = { mode: 'FIT'; data: JsonObject; members: FittedMember[]; binary: NativeTarget }
+  | { mode: 'REPLAY'; data: JsonObject; fitTaskId: number; policy: ThresholdPolicy; partition: StrategyPartition; binary: NativeTarget };
 export const FittedEnsembleTask = defineTask<Input, { phase: 'compute' }, JsonObject>({
   name: 'qz.ensemble.fit-replay', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
+    return withNativeRemoteTracking(task.id, runtime, context, async () => {
     try {
       let output: { summary: JsonObject; evidence: JsonObject };
       if (task.input.mode === 'FIT') output = await fitNativeEnsemble({ ...task.input, evidenceIdentity: `native-task:${runtime.conversationId}:${task.id}` }, context);
@@ -66,9 +69,11 @@ export const FittedEnsembleTask = defineTask<Input, { phase: 'compute' }, JsonOb
       });
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: { summary: { ...output.summary, evidenceTaskId: task.id }, native } } }), context);
     } catch (error) {
+      await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: executionDiagnostic(error, 'ensemble_failed'), detail: { ...classifyExecutionError(error) } } } }), context);
     }
+    });
   } },
   async abort(_task, runtime, context) { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context); },
 });

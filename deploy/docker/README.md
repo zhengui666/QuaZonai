@@ -3,8 +3,9 @@
 The pinned Node 22.19 application serves the Web console and `/api/v3` at
 container port 8080. The service owns the sole official Pi Durable writer and
 scheduler; there is no host Worker, separate research server, Rust API or gateway.
-A separate offline scientific image retains the real Rust/Wasm compiler and
-Nautilus/Clarabel kernel. CLI archives include JS/dependencies and the official
+The application contains no Nautilus kernel or source-tool executable. Scientific
+work connects to a separately deployed Nautilus HTTP instance; paper and live
+connections select their own remote instances. CLI archives include JS/dependencies and the official
 platform Node runtime, not SEA or a custom bundled executable.
 
 ## Install
@@ -31,8 +32,8 @@ original durable storage, not fictional remote cancellation.
 
 ## State and providers
 
-`data/service.json` configures datasets, connections, extensions and the original
-`research.database` path. `data/research/provider.env` is private: Node alone
+`data/service.json` configures `nautilus.backtest`, paper/live `connections`,
+datasets, extensions and the original `research.database` path. `data/research/provider.env` is private: Node alone
 reads it using `--env-file`. Use official pi-ai provider environment names; never
 put credentials in research inputs, model context, logs or source. Initial
 password setup/login happens in the browser. The standalone installed CLI is
@@ -62,7 +63,12 @@ bash manage.sh restore /absolute/installation/backups/RECOVERY_POINT
 Pass `--directory /original/root` for a custom installation. Update stops the
 original writer before idle inspection and backup. Unresolved tasks, queued
 research submissions and pending/uncertain downstream receipts refuse update;
-resume the original release explicitly and reconcile them. Pending target,
+resume the original release explicitly and reconcile them. Before upgrading an
+installation that previously used `jobBinary`, finish its local tasks, remove
+that field from the private config, configure the remote backtest instance and
+shared catalog paths, then update. Historical
+results remain readable; a stored local executable is not silently treated as a
+new remote execution. Pending target,
 original config, SQLite/WAL, modules, provider env, artifacts, keys, journals,
 PostgreSQL and backup data are preserved. Restart/restore reuse the original
 receipt identities, not replacement requests. Restore is explicit and requires
@@ -82,15 +88,110 @@ original database, master key, journals and backups. A reviewed auth/archive/que
 cutover is required before adopting schema 4. A local process exit is not proof
 of remote-stop. Do not delete the old Worker or initialize over existing state.
 
-## Scientific images and source tools
+## Remote Nautilus instances
 
-The application and scientific image reuse the exact same tested `job` output.
-The scientific image is offline, accepts explicit immutable `/input` mounts and
-writes only to `/output`; actual Docker stop is needed to stop its process.
-No retired `runtime doctor/serve`, `worker`, `init-state` or Rust `migrate` command
-is invoked. Source preparation remains in the app image at
-`/opt/quazonai/operator/source_plugins.py` and uses its matching `source-tools`.
-Call it in a disposable `docker run --rm --init --network none --read-only` with
-explicit read-only input and writable output mounts. Configure an original
-server-side native catalog in `data/service.json`; a successful compilation or
-backtest is not independent evidence or permission to trade.
+Configure the backtest endpoint independently from each paper/live account
+connection. No remote endpoint is inferred from a former `jobBinary`, and a
+missing endpoint does not fall back to local execution. The console can start
+without one; scientific operations require it. For example, merge these fields
+into the original private `data/service.json`:
+
+```json
+{
+  "nautilus": {
+    "backtest": {
+      "id": "research-nautilus",
+      "url": "https://research-nautilus.example.com",
+      "tokenEnv": "QZ_RESEARCH_NAUTILUS_TOKEN"
+    }
+  },
+  "connections": [
+    {
+      "id": "paper-account", "name": "Paper Nautilus", "mode": "paper",
+      "url": "https://paper-nautilus.example.com",
+      "clientId": "quazonai-paper", "accountId": "paper-account",
+      "tokenEnv": "QZ_PAPER_NAUTILUS_TOKEN"
+    },
+    {
+      "id": "live-account", "name": "Live Nautilus", "mode": "live",
+      "url": "https://live-nautilus.example.com",
+      "clientId": "quazonai-live", "accountId": "live-account",
+      "tokenEnv": "QZ_LIVE_NAUTILUS_TOKEN"
+    }
+  ]
+}
+```
+
+Store each named token in the private `data/research/provider.env`, then restart
+the app. Use distinct connection IDs for distinct account bindings. Existing
+observations retain their original connection and receipt identity; changing a
+configuration entry does not retarget their pending deliveries.
+
+These URLs must expose the corresponding QuaZonai adapter protocol, not a raw
+NautilusTrader Python/Rust library. The shipped remote image serves the scientific
+HTTP protocol on port 8090. Paper/live endpoints use the existing target receipt,
+account, capability and capital-control protocol. QuaZonai remains target-only;
+it does not hold broker credentials or place real orders.
+
+### Deploy the backtest instance separately
+
+The release manifest's `runtime_image` identifies the matching remote Nautilus
+image. The local application installer does not pull or start it. Run it on the
+chosen execution host with a private environment file containing
+`QZ_NAUTILUS_TOKEN`, and a writable directory for durable execution receipts:
+
+```sh
+# Example paths: substitute the original absolute paths on both hosts.
+mkdir -p /srv/nautilus-state /srv/quazonai/data/catalogs
+docker run --detach --name quazonai-nautilus \
+  --user "$(id -u):$(id -g)" --read-only \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --env-file /absolute/private/nautilus.env \
+  --env 'QZ_NAUTILUS_CATALOG_ROOTS=["/srv/market-data","/srv/quazonai/data/catalogs"]' \
+  --mount type=bind,source=/srv/market-data,target=/srv/market-data,readonly \
+  --mount type=bind,source=/srv/quazonai/data/catalogs,target=/srv/quazonai/data/catalogs,readonly \
+  --mount type=bind,source=/srv/nautilus-state,target=/data/nautilus \
+  --tmpfs /tmp:rw,nosuid,nodev,size=128m \
+  --publish 127.0.0.1:8090:8090 \
+  REMOTE_NAUTILUS_IMAGE_FROM_RELEASE_MANIFEST
+```
+
+Expose the HTTP endpoint to QuaZonai through the chosen private network or HTTPS
+proxy. `/health` reports process readiness; authenticated `/v1/capabilities`
+reports its supported scientific commands. Configure the app with the address
+reachable from its own container, not the app container's `localhost`.
+
+The current dataset contract uses shared filesystems. Original registered
+catalogs and the app's `<dataDir>/catalogs` frozen snapshots must be available on
+both hosts **at the same absolute paths**, and mounted read-only in the worker.
+Only these data directories need sharing; do not mount the app's database,
+provider environment or entire private data root into the worker. Keep admitted
+catalog revisions immutable. Small generated models and request objects travel
+through HTTP, while catalog bytes are not automatically uploaded or copied to
+an unrelated remote directory. A catalog path that exists only on one host is
+not sufficient.
+
+The remote worker owns its execution receipts under `QZ_NAUTILUS_DATA_DIR`
+(default `/data/nautilus`). Preserve and back up this directory separately with
+its matching catalogs and image. An application restart, HTTP disconnect or
+local task abort does not prove remote cancellation; reconcile the original
+execution identity. App backup/restore does not back up or restore remote hosts.
+
+### Source preparation
+
+The remote image contains the exact tested `job`, `source-tools` and retained
+Rust/Wasm compiler. Operator helpers are at
+`/opt/quazonai/operator/source_plugins.py` in that image. Invoke source preparation
+with an explicit entrypoint, read-only inputs and a separate writable output:
+
+```sh
+docker run --rm --init --network none --read-only \
+  --entrypoint /usr/bin/python3 REMOTE_NAUTILUS_IMAGE_FROM_RELEASE_MANIFEST \
+  -E -s -B /opt/quazonai/operator/source_plugins.py plugins
+```
+
+For a native CLI operation use `--entrypoint /opt/quazonai/bin/job` on the remote
+image; the application no longer has a `job` command. Source download operations
+need their explicitly allowed network access. No retired `runtime doctor/serve`,
+`worker`, `init-state` or Rust `migrate` command is invoked. A successful backtest
+is not independent evidence or permission to trade.

@@ -1,3 +1,4 @@
+import { nativeTargetForData } from '../src/native-execution.ts';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Study } from '../src/documents.ts';
@@ -22,7 +23,7 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
       members: sources.map(member => ({ ...member })), request: input.data.request ?? null, method: 'qz-expanding-train-three-fold-v1' };
     return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);
-      return runFittedEnsemble(api, context, { mode: 'FIT', data: input.data, members: sources, binary: process.env.QZ_JOB_BINARY ?? 'job' });
+      return runFittedEnsemble(api, context, { mode: 'FIT', data: input.data, members: sources, binary: nativeTargetForData(input.data) });
     }));
   },
 }), defineTool({
@@ -41,7 +42,7 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
       const policy = resolvePortfolioPolicy(proposal, object(input.policy.strategy, 'strategy_policy'));
       if (policy.kind === 'catalog-ensemble') throw new Error('ensemble_full_prediction_panel_required');
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined, policy.evidenceMode);
-      return runFittedEnsemble(api, context, { mode: 'REPLAY', data: input.data, fitTaskId: fit.evidenceTaskId as number, policy, partition: 'VALIDATION', binary: process.env.QZ_JOB_BINARY ?? 'job' });
+      return runFittedEnsemble(api, context, { mode: 'REPLAY', data: input.data, fitTaskId: fit.evidenceTaskId as number, policy, partition: 'VALIDATION', binary: nativeTargetForData(input.data) });
     }));
   },
 })] });

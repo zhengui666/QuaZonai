@@ -1,3 +1,4 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -111,7 +112,7 @@ export function retirementAccountFlat(capture: CapturedAccount): { flat: boolean
 }
 
 export interface ObservedSpotComparisonInput {
-  capture: CapturedAccount; nativeDatasetRevisionId: string; datasetRevision: { id: string; contentRef: string }; catalog: string; binary: string; dataDir: string;
+  capture: CapturedAccount; nativeDatasetRevisionId: string; datasetRevision: { id: string; contentRef: string }; catalog: string; binary: NativeTarget; dataDir: string;
   operation: { kind: 'SIMULATION'; simulation: JsonObject } | { kind: 'STUDY'; study: JsonObject; objectsDirectory: string };
 }
 export interface ObservedSpotLeg { status: 'COMPLETED' | 'FAILED'; result: JsonObject | null; reason: string | null }

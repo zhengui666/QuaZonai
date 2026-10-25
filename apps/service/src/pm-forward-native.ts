@@ -1,3 +1,4 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -20,7 +21,7 @@ export interface PmForwardNativeInput {
   datasetRevision: { id: string; contentRef: string };
   selection: JsonObject;
   catalog: string;
-  binary: string;
+  binary: NativeTarget;
   dataDir: string;
   basisRevision: string;
 }

@@ -18,6 +18,8 @@ check-ts:
 	npm --prefix apps/service test
 	npm --prefix apps/research run typecheck
 	npm --prefix apps/research test
+	npm --prefix apps/nautilus run typecheck
+	npm --prefix apps/nautilus test
 	npm --prefix apps/cli run typecheck
 	npm --prefix apps/cli test
 
@@ -48,6 +50,7 @@ check-core:
 	binaries=$$(dirname "$(QZ_JOB_BINARY)"); \
 	"$$binaries/browser_catalog_fixture" "$$directory/catalog" "$$binaries/catalog-prepare" && \
 	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" QZ_CATALOG_PREPARE_BINARY="$$binaries/catalog-prepare" QZ_BROWSER_FIXTURE="$$directory/catalog/prepared.json" QZ_PM_NATIVE_FIXTURE="$(QZ_PM_NATIVE_FIXTURE_DIR)/source.json" QZ_PM_NATIVE_FIXTURE_DIR="$(QZ_PM_NATIVE_FIXTURE_DIR)" QZ_PM_OBSERVED_FIXTURE_DIR="$(QZ_PM_OBSERVED_FIXTURE_DIR)" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" npm --prefix apps/service run test:native
+	QZ_JOB_BINARY="$(QZ_JOB_BINARY)" QZ_PM_NATIVE_FIXTURE="$(QZ_PM_NATIVE_FIXTURE_DIR)/source.json" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" node --experimental-strip-types --test apps/service/test/remote-native.ts
 
 # Manual/formal-release science coverage only, on the retained three crates.
 check-native-full:

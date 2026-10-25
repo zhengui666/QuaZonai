@@ -1,3 +1,5 @@
+import { boundScienceTarget } from './science-binding.ts';
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -70,13 +72,13 @@ export function pmIndependentTask(config: ServiceConfig) {
         const allocationMethod = validatePmAllocationMethod(object(policy.validDomain).jointAllocationMethod);
         assertPmDataAvailable(heldout, frozenCycle.availableCutoffNs);
         await checkExposure(researchRuntime(runtime), ctx, heldout, true);
-        const result = await evaluatePmIndependent({ source: object(frozen.source), capital: frozen.capital as unknown as Pm.Money,
-          currency: String(object(frozen.capital).currency), catalog: String(heldout.catalog), dataDir: config.dataDir, binary: config.jobBinary,
+        const result = await withNativeRemoteTracking(runtime.taskId, runtime, ctx, () => evaluatePmIndependent({ source: object(frozen.source), capital: frozen.capital as unknown as Pm.Money,
+          currency: String(object(frozen.capital).currency), catalog: String(heldout.catalog), dataDir: config.dataDir, binary: boundScienceTarget(config, heldout),
           cycleId: task.input.cycleId, allocationMethod,
           ownerBoundaries: (object(policy.validDomain).ownerBoundaries ?? []) as unknown as Pm.OwnerBoundary[],
           selectedCapital: String(frozen.selectedCapital), heldoutData: heldout,
           ...(frozen.capture ? { capture: frozen.capture as unknown as CapturedAccount,
-            datasetRevision: { id: String(object(object(frozen.configured).revision).id), contentRef: String(object(object(frozen.configured).revision).contentRef) } } : {}) }, ctx, pmScienceCheckpoint(runtime, 'pm-independent', ctx));
+            datasetRevision: { id: String(object(object(frozen.configured).revision).id), contentRef: String(object(object(frozen.configured).revision).contentRef) } } : {}) }, ctx, pmScienceCheckpoint(runtime, 'pm-independent', ctx)));
         const record = snapshot; const decision = record.decisions[task.input.decisionId]!; const cycle = record.cycles[task.input.cycleId]!;
           const artifactId = identity('independent-evidence', decision.id); const artifact = result as unknown as JsonObject; const atNs = nowNs();
           const selection = result.point.simulationRequest ? object(result.point.simulationRequest.selection) : null;
@@ -132,6 +134,7 @@ export function pmIndependentTask(config: ServiceConfig) {
           return { status: 'terminal', outcome: { status: 'completed', result: null } };
         }, ctx);
       } catch (error) {
+        await retainNativeRemoteUncertainty(error, runtime.taskId, runtime, ctx);
         if (runtime.signal.aborted) throw error;
         const reason = error instanceof Error && /^[a-zA-Z][a-zA-Z0-9_]+$/.test(error.message) ? error.message : 'independent_portfolio_evaluation_failed';
         await runtime.commit(async tx => {

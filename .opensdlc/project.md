@@ -35,6 +35,7 @@ npm ci --prefix apps/web --ignore-scripts --no-audit --no-fund
 | Installation/package helpers | `make check-deploy` | Source helper tests, shell syntax and disposable package/manager checks; not an installed service |
 | Routine TypeScript work | `make check` | TS, Web and deployment helpers |
 | Scientific contracts/kernel | `make check-science` | Retained native rules, factors, simulation, allocation, isolation and account adapters |
+| Remote scientific protocol | `node --experimental-strip-types --test apps/nautilus/test/*.test.ts` | Actual HTTP and controlled child processes, receipts, restart and cancellation; not scientific evidence |
 | Connected native core flow | `make check-core QZ_JOB_BINARY=/absolute/path/to/job` | Matching `catalog-prepare` and `browser_catalog_fixture` beside job; actual native factor/heldout, selected strategy, shared-account curve and controlled downstream protocol |
 | Full retained science, manual/formal release | `make check-native-full` | Clippy and all retained native tests; not the routine control-plane suite |
 | Current Markdown | `make check-links` | Offline links using `.lychee.toml`; historical task records retain their original context |
@@ -45,7 +46,7 @@ Build the matching scientific executables once with `bash deploy/docker/native-b
 
 ### Local service
 
-Copy [service.example.json](../apps/service/service.example.json) to a private configuration, then set explicit original database, native job, datasets, provider modules and extensions as needed:
+Copy [service.example.json](../apps/service/service.example.json) to a private configuration, then set explicit original database, remote `nautilus.backtest` endpoint, datasets, provider modules and extensions as needed:
 
 ```sh
 QZ_CONFIG=/absolute/private/service.json npm --prefix apps/service start
@@ -94,7 +95,7 @@ Deterministic tests use official Faux Provider and controlled downstream protoco
 <a id="runtime-image-build"></a>
 ## Image production
 
-[Container action](../.github/actions/container/action.yml) reuses exact tested native outputs for the Node application and scientific image; normal npm/buildx/Rust dependency caches avoid duplicate compilation. [Version publishing](../.github/workflows/release-version.yml) and [dev publishing](../.github/workflows/dev-image.yml) preserve the release strategy and run disposable installation/restart/backup acceptance. Source tools remain at [runtimes/data](../runtimes/data); native image assembly at [runtimes/native](../runtimes/native).
+[Container action](../.github/actions/container/action.yml) keeps the Node application free of native engines and reuses exact tested native outputs for the separately deployed Nautilus worker image; normal npm/buildx/Rust dependency caches avoid duplicate compilation. [Version publishing](../.github/workflows/release-version.yml) and [dev publishing](../.github/workflows/dev-image.yml) preserve the release strategy and run disposable installation/restart/backup acceptance. Source tools remain at [runtimes/data](../runtimes/data); native image assembly at [runtimes/native](../runtimes/native).
 
 CLI archives carry ordinary JS, official dependencies and the official platform Node runtime, not a rewritten runtime or SEA implementation. Installation does not compile and requires no host Node/Rust/Python/Worker. Legacy Rust installation cutover is explicitly unsupported until original authentication, queues and state can be reconciled; new bundles never initialize over that state. See [deployment](../deploy/docker/README.md).
 

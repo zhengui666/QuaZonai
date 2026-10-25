@@ -1,3 +1,4 @@
+import { boundScienceTarget } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -106,7 +107,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
     trainingEvidenceRefs: [fitEvidenceId], jointValidationEvidenceRefs: [], qualification: 'CANDIDATE', rejectionReasonCodes: [] };
   result.ensembles[ensembleId] = ensemble; decision.ensembleRevisionId = ensembleId;
   const common = { source, currency: capital?.currency ?? cycle.accountBasis!.currency, catalog: String(data.catalog), dataDir: config.dataDir,
-    binary: config.jobBinary, maximumTrials: Number(frozen.maximumTrials ?? 0), cycleId: cycle.id,
+    binary: boundScienceTarget(config, data), maximumTrials: Number(frozen.maximumTrials ?? 0), cycleId: cycle.id,
     ownerBoundaries: record.mandate.ownerBoundaries,
     allocationMethod: object(object(record.policy.validDomain).jointAllocationMethod, 'joint_allocation_method') };
   let accountScience: PmAccountScienceResult | null = null;

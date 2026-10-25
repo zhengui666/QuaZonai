@@ -1,3 +1,4 @@
+import { scienceTarget } from './config.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import type { ResearchHost } from '../../research/src/host.ts';
@@ -110,7 +111,7 @@ export function capitalWorkbench(host: ResearchHost, config: ServiceConfig) {
       if (Object.values(state.commands).some(value => ['PENDING', 'UNCERTAIN'].includes(value.state))) throw new Problem('capital_exit_command_requires_reconciliation', 409);
       if (state.status?.controlRevision !== status.controlRevision) throw new Problem('capital_exit_revision_conflict', 409);
       // Local reservation and durable command admission are one transaction, before any unsafe POST.
-      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: config.jobBinary, dataDir: config.dataDir },
+      const taskId = await tx.createTask(CapitalExitCommand, { key, requestId, connection: current.connection, reconcile: false, binary: scienceTarget(config), dataDir: config.dataDir },
         { conversationId: portfolio(facts.portfolios[current.input.portfolioId]).view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' }, background: true });
       state.commands[requestId] = { original: json(original), body: native, path, reserved, state: 'PENDING', result: null, error: null, taskId, permissionBasis };
       facts.accountControls ??= {}; facts.accountControls[key] = json(state); return { requestId, state: 'PENDING', result: null };

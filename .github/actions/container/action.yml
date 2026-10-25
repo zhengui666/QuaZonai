@@ -1,5 +1,5 @@
 name: Verify production container
-description: Assemble Node/static and isolated science images from one native build, then run stopped-state acceptance.
+description: Assemble the application and separate remote Nautilus image from one native build, then run HTTP science and stopped-state acceptance.
 inputs:
   source:
     description: Source checkout directory
@@ -18,7 +18,7 @@ inputs:
     default: ''
 outputs:
   runtime-image:
-    description: Tested scientific image
+    description: Tested remote Nautilus image
     value: ${{ steps.native.outputs.image }}
 runs:
   using: composite
@@ -79,29 +79,33 @@ runs:
       run: |
         node runtimes/native/build-native-image.mjs --job-binary "$JOB_BINARY" --profile release \
           --prepare-only --output-dir "$RUNNER_TEMP/scientific-image"
-        echo "context=$RUNNER_TEMP/scientific-image/context" >> "$GITHUB_OUTPUT"
-    - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-      with:
-        builder: ${{ steps.builder.outputs.name }}
-        context: ${{ steps.assembly.outputs.context }}
-        file: ${{ inputs.source }}/runtimes/native/native-job.Dockerfile
-        platforms: linux/amd64
-        load: true
-        tags: quazonai-science:${{ inputs.revision }}
-        build-args: |
-          VERSION=${{ inputs.version }}
-          REVISION=${{ inputs.revision }}
-        cache-from: type=gha,scope=quazonai-scientific
-        cache-to: type=gha,mode=max,scope=quazonai-scientific
-    - id: native
-      shell: bash
-      run: echo "image=quazonai-science:${{ inputs.revision }}" >> "$GITHUB_OUTPUT"
+        echo "compiler=$RUNNER_TEMP/scientific-image/context/native-root" >> "$GITHUB_OUTPUT"
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
       with:
         builder: ${{ steps.builder.outputs.name }}
         context: ${{ inputs.source }}
         file: ${{ inputs.source }}/deploy/docker/Dockerfile
-        build-contexts: native=${{ steps.artifacts.outputs.directory }}
+        target: nautilus
+        build-contexts: |
+          native=${{ steps.artifacts.outputs.directory }}
+          compiler=${{ steps.assembly.outputs.compiler }}
+        platforms: linux/amd64
+        load: true
+        tags: quazonai-nautilus:${{ inputs.revision }}
+        build-args: |
+          VERSION=${{ inputs.version }}
+          REVISION=${{ inputs.revision }}
+        cache-from: type=gha,scope=quazonai-nautilus
+        cache-to: type=gha,mode=max,scope=quazonai-nautilus
+    - id: native
+      shell: bash
+      run: echo "image=quazonai-nautilus:${{ inputs.revision }}" >> "$GITHUB_OUTPUT"
+    - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+      with:
+        builder: ${{ steps.builder.outputs.name }}
+        context: ${{ inputs.source }}
+        file: ${{ inputs.source }}/deploy/docker/Dockerfile
+        target: application
         platforms: linux/amd64
         load: true
         tags: ${{ inputs.image }}

@@ -55,7 +55,9 @@ qz_compose() (
 qz_prepare() {
     local root=$1 release="$QZ_BUNDLE/release.json" file=$2 directory field image name
     qz_manifest "$release"
-    for field in image runtime_image; do
+    # A remote Nautilus instance is configured separately. Updating the local
+    # application must not pull or install its optional remote image.
+    for field in image; do
         image=$(qz_get "$release" "$field")
         if [[ "$image" != sha256:* ]]; then docker pull "$image"; fi
         [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$(qz_get "$release" revision)" ]] || qz_fail 'Image source differs from the release manifest.'

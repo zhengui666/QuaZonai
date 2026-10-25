@@ -1,3 +1,4 @@
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../src/native-execution.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -12,6 +13,7 @@ import { readCatalogScope } from './native-catalog-scope.ts';
 export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { phase: 'compute' }, JsonObject>({
   name: 'qz.strategy-portfolio.evaluate', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
+    return withNativeRemoteTracking(task.id, runtime, context, async () => {
     try {
       const scope = task.input.policy.kind === 'catalog-ensemble' ? await readCatalogScope(runtime, object(task.input.data.catalog_scope, 'catalog_scope'), context) : undefined;
       const result = await evaluatePortfolio(task.input, context, scope);
@@ -25,14 +27,16 @@ export const PortfolioEvaluationTask = defineTask<PortfolioEvaluationInput, { ph
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed',
         result: { summary: { ...result.summary, evidenceTaskId: task.id }, native } } }), context);
     } catch (error) {
+      await retainNativeRemoteUncertainty(error, task.id, runtime, context);
       if (runtime.signal.aborted) throw error;
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
         message: executionDiagnostic(error, 'portfolio_evaluation_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: 'portfolio-evaluation' }) },
       } } }), context);
     }
+    });
   } },
   async abort(_task, runtime, context) {
-    // ExecutionEnv cleanup has joined the local processes before this phase runs.
+    // Local task abort does not establish remote termination without its receipt.
     await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context);
   },
 });

@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-durable';
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { DatasetView, JsonObject, ModelRef, ObservationMode, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
+import type { NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 
 import type { StrategyPolicy } from '../../research/src/strategy.ts';
 export type { StrategyPolicy, ThresholdPolicy } from '../../research/src/strategy.ts';
@@ -23,6 +24,7 @@ export interface ServiceConfig {
   host: string; port: number; dataDir: string;
   research: { database: string; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
+  nautilus?: { backtest?: RemoteNativeTarget };
   name: string; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; jobBinary: string;
   passwordHash?: string; secureCookies: boolean; publicOrigin?: string; staticDir?: string;
   archiveDatabase?: string;
@@ -36,13 +38,19 @@ export function configDefaults(value: Partial<ServiceConfig> = {}, base = proces
   return {
     host: '127.0.0.1', port: 8080, name: 'QuaZonai', defaultModel: null, thinkingLevel: null, serviceTier: null, secureCookies: false,
     datasets: [], connections: [], extensions: [], ...value, dataDir,
-    jobBinary: resolve(base, value.jobBinary ?? process.env.QZ_JOB_BINARY ?? 'job'),
+    ...(value.nautilus?.backtest ? { datasets: (value.datasets ?? []).map(dataset => ({ ...dataset, data: bindScienceData(dataset.data, value.nautilus!.backtest!) })) } : {}),
+    // Only explicit in-process test/worker callers may supply a local executable.
+    // File-based application configuration never enables embedded execution.
+    jobBinary: value.jobBinary ? resolve(base, value.jobBinary) : '',
     research: { ...value.research, database: resolve(base, value.research?.database ?? `${dataDir}/research.sqlite`) },
   };
 }
 export async function loadConfig(path: string): Promise<ServiceConfig> {
   const absolute = resolve(path);
-  const config = configDefaults(JSON.parse(await readFile(absolute, 'utf8')), dirname(absolute));
+  const raw = JSON.parse(await readFile(absolute, 'utf8'));
+  if (raw.jobBinary !== undefined) throw new Error('embedded_nautilus_removed_configure_remote_backtest');
+  const config = configDefaults(raw, dirname(absolute));
+  validateNautilusConfiguration(config);
   const base = dirname(absolute);
   config.research.modules = config.research.modules?.map((path) => resolve(base, path));
   config.research.providerModules = config.research.providerModules?.map((path) => resolve(base, path));
@@ -58,4 +66,57 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
     }
   }
   return config;
+}
+
+/** Backtest/PM computations and PAPER/LIVE transports have separate bindings. */
+export function scienceTarget(config: { nautilus?: ServiceConfig['nautilus']; jobBinary: NativeTarget }): NativeTarget {
+  return config.nautilus?.backtest ?? config.jobBinary;
+}
+
+function remoteUrl(value: unknown) {
+  if (typeof value !== 'string') throw new Error('nautilus_url_required');
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('nautilus_url_invalid'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('nautilus_url_invalid');
+}
+function tokenEnvironment(value: unknown) {
+  if (value !== undefined && (typeof value !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value))) throw new Error('nautilus_token_env_invalid');
+}
+export function validateNautilusConfiguration(config: Pick<ServiceConfig, 'nautilus' | 'connections'>) {
+  if (config.nautilus !== undefined) {
+    if (!config.nautilus || typeof config.nautilus !== 'object' || Array.isArray(config.nautilus)
+      || Object.keys(config.nautilus).some(key => key !== 'backtest')) throw new Error('nautilus_configuration_invalid');
+    const backtest = config.nautilus.backtest;
+    if (backtest !== undefined) {
+      if (!backtest || typeof backtest !== 'object' || Array.isArray(backtest) || typeof backtest.id !== 'string' || !backtest.id.trim()
+        || Object.keys(backtest).some(key => !['id', 'url', 'tokenEnv'].includes(key))) throw new Error('nautilus_backtest_instance_invalid');
+      remoteUrl(backtest.url); tokenEnvironment(backtest.tokenEnv);
+    }
+  }
+  const ids = new Set<string>();
+  if (!Array.isArray(config.connections)) throw new Error('nautilus_connections_invalid');
+  for (const connection of config.connections) {
+    if (!connection || typeof connection !== 'object' || !['paper', 'live'].includes(connection.mode)
+      || ['id', 'name', 'clientId', 'accountId'].some(key => typeof connection[key as keyof ConnectionConfig] !== 'string' || !String(connection[key as keyof ConnectionConfig]).trim())) throw new Error('nautilus_connection_invalid');
+    if (ids.has(connection.id)) throw new Error('nautilus_connection_id_conflict');
+    ids.add(connection.id); remoteUrl(connection.url); tokenEnvironment(connection.tokenEnv);
+  }
+}
+
+/** Freeze the transport identity with newly admitted data, never rewrite stored requests. */
+export function bindScienceData(data: JsonObject, target: RemoteNativeTarget): JsonObject {
+  const bound: JsonObject = { ...data, nautilusTarget: { ...target } };
+  if (data.sealed && typeof data.sealed === 'object' && !Array.isArray(data.sealed)) {
+    bound.sealed = { ...data.sealed, nautilusTarget: { ...target } };
+  }
+  return bound;
+}
+
+export function scienceDataWithoutBinding(data: JsonObject): JsonObject {
+  // Stored Durable documents can be proxies and cannot be structuredClone'd.
+  const copy = { ...data }; delete copy.nautilusTarget;
+  if (copy.sealed && typeof copy.sealed === 'object' && !Array.isArray(copy.sealed)) {
+    copy.sealed = { ...copy.sealed }; delete copy.sealed.nautilusTarget;
+  }
+  return copy;
 }

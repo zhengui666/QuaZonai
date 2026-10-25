@@ -14,6 +14,13 @@
     "providerModules": []
   },
   "datasets": [],
+  "nautilus": {
+    "backtest": {
+      "id": "research-nautilus",
+      "url": "https://nautilus-research.example.com",
+      "tokenEnv": "QZ_NAUTILUS_RESEARCH_TOKEN"
+    }
+  },
   "connections": [],
   "extensions": []
 }

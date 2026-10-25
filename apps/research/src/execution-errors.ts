@@ -23,6 +23,10 @@ export class ExecutionFailure extends Error {
 
 type Reason = { codes: string[]; category: ExecutionErrorCategory; message: string; action: string };
 const reasons: Reason[] = [
+  { codes: ['nautilus_backtest_not_configured', 'nautilus_credentials_missing'], category: 'runtime', message: '远程 Nautilus 回测实例或连接凭据未配置。', action: '配置回测实例和对应凭据后核对原任务；不会回退到本地引擎。' },
+  { codes: ['legacy_local_nautilus_task_requires_migration'], category: 'runtime', message: '原任务仍绑定旧的本地 Nautilus，不能自动改到其他实例。', action: '保留原任务与证据，完成明确的远程执行迁移后再提交新的工作。' },
+  { codes: ['nautilus_execution_unknown', 'nautilus_cancellation_unknown'], category: 'runtime', message: '远程科学执行或取消的结果尚未确认。', action: '按原远程回执核对实例状态；连接断开不代表任务已经取消。' },
+  { codes: ['nautilus_execution_cancelled'], category: 'cancelled', message: '远程 Nautilus 已确认停止本次科学执行。', action: '保留原任务、试验和停止记录；没有计算成功结论。' },
   { codes: ['QZ_NATIVE_JOB_MEMORY_LIMIT'], category: 'resource', message: '原生编译器触及内存限制。', action: '检查本机可用内存和模型复杂度；本次失败已记录，不会自动重算。' },
   { codes: ['QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED', 'SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED'], category: 'runtime',
     message: '当前原生模拟引擎不支持区间内的合约定义变更。', action: '使用定义稳定且满足原研究条件的数据区间，或升级支持该能力的官方引擎；不要删除原始定义历史。' },

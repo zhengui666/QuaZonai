@@ -28,6 +28,7 @@ test('adopt the original research database and private modules; configure never 
   const path = configure(root, 'http://localhost:8081'); const config = JSON.parse(await readFile(path, 'utf8'));
   assert.equal(config.research.database, database); assert.equal(config.research.modules[0], '/opt/quazonai/apps/research/plugins/research.ts');
   assert.equal(config.research.modules[1], join(research, 'private.ts')); assert.deepEqual(config.research.tuning, old.tuning);
+  assert.deepEqual(config.nautilus, {}); assert.equal(config.jobBinary, undefined);
   assert.equal(await readFile(database, 'utf8'), 'original bytes'); assert.equal(await readFile(join(research, 'provider.env'), 'utf8'), '# private original env\n');
   const saved = await readFile(path, 'utf8'); configure(root, 'http://localhost:9999'); assert.equal(await readFile(path, 'utf8'), saved);
 });

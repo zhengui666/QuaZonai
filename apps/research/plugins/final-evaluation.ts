@@ -1,3 +1,4 @@
+import { nativeTargetForData } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
 import { canonical, Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
@@ -44,8 +45,8 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
           await checkExposure(api, context, scoped, true, undefined, selected.policy.evidenceMode);
           if (selected.fitTaskId !== null && selected.policy.kind === 'catalog-ensemble') throw new Error('ensemble_full_prediction_panel_required');
           const result = selected.fitTaskId !== null && selected.policy.kind !== 'catalog-ensemble'
-            ? await runFittedEnsemble(api, context, { mode: 'REPLAY', fitTaskId: selected.fitTaskId, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: process.env.QZ_JOB_BINARY ?? 'job' })
-            : await runPortfolio(api, context, { members: selected.members, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: process.env.QZ_JOB_BINARY ?? 'job' });
+            ? await runFittedEnsemble(api, context, { mode: 'REPLAY', fitTaskId: selected.fitTaskId, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: nativeTargetForData(scoped) })
+            : await runPortfolio(api, context, { members: selected.members, policy: selected.policy, data: scoped, partition: 'HELDOUT', binary: nativeTargetForData(scoped) });
           await api.commit(async (tx) => { const final = (await tx.doc(Study, api.conversationId)).final!; final.result = result; final.status = 'COMPUTED'; }, context);
         } catch (error) {
           if (context.abortSignal?.aborted) throw error;

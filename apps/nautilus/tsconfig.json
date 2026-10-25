@@ -1,0 +1,5 @@
+{
+  "extends": "../research/tsconfig.json",
+  "compilerOptions": { "typeRoots": ["../research/node_modules/@types"] },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

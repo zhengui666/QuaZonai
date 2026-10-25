@@ -114,7 +114,7 @@ WABT compiles model WAT; an owned official Task runs the real `job evaluate-fact
 
 ## CLI and verification
 
-Installed operations use the [CLI](../cli/README.md) and [service Skill](../../skills/quazonai/SKILL.md). The old Rust client/bridge commands are not this workbench's API. The optional `src/main.ts` is a private loopback-only host, not the public service; `research.example.json` documents native settings.
+Installed operations use the [CLI](../cli/README.md) and [service Skill](../../skills/quazonai/SKILL.md). The old Rust client/bridge commands are not this workbench's API. The optional `src/main.ts` is a private loopback-only host, not the public service; `research.example.json` documents native settings. Both application entry points require remote Nautilus. The service captures its configured backtest instance in new dataset inputs; a standalone research caller must supply the same immutable `data.nautilusTarget` (`id`, `url`, optional `tokenEnv`) in the primary and Sealed data. Existing inputs are not silently redirected. `QZ_JOB_BINARY` is only an explicit test/worker override and is removed by application entry points.
 
 ```sh
 npm --prefix apps/research run typecheck

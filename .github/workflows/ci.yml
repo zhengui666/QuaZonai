@@ -29,7 +29,7 @@ jobs:
           science=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             science=false
-            if git diff --name-only "$BASE_REVISION" HEAD | grep -E '^(Cargo\.(toml|lock)|rust-toolchain\.toml|apps/(job|service|research|cli)/|crates/|packages/contracts/|runtimes/(native|data)/|deploy/|Makefile|\.github/)' >/dev/null; then science=true; fi
+            if git diff --name-only "$BASE_REVISION" HEAD | grep -E '^(Cargo\.(toml|lock)|rust-toolchain\.toml|apps/(job|nautilus|service|research|cli)/|crates/|packages/contracts/|runtimes/(native|data)/|deploy/|Makefile|\.github/)' >/dev/null; then science=true; fi
           fi
           echo "science=$science" >> "$GITHUB_OUTPUT"
   typescript:

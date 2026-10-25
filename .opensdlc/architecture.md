@@ -17,9 +17,11 @@ QuaZonai 是单人、本机、可扩展的无人值守研究工作台。核心�
 | [Research](../apps/research) | 官方 Pi Durable 宿主与 Extension；研究事实和试验账本 |
 | [CLI](../apps/cli) | 同一 HTTP API 的客户端，不直接打开服务数据库 |
 | [Web](../apps/web) | React、官方 Ant Design、ECharts 与研究工作区 |
-| [Native job](../apps/job) | 原生计算、数据目录、科学回放、Nautilus 模拟与账户快照 |
+| [Remote Nautilus](../apps/nautilus/README.md) | 独立部署的原生计算、数据目录与科学回放 HTTP 适配；应用不内置引擎 |
 | [Rust contracts](../crates/contracts/src)、[domain](../crates/domain/src) | 科学内核所需的 Wire／Arrow 类型、数值、PIT、分区、费用与科学结果校验 |
 | [Migrations](../migrations) | 保留已应用的 PostgreSQL 与原 Runtime SQLite 迁移；不重置历史数据库 |
+
+应用通过 `nautilus.backtest` 连接研究／回测的远程 Nautilus，模拟盘与实盘通过各自 `connections` URL、账户和凭据引用连接；各用途不互相回退。新研究与子任务冻结远程连接，旧本地任务不静默迁移。模型与临时对象随 HTTP 请求传输，目录与冻结副本使用相同绝对路径的共享只读挂载；既有 PIT、修订和独立评估校验保持。部署与升级配置见[部署手册](../deploy/docker/README.md)。
 
 非科学控制面不再依赖 Rust server、Store、Runtime 网关、integrations 或 Rust CLI。历史 PostgreSQL 记录通过只读适配访问，不伪造新的成功 Run／Attempt 或把旧执行身份改成 durable 身份。
 

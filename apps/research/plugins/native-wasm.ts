@@ -1,8 +1,7 @@
+import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import { nativeTargetForData, executeNativeValue } from '../src/native-execution.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord';
-import { withoutAbortSignal } from '@earendil-works/chord/context';
-import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import wabtFactory from 'wabt';
@@ -61,33 +60,23 @@ export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): 
   return request;
 }
 
-export async function evaluateWasm(model: string, data: JsonObject, context: Context, scope?: JsonObject): Promise<JsonObject> {
+export async function evaluateWasm(model: string, data: JsonObject, context: Context, scope?: JsonObject, binary: NativeTarget = nativeTargetForData(data)): Promise<JsonObject> {
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(data);
   const catalog = data.catalog_scan_request !== undefined;
   const operation = catalog ? 'scan-factor-catalog' : 'evaluate-factor';
   if (catalog && (!Array.isArray(scope?.barTypes) || !scope.barTypes.every((type) => typeof type === 'string'))) throw new Error('catalog_scope_required');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
-  const env = new NodeExecutionEnv({ cwd: directory });
   let stage: 'execute' | 'decode' | 'validate' = 'execute';
   try {
     await writeFile(join(directory, 'model.wasm'), compileWasm(model, 'factor.wat', operation));
     await writeFile(join(directory, 'request.json'), JSON.stringify(request));
     if (catalog) await writeFile(join(directory, 'scope.json'), jsonChunks(scope!.barTypes!));
-    let stdout = ''; let stderr = '';
-    const result = getOrThrow(await env.exec([
-      'bash', '-c', catalog
-        ? 'exec "$1" scan-factor-catalog --catalog "$2" --model "$3" --scope "$5" < "$4"'
-        : 'exec "$1" evaluate-factor --summary-only --catalog "$2" --model "$3" < "$4"',
-      'qz-factor', process.env.QZ_JOB_BINARY ?? 'job', data.catalog,
-      join(directory, 'model.wasm'), join(directory, 'request.json'), join(directory, 'scope.json'),
-    ], {
-      inheritEnv: false, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', TMPDIR: directory },
-      onOutput: (text, _context, info) => { if (info.stream === 'stdout') stdout += text; else stderr += text; },
-    }, context));
-    if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_factor_exit_${result.exitCode}`);
+    const args = ['--catalog', data.catalog, '--model', join(directory, 'model.wasm')];
+    if (catalog) args.push('--scope', join(directory, 'scope.json')); else args.push('--summary-only');
+    const value = await executeNativeValue(binary, operation, request, args, directory, context);
     stage = 'decode';
-    const output = object(JSON.parse(stdout), 'native_result');
+    const output = object(value, 'native_result');
     stage = 'validate';
     if (canonical(output.request!) !== canonical(request)) throw new Error('native_result_request_mismatch');
     if ('points' in output) throw new Error('native_summary_required');
@@ -96,7 +85,6 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     if (error instanceof ExecutionFailure) throw error;
     throw new ExecutionFailure(error, { operation, stage });
   } finally {
-    await env.cleanup(withoutAbortSignal(context));
     await rm(directory, { recursive: true, force: true });
   }
 }

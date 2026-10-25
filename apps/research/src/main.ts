@@ -6,6 +6,11 @@ import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { researchServer } from './http.ts';
 import { record } from './input.ts';
 
+// Every application entry point is remote-only. Direct local execution is
+// reserved for the independent worker and explicitly configured science tests.
+process.env.QZ_REQUIRE_REMOTE_NAUTILUS = '1';
+delete process.env.QZ_JOB_BINARY;
+
 const path = resolve(process.env.QZ_RESEARCH_CONFIG ?? 'research.json');
 const config = record(JSON.parse(await readFile(path, 'utf8')), 'research_config');
 if (typeof config.database !== 'string') throw new Error('database_required');

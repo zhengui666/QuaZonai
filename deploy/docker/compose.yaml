@@ -33,7 +33,6 @@ services:
       HOME: ${INSTALL_DIR:?}/data/home
       QZ_CONFIG: ${INSTALL_DIR:?}/data/service.json
       QZ_RESEARCH_PROVIDER_ENV: ${INSTALL_DIR:?}/data/research/provider.env
-      QZ_JOB_BINARY: /opt/quazonai/bin/job
       QZ_SCRATCH_DIR: ${INSTALL_DIR:?}/data/scratch
       TMPDIR: ${INSTALL_DIR:?}/data/scratch
     ports:
