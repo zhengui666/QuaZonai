@@ -7,6 +7,20 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  native_remote_execution_unsettled: '远端科学执行的原始回执仍未确认终态，暂时不能删除；请恢复原连接后按同一身份核对',
+  mandate_deleted: '所属投资决策已删除，不能恢复其研究',
+  research_delete_tasks_active: '请先停止研究并等待原始任务结束，再删除',
+  research_delete_portfolio_in_use: '研究仍被组合使用，请先删除相关组合',
+  research_delete_pm_in_use: '研究仍被投资决策使用，请先处理相关投资决策',
+  factor_delete_portfolio_in_use: '因子仍被组合使用，请先删除相关组合',
+  factor_delete_pm_in_use: '因子仍被投资决策使用，请先处理相关投资决策',
+  portfolio_delete_tasks_active: '组合仍在计算，请等待原始任务结束后删除',
+  portfolio_delete_observation_in_use: '组合仍有活动观测或待核对回执，请先停止观测并完成对账',
+  pm_delete_requires_retirement: '请先退役当前策略，再删除投资决策',
+  pm_delete_external_obligations: '投资决策仍有目标或账户对账责任，请先完成对账',
+  pm_delete_tasks_active: '投资决策仍有活动任务，请等待原始任务结束后删除',
+  research_deleted: '研究已删除', factor_deleted: '因子已删除', portfolio_deleted: '组合已删除',
+
   research_capital_scenarios_invalid: '资本情景须为精确正金额：小于 10²⁰、小数至多 18 位、原文至多 64 字符', research_participation_invalid: '成交量参与率须大于 0 且不超过 1（0.01 = 1%）',
   research_liquidity_age_invalid: '请填写正整数流动性数据时差', research_override_unsupported: '存在不支持的研究或容量设置',
   research_evaluation_unsupported: '当前原生评估仅支持最大化已注册指标', research_policy_unregistered: '结构化研究必须继承注册数据集的原始科学策略',

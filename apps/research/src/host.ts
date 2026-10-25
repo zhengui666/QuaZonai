@@ -3,7 +3,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/
 import type { Models } from '@earendil-works/pi-ai/models';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { configure, createRegistry, GenerationTask, Harness, ProviderDoc } from '@earendil-works/pi-durable';
-import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, ConversationWatch, Cursor, Extension, HarnessOptions, Storage, SubmissionId, TaskId, Tx } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -16,6 +16,7 @@ import type { ResearchInput } from './documents.ts';
 import { configuredModels, subscriptionSpeed, supportsServiceTier } from './models.ts';
 import { ModelCredentials } from './credentials.ts';
 import { researchSettings } from './settings.ts';
+import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from './native-remote-receipts.ts';
 import { Continuation, researchContinuation } from './continuation.ts';
 import { CampaignResearchDoc } from './pm-campaign.ts';
 import { settleCampaignTrial } from './pm-ledger.ts';
@@ -32,6 +33,8 @@ export async function openResearch(options: {
   storage?: Storage;
   settings?: HarnessOptions['settings'];
   thinkingLevel?: ModelThinkingLevel;
+  /** Service-owned parent admission, applied to original native recovery too. */
+  authorizeResume?: (tx: Tx, id: ConversationId) => Promise<void>;
 }) {
   const settings = researchSettings(options.settings);
   const requestedThinking = options.thinkingLevel ?? 'medium';
@@ -145,6 +148,7 @@ export async function openResearch(options: {
     // Admission and owner stop share the same original Conversation boundary.
     // A final-state read alone cannot fence a later native submit after abort.
     return ownerChange(id, async () => {
+      if ((await harness.snapshot(Study, id, context))?.deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
       const previous = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
       if (previous) return { conversationId: id, submissionId: previous.id };
       if ((await harness.snapshot(Study, id, context))?.final) throw new Error('research_already_final');
@@ -209,14 +213,19 @@ export async function openResearch(options: {
   async function resume(id: number, previousId: number) {
     if (!Number.isSafeInteger(previousId) || previousId < 1) throw new Error('invalid_submission_id');
     const handle = await conversation(id);
+    if ((await harness.snapshot(Study, handle.id, context))?.deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
     const requestId = recoveryRequestId(id, previousId);
-    const existing = await harness.commit((tx) => tx.submissionByRequest(handle.id, requestId), context);
+    const existing = await harness.commit(async tx => {
+      await options.authorizeResume?.(tx, handle.id);
+      return tx.submissionByRequest(handle.id, requestId);
+    }, context);
     if (existing) {
       if (existing.type !== 'input' || existing.id <= previousId || existing.conversationId !== handle.id) throw new Error('recovery_request_conflict');
       return { conversationId: id, submissionId: existing.id, previousSubmissionId: previousId };
     }
     const current = await state(id);
     const mode = await harness.commit(async (tx) => {
+      await options.authorizeResume?.(tx, handle.id);
       const study = await tx.doc(Study, handle.id);
       const requests = await tx.doc(Requests); const key = `request:${requestId}`;
       const intent = requests.requests[key];
@@ -249,7 +258,7 @@ export async function openResearch(options: {
   }
   let closed: Promise<void> | undefined;
   return {
-    harness, models, registry,
+    harness, models, registry, withOwnerChange: ownerChange,
     async start(requestId: string, value: ResearchInput, originalAdmission = false) {
       if (!accepting) throw new Error('research_closing');
       const admission = start(requestId, value, originalAdmission);
@@ -257,6 +266,40 @@ export async function openResearch(options: {
       try { return await admission; } finally { admissions.delete(admission); }
     },
     state, diagnostics,
+    // Share the native owner-command boundary with start/resume/stop. Deletion
+    // never aborts a scientific task or discards its original ledger.
+    async remove(id: number, validate: (tx: Tx) => Promise<void>, factorId?: string) {
+      return ownerChange(id, async () => {
+        const handle = await conversation(id);
+        const tasks = await harness.commit(async tx => {
+          const records = []; let cursor: Cursor | undefined;
+          do { const page = await tx.scanTasks({ conversationId: handle.id }, 100, cursor); records.push(...page.items); cursor = page.next; } while (cursor);
+          return records;
+        }, context);
+        await reconcileNativeRemoteTasks(harness, tasks, context);
+        const current = await state(id);
+        return harness.commit(async tx => {
+          const study = await tx.doc(Study, handle.id);
+          if (!study.input) throw new Error('research_not_found');
+          const prior = factorId ? study.deletedFactors?.[factorId] : study.deletedAt;
+          if (prior) return prior;
+          if (study.deletedAt) throw new Error('research_not_found');
+          if (['queued', 'placed'].includes(current.submission?.status ?? '')) throw Object.assign(new Error('research_delete_tasks_active'), { statusCode: 409 });
+          let cursor: Cursor | undefined;
+          do {
+            const page = await tx.scanTasks({ conversationId: handle.id }, 100, cursor);
+            if (page.items.some(task => task.state.status !== 'terminal')) throw Object.assign(new Error('research_delete_tasks_active'), { statusCode: 409 });
+            for (const task of page.items) await assertNativeRemoteTaskSettled(tx, task.conversationId, task.id);
+            cursor = page.next;
+          } while (cursor);
+          await validate(tx);
+          const deletedAt = new Date().toISOString();
+          if (factorId) study.deletedFactors = { ...study.deletedFactors, [factorId]: deletedAt };
+          else study.deletedAt = deletedAt;
+          return deletedAt;
+        }, context);
+      });
+    },
     async resume(id: number, previousId: number) {
       if (!accepting) throw new Error('research_closing');
       const admission = ownerChange(id, () => resume(id, previousId)); admissions.add(admission);
@@ -284,6 +327,7 @@ export async function openResearch(options: {
     async stop(id: number) {
       return ownerChange(id, async () => {
         const study = await conversation(id);
+        if ((await harness.snapshot(Study, study.id, context))?.deletedAt) throw Object.assign(new Error('research_deleted'), { statusCode: 409 });
         await harness.commit(async (tx) => {
           const facts = await tx.doc(Study, study.id);
           facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };

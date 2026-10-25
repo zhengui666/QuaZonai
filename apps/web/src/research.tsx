@@ -17,6 +17,7 @@ import { partitionLabel } from './metric-glossary';
 import { ExecutionFailure, Reason } from './diagnostics';
 import { Literature } from './literature';
 import { publicLiteratureTopics } from './literature-input';
+import { DeleteRecord } from './delete-record';
 
 const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
@@ -53,7 +54,7 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
   const stoppedLabel = detail.status === 'STOPPED' && active ? '停止中' : detail.status === 'STARTED' ? '独立评估中' : undefined;
   const records = [...detail.trialRecords].reverse();
   const originalSubmission = detail.originalSubmission ?? detail.submission;
-  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="mobile-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active && (!detail.final || detail.final.status === 'STARTED') ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown></div>
+  return <article className="study-document"><header className="study-heading"><div className="document-toolbar"><div className="document-identity"><a className="mobile-back text-link" href={href(back)}><ArrowLeftIcon size={14} />研究列表</a><span className="desktop-breadcrumb">研究 <CaretRightIcon size={11} /><code>{detail.id}</code></span><Status value={detail.status} label={stoppedLabel} /></div><Dropdown trigger={['click']} menu={{ items: [{ key: 'inputs', label: '查看原始身份', onClick: () => selectTab('inputs') }, ...(active && (!detail.final || detail.final.status === 'STARTED') ? [{ key: 'stop', label: stopping ? '停止中' : '停止研究', danger: true, disabled: stopping, onClick: () => confirm('停止研究？', '停止此研究的原始执行。', () => { void stop(); }) }] : [])] }}><Button className="icon-button" type="text" aria-label="研究操作" icon={<DotsThreeIcon size={21} />} /></Dropdown><DeleteRecord key={detail.id} kind="research" id={String(detail.id)} back={back} /></div>
       <RecordTitle name={detail.input.specification?.name} text={detail.title} fallback="研究" />
       <div className="study-context"><span><DatabaseIcon size={14} />{detail.dataset?.name ?? detail.datasetId ?? '数据集名称未记录'}</span><span><FlaskIcon size={14} /><MetricLabel metricKey="trials" /><code>{detail.trials}{typeof budget === 'number' ? ` / ${budget}` : ''}</code></span></div></header>
       <ErrorNotice error={stopError} /><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />

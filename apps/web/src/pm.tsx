@@ -11,6 +11,7 @@ import { Disclosure, RecordTitle } from './disclosure';
 import { shortTitle } from './titles';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, PendingCommand, Status, useConfirm } from './ui';
 import { pmAssumption, pmCapitalShare, pmMetricValue, pmRatio, pmReason, pmTime } from './pm-values';
+import { DeleteRecord } from './delete-record';
 import './pm.css';
 
 const actionNames: Record<string, string> = { HOLD: '保持现有配置', REBALANCE: '调整持仓', REDUCE: '减少风险', CASH: '保留现金', NEEDS_EVIDENCE: '补齐证据后再决定', NO_FEASIBLE_SOLUTION: '当前无可行配置' };
@@ -160,6 +161,7 @@ function PmActions({ view, path }: { view: PmMandateView; path: string }) {
   return <div className="pm-actions"><Button loading={recalculate.busy} disabled={recalculate.busy} onClick={() => { void recalculate.submit({ expectedRevision: view.mandate.revision }); }}>{recalculate.pending ? '核对原重算请求' : '重算当前证据'}</Button>
     {view.mandate.operatingAuthority === 'AUTHORIZED_TARGETS' && <Button type="primary" loading={targets.busy} disabled={targets.busy || (!ready && !targets.pending)} onClick={() => { void targets.submit({ expectedRevision: view.mandate.revision, decisionId: current?.id }); }}>{targets.pending ? '核对原目标请求' : ready ? paperReady ? '更新纸面账户目标' : '更新账户目标' : '等待运营证据'}</Button>}
     {view.currentDecision && <Button danger disabled={retire.busy} loading={retire.busy} onClick={() => confirm('退役当前策略？', '停止新增策略消费；已有目标与持仓继续按原事实对账。', () => { void retire.submit({ expectedRevision: view.mandate.revision, strategyVersionId: view.currentDecision!.strategyVersionId }); })}>{retire.pending ? '核对原退役请求' : '退役策略'}</Button>}
+    <DeleteRecord key={view.mandate.id} kind="mandate" id={view.mandate.id} />
     <ErrorNotice error={recalculate.error ?? retire.error ?? targets.error} /><PendingCommand command={recalculate} /><PendingCommand command={retire} /><PendingCommand command={targets} />
   </div>;
 }

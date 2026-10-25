@@ -102,7 +102,7 @@ export function researchTaskViews(host: ResearchHost) {
 
 export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHost['state']>>, admissions: ResearchAdmissions | undefined, running: boolean) {
   const study = view.research;
-  if (!study?.input) throw new Problem('research_not_found', 404);
+  if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const input = study.input; const final = study.final;
   const admission = view.originalSubmission?.requestId ? admissions?.[`request:${view.originalSubmission.requestId}`] : undefined;
   const original = admission?.original && typeof admission.original === 'object' && !Array.isArray(admission.original) ? admission.original : null;
@@ -118,7 +118,7 @@ export function researchSummary(id: number, view: Awaited<ReturnType<ResearchHos
 
 export async function researchDetail(host: ResearchHost, id: number, readTasks: ReturnType<typeof researchTaskViews>): Promise<ResearchDetail> {
   const view = await host.state(id); const study = view.research;
-  if (!study?.input) throw new Problem('research_not_found', 404);
+  if (!study?.input || study.deletedAt) throw new Problem('research_not_found', 404);
   const tasks = await readTasks(id); const final = study.final;
   const admissions = (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
   return {

@@ -129,6 +129,13 @@ function receipt(value: NativeJson, requestId: string): NativeExecutionReceipt {
   return result;
 }
 
+/** Read only the receipt for this original invocation and retained instance.
+ * This does not submit or cancel any remote execution. */
+export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal: AbortSignal): Promise<NativeExecutionReceipt> {
+  if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
+  return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
+}
+
 async function attachments(original: string[]): Promise<{ args: string[]; files: Record<string, string> }> {
   const args = [...original]; const files: Record<string, string> = {}; let index = 0;
   async function attach(path: string, name: string) {

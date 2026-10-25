@@ -19,6 +19,8 @@ export const Study = defineDoc<{
   input: ResearchInput | null;
   trials: JsonObject[];
   final: JsonObject | null;
+  deletedAt?: string;
+  deletedFactors?: Record<string, string>;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
 }>({
   kind: 'qz.study', version: 1, scope: 'conversation', history: 'rewindable',

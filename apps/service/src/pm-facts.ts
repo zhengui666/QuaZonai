@@ -12,6 +12,8 @@ export const PmDocument = defineDoc<JsonObject>({
 });
 export interface PmCommandReceipt { original: JsonObject; mandateId: string; resourceId: string }
 export interface PmRecord {
+  /** Owner deletion hides the workspace; original facts and receipts remain. */
+  deletedAt?: string;
   input: Pm.PmMandateStart;
   conversationId: number;
   mandate: Pm.MandateRevision;
@@ -53,6 +55,14 @@ export const pmState = (value: unknown): PmState => (value ?? { mandates: {}, da
 export const pmRecord = (state: PmState, id: string): PmRecord => {
   const value = state.mandates[id]; if (!value) throw new Problem('mandate_not_found', 404); return value;
 };
+export function assertPmNotDeleted(record: PmRecord) {
+  if (record.deletedAt) throw new Problem('mandate_deleted', 409);
+}
+export function visiblePmRecord(state: PmState, id: string): PmRecord {
+  const record = pmRecord(state, id);
+  if (record.deletedAt) throw new Problem('mandate_not_found', 404);
+  return record;
+}
 export function digest(value: unknown): string {
   return createHash('sha256').update(canonical(json(value))).digest('hex');
 }

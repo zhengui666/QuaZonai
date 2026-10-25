@@ -258,3 +258,8 @@ details[open] > summary { margin-bottom: 14px; }
   .long-counts .metric-count .metric-label { margin-bottom: 0; }
   .long-counts .metric-count strong { font-size: 15px; line-height: 24px; }
 }
+
+.deletion-recovery { margin: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+.deletion-recovery h2 { margin-top: 0; font-size: 16px; }
+.deletion-recovery-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.deletion-recovery-row code { overflow-wrap: anywhere; }

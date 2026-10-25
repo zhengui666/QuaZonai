@@ -27,6 +27,8 @@ import { createPmPlatform } from './pm-platform.ts';
 import { registerPmRoutes } from './pm-routes.ts';
 import { maintenanceExtension, createMaintenance } from './pm-maintenance.ts';
 import { registerMaintenanceRoutes } from './pm-maintenance-routes.ts';
+import { Study } from '../../research/src/documents.ts';
+import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -69,7 +71,12 @@ export async function createService(options: ServiceOptions) {
   }
   if (!extensions.has(fittedEnsemble.name)) install(fittedEnsemble, true, '1', 'science');
   requiredExtensions.add(fittedEnsemble.name);
-  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage });
+  const research = await openResearch({ ...config.research, modules: [], extensions: installed, models: options.models, storage: options.storage,
+    authorizeResume: async (tx, id) => {
+      const parent = (await tx.doc(Study, id)).input?.campaign?.mandateRevisionId;
+      if (parent) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), parent));
+    },
+  });
   for (const extension of research.registry.snapshot().installed()) if (!extensions.has(extension.name)) {
     requiredExtensions.add(extension.name);
     extensions.set(extension.name, { name: extension.name, version: null, enabled: true, kind: 'host', state: 'loaded', error: null });
@@ -97,6 +104,9 @@ export async function createService(options: ServiceOptions) {
   const work = workbench(research, config);
   pm.connect({ host: research, work });
   registerPmRoutes(app, pm.work);
+  for (const [path, remove] of [['research', (id: string) => work.removeResearch(Number(id))], ['factors', work.removeFactor], ['portfolios', work.removePortfolio], ['mandates', pm.work.delete]] as const) {
+    app.delete<{ Params: { id: string } }>(`${API}/${path}/:id`, request => remove(request.params.id));
+  }
   const capital = capitalWorkbench(research, config);
   await work.recoverResearch();
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
@@ -106,11 +116,14 @@ export async function createService(options: ServiceOptions) {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
     const [page, facts, inspection] = await Promise.all([research.list(cursor), work.snapshot(), research.harness.inspect(context)]);
     const items: ResearchSummary[] = []; const active = new Set(inspection.tasks.map(task => task.record.conversationId));
-    for (const row of page.items) items.push(researchSummary(row.id, await research.state(row.id), facts?.researchRequests, active.has(row.id)));
+    for (const row of page.items) {
+      const state = await research.state(row.id);
+      if (state.research?.input && !state.research.deletedAt) items.push(researchSummary(row.id, state, facts?.researchRequests, active.has(row.id)));
+    }
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
-  app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, (request) => research.diagnostics(Number(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, async request => { await detail(Number(request.params.id)); return research.diagnostics(Number(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
     const body = object(request.body);
     if (Object.keys(body).length !== 1 || typeof body.submissionId !== 'number' || !Number.isSafeInteger(body.submissionId) || body.submissionId < 1) throw new Problem('invalid_research_resume');
@@ -130,7 +143,7 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
   app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
   app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
-  app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map((item) => portfolioView(portfolio(item))));
+  app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(portfolioView));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
   app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
     const assumptions = researchCapital(request.body);

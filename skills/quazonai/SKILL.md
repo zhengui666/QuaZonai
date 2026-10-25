@@ -1,6 +1,6 @@
 ---
 name: quazonai
-description: Operate an existing QuaZonai research workbench through its installed HTTP CLI. Define original goals, testable research questions and evidence-backed rationales; create or continue finite factor studies, inspect trials and independent evidence, build optional shared-account portfolios/backtests, and observe target-only downstream/account bindings. Covers both command usage and agent decision, writing, recovery and handoff standards. Not a development or deployment workflow.
+description: Operate an existing QuaZonai research workbench through its installed HTTP CLI. Define original goals, testable research questions and evidence-backed rationales; create or continue finite factor studies, inspect trials and independent evidence, build optional shared-account portfolios/backtests, delete requested inactive investment decisions/studies/factors/portfolios, and observe target-only downstream/account bindings. Covers both command usage and agent decision, writing, recovery and handoff standards. Not a development or deployment workflow.
 compatibility: Requires the installed quazonai CLI, Node 22.19+ and a saved owner-device login to a compatible /api/v3 service.
 ---
 
@@ -29,6 +29,7 @@ Run `quazonai identity`. Without a login, have the user run `quazonai login --or
 | Submit a finite goal or an original request file | [Research](references/research.md) |
 | Read trials, selection, failure and independent result | `research get ID`; [evidence and portfolios](references/results.md) |
 | Observe or stop the original study | [Bounded observation](references/runs.md) |
+| Delete specifically requested investment decisions, studies, atomic factors or portfolios | `pm delete ID`, `research delete ID`, `factor delete ID`, `portfolio delete ID`; [deletion and limits](references/deletion.md) |
 | Inspect original atomic factors and conditional capacity | `factor list`, `factor get ID`, `factor capacity ID` |
 | Build a requested shared-account portfolio/backtest | `portfolio build --file FILE`, `portfolio list`, `portfolio get ID` |
 | Reassess original portfolio capacity without rebuilding | `portfolio capacity ID --file FILE`; [assumptions and limits](references/results.md) |
@@ -44,6 +45,7 @@ Use `quazonai --help` and offline `schema list` / `schema show NAME` for unfamil
 - Retain the original request file and `requestId`. Replaying the same body/ID obtains original identities; changing the body conflicts. Never make a new key after an unknown outcome.
 - Native research IDs are numbers. Portfolio/observation IDs are opaque strings; large clocks, quantities and money remain exact decimal strings.
 - HTTP 202 is admission, not settled science or proof of cancellation. `wait` uses the native submission projection; empty tasks, IDLE or a final record alone do not establish settlement. Detaching a watcher leaves admitted work running.
+- Requested deletion hides the object from normal lists/details and new selection; it preserves original ledgers, evidence and receipts. It never cancels work, resets a budget/exposure, retires an investment strategy or liquidates positions. Read [deletion](references/deletion.md) before acting.
 - Keep all failed/rejected trials, the compared set, selection and original criteria. Computation is not independently evaluated evidence, qualification or profitability. Never tune against final held-out values or relabel exposed samples as unseen.
 - Missing/stale values stay unavailable, not zero. Real portfolio equity must come from a shared native account, never summed factor curves. A configured source alone proves no licensing, PIT, data quality or usable account.
 - Model credentials stay in the service's private native credential store or configured host environment. Use Settings for official provider login; never ask for credentials in chat. Model availability is metadata/auth configuration, not a billed test. Never disclose secrets, hidden reasoning or raw Sealed values.

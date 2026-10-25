@@ -213,3 +213,41 @@ test('structured validation and factor/account-control commands preserve origina
     ]);
   } finally { await config.close(); await api.close(); }
 });
+
+test('delete commands retain exact original identities, send once without bodies and expose receipts or blockers', async () => {
+  const sent: { method: string; url: string; bytes: string }[] = []; let drop = true;
+  const receipt = { kind: 'research', id: '508', deletedAt: '2026-10-25T12:00:00.000Z' };
+  const api = await server((request, response, bytes) => {
+    sent.push({ method: request.method!, url: request.url!, bytes });
+    if (request.url === '/api/v3/research/508' && drop) { drop = false; request.socket.destroy(); return; }
+    if (request.url === '/api/v3/portfolios/blocked') { json(response, { error: 'portfolio_in_use' }, 409); return; }
+    json(response, request.url === '/api/v3/research/508' ? receipt : { kind: 'factor', id: 'r2.t3.m0', deletedAt: receipt.deletedAt });
+  });
+  const config = await configuration(api.origin); const output: unknown[] = [];
+  try {
+    for (const command of [['pm', 'delete'], ['research', 'delete'], ['factor', 'delete'], ['portfolio', 'delete']]) await assert.rejects(run(command), /resource_id_required|native_numeric_research_id_required/);
+    await assert.rejects(run(['research', 'delete', '9007199254740993']), /native_numeric_research_id_required/);
+    assert.equal(sent.length, 0);
+    await assert.rejects(run(['research', 'delete', '508'], value => { output.push(value); }), /write_outcome_unknown_retain_original_request/);
+    assert.equal(sent.length, 1); assert.equal(output.length, 0);
+    await run(['research', 'delete', '508'], value => { output.push(value); });
+    assert.deepEqual(output, [receipt]);
+    for (const args of [['pm', 'delete', 'mandate:one/two'], ['factor', 'delete', 'r2.t3.m0'], ['portfolio', 'delete', 'p/original'], ['backtest', 'delete', 'p:alias']]) await run(args, () => {});
+    await assert.rejects(run(['portfolio', 'delete', 'blocked']), error => {
+      assert.equal((error as { code: string }).code, 'portfolio_in_use'); assert.equal((error as { status: number }).status, 409); return true;
+    });
+    assert.deepEqual(sent, [
+      { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/research/508', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/mandates/mandate%3Aone%2Ftwo', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/factors/r2.t3.m0', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/portfolios/p%2Foriginal', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/portfolios/p%3Aalias', bytes: '' },
+      { method: 'DELETE', url: '/api/v3/portfolios/blocked', bytes: '' },
+    ]);
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/quazonai.mjs', import.meta.url)), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let help = ''; child.stdout.on('data', part => { help += part; }); const [code] = await once(child, 'exit');
+    assert.equal(code, 0);
+    for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /factor list \| get ID \| delete ID/, /portfolio build.*delete ID/]) assert.match(help, line);
+  } finally { await config.close(); await api.close(); }
+});

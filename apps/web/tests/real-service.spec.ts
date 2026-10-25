@@ -110,3 +110,59 @@ test('a deliberately lost real HTTP admission response resolves the same durable
     await start(page, url, 'Lost HTTP response protocol only'); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible(); await expect(page.locator('.pending-command')).toContainText('提交结果待核对'); await page.reload(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Lost HTTP response protocol only'); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Lost HTTP response protocol only', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.metric-primary')).toContainText('分数恒定'); expect(bodies).toHaveLength(2); expect(bodies[1]).toBe(bodies[0]); expect(await state.calls()).toBe(1); const studies = await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>; expect(studies.items).toHaveLength(1);
   } finally { await state.close(); }
 });
+
+test('object deletion confirms the original resource, reconciles a lost response and persists after restart', async ({ page }) => {
+  test.setTimeout(90_000); const state = await service(); const url = state.url;
+  try {
+    await owner(page, url);
+    const models = await (await page.request.get(`${url}/api/v3/research/models`)).json() as ModelCatalog['models'];
+    const model = models.find(item => item.provider === 'faux')!;
+    const datasets = await (await page.request.get(`${url}/api/v3/datasets`)).json() as { id: string }[];
+    const created = await page.request.post(`${url}/api/v3/research`, { data: { requestId: 'TEST_ONLY-delete-original-study', goal: 'Deletion HTTP lifecycle, not scientific qualification', model: { provider: model.provider, modelId: model.modelId }, datasetId: datasets[0]!.id, maxTrials: 1 } });
+    expect(created.status()).toBe(202);
+    let study!: ResearchDetail;
+    await expect.poll(async () => {
+      const studies = await (await page.request.get(`${url}/api/v3/research`)).json() as RecordPage<ResearchSummary>;
+      if (!studies.items[0]) return false;
+      study = await (await page.request.get(`${url}/api/v3/research/${studies.items[0].id}`)).json() as ResearchDetail;
+      return study.final?.status === 'COMPUTED' && study.tasks.every(task => task.status === 'terminal');
+    }).toBe(true);
+    const factors = await (await page.request.get(`${url}/api/v3/factors`)).json() as FactorView[];
+    expect(factors).toHaveLength(1); const factor = factors[0]!;
+    const build = await page.request.post(`${url}/api/v3/portfolios`, { data: { requestId: 'TEST_ONLY-delete-original-portfolio', name: 'Disposable deletion protocol portfolio', datasetId: study.datasetId, researchIds: [study.id], weights: [{ researchId: study.id, weight: '1' }], capital: '1000' } });
+    expect(build.status()).toBe(202); const portfolio = await build.json() as PortfolioView;
+    await expect.poll(async () => ((await (await page.request.get(`${url}/api/v3/portfolios/${portfolio.id}`)).json()) as PortfolioView).status).toBe('COMPUTED');
+    await page.goto(`${url}/#/portfolios/${portfolio.id}`);
+    await page.getByRole('button', { name: '删除组合', exact: true }).click();
+    const dialog = page.getByRole('dialog'); await expect(dialog).toContainText('原始试验、证据与回执历史保留');
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    expect((await page.request.get(`${url}/api/v3/portfolios/${portfolio.id}`)).status()).toBe(200);
+    await page.getByRole('button', { name: '删除组合', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect(page).toHaveURL(`${url}/#/portfolios`); await expect(page.getByRole('heading', { name: '尚无策略组合', exact: true })).toBeVisible();
+    await page.goto(`${url}/#/factors/${factor.id}`); await page.getByRole('button', { name: '删除因子', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect(page).toHaveURL(`${url}/#/factors`); await expect(page.getByRole('heading', { name: '尚无匹配原子因子', exact: true })).toBeVisible();
+    const deletes: string[] = [];
+    await page.route(`${url}/api/v3/research/${study.id}`, async route => {
+      if (route.request().method() !== 'DELETE') return route.continue();
+      deletes.push(route.request().url()); const response = await route.fetch(); expect(response.status()).toBe(200);
+      if (deletes.length === 1) return route.abort('failed'); return route.fulfill({ response });
+    });
+    await page.goto(`${url}/#/research/${study.id}`); await page.getByRole('button', { name: '删除研究', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
+    await expect(page.getByRole('dialog')).toContainText('连接失败');
+    const originalDeletion = await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'));
+    expect(JSON.parse(originalDeletion!)).toEqual([{ kind: 'research', id: String(study.id), path: `/research/${study.id}` }]);
+    await page.reload();
+    const recovery = page.getByRole('region', { name: '待核对删除' });
+    await expect(recovery).toContainText(String(study.id));
+    await expect(page.locator('.study-document .error-notice')).toContainText('服务或记录不存在');
+    expect(deletes).toHaveLength(1); // Reload and a 404 read never send another DELETE or claim its success.
+    expect(await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'))).toBe(originalDeletion);
+    await recovery.getByRole('button', { name: '核对删除研究', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '核对原删除', exact: true }).click();
+    await expect(page).toHaveURL(`${url}/#/research`); expect(deletes).toHaveLength(2); expect(deletes[0]).toBe(deletes[1]); await expect(page.getByRole('heading', { name: '尚无研究', exact: true })).toBeVisible();
+    await expect(recovery).toHaveCount(0); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.draft.pending-deletions'))).toBeNull();
+    await state.restart(); await page.reload(); await expect(page.getByRole('heading', { name: '尚无研究', exact: true })).toBeVisible();
+    expect((await page.request.get(`${url}/api/v3/research/${study.id}`)).status()).toBe(404);
+    expect(await (await page.request.get(`${url}/api/v3/factors`)).json()).toEqual([]); expect(await (await page.request.get(`${url}/api/v3/portfolios`)).json()).toEqual([]);
+  } finally { await state.close(); }
+});

@@ -7,6 +7,7 @@ async function pmTransport(page: Page, needsClarification = false, forward = fal
   const standard: ModelView = { provider: 'test', modelId: 'test-model', name: '测试模型', reasoning: true, thinkingLevels: ['max'], effectiveThinkingLevel: 'max', serviceTiers: [] };
   const subscription: ModelView = { provider: 'openai-codex', modelId: 'test-subscription', name: '订阅模型', reasoning: true, thinkingLevels: ['medium', 'high', 'max'], effectiveThinkingLevel: 'medium', serviceTiers: ['default', 'priority'] };
   const preferred = fast ? subscription : standard;
+  const deletionPaths: string[] = []; let deleted = false;
   const writes: { path: string; raw: string }[] = []; let starts = 0; let revision = '9007199254740993'; let clarified = !needsClarification; let clarifications = 0;
   const view = () => ({
     mandate: { id: 'mandate:test/opaque', revision, ownerGoal: '测试目标：比较净收益与下行风险', baseCurrency: 'USD', operatingAuthority: forward ? 'AUTHORIZED_TARGETS' : 'RESEARCH_ONLY', unresolvedIntent: clarified ? [] : ['请明确杠杆边界'] },
@@ -31,9 +32,17 @@ async function pmTransport(page: Page, needsClarification = false, forward = fal
     if (path === '/observations') return reply([]);
     if (path === '/mandates') {
       if (req.method() === 'POST') { if (++starts === 1) return route.abort('failed'); return reply(view(), 202); }
-      return reply([view()]);
+      return reply(deleted ? [] : [view()]);
     }
-    if (path === '/mandates/mandate%3Atest%2Fopaque') return reply(view());
+    if (path === '/mandates/mandate%3Atest%2Fopaque') {
+      if (req.method() === 'DELETE') {
+        deletionPaths.push(path);
+        if (deletionPaths.length === 1) return reply({ error: 'pm_delete_tasks_active' }, 409);
+        deleted = true;
+        return reply({ kind: 'mandate', id: 'mandate:test/opaque', deletedAt: '2026-10-25T00:00:00.000Z' });
+      }
+      return deleted ? reply({ error: 'mandate_not_found' }, 404) : reply(view());
+    }
     if (path === '/mandates/mandate%3Atest%2Fopaque/recompute') { revision = '9007199254740994'; return reply(view(), 202); }
     if (path === '/mandates/mandate%3Atest%2Fopaque/intent-clarifications') {
       if (++clarifications === 1) return route.abort('failed');
@@ -41,7 +50,7 @@ async function pmTransport(page: Page, needsClarification = false, forward = fal
     }
     return reply({ error: 'not_found' }, 404);
   });
-  return { writes, advance: () => { revision = '9007199254740994'; } };
+  return { writes, deletionPaths, advance: () => { revision = '9007199254740994'; } };
 }
 
 test('PM intake preserves one original request after a lost response, without asking for factor weights or capital grids', async ({ page }) => {
@@ -146,4 +155,22 @@ test('PM forward presentation separates current modeled targets from historical 
   await expect(page.getByRole('cell', { name: '4.90%', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: '0.002', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '等待运营证据', exact: true })).toBeDisabled();
+});
+
+
+test('PM deletion preserves an opaque identity, permits cancellation and explains an active-task refusal before retry', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await pmTransport(page);
+  await page.goto('/#/pm/mandate%3Atest%2Fopaque');
+  await page.getByRole('button', { name: '删除投资决策', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+  expect(state.deletionPaths).toEqual([]);
+  await page.getByRole('button', { name: '删除投资决策', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('mandate:test/opaque');
+  await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('投资决策仍有活动任务');
+  await expect(page).toHaveURL(/#\/pm\/mandate%3Atest%2Fopaque$/);
+  await page.getByRole('dialog').getByRole('button', { name: '重试删除', exact: true }).click();
+  await expect(page).toHaveURL(/#\/pm$/); await expect(page.getByRole('heading', { name: '尚无投资目标', exact: true })).toBeVisible();
+  expect(state.deletionPaths).toEqual(['/mandates/mandate%3Atest%2Fopaque', '/mandates/mandate%3Atest%2Fopaque']);
 });
