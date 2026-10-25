@@ -57,8 +57,8 @@ export interface PmAccountScienceResult {
   consumedTrials: number; limitations: string[]; evidence: JsonObject;
 }
 
-export async function implementationIdentity(binary: NativeTarget): Promise<string> {
-  if (typeof binary !== 'string') return (await remoteNativeCapabilities(binary)).implementationDigest;
+export async function implementationIdentity(binary: NativeTarget, context?: Context): Promise<string> {
+  if (typeof binary !== 'string') return (await remoteNativeCapabilities(binary, context?.abortSignal)).implementationDigest;
   if (process.env.QZ_REQUIRE_REMOTE_NAUTILUS === '1') throw new Error('legacy_local_nautilus_task_requires_migration');
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(binary)) hash.update(chunk);
@@ -168,7 +168,7 @@ async function runPmAccountScience(input: PmAccountScienceInput, context: Contex
     || asof <= counter(prefix.event_start_ns, 'source_start')) throw new Error('pm_account_state_outside_registered_validation');
   const settings = object(object(input.source.simulationRequest).settings, 'original_execution_settings');
   if (settings.multi_currency_spot_cash == null) throw new Error('pm_account_explicit_spot_execution_policy_required');
-  const nativeImplementation = await implementationIdentity(input.binary);
+  const nativeImplementation = await implementationIdentity(input.binary, context);
   const fingerprint = createHash('sha256').update(canonical({ source: input.source, capture: input.capture as unknown as JsonObject,
     datasetRevision: input.datasetRevision, method: input.allocationMethod, cycleId: input.cycleId, nativeImplementation,
     independent: independent ?? null, ownerBoundaries: (input.ownerBoundaries ?? []) as unknown as JsonObject[] })).digest('hex');
@@ -298,7 +298,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   const scratchRoot = join(input.dataDir, 'scratch'); await mkdir(scratchRoot, { recursive: true });
   const directory = await mkdtemp(join(scratchRoot, 'pm-science-'));
   let objects: JsonObject = {}; let bindings: JsonObject[] = [];
-  const nativeImplementation = await implementationIdentity(input.binary);
+  const nativeImplementation = await implementationIdentity(input.binary, context);
   const fingerprint = createHash('sha256').update(canonical({ source: input.source, capital: { ...input.capital },
     method: input.allocationMethod, maximumTrials: input.maximumTrials, cycleId: input.cycleId, catalog: input.catalog,
     nativeImplementation, verifiedPrefix, ownerBoundaries: ownerBoundaries as unknown as JsonObject[],

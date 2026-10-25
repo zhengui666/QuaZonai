@@ -54,7 +54,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         let key = accountKey(fact.connection, read.controls as Record<string, JsonObject>);
         try {
           const fresh = await readCapitalControl(fact.connection, fact.view.currency, runtime.signal); capability = fresh.capabilities;
-          for (const exit of fresh.status.exits) await withNativeRemoteTracking(runtime.taskId, runtime, context, () => validateCapitalDocument({ dataDir: task.input.dataDir, jobBinary: task.input.binary }, 'VIEW', exit));
+          for (const exit of fresh.status.exits) await withNativeRemoteTracking(runtime.taskId, runtime, context, () => validateCapitalDocument({ dataDir: task.input.dataDir, jobBinary: task.input.binary }, 'VIEW', exit, context));
           await runtime.commit(async tx => {
             const facts = await tx.doc(Application);
             facts.accountControls ??= {}; key = recordCapitalControl(facts.accountControls!, fact.connection, fresh);
