@@ -111,12 +111,12 @@ test('disabling or closing a source aborts an active cooperative historical oper
   }};`);
   const sources = await dataSources(configDefaults({ dataDir, extensions: [{ name: 'test.history', module, kind: 'data', enabled: true }] }));
   try {
-    let run = sources.refresh('test.history'); let rejected = assert.rejects(run, /data_source_refresh_failed/);
+    let run = sources.refresh('test.history'); let rejected = assert.rejects(run, /data_source_refresh_cancelled/);
     await new Promise(resolve => setImmediate(resolve));
     await sources.save('test.history', { enabled: false, config: {} }); await rejected;
     assert.equal(sources.view().find(item => item.name === 'test.history')!.enabled, false);
     await sources.toggle('test.history', true);
-    run = sources.refresh('test.history'); rejected = assert.rejects(run, /data_source_refresh_failed/);
+    run = sources.refresh('test.history'); rejected = assert.rejects(run, /data_source_refresh_cancelled/);
     await new Promise(resolve => setImmediate(resolve)); await sources.close(); await rejected;
   } finally { await sources.close(); await rm(dataDir, { recursive: true, force: true }); }
 });
