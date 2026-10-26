@@ -117,7 +117,8 @@ export async function dataSources(config: ServiceConfig) {
   }
   apply();
   let tail: Promise<unknown> = Promise.resolve(); let closing = false;
-  const active = new Map<string, AbortController>();
+  const active = new Map<string, Set<AbortController>>();
+  function cancel(name: string) { for (const controller of active.get(name) ?? []) controller.abort(); }
   function serial<T>(run: () => Promise<T>): Promise<T> {
     const result = tail.then(() => { if (closing) throw new Problem('service_closing', 503); return run(); });
     tail = result.catch(() => undefined); return result;
@@ -145,7 +146,7 @@ export async function dataSources(config: ServiceConfig) {
     if (update.enabled === false && Object.keys(update).every(key => ['config', 'enabled'].includes(key))) {
       const source = found(name);
       if (source.plugin) validateConfig(source.plugin, update.config, false);
-      active.get(name)?.abort();
+      cancel(name);
     }
     return serial(async () => {
       const source = found(name); const value = object(body, 'data_source');
@@ -155,34 +156,43 @@ export async function dataSources(config: ServiceConfig) {
     });
   };
   const toggle = (name: string, enabled: boolean) => {
-    if (enabled === false) active.get(name)?.abort();
+    if (enabled === false) cancel(name);
     return serial(async () => {
       if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
       return persist({ ...found(name), enabled });
     });
   };
-  const refresh = (name: string) => serial(async () => {
-    const source = found(name);
-    if (!source.enabled) throw new Problem('data_source_disabled', 409);
-    if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
-    let loaded: DatasetConfig[];
-    const controller = new AbortController(); active.set(name, controller);
-    try {
-      loaded = datasets(await source.plugin.load(validateConfig(source.plugin, source.config), { dataDir: config.dataDir, signal: controller.signal }));
-      controller.signal.throwIfAborted();
-      merged({ ...source, datasets: loaded });
-    } catch {
-      await persist({ ...source, error: 'data_source_refresh_failed' });
-      throw new Problem('data_source_refresh_failed', 400);
-    } finally {
-      active.delete(name);
-    }
-    return persist({ ...source, datasets: loaded, lastLoadedAt: new Date().toISOString(), error: null });
-  });
+  const refresh = (name: string) => {
+    const controller = new AbortController();
+    const controllers = active.get(name) ?? new Set<AbortController>();
+    controllers.add(controller); active.set(name, controllers);
+    return serial(async () => {
+      try {
+        if (controller.signal.aborted) throw new Problem('data_source_refresh_cancelled', 503);
+        const source = found(name);
+        if (!source.enabled) throw new Problem('data_source_disabled', 409);
+        if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
+        let loaded: DatasetConfig[];
+        try {
+          loaded = datasets(await source.plugin.load(validateConfig(source.plugin, source.config), { dataDir: config.dataDir, signal: controller.signal }));
+          controller.signal.throwIfAborted();
+          merged({ ...source, datasets: loaded });
+        } catch {
+          if (controller.signal.aborted) throw new Problem('data_source_refresh_cancelled', 503);
+          await persist({ ...source, error: 'data_source_refresh_failed' });
+          throw new Problem('data_source_refresh_failed', 400);
+        }
+        return persist({ ...source, datasets: loaded, lastLoadedAt: new Date().toISOString(), error: null });
+      } finally {
+        controllers.delete(controller);
+        if (!controllers.size) active.delete(name);
+      }
+    });
+  };
   return { view: () => [...sources.values()].map(viewOne), has: (name: string) => sources.has(name), save, toggle, refresh,
     extensions: (): ExtensionView[] => [...sources.values()].map(source => ({ name: source.name, version: source.version, enabled: source.enabled,
       kind: 'data', state: source.error ? 'error' : source.enabled ? 'loaded' : 'disabled', error: source.error })),
-    async close() { closing = true; for (const controller of active.values()) controller.abort(); await tail; } };
+    async close() { closing = true; for (const controllers of active.values()) for (const controller of controllers) controller.abort(); await tail; } };
 }
 export function registerDataSources(app: FastifyInstance, sources: Awaited<ReturnType<typeof dataSources>>) {
   app.get(`${API}/data-sources`, sources.view);
