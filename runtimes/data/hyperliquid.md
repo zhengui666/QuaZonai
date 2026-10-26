@@ -1,5 +1,72 @@
 # Hyperliquid public history
 
+## Settings plugin and millisecond history
+
+`qz.data.hyperliquid` is built into **Settings → Data Plugins**, disabled initially.
+It uses existing historical files, never a live market-data connection. Configure
+an acquisition directory containing `market-data.json` for offline loading. To
+download a date selection from the existing archive instead, supply both UTC
+start and exclusive end dates. The plugin reuses `hub.py` and the fixed profile
+below; all matching markets are selected, without a hard-coded coin list.
+
+Only the original `trades` streams are selected for the 100ms path. Optional
+native conversion requires the built `market-history` executable and a local
+native instrument-definition file. It invokes `import --bar-milliseconds 100`
+and retains native readback and coverage reports in a new output directory.
+Existing files are not rewritten. A missing partition, rejected record or failed
+native conversion fails loading and preserves the previous successful source.
+Disabling the plugin or closing the service cancels its active operator process.
+
+The result is deliberately `ready: false`: acquisition/native decoding does not
+provide original research partitions, contract/fee history or qualification.
+Use the existing preparation workflow and load its resulting DatasetConfig via
+`qz.data.local-config` for research admission. No online instrument fetch is
+performed by this plugin. Current definitions remain later observations.
+
+The new native option constructs **millisecond observed-trade BARs**, including
+1ms or 100ms, with the official
+Nautilus `BarBuilder`, exact decimal values and original trade IDs. It preserves
+event/availability clocks, omits empty intervals and never upsamples one-second
+candles or minute books. Granularity is not a promise of a trade in every 100ms
+window, transport latency or exchange-wide historical completeness.
+
+Keep original millisecond trade timestamps regardless of an execution host's
+network RTT. The [TradingVPS investigation](tradingvps-latency.md) separates
+published claims from the missing on-instance latency/jitter measurements.
+
+```sh
+target/debug/market-history import \
+  --manifest /absolute/data/hyperliquid-trades/market-data.json \
+  --instruments /absolute/data/original-hyperliquid-instruments.json \
+  --native-precision --bar-milliseconds 100 \
+  --output /absolute/catalogs/new-hyperliquid-100ms
+```
+
+Do not combine supplied candles with trade aggregation. As with second BARs,
+selected event-time boundaries must align with complete intervals. The importer
+supports supplied `bar_milliseconds` mappings independently of its aggregation
+CLI; seconds/milliseconds declarations are mutually exclusive.
+
+### Historical source comparison
+
+Sources can be official, GitHub or Hugging Face; third-party publishers are valid
+candidates. The existing fixed archive was chosen for its inspected file layout
+and previous real native readback, not because its publisher is Hyperliquid.
+
+| Source | Evidence and limits |
+| --- | --- |
+| [Official history](https://hyperliquid.gitbook.io/hyperliquid-docs/historical-data) | Requester-pays S3 node fills and separate book/context history; documentation does not guarantee continuous complete history. |
+| [Official historical GitHub](https://github.com/hyperliquid-dex/historical_data) | Some market-maker trades are excluded; not a complete market tape. |
+| [ProbioticFarmer archive](https://huggingface.co/datasets/ProbioticFarmer/hyperliquid-augmented-copytrading/tree/064bc5ea76a6f0db8dd5c2b66f598e925857784d) | Fixed revision and actual inspected intervals below; millisecond fills support 100ms aggregation. The 2026-10-16 observations are prior evidence, not a new full-corpus verification. |
+| [Chainticks/perp-data](https://huggingface.co/datasets/Chainticks/perp-data) | Public CC-BY-4.0 candidate with multiple daily shards; latest-date pointer observed on 2026-10-26 says 2026-08-11. Not established to exceed the selected source's coverage. |
+| [gionuibk node fills](https://huggingface.co/datasets/gionuibk/hyperliquid-node-fills-by-block) | Large node-fill archive; samples retain ms times and string decimals, with spot/perpetual examples. Exact coverage and dataset licensing remain unverified. |
+
+Current environment access to the selected HF API is blocked by proxy CONNECT
+403. The fixed source was not re-downloaded or refreshed on 2026-10-26. New local
+protocol/native checks must not be presented as fresh real-source verification.
+
+## Existing inspected archive
+
 The [MIT-declared research archive](https://huggingface.co/datasets/ProbioticFarmer/hyperliquid-augmented-copytrading/tree/064bc5ea76a6f0db8dd5c2b66f598e925857784d) was inspected on 2026-10-16. Use its actual published intervals, not the card's unsupported claim of complete genesis-to-present history:
 
 | Stream | Published files | Native preparation |

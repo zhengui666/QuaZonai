@@ -55,6 +55,9 @@ enum Command {
         /// Optionally build observed bars from trades, instead of importing supplied candles.
         #[arg(long)]
         bar_seconds: Option<u32>,
+        /// Optionally build observed subsecond bars from trades.
+        #[arg(long, conflicts_with = "bar_seconds")]
+        bar_milliseconds: Option<u32>,
         /// Preserve archive values at native encoding precision, not current contract precision.
         #[arg(long)]
         native_precision: bool,
@@ -77,6 +80,8 @@ struct Stream {
     #[serde(default)]
     symbol_from_file_stem: bool,
     bar_seconds: Option<u32>,
+    /// Supplied subsecond BAR interval; mutually exclusive with bar_seconds.
+    bar_milliseconds: Option<u32>,
     bar_timestamp: Option<String>,
 }
 
@@ -296,10 +301,11 @@ fn import(
     instruments_path: &Path,
     start: Option<u64>,
     end: Option<u64>,
-    bar_seconds: Option<u32>,
+    bar_interval: (Option<u32>, Option<u32>),
     native_precision: bool,
     output: &Path,
 ) -> Result<Report> {
+    let (bar_seconds, bar_milliseconds) = bar_interval;
     let manifest: Manifest = json(manifest_path)?;
     ensure!(
         manifest.schema_version == 1 && !manifest.license.is_empty(),
@@ -321,12 +327,19 @@ fn import(
         start < end && start >= date_ns(manifest.start_date)? && end <= date_ns(manifest.end_date)?,
         "HISTORY_WINDOW_INVALID"
     );
-    if let Some(interval) = bar_seconds {
+    let interval_ns = match (bar_seconds, bar_milliseconds) {
+        (Some(seconds), None) if seconds > 0 && seconds <= 86400 => {
+            Some(u64::from(seconds) * 1_000_000_000)
+        }
+        (None, Some(milliseconds)) if milliseconds > 0 && milliseconds <= 86_400_000 => {
+            Some(u64::from(milliseconds) * 1_000_000)
+        }
+        (None, None) => None,
+        _ => anyhow::bail!("BAR_INTERVAL_UNSUPPORTED_OR_CONFLICTING"),
+    };
+    if let Some(interval) = interval_ns {
         ensure!(
-            interval > 0
-                && interval <= 86400
-                && (start / 1_000_000_000).is_multiple_of(u64::from(interval))
-                && (end / 1_000_000_000).is_multiple_of(u64::from(interval)),
+            start.is_multiple_of(interval) && end.is_multiple_of(interval),
             "FULL_BAR_INTERVALS_REQUIRED"
         );
         ensure!(
@@ -369,7 +382,7 @@ fn import(
         versions.sort_by_key(|v| v.ts_init());
     }
     let mut sink = writer::Writer::new(output, &instruments)?;
-    let mut aggregation = records::Aggregation::new(bar_seconds);
+    let mut aggregation = records::Aggregation::with_milliseconds(bar_seconds, bar_milliseconds)?;
     let mut report = Report {
         schema_version: 1,
         source_reference: format!("https://huggingface.co/datasets/{}/tree/{}", manifest.repository, manifest.revision),
@@ -513,6 +526,7 @@ async fn main() {
             start_seconds,
             end_seconds,
             bar_seconds,
+            bar_milliseconds,
             native_precision,
             output,
         } => import(
@@ -520,7 +534,7 @@ async fn main() {
             &instruments,
             start_seconds,
             end_seconds,
-            bar_seconds,
+            (bar_seconds, bar_milliseconds),
             native_precision,
             &output,
         )
@@ -542,6 +556,32 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_bar_cli_accepts_milliseconds_and_rejects_mixed_units() {
+        let args = [
+            "market-history",
+            "import",
+            "--manifest",
+            "source.json",
+            "--instruments",
+            "instruments.json",
+            "--output",
+            "native",
+            "--bar-milliseconds",
+            "100",
+        ];
+        let parsed = Arguments::try_parse_from(args).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Command::Import {
+                bar_milliseconds: Some(100),
+                bar_seconds: None,
+                ..
+            }
+        ));
+        assert!(Arguments::try_parse_from(args.into_iter().chain(["--bar-seconds", "1"])).is_err());
+    }
 
     #[test]
     fn historical_identity_uses_the_official_parser_without_contract_parameters() {

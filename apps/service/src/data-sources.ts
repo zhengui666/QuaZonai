@@ -10,10 +10,11 @@ import { bindScienceData, resolveDatasetPaths, scienceDataWithoutBinding } from 
 import type { DatasetConfig, ServiceConfig } from './config.ts';
 import { object, Problem } from './facts.ts';
 import { validateNumbers } from '../../research/src/input.ts';
+import hyperliquid from './providers/hyperliquid.ts';
 
 export interface DataSourcePlugin {
   name: string; version?: string; fields: DataSourceField[];
-  load(config: JsonObject, context: { dataDir: string }): Promise<DatasetConfig[]>;
+  load(config: JsonObject, context: { dataDir: string; signal?: AbortSignal }): Promise<DatasetConfig[]>;
 }
 interface SavedSource {
   config: JsonObject; enabled: boolean; datasets: DatasetConfig[]; retainedDatasets?: DatasetConfig[]; lastLoadedAt: string | null; error: string | null;
@@ -72,14 +73,14 @@ export async function dataSources(config: ServiceConfig) {
   try { stored = object(JSON.parse(await readFile(file, 'utf8')), 'data_sources') as unknown as typeof stored; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const sources = new Map<string, Source>();
-  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, { name: local.name, version: local.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' }, ...config.extensions.filter(item => item.kind === 'data')];
+  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, hyperliquid].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
   for (const entry of configured) {
     if (sources.has(entry.name)) throw new Problem('extension_name_conflict');
     const saved = stored[entry.name];
     const source: Source = { name: entry.name, version: entry.version ?? null, fields: [], enabled: saved?.enabled ?? entry.enabled,
       config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], retainedDatasets: saved ? datasets(saved.retainedDatasets ?? saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
     try {
-      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : (await import(pathToFileURL(entry.module).href)).default, entry.name);
+      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === hyperliquid.name ? hyperliquid : (await import(pathToFileURL(entry.module).href)).default, entry.name);
       source.fields = source.plugin.fields; source.version = source.plugin.version ?? source.version;
     } catch { source.error = 'data_source_plugin_load_failed'; }
     sources.set(entry.name, source);
@@ -116,6 +117,7 @@ export async function dataSources(config: ServiceConfig) {
   }
   apply();
   let tail: Promise<unknown> = Promise.resolve(); let closing = false;
+  const active = new Map<string, AbortController>();
   function serial<T>(run: () => Promise<T>): Promise<T> {
     const result = tail.then(() => { if (closing) throw new Problem('service_closing', 503); return run(); });
     tail = result.catch(() => undefined); return result;
@@ -138,34 +140,49 @@ export async function dataSources(config: ServiceConfig) {
     stored = saved; sources.set(next.name, next); apply();
     return viewOne(next);
   }
-  const save = (name: string, body: unknown) => serial(async () => {
-    const source = found(name); const value = object(body, 'data_source');
-    if (Object.keys(value).some(key => !['config', 'enabled'].includes(key)) || typeof value.enabled !== 'boolean') throw new Problem('data_source_update_invalid');
-    if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
-    return persist({ ...source, config: validateConfig(source.plugin, value.config, value.enabled), enabled: value.enabled, error: null });
-  });
-  const toggle = (name: string, enabled: boolean) => serial(async () => {
-    if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
-    return persist({ ...found(name), enabled });
-  });
+  const save = async (name: string, body: unknown) => {
+    const update = object(body, 'data_source');
+    if (update.enabled === false && Object.keys(update).every(key => ['config', 'enabled'].includes(key))) {
+      const source = found(name);
+      if (source.plugin) validateConfig(source.plugin, update.config, false);
+      active.get(name)?.abort();
+    }
+    return serial(async () => {
+      const source = found(name); const value = object(body, 'data_source');
+      if (Object.keys(value).some(key => !['config', 'enabled'].includes(key)) || typeof value.enabled !== 'boolean') throw new Problem('data_source_update_invalid');
+      if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
+      return persist({ ...source, config: validateConfig(source.plugin, value.config, value.enabled), enabled: value.enabled, error: null });
+    });
+  };
+  const toggle = (name: string, enabled: boolean) => {
+    if (enabled === false) active.get(name)?.abort();
+    return serial(async () => {
+      if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
+      return persist({ ...found(name), enabled });
+    });
+  };
   const refresh = (name: string) => serial(async () => {
     const source = found(name);
     if (!source.enabled) throw new Problem('data_source_disabled', 409);
     if (!source.plugin) throw new Problem('data_source_plugin_unavailable');
     let loaded: DatasetConfig[];
+    const controller = new AbortController(); active.set(name, controller);
     try {
-      loaded = datasets(await source.plugin.load(validateConfig(source.plugin, source.config), { dataDir: config.dataDir }));
+      loaded = datasets(await source.plugin.load(validateConfig(source.plugin, source.config), { dataDir: config.dataDir, signal: controller.signal }));
+      controller.signal.throwIfAborted();
       merged({ ...source, datasets: loaded });
     } catch {
       await persist({ ...source, error: 'data_source_refresh_failed' });
       throw new Problem('data_source_refresh_failed', 400);
+    } finally {
+      active.delete(name);
     }
     return persist({ ...source, datasets: loaded, lastLoadedAt: new Date().toISOString(), error: null });
   });
   return { view: () => [...sources.values()].map(viewOne), has: (name: string) => sources.has(name), save, toggle, refresh,
     extensions: (): ExtensionView[] => [...sources.values()].map(source => ({ name: source.name, version: source.version, enabled: source.enabled,
       kind: 'data', state: source.error ? 'error' : source.enabled ? 'loaded' : 'disabled', error: source.error })),
-    async close() { closing = true; await tail; } };
+    async close() { closing = true; for (const controller of active.values()) controller.abort(); await tail; } };
 }
 export function registerDataSources(app: FastifyInstance, sources: Awaited<ReturnType<typeof dataSources>>) {
   app.get(`${API}/data-sources`, sources.view);

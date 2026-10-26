@@ -10,6 +10,13 @@ Existing investment decisions retain source lookup when a provider is disabled o
 
 ## External providers
 
+The built-in disabled `qz.data.hyperliquid` provider loads existing public history
+from the fixed Hugging Face archive profile, with optional exact 100ms native
+trade aggregation. It never opens a live market feed. See the
+[history guide](../../runtimes/data/hyperliquid.md) for source coverage, local
+archives, downloads, native conversion and research-admission boundaries.
+Archives appear with `ready: false`; they do not bypass native preparation.
+
 Register a module in the existing service configuration:
 
 ```json
