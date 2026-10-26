@@ -36,6 +36,7 @@ Reuse Fastify authentication hooks, existing instance settings and atomic JSON p
 - Four data-source and HTTP integration tests passed: local-file import and paths, external modules, replacement, enable/disable, optional-field clearing, invalid numeric output, failed refresh preservation, restart, authentication, unique extension names and retained research input.
 - Three instance settings tests passed, including direct authenticated calls, same-ID URL/token rotation and recovery of both old and current credential references after restart.
 - Web type checking, 26 unit tests and the production build passed. The 70-case browser run passed 67 cases; the three failures identified obsolete instance/data locators and a settings-section focus bug. All three passed after the respective corrections; desktop/mobile plugin views were inspected.
+- A further browser regression reproduced optional number/password values returning after a successful save. Explicitly clearing removed form fields fixed it; all four plugin browser tests and Web type checking passed afterward. CI runs the resulting 71-case suite.
 - Thirteen deployment configuration/maintenance tests and the full `make check-ts` suite passed. Tests requiring an actual native kernel were not run locally; the existing scientific/core CI owns that coverage.
 
 <a id="review"></a>

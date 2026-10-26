@@ -7,11 +7,13 @@ import { api } from './api';
 import { useResource } from './data-hooks';
 import { Empty, ErrorNotice, Loading, Status, Timestamp } from './ui';
 
+const formValues = (source: DataSourceView) => ({ enabled: source.enabled, config: { ...source.config, ...Object.fromEntries(source.fields.map(field => [field.key, source.config[field.key]])) } });
+
 function DataPlugin({ source }: { source: DataSourceView }) {
   const cache = useQueryClient(); const [form] = Form.useForm<DataSourceUpdate>();
   const values = Form.useWatch([], form) as DataSourceUpdate | undefined;
   const [busy, setBusy] = useState<'save' | 'refresh'>(); const [error, setError] = useState<unknown>(); const [notice, setNotice] = useState('');
-  const saved = { enabled: source.enabled, config: source.config };
+  const saved = formValues(source);
   const dirty = !!values && JSON.stringify(values) !== JSON.stringify(saved);
   const previous = useRef(saved);
   useEffect(() => {
@@ -25,7 +27,7 @@ function DataPlugin({ source }: { source: DataSourceView }) {
       const path = `/data-sources/${encodeURIComponent(source.name)}`;
       const next = await api<DataSourceView>(operation === 'save' ? path : `${path}/refresh`, operation === 'save' ? { method: 'PUT', body: form.getFieldsValue(true) } : { method: 'POST' });
       cache.setQueryData<DataSourceView[]>(['/data-sources'], known => known?.map(item => item.name === next.name ? next : item));
-      form.resetFields(); form.setFieldsValue({ enabled: next.enabled, config: next.config });
+      form.resetFields(); form.setFieldsValue(formValues(next));
       setNotice(operation === 'save' ? next.enabled ? '已保存配置，可加载数据' : '已保存配置' : '已加载数据');
       await Promise.all(['/datasets', '/extensions', '/data-sources'].map(path => cache.invalidateQueries({ queryKey: [path] })));
     } catch (failure) { setError(failure); }

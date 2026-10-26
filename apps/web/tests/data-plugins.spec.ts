@@ -14,7 +14,8 @@ async function plugins(page: Page) {
       writes.push({ method: request.method(), body: request.postData() ? request.postDataJSON() : null });
       if (request.method() === 'PUT') {
         if (failSave) return route.fulfill({ status: 400, json: { message: '配置路径不可用' } });
-        source = { ...source, ...request.postDataJSON(), state: request.postDataJSON().enabled ? 'loaded' : 'disabled' };
+        const input = request.postDataJSON() as DataSourceUpdate;
+        source = { ...source, ...input, config: Object.fromEntries(Object.entries(input.config).filter(([, value]) => value !== null && value !== '')), state: input.enabled ? 'loaded' : 'disabled' };
       } else {
         if (failLoad) return route.fulfill({ status: 422, json: { message: '数据加载失败' } });
         source = { ...source, state: 'loaded', datasetIds: ['registered-dataset'], lastLoadedAt: '2026-10-26T00:00:00Z' };
@@ -87,4 +88,20 @@ test('data plugin refresh updates pristine fields and preserves unsaved fields',
   await page.getByRole('button', { name: '刷新目录', exact: true }).click();
   await expect(plugin.getByLabel('配置路径', { exact: true })).toHaveValue('/tmp/draft.json');
   await expect(plugin.getByRole('button', { name: '保存配置', exact: true })).toBeEnabled();
+});
+
+
+test('saving cleared optional number and password fields keeps them empty', async ({ page }) => {
+  const state = await plugins(page); state.changeConfig({ path: '/tmp/data.json', token: 'test-existing-token', limit: 10, history: false });
+  await page.goto('/#/settings?section=data-plugins');
+  const plugin = page.getByRole('region', { name: 'test.data', exact: true });
+  await plugin.getByRole('switch', { name: '启用 test.data', exact: true }).check();
+  await plugin.getByLabel('条数', { exact: true }).fill('');
+  await plugin.getByLabel('访问令牌', { exact: true }).fill('');
+  await plugin.getByRole('button', { name: '保存配置', exact: true }).click();
+  await expect(plugin.getByText('已保存配置，可加载数据', { exact: true })).toBeVisible();
+  await expect(plugin.getByLabel('条数', { exact: true })).toHaveValue('');
+  await expect(plugin.getByLabel('访问令牌', { exact: true })).toHaveValue('');
+  await expect(plugin.getByRole('button', { name: '保存配置', exact: true })).toBeDisabled();
+  await expect(plugin.getByRole('button', { name: '加载数据', exact: true })).toBeEnabled();
 });
