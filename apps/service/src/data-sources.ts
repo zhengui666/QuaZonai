@@ -85,6 +85,17 @@ export async function dataSources(config: ServiceConfig) {
     sources.set(entry.name, source);
   }
   function merged(replacement?: Source): DatasetConfig[] {
+    const owners = new Map<string, string>();
+    for (const source of [
+      ...Object.entries(stored).map(([name, value]) => ({ name, datasets: value.datasets, retainedDatasets: value.retainedDatasets })),
+      ...sources.values(), ...(replacement ? [replacement] : []),
+    ]) {
+      for (const dataset of [...(source.retainedDatasets ?? []), ...source.datasets]) {
+        const owner = owners.get(dataset.id);
+        if (owner !== undefined && owner !== source.name) throw new Problem('data_source_dataset_id_conflict', 409);
+        owners.set(dataset.id, source.name);
+      }
+    }
     const result = [...sources.values()].flatMap(source => { const selected = source.name === replacement?.name ? replacement : source; return selected.enabled ? selected.datasets : []; });
     const ids = new Set<string>();
     for (const dataset of result) {

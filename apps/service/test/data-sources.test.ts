@@ -115,3 +115,41 @@ test('existing mandates retain source lookup after disable, omitted datasets and
     assert.deepEqual(existingDataset(config, 'tracked'), captured, 'omitted source manifest remains available after restart');
   } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('retained dataset IDs stay owned by their original source after removal and restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-retained-source-owner-'));
+  const moduleA = join(directory, 'source-a.mjs'); const moduleB = join(directory, 'source-b.mjs');
+  await writeFile(moduleA, `export default {name:'source.a',version:'1',fields:[{key:'mode',label:'Mode',type:'text',required:true}],async load(config){return config.mode==='omit'?[]:[{id:'shared',name:config.mode,assetClass:'CRYPTO',currency:'USD',source:'source.a',start:null,end:null,ready:true,data:{catalog:'/source-a/'+config.mode}}];}}`);
+  await writeFile(moduleB, `export default {name:'source.b',version:'1',fields:[{key:'mode',label:'Mode',type:'text',required:true}],async load(config){return [{id:'shared',name:config.mode,assetClass:'CRYPTO',currency:'USD',source:'source.b',start:null,end:null,ready:true,data:{catalog:'/source-b/'+config.mode}}];}}`);
+  let config = configDefaults({ dataDir: directory, extensions: [
+    { name: 'source.a', module: moduleA, kind: 'data', enabled: true, config: { mode: 'original' } },
+    { name: 'source.b', module: moduleB, kind: 'data', enabled: false, config: { mode: 'conflict' } },
+  ] });
+  let sources = await dataSources(config);
+  try {
+    await sources.refresh('source.a');
+    const original = structuredClone(existingDataset(config, 'shared'));
+    await sources.toggle('source.a', false);
+    await sources.save('source.a', { enabled: true, config: { mode: 'omit' } });
+    assert.deepEqual((await sources.refresh('source.a')).datasetIds, []);
+    await sources.toggle('source.a', false);
+
+    await sources.save('source.b', { enabled: true, config: { mode: 'conflict' } });
+    await assert.rejects(sources.refresh('source.b'), /data_source_refresh_failed/);
+    assert.deepEqual(existingDataset(config, 'shared'), original, 'a failed second source cannot replace the retained owner');
+
+    await sources.save('source.a', { enabled: true, config: { mode: 'updated' } });
+    await sources.refresh('source.a');
+    assert.equal(config.datasets.find(value => value.id === 'shared')?.name, 'updated', 'the owning source may update its own ID');
+    const updated = structuredClone(existingDataset(config, 'shared'));
+    await sources.close();
+
+    config = configDefaults({ dataDir: directory, extensions: [
+      { name: 'source.b', module: moduleB, kind: 'data', enabled: false, config: { mode: 'conflict' } },
+    ] });
+    sources = await dataSources(config);
+    assert.deepEqual(existingDataset(config, 'shared'), updated, 'removed source history remains available to existing mandates');
+    await assert.rejects(sources.refresh('source.b'), /data_source_refresh_failed/);
+    assert.deepEqual(existingDataset(config, 'shared'), updated, 'stored history still rejects ID reuse after restart');
+  } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
+});

@@ -39,6 +39,7 @@ Reuse Fastify authentication hooks, existing instance settings and atomic JSON p
 - A further browser regression reproduced optional number/password values returning after a successful save. Explicitly clearing removed form fields fixed it; all four plugin browser tests and Web type checking passed afterward. CI runs the resulting 71-case suite.
 - GitHub review identified existing PM monitors losing their source lookup on disable or omission. Per-source retained configurations now survive replacement and restart; new admissions remain restricted to active datasets. The data-source lifecycle regression and a real Durable PM monitor test passed through disable, omission and restart without clearing its current decision.
 - After the retention fix, service type checking and the affected source/HTTP/PM suite passed: 20 tests passed, with two actual-native forward tests left to scientific/core CI.
+- Retained dataset IDs keep their source ownership, so a different provider cannot reuse a disabled or omitted ID and redirect an existing mandate. The regression covers source removal, restart, conflicting reuse and updates by the original source.
 - Thirteen deployment configuration/maintenance tests and the full `make check-ts` suite passed. Tests requiring an actual native kernel were not run locally; the existing scientific/core CI owns that coverage.
 
 <a id="review"></a>
