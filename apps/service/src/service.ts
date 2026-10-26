@@ -89,7 +89,8 @@ export async function createService(options: ServiceOptions) {
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2 }) : null;
-  app.addHook('onClose', async () => { await sources.close(); await instances.close(); await research.close(); await archive?.end(); });
+  app.addHook('preClose', async () => { await sources.close(); });
+  app.addHook('onClose', async () => { await instances.close(); await research.close(); await archive?.end(); });
   try {
   for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {

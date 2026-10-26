@@ -64,7 +64,7 @@ test('history download and 100ms native conversion use fixed argv; controlled re
     await mkdir(join(output, 'catalog'), { recursive: true });
     await writeFile(join(output, 'import-report.json'), JSON.stringify({ status: 'IMPORTED', readback_records: 4,
       missing_symbols: {}, rejected_rows: {}, missing_partitions: [], missing_definitions: { expired: 1 },
-      native_records: { trades: { 'BTC-USD-PERP.HYPERLIQUID': 2 }, bars: { [`BTC-USD-PERP.HYPERLIQUID-${grain}-MILLISECOND-LAST-EXTERNAL`]: 2 } } }));
+      native_records: { trades: { 'BTC-USD-PERP.HYPERLIQUID': 2 }, bars: { 'BTC-USD-PERP.HYPERLIQUID': 2 } } }));
   };
   try {
     const [dataset] = await hyperliquidDataPlugin(runner).load({ acquisitionDirectory: 'archive', startDate: '2026-10-13', endDate: '2026-10-14',

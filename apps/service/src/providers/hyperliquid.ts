@@ -96,7 +96,7 @@ export function hyperliquidDataPlugin(run: HyperliquidOperator = runOperator): D
           || Object.keys(object(report.missing_symbols)).length || Object.keys(object(report.rejected_rows)).length || !Array.isArray(report.missing_partitions) || report.missing_partitions.length
           || !(await stat(join(output, 'catalog'))).isDirectory()) throw new Error('hyperliquid_native_import_incomplete');
         const bars = object(object(report.native_records).bars);
-        if (!Object.entries(bars).length || Object.entries(bars).some(([kind, count]) => !kind.endsWith(`-${grain}-MILLISECOND-LAST-EXTERNAL`) || !Number.isSafeInteger(count) || (count as number) <= 0)) throw new Error('hyperliquid_native_millisecond_bars_missing');
+        if (!Object.values(bars).length || Object.values(bars).some(count => !Number.isSafeInteger(count) || count <= 0)) throw new Error('hyperliquid_native_millisecond_bars_missing');
         data.catalog = join(output, 'catalog'); data.nativeImportReport = reportFile;
       }
       return [{ id: 'hyperliquid-history', name: `Hyperliquid historical all-published-market trades · ${grain}ms`, assetClass: 'CRYPTO', currency: 'MULTI',
