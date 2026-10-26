@@ -706,7 +706,9 @@ test('an uncertain instance save replays the original revision and content after
   const backtest = page.locator('.instance-backtest');
   await backtest.getByLabel('实例标识', { exact: true }).fill('original-science');
   await backtest.getByLabel('服务地址', { exact: true }).fill('https://original.example/worker');
-  await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+  await page.getByRole('button', { name: '保存实例连接', exact: true }).click({ noWaitAfter: true });
+  await expect(page).toHaveURL(/\/#\/settings\?section=instances$/);
+  await expect(page.getByText('保存结果待核对', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '核对保存', exact: true })).toBeVisible();
   await expect(backtest.getByLabel('服务地址', { exact: true })).toBeDisabled();
   await page.reload();

@@ -188,8 +188,10 @@ test('settings configures independent remote instances through real HTTP and pre
       const connection = page.locator('.instance-connection').last();
       await connection.getByLabel('名称', { exact: true }).fill(name);
       await connection.getByLabel('实例标识', { exact: true }).fill(`${mode}-remote`);
-      await connection.getByLabel('模式', { exact: true }).click();
-      await page.getByRole('option', { name: mode === 'paper' ? '模拟盘' : '实盘', exact: true }).click();
+      const modeSelect = connection.getByLabel('模式', { exact: true });
+      await modeSelect.click();
+      const listboxId = await modeSelect.getAttribute('aria-controls'); expect(listboxId).toBeTruthy();
+      await page.locator(`[id="${listboxId}"]`).getByRole('option', { name: mode === 'paper' ? '模拟盘' : '实盘', exact: true }).click();
       await connection.getByLabel('服务地址', { exact: true }).fill(`https://${mode}.example/nautilus`);
       await connection.getByLabel('客户端标识', { exact: true }).fill(`qz-${mode}`);
       await connection.getByLabel('账户标识', { exact: true }).fill(`${mode}-account`);
