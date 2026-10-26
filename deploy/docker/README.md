@@ -34,9 +34,11 @@ original durable storage, not fictional remote cancellation.
 
 `data/service.json` supplies initial `nautilus.backtest`, paper/live `connections`,
 datasets, extensions and the original `research.database` path. The browser's
-Settings page groups Model settings, Extensions and Instance connections. Explicitly
-saved instance settings live in private `data/instances.json` and override the initial
-file on restart, including explicitly cleared connections. `data/research/provider.env` is private: Node alone
+Settings page includes Research, Factors, Portfolios, Observations and Settings;
+datasets and data plugins have their own Settings pages, and extensions are managed
+in Settings. Instance tokens use a masked password field. Explicitly saved instance
+settings live in private `data/instances.json` and override the initial file on restart,
+including explicitly cleared connections. `data/research/provider.env` is private: Node alone
 reads it using `--env-file`. Use official pi-ai provider environment names; never
 put credentials in research inputs, model context, logs or source. Initial
 password setup/login happens in the browser. The standalone installed CLI is
@@ -98,8 +100,7 @@ connection. No remote endpoint is inferred from a former `jobBinary`, and a
 missing endpoint does not fall back to local execution. The console can start
 without one; scientific operations require it. In the browser, open Settings →
 Instance connections, configure the backtest/research worker and paper/live account
-connections, then save. Credential fields name existing application-host environment
-variables; they do not contain tokens. Saving configures new work and does not test
+connections, then save. Enter the token value in the masked password field. Saving configures new work and does not test
 remote health or redirect existing tasks. Saved settings survive reload, restart and
 the existing stopped data backup/restore. Concurrent edits require loading the latest
 revision; uncertain saves reconcile the original update.
@@ -113,7 +114,7 @@ into the original private `data/service.json`:
     "backtest": {
       "id": "research-nautilus",
       "url": "https://research-nautilus.example.com",
-      "tokenEnv": "QZ_RESEARCH_NAUTILUS_TOKEN"
+      "token": ""
     }
   },
   "connections": [
@@ -121,20 +122,21 @@ into the original private `data/service.json`:
       "id": "paper-account", "name": "Paper Nautilus", "mode": "paper",
       "url": "https://paper-nautilus.example.com",
       "clientId": "quazonai-paper", "accountId": "paper-account",
-      "tokenEnv": "QZ_PAPER_NAUTILUS_TOKEN"
+      "token": ""
     },
     {
       "id": "live-account", "name": "Live Nautilus", "mode": "live",
       "url": "https://live-nautilus.example.com",
       "clientId": "quazonai-live", "accountId": "live-account",
-      "tokenEnv": "QZ_LIVE_NAUTILUS_TOKEN"
+      "token": ""
     }
   ]
 }
 ```
 
-Store each named token in the private `data/research/provider.env`, then restart
-the app. Use distinct connection IDs for distinct account bindings. Existing
+Replace each empty token value with the instance token in this initial configuration.
+The browser Settings page stores edits in `data/instances.json`. Use distinct
+connection IDs for distinct account bindings. Existing
 observations retain their original connection and receipt identity; changing a
 configuration entry does not retarget their pending deliveries.
 

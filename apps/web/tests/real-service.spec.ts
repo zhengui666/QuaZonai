@@ -93,7 +93,7 @@ test('late original admission cannot erase a newer pending command', async ({ pa
       if (ordinal === 1) await heldA; if (ordinal === 3) await heldB;
       await route.fulfill({ response }).catch(() => undefined); if (ordinal === 1) lateFinished = true;
     });
-    await start(page, url, 'First delayed original'); await expect.poll(() => bodies.length).toBe(1); await page.getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click(); await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('First delayed original'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'First delayed original', level: 1, exact: true })).toBeVisible();
+    await start(page, url, 'First delayed original'); await expect.poll(() => bodies.length).toBe(1); await page.getByRole('link', { name: '设置', exact: true }).click(); await page.getByRole('navigation', { name: '设置分类' }).getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 2 })).toBeVisible(); await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click(); await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('First delayed original'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: 'First delayed original', level: 1, exact: true })).toBeVisible();
     await start(page, url, 'Second pending original'); await expect.poll(() => bodies.length).toBe(3); const second = bodies[2]!;
     releaseA(); await expect.poll(() => lateFinished).toBe(true); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBe(second); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Second pending original');
@@ -182,7 +182,8 @@ test('settings configures independent remote instances through real HTTP and pre
     const backtest = page.locator('.instance-backtest');
     await backtest.getByLabel('实例标识', { exact: true }).fill('science-remote');
     await backtest.getByLabel('服务地址', { exact: true }).fill('https://science.example/nautilus');
-    await backtest.getByLabel('凭据环境变量', { exact: true }).fill('QZ_SCIENCE_TOKEN');
+    await backtest.getByLabel('访问令牌', { exact: true }).fill('test-science-token');
+    await expect(backtest.getByLabel('访问令牌', { exact: true })).toHaveAttribute('type', 'password');
     for (const [mode, name] of [['paper', '独立模拟盘'], ['live', '独立实盘']] as const) {
       await page.getByRole('button', { name: '添加连接', exact: true }).click();
       const connection = page.locator('.instance-connection').last();
@@ -195,20 +196,26 @@ test('settings configures independent remote instances through real HTTP and pre
       await connection.getByLabel('服务地址', { exact: true }).fill(`https://${mode}.example/nautilus`);
       await connection.getByLabel('客户端标识', { exact: true }).fill(`qz-${mode}`);
       await connection.getByLabel('账户标识', { exact: true }).fill(`${mode}-account`);
-      await connection.getByLabel('凭据环境变量', { exact: true }).fill(`QZ_${mode.toUpperCase()}_TOKEN`);
+      await connection.getByLabel('访问令牌', { exact: true }).fill(`test-${mode}-token`);
+      await expect(connection.getByLabel('访问令牌', { exact: true })).toHaveAttribute('type', 'password');
     }
     await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
     await expect(page.getByText('已保存', { exact: true })).toBeVisible();
     const saved = await (await page.request.get(`${url}/api/v3/settings/instances`)).json();
-    expect(saved).toEqual({ revision: before.revision + 1, backtest: { id: 'science-remote', url: 'https://science.example/nautilus', tokenEnv: 'QZ_SCIENCE_TOKEN' }, connections: [
-      { id: 'paper-remote', name: '独立模拟盘', mode: 'paper', url: 'https://paper.example/nautilus', clientId: 'qz-paper', accountId: 'paper-account', tokenEnv: 'QZ_PAPER_TOKEN' },
-      { id: 'live-remote', name: '独立实盘', mode: 'live', url: 'https://live.example/nautilus', clientId: 'qz-live', accountId: 'live-account', tokenEnv: 'QZ_LIVE_TOKEN' },
+    expect(saved).toEqual({ revision: before.revision + 1, backtest: { id: 'science-remote', url: 'https://science.example/nautilus', token: 'test-science-token' }, connections: [
+      { id: 'paper-remote', name: '独立模拟盘', mode: 'paper', url: 'https://paper.example/nautilus', clientId: 'qz-paper', accountId: 'paper-account', token: 'test-paper-token' },
+      { id: 'live-remote', name: '独立实盘', mode: 'live', url: 'https://live.example/nautilus', clientId: 'qz-live', accountId: 'live-account', token: 'test-live-token' },
     ] });
     await page.reload(); await expect(backtest.getByLabel('服务地址', { exact: true })).toHaveValue(saved.backtest.url);
     await expect(page.locator('.instance-connection')).toHaveCount(2);
     await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeDisabled();
     await state.restart(); await page.reload();
-    await expect(backtest.getByLabel('凭据环境变量', { exact: true })).toHaveValue('QZ_SCIENCE_TOKEN');
+    await expect(backtest.getByLabel('访问令牌', { exact: true })).toHaveValue('test-science-token');
+    await expect(backtest.getByLabel('访问令牌', { exact: true })).toHaveAttribute('type', 'password');
+    for (const [index, mode] of ['paper', 'live'].entries()) {
+      const token = page.locator('.instance-connection').nth(index).getByLabel('访问令牌', { exact: true });
+      await expect(token).toHaveValue(`test-${mode}-token`); await expect(token).toHaveAttribute('type', 'password');
+    }
     await expect(page.locator('.instance-connection').nth(0).getByLabel('账户标识', { exact: true })).toHaveValue('paper-account');
     await expect(page.locator('.instance-connection').nth(1).getByLabel('账户标识', { exact: true })).toHaveValue('live-account');
     expect(await (await page.request.get(`${url}/api/v3/settings/instances`)).json()).toEqual(saved);

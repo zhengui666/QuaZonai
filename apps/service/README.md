@@ -13,7 +13,7 @@ QZ_CONFIG=/absolute/path/service.json QZ_JOB_BINARY=/absolute/path/job \
   node --experimental-strip-types src/main.ts
 ```
 
-`service.example.json` has no datasets, connections, sample balances or credentials. Relative paths are resolved against the config file. Defaults: `127.0.0.1:8080`, persistent `data/`, `data/research.sqlite`; no QZ task/native/model-discovery deadline. Set `research.database` to the existing SQLite file, **not** a fresh replacement. `research.modules`, `research.providerModules` and native `research.settings` are passed to the official host, except retired stream deadlines. Provider credentials stay in its environment or private `${research.database}.auth/credentials.sqlite` (0700 directory, 0600 file), never research documents. Back up that directory alongside SQLite/sidecars. `passwordHash` optionally supplies an existing Argon2 verifier; otherwise set the owner password through `/session/setup`. Configure `secureCookies` and `publicOrigin` for the deployment origin. `staticDir` optionally serves the built same-origin console.
+`service.example.json` has no datasets, connections, sample balances or credentials. Relative paths are resolved against the config file. Defaults: `127.0.0.1:8080`, persistent `data/`, `data/research.sqlite`; no QZ task/native/model-discovery deadline. Set `research.database` to the existing SQLite file, **not** a fresh replacement. `research.modules`, `research.providerModules` and native `research.settings` are passed to the official host, except retired stream deadlines. Provider credentials stay in its environment or private `${research.database}.auth/credentials.sqlite` (0700 directory, 0600 file), never research documents. Back up that directory alongside SQLite/sidecars. `passwordHash` optionally supplies an existing Argon2 verifier; otherwise set the owner password through `/session/setup`. Configure `secureCookies` for the deployment. `staticDir` optionally serves the built console.
 
 `createService({config, models?, storage?, extensions?})` (also exported as `buildService`) returns `{app, research, work, close}`; `app.inject()` supports short integration tests. `close()` awaits the host's suspension; it does not invent cancellation or delete facts.
 
@@ -45,7 +45,7 @@ Review and merge the entry into the existing private `service.json.datasets` arr
 
 ## Target-only downstream protocol
 
-A configured connection has `id`, `name`, `mode` (`paper`/`live`), `url`, original `clientId`/`accountId`, and optional `tokenEnv` (environment variable **name**, never a credential in config). The supported downstream adapter exposes:
+A configured connection has `id`, `name`, `mode` (`paper`/`live`), `url`, original `clientId`/`accountId`, and optional `token` value. The Settings page masks the token with a password input and saves instance settings in private `data/instances.json`; omitting or clearing the token sends no credential. Older service configs may still use `tokenEnv` as an environment variable name. The supported downstream adapter exposes:
 
 - `POST <url>/targets`: `{id, clientId, accountId, expiresAt, target}`. `target` is the original immutable native target point, including string nanosecond clocks/expiry, exact target/cash weights and currency. No broker orders are sent.
 - `GET <url>/targets/:id`: the original receipt, also used to reconcile an uncertain POST.

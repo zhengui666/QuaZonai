@@ -2,7 +2,7 @@ import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useL
 import zhCN from 'antd/locale/zh_CN';
 import { App as AntApp, Button, ConfigProvider, Drawer, Dropdown, theme } from 'antd';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { ChartLineUpIcon, CircleHalfIcon, CircleNotchIcon, DatabaseIcon, FlaskIcon, IconContext, ListIcon, MoonIcon, GearIcon, SignOutIcon, SquaresFourIcon, SunIcon, ArrowsLeftRightIcon } from '@phosphor-icons/react';
+import { ChartLineUpIcon, CircleHalfIcon, CircleNotchIcon, FlaskIcon, IconContext, ListIcon, MoonIcon, GearIcon, SignOutIcon, SquaresFourIcon, SunIcon, ArrowsLeftRightIcon } from '@phosphor-icons/react';
 import type { ModelAuthType, ProviderView, SessionView } from '../../../packages/contracts/src/index.ts';
 import { api, authenticationEvents } from './api';
 import { useResource } from './data-hooks';
@@ -14,7 +14,6 @@ import { Brand } from './brand';
 import { DeletionRecovery } from './delete-record';
 const Research = lazy(() => import('./research'));
 const Pm = lazy(() => import('./pm'));
-const Data = lazy(() => import('./data'));
 const Portfolios = lazy(() => import('./portfolio'));
 const Factors = lazy(() => import('./factors'));
 const Observations = lazy(() => import('./observations'));
@@ -24,7 +23,7 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false, stal
 type Appearance = 'system' | 'light' | 'dark';
 const destinations: { page: Workspace; label: string; icon: ReactNode; secondary?: boolean }[] = [
   { page: 'pm', label: '投资决策', icon: <ChartLineUpIcon /> },
-  { page: 'research', label: '研究', icon: <FlaskIcon /> }, { page: 'data', label: '数据', icon: <DatabaseIcon /> },
+  { page: 'research', label: '研究', icon: <FlaskIcon /> },
   { page: 'factors', label: '因子库', icon: <SquaresFourIcon /> },
   { page: 'portfolios', label: '组合回测', icon: <ChartLineUpIcon /> }, { page: 'observations', label: '目标与观测', icon: <ArrowsLeftRightIcon /> },
   { page: 'settings', label: '设置', icon: <GearIcon />, secondary: true },
@@ -47,17 +46,17 @@ function WorkspaceApp() {
       document.getElementById('main-content')?.focus({ preventScroll: true });
       if (route.page === 'research' && !route.id && previous?.page === 'research' && previous.id) requestAnimationFrame(() => document.querySelector<HTMLAnchorElement>(`a[data-study-id="${CSS.escape(previous.id!)}"]`)?.focus({ preventScroll: true }));
     }
-  }, [route.page, route.id, route.creating, session.data?.authenticated]);
+  }, [route.page, route.id, route.creating, route.params.get('section'), session.data?.authenticated]);
   if (session.isPending) return <main><Loading /></main>;
   if (session.error || !session.data) return <main><ErrorNotice error={session.error ?? new Error('会话不可用')} retry={() => { void session.refetch(); }} /></main>;
   if (!session.data.authenticated) return <Auth session={session.data} changed={changeSession} />;
-  const activePage = route.page === 'extensions' ? 'settings' : route.page;
+  const activePage = route.page === 'data' || route.page === 'extensions' ? 'settings' : route.page;
   const links = (secondary: boolean) => destinations.filter(item => Boolean(item.secondary) === secondary).map(item => <a key={item.page} className={`nav-link ${activePage === item.page ? 'selected' : ''}`} aria-current={activePage === item.page ? 'page' : undefined} href={href(`/${item.page}`)} onClick={() => setDrawer(false)}>{item.icon}<span>{item.label}</span></a>);
   return <><a href="#main-content" className="skip-link" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus(); }}>跳到内容</a>
     <header className="app-topbar"><div className="topbar-inner"><a className="wordmark" href={href('/research')}><Brand /></a><nav className="primary-nav" aria-label="主要工作区">{links(false)}</nav><div className="topbar-right"><nav className="secondary-nav" aria-label="工作台设置">{links(true)}</nav><div className="topbar-divider" /><AppearanceControl /><Button className="icon-button logout-button" type="text" aria-label="退出登录" icon={<SignOutIcon size={19} />} onClick={() => { setLogoutError(undefined); void api<SessionView>('/session', { method: 'DELETE' }).then(changeSession, setLogoutError); }} /></div><Button className="mobile-menu icon-button" type="text" icon={<ListIcon size={21} />} aria-label="打开导航" onClick={() => setDrawer(true)} /></div></header>
     <Drawer title={<Brand />} placement="left" getContainer={false} open={drawer} onClose={() => setDrawer(false)} width={288}><nav className="drawer-nav" aria-label="工作区">{links(false)}<div className="drawer-divider" />{links(true)}</nav><div className="drawer-appearance"><AppearanceControl /><span>外观设置</span><Button type="text" onClick={() => { void api<SessionView>('/session', { method: 'DELETE' }).then(value => { setDrawer(false); changeSession(value); }, setLogoutError); }}>退出登录</Button></div></Drawer>
     <main id="main-content" tabIndex={-1} className={route.page === 'research' && !route.creating ? 'research-main' : ''}><ErrorNotice error={logoutError} /><DeletionRecovery /><AppErrorBoundary key={`${route.page}/${route.creating}/${route.id ?? ''}/${route.creating ? route.params.toString() : ''}`}><Suspense fallback={<Loading />}>
-      {route.unknown ? <Empty title="未找到页面" action={<a className="text-link" href={href('/research')}>返回研究</a>} /> : route.page === 'pm' ? <Pm route={route} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'data' ? <Data /> : route.page === 'factors' ? <Factors route={route} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : <Settings connect={setAuthRequest} route={route} />}
+      {route.unknown ? <Empty title="未找到页面" action={<a className="text-link" href={href('/research')}>返回研究</a>} /> : route.page === 'pm' ? <Pm route={route} /> : route.page === 'research' ? <Research route={route} /> : route.page === 'factors' ? <Factors route={route} /> : route.page === 'portfolios' ? <Portfolios route={route} /> : route.page === 'observations' ? <Observations route={route} /> : <Settings connect={setAuthRequest} route={route} />}
     </Suspense></AppErrorBoundary></main>
     {authRequest && <Suspense fallback={<Loading />}><ModelLogin key={authRequest.id} request={authRequest} changed={refreshModels} close={() => setAuthRequest(undefined)} /></Suspense>}
   </>;

@@ -17,6 +17,7 @@ import { science } from './science.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
+import { dataSources, registerDataSources } from './data-sources.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { listFactors, readFactor } from './factors.ts';
@@ -37,6 +38,7 @@ export async function createService(options: ServiceOptions) {
   const config = structuredClone(options.config);
   await mkdir(config.dataDir, { recursive: true });
   const instances = await instanceSettings(config);
+  const sources = await dataSources(config);
   const extensionFile = join(config.dataDir, 'extensions.json');
   let desired: Record<string, boolean> = {};
   let moduleNames: Record<string, string> = {};
@@ -49,7 +51,7 @@ export async function createService(options: ServiceOptions) {
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
-    if (extensions.has(extension.name)) throw new Problem('extension_name_conflict');
+    if (extensions.has(extension.name) || sources.has(extension.name)) throw new Problem('extension_name_conflict');
     const wanted = desired[extension.name] ?? enabled;
     if (wanted) installed.push(extension);
     extensions.set(extension.name, { name: extension.name, version, enabled: wanted, kind, state: wanted ? 'loaded' : 'disabled', error: null });
@@ -60,7 +62,7 @@ export async function createService(options: ServiceOptions) {
     if (name && desired[name] === false) extensions.set(name, { name, version: null, enabled: false, kind: 'research', state: 'disabled', error: null });
     else { const extension = (await import(pathToFileURL(path).href)).default as Extension; moduleNames[path] = extension.name; install(extension); }
   }
-  for (const configured of config.extensions) {
+  for (const configured of config.extensions.filter(item => item.kind !== 'data')) {
     if (extensions.has(configured.name)) throw new Problem('extension_name_conflict');
     const enabled = desired[configured.name] ?? configured.enabled;
     try {
@@ -87,8 +89,9 @@ export async function createService(options: ServiceOptions) {
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2 }) : null;
-  app.addHook('onClose', async () => { await instances.close(); await research.close(); await archive?.end(); });
+  app.addHook('onClose', async () => { await sources.close(); await instances.close(); await research.close(); await archive?.end(); });
   try {
+  for (const source of sources.extensions()) if (extensions.has(source.name)) throw new Problem('extension_name_conflict');
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
     const status = error instanceof Problem ? error.statusCode : /conflict|already|trial_budget_exhausted/.test(message) ? 409 : /not_found/.test(message) ? 404 : (error as { statusCode?: number }).statusCode ?? (/invalid|required|unavailable|unsupported|mismatch/.test(message) ? 400 : 500);
@@ -171,14 +174,20 @@ export async function createService(options: ServiceOptions) {
   });
   registerModels(app, research, work.getSettings);
   registerInstanceSettings(app, instances);
+  registerDataSources(app, sources);
   app.get(`${API}/workspace`, async (): Promise<WorkspaceView> => {
     const facts = (await work.snapshot())!; const views = Object.values(facts.observations).map(observation);
     return { name: config.name, connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
       connected: views.some((fact) => fact.connection.id === connection.id && transportBindingKey(fact.connection) === transportBindingKey(connection)
-        && fact.connection.tokenEnv === connection.tokenEnv && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
+        && fact.connection.tokenEnv === connection.tokenEnv && fact.connection.credentialRef === connection.credentialRef
+        && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
   });
-  app.get(`${API}/extensions`, async () => [...extensions.values()].map(item => ({ ...item, required: requiredExtensions.has(item.name) })));
+  app.get(`${API}/extensions`, async (): Promise<ExtensionView[]> => [...[...extensions.values()].map(item => ({ ...item, required: requiredExtensions.has(item.name) })), ...sources.extensions()]);
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {
+    if (sources.has(request.params.name)) {
+      await sources.toggle(request.params.name, object(request.body).enabled as boolean);
+      return sources.extensions().find(item => item.name === request.params.name);
+    }
     const found = extensions.get(request.params.name); if (!found) throw new Problem('extension_not_found', 404);
     const enabled = object(request.body).enabled; if (typeof enabled !== 'boolean') throw new Problem('enabled_boolean_required');
     if (!enabled && requiredExtensions.has(found.name)) throw new Problem('service_extension_required', 409);

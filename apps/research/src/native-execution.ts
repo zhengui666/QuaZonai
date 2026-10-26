@@ -16,6 +16,15 @@ import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks } from './native-json.ts';
 
 export const nativeCommands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+const instanceCredentials = new Map<string, string>();
+
+/** Settings credentials stay outside research facts; targets carry only this random reference. */
+export function setRemoteNativeCredential(reference: string, token?: string): void {
+  if (token) instanceCredentials.set(reference, token); else instanceCredentials.delete(reference);
+}
+export function remoteNativeCredential(reference: string): string | undefined {
+  return instanceCredentials.get(reference);
+}
 
 /** Receipt references only: this document never schedules or retries work. */
 export const NativeRemoteUncertainty = defineDocFamily<{ requests: JsonObject[] }, null>({
@@ -76,7 +85,8 @@ export function validateRemoteTarget(value: unknown): RemoteNativeTarget {
   try { url = new URL(item.url); } catch { throw new Error('nautilus_remote_url_invalid'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) throw new Error('nautilus_remote_url_invalid');
   if (item.tokenEnv !== undefined && (typeof item.tokenEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(item.tokenEnv))) throw new Error('nautilus_token_env_invalid');
-  return { id: item.id, url: item.url, ...(typeof item.tokenEnv === 'string' ? { tokenEnv: item.tokenEnv } : {}) };
+  if (item.credentialRef !== undefined && (typeof item.credentialRef !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(item.credentialRef))) throw new Error('nautilus_credential_ref_invalid');
+  return { id: item.id, url: item.url, ...(typeof item.tokenEnv === 'string' ? { tokenEnv: item.tokenEnv } : {}), ...(typeof item.credentialRef === 'string' ? { credentialRef: item.credentialRef } : {}) };
 }
 
 /** Production sets only the remote binding. Explicit local executables remain
@@ -99,10 +109,9 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
   target = validateRemoteTarget(target);
   const url = new URL(target.url.endsWith('/') ? target.url : `${target.url}/`); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (target.tokenEnv) {
-    const token = process.env[target.tokenEnv]; if (!token) throw new Error('nautilus_credentials_missing');
-    headers.authorization = `Bearer ${token}`;
-  }
+  const token = target.credentialRef ? instanceCredentials.get(target.credentialRef) : target.tokenEnv ? process.env[target.tokenEnv] : undefined;
+  if ((target.credentialRef || target.tokenEnv) && !token) throw new Error('nautilus_credentials_missing');
+  if (token) headers.authorization = `Bearer ${token}`;
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 30_000 } });
   try {
     const response = await fetch(url, { method, headers, ...(body === undefined ? {} : { body: Readable.from(jsonChunks(body)), duplex: 'half' as const }), signal, dispatcher, redirect: 'error' });

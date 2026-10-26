@@ -29,6 +29,18 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
   try {
     const app = state.service.app;
     assert.equal((await app.inject('/health/live')).statusCode, 204);
+    const origin = 'https://cross-origin.example';
+    const preflight = await app.inject({ method: 'OPTIONS', url: `${api}/settings`, headers: { origin, 'access-control-request-method': 'PATCH', 'access-control-request-headers': 'authorization, content-type, x-qz-test' } });
+    assert.equal(preflight.statusCode, 204);
+    assert.equal(preflight.headers['access-control-allow-origin'], origin);
+    assert.equal(preflight.headers['access-control-allow-credentials'], 'true');
+    assert.equal(preflight.headers['access-control-allow-methods'], 'PATCH');
+    assert.equal(preflight.headers['access-control-allow-headers'], 'authorization, content-type, x-qz-test');
+    const crossOrigin = await app.inject({ url: `${api}/settings`, headers: { ...state.headers, origin } });
+    assert.equal(crossOrigin.statusCode, 200, crossOrigin.body);
+    assert.equal(crossOrigin.headers['access-control-allow-origin'], origin);
+    const unauthenticatedCrossOrigin = await app.inject({ url: `${api}/research`, headers: { origin } });
+    assert.equal(unauthenticatedCrossOrigin.statusCode, 401);
     assert.equal((await app.inject(`${api}/research`)).statusCode, 401);
     assert.equal((await app.inject({ method: 'POST', url: `${api}/session/login`, payload: { password: 'incorrect' } })).statusCode, 401);
     for (const path of ['research', 'research/models', 'datasets', 'usage', 'portfolios', 'observations', 'settings', 'extensions']) assert.equal((await app.inject({ url: `${api}/${path}`, headers: state.headers })).statusCode, 200, path);
@@ -41,7 +53,7 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: input.requestId });
     state.faux.setResponses([fauxAssistantMessage('No scientific result claimed.')]);
     const original = { goal: 'Original full input', model: state.model, data: state.options.config.datasets[0]!.data, policy: {} };
-    const full = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers, payload: { requestId: 'full-input', input: original } });
+    const full = await app.inject({ method: 'POST', url: `${api}/research`, headers: { ...state.headers, origin }, payload: { requestId: 'full-input', input: original } });
     assert.equal(full.statusCode, 202, full.body);
     await (await state.service.research.harness.submission(full.json().submissionId, context))!.wait(context);
     const fullDetail = (await app.inject({ url: `${api}/research/${full.json().conversationId}`, headers: state.headers })).json();

@@ -4,7 +4,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import { addDecimal, compareDecimal, multiplyDecimal, subtractDecimal, validatePmEntity } from '../../../packages/contracts/src/pm-validation.ts';
 import { canonical } from '../../research/src/documents.ts';
-import type { ServiceConfig } from './config.ts';
+import { existingDataset, type ServiceConfig } from './config.ts';
 import { json, nowNs, object, Problem } from './facts.ts';
 import { fact, identity } from './pm-facts.ts';
 import type { PmRecord } from './pm-facts.ts';
@@ -93,7 +93,7 @@ export async function computePmForward(record: PmRecord, cycle: Pm.DecisionCycle
   if (BigInt(dataset.availableThroughNs) > BigInt(cycle.availableCutoffNs)) return unavailable('current_data_not_available_asof', 'point_in_time_data', 'REFRESH_SOURCE');
   const accountRef = record.evidence[cycle.accountBasis.positionsEvidenceRef]!;
   const capture = { basis: cycle.accountBasis, evidence: accountRef, artifact: record.artifacts[accountRef.objectKey]! };
-  const trustedConfig = config.datasets.find(item => item.id === dataset.datasetId);
+  const trustedConfig = existingDataset(config, dataset.datasetId);
   const sourceBefore = trustedConfig ? await readSourceRevision(trustedConfig) : null;
   if (sourceBefore && sourceBefore.contentDigest !== dataset.contentRef) return unavailable('current_source_revision_changed_before_inference', 'source_revision', 'REFRESH_SOURCE');
   const artifact = await buildPmForward({ seed, capture, datasetRevision: { id: dataset.id, contentRef: dataset.contentRef }, selection,

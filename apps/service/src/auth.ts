@@ -19,13 +19,21 @@ export function registerAuth(app: FastifyInstance, host: ResearchHost, config: S
     return timingSafeEqual(Buffer.from(entry.digest, 'hex'), Buffer.from(digest(token), 'hex')) ? id : null;
   }
   const publicRoutes = new Set([`${API}/session`, `${API}/session/setup`, `${API}/session/login`, `${API}/devices/login`]);
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.headers.origin) {
+      reply.header('access-control-allow-origin', request.headers.origin);
+      reply.header('access-control-allow-credentials', 'true');
+      reply.header('vary', 'Origin');
+    }
+    if (request.method !== 'OPTIONS') return;
+    reply.header('access-control-allow-methods', request.headers['access-control-request-method'] ?? 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+    if (request.headers['access-control-request-headers']) reply.header('access-control-allow-headers', request.headers['access-control-request-headers']);
+    reply.header('vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers');
+    return reply.code(204).send();
+  });
   app.addHook('onRequest', async (request) => {
     const path = request.url.split('?')[0];
     if (!path.startsWith(`${API}/`)) return;
-    if (request.method !== 'GET' && request.headers.origin) {
-      const expected = config.publicOrigin ?? `${request.protocol}://${request.headers.host}`;
-      if (request.headers.origin !== expected) throw new Problem('origin_not_allowed', 403);
-    }
     if (!publicRoutes.has(path) && !await session(request)) throw new Problem('authentication_required', 401);
   });
   async function verify(body: unknown) {
