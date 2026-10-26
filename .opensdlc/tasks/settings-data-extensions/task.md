@@ -36,14 +36,14 @@ Reuse Fastify authentication hooks, existing instance settings and atomic JSON p
 - Four data-source and HTTP integration tests passed: local-file import and paths, external modules, replacement, enable/disable, optional-field clearing, invalid numeric output, failed refresh preservation, restart, authentication, unique extension names and retained research input.
 - Three instance settings tests passed, including direct authenticated calls, same-ID URL/token rotation and recovery of both old and current credential references after restart.
 - Web type checking, 26 unit tests and the production build passed. The 70-case browser run passed 67 cases; the three failures identified obsolete instance/data locators and a settings-section focus bug. All three passed after the respective corrections; desktop/mobile plugin views were inspected.
-- Thirteen deployment configuration/maintenance tests passed. The full `make check-ts` suite is running. GitHub CI also runs the existing scientific/core coverage for this branch.
+- Thirteen deployment configuration/maintenance tests and the full `make check-ts` suite passed. Tests requiring an actual native kernel were not run locally; the existing scientific/core CI owns that coverage.
 
 <a id="review"></a>
 ## Review
 
-Parallel review found and resolved a data-source/instance-save binding race, duplicate extension names and optional number clearing. Final GitHub Codex read-only review and CI are maintained in the PR.
+Parallel review found and resolved a data-source/instance-save binding race, duplicate extension names and optional number clearing. An independent read-only review of the integrated credential transport found no remaining issues. Final GitHub Codex read-only review and CI are maintained in [PR #241](https://github.com/zhengui666/QuaZonai/pull/241).
 
 <a id="delivery"></a>
 ## Delivery
 
-Branch: `codex/settings-data-extensions`, based on remote `dev` at `b4d25a48`. PR and merge are pending. The original dirty checkout is preserved. Installed services are outside this code-delivery task.
+Branch: `codex/settings-data-extensions`, based on remote `dev` at `b4d25a48`. [PR #241](https://github.com/zhengui666/QuaZonai/pull/241) targets `dev` and owns the authoritative checks, review and merge result. The original dirty checkout is preserved. Installed services are outside this code-delivery task.
