@@ -92,7 +92,7 @@ Provider 与模型来自实际配置的官方目录，无静默模型回退。�
 <a id="data"></a>
 ## 数据与独立评价
 
-数据来源通过独立于 Pi Durable 的 [DataSourcePlugin](../apps/service/data-sources.md) 加载，统一出现在扩展目录的 `kind: data` 中，在设置的「数据插件」页保存配置、启停与手动加载。内置来源兼容 `service.json.datasets` 并支持现有工具导出的 DatasetConfig 文件；外部模块返回同一数据合同。每源配置和最近成功结果原子写入 `data-sources.json`，加载失败保留已有结果，禁用仅移除新准入可选数据而不删除目录和历史。启动恢复成功结果，不自动下载。来源间重复数据集 ID 不覆盖；新准入绑定当前回测实例，已捕获研究输入保持原样。
+数据来源通过独立于 Pi Durable 的 [DataSourcePlugin](../apps/service/data-sources.md) 加载，统一出现在扩展目录的 `kind: data` 中，在设置的「数据插件」页保存配置、启停与手动加载。内置来源兼容 `service.json.datasets` 并支持现有工具导出的 DatasetConfig 文件；外部模块返回同一数据合同。每源配置、最近成功结果和既有任务所需的历史数据源配置原子写入 `data-sources.json`，加载失败保留已有结果，禁用仅移除新准入可选数据而不删除目录和历史。禁用或刷新省略原数据集后，已有投资决策仍通过保留配置监视原来源，重启后恢复；真实来源读取失败仍按原逻辑处理。启动恢复成功结果，不自动下载。已启用来源间重复数据集 ID 不覆盖；新准入绑定当前回测实例，已捕获研究输入保持原样。
 
 保留原数据目录、Instrument 定义、Universe 历史、来源、许可、质量、可得时间和研究版本。`event_at`、`available_at`、`decision_at` 不可互换；PIT 要求 `available_at <= decision_at`。抓取成功、当前成分或重述后的数值不冒充历史可得。
 

@@ -6,6 +6,8 @@ Manage datasets in **Settings → Data** and providers in **Settings → Data Pl
 
 Saving configuration does not start acquisition. **Load Data** calls the provider and replaces its successful dataset result. A failed load retains the previous result and reports the error. Disable removes those datasets from new selections while keeping their stored result, files and historical research. Re-enable restores the stored result. Configuration and successful datasets live in `data-sources.json` and survive restart; startup does not automatically download or convert data.
 
+Existing investment decisions retain source lookup when a provider is disabled or a refresh omits a previously published dataset. Their monitors continue reading the retained source configuration, including after restart; actual source read failures keep their normal behavior. New admissions still use only the enabled, current dataset list.
+
 ## External providers
 
 Register a module in the existing service configuration:

@@ -37,12 +37,14 @@ Reuse Fastify authentication hooks, existing instance settings and atomic JSON p
 - Three instance settings tests passed, including direct authenticated calls, same-ID URL/token rotation and recovery of both old and current credential references after restart.
 - Web type checking, 26 unit tests and the production build passed. The 70-case browser run passed 67 cases; the three failures identified obsolete instance/data locators and a settings-section focus bug. All three passed after the respective corrections; desktop/mobile plugin views were inspected.
 - A further browser regression reproduced optional number/password values returning after a successful save. Explicitly clearing removed form fields fixed it; all four plugin browser tests and Web type checking passed afterward. CI runs the resulting 71-case suite.
+- GitHub review identified existing PM monitors losing their source lookup on disable or omission. Per-source retained configurations now survive replacement and restart; new admissions remain restricted to active datasets. The data-source lifecycle regression and a real Durable PM monitor test passed through disable, omission and restart without clearing its current decision.
+- After the retention fix, service type checking and the affected source/HTTP/PM suite passed: 20 tests passed, with two actual-native forward tests left to scientific/core CI.
 - Thirteen deployment configuration/maintenance tests and the full `make check-ts` suite passed. Tests requiring an actual native kernel were not run locally; the existing scientific/core CI owns that coverage.
 
 <a id="review"></a>
 ## Review
 
-Parallel review found and resolved a data-source/instance-save binding race, duplicate extension names and optional number clearing. An independent read-only review of the integrated credential transport found no remaining issues. Final GitHub Codex read-only review and CI are maintained in [PR #241](https://github.com/zhengui666/QuaZonai/pull/241).
+Parallel review found and resolved a data-source/instance-save binding race, duplicate extension names and optional number clearing. An independent read-only review of the integrated credential transport found no remaining issues. GitHub review's PM source-retention finding is addressed by separate existing-task lookup and a monitor regression. Final GitHub Codex read-only review and CI are maintained in [PR #241](https://github.com/zhengui666/QuaZonai/pull/241).
 
 <a id="delivery"></a>
 ## Delivery

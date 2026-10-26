@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import Fastify from 'fastify';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { PmMandateView, PortfolioDecision, TargetCommand } from '../../../packages/contracts/src/pm.ts';
@@ -15,7 +17,7 @@ import { context, setup } from './support.ts';
 // explicit controlled account/eligibility facts. No scientific result is
 // synthesized by these tests or promoted into investment evidence. The full
 // native research/qualification path has a separate acceptance suite.
-async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['mandate']['operatingAuthority'] = 'AUTHORIZED_TARGETS') {
+async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['mandate']['operatingAuthority'] = 'AUTHORIZED_TARGETS', dataPlugin = false) {
   const state = await setup();
   const remote = Fastify();
   try {
@@ -55,7 +57,17 @@ async function fixture(keepMonitor = false, operatingAuthority: PmMandateView['m
     state.options.config.connections = [connection];
     state.options.config.datasets[0]!.data.request = { protocol_version: 1, train_end_ns: '100', validation_end_ns: '200', forecast: { schema_version: 1,
       selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '300', decision_cutoff_ns: '300', maximum_rows: 100 }, parameters: {} } };
+    if (dataPlugin) {
+      await writeFile(join(state.directory, 'pm-plugin-datasets.json'), JSON.stringify(state.options.config.datasets));
+      state.options.config.datasets = [];
+    }
     await state.restart();
+    if (dataPlugin) {
+      const source = '/api/v3/data-sources/qz.data.local-config';
+      assert.equal((await state.service.app.inject({ method: 'PUT', url: source, headers: state.headers, payload: { enabled: true, config: { path: 'pm-plugin-datasets.json' } } })).statusCode, 200);
+      const loaded = await state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: state.headers });
+      assert.equal(loaded.statusCode, 200, loaded.body);
+    }
     const observedAtNs = (BigInt(nowNs()) - 1_000_000_000n).toString();
     const account: ObservationFact = {
       input: { requestId: 'controlled-account-observation', portfolioId: 'controlled-existing-position', mode: 'paper', connectionId: connection.id },
@@ -159,6 +171,35 @@ async function eventually(check: () => Promise<boolean>, reason: string) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
   assert.fail(reason);
 }
+
+test('PM monitoring retains plugin source lookup after disable, omitted datasets and restart', { timeout: 45_000 }, async () => {
+  const f = await fixture(true, 'AUTHORIZED_TARGETS', true);
+  let accountReads = 0;
+  f.remote.server.on('request', request => { if (request.url === '/account') accountReads++; });
+  const source = '/api/v3/data-sources/qz.data.local-config';
+  async function nextMonitorRounds() {
+    const before = accountReads;
+    await eventually(async () => accountReads >= before + 2, 'The existing monitor must complete a round with the retained source.');
+    const record = await f.record();
+    assert.equal(record.currentDecisionId, f.decisionId);
+    assert.equal(record.decisions[f.decisionId]!.status, 'CURRENT');
+    assert.notEqual(record.artifacts['source-health']?.state, 'FAILED');
+  }
+  try {
+    const disabled = await f.state.service.app.inject({ method: 'PATCH', url: '/api/v3/extensions/qz.data.local-config', headers: f.state.headers, payload: { enabled: false } });
+    assert.equal(disabled.statusCode, 200, disabled.body);
+    assert.deepEqual(f.state.service.config.datasets, []);
+    await nextMonitorRounds();
+    await f.state.service.app.inject({ method: 'PATCH', url: '/api/v3/extensions/qz.data.local-config', headers: f.state.headers, payload: { enabled: true } });
+    await writeFile(join(f.state.directory, 'pm-plugin-datasets.json'), '[]');
+    const loaded = await f.state.service.app.inject({ method: 'POST', url: `${source}/refresh`, headers: f.state.headers });
+    assert.equal(loaded.statusCode, 200, loaded.body);
+    assert.deepEqual(f.state.service.config.datasets, []);
+    await f.state.restart();
+    await nextMonitorRounds();
+  } finally { await f.cleanup(); }
+});
+
 async function delivered(f: Awaited<ReturnType<typeof fixture>>): Promise<TargetCommand> {
   const response = await f.offer(); assert.equal(response.statusCode, 202, response.body);
   try {

@@ -12,7 +12,7 @@ import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
 import { canonicalOwnerBoundary } from '../../../packages/contracts/src/pm-intent.ts';
 import type { ResearchCampaignBinding } from '../../research/src/pm-campaign.ts';
-import type { ServiceConfig } from './config.ts';
+import { existingDataset, type ServiceConfig } from './config.ts';
 import type { workbench } from './workbench.ts';
 import { Application, counter, decimal, decimalUnits, json, nowNs, object, observation, Problem, text } from './facts.ts';
 import { captureAccount } from './pm-account.ts';
@@ -472,7 +472,7 @@ export function createPmPlatform(config: ServiceConfig) {
         if (retired && record.mandate.capitalSource.kind !== 'ACCOUNT') { await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), ctx); return; }
         if (!maintenanceOnly && !retired && campaign.state === 'PLANNED') { await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'start' } }), ctx); return; }
         let source: Awaited<ReturnType<typeof readSourceRevision>> = null; let sourceError: string | null = null;
-        const configured = config.datasets.find(item => item.id === record.input.datasetId)!;
+        const configured = existingDataset(config, record.input.datasetId)!;
         try { if (!maintenanceOnly) source = await readSourceRevision(configured); } catch (error) { sourceError = error instanceof Problem ? error.message : 'source_revision_unavailable'; }
         if (source) {
           const previous = state.datasets[record.datasets.at(-1)!]!;
@@ -815,7 +815,7 @@ export function createPmPlatform(config: ServiceConfig) {
     await ready; const body = object(value); const requestId = text(body.requestId, 'request_id'); const original = json(value);
     const before = pmState(await dependencies.host.harness.snapshot(PmDocument, context)); assertPmNotDeleted(pmRecord(before, id)); const existing = before.commands[`${id}:${kind}:${requestId}`];
     if (existing) { if (canonical(existing.original) !== canonical(original)) throw new Problem('request_id_conflict', 409); if (kind !== 'retire') return get(id); }
-    const configuredSource = kind === 'refresh-data' ? config.datasets.find(item => item.id === pmRecord(before, id).input.datasetId)! : null;
+    const configuredSource = kind === 'refresh-data' ? existingDataset(config, pmRecord(before, id).input.datasetId)! : null;
     const revisionSource = configuredSource ? await readSourceRevision(configuredSource) : null;
     if (revisionSource && configuredSource) configuredSource.data = revisionSource.configured.data;
 

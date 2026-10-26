@@ -16,7 +16,7 @@ export interface DataSourcePlugin {
   load(config: JsonObject, context: { dataDir: string }): Promise<DatasetConfig[]>;
 }
 interface SavedSource {
-  config: JsonObject; enabled: boolean; datasets: DatasetConfig[]; lastLoadedAt: string | null; error: string | null;
+  config: JsonObject; enabled: boolean; datasets: DatasetConfig[]; retainedDatasets?: DatasetConfig[]; lastLoadedAt: string | null; error: string | null;
 }
 interface Source extends SavedSource { name: string; version: string | null; fields: DataSourceField[]; plugin?: DataSourcePlugin }
 const local: DataSourcePlugin = {
@@ -77,7 +77,7 @@ export async function dataSources(config: ServiceConfig) {
     if (sources.has(entry.name)) throw new Problem('extension_name_conflict');
     const saved = stored[entry.name];
     const source: Source = { name: entry.name, version: entry.version ?? null, fields: [], enabled: saved?.enabled ?? entry.enabled,
-      config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
+      config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], retainedDatasets: saved ? datasets(saved.retainedDatasets ?? saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
     try {
       source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : (await import(pathToFileURL(entry.module).href)).default, entry.name);
       source.fields = source.plugin.fields; source.version = source.plugin.version ?? source.version;
@@ -94,7 +94,16 @@ export async function dataSources(config: ServiceConfig) {
     return result.map(dataset => ({ ...structuredClone(dataset), data: config.nautilus?.backtest
       ? bindScienceData(scienceDataWithoutBinding(dataset.data), config.nautilus.backtest) : scienceDataWithoutBinding(dataset.data) }));
   }
-  config.datasets = merged();
+  function apply() {
+    config.datasets = merged();
+    const retained = new Map<string, DatasetConfig>();
+    for (const source of [...Object.values(stored), ...sources.values()]) {
+      for (const dataset of [...(source.retainedDatasets ?? []), ...source.datasets]) retained.set(dataset.id, dataset);
+    }
+    config.retainedDatasets = [...retained.values()].map(dataset => ({ ...structuredClone(dataset), data: config.nautilus?.backtest
+      ? bindScienceData(scienceDataWithoutBinding(dataset.data), config.nautilus.backtest) : scienceDataWithoutBinding(dataset.data) }));
+  }
+  apply();
   let tail: Promise<unknown> = Promise.resolve(); let closing = false;
   function serial<T>(run: () => Promise<T>): Promise<T> {
     const result = tail.then(() => { if (closing) throw new Problem('service_closing', 503); return run(); });
@@ -110,11 +119,12 @@ export async function dataSources(config: ServiceConfig) {
   }
   async function persist(next: Source) {
     merged(next);
-    const saved = { ...stored, [next.name]: { config: next.config, enabled: next.enabled, datasets: next.datasets, lastLoadedAt: next.lastLoadedAt, error: next.error } };
+    next = { ...next, retainedDatasets: [...new Map([...(next.retainedDatasets ?? []), ...next.datasets].map(dataset => [dataset.id, dataset])).values()] };
+    const saved = { ...stored, [next.name]: { config: next.config, enabled: next.enabled, datasets: next.datasets, retainedDatasets: next.retainedDatasets, lastLoadedAt: next.lastLoadedAt, error: next.error } };
     const temporary = `${file}.${randomUUID()}.tmp`;
     try { await writeFile(temporary, JSON.stringify(saved, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); await rename(temporary, file); }
     catch { await rm(temporary, { force: true }).catch(() => undefined); throw new Problem('data_source_save_failed', 503); }
-    stored = saved; sources.set(next.name, next); config.datasets = merged();
+    stored = saved; sources.set(next.name, next); apply();
     return viewOne(next);
   }
   const save = (name: string, body: unknown) => serial(async () => {

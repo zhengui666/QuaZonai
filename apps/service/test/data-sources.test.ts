@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { configDefaults } from '../src/config.ts';
+import { configDefaults, existingDataset } from '../src/config.ts';
 import type { DatasetConfig } from '../src/config.ts';
 import { dataSources, registerDataSources } from '../src/data-sources.ts';
 
@@ -83,5 +83,35 @@ test('external modules load through data registry and failed or conflicting refr
     await rm(savedPath, { recursive: true }); await rename(`${savedPath}.retained`, savedPath);
     await sources.toggle('qz.data.config', false);
     assert.deepEqual(config.datasets.map(value => value.id), ['second']);
+  } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('existing mandates retain source lookup after disable, omitted datasets and restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-retained-source-'));
+  const file = join(directory, 'dataset.json');
+  const original = { ...dataset('tracked'), revisionManifest: './source/current.json' };
+  await writeFile(file, JSON.stringify(original));
+  let config = configDefaults({ dataDir: directory });
+  let sources = await dataSources(config);
+  try {
+    await sources.save(local, { enabled: true, config: { path: file } });
+    await sources.refresh(local);
+    const captured = structuredClone(existingDataset(config, 'tracked'));
+    await sources.toggle(local, false);
+    assert.deepEqual(config.datasets, [], 'disabled source is unavailable to new admissions');
+    assert.deepEqual(existingDataset(config, 'tracked'), captured);
+    await sources.close();
+    config = configDefaults({ dataDir: directory }); sources = await dataSources(config);
+    assert.deepEqual(config.datasets, []);
+    assert.deepEqual(existingDataset(config, 'tracked'), captured, 'disabled source survives restart');
+    await sources.toggle(local, true);
+    await writeFile(file, '[]'); await sources.refresh(local);
+    assert.deepEqual(config.datasets, [], 'an omitted dataset is unavailable to new admissions');
+    assert.deepEqual(existingDataset(config, 'tracked'), captured);
+    await sources.close();
+    config = configDefaults({ dataDir: directory }); sources = await dataSources(config);
+    assert.deepEqual(config.datasets, []);
+    assert.deepEqual(existingDataset(config, 'tracked'), captured, 'omitted source manifest remains available after restart');
   } finally { await sources.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -22,6 +22,8 @@ export interface ExtensionConfig { name: string; module: string; enabled: boolea
 export interface ServiceConfig {
   host: string; port: number; dataDir: string;
   research: { database: string; modules?: string[]; providerModules?: string[]; settings?: HarnessSettings };
+  /** Runtime source snapshots for existing mandates; excluded from new admissions. */
+  retainedDatasets?: DatasetConfig[];
   datasets: DatasetConfig[]; connections: ConnectionConfig[]; extensions: ExtensionConfig[];
   nautilus?: { backtest?: BacktestConfig };
   name: string; defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null; jobBinary: string;
@@ -139,4 +141,9 @@ export function scienceDataWithoutBinding(data: JsonObject): JsonObject {
     copy.sealed = { ...copy.sealed }; delete copy.sealed.nautilusTarget;
   }
   return copy;
+}
+
+/** Existing mandates continue observing their source after it leaves the admission list. */
+export function existingDataset(config: ServiceConfig, id: string): DatasetConfig | undefined {
+  return config.datasets.find(dataset => dataset.id === id) ?? config.retainedDatasets?.find(dataset => dataset.id === id);
 }
