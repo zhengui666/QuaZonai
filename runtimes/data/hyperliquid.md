@@ -9,10 +9,13 @@ download a date selection from the existing archive instead, supply both UTC
 start and exclusive end dates. The plugin reuses `hub.py` and the fixed profile
 below; all matching markets are selected, without a hard-coded coin list.
 
-Only the original `trades` streams are selected for the 100ms path. Optional
-native conversion requires the built `market-history` executable and a local
-native instrument-definition file. It invokes `import --bar-milliseconds 100`
-and retains native readback and coverage reports in a new output directory.
+Downloads select the original `trades` streams. Existing mixed-stream archives
+can load offline; native trade aggregation requires a trades-only selection.
+Optional native conversion requires the built `market-history` executable and a
+local native instrument-definition file. Set **BAR 毫秒间隔** (`barMilliseconds`):
+the default is **1ms**, and **100ms** is supported. The plugin invokes
+`import --bar-milliseconds` with that value and retains native readback and
+coverage reports in a new output directory.
 Existing files are not rewritten. A missing partition, rejected record or failed
 native conversion fails loading and preserves the previous successful source.
 Disabling the plugin or closing the service cancels its active operator process.
@@ -24,8 +27,8 @@ Use the existing preparation workflow and load its resulting DatasetConfig via
 performed by this plugin. Current definitions remain later observations.
 
 The new native option constructs **millisecond observed-trade BARs**, including
-1ms or 100ms, with the official
-Nautilus `BarBuilder`, exact decimal values and original trade IDs. It preserves
+1ms or 100ms, with the official Nautilus `BarBuilder`, exact decimal values and
+original trade IDs. It preserves
 event/availability clocks, omits empty intervals and never upsamples one-second
 candles or minute books. Granularity is not a promise of a trade in every 100ms
 window, transport latency or exchange-wide historical completeness.

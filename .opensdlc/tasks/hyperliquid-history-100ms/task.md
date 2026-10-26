@@ -44,8 +44,13 @@ claim of complete exchange-wide history. 1s candles/minute books cannot establis
 
 - Existing `test_hub.py`: 2 checks passed locally on 2026-10-26, covering all-symbol
   file selection, missing partitions and relative download paths.
-- Final history-plugin tests, native millisecond/readback checks, applicable CI,
-  independent final-Head review and GitHub Codex review are pending.
+- Historical provider tests: 5/5 passed; deployment workflow checks: 5/5 passed.
+  The independent reviewer executed plugin/registry/deployment checks 14/14 and
+  reported no remaining findings at `e261b259`. These are protocol/deployment
+  checks, not fresh real-source or native readback evidence.
+- Native millisecond/readback checks and complete TypeScript checks are running.
+  Final-Head CI and explicit clean GitHub Codex review remain pending on
+  [PR #242](https://github.com/zhengui666/QuaZonai/pull/242), targeting `dev`.
 - A fresh source inventory/download is blocked: `huggingface.co` is outside this
   environment's network policy and the proxy returned CONNECT 403. No source
   refresh, real-data 100ms re-import, research qualification or deployment is claimed.
