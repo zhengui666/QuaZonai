@@ -223,6 +223,16 @@ main { max-width: 1360px; margin: 0 auto; padding: 32px 40px 48px; }
 .observation-footer .ant-btn { margin-left: auto; }
 .settings-page { max-width: 900px; margin-inline: auto; }
 .settings-page > .page-heading { margin-bottom: 9px; }
+.settings-nav { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.settings-nav a { padding: 13px 0; color: var(--secondary); font-size: 14px; border-bottom: 2px solid transparent; }
+.settings-nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.settings-hub > .settings-page > .page-heading h2 { font-size: 20px; font-weight: 550; }
+.instance-card { border: 1px solid var(--line); border-radius: 9px; padding: 20px; margin-bottom: 18px; background: var(--surface); }
+.instance-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.instance-card h3 { font-size: 14px; font-weight: 550; }
+.instance-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.instance-conflict { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-block: 16px; }
+@media (max-width: 600px) { .instance-pair { grid-template-columns: 1fr; gap: 0; } .instance-card { padding: 15px; } }
 .settings-group { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 32px; padding: 30px 0; border-bottom: 1px solid var(--line); }
 .settings-group:last-child { border-bottom: 0; }
 .settings-group > header { padding-top: 5px; }

@@ -32,8 +32,11 @@ original durable storage, not fictional remote cancellation.
 
 ## State and providers
 
-`data/service.json` configures `nautilus.backtest`, paper/live `connections`,
-datasets, extensions and the original `research.database` path. `data/research/provider.env` is private: Node alone
+`data/service.json` supplies initial `nautilus.backtest`, paper/live `connections`,
+datasets, extensions and the original `research.database` path. The browser's
+Settings page groups Model settings, Extensions and Instance connections. Explicitly
+saved instance settings live in private `data/instances.json` and override the initial
+file on restart, including explicitly cleared connections. `data/research/provider.env` is private: Node alone
 reads it using `--env-file`. Use official pi-ai provider environment names; never
 put credentials in research inputs, model context, logs or source. Initial
 password setup/login happens in the browser. The standalone installed CLI is
@@ -93,7 +96,15 @@ of remote-stop. Do not delete the old Worker or initialize over existing state.
 Configure the backtest endpoint independently from each paper/live account
 connection. No remote endpoint is inferred from a former `jobBinary`, and a
 missing endpoint does not fall back to local execution. The console can start
-without one; scientific operations require it. For example, merge these fields
+without one; scientific operations require it. In the browser, open Settings →
+Instance connections, configure the backtest/research worker and paper/live account
+connections, then save. Credential fields name existing application-host environment
+variables; they do not contain tokens. Saving configures new work and does not test
+remote health or redirect existing tasks. Saved settings survive reload, restart and
+the existing stopped data backup/restore. Concurrent edits require loading the latest
+revision; uncertain saves reconcile the original update.
+
+For initial file configuration, merge these fields
 into the original private `data/service.json`:
 
 ```json

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { Extension, HarnessSettings, Storage } from '@earendil-works/pi-durable';
 import type { Models } from '@earendil-works/pi-ai/models';
-import type { DatasetView, JsonObject, ModelRef, ObservationMode, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
+import type { DatasetView, JsonObject, ModelRef, NautilusConnection, ServiceTier, ThinkingLevel } from '../../../packages/contracts/src/index.ts';
 import type { NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 
 import type { StrategyPolicy } from '../../research/src/strategy.ts';
@@ -14,11 +14,7 @@ export interface DatasetConfig extends DatasetView {
   /** Trusted source producer atomically publishes immutable catalog revisions here. */
   revisionManifest?: string;
 }
-export interface ConnectionConfig {
-  id: string; name: string; mode: ObservationMode;
-  url: string; clientId: string; accountId: string;
-  tokenEnv?: string;
-}
+export type ConnectionConfig = NautilusConnection;
 export interface ExtensionConfig { name: string; module: string; enabled: boolean; version?: string; kind?: string }
 export interface ServiceConfig {
   host: string; port: number; dataDir: string;

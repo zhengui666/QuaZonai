@@ -7,6 +7,7 @@ export * from './pm-forward.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
 import type { LiteratureView } from './literature.ts';
+import type { RemoteNativeTarget } from './nautilus.ts';
 export type { LiteratureSource, LiteraturePaper, LiteratureSearchResult, LiteratureSearch, LiteratureNote, LiteratureView } from './literature.ts';
 export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -159,6 +160,16 @@ export interface ObservationView {
   provenance?: { clientId: string; accountId: string; sequence: string; nativeClockNs: string } | null;
 }
 export interface ConnectionView { id: string; name: string; mode: ObservationMode; connected: boolean }
+export interface NautilusConnection {
+  id: string; name: string; mode: ObservationMode;
+  url: string; clientId: string; accountId: string; tokenEnv?: string;
+}
+export interface InstanceSettingsView {
+  revision: number; backtest: RemoteNativeTarget | null; connections: NautilusConnection[];
+}
+export interface InstanceSettingsUpdate {
+  expectedRevision: number; backtest: RemoteNativeTarget | null; connections: NautilusConnection[];
+}
 export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null }
 export interface WorkspaceView { name: string; connections: ConnectionView[] }
 export interface ExtensionView {

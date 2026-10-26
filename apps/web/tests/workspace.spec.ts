@@ -223,7 +223,7 @@ test('portfolio exact inputs, native curve data, target-only observation, explic
   await page.getByRole('link', { name: '目标与观测', exact: true }).click(); await page.getByRole('button', { name: '新建观测' }).click(); await choose(page, '组合', 'p1 / 测试 · 多因子组合'); await page.getByLabel('连接', { exact: true }).click(); await expect(page.getByRole('option', { name: '测试实盘连接' })).toHaveCount(0); await page.getByRole('option', { name: '测试模拟连接' }).click(); await page.getByRole('button', { name: '交付并观测' }).click(); await expect(page.locator('.receipt-section')).toContainText('待接收'); await expect(page.locator('.snapshot-section')).toContainText('尚无账户快照'); expect(JSON.parse(state.writes.find(value => value.path === '/observations')!.raw!)).toMatchObject({ portfolioId: 'p1', mode: 'paper', connectionId: 'paper-test' });
   await page.getByRole('button', { name: '核对回执' }).click(); await expect(page.locator('.snapshot-values')).toContainText('1000.250000000000000001'); await expect(page.locator('.receipt-section')).toContainText('已接收'); await page.getByRole('button', { name: '停止观测', exact: true }).click(); const stop = page.getByRole('dialog'); await expect(stop).toContainText('仅停止本地观测，不撤回下游目标'); await stop.getByRole('button', { name: '停止观测', exact: true }).click(); await expect(page.getByRole('button', { name: '停止观测', exact: true })).toBeDisabled(); await expect(page.locator('.receipt-section')).toContainText('已接收'); expect(state.writes.filter(value => value.path === '/observations')).toHaveLength(1); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('observation-1440.png'), fullPage: true });
   await page.goto('/#/observations?mode=live'); await expect(page.getByRole('heading', { name: '尚无实盘观测' })).toBeVisible(); await expect(page.getByRole('button', { name: /下单|买入|卖出/ })).toHaveCount(0);
-  await page.getByRole('link', { name: '模型设置', exact: true }).click(); await expect(page.getByLabel(/超时|最大试验|内存|应用名称/)).toHaveCount(0); await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '刷新目录' }).click(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('高'); expect(state.writes.filter(value => value.path === '/settings')).toHaveLength(0); await page.getByRole('button', { name: '保存设置' }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled(); expect(JSON.parse(state.writes.find(value => value.method === 'PATCH' && value.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'high', serviceTier: null }); await audit(page); await page.screenshot({ path: info.outputPath('settings-1440.png'), fullPage: true });
+  await page.getByRole('link', { name: '设置', exact: true }).click(); await expect(page.getByLabel(/超时|最大试验|内存|应用名称/)).toHaveCount(0); await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '刷新目录' }).click(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('高'); expect(state.writes.filter(value => value.path === '/settings')).toHaveLength(0); await page.getByRole('button', { name: '保存设置' }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '保存设置' })).toBeDisabled(); expect(JSON.parse(state.writes.find(value => value.method === 'PATCH' && value.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'high', serviceTier: null }); await audit(page); await page.screenshot({ path: info.outputPath('settings-1440.png'), fullPage: true });
   await page.getByRole('link', { name: '扩展', exact: true }).click(); await expect(page.getByRole('switch', { name: '启用 qz.science' })).toHaveCount(0); await page.getByRole('switch', { name: '启用 测试原生扩展' }).click(); await expect(page.getByText('待重启', { exact: true })).toBeVisible(); await expect(page.getByRole('switch')).toBeChecked(); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('extensions-1440.png'), fullPage: true });
 });
 
@@ -268,7 +268,7 @@ test('390px keyboard navigation, reduced motion and distinct loading/empty/missi
   await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ reducedMotion: 'reduce' }); const state = await contract(page); const release = state.hold(); await page.goto('/'); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(page.getByRole('status', { name: '加载中' }).first()).toBeVisible(); release(); await expect(page.locator('.study-row')).toHaveCount(3);
   await page.getByRole('link', { name: '跳到内容' }).focus(); await expect(page.getByRole('link', { name: '跳到内容' })).toHaveCSS('outline-style', 'solid'); await page.keyboard.press('Enter'); await expect(page.locator('#main-content')).toBeFocused(); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-390.png'), fullPage: true });
   await page.getByRole('button', { name: '新建研究', exact: true }).click(); await expect(page.getByLabel('研究名称', { exact: true })).toBeFocused(); await page.keyboard.press('Tab'); await expect(page.getByLabel('研究问题', { exact: true })).toBeFocused(); await page.keyboard.press('Escape'); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath('research-form-390.png'), fullPage: true }); await page.getByRole('button', { name: '取消', exact: true }).click();
-  for (const [label, image] of [['投资决策', 'pm'], ['数据', 'data'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['模型设置', 'settings'], ['扩展', 'extensions']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(8); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
+  for (const [label, image] of [['投资决策', 'pm'], ['数据', 'data'], ['因子库', 'factors'], ['组合回测', 'portfolios'], ['目标与观测', 'observations'], ['设置', 'settings']]) { await page.getByRole('button', { name: '打开导航' }).press('Enter'); const menu = page.getByRole('dialog'); await expect(menu.getByRole('link')).toHaveCount(7); const link = menu.getByRole('link', { name: label!, exact: true }); await link.focus(); await expect(link).toHaveCSS('outline-style', 'solid'); await link.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: label!, exact: true })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); await fits(page, 390); await audit(page); await page.screenshot({ path: info.outputPath(`${image}-390.png`), fullPage: true }); }
   state.empty(); for (const [path, text] of [['research', '尚无研究'], ['portfolios', '尚无策略组合'], ['observations', '尚无观测'], ['extensions', '没有已发现扩展']]) { await page.goto('/#/' + path); await page.reload(); await expect(page.getByRole('heading', { name: text!, exact: true })).toBeVisible(); await fits(page, 390); }
   state.missing(); await page.getByRole('button', { name: '刷新目录', exact: true }).click(); await expect(page.getByRole('alert')).toContainText('记录不存在'); await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible(); await expect(page.locator('pre')).toHaveCount(0); expect(state.writes).toEqual([]);
 });
@@ -286,11 +286,11 @@ test('navigation opened after cancel survives publication of the pending route a
   await page.evaluate(() => { (window as Window & { holdNavigation?: boolean }).holdNavigation = true; });
   await page.getByRole('button', { name: '取消', exact: true }).click(); await expect(page).toHaveURL(/#\/research$/); await expect(page.getByRole('heading', { name: '新建研究', exact: true })).toBeVisible();
   const trigger = page.getByRole('button', { name: '打开导航', exact: true }); const menu = page.getByRole('dialog'); const data = menu.getByRole('link', { name: '数据', exact: true });
-  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(8); await data.focus(); await expect(data).toBeFocused();
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.focus(); await expect(data).toBeFocused();
   await page.evaluate(() => { const browser = window as Window & { publishNavigation?: () => void }; browser.publishNavigation!(); delete browser.publishNavigation; });
-  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(menu.getByRole('link')).toHaveCount(8); await expect(data).toBeFocused();
+  await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible(); await expect(menu.getByRole('link')).toHaveCount(7); await expect(data).toBeFocused();
   await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();
-  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(8); await data.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('#main-content')).toBeFocused();
+  await trigger.press('Enter'); await expect(menu.getByRole('link')).toHaveCount(7); await data.press('Enter'); await expect(menu).toBeHidden(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await expect(page.locator('#main-content')).toBeFocused();
   await fits(page, 390); await audit(page); expect(state.writes).toEqual([]);
 });
 
@@ -335,7 +335,7 @@ test('a held account refresh remains stoppable and cannot revive a stopped obser
 test('provider disconnect remains serialized through credential removal and catalog refresh', async ({ page }) => {
   await contract(page); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let calls = 0;
   await page.route('**/api/v3/models/providers/test', async route => { calls++; await held; return route.fallback(); });
-  try { await page.goto('/#/settings'); const provider = page.locator('.provider-row').filter({ hasText: '测试模型服务' }); await provider.getByRole('button', { name: '断开', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '断开模型服务', exact: true }).click(); await expect.poll(() => calls).toBe(1); await expect(provider.getByRole('button', { name: '断开', exact: true })).toBeDisabled(); await expect(provider.getByRole('button', { name: '配置 API Key 测试模型服务', exact: true })).toBeDisabled(); await page.getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await page.getByRole('link', { name: '模型设置', exact: true }).click(); await expect(provider.getByRole('button', { name: '断开', exact: true })).toBeDisabled(); expect(calls).toBe(1); release(); await expect(provider.getByRole('button', { name: '断开', exact: true })).toHaveCount(0); await expect(provider.getByRole('button', { name: '配置 API Key 测试模型服务', exact: true })).toBeEnabled(); expect(calls).toBe(1); }
+  try { await page.goto('/#/settings'); const provider = page.locator('.provider-row').filter({ hasText: '测试模型服务' }); await provider.getByRole('button', { name: '断开', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '断开模型服务', exact: true }).click(); await expect.poll(() => calls).toBe(1); await expect(provider.getByRole('button', { name: '断开', exact: true })).toBeDisabled(); await expect(provider.getByRole('button', { name: '配置 API Key 测试模型服务', exact: true })).toBeDisabled(); await page.getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', exact: true, level: 1 })).toBeVisible(); await page.getByRole('link', { name: '设置', exact: true }).click(); await expect(provider.getByRole('button', { name: '断开', exact: true })).toBeDisabled(); expect(calls).toBe(1); release(); await expect(provider.getByRole('button', { name: '断开', exact: true })).toHaveCount(0); await expect(provider.getByRole('button', { name: '配置 API Key 测试模型服务', exact: true })).toBeEnabled(); expect(calls).toBe(1); }
   finally { release(); }
 });
 
@@ -409,7 +409,7 @@ test('late settings response cannot overwrite a newer save or discard a later dr
   await contract(page); let current: SettingsView = { defaultModel: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'medium', serviceTier: null }; let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let patches = 0;
   await page.route('**/api/v3/settings', async route => { if (route.request().method() === 'PATCH') { current = route.request().postDataJSON(); const snapshot = structuredClone(current); if (++patches === 1) await held; return route.fulfill({ json: snapshot }); } return route.fulfill({ json: current }); });
   try {
-    await page.goto('/#/settings'); await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect.poll(() => patches).toBe(1); await page.getByRole('link', { name: '数据', exact: true }).click(); await page.getByRole('link', { name: '模型设置', exact: true }).click(); await choose(page, '推理强度', '低'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await choose(page, '推理强度', '中'); await expect(page.getByText('未保存', { exact: true })).toBeVisible();
+    await page.goto('/#/settings'); await choose(page, '推理强度', '高'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect.poll(() => patches).toBe(1); await page.getByRole('link', { name: '数据', exact: true }).click(); await page.getByRole('link', { name: '设置', exact: true }).click(); await choose(page, '推理强度', '低'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); await choose(page, '推理强度', '中'); await expect(page.getByText('未保存', { exact: true })).toBeVisible();
     const refreshed = page.waitForResponse(response => response.url().endsWith('/api/v3/settings') && response.request().method() === 'GET'); release(); await refreshed; await page.reload(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('中'); await expect(page.getByText('未保存', { exact: true })).toBeVisible(); expect(current.thinkingLevel).toBe('low'); expect(patches).toBe(2);
   } finally { release(); }
 });
@@ -426,7 +426,7 @@ test('light/dark and 320–1024 layouts retain exact long facts without page ove
     for (const width of [320, 390, 768, 1024]) {
       await page.setViewportSize({ width, height: 844 });
       for (const route of ['research/8', 'research/9?tab=inputs', 'data', 'portfolios/p1', 'observations/o1', 'settings', 'extensions']) {
-        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : route === 'settings' ? '模型设置' : '扩展'; await expect(page.getByRole('heading', { name: shortTitle(title), exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
+        await page.goto('/#/' + route); const title = route === 'research/8' ? '测试 · 横截面价值' : route.startsWith('research/9') ? '测试 · ' + 'LongResearchName'.repeat(7) : route.startsWith('portfolios') ? '测试 · 多因子组合' : route.startsWith('observations') ? '目标与观测' : route === 'data' ? '数据' : '设置'; await expect(page.getByRole('heading', { name: shortTitle(title), exact: true, level: 1 })).toBeVisible(); await expect(page.locator('.loading-state')).toHaveCount(0); if (route.startsWith('research/9')) await expect(page.getByRole('tab', { name: '输入与执行' })).toHaveAttribute('aria-selected', 'true'); if (route.startsWith('observations')) await expect(page.locator('.observation-document')).toBeVisible(); await fits(page, width);
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 }); await page.goto('/#/research/8'); await expect(page.locator('.metric-grid')).toBeVisible(); await audit(page); await page.screenshot({ path: info.outputPath(`research-${dark ? 'dark' : 'light'}-1440.png`), fullPage: true });
@@ -686,4 +686,108 @@ test('capacity execution diagnostics retain source cause and remedy without inve
   await panel.locator('.recorded-error summary').click(); await expect(panel.locator('.recorded-error')).toContainText(executable.code); await expect(panel.locator('.recorded-error')).toContainText(executable.operation!); await expect(panel.locator('.recorded-error')).toContainText('阶段：执行');
   await expect(page.getByRole('heading', { name: original.name, level: 1, exact: true })).toBeVisible(); await expect(page.locator('.result-section').filter({ has: page.getByRole('heading', { name: '目标权重', exact: true }) })).toContainText(original.targets[0]!.weight); expect(requests).toEqual([policy]); expect(state.portfolio).toEqual(original); expect(state.writes).toEqual([]);
   await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await audit(page);
+});
+
+test('an uncertain instance save replays the original revision and content after reload', async ({ page }) => {
+  await contract(page);
+  let current = { revision: 0, backtest: null as { id: string; url: string; tokenEnv?: string } | null, connections: [] };
+  const writes: string[] = [];
+  await page.route('**/api/v3/settings/instances', async route => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ json: current });
+    const raw = route.request().postData()!; writes.push(raw);
+    const { expectedRevision, ...content } = JSON.parse(raw);
+    expect(expectedRevision).toBe(0);
+    current = { revision: 1, ...content };
+    if (writes.length === 1) return route.abort('failed');
+    return route.fulfill({ json: current });
+  });
+  await page.goto('/#/settings?section=instances');
+  await page.getByRole('switch', { name: '启用回测连接', exact: true }).check();
+  const backtest = page.locator('.instance-backtest');
+  await backtest.getByLabel('实例标识', { exact: true }).fill('original-science');
+  await backtest.getByLabel('服务地址', { exact: true }).fill('https://original.example/worker');
+  await page.getByRole('button', { name: '保存实例连接', exact: true }).click({ noWaitAfter: true });
+  await expect(page).toHaveURL(/\/#\/settings\?section=instances$/);
+  await expect(page.getByText('保存结果待核对', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '核对保存', exact: true })).toBeVisible();
+  await expect(backtest.getByLabel('服务地址', { exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByRole('button', { name: '核对保存', exact: true })).toBeVisible();
+  await expect(backtest.getByLabel('实例标识', { exact: true })).toHaveValue('original-science');
+  await page.getByRole('button', { name: '核对保存', exact: true }).click();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[1]).toBe(writes[0]);
+  await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => sessionStorage.getItem('quazonai.draft.instance-settings'))).toBeNull();
+});
+
+test('invalid instance addresses never save and a stale revision needs an explicit latest-config reload', async ({ page }) => {
+  await contract(page);
+  let current = { revision: 0, backtest: null as { id: string; url: string } | null, connections: [] };
+  let puts = 0;
+  await page.route('**/api/v3/settings/instances', async route => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ json: current });
+    puts++; current = { revision: 1, backtest: { id: 'another-client', url: 'https://newer.example/worker' }, connections: [] };
+    return route.fulfill({ status: 409, json: { error: 'instance_settings_revision_conflict' } });
+  });
+  await page.goto('/#/settings?section=instances');
+  await page.getByRole('switch', { name: '启用回测连接', exact: true }).check();
+  const backtest = page.locator('.instance-backtest');
+  await backtest.getByLabel('实例标识', { exact: true }).fill('my-draft');
+  await backtest.getByLabel('服务地址', { exact: true }).fill('file:///tmp/worker');
+  await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+  await expect(page.getByText('请填写 HTTP 或 HTTPS 地址，不含密码、查询参数或片段', { exact: true })).toBeVisible();
+  expect(puts).toBe(0);
+  await backtest.getByLabel('服务地址', { exact: true }).fill('https://draft.example/worker');
+  await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+  await expect(page.getByRole('button', { name: '载入最新配置', exact: true })).toBeVisible();
+  await expect(backtest.getByLabel('实例标识', { exact: true })).toHaveValue('my-draft');
+  expect(puts).toBe(1);
+  await page.getByRole('button', { name: '载入最新配置', exact: true }).click();
+  await expect(backtest.getByLabel('实例标识', { exact: true })).toHaveValue('another-client');
+  await expect(backtest.getByLabel('服务地址', { exact: true })).toHaveValue('https://newer.example/worker');
+  await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeDisabled();
+  expect(puts).toBe(1);
+});
+
+test('an old unmounted instance save cannot roll back a newer reconciled configuration', async ({ page }) => {
+  await contract(page);
+  let current = { revision: 0, backtest: { id: 'initial', url: 'https://initial.example/worker' }, connections: [] };
+  const writes: string[] = []; let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v3/settings/instances', async route => {
+    if (route.request().method() !== 'PUT') return route.fulfill({ json: current });
+    const raw = route.request().postData()!; writes.push(raw);
+    const input = JSON.parse(raw);
+    if (input.expectedRevision === current.revision) current = { revision: current.revision + 1, backtest: input.backtest, connections: input.connections };
+    const response = structuredClone(current);
+    if (writes.length === 1) await held;
+    return route.fulfill({ json: response });
+  });
+  try {
+    await page.goto('/#/settings?section=instances');
+    const backtest = page.locator('.instance-backtest');
+    await backtest.getByLabel('实例标识', { exact: true }).fill('first-save');
+    await backtest.getByLabel('服务地址', { exact: true }).fill('https://first.example/worker');
+    await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+    await expect.poll(() => writes.length).toBe(1);
+    await page.getByRole('link', { name: '扩展', exact: true }).click();
+    await page.getByRole('link', { name: '实例连接', exact: true }).click();
+    await page.getByRole('button', { name: '核对保存', exact: true }).click();
+    await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+    expect(writes[1]).toBe(writes[0]);
+    await backtest.getByLabel('实例标识', { exact: true }).fill('newer-save');
+    await backtest.getByLabel('服务地址', { exact: true }).fill('https://newer.example/worker');
+    await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+    await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+    expect(current.revision).toBe(2);
+    const late = page.waitForResponse(response => response.url().endsWith('/api/v3/settings/instances') && response.request().method() === 'PUT' && response.request().postData() === writes[0]);
+    const refreshed = page.waitForResponse(response => response.url().endsWith('/api/v3/settings/instances') && response.request().method() === 'GET');
+    release(); await late; await refreshed;
+    await expect(backtest.getByLabel('实例标识', { exact: true })).toHaveValue('newer-save');
+    await expect(backtest.getByLabel('服务地址', { exact: true })).toHaveValue('https://newer.example/worker');
+    await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeDisabled();
+    await page.reload(); await expect(backtest.getByLabel('实例标识', { exact: true })).toHaveValue('newer-save');
+    expect(writes).toHaveLength(3);
+  } finally { release(); }
 });
