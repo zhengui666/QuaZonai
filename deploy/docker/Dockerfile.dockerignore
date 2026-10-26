@@ -30,6 +30,8 @@
 !runtimes/
 !runtimes/data/
 !runtimes/data/*.py
+!runtimes/data/sources/
+!runtimes/data/sources/hyperliquid.json
 !deploy/
 !deploy/docker/
 !deploy/docker/Dockerfile

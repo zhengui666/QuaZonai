@@ -55,6 +55,26 @@ fn field<'a>(row: &'a Row, name: &str) -> Result<&'a Field> {
 }
 
 impl Stream {
+    fn bar_interval(&self, id: InstrumentId) -> Result<(BarType, u64)> {
+        match (self.bar_seconds, self.bar_milliseconds) {
+            (Some(seconds), None) => {
+                Ok((bar_type(id, seconds)?, u64::from(seconds) * 1_000_000_000))
+            }
+            (None, Some(milliseconds)) => {
+                ensure!(
+                    milliseconds > 0 && milliseconds <= 86_400_000,
+                    "BAR_INTERVAL_UNSUPPORTED"
+                );
+                Ok((
+                    BarType::from_str(&format!("{id}-{milliseconds}-MILLISECOND-LAST-EXTERNAL"))?,
+                    u64::from(milliseconds) * 1_000_000,
+                ))
+            }
+            (None, None) => anyhow::bail!("BAR_INTERVAL_REQUIRED"),
+            (Some(_), Some(_)) => anyhow::bail!("BAR_INTERVAL_UNITS_CONFLICT"),
+        }
+    }
+
     pub(super) fn field<'a>(&self, row: &'a Row, name: &str) -> Result<&'a Field> {
         field(
             row,
@@ -289,16 +309,16 @@ pub(super) fn convert(
             )?)]
         }
         "bars" => {
-            let interval = stream.bar_seconds.context("BAR_INTERVAL_REQUIRED")?;
+            let (kind, interval_ns) = stream.bar_interval(id)?;
             let label = match stream.bar_timestamp.as_deref() {
                 Some("start") => event
-                    .checked_add(u64::from(interval) * 1_000_000_000)
+                    .checked_add(interval_ns)
                     .context("BAR_TIMESTAMP_RANGE")?,
                 Some("end") => event,
                 _ => anyhow::bail!("BAR_TIMESTAMP_CONVENTION_REQUIRED"),
             };
             vec![Data::Bar(Bar::new_checked(
-                bar_type(id, interval)?,
+                kind,
                 p("open")?,
                 p("high")?,
                 p("low")?,
@@ -415,6 +435,7 @@ impl Bucket {
 
 pub(super) struct Aggregation {
     seconds: Option<u32>,
+    milliseconds: Option<u32>,
     buckets: BTreeMap<InstrumentId, Bucket>,
 }
 
@@ -422,15 +443,46 @@ impl Aggregation {
     pub(super) fn new(seconds: Option<u32>) -> Self {
         Self {
             seconds,
+            milliseconds: None,
             buckets: BTreeMap::new(),
         }
     }
 
+    pub(super) fn with_milliseconds(
+        seconds: Option<u32>,
+        milliseconds: Option<u32>,
+    ) -> Result<Self> {
+        ensure!(
+            seconds.is_none() || milliseconds.is_none(),
+            "BAR_INTERVAL_UNITS_CONFLICT"
+        );
+        if let Some(interval) = milliseconds {
+            ensure!(
+                interval > 0 && interval <= 86_400_000,
+                "BAR_INTERVAL_UNSUPPORTED"
+            );
+        }
+        let mut result = Self::new(seconds);
+        result.milliseconds = milliseconds;
+        Ok(result)
+    }
+
     pub(super) fn update(&mut self, trade: &TradeTick) -> Result<Option<Bar>> {
-        let Some(seconds) = self.seconds else {
-            return Ok(None);
+        let (kind, interval) = match (self.seconds, self.milliseconds) {
+            (Some(seconds), None) => (
+                bar_type(trade.instrument_id, seconds)?,
+                u64::from(seconds) * 1_000_000_000,
+            ),
+            (None, Some(milliseconds)) => (
+                BarType::from_str(&format!(
+                    "{}-{milliseconds}-MILLISECOND-LAST-EXTERNAL",
+                    trade.instrument_id
+                ))?,
+                u64::from(milliseconds) * 1_000_000,
+            ),
+            (None, None) => return Ok(None),
+            _ => anyhow::bail!("BAR_INTERVAL_UNITS_CONFLICT"),
         };
-        let interval = u64::from(seconds) * 1_000_000_000;
         let event = trade.ts_event.as_u64();
         let end = (event / interval + 1)
             .checked_mul(interval)
@@ -440,18 +492,15 @@ impl Aggregation {
         let size = Quantity::from_raw(trade.size.raw, FIXED_PRECISION);
         let bucket = self.buckets.entry(trade.instrument_id).or_insert(Bucket {
             builder: BarBuilder::new(
-                {
-                    let kind = bar_type(trade.instrument_id, seconds)?;
-                    BarType::new(
-                        kind.instrument_id(),
-                        kind.spec(),
-                        AggregationSource::Internal,
-                    )
-                },
+                BarType::new(
+                    kind.instrument_id(),
+                    kind.spec(),
+                    AggregationSource::Internal,
+                ),
                 FIXED_PRECISION,
                 FIXED_PRECISION,
             ),
-            kind: bar_type(trade.instrument_id, seconds)?,
+            kind,
             end,
             available: end,
             volume: Quantity::zero(FIXED_PRECISION),
@@ -494,6 +543,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn csv_millisecond_bars_preserve_interval_values_and_receipt_time() {
+        let stream: Stream = serde_json::from_value(serde_json::json!({
+            "name":"bars", "kind":"bars", "format":"csv", "time_unit":"ms",
+            "bar_milliseconds":100, "bar_timestamp":"start",
+            "columns":{"symbol":"coin", "time":"time", "available_at":"received",
+                "open":"open", "high":"high", "low":"low", "close":"close", "volume":"volume"}
+        }))
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let csv = root.path().join("bars.csv");
+        std::fs::write(&csv, "coin,time,received,open,high,low,close,volume\nAUD/USD,1000,1150,1.1,1.2,1.0,1.15,2.5\n").unwrap();
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        let encoding = Encoding::new(id, None, true).unwrap();
+        let mut sink = super::super::writer::Writer::new(&root.path().join("native"), &[]).unwrap();
+        let mut report = Report::default();
+        let mut rows = 0;
+        read_rows(&csv, &stream.format, |row| {
+            let event = timestamp(stream.field(&row, "time")?, &stream.time_unit)?;
+            let receipt = timestamp(stream.field(&row, "available_at")?, &stream.time_unit)?;
+            let records = convert(&stream, &row, &encoding, event, receipt, &mut report)?;
+            let Data::Bar(bar) = &records[0] else {
+                panic!("expected BAR")
+            };
+            assert_eq!(
+                bar.bar_type.to_string(),
+                "AUD/USD.SIM-100-MILLISECOND-LAST-EXTERNAL"
+            );
+            assert_eq!(bar.ts_event.as_u64(), 1_100_000_000);
+            assert_eq!(bar.ts_init.as_u64(), 1_150_000_000);
+            assert_eq!(bar.close.as_decimal(), Decimal::from_str("1.15").unwrap());
+            assert_eq!(bar.volume.as_decimal(), Decimal::from_str("2.5").unwrap());
+            for record in records {
+                sink.push(record)?;
+            }
+            rows += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rows, 1);
+        sink.finish().unwrap(); // Writer compares the actual native readback to the original BAR.
+    }
+
+    #[test]
+    fn supplied_bar_interval_requires_one_positive_unit() {
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        let base = serde_json::json!({"name":"bars","kind":"bars","format":"csv","time_unit":"ms","columns":{}});
+        for fields in [
+            serde_json::json!({}),
+            serde_json::json!({"bar_milliseconds":0}),
+            serde_json::json!({"bar_milliseconds":86_400_001}),
+            serde_json::json!({"bar_seconds":1,"bar_milliseconds":100}),
+        ] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let stream: Stream = serde_json::from_value(value).unwrap();
+            assert!(stream.bar_interval(id).is_err());
+        }
+    }
+
+    #[test]
     fn timestamps_preserve_units_and_large_integer_precision() {
         assert_eq!(
             timestamp(&Field::TimestampMicros(1_700_000_000_123_456), "us").unwrap(),
@@ -506,6 +618,63 @@ mod tests {
             scalar(&Field::ULong(9_007_199_254_740_993)).unwrap(),
             "9007199254740993"
         );
+    }
+
+    #[test]
+    fn archive_trades_aggregate_at_100ms_boundaries_with_native_readback() {
+        let id = InstrumentId::from_str("AUD/USD.SIM").unwrap();
+        let mut aggregation = Aggregation::with_milliseconds(None, Some(100)).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut sink = super::super::writer::Writer::new(&root.path().join("native"), &[]).unwrap();
+        let mut bars = Vec::new();
+        for (event_ms, receipt_ms, px, size) in [
+            (99_u64, 120_u64, "1.1", "2"),
+            (100, 250, "1.2", "3"),
+            (350, 390, "1.3", "4"),
+        ] {
+            let trade = TradeTick::new_checked(
+                id,
+                Price::from(px),
+                Quantity::from(size),
+                AggressorSide::Buy,
+                TradeId::new(event_ms.to_string()),
+                (event_ms * 1_000_000).into(),
+                (receipt_ms * 1_000_000).into(),
+            )
+            .unwrap();
+            if let Some(bar) = aggregation.update(&trade).unwrap() {
+                bars.push(bar);
+            }
+        }
+        bars.extend(aggregation.finish().unwrap());
+        assert_eq!(
+            bars.iter()
+                .map(|bar| bar.ts_event.as_u64())
+                .collect::<Vec<_>>(),
+            vec![100_000_000, 200_000_000, 400_000_000]
+        );
+        assert_eq!(
+            bars.iter()
+                .map(|bar| bar.ts_init.as_u64())
+                .collect::<Vec<_>>(),
+            vec![120_000_000, 250_000_000, 400_000_000]
+        );
+        assert_eq!(
+            bars.iter()
+                .map(|bar| bar.volume.as_decimal())
+                .collect::<Vec<_>>(),
+            vec![Decimal::from(2), Decimal::from(3), Decimal::from(4)]
+        );
+        for bar in bars {
+            assert_eq!(
+                bar.bar_type.to_string(),
+                "AUD/USD.SIM-100-MILLISECOND-LAST-EXTERNAL"
+            );
+            sink.push(Data::Bar(bar)).unwrap();
+        }
+        sink.finish().unwrap();
+        assert!(Aggregation::with_milliseconds(Some(1), Some(100)).is_err());
+        assert!(Aggregation::with_milliseconds(None, Some(0)).is_err());
     }
 
     #[test]

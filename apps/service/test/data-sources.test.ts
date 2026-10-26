@@ -53,6 +53,37 @@ test('local source registers catalogs, persists and applies enablement to new ad
   } finally { await app.close(); await sources.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test('disabling a provider cancels refreshes queued behind another source', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-data-source-queue-'));
+  const slowModule = join(directory, 'slow.mjs'); const queuedModule = join(directory, 'queued.mjs');
+  let start!: () => void; let release!: () => void;
+  const started = new Promise<void>(resolve => { start = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const key = `__qzDataSourceQueue_${Date.now()}`;
+  const state = { start, gate, queuedLoads: 0 };
+  Object.assign(globalThis, { [key]: state });
+  await writeFile(slowModule, `export default {name:'source.slow',fields:[],async load(){globalThis[${JSON.stringify(key)}].start();await globalThis[${JSON.stringify(key)}].gate;return []}}`);
+  await writeFile(queuedModule, `export default {name:'source.queued',fields:[],async load(){globalThis[${JSON.stringify(key)}].queuedLoads++;return []}}`);
+  const sources = await dataSources(configDefaults({ dataDir: directory, extensions: [
+    { name: 'source.slow', module: slowModule, kind: 'data', enabled: true },
+    { name: 'source.queued', module: queuedModule, kind: 'data', enabled: true },
+  ] }));
+  try {
+    const running = sources.refresh('source.slow');
+    await started;
+    const queued = sources.refresh('source.queued');
+    const cancelled = assert.rejects(queued, /data_source_refresh_cancelled/);
+    const disabled = sources.toggle('source.queued', false);
+    release();
+    await running; await cancelled; await disabled;
+    assert.equal(state.queuedLoads, 0);
+    assert.equal(sources.view().find(source => source.name === 'source.queued')!.enabled, false);
+  } finally {
+    release(); await sources.close(); delete (globalThis as Record<string, unknown>)[key];
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('external modules load through data registry and failed or conflicting refresh keeps prior datasets', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-data-module-'));
   const module = join(directory, 'plugin.mjs');
