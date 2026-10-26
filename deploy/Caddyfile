@@ -1,5 +1,5 @@
 # Optional external HTTPS proxy. The Node app serves API and static files itself.
-# Set QUAZONAI_SITE and the matching publicOrigin/secureCookies in service.json.
+# Set QUAZONAI_SITE and enable secureCookies in service.json for HTTPS.
 {$QUAZONAI_SITE} {
 	reverse_proxy {$QUAZONAI_API_UPSTREAM:127.0.0.1:8081} {
 		flush_interval -1

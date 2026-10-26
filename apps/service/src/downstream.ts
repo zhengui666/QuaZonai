@@ -1,6 +1,7 @@
 import { Agent, fetch } from 'undici';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { ConnectionConfig } from './config.ts';
+import { remoteNativeCredential } from '../../research/src/native-execution.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.ts';
 import type { ObservationFact } from './facts.ts';
@@ -16,10 +17,11 @@ export function connectionBase(connection: ConnectionConfig): URL {
 export async function downstreamRequest(connection: ConnectionConfig, path: string, method: 'GET' | 'POST', body?: unknown, signal?: AbortSignal): Promise<JsonObject> {
   const url = connectionBase(connection); url.pathname += path;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-qz-client-id': connection.clientId };
-  if (connection.tokenEnv) {
-    const token = process.env[connection.tokenEnv]; if (!token) throw new Problem('downstream_credentials_missing');
-    headers.authorization = `Bearer ${token}`;
-  }
+  const hasDirectToken = Object.hasOwn(connection, 'token');
+  const token = connection.credentialRef ? remoteNativeCredential(connection.credentialRef)
+    : hasDirectToken ? connection.token : connection.tokenEnv ? process.env[connection.tokenEnv] : undefined;
+  if ((connection.credentialRef || !hasDirectToken && connection.tokenEnv) && !token) throw new Problem('downstream_credentials_missing');
+  if (token) headers.authorization = `Bearer ${token}`;
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 0 } });
   try {
     const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal, dispatcher, redirect: 'error' });

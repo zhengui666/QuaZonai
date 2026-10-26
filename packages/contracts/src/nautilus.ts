@@ -1,6 +1,8 @@
 /** A string is an explicit local executable for the independent worker and
  * scientific tests. Application configuration admits remote targets only. */
-export type RemoteNativeTarget = { id: string; url: string; tokenEnv?: string };
+export type RemoteNativeTarget = { id: string; url: string; tokenEnv?: string; credentialRef?: string };
+/** Owner-configured instance. `tokenEnv` remains for older service files. */
+export type RemoteNativeInstance = { id: string; url: string; token?: string; tokenEnv?: string };
 export type NativeTarget = string | RemoteNativeTarget;
 
 export type NativeJson = null | boolean | number | string | NativeJson[] | { [key: string]: NativeJson };

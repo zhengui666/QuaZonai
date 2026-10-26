@@ -1,5 +1,6 @@
 export type * from './pm.ts';
 export type * from './maintenance.ts';
+export type * from './data-sources.ts';
 export type * from './pm-intent.ts';
 export * from './decision.ts';
 export * from './pm-validation.ts';
@@ -7,7 +8,7 @@ export * from './pm-forward.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
 import type { LiteratureView } from './literature.ts';
-import type { RemoteNativeTarget } from './nautilus.ts';
+import type { RemoteNativeInstance } from './nautilus.ts';
 export type { LiteratureSource, LiteraturePaper, LiteratureSearchResult, LiteratureSearch, LiteratureNote, LiteratureView } from './literature.ts';
 export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -162,13 +163,13 @@ export interface ObservationView {
 export interface ConnectionView { id: string; name: string; mode: ObservationMode; connected: boolean }
 export interface NautilusConnection {
   id: string; name: string; mode: ObservationMode;
-  url: string; clientId: string; accountId: string; tokenEnv?: string;
+  url: string; clientId: string; accountId: string; token?: string; tokenEnv?: string;
 }
 export interface InstanceSettingsView {
-  revision: number; backtest: RemoteNativeTarget | null; connections: NautilusConnection[];
+  revision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
 export interface InstanceSettingsUpdate {
-  expectedRevision: number; backtest: RemoteNativeTarget | null; connections: NautilusConnection[];
+  expectedRevision: number; backtest: RemoteNativeInstance | null; connections: NautilusConnection[];
 }
 export interface SettingsView { defaultModel: ModelRef | null; thinkingLevel: ThinkingLevel | null; serviceTier: ServiceTier | null }
 export interface WorkspaceView { name: string; connections: ConnectionView[] }
