@@ -166,3 +166,65 @@ test('object deletion confirms the original resource, reconciles a lost response
     expect(await (await page.request.get(`${url}/api/v3/factors`)).json()).toEqual([]); expect(await (await page.request.get(`${url}/api/v3/portfolios`)).json()).toEqual([]);
   } finally { await state.close(); }
 });
+
+test('settings configures independent remote instances through real HTTP and preserves them across reload and restart', async ({ page }, info) => {
+  test.setTimeout(90_000);
+  const state = await service(); const url = state.url;
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  try {
+    await owner(page, url);
+    await page.getByRole('link', { name: '设置', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '设置', exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByRole('link', { name: '模型设置', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: '实例连接', exact: true }).click();
+    const before = await (await page.request.get(`${url}/api/v3/settings/instances`)).json();
+    await page.getByRole('switch', { name: '启用回测连接', exact: true }).check();
+    const backtest = page.locator('.instance-backtest');
+    await backtest.getByLabel('实例标识', { exact: true }).fill('science-remote');
+    await backtest.getByLabel('服务地址', { exact: true }).fill('https://science.example/nautilus');
+    await backtest.getByLabel('凭据环境变量', { exact: true }).fill('QZ_SCIENCE_TOKEN');
+    for (const [mode, name] of [['paper', '独立模拟盘'], ['live', '独立实盘']] as const) {
+      await page.getByRole('button', { name: '添加连接', exact: true }).click();
+      const connection = page.locator('.instance-connection').last();
+      await connection.getByLabel('名称', { exact: true }).fill(name);
+      await connection.getByLabel('实例标识', { exact: true }).fill(`${mode}-remote`);
+      await connection.getByLabel('模式', { exact: true }).click();
+      await page.getByRole('option', { name: mode === 'paper' ? '模拟盘' : '实盘', exact: true }).click();
+      await connection.getByLabel('服务地址', { exact: true }).fill(`https://${mode}.example/nautilus`);
+      await connection.getByLabel('客户端标识', { exact: true }).fill(`qz-${mode}`);
+      await connection.getByLabel('账户标识', { exact: true }).fill(`${mode}-account`);
+      await connection.getByLabel('凭据环境变量', { exact: true }).fill(`QZ_${mode.toUpperCase()}_TOKEN`);
+    }
+    await page.getByRole('button', { name: '保存实例连接', exact: true }).click();
+    await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+    const saved = await (await page.request.get(`${url}/api/v3/settings/instances`)).json();
+    expect(saved).toEqual({ revision: before.revision + 1, backtest: { id: 'science-remote', url: 'https://science.example/nautilus', tokenEnv: 'QZ_SCIENCE_TOKEN' }, connections: [
+      { id: 'paper-remote', name: '独立模拟盘', mode: 'paper', url: 'https://paper.example/nautilus', clientId: 'qz-paper', accountId: 'paper-account', tokenEnv: 'QZ_PAPER_TOKEN' },
+      { id: 'live-remote', name: '独立实盘', mode: 'live', url: 'https://live.example/nautilus', clientId: 'qz-live', accountId: 'live-account', tokenEnv: 'QZ_LIVE_TOKEN' },
+    ] });
+    await page.reload(); await expect(backtest.getByLabel('服务地址', { exact: true })).toHaveValue(saved.backtest.url);
+    await expect(page.locator('.instance-connection')).toHaveCount(2);
+    await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeDisabled();
+    await state.restart(); await page.reload();
+    await expect(backtest.getByLabel('凭据环境变量', { exact: true })).toHaveValue('QZ_SCIENCE_TOKEN');
+    await expect(page.locator('.instance-connection').nth(0).getByLabel('账户标识', { exact: true })).toHaveValue('paper-account');
+    await expect(page.locator('.instance-connection').nth(1).getByLabel('账户标识', { exact: true })).toHaveValue('live-account');
+    expect(await (await page.request.get(`${url}/api/v3/settings/instances`)).json()).toEqual(saved);
+    const workspace = await (await page.request.get(`${url}/api/v3/workspace`)).json();
+    expect(workspace.connections.map((value: { id: string }) => value.id)).toEqual(['paper-remote', 'live-remote']);
+    await page.screenshot({ path: info.outputPath('settings-instances-real-http-1440.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: '打开导航', exact: true }).click();
+    await page.getByRole('dialog').getByRole('link', { name: '设置', exact: true }).click();
+    await page.getByRole('link', { name: '实例连接', exact: true }).click();
+    await expect(page.getByRole('button', { name: '保存实例连接', exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: info.outputPath('settings-instances-real-http-390.png'), fullPage: true });
+    await page.getByRole('link', { name: '扩展', exact: true }).click();
+    await expect(page.locator('.extension-list')).toBeVisible();
+    await page.goto(`${url}/#/extensions`); await expect(page.getByRole('heading', { name: '设置', exact: true, level: 1 })).toBeVisible();
+    await expect(page.locator('.extension-list')).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally { await state.close(); }
+});

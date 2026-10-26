@@ -29,7 +29,10 @@ async function peer(mode: 'paper' | 'live', suffix: string) {
 test('paper and live retain distinct remote instances across configuration changes and restart', { timeout: 30_000 }, async () => {
   const state = await setup(); const paper = await peer('paper', '00000000001'); const live = await peer('live', '00000000002');
   try {
-    state.options.config.connections = [paper.connection, live.connection]; await state.restart();
+    const configured = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
+      payload: { expectedRevision: 0, backtest: null, connections: [paper.connection, live.connection] } });
+    assert.equal(configured.statusCode, 200, configured.body);
+    await state.restart();
     const { view } = await built(state); assert.equal(view.status, 'COMPUTED', view.error ?? '');
     const wrongMode = await state.service.app.inject({ method: 'POST', url: '/api/v3/observations', headers: state.headers,
       payload: { requestId: 'wrong-instance-purpose', portfolioId: view.id, mode: 'live', connectionId: paper.connection.id } });
@@ -47,7 +50,11 @@ test('paper and live retain distinct remote instances across configuration chang
     }
     // Reconfiguring an ID applies only to new work; historical receipt/account
     // refresh must keep the original captured transport and account identity.
-    state.options.config.connections = [{ ...paper.connection, url: live.connection.url }, { ...live.connection, url: paper.connection.url }];
+    const changed = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
+      payload: { expectedRevision: 1, backtest: null, connections: [{ ...paper.connection, url: live.connection.url }, { ...live.connection, url: paper.connection.url }] } });
+    assert.equal(changed.statusCode, 200, changed.body);
+    const workspace = await state.service.app.inject({ method: 'GET', url: '/api/v3/workspace', headers: state.headers });
+    assert.ok(workspace.json().connections.every((item: { connected: boolean }) => !item.connected), 'an old observed binding does not prove the replacement connection works');
     await state.restart(); paper.requests.length = 0; live.requests.length = 0;
     for (const [index, remote] of [paper, live].entries()) {
       const other = remote === paper ? live : paper; const otherCount = other.requests.length;

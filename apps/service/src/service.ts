@@ -16,13 +16,14 @@ import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
+import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
 import { observationView, portfolioView, researchDetail, researchSummary, researchTaskViews } from './projections.ts';
 import { workbench } from './workbench.ts';
 import { listFactors, readFactor } from './factors.ts';
 import { factorCapacity, portfolioCapacity } from './capacity.ts';
 import { researchCapital } from '../../../packages/contracts/src/research.ts';
 import { capitalWorkbench } from './capital-workbench.ts';
-import { accountKey, capitalStatus, control } from './capital-exit.ts';
+import { accountKey, capitalStatus, control, transportBindingKey } from './capital-exit.ts';
 import { createPmPlatform } from './pm-platform.ts';
 import { registerPmRoutes } from './pm-routes.ts';
 import { maintenanceExtension, createMaintenance } from './pm-maintenance.ts';
@@ -35,6 +36,7 @@ const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
   const config = structuredClone(options.config);
   await mkdir(config.dataDir, { recursive: true });
+  const instances = await instanceSettings(config);
   const extensionFile = join(config.dataDir, 'extensions.json');
   let desired: Record<string, boolean> = {};
   let moduleNames: Record<string, string> = {};
@@ -85,7 +87,7 @@ export async function createService(options: ServiceOptions) {
   const detail = (id: number) => researchDetail(research, id, readTasks);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, routerOptions: { ignoreTrailingSlash: true } });
   const archive = config.archiveDatabase ? new Pool({ connectionString: config.archiveDatabase, max: 2 }) : null;
-  app.addHook('onClose', async () => { await research.close(); await archive?.end(); });
+  app.addHook('onClose', async () => { await instances.close(); await research.close(); await archive?.end(); });
   try {
   app.setErrorHandler((error, _request, reply) => {
     const message = error instanceof Error ? error.message : 'internal_error';
@@ -168,10 +170,12 @@ export async function createService(options: ServiceOptions) {
     return observationView(await work.getObservation(id));
   });
   registerModels(app, research, work.getSettings);
+  registerInstanceSettings(app, instances);
   app.get(`${API}/workspace`, async (): Promise<WorkspaceView> => {
     const facts = (await work.snapshot())!; const views = Object.values(facts.observations).map(observation);
     return { name: config.name, connections: config.connections.map((connection) => ({ id: connection.id, name: connection.name, mode: connection.mode,
-      connected: views.some((fact) => fact.connection.id === connection.id && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
+      connected: views.some((fact) => fact.connection.id === connection.id && transportBindingKey(fact.connection) === transportBindingKey(connection)
+        && fact.connection.tokenEnv === connection.tokenEnv && !!fact.snapshot && !fact.view.error && fact.view.status === 'OBSERVING') })) };
   });
   app.get(`${API}/extensions`, async () => [...extensions.values()].map(item => ({ ...item, required: requiredExtensions.has(item.name) })));
   app.patch<{ Params: { name: string } }>(`${API}/extensions/:name`, async (request) => {

@@ -6,7 +6,8 @@ const config = await loadConfig(process.env.QZ_CONFIG ?? 'service.json');
 delete process.env.QZ_JOB_BINARY;
 delete process.env.QZ_NAUTILUS_BACKTEST;
 process.env.QZ_REQUIRE_REMOTE_NAUTILUS = '1';
-if (config.nautilus?.backtest) process.env.QZ_NAUTILUS_BACKTEST = JSON.stringify(config.nautilus.backtest);
+// New work receives its explicit persisted instance binding at admission.
+// A process-wide fallback would outlive a connection cleared in Settings.
 const service = await createService({ config });
 try { await service.app.listen({ host: config.host, port: config.port }); }
 catch (error) { await service.close(); throw error; }

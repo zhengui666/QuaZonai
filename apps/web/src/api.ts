@@ -7,6 +7,14 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  instance_settings_invalid: '实例配置格式不正确，请检查后重试',
+  instance_settings_revision_conflict: '配置已在其他页面更新，请载入最新配置后重新编辑',
+  instance_settings_save_failed: '配置未能保存，请核对重试',
+  nautilus_configuration_invalid: '实例配置格式不正确', nautilus_backtest_instance_invalid: '请填写有效的回测实例标识与地址',
+  nautilus_url_required: '请填写实例服务地址', nautilus_url_invalid: '实例地址须为 HTTP 或 HTTPS，且不含密码、查询参数或片段',
+  nautilus_token_env_invalid: '凭据须填写服务端环境变量名称',
+  nautilus_connections_invalid: '账户连接配置不正确', nautilus_connection_invalid: '请完整填写账户连接信息',
+  nautilus_connection_id_conflict: '实例标识重复，请为每个账户连接使用不同标识',
   native_remote_execution_unsettled: '远端科学执行的原始回执仍未确认终态，暂时不能删除；请恢复原连接后按同一身份核对',
   mandate_deleted: '所属投资决策已删除，不能恢复其研究',
   research_delete_tasks_active: '请先停止研究并等待原始任务结束，再删除',
@@ -50,7 +58,7 @@ export function shortError(error: unknown): string {
   return text.split('\n')[0]!.slice(0, 72);
 }
 
-type Options = { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown; rawBody?: string; signal?: AbortSignal };
+type Options = { method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown; rawBody?: string; signal?: AbortSignal };
 export async function api<T>(path: string, options: Options = {}): Promise<T> {
   let response: Response;
   const body = options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body));

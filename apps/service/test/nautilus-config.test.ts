@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { bindScienceData, configDefaults, loadConfig, scienceTarget, validateNautilusConfiguration } from '../src/config.ts';
+import { configDefaults, loadConfig, scienceTarget, validateNautilusConfiguration } from '../src/config.ts';
 
 test('file configuration separates remote backtest, paper and live and freezes research binding', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-config-'));
@@ -49,8 +49,10 @@ test('new portfolio accepts completed research when only its configured transpor
   try {
     const { receipt } = await studied(state, 'completed-before-remote');
     const target = { id: 'new-backtest', url: `http://127.0.0.1:${(worker.server.address() as import('node:net').AddressInfo).port}` };
-    state.service.config.nautilus = { backtest: target };
-    const dataset = state.service.config.datasets[0]!; dataset.data = bindScienceData(dataset.data, target);
+    const saved = await state.service.app.inject({ method: 'PUT', url: '/api/v3/settings/instances', headers: state.headers,
+      payload: { expectedRevision: 0, backtest: target, connections: [] } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    const dataset = state.service.config.datasets[0]!;
     const response = await state.service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers: state.headers, payload: {
       requestId: 'new-remote-backtest', name: 'Existing evidence via selected remote worker', researchIds: [receipt.conversationId], datasetId: dataset.id, capital: '1000' } });
     assert.equal(response.statusCode, 202, response.body);
