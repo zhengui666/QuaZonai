@@ -2,7 +2,7 @@ import type { ExecutionErrorCategory, ExecutionErrorDetail } from '../../../pack
 
 type ExecutionContext = { operation?: unknown; stage?: unknown };
 type Fallback = 'scientific_execution_failed' | 'backtest_failed' | 'operation_failed';
-const operations = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
+const operations = new Set(['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'study-portfolio', 'allocate',
   'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'portfolio-evaluation', 'portfolio-backtest', 'replay-catalog-ensemble']);
 const stages = new Set(['compile', 'execute', 'decode', 'validate']);
 
@@ -23,6 +23,20 @@ export class ExecutionFailure extends Error {
 
 type Reason = { codes: string[]; category: ExecutionErrorCategory; message: string; action: string };
 const reasons: Reason[] = [
+  { codes: ['TICK_SOURCE_INCOMPLETE', 'TICK_SOURCE_COVERAGE_INCOMPLETE', 'TICK_SOURCE_READBACK_MISSING', 'TICK_NATIVE_INVENTORY_MISMATCH', 'TICK_NATIVE_INVENTORY_REQUIRED', 'TICK_NATIVE_INVENTORY_EMPTY', 'TICK_PREPARED_COUNTS_MISMATCH', 'TICK_PREPARED_SELECTION_OUTSIDE_SCOPE', 'TICK_PROVENANCE_MISSING', 'TICK_PROVENANCE_INVALID', 'TICK_SOURCE_REVISION_MISMATCH', 'TICK_SOURCE_REVISION_CONFLICT'], category: 'data',
+    message: '逐笔目录的来源修订、文件清单或所选覆盖不完整／不一致。', action: '核对原导入及准备报告、所选文件和固定来源修订；不能忽略缺失文件或缩小请求后冒充完整输入。' },
+  { codes: ['TICK_ID_MISSING', 'TICK_ID_DUPLICATE', 'TICK_ID_CONFLICT', 'TICK_SOURCE_DUPLICATES_REPORTED', 'TICK_PRICE_INVALID', 'TICK_QUANTITY_INVALID', 'TICK_PRICE_QUANTITY_INVALID'], category: 'data',
+    message: '逐笔身份或原始价格／数量无效，或存在重复／冲突成交。', action: '检查原始成交及拒绝行报告，保留来源身份和值；不通过丢弃、补齐或舍入修复输入。' },
+  { codes: ['TICK_NATIVE_PRECISION_INCOMPATIBLE', 'TICK_NATIVE_FORMAT_OR_CATALOG_INCOMPATIBLE', 'TICK_NATIVE_FORMAT_OR_DECODE_INCOMPATIBLE', 'TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE', 'TICK_NATIVE_TYPE_MISMATCH'], category: 'data',
+    message: '逐笔目录精度／格式与所配置的原生程序不兼容。', action: '为逐笔配置匹配的高精度计算程序，保留现有 BAR 程序和目录；不要覆盖或重新标记原目录格式。' },
+  { codes: ['TICK_INSTRUMENT_DEFINITION_MISSING', 'TICK_NATIVE_DEFINITIONS_INVALID', 'TICK_INSTRUMENT_TYPE_UNSUPPORTED'], category: 'data',
+    message: '逐笔输入缺少必要的原生品种定义，或品种类型不受支持。', action: '核对原始定义与当前支持的现货／永续类型；当前定义不构成历史合约或费用证据。' },
+  { codes: ['TICK_AVAILABILITY_POLICY_UNSUPPORTED'], category: 'data', message: '逐笔可得时间不符合已声明的采样策略。', action: '首版仅支持明确未验证的事件时间代理；不能改写原始接收时钟或把代理数据称作 PIT 资格。' },
+  { codes: ['TICK_ROW_LIMIT', 'TICK_COHORT_ROW_LIMIT', 'TICK_RESOURCE_LIMIT', 'TICK_PREPARATION_OUTPUT_LIMIT', 'TICK_PROVENANCE_LIMIT', 'nautilus_tick_capacity_exhausted', 'nautilus_tick_output_limit_exceeded', 'nautilus_tick_resource_limits_unavailable'], category: 'resource',
+    message: '逐笔执行超过显式资源限额，或所需限额无法生效。', action: '核对行数、完整成交组、输出空间、计算程序和 Worker 限额；本次失败保留，不抽样、不重置原身份或自动重算。' },
+  { codes: ['TICK_EMPTY_SELECTION', 'TICK_RESEARCH_SELECTION_EMPTY', 'TICK_NO_PREDICTIONS'], category: 'data', message: '逐笔选择为空或不足以产生完成预热的预测。', action: '核对所选品种、半开时间范围、成交覆盖与 cohort 预热周期；缺口不能补零。' },
+  { codes: ['TICK_FEATURE_NONFINITE', 'TICK_LABEL_NONFINITE'], category: 'data', message: '逐笔派生特征或目标产生非有限数值。', action: '检查原始成交与明确的特征／目标语义；不以零值替代无效计算。' },
+  { codes: ['tick_factor_volume_unsupported', 'tick_portfolio_unsupported', 'tick_capacity_unsupported'], category: 'request', message: '所选因子或组合能力尚不支持逐笔输入。', action: '首版逐笔研究使用显式特征 v2 的 Wasm 因子；原 BAR 因子、组合与模拟不会被隐式改成逐笔语义。' },
   { codes: ['nautilus_backtest_not_configured', 'nautilus_credentials_missing'], category: 'runtime', message: '远程 Nautilus 回测实例或连接凭据未配置。', action: '配置回测实例和对应凭据后核对原任务；不会回退到本地引擎。' },
   { codes: ['legacy_local_nautilus_task_requires_migration'], category: 'runtime', message: '原任务仍绑定旧的本地 Nautilus，不能自动改到其他实例。', action: '保留原任务与证据，完成明确的远程执行迁移后再提交新的工作。' },
   { codes: ['nautilus_execution_unknown', 'nautilus_cancellation_unknown'], category: 'runtime', message: '远程科学执行或取消的结果尚未确认。', action: '按原远程回执核对实例状态；连接断开不代表任务已经取消。' },

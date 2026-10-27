@@ -1,5 +1,78 @@
 # Hyperliquid public history
 
+## Native TradeTick preparation
+
+Settings → Data Plugins → `qz.data.hyperliquid` accepts an explicit
+`inputModality`: `BAR` retains the existing default; `TRADE_TICK` prepares
+native trades without any BAR aggregation. Tick mode rejects a simultaneous
+`barMilliseconds` setting. Its declared source scope is the existing spot and
+perpetual fill directories, selected by `research_trade_path_prefixes` in the
+profile. Outcome fills, supplied candles, books and funding records are not
+required for this selection. Existing broad acquisition manifests remain usable
+offline: missing paths outside the explicit selection do not become missing
+tick inputs, while missing selected paths still fail.
+
+Select those source paths before acquisition, rather than downloading outcomes
+as part of the legacy all-trades stream:
+
+```sh
+python3 -I runtimes/data/hub.py download \
+  --profile runtimes/data/sources/hyperliquid.json \
+  --start-date 2026-10-13 --end-date 2026-10-14 \
+  --kind trades --path-prefix perp_fills_all/ --path-prefix spot_fills/ \
+  --output /absolute/data/hyperliquid-spot-perpetual
+
+target/debug/market-history import \
+  --manifest /absolute/data/hyperliquid-spot-perpetual/market-data.json \
+  --instruments /absolute/data/original-hyperliquid-instruments.json \
+  --trade-ticks --path-prefix perp_fills_all/ --path-prefix spot_fills/ \
+  --native-precision --start-seconds 1791850200 --end-seconds 1791850500 \
+  --resume --output /absolute/catalogs/hyperliquid-ticks-unit-1
+```
+
+`--trade-ticks` is explicit and rejects non-trade selected streams and BAR
+aggregation. Original prices, quantities, trade IDs and event/availability
+clocks pass through the existing exact converter and official native readback.
+The output contains only native trades plus definitions/currencies and separate
+provenance. `catalog/import-provenance.json` carries the pinned revision,
+selected streams/paths, event range, source coverage, identity/rejection counts
+and availability limitations with the catalog. The final `import-report.json`
+is published last. Missing selected native instrument definitions or duplicate
+trade identities make a tick import incomplete;
+conflicting identities are reported as rejected. No raw file is overwritten.
+
+Tick units admit at most 1,000,000 selected source rows, 100,000 retained
+same-availability records and 10 GiB of derived output including reports.
+`--max-trade-rows` and `--max-output-bytes` can lower these limits. Exceeding a
+limit fails without silently sampling or truncating. Use explicit smaller
+event-time units via `--start-seconds`/`--end-seconds`; the plugin exposes these
+as `eventStartSeconds`/`eventEndSeconds`. The plugin runs tick conversion under
+Linux `prlimit` with a 2 GiB address-space limit; missing `prlimit` or an
+unsupported platform fails instead of running unbounded. The direct
+`market-history --trade-ticks` command also lowers its own address-space limit
+through the pinned Rustix process API, preserving any stricter inherited limit.
+The existing BAR command does not acquire this tick-only limit.
+
+`--resume` verifies a completed immutable unit by re-reading its source,
+definitions, currencies and native records, and comparing its final receipt;
+it does not rewrite that catalog. A changed source/selection/definition or
+native result fails verification. An interrupted or incomplete native output
+must use a new directory; completed dated units can be reused while the failed
+unit is retried. The plugin's optional `nativeOutputDirectory` selects this
+verified reuse path. Original acquisition retains its existing size-based
+reuse and no-content-hashing limitation; native readback is not independent
+source or market-completeness evidence.
+
+Results expose `nativeModality` and separate preparation facts
+(`archiveLoaded`, `nativePrepared`, `scientificQualification`). The source plugin
+keeps `ready:false` and qualification `UNVERIFIED`, including after successful
+tick conversion. Research still needs an explicitly declared supported
+instrument/time/sampling/target selection and original partition policy through
+the research preparation/export and existing `qz.data.local-config` workflow.
+Conversion does not invent those declarations or PIT evidence. New high-precision
+catalogs require matching scientific/preparation binaries; see the native-format
+limitations below.
+
 ## Settings plugin and millisecond history
 
 `qz.data.hyperliquid` is built into **Settings → Data Plugins**, disabled initially.
@@ -157,6 +230,6 @@ Original contract parameters remain missing for 173 selected rows across 30 expi
 
 A missing native symbol, rejected record or absent expected partition produces an **INCOMPLETE report and unsuccessful exit**, retaining the original raw files and explicitly counted native subset. A process interrupted before its final report has not finished. Existing output directories are never overwritten. Do not relabel an incomplete import as all-market coverage.
 
-Event time is an explicitly unverified native availability proxy unless the profile maps an original reception column. Definitions are never backdated. Native decoding/readback does not certify PIT, historical fees, listing membership, source completeness or research permission. BARs use the existing [catalog preparation and registration workflow](README.md#prepare-isolated-research-partitions) when original provenance supports it. The scientific API still consumes BARs; archived trades/books/funding do not enable an L2 strategy engine or perpetual funding-settlement backtest. Existing unsupported account/instrument capabilities remain unsupported.
+Event time is an explicitly unverified native availability proxy unless the profile maps an original reception column. Definitions are never backdated. Native decoding/readback does not certify PIT, historical fees, listing membership, source completeness or research permission. BARs use the existing [catalog preparation and registration workflow](README.md#prepare-isolated-research-partitions) when original provenance supports it. Native TradeTick research requires the separate explicit tick input and supported feature/target contract; archived books/funding do not enable an L2 strategy engine or perpetual funding-settlement backtest. Existing unsupported account/instrument capabilities remain unsupported.
 
 The [task record](../../.opensdlc/tasks/hyperliquid-public-history/task.md#verification) distinguishes actual live observations and local checks from unperformed qualification, full-corpus acquisition, review and deployment.

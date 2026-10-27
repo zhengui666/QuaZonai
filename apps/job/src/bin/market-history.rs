@@ -61,6 +61,19 @@ enum Command {
         /// Preserve archive values at native encoding precision, not current contract precision.
         #[arg(long)]
         native_precision: bool,
+        /// Explicit native trade-only preparation; never aggregates or admits other record kinds.
+        #[arg(long, conflicts_with_all = ["bar_seconds", "bar_milliseconds"])]
+        trade_ticks: bool,
+        /// Select declared source directories without requiring unrelated streams or paths.
+        #[arg(long = "path-prefix")]
+        path_prefixes: Vec<String>,
+        /// Verify and reuse an already completed immutable unit; interrupted outputs need a new directory.
+        #[arg(long)]
+        resume: bool,
+        #[arg(long, default_value_t = 1_000_000)]
+        max_trade_rows: u64,
+        #[arg(long, default_value_t = 10_u64 * 1024 * 1024 * 1024)]
+        max_output_bytes: u64,
         #[arg(long)]
         output: PathBuf,
     },
@@ -73,6 +86,8 @@ struct Stream {
     format: String,
     time_unit: String,
     columns: BTreeMap<String, String>,
+    #[serde(default)]
+    paths: Vec<String>,
     #[serde(default)]
     equals: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
@@ -110,6 +125,8 @@ struct Manifest {
     profile: Profile,
     files: Vec<SourceFile>,
     missing: Vec<serde_json::Value>,
+    #[serde(default)]
+    selected_path_prefixes: Vec<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -125,6 +142,15 @@ struct Report {
     schema_version: u32,
     status: String,
     source_reference: String,
+    revision: String,
+    source_revision: String,
+    selected_streams: Vec<String>,
+    selected_path_prefixes: Vec<String>,
+    modality: String,
+    availability: String,
+    source_manifest: serde_json::Value,
+    instrument_source: serde_json::Value,
+    native_files: Vec<NativeFile>,
     source_observed_at: Option<DateTime<Utc>>,
     license: String,
     attribution: String,
@@ -148,6 +174,44 @@ struct Report {
     missing_partitions: Vec<serde_json::Value>,
     historical_availability: String,
     registered_in_quazonai: bool,
+}
+
+#[derive(Serialize)]
+struct NativeFile {
+    path: String,
+    size: u64,
+}
+
+fn native_files(root: &Path) -> Result<Vec<NativeFile>> {
+    fn visit(root: &Path, directory: &Path, files: &mut Vec<NativeFile>) -> Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            ensure!(!kind.is_symlink(), "NATIVE_OUTPUT_SYMLINK");
+            if kind.is_dir() {
+                visit(root, &entry.path(), files)?;
+            } else {
+                ensure!(kind.is_file(), "NATIVE_OUTPUT_FILE_REQUIRED");
+                let path = entry
+                    .path()
+                    .strip_prefix(root)?
+                    .to_str()
+                    .context("NATIVE_OUTPUT_PATH_ENCODING")?
+                    .replace('\\', "/");
+                if path != "import-provenance.json" {
+                    files.push(NativeFile {
+                        path,
+                        size: entry.metadata()?.len(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    visit(root, root, &mut files)?;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 fn json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -296,30 +360,128 @@ fn date_ns(date: NaiveDate) -> Result<u64> {
     )?)
 }
 
-fn import(
-    manifest_path: &Path,
-    instruments_path: &Path,
+struct ImportOptions<'a> {
     start: Option<u64>,
     end: Option<u64>,
     bar_interval: (Option<u32>, Option<u32>),
     native_precision: bool,
+    trade_ticks: bool,
+    path_prefixes: &'a [String],
+    resume: bool,
+    max_trade_rows: u64,
+    max_output_bytes: u64,
+}
+
+fn selected_path(path: &str, prefixes: &[String]) -> bool {
+    prefixes.is_empty() || prefixes.iter().any(|prefix| path.starts_with(prefix))
+}
+
+fn selection_prefixes(manifest: &Manifest, requested: &[String]) -> Result<Vec<String>> {
+    let mut prefixes = if requested.is_empty() {
+        manifest.selected_path_prefixes.clone()
+    } else {
+        requested.to_vec()
+    };
+    prefixes.sort();
+    prefixes.dedup();
+    for prefix in &prefixes {
+        ensure!(
+            prefix.ends_with('/')
+                && Path::new(prefix)
+                    .components()
+                    .all(|p| matches!(p, Component::Normal(_)))
+                && !prefix.contains('\\')
+                && manifest
+                    .profile
+                    .streams
+                    .iter()
+                    .any(|s| s.paths.iter().any(|p| p.starts_with(prefix))),
+            "SOURCE_PATH_PREFIX_INVALID"
+        );
+        ensure!(
+            manifest.selected_path_prefixes.is_empty()
+                || manifest
+                    .selected_path_prefixes
+                    .iter()
+                    .any(|p| prefix.starts_with(p)),
+            "SOURCE_PATH_PREFIX_OUTSIDE_ACQUISITION"
+        );
+    }
+    Ok(prefixes)
+}
+
+fn import(
+    manifest_path: &Path,
+    instruments_path: &Path,
     output: &Path,
+    options: ImportOptions<'_>,
 ) -> Result<Report> {
-    let (bar_seconds, bar_milliseconds) = bar_interval;
+    let (bar_seconds, bar_milliseconds) = options.bar_interval;
     let manifest: Manifest = json(manifest_path)?;
     ensure!(
         manifest.schema_version == 1 && !manifest.license.is_empty(),
         "SOURCE_MANIFEST_INVALID"
     );
+    let prefixes = selection_prefixes(&manifest, options.path_prefixes)?;
+    ensure!(
+        !options.trade_ticks
+            || (manifest.revision.len() == 40
+                && manifest.revision.bytes().all(|c| c.is_ascii_hexdigit())),
+        "SOURCE_REVISION_REQUIRED"
+    );
+    ensure!(
+        !options.resume || options.trade_ticks,
+        "RESUME_REQUIRES_EXPLICIT_TRADE_TICKS"
+    );
+    ensure!(
+        !options.trade_ticks
+            || (bar_seconds.is_none()
+                && bar_milliseconds.is_none()
+                && options.max_trade_rows > 0
+                && options.max_trade_rows <= 1_000_000
+                && options.max_output_bytes > 0
+                && options.max_output_bytes <= 10 * 1024 * 1024 * 1024),
+        "TRADE_INPUT_RESOURCE_OR_MODALITY_INVALID"
+    );
+    let selected_files = manifest
+        .files
+        .iter()
+        .filter(|f| f.stream.is_some() && selected_path(&f.path, &prefixes))
+        .collect::<Vec<_>>();
+    ensure!(!selected_files.is_empty(), "SOURCE_SELECTION_EMPTY");
+    if options.trade_ticks {
+        for file in &selected_files {
+            ensure!(
+                manifest
+                    .stream(file.stream.as_deref().context("SOURCE_STREAM_MISSING")?)?
+                    .kind
+                    == "trades",
+                "TRADE_TICKS_REQUIRE_TRADE_ONLY_SELECTION"
+            );
+        }
+    }
+    let previous_report: Option<serde_json::Value> = if options.resume && output.try_exists()? {
+        let previous: serde_json::Value = json(&output.join("import-report.json"))
+            .context("RESUME_REQUIRES_COMPLETED_UNIT_USE_NEW_OUTPUT_FOR_INTERRUPTED_IMPORT")?;
+        ensure!(
+            previous["status"] == "IMPORTED",
+            "RESUME_REQUIRES_COMPLETE_IMPORT"
+        );
+        Some(previous)
+    } else {
+        None
+    };
     let root = manifest_path
         .parent()
         .context("SOURCE_ROOT")?
         .canonicalize()?;
-    let start = start
+    let start = options
+        .start
         .map(seconds_ns)
         .transpose()?
         .unwrap_or(date_ns(manifest.start_date)?);
-    let end = end
+    let end = options
+        .end
         .map(seconds_ns)
         .transpose()?
         .unwrap_or(date_ns(manifest.end_date)?);
@@ -346,6 +508,7 @@ fn import(
             !manifest
                 .files
                 .iter()
+                .filter(|file| selected_path(&file.path, &prefixes))
                 .any(|file| file.stream.as_ref().is_some_and(|name| manifest
                     .profile
                     .streams
@@ -381,28 +544,39 @@ fn import(
     for versions in by_symbol.values_mut() {
         versions.sort_by_key(|v| v.ts_init());
     }
-    let mut sink = writer::Writer::new(output, &instruments)?;
+    let mut sink = writer::Writer::configured(
+        output,
+        &instruments,
+        previous_report.is_some(),
+        options.trade_ticks.then_some(options.max_output_bytes),
+    )?;
     let mut aggregation = records::Aggregation::with_milliseconds(bar_seconds, bar_milliseconds)?;
     let mut report = Report {
         schema_version: 1,
         source_reference: format!("https://huggingface.co/datasets/{}/tree/{}", manifest.repository, manifest.revision),
+        revision: manifest.revision.clone(), source_revision: manifest.revision.clone(),
+        selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
+        selected_path_prefixes: prefixes.clone(),
+        modality: if options.trade_ticks { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
+        availability: if selected_files.iter().all(|f| manifest.stream(f.stream.as_deref().unwrap()).is_ok_and(|s| !s.columns.contains_key("available_at"))) { "EVENT_TIME_PROXY_UNVERIFIED" } else { "SOURCE_AVAILABILITY_UNVERIFIED" }.into(),
+        source_manifest: json(manifest_path)?, instrument_source: json(instruments_path)?,
         source_observed_at: Some(manifest.retrieved_at),
         license: manifest.license.clone(),
         attribution: manifest.attribution.clone(),
         event_start_ns: start,
         event_end_ns: end,
-        record_precision: if native_precision {
+        record_precision: if options.native_precision {
             format!("NATIVE_ENCODING_{}; not a historical contract tick/lot claim", nautilus_model::types::fixed::FIXED_PRECISION)
         } else {
             "INSTRUMENT_DEFINITION; derived BARs use exact maximum observed precision, including equal-availability groups".into()
         },
-        missing_partitions: manifest.missing.clone(),
+        missing_partitions: manifest.missing.iter().filter(|m| m.get("pattern").and_then(serde_json::Value::as_str).is_none_or(|p| selected_path(p, &prefixes))).cloned().collect(),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
         ..Report::default()
     };
     // shortcut: deduplication retains IDs for this import; split long histories into dated catalogs when ID memory grows.
     let mut trades = BTreeMap::new();
-    for file in &manifest.files {
+    for file in selected_files {
         let Some(name) = &file.stream else { continue };
         let stream = manifest.stream(name)?;
         let path = source_file(&root, file)?;
@@ -423,6 +597,10 @@ fn import(
                 return Ok(());
             }
             report.selected_rows += 1;
+            ensure!(
+                !options.trade_ticks || report.selected_rows <= options.max_trade_rows,
+                "TRADE_INPUT_ROW_LIMIT; use smaller immutable import units"
+            );
             coverage.selected_rows += 1;
             let symbol = if stream.symbol_from_file_stem {
                 file_symbol(&path)?
@@ -456,8 +634,8 @@ fn import(
             } else {
                 *report.missing_definitions.entry(symbol).or_default() += 1;
             }
-            let converted =
-                records::Encoding::new(id, instrument, native_precision).and_then(|encoding| {
+            let converted = records::Encoding::new(id, instrument, options.native_precision)
+                .and_then(|encoding| {
                     records::convert(stream, &row, &encoding, event, available, &mut report)
                 });
             let converted = match converted {
@@ -474,6 +652,13 @@ fn import(
                 if let Data::Trade(trade) = &data {
                     let key = (trade.instrument_id, trade.trade_id);
                     if let Some(previous) = trades.get(&key) {
+                        if previous != trade && options.trade_ticks {
+                            *report
+                                .rejected_rows
+                                .entry("CONFLICTING_SOURCE_TRADE_ID".into())
+                                .or_default() += 1;
+                            continue;
+                        }
                         ensure!(previous == trade, "CONFLICTING_SOURCE_TRADE_ID");
                         report.duplicate_trades += 1;
                         continue;
@@ -494,7 +679,8 @@ fn import(
         sink.push(Data::Bar(bar))?;
     }
     sink.finish()?;
-    report.native_records = sink.counts;
+    report.native_files = native_files(&output.join("catalog"))?;
+    report.native_records = std::mem::take(&mut sink.counts);
     report.readback_records = report
         .native_records
         .values()
@@ -503,6 +689,8 @@ fn import(
     report.status = if report.missing_symbols.is_empty()
         && report.rejected_rows.is_empty()
         && report.missing_partitions.is_empty()
+        && (!options.trade_ticks
+            || (report.duplicate_trades == 0 && report.missing_definitions.is_empty()))
         && report.readback_records > 0
     {
         "IMPORTED"
@@ -510,16 +698,54 @@ fn import(
         "INCOMPLETE"
     }
     .into();
-    publish(&output.join("import-report.json"), &report)?;
+    if let Some(previous) = previous_report {
+        ensure!(
+            previous == serde_json::to_value(&report)?,
+            "RESUME_SOURCE_SELECTION_OR_RESULT_CHANGED"
+        );
+        sink.verify_trade_count(report.readback_records)?;
+        let embedded: serde_json::Value = json(&output.join("catalog/import-provenance.json"))?;
+        ensure!(embedded == previous, "RESUME_PROVENANCE_CHANGED");
+    } else {
+        if options.trade_ticks {
+            sink.check_output_limit_for(&report)?;
+        }
+        publish(&output.join("catalog/import-provenance.json"), &report)?;
+        publish(&output.join("import-report.json"), &report)?;
+    }
     Ok(report)
 }
 
-#[tokio::main]
-async fn main() {
+#[cfg(target_os = "linux")]
+fn trade_memory_limit() -> Result<()> {
+    use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
+    let cap = 2 * 1024 * 1024 * 1024_u64;
+    let original = getrlimit(Resource::As);
+    let maximum = original.maximum.unwrap_or(cap).min(cap);
+    let current = original.current.unwrap_or(cap).min(maximum);
+    setrlimit(
+        Resource::As,
+        Rlimit {
+            current: Some(current),
+            maximum: Some(maximum),
+        },
+    )
+    .context("TRADE_INPUT_MEMORY_LIMIT_UNAVAILABLE")?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn trade_memory_limit() -> Result<()> {
+    anyhow::bail!("TRADE_INPUT_MEMORY_LIMIT_UNSUPPORTED_PLATFORM")
+}
+
+fn main() {
     let result = match Arguments::parse().command {
-        Command::HyperliquidInstruments { output, manifest } => {
-            hyperliquid_instruments(&output, manifest.as_deref()).await
-        }
+        Command::HyperliquidInstruments { output, manifest } => tokio::runtime::Runtime::new()
+            .context("METADATA_RUNTIME_UNAVAILABLE")
+            .and_then(|runtime| {
+                runtime.block_on(hyperliquid_instruments(&output, manifest.as_deref()))
+            }),
         Command::Import {
             manifest,
             instruments,
@@ -528,16 +754,35 @@ async fn main() {
             bar_seconds,
             bar_milliseconds,
             native_precision,
+            trade_ticks,
+            path_prefixes,
+            resume,
+            max_trade_rows,
+            max_output_bytes,
             output,
-        } => import(
-            &manifest,
-            &instruments,
-            start_seconds,
-            end_seconds,
-            (bar_seconds, bar_milliseconds),
-            native_precision,
-            &output,
-        )
+        } => (if trade_ticks {
+            trade_memory_limit()
+        } else {
+            Ok(())
+        })
+        .and_then(|_| {
+            import(
+                &manifest,
+                &instruments,
+                &output,
+                ImportOptions {
+                    start: start_seconds,
+                    end: end_seconds,
+                    bar_interval: (bar_seconds, bar_milliseconds),
+                    native_precision,
+                    trade_ticks,
+                    path_prefixes: &path_prefixes,
+                    resume,
+                    max_trade_rows,
+                    max_output_bytes,
+                },
+            )
+        })
         .and_then(|report| {
             println!("{}", serde_json::to_string_pretty(&report)?);
             ensure!(
@@ -556,6 +801,203 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tick_options(prefixes: &[String], resume: bool, rows: u64, bytes: u64) -> ImportOptions<'_> {
+        ImportOptions {
+            start: None,
+            end: None,
+            bar_interval: (None, None),
+            native_precision: true,
+            trade_ticks: true,
+            path_prefixes: prefixes,
+            resume,
+            max_trade_rows: rows,
+            max_output_bytes: bytes,
+        }
+    }
+
+    fn tick_source(root: &Path, rows: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let source = root.join("source");
+        fs::create_dir_all(source.join("perps")).unwrap();
+        let csv = source.join("perps/fills.csv");
+        fs::write(
+            &csv,
+            format!("coin,timestamp,price,size,trade_id,side\n{rows}"),
+        )
+        .unwrap();
+        let manifest = source.join("market-data.json");
+        fs::write(&manifest, serde_json::to_vec(&serde_json::json!({
+            "schema_version":1,"repository":"fixture/declared-source","revision":"0123456789012345678901234567890123456789",
+            "license":"mit","attribution":"controlled exact-native test","retrieved_at":"2026-01-03T00:00:00Z",
+            "start_date":"2026-01-01","end_date":"2026-01-02",
+            "profile":{"streams":[{"name":"trades","kind":"trades","format":"csv","time_unit":"ms",
+                "paths":["perps/{date}/fills.csv","spot/{date}/fills.csv","outcomes/{date}/fills.csv"],
+                "columns":{"symbol":"coin","time":"timestamp","price":"price","size":"size","trade_id":"trade_id","side":"side"},
+                "sides":{"B":"BUYER","S":"SELLER"}}]},
+            "files":[{"path":"perps/fills.csv","size":fs::metadata(&csv).unwrap().len(),"stream":"trades"},
+                     {"path":"outcomes/not-downloaded.csv","size":999,"stream":"trades"}],
+            "missing":[{"stream":"trades","pattern":"outcomes/2026-01-01/fills.csv"}]
+        })).unwrap()).unwrap();
+        let instruments = root.join("instruments.json");
+        fs::write(
+            &instruments,
+            serde_json::to_vec(&vec![InstrumentAny::CurrencyPair(
+                nautilus_model::instruments::stubs::currency_pair_btcusdt(),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        (manifest, instruments, csv)
+    }
+
+    #[test]
+    fn tick_import_preserves_exact_source_and_reuses_only_verified_completed_units() {
+        let temp = tempfile::tempdir().unwrap();
+        let rows = "BTCUSDT,1767225600001,10.1234567890123456,0.1234567890,T-1,B\nBTCUSDT,1767225600001,11.1234567890123456,0.1234567890,T-2,S\n";
+        let (manifest, instruments, csv) = tick_source(temp.path(), rows);
+        let original = fs::read(&csv).unwrap();
+        let prefixes = vec!["perps/".into(), "spot/".into()];
+        let output = temp.path().join("native");
+        let report = import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, false, 10, 10_000_000),
+        )
+        .unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.readback_records, 2);
+        assert_eq!(report.native_records.len(), 1);
+        assert!(!report.native_records.contains_key("bars"));
+        assert!(report.missing_partitions.is_empty());
+        let receipt = fs::read(output.join("import-report.json")).unwrap();
+        assert_eq!(
+            fs::read(output.join("catalog/import-provenance.json")).unwrap(),
+            receipt
+        );
+        import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, true, 10, 10_000_000),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(output.join("import-report.json")).unwrap(),
+            receipt
+        );
+        assert_eq!(fs::read(&csv).unwrap(), original);
+        fs::write(
+            &csv,
+            String::from_utf8(original.clone())
+                .unwrap()
+                .replace("10.1234567890123456", "20.1234567890123456"),
+        )
+        .unwrap();
+        assert!(import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, true, 10, 10_000_000)
+        )
+        .is_err());
+        fs::write(&csv, &original).unwrap();
+        let native_file = report
+            .native_files
+            .iter()
+            .find(|file| {
+                file.path.split('/').any(|part| part == "trades") && file.path.ends_with(".parquet")
+            })
+            .unwrap();
+        fs::remove_file(output.join("catalog").join(&native_file.path)).unwrap();
+        assert!(
+            import(
+                &manifest,
+                &instruments,
+                &output,
+                tick_options(&prefixes, true, 10, 10_000_000)
+            )
+            .is_err(),
+            "deleted native data cannot be accepted as a completed unit"
+        );
+        assert_eq!(
+            fs::read(output.join("import-report.json")).unwrap(),
+            receipt
+        );
+    }
+
+    #[test]
+    fn tick_import_rejects_duplicate_identity_and_resource_overflow_without_publishing_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let row = "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\n";
+        let (manifest, instruments, csv) = tick_source(temp.path(), &row.repeat(2));
+        let original = fs::read(&csv).unwrap();
+        let prefixes = vec!["perps/".into(), "spot/".into()];
+        let output = temp.path().join("duplicates");
+        let report = import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, false, 10, 10_000_000),
+        )
+        .unwrap();
+        assert_eq!(report.status, "INCOMPLETE");
+        assert_eq!(report.duplicate_trades, 1);
+        assert!(import(
+            &manifest,
+            &instruments,
+            &output,
+            tick_options(&prefixes, true, 10, 10_000_000)
+        )
+        .is_err());
+        for (name, max_rows, max_bytes) in [("row-limit", 1, 10_000_000), ("byte-limit", 10, 1)] {
+            let output = temp.path().join(name);
+            assert!(import(
+                &manifest,
+                &instruments,
+                &output,
+                tick_options(&prefixes, false, max_rows, max_bytes)
+            )
+            .is_err());
+            assert!(!output.join("import-report.json").exists());
+            assert!(
+                import(
+                    &manifest,
+                    &instruments,
+                    &output,
+                    tick_options(&prefixes, true, 10, 10_000_000)
+                )
+                .is_err(),
+                "interrupted native output must not be reused"
+            );
+        }
+        assert_eq!(fs::read(csv).unwrap(), original);
+    }
+
+    #[test]
+    fn missing_native_definitions_reject_tick_preparation_without_changing_raw_import() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, instruments, _) = tick_source(
+            temp.path(),
+            "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\n",
+        );
+        fs::write(&instruments, serde_json::to_vec(&serde_json::json!({"currencies":[],"instruments":[],"symbol_ids":{"BTCUSDT":"BTCUSDT.BINANCE"}})).unwrap()).unwrap();
+        let prefixes = vec!["perps/".into(), "spot/".into()];
+        let report = import(
+            &manifest,
+            &instruments,
+            &temp.path().join("tick"),
+            tick_options(&prefixes, false, 10, 10_000_000),
+        )
+        .unwrap();
+        assert_eq!(report.status, "INCOMPLETE");
+        assert_eq!(report.missing_definitions["BTCUSDT"], 1);
+        let mut raw = tick_options(&prefixes, false, 10, 10_000_000);
+        raw.trade_ticks = false;
+        let legacy = import(&manifest, &instruments, &temp.path().join("raw"), raw).unwrap();
+        assert_eq!(legacy.status, "IMPORTED");
+        assert_eq!(legacy.missing_definitions["BTCUSDT"], 1);
+    }
 
     #[test]
     fn archive_bar_cli_accepts_milliseconds_and_rejects_mixed_units() {
@@ -581,6 +1023,7 @@ mod tests {
             }
         ));
         assert!(Arguments::try_parse_from(args.into_iter().chain(["--bar-seconds", "1"])).is_err());
+        assert!(Arguments::try_parse_from(args.into_iter().chain(["--trade-ticks"])).is_err());
     }
 
     #[test]

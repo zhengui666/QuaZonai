@@ -32,13 +32,19 @@ def read_json(url):
         return json.load(response)
 
 
-def select_files(profile, siblings, start, end, kinds):
+def select_files(profile, siblings, start, end, kinds, path_prefixes=None):
     """Every declared daily path must be accounted for, including missing partitions."""
     if start >= end:
         raise ValueError("start-date must precede exclusive end-date")
     streams = [s for s in profile["streams"] if not kinds or s["kind"] in kinds]
     if not streams or (kinds and set(kinds) - {s["kind"] for s in streams}):
         raise ValueError("unknown or empty stream selection")
+    prefixes = sorted(set(path_prefixes or []))
+    for prefix in prefixes:
+        relative_path(prefix)
+        if not prefix.endswith("/") or not any(
+                template.startswith(prefix) for stream in streams for template in stream["paths"]):
+            raise ValueError("path-prefix must select a declared stream directory")
     paths = {relative_path(f["rfilename"]): f for f in siblings}
     selected = {}
     missing = []
@@ -46,6 +52,8 @@ def select_files(profile, siblings, start, end, kinds):
     while day < end:
         for stream in streams:
             for template in stream["paths"]:
+                if prefixes and not any(template.startswith(prefix) for prefix in prefixes):
+                    continue
                 pattern = relative_path(template.format(date=day.strftime(stream["date_format"])))
                 matches = ([p for p in paths if fnmatch.fnmatchcase(p, pattern)]
                            if any(c in pattern for c in "*?[") else
@@ -65,7 +73,7 @@ def select_files(profile, siblings, start, end, kinds):
     return sorted(selected.values(), key=lambda f: f["path"]), missing
 
 
-def plan(profile, start, end, kinds, revision=None):
+def plan(profile, start, end, kinds, revision=None, path_prefixes=None):
     repo = profile["repository"]
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo, flags=re.ASCII):
         raise ValueError("repository must be a public Hugging Face dataset ID")
@@ -78,13 +86,16 @@ def plan(profile, start, end, kinds, revision=None):
     terms = (metadata.get("cardData") or {}).get("license") or profile.get("license")
     if not terms:
         raise ValueError("source license is missing")
-    files, missing = select_files(profile, metadata["siblings"], start, end, kinds)
+    files, missing = select_files(profile, metadata["siblings"], start, end, kinds, path_prefixes)
     for item in files:
         item["url"] = f"{HUB}/datasets/{repo}/resolve/{commit}/{urllib.parse.quote(item['path'])}"
-    return {"schema_version": 1, "repository": repo, "revision": commit,
+    result = {"schema_version": 1, "repository": repo, "revision": commit,
             "license": terms, "attribution": profile.get("attribution", ""),
             "profile": profile, "start_date": start.isoformat(), "end_date": end.isoformat(),
             "total_bytes": sum(f["size"] for f in files), "missing": missing, "files": files}
+    if path_prefixes:
+        result["selected_path_prefixes"] = sorted(set(path_prefixes))
+    return result
 
 
 def local_file(root, path):
@@ -114,6 +125,16 @@ def acquire_file(root, item):
     print(f"downloaded {item['path']} ({count} bytes)", file=sys.stderr)
 
 
+def selection_identity(value):
+    result = {k: v for k, v in value.items() if k != "retrieved_at"}
+    # Source-profile hints do not alter an already explicit file/stream selection.
+    # Keep every profile field used by planning/decoding; the actual files, revision,
+    # terms, dates and optional path selection remain exact top-level bindings.
+    result["profile"] = {k: v for k, v in result["profile"].items()
+                         if k in ("repository", "revision", "license", "attribution", "streams")}
+    return result
+
+
 def acquire(selection, output):
     root = output.absolute()
     root.mkdir(parents=True, exist_ok=True)
@@ -121,7 +142,7 @@ def acquire(selection, output):
     if manifest.exists():
         with manifest.open() as stream:
             previous = json.load(stream)
-        if {k: v for k, v in previous.items() if k != "retrieved_at"} != selection:
+        if selection_identity(previous) != selection_identity(selection):
             raise ValueError("existing download belongs to a different selection")
     else:
         previous = None
@@ -144,6 +165,7 @@ def main():
     parser.add_argument("--end-date", required=True, type=datetime.date.fromisoformat,
                         help="exclusive UTC date")
     parser.add_argument("--kind", action="append", help="profile record kind; omit for all streams")
+    parser.add_argument("--path-prefix", action="append", help="explicit declared stream directory, ending in /; repeat to select multiple directories")
     parser.add_argument("--revision", help="override the profile's repository revision")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -152,7 +174,7 @@ def main():
     try:
         with args.profile.open() as stream:
             profile = json.load(stream)
-        selection = plan(profile, args.start_date, args.end_date, args.kind, args.revision)
+        selection = plan(profile, args.start_date, args.end_date, args.kind, args.revision, args.path_prefix)
         result = acquire(selection, args.output) if args.command == "download" else selection
         print(json.dumps(result, indent=2))
     except urllib.error.HTTPError as error:

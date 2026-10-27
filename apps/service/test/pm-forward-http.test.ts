@@ -25,9 +25,11 @@ const child = process.env.QZ_PM_FORWARD_HTTP_CHILD === '1';
 const paper = process.env.QZ_PM_FORWARD_HTTP_MODE === 'PAPER';
 // The measured full-environment RO run took 321.50 seconds and began current
 // computation around second 212, close to its former 220-second phase limit.
-// Use the existing PAPER technical bounds for both modes. This is a finite
-// test watchdog, not a source freshness extension or a throughput guarantee.
-const options = { timeout: 420_000, skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false };
+// Keep the finite base watchdog; PAPER also allows its one bounded wait for
+// an original receipt. This does not extend source freshness or guarantee throughput.
+const maximumSourceWaitMs = 61_000;
+const options = (includeSourceWait = false) => ({ timeout: 420_000 + (includeSourceWait ? maximumSourceWaitMs : 0),
+  skip: !available ? 'Requires the full cash-heavy hourly-label native source and matching job; no scientific fixture is synthesized.' : false });
 const call = (name: string, args: JsonObject) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
 function result(transcript: { messages: readonly unknown[] }, name: string, offset = -1): JsonObject {
   const entry = (transcript.messages.filter(value => (value as { role?: string; toolName?: string }).role === 'toolResult'
@@ -56,7 +58,7 @@ function script(state: Awaited<ReturnType<typeof setup>>, source: JsonObject) {
 }
 async function exists(path: string) { try { await access(path); return true; } catch { return false; } }
 
-if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, options, async () => {
+if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${mode} HTTP recovery runs in an isolated archival software clock process`, options(mode === 'PAPER'), async () => {
   console.log(JSON.stringify({ scope: 'ORIGINAL_FORWARD_HTTP_RUNTIME', mode, node: process.version, execPath: process.execPath }));
   await access(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science', 'cash-heavy-hour', 'source.json'));
   const output = await new Promise<{ code: number | null; log: string }>((resolve, reject) => {
@@ -69,9 +71,9 @@ if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${
     });
     let log = ''; processChild.stdout.on('data', value => { log += value; }); processChild.stderr.on('data', value => { log += value; });
     // PAPER includes at most one additional original one-minute source wait.
-    // Both modes share a finite process watchdog; financial deadlines remain
-    // the original source facts and are independently asserted below.
-    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, 410_000);
+    // Its finite process watchdog includes the same bounded source interval;
+    // financial deadlines remain the original facts independently asserted below.
+    const timer = setTimeout(() => { processChild.kill('SIGTERM'); reject(new Error(`forward_http_child_timeout\n${log.slice(-12000)}`)); }, 410_000 + (mode === 'PAPER' ? maximumSourceWaitMs : 0));
     processChild.on('error', error => { clearTimeout(timer); reject(error); });
     processChild.on('close', code => { clearTimeout(timer); resolve({ code, log }); });
   });
@@ -80,7 +82,7 @@ if (!child) { for (const mode of ['RESEARCH_ONLY', 'PAPER']) test(`PM forward ${
   if (mode === 'PAPER') assert.match(output.log, /ORIGINAL_PAPER_TARGET_RECEIPT_RECOVERY_PASS/);
   for (const line of output.log.split('\n')) if (line.includes('THIS_CONTROLLED_FRESH_SOURCE_WINDOW_NOT_A_PRODUCTION_THROUGHPUT_GUARANTEE')) console.log(line);
 }); }
-else test('actual learned ACCOUNT method survives independent evaluation and original current-task recovery without another trial or sealed read', options, async t => {
+else test('actual learned ACCOUNT method survives independent evaluation and original current-task recovery without another trial or sealed read', options(paper), async t => {
   const f = await observedSpotFixture(join(process.env.QZ_PM_OBSERVED_FIXTURE_DIR!, 'science', 'cash-heavy-hour'));
   const current = object(f.source.current_initial_state); const realNow = Date.now.bind(Date);
   const offset = realNow() - Number(BigInt(String(current.open_orders_available_ns)) / 1_000_000n) - 1000;
@@ -156,7 +158,9 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
       const app = await state.service.research.harness.snapshot(Application, context);
       const observed = app?.observations[f.connection.id] ? observation(app.observations[f.connection.id]) : null;
       const snapshot = observed?.snapshot ? object(observed.snapshot) : null;
-      return JSON.stringify({ stage, runtime: { node: process.version, atNs: (BigInt(Date.now()) * 1_000_000n).toString(), realNowMs: realNow() },
+      return JSON.stringify({ stage, fixtureFlow: { currentPublished, sourceEpoch, sourceResumed, sourceWaitMs, expectedFreshPriceNs },
+        maintenance: await state.service.maintenance.status(),
+        runtime: { node: process.version, atNs: (BigInt(Date.now()) * 1_000_000n).toString(), realNowMs: realNow() },
         currentDecisionId: value.currentDecisionId, latestCycleId: value.latestCycleId, basisRevision: value.basisRevision,
         policy: { id: value.policy.id, operatingRuleId: object(object(value.policy.validDomain).operatingRule ?? {}).id ?? null,
           allocationMethodId: object(object(value.policy.validDomain).jointAllocationMethod ?? {}).id ?? null },
@@ -193,10 +197,11 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     };
     let currentPublished = false; let sourceEpoch: string | null = null; let sourceResumed = false;
     let expectedFreshPriceNs: string | null = null;
+    let sourceWaitMs = 0;
     // Share the existing PAPER receipt watchdog: the measured RO solve began
     // at approximately 212 seconds. PAPER may also wait one original source
     // interval; neither mode changes the native 65-second price-age policy.
-    const deadline = realNow() + 290_000;
+    let deadline = realNow() + 290_000;
     while (!(await exists(reachedPath)) && realNow() < deadline) {
       const stored = await record(); const view = await read();
       if (!currentPublished && view.cycles.some(cycle => cycle.state === 'COMPUTING')) {
@@ -243,7 +248,13 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
           assert.ok(receiptNs - waitingAtNs <= 61_000_000_000n, 'Wait only for the original next one-minute source receipt.');
           const originalBar = object((next.response as JsonObject[]).at(-1));
           expectedFreshPriceNs = ((BigInt(String(originalBar.T)) + 1n) * 1_000_000n).toString();
+          const sourceWaitStartedAt = realNow();
           while (BigInt(Date.now()) * 1_000_000n < receiptNs) await new Promise(resolve => setTimeout(resolve, 50));
+          // Waiting for the original market receipt is separate from polling
+          // native progress. Keep that evidenced wait bounded to one interval;
+          // the parent process watchdog and all financial deadlines still apply.
+          sourceWaitMs = Math.min(maximumSourceWaitMs, realNow() - sourceWaitStartedAt);
+          deadline += sourceWaitMs;
           // No new account frame/proof is published and no evidence deadline
           // is renewed. Resume the original parked monitor at the actual clock.
           const resumedAtNs = (BigInt(Date.now()) * 1_000_000n).toString();

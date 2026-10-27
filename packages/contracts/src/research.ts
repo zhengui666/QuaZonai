@@ -1,4 +1,4 @@
-import type { CapitalAssumptions, CriterionView, JsonObject, Metric, ResearchSpecification } from './index.ts';
+import type { CapitalAssumptions, CriterionView, DatasetView, JsonObject, Metric, ResearchSpecification } from './index.ts';
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('research_specification_required');
@@ -64,7 +64,17 @@ export function researchCriterion(spec: ResearchSpecification | undefined, statu
   return { status: state, metric, value, target, partition, reason };
 }
 
-export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject) {
+export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject): NonNullable<DatasetView['researchSettings']> {
+  const tagged = data.nativeInput as JsonObject | undefined;
+  if (tagged?.modality === 'TRADE_TICK') {
+    const request = tagged.request as JsonObject;
+    const selection = request.input as JsonObject;
+    return { instruments: selection.instrument_ids as string[], inputFamily: 'tick-cohort-v1: cohort_vwap, previous_cohort_vwap, fast_ema, slow_ema, quantity, trade_count, elapsed_event_ns',
+      modality: 'TRADE_TICK' as const, sampling: 'EVENT_TIME_COHORT_V1', horizonUnit: 'TRADE_COHORTS' as const,
+      horizon: (request.target as JsonObject).horizon_cohorts as number, sourceRevision: selection.source_revision as string, availability: selection.availability as string,
+      partitions: { trainEndNs: request.train_end_ns!, validationEndNs: request.validation_end_ns!, endNs: selection.event_end_ns! }, strategy: null };
+  }
+  if (tagged?.modality === 'BAR') { const { nativeInput: _tagged, ...legacy } = data; data = { ...legacy, request: tagged.request! }; }
   const ensemble = data.catalog_ensemble_request !== undefined;
   const catalog = ensemble || data.catalog_scan_request !== undefined;
   const request = (ensemble ? data.catalog_ensemble_request : catalog ? data.catalog_scan_request : data.request) as JsonObject | undefined;
@@ -72,7 +82,7 @@ export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject)
   const parameters = forecast?.parameters as JsonObject | undefined;
   const selection = (catalog ? request : forecast?.selection) as JsonObject | undefined;
   if (catalog && !ensemble) strategy = undefined;
-  return { instruments: Array.isArray(strategy?.instrumentIds) ? strategy.instrumentIds as string[] : typeof strategy?.instrumentId === 'string' ? [strategy.instrumentId] : [],
+  return { modality: 'BAR' as const, horizonUnit: 'BAR_OBSERVATIONS' as const, instruments: Array.isArray(strategy?.instrumentIds) ? strategy.instrumentIds as string[] : typeof strategy?.instrumentId === 'string' ? [strategy.instrumentId] : [],
     inputFamily: ensemble ? 'feature-abi-v2: completed_bar_close, previous_observed_bar_return, source_taker_quantity_imbalance, source_taker_cash_imbalance, source_trade_count, source_fee_per_cash, source_within_minute_price_response' : 'price-volume', horizon: typeof parameters?.label_horizon_observations === 'number' ? parameters.label_horizon_observations : null,
     partitions: request ? { trainEndNs: (ensemble ? data : request).train_end_ns ?? null, validationEndNs: (ensemble ? data : request).validation_end_ns ?? null, endNs: selection?.event_end_ns ?? null, historical: strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' } : null,
     strategy: strategy ? { kind: strategy.kind ?? null, threshold: (ensemble ? request?.score_threshold : strategy.threshold) ?? null, investedWeight: (ensemble ? request?.gross_exposure : strategy.investedWeight) ?? null, targetTtlNs: (ensemble ? request?.target_ttl_ns : strategy.targetTtlNs) ?? null, simulationSettings: (ensemble ? request?.settings : strategy.simulationSettings) ?? null } : null };

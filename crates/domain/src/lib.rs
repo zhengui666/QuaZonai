@@ -18,6 +18,7 @@ pub mod research;
 pub mod runtime;
 pub mod runtime_jobs;
 pub mod spot_cash;
+pub mod ticks;
 
 use thiserror::Error;
 

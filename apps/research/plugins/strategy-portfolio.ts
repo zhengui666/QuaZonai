@@ -8,6 +8,7 @@ import { iterationRequest } from './native-wasm.ts';
 import { checkExposure } from './native-exposure.ts';
 import { PortfolioEvaluationTask, runPortfolio } from './native-portfolio-task.ts';
 import { catalogScope } from './native-catalog-scope.ts';
+import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 
 export default defineExtension({
   name: 'qz.strategy-portfolio', tasks: [PortfolioEvaluationTask],
@@ -24,6 +25,7 @@ export default defineExtension({
         ...(args.instrumentId !== undefined ? { instrumentId: args.instrumentId } : {}),
         ...(args.allocations !== undefined ? { allocations: args.allocations } : {}) };
       return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
+        if (isTickResearchInput(input.data)) throw new Error('tick_portfolio_unsupported');
         if (input.campaign) throw new Error('campaign_native_fitted_ensemble_required');
         if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
         const members = strategyMembers(proposal);

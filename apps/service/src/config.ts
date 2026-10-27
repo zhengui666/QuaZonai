@@ -8,6 +8,7 @@ import type { NativeTarget, RemoteNativeTarget } from '../../../packages/contrac
 import { setRemoteNativeCredential } from '../../research/src/native-execution.ts';
 
 import type { StrategyPolicy } from '../../research/src/strategy.ts';
+import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 export type { StrategyPolicy, ThresholdPolicy } from '../../research/src/strategy.ts';
 export interface DatasetConfig extends DatasetView {
   data: JsonObject;
@@ -64,6 +65,7 @@ export async function loadConfig(path: string): Promise<ServiceConfig> {
 }
 
 export function resolveDatasetPaths(dataset: DatasetConfig, base: string): DatasetConfig {
+  validateDatasetInput(dataset);
   if (dataset.revisionManifest) dataset.revisionManifest = resolve(base, dataset.revisionManifest);
   for (const data of [dataset.data, dataset.data.sealed]) {
     if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -71,6 +73,16 @@ export function resolveDatasetPaths(dataset: DatasetConfig, base: string): Datas
     }
   }
   return dataset;
+}
+
+export function validateDatasetInput(dataset: DatasetConfig): void {
+  const tagged = nativeResearchInput(dataset.data);
+  if (dataset.nativeModality !== undefined && !['BAR', 'TRADE_TICK'].includes(dataset.nativeModality)) throw new Error('dataset_modality_invalid');
+  if (tagged && dataset.nativeModality !== undefined && tagged.modality !== dataset.nativeModality) throw new Error('dataset_modality_mismatch');
+  if (tagged?.modality === 'TRADE_TICK' && dataset.strategy !== undefined) throw new Error('tick_portfolio_unsupported');
+  const prepared = dataset.preparation;
+  if (prepared !== undefined && (!prepared || typeof prepared.archiveLoaded !== 'boolean' || typeof prepared.nativePrepared !== 'boolean'
+    || !['UNVERIFIED', 'NOT_ASSESSED'].includes(prepared.scientificQualification))) throw new Error('dataset_preparation_invalid');
 }
 
 /** Backtest/PM computations and PAPER/LIVE transports have separate bindings. */

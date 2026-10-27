@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One feature selection and one build of both release executables.
+# Build each required native format once; preserve standard BAR artifacts before
+# Cargo publishes the separate high-precision executable at the same target path.
 set -euo pipefail
 profile=${1:-release}
 output=${2:?output directory is required}
@@ -15,3 +16,9 @@ install -m755 "${CARGO_TARGET_DIR:-target}/$profile/source-tools" "$output/sourc
 # in either production image or the CLI distribution.
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/catalog-prepare" "$output/catalog-prepare"
 install -m755 "${CARGO_TARGET_DIR:-target}/$profile/examples/browser_catalog_fixture" "$output/browser_catalog_fixture"
+cargo build --locked "${args[@]}" -p job \
+  --features market-history,catalog-prepare,hyperliquid-offline \
+  --bin job --bin catalog-prepare --bin market-history
+install -m755 "${CARGO_TARGET_DIR:-target}/$profile/job" "$output/job-high-precision"
+install -m755 "${CARGO_TARGET_DIR:-target}/$profile/catalog-prepare" "$output/catalog-prepare-high-precision"
+install -m755 "${CARGO_TARGET_DIR:-target}/$profile/market-history" "$output/market-history"

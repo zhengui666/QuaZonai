@@ -6,12 +6,14 @@ import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.
 import { resolvePortfolioPolicy } from '../src/strategy.ts';
 import { checkExposure } from './native-exposure.ts';
 import { FittedEnsembleTask, runFittedEnsemble } from './fitted-ensemble-task.ts';
+import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 
 export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsembleTask], tools: [defineTool({
   name: 'strategy_ensemble_fit', description: 'Fit calibrated nonnegative signal weights from at least two original COMPUTED Wasm factor trials. Native TRAIN-only expanding folds fit calibration and weights; unavailable full prediction panels fail explicitly. No user/model supplied weights. Consumes one ENSEMBLE_FIT attempt, including failure. This fit is not account validation.',
   parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), sourceTrialIds: Type.Array(Type.Integer(), { minItems: 2 }) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context); const study = await api.snapshot(Study, api.conversationId, context);
+    if (isTickResearchInput(input.data)) throw new Error('tick_ensemble_unsupported');
     const sources = args.sourceTrialIds.map(id => {
       const trial = study?.trials.find(item => item.taskId === id); const proposal = trial ? object(trial.proposal, 'proposal') : null;
       if (trial?.status !== 'COMPUTED' || typeof proposal?.model !== 'string') throw new Error('ensemble_source_factor_not_computed');
@@ -31,6 +33,7 @@ export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsem
   parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), fitTrialId: Type.Integer(), instrumentId: Type.Optional(Type.String()), allocations: Type.Optional(Type.Union([Type.Literal('ALL_EQUAL'), Type.Array(Type.Object({ instrumentId: Type.String(), weight: Type.String() }))])) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context); const study = await api.snapshot(Study, api.conversationId, context);
+    if (isTickResearchInput(input.data)) throw new Error('tick_ensemble_unsupported');
     const fitTrial = study?.trials.find(item => item.taskId === args.fitTrialId); const fit = fitTrial ? object(fitTrial.result, 'fit_result') : null;
     if (fitTrial?.status !== 'COMPUTED' || fit?.kind !== 'ENSEMBLE_FIT' || typeof fit.evidenceTaskId !== 'number') throw new Error('registered_ensemble_fit_missing');
     const original = object(fitTrial.proposal, 'fit_proposal');

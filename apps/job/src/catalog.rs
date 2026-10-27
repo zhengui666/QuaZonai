@@ -235,7 +235,7 @@ pub(crate) fn catalog_root(root: &Path) -> Result<std::path::PathBuf> {
     Ok(root.canonicalize()?)
 }
 
-fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
+pub(crate) fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
     let root = catalog_root(root)?;
     currencies::load(&root)?;
     let text = root

@@ -143,7 +143,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
       const receipt = await host.start('catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.state(receipt.conversationId)).research!;
-      assert.equal(study.trials[0]!.status, 'COMPUTED');
+      assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
       assert.equal(study.final, null, JSON.stringify(study.final));
       peer = { researchId: receipt.conversationId, trialId: Number(study.trials[0]!.taskId) };
     }
@@ -169,7 +169,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(id)).research!;
     assert.deepEqual(study.input, original); assert.equal(study.trials.length, 1);
-    assert.ok(study.final, JSON.stringify((await host.view(id)).entries));
+    assert.ok(study.final, JSON.stringify({ trials: study.trials, final: study.final }));
     assert.equal(study.final.status, 'COMPUTED', JSON.stringify(study.final));
     const result = object(study.final.result);
     assert.equal(object(result.native_versions)['nautilus-model'], '0.63.0');

@@ -15,6 +15,12 @@ for (const [raw, code, category] of [
   ['qz-native: line 1: /private/job: No such file or directory', 'native_executable_unavailable', 'runtime'],
   ['validate failed:\nfactor.wat:1:2: error: invalid memory limits', 'wasm_compile_failed', 'model'],
   ['aborted', 'aborted', 'cancelled'],
+  ['Error: TICK_NATIVE_INVENTORY_MISMATCH: /private/catalog token=synthetic-secret', 'TICK_NATIVE_INVENTORY_MISMATCH', 'data'],
+  ['TICK_ID_CONFLICT: private source row', 'TICK_ID_CONFLICT', 'data'],
+  ['TICK_NATIVE_PRECISION_INCOMPATIBLE', 'TICK_NATIVE_PRECISION_INCOMPATIBLE', 'data'],
+  ['TICK_INSTRUMENT_DEFINITION_MISSING', 'TICK_INSTRUMENT_DEFINITION_MISSING', 'data'],
+  ['TICK_COHORT_ROW_LIMIT', 'TICK_COHORT_ROW_LIMIT', 'resource'],
+  ['nautilus_tick_capacity_exhausted', 'nautilus_tick_capacity_exhausted', 'resource'],
 ]) test(`classifies retained diagnostic ${code}`, () => {
   const detail = classifyExecutionError(raw)!;
   assert.equal(detail.code, code); assert.equal(detail.category, category);
@@ -63,4 +69,11 @@ test('execution context retains the original diagnostic and distinguishes decodi
   const detail = classifyExecutionError(error)!;
   assert.equal(detail.code, 'native_result_invalid'); assert.equal(detail.operation, 'simulate'); assert.equal(detail.stage, 'decode');
   assert.doesNotMatch(JSON.stringify(detail), /private-source/);
+});
+
+test('tick diagnostics preserve their operation without exposing original paths or values', () => {
+  const failure = new ExecutionFailure(new Error('TICK_SOURCE_REVISION_MISMATCH: /private/source 123.000000001'), { operation: 'evaluate-tick-factor', stage: 'execute' });
+  const detail = classifyExecutionError(failure)!;
+  assert.equal(detail.operation, 'evaluate-tick-factor'); assert.equal(detail.code, 'TICK_SOURCE_REVISION_MISMATCH');
+  assert.doesNotMatch(JSON.stringify(detail), /\/private|123\.000000001/);
 });

@@ -31,3 +31,12 @@ export type NativeExecutionReceipt = {
   { status: 'FAILED' | 'UNKNOWN'; error: string } |
   { status: 'RUNNING' | 'CANCELLED' }
 );
+
+/** Authoritative admission refusal, before any execution receipt or process.
+ * This is not a terminal execution receipt. Generic HTTP errors carry no such proof. */
+export interface NativeExecutionRejection {
+  schemaVersion: 1;
+  requestId: string;
+  admission: 'REJECTED';
+  error: 'nautilus_tick_capacity_exhausted' | 'nautilus_tick_resource_limits_unavailable';
+}

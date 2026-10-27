@@ -3,6 +3,7 @@
   "revision": "064bc5ea76a6f0db8dd5c2b66f598e925857784d",
   "license": "mit",
   "attribution": "Georgia Tech CSE6242 Team 176 / ProbioticFarmer; Hyperliquid L1 Consensus Replay & Hydromancer Reservoir",
+  "research_trade_path_prefixes": ["perp_fills_all/", "spot_fills/"],
   "streams": [
     {
       "name": "trades",

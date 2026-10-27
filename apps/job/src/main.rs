@@ -91,6 +91,18 @@ enum Operation {
         #[arg(long)]
         summary_only: bool,
     },
+    /// Explicit native TradeTick cohort factor research, without BARs or accounts.
+    EvaluateTickFactor {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+        /// Omit to use the existing native stdin request protocol.
+        #[arg(long)]
+        request: Option<PathBuf>,
+        #[arg(long)]
+        summary_only: bool,
+    },
     /// Exact native BAR identities for private exposure tracking; no observations.
     CatalogFactorScope {
         #[arg(long)]
@@ -315,6 +327,23 @@ fn run(operation: Operation) -> Result<()> {
         }
         Operation::CatalogFactorScope { catalog } => {
             output(&job::factors::catalog_factor_scope(&catalog)?)
+        }
+        Operation::EvaluateTickFactor {
+            catalog,
+            model,
+            request,
+            summary_only,
+        } => {
+            let request = match request {
+                Some(path) => serde_json::from_slice(&model_bytes(&path)?)?,
+                None => input()?,
+            };
+            output(&job::ticks::evaluate(
+                &catalog,
+                &request,
+                &model_bytes(&model)?,
+                summary_only,
+            )?)
         }
         Operation::ScanFactorCatalog {
             catalog,

@@ -34,7 +34,8 @@ export const finalizeGroup = defineTool({
         const model = object(trial.proposal, 'proposal').model;
         if (typeof model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
         const data = JSON.parse(JSON.stringify(object(study.input.data.sealed, 'heldout_data'))) as JsonObject;
-        if (canonical(iterationRequest(data)) !== canonical(object(trial.result, 'trial_result').request!)) throw new Error('heldout_criteria_mismatch');
+        if (canonical(iterationRequest(data)) !== canonical(object(trial.result, 'trial_result').request!)
+          || canonical(iterationRequest(data)) !== canonical(iterationRequest(study.input.data))) throw new Error('heldout_criteria_mismatch');
         if (members.length && canonical(data) !== canonical(members[0]!.data)) throw new Error('heldout_group_window_mismatch');
         study.final ??= { taskId: api.taskId, trialId: selection.trialId, comparedTrials: study.trials.map((trial) => trial.taskId!),
           selections: args.selections, reason: args.reason, status: 'STARTED', result: null, error: null };

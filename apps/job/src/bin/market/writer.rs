@@ -10,7 +10,7 @@ use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 const BATCH_RECORDS: usize = 100_000;
@@ -21,6 +21,9 @@ pub(super) struct Writer {
     last_written: BTreeMap<(String, String), u64>,
     pending_records: usize,
     pub(super) counts: BTreeMap<String, BTreeMap<String, u64>>,
+    root: PathBuf,
+    verify_only: bool,
+    max_output_bytes: Option<u64>,
 }
 
 fn identity(data: &Data) -> Result<(String, String)> {
@@ -66,10 +69,24 @@ fn metadata(data: &Data) -> HashMap<String, String> {
 }
 
 impl Writer {
+    #[cfg(test)]
     pub(super) fn new(output: &Path, instruments: &[InstrumentAny]) -> Result<Self> {
-        fs::create_dir(output).context("OUTPUT_MUST_BE_NEW")?;
+        Self::configured(output, instruments, false, None)
+    }
+
+    pub(super) fn configured(
+        output: &Path,
+        instruments: &[InstrumentAny],
+        verify_only: bool,
+        max_output_bytes: Option<u64>,
+    ) -> Result<Self> {
+        if !verify_only {
+            fs::create_dir(output).context("OUTPUT_MUST_BE_NEW")?;
+        }
         let root = output.join("catalog");
-        fs::create_dir(&root)?;
+        if !verify_only {
+            fs::create_dir(&root)?;
+        }
         let catalog = ParquetDataCatalog::from_uri(
             root.to_str().context("CATALOG_PATH_ENCODING")?,
             None,
@@ -77,10 +94,22 @@ impl Writer {
             None,
             None,
         )?;
-        job::catalog::currencies::write(&root, instruments)?;
+        if verify_only {
+            job::catalog::currencies::load(&root)?;
+            let saved: serde_json::Value =
+                serde_json::from_reader(fs::File::open(root.join("currencies.json"))?)?;
+            ensure!(
+                saved == serde_json::to_value(job::catalog::currencies::definitions(instruments))?,
+                "RESUME_CURRENCY_DEFINITIONS_CHANGED"
+            );
+        } else {
+            job::catalog::currencies::write(&root, instruments)?;
+        }
         let mut instruments = instruments.to_vec();
         instruments.sort_by_key(|i| (i.id(), Instrument::ts_init(i)));
-        catalog.write_instruments(instruments.clone())?;
+        if !verify_only {
+            catalog.write_instruments(instruments.clone())?;
+        }
         let mut readback = catalog.instruments(None, None, None)?;
         readback.sort_by_key(|i| (i.id(), Instrument::ts_init(i)));
         ensure!(
@@ -93,6 +122,9 @@ impl Writer {
             last_written: BTreeMap::new(),
             pending_records: 0,
             counts: BTreeMap::new(),
+            root: output.to_owned(),
+            verify_only,
+            max_output_bytes,
         })
     }
 
@@ -108,6 +140,10 @@ impl Writer {
         self.pending_records += 1;
         if self.pending_records >= BATCH_RECORDS {
             self.flush(false)?;
+            ensure!(
+                self.max_output_bytes.is_none() || self.pending_records <= BATCH_RECORDS,
+                "TRADE_INPUT_COHORT_LIMIT"
+            );
         }
         Ok(())
     }
@@ -147,7 +183,9 @@ impl Writer {
             }
             // Split contiguous native encodings, not all equal precisions across intervening versions.
             for items in items.chunk_by(|a, b| metadata(a) == metadata(b)) {
-                self.catalog.write_data_enum(items, None, None, None)?;
+                if !self.verify_only {
+                    self.catalog.write_data_enum(items, None, None, None)?;
+                }
                 self.catalog.reset_session();
                 let start = Some(items[0].ts_init());
                 let end = Some(items.last().unwrap().ts_init());
@@ -184,12 +222,67 @@ impl Writer {
                     .or_default() += items.len() as u64;
             }
         }
+        if let Some(limit) = self.max_output_bytes {
+            ensure!(
+                directory_bytes(&self.root)? <= limit,
+                "TRADE_INPUT_OUTPUT_BYTE_LIMIT"
+            );
+        }
         Ok(())
     }
 
     pub(super) fn finish(&mut self) -> Result<()> {
         self.flush(true)
     }
+
+    pub(super) fn check_output_limit_for(&self, report: &impl serde::Serialize) -> Result<()> {
+        if let Some(limit) = self.max_output_bytes {
+            let report_bytes = serde_json::to_vec_pretty(report)?.len() as u64 + 1;
+            ensure!(
+                directory_bytes(&self.root)?
+                    .checked_add(report_bytes.saturating_mul(2))
+                    .is_some_and(|size| size <= limit),
+                "TRADE_INPUT_OUTPUT_BYTE_LIMIT"
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn verify_trade_count(&mut self, count: u64) -> Result<()> {
+        self.catalog.reset_session();
+        let mut actual = 0_u64;
+        for item in self
+            .catalog
+            .query::<TradeTick>(None, None, None, None, None, false)?
+        {
+            ensure!(
+                matches!(item?, Data::Trade(_)),
+                "RESUME_NATIVE_KIND_CHANGED"
+            );
+            actual += 1;
+            ensure!(actual <= count, "RESUME_NATIVE_ROWS_CHANGED");
+        }
+        ensure!(actual == count, "RESUME_NATIVE_ROWS_CHANGED");
+        Ok(())
+    }
+}
+
+fn directory_bytes(path: &Path) -> Result<u64> {
+    let mut bytes = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        ensure!(!entry.file_type()?.is_symlink(), "NATIVE_OUTPUT_SYMLINK");
+        let size = if metadata.is_dir() {
+            directory_bytes(&entry.path())?
+        } else {
+            metadata.len()
+        };
+        bytes = bytes
+            .checked_add(size)
+            .context("NATIVE_OUTPUT_SIZE_RANGE")?;
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -259,6 +352,47 @@ mod tests {
             assert_eq!(bar.ts_init.as_u64(), 180_000_000_000);
             assert_eq!(bar.open.precision, 4);
         }
+    }
+
+    #[test]
+    fn trade_cohort_overflow_fails_before_native_publication() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("bounded");
+        let mut writer = Writer::configured(&output, &[], false, Some(10 * 1024 * 1024)).unwrap();
+        let id = InstrumentId::from_str("TOKEN/QUOTE.VENUE").unwrap();
+        for index in 0..BATCH_RECORDS {
+            writer
+                .push(Data::Trade(
+                    TradeTick::new_checked(
+                        id,
+                        Price::from("1"),
+                        Quantity::from("1"),
+                        AggressorSide::Buy,
+                        TradeId::new(index.to_string()),
+                        1_u64.into(),
+                        1_u64.into(),
+                    )
+                    .unwrap(),
+                ))
+                .unwrap();
+        }
+        let overflow = TradeTick::new_checked(
+            id,
+            Price::from("1"),
+            Quantity::from("1"),
+            AggressorSide::Buy,
+            TradeId::new("overflow"),
+            1_u64.into(),
+            1_u64.into(),
+        )
+        .unwrap();
+        assert!(writer
+            .push(Data::Trade(overflow))
+            .unwrap_err()
+            .to_string()
+            .contains("COHORT_LIMIT"));
+        assert!(writer.counts.is_empty());
+        assert!(!output.join("import-report.json").exists());
     }
 
     #[test]

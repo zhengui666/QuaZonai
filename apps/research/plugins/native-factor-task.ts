@@ -9,6 +9,11 @@ import { evaluateWasm } from './native-wasm.ts';
 import { readNativeEvidence } from './native-evidence.ts';
 import { object } from '../src/trials.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
+import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
+
+function factorOperation(data: JsonObject): string {
+  return isTickResearchInput(data) ? 'evaluate-tick-factor' : data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor';
+}
 
 export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?: NativeTarget }, { phase: 'compute' }, JsonObject>({
   name: 'qz.factor.wasm', version: 1, initial: () => ({ phase: 'compute' }),
@@ -29,7 +34,7 @@ export const FactorTask = defineTask<{ model: string; data: JsonObject; binary?:
         await retainNativeRemoteUncertainty(error, task.id, runtime, context);
         if (runtime.signal.aborted) throw error;
         await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: {
-          message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: task.input.data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor' }) },
+          message: executionDiagnostic(error, 'factor_failed'), detail: { ...classifyExecutionError(error, 'scientific_execution_failed', { operation: factorOperation(task.input.data) }) },
         } } }), context);
       }
     });
@@ -59,7 +64,7 @@ export async function runFactor(api: ResearchRuntime, context: Context, model: s
     const outcome = settled.state.outcome;
     const detail = 'error' in outcome ? outcome.error?.detail : undefined;
     throw new ExecutionFailure('error' in outcome && outcome.error ? outcome.error.message : outcome.status,
-      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: data.catalog_scan_request !== undefined ? 'scan-factor-catalog' : 'evaluate-factor' });
+      detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : { operation: factorOperation(data) });
   }
   return settled.state.outcome.result;
 }

@@ -12,6 +12,8 @@ import { canonical } from '../../research/src/documents.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { thresholdPolicy } from '../../research/src/strategy.ts';
 import { datasetRevisionManifest, prepareDatasetRevision } from './dataset-revision-publish.ts';
+import { exportTickDataset } from './tick-dataset-export.ts';
+import { parseOriginalJson } from './dataset-json.ts';
 
 export interface DatasetExportOptions {
   prepared: string; request: string; output: string; id: string; name: string;
@@ -37,24 +39,6 @@ function dayNs(value: unknown): bigint {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(milliseconds)
     || new Date(milliseconds).toISOString().slice(0, 10) !== day) throw new Error('invalid_source_date');
   return BigInt(milliseconds) * 1_000_000n;
-}
-function parseOriginalJson(contents: string): unknown {
-  let value: unknown;
-  try { value = JSON.parse(contents); } catch { throw new Error('dataset_input_invalid_json'); }
-  // JSON.parse silently keeps the last duplicate; native serde rejects such originals.
-  const stack: (Set<string> | null)[] = [];
-  for (const token of contents.matchAll(/"(?:[^"\\]|\\.)*"(\s*:)?|[{}\[\]]/g)) {
-    if (token[0] === '{') stack.push(new Set());
-    else if (token[0] === '[') stack.push(null);
-    else if (token[0] === '}' || token[0] === ']') stack.pop();
-    else if (token[1]) {
-      const key = JSON.parse(token[0].slice(0, -token[1].length)) as string;
-      const fields = stack.at(-1)!;
-      if (fields?.has(key)) throw new Error('dataset_input_duplicate_json_key');
-      fields?.add(key);
-    }
-  }
-  return value;
 }
 function nativeKeys(value: JsonObject, allowed: string[]): void {
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new Error('unknown_native_request_field');
@@ -113,6 +97,8 @@ function within(path: string, root: string): boolean {
 /** Offline configuration and immutable revision handoff; existing registered
  * monitors may consume it. No native decoding or source qualification is implied. */
 export async function exportDataset(options: DatasetExportOptions): Promise<DatasetConfig> {
+  const declaration = object(parseOriginalJson(await readFile(resolve(options.prepared), 'utf8')), 'prepared_declaration');
+  if (declaration.modality === 'TRADE_TICK') return exportTickDataset(options);
   const observed = new Map<string, string>();
   const checkedAncestors = new Set<string>();
   async function observe(path: string): Promise<void> {

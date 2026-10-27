@@ -19,6 +19,7 @@ import { factorReference, factorViews } from './factors.ts';
 import { publicLiteratureQueries, researchCriterion } from '../../../packages/contracts/src/research.ts';
 import { metrics } from './projections.ts';
 import { factorRequest } from './dataset-export.ts';
+import { nativeResearchInput as parseNativeResearchInput, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
@@ -30,6 +31,10 @@ import { acceptSnapshot, downstreamRequest } from './downstream.ts';
 import type { ObservationStart, PortfolioStart, ResearchInput, ResearchStart, SettingsView, AutomaticPolicy, DeletionReceipt } from '../../../packages/contracts/src/index.ts';
 
 const context = BACKGROUND_CONTEXT;
+function nativeResearchInput(data: Record<string, unknown>) {
+  try { return parseNativeResearchInput(data); }
+  catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_request_invalid'); }
+}
 function portfolioUsesFactor(fact: PortfolioFact, id: string): boolean {
   if (fact.input.factors) return fact.input.factors.some(member => member.factorId === id);
   const reference = factorReference(id);
@@ -76,8 +81,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     let input: ResearchInput;
     let capturedDataset: import('../../../packages/contracts/src/index.ts').RecordedDataset | undefined;
     const captureDataset = (configured: ServiceConfig['datasets'][number]) => {
-      const { id, name, assetClass, currency, source, start, end } = configured;
-      return { id, name, assetClass, currency, source, start, end };
+      const { id, name, assetClass, currency, source, start, end, preparation, inputCoverage } = configured;
+      const nativeModality = nativeResearchInput(configured.data)?.modality ?? configured.nativeModality;
+      return { id, name, assetClass, currency, source, start, end, ...(nativeModality ? { nativeModality } : {}), ...(preparation ? { preparation } : {}), ...(inputCoverage ? { inputCoverage } : {}) };
     };
     if ('input' in submission) {
       const native = (await host.harness.snapshot(Requests, context))?.requests[`request:${requestId}`];
@@ -128,38 +134,46 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const validated = researchInput(input);
     const registry = host.registry.snapshot();
     const versioned = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value) && 'schema_version' in value && value.schema_version === 1 ? value as Record<string, unknown> : null;
-    const request = versioned(validated.data.request); const forecast = versioned(request?.forecast);
+    const tagged = nativeResearchInput(validated.data); const tick = tagged?.modality === 'TRADE_TICK';
+    const request = versioned(tagged?.request ?? validated.data.request); const forecast = versioned(request?.forecast);
     const selection = versioned(forecast?.selection); const scan = versioned(validated.data.catalog_scan_request);
-    const native = validated.data.catalog_ensemble_request !== undefined || validated.data.storageMode === 'price-volume'
+    const native = tagged !== null || validated.data.catalog_ensemble_request !== undefined || validated.data.storageMode === 'price-volume'
       || request && forecast && selection && versioned(forecast.parameters) && Array.isArray(selection.bar_types)
         && typeof request.train_end_ns === 'string' && typeof request.validation_end_ns === 'string'
       || scan && versioned(scan.parameters) && ['event_start_ns', 'event_end_ns', 'train_end_ns', 'validation_end_ns', 'decision_cutoff_ns'].every(key => typeof scan[key] === 'string');
-    if (validated.specification && native) {
+    if ((validated.specification || tagged) && native) {
       try {
         text(validated.data.catalog, 'catalog');
+        const searchScope = validated.specification?.search.scope ?? 'single-factor';
+        if (tick && (searchScope !== 'single-factor' || validated.policy.strategy !== undefined)) throw new Problem('tick_portfolio_unsupported');
+        if (tick && validated.specification?.capital !== undefined) throw new Problem('tick_capacity_unsupported');
+        if (tick && !registry.extension('qz.factor-wasm')) throw new Problem('tick_factor_evaluator_unavailable');
         const catalogEnsemble = validated.data.catalog_ensemble_request !== undefined;
         if (catalogEnsemble) {
           text(validated.data.catalog_partitions, 'catalog_partitions');
-          if (validated.specification.search.scope !== 'ensemble') throw new Problem('catalog_ensemble_search_scope_required');
+          if (searchScope !== 'ensemble') throw new Problem('catalog_ensemble_search_scope_required');
           if (object(validated.policy.strategy, 'strategy_policy').kind !== 'catalog-ensemble') throw new Problem('catalog_ensemble_strategy_required');
           if (!registry.task('qz.strategy-portfolio.evaluate') || !registry.task('qz.catalog.scope')) throw new Problem('strategy_adapter_not_configured');
         }
         let finalRequest = catalogEnsemble ? validateCatalogEnsembleRequest(validated.data) : normalizedRequest(validated.data);
-        if (!catalogEnsemble) factorRequest(finalRequest, validated.data.catalog_scan_request !== undefined);
+        if (tick) validateNativeTickFactorRequest(finalRequest);
+        else if (!catalogEnsemble) factorRequest(finalRequest, validated.data.catalog_scan_request !== undefined);
         if (catalogEnsemble || validated.data.sealed !== undefined) {
           const sealed = object(validated.data.sealed, 'heldout_data');
           text(sealed.catalog, 'heldout_catalog');
+          if (tagged && nativeResearchInput(sealed)?.modality !== tagged.modality) throw new Problem('heldout_modality_mismatch');
           if (catalogEnsemble) {
             text(sealed.catalog_partitions, 'heldout_catalog_partitions');
             if (sealed.catalog_ensemble_request === undefined) throw new Problem('heldout_catalog_ensemble_request_required');
           }
           finalRequest = catalogEnsemble ? validateCatalogEnsembleRequest(sealed) : normalizedRequest(sealed);
           if (catalogEnsemble && BigInt(counter(sealed.validation_end_ns, 'validation_end')) >= BigInt(counter(finalRequest.event_end_ns, 'event_end'))) throw new Problem('catalog_ensemble_clock_invalid');
-          if (!catalogEnsemble) factorRequest(finalRequest, sealed.catalog_scan_request !== undefined);
-          const clip = validated.specification.search.scope === 'ensemble';
+          if (tick) validateNativeTickFactorRequest(finalRequest);
+          else if (!catalogEnsemble) factorRequest(finalRequest, sealed.catalog_scan_request !== undefined);
+          const clip = searchScope === 'ensemble';
           if (canonical(iterationRequest(validated.data, clip)) !== canonical(iterationRequest(sealed, clip))) throw new Problem('heldout_criteria_mismatch');
         }
-        if (validated.specification.search.scope === 'ensemble') {
+        if (searchScope === 'ensemble') {
           if (validated.data.catalog_scan_request !== undefined) throw new Problem('catalog_factor_only_account_binding_required');
           if (!registry.extension('qz.strategy-portfolio')) throw new Problem('strategy_adapter_not_configured');
           if (catalogEnsemble) resolvePortfolioPolicy({}, object(validated.policy.strategy, 'strategy_policy'));
@@ -264,6 +278,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const old = Object.values((await snapshot())!.portfolios).map(portfolio).find((item) => item.input.requestId === input.requestId);
     if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); if ('deletedAt' in old && old.deletedAt) throw new Problem('portfolio_deleted', 409); return old.view; }
     const configured = dataset(text(input.datasetId, 'dataset_id'));
+    if (nativeResearchInput(configured.data)?.modality === 'TRADE_TICK') throw new Problem('tick_portfolio_unsupported', 422);
     const capital = decimal(input.capital, 'capital'); if (decimalUnits(capital) <= 0n) throw new Problem('capital_invalid');
     let researchIds: number[]; let weights: string[];
     if (input.factors !== undefined) {
