@@ -156,7 +156,9 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
       const app = await state.service.research.harness.snapshot(Application, context);
       const observed = app?.observations[f.connection.id] ? observation(app.observations[f.connection.id]) : null;
       const snapshot = observed?.snapshot ? object(observed.snapshot) : null;
-      return JSON.stringify({ stage, runtime: { node: process.version, atNs: (BigInt(Date.now()) * 1_000_000n).toString(), realNowMs: realNow() },
+      return JSON.stringify({ stage, fixtureFlow: { currentPublished, sourceEpoch, sourceResumed, sourceWaitMs, expectedFreshPriceNs },
+        maintenance: await state.service.maintenance.status(),
+        runtime: { node: process.version, atNs: (BigInt(Date.now()) * 1_000_000n).toString(), realNowMs: realNow() },
         currentDecisionId: value.currentDecisionId, latestCycleId: value.latestCycleId, basisRevision: value.basisRevision,
         policy: { id: value.policy.id, operatingRuleId: object(object(value.policy.validDomain).operatingRule ?? {}).id ?? null,
           allocationMethodId: object(object(value.policy.validDomain).jointAllocationMethod ?? {}).id ?? null },
@@ -193,10 +195,11 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     };
     let currentPublished = false; let sourceEpoch: string | null = null; let sourceResumed = false;
     let expectedFreshPriceNs: string | null = null;
+    let sourceWaitMs = 0;
     // Share the existing PAPER receipt watchdog: the measured RO solve began
     // at approximately 212 seconds. PAPER may also wait one original source
     // interval; neither mode changes the native 65-second price-age policy.
-    const deadline = realNow() + 290_000;
+    let deadline = realNow() + 290_000;
     while (!(await exists(reachedPath)) && realNow() < deadline) {
       const stored = await record(); const view = await read();
       if (!currentPublished && view.cycles.some(cycle => cycle.state === 'COMPUTING')) {
@@ -243,7 +246,13 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
           assert.ok(receiptNs - waitingAtNs <= 61_000_000_000n, 'Wait only for the original next one-minute source receipt.');
           const originalBar = object((next.response as JsonObject[]).at(-1));
           expectedFreshPriceNs = ((BigInt(String(originalBar.T)) + 1n) * 1_000_000n).toString();
+          const sourceWaitStartedAt = realNow();
           while (BigInt(Date.now()) * 1_000_000n < receiptNs) await new Promise(resolve => setTimeout(resolve, 50));
+          // Waiting for the original market receipt is separate from polling
+          // native progress. Keep that evidenced wait bounded to one interval;
+          // the parent process watchdog and all financial deadlines still apply.
+          sourceWaitMs = Math.min(61_000, realNow() - sourceWaitStartedAt);
+          deadline += sourceWaitMs;
           // No new account frame/proof is published and no evidence deadline
           // is renewed. Resume the original parked monitor at the actual clock.
           const resumedAtNs = (BigInt(Date.now()) * 1_000_000n).toString();
