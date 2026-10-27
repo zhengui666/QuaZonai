@@ -54,8 +54,17 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
   // against final exposures so a new root cannot reset an exposed study.
-  const end = finalData?.catalog_ensemble_request !== undefined ? object(finalData.catalog_ensemble_request, 'native_request').event_end_ns!
+  // Original catalog bindings carry their time range before the scope task runs.
+  // Reading that boundary must not require a scope for the held-out catalog.
+  const finalCatalog = finalData && (finalData.catalog_ensemble_request !== undefined || finalData.catalog_scan_request !== undefined);
+  if (finalCatalog && [finalData.catalog_ensemble_request, finalData.catalog_scan_request, finalData.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
+  const finalRequest = finalCatalog ? nativeResearchRequest(finalData) : undefined;
+  if (finalRequest) partitionBoundaries(finalData!.catalog_ensemble_request !== undefined
+    ? { ...finalRequest, train_end_ns: finalData!.train_end_ns!, validation_end_ns: finalData!.validation_end_ns! }
+    : finalRequest, true);
+  const finalEnd = finalRequest ? finalRequest.event_end_ns!
     : finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
+  const end = BigInt(finalEnd as string) > BigInt(selection.event_end_ns as string) ? finalEnd : selection.event_end_ns!;
   const checked = reserve ? window : { ...window, end };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);

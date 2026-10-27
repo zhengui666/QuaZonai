@@ -29,6 +29,35 @@ function tickData(catalog: string, instrument: string, start = 9, end = 10): Jso
     parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: ns(start - 1), validation_end_ns: ns(start) } } };
 }
 
+test('unscoped final catalog boundaries cannot erase an existing final exposure', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-final-catalog-boundary-'));
+  const data = barData(directory, 'ORIGINAL.SIM');
+  // Controlled transaction protocol checks admission only; native calculation
+  // and real Durable scope consumption are covered by the service native suite.
+  const ledger: { windows: JsonObject[] } = { windows: [{ kind: 'FINAL', taskId: 1, conversationId: 1,
+    barTypes: ['ORIGINAL.SIM-1-SECOND-LAST-EXTERNAL'], start: ns(10), end: ns(12) }] };
+  const original = structuredClone(ledger);
+  const api = { taskId: 2, conversationId: 2,
+    async commit(action: (tx: { doc(): Promise<typeof ledger> }) => Promise<void>) { return action({ async doc() { return ledger; } }); },
+  } as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    for (const kind of ['catalog_scan_request', 'catalog_ensemble_request']) {
+      const finalData: JsonObject = { catalog: directory, train_end_ns: ns(1), validation_end_ns: ns(10),
+        [kind]: { event_start_ns: '0', train_end_ns: ns(1), validation_end_ns: ns(10), event_end_ns: '0' } };
+      await assert.rejects(checkExposure(api, context, data, false, finalData), /native_partition_boundaries/);
+      (finalData[kind] as JsonObject).event_end_ns = ns(12);
+      await assert.rejects(checkExposure(api, context, data, false, finalData), /heldout_already_exposed/);
+      // A valid but shorter final binding cannot narrow the current source read.
+      finalData.validation_end_ns = ns(2);
+      Object.assign(finalData[kind] as JsonObject, { validation_end_ns: ns(2), event_end_ns: ns(5) });
+      await assert.rejects(checkExposure(api, context, data, false, finalData), /heldout_already_exposed/);
+      finalData.request = data.request!;
+      await assert.rejects(checkExposure(api, context, data, false, finalData), /ambiguous_factor_request/);
+      assert.deepEqual(ledger, original);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 // Real SQLite/Durable transactions verify source-exposure admission only. This
 // fixture neither evaluates a numerical factor nor qualifies historical data.
 test('cross-modality exposure includes completed BAR source intervals while BAR admission retains exact granularity', { timeout: 30_000 }, async () => {

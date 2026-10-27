@@ -9,11 +9,11 @@ Delivery PR: [#243](https://github.com/zhengui666/QuaZonai/pull/243), targeting 
 
 Define what QuaZonai should become so historical research can use the configured Hyperliquid trade archive without requiring prebuilt BARs.
 
-Original endpoint: requirements proposal for owner review, without implementation, data conversion or release. The owner subsequently requested the full research, design, development, review and testing workflow and confirmed continuation without project-board synchronization. Release/deployment and full-corpus acquisition remain outside the task.
+Original endpoint: requirements proposal for owner review, without implementation, data conversion or release. The owner subsequently requested the full research, design, development, review and testing workflow and confirmed continuation without project-board synchronization. The owner later explicitly included publication through the existing development-release flow. Production deployment and full-corpus acquisition remain outside the task.
 
 The owner accepted the complete initial sampling, factor and resource profile, requested the most general implementation, and explicitly required an isolated branch from remote `dev` followed by merge back after development. The [implementation plan](implementation-plan.md) records that profile. Development baseline: remote `dev` at `1ddefc197414f0d2e35340d8d011ccfa26f996dd`, isolated branch `feat/tick-native-research-input`.
 
-Current status: runtime implementation, local native/connected validation and independent source review are complete. Remote final-Head CI, clean GitHub Codex review and the authorized merge are not yet complete. No release or deployment is included.
+Current status: runtime implementation and local native/connected validation are complete. Final compatibility corrections, exact-Head CI and clean review must pass before the authorized merge. Publication then requires successful exact-push CI on the actual `dev` merge revision and verification of the existing Dev release workflow's published assets. GitHub PR, Actions and release records retain the final delivery receipts. Production deployment is excluded.
 
 <a id="intent"></a>
 ## Intent
