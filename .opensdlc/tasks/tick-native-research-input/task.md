@@ -5,6 +5,8 @@
 
 Task ID: `tick-native-research-input`.
 
+Delivery PR: [#243](https://github.com/zhengui666/QuaZonai/pull/243), targeting remote `dev`. Final CI, review and merge receipts are retained on that PR.
+
 Define what QuaZonai should become so historical research can use the configured Hyperliquid trade archive without requiring prebuilt BARs.
 
 Original endpoint: requirements proposal for owner review, without implementation, data conversion or release. The owner subsequently requested the full research, design, development, review and testing workflow and confirmed continuation without project-board synchronization. Release/deployment and full-corpus acquisition remain outside the task.
