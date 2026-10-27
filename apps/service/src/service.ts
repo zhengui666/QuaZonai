@@ -117,7 +117,10 @@ export async function createService(options: ServiceOptions) {
   await work.recoverResearch();
   app.get('/health/live', async (_request, reply) => reply.code(204).send());
   app.get(`${API}/research/models`, () => research.availableModels());
-  app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => ({ ...view, researchSettings: datasetResearchSettings(data, strategy ? json(strategy) : undefined) })));
+  app.get(`${API}/datasets`, async () => config.datasets.map(({ data, policy: _policy, strategy, ...view }) => {
+    const researchSettings = view.nativeModality === 'TRADE_TICK' && data.nativeInput === undefined ? undefined : datasetResearchSettings(data, strategy ? json(strategy) : undefined);
+    return { ...view, nativeModality: view.nativeModality ?? researchSettings?.modality, ...(researchSettings ? { researchSettings } : {}) };
+  }));
   app.get<{ Querystring: { cursor?: string } }>(`${API}/research`, async (request) => {
     const cursor = request.query.cursor ? object(JSON.parse(request.query.cursor), 'cursor') as Cursor : undefined;
     const [page, facts, inspection] = await Promise.all([research.list(cursor), work.snapshot(), research.harness.inspect(context)]);

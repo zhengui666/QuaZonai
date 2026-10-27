@@ -11,6 +11,7 @@ then start the adapter on the machine that owns the native engine:
 
 ```sh
 export QZ_JOB_BINARY=/opt/quazonai/bin/job
+export QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision
 export QZ_NAUTILUS_DATA_DIR=/data/nautilus
 export QZ_NAUTILUS_CATALOG_ROOTS='["/data/catalogs","/data/quazonai/catalogs"]'
 export QZ_NAUTILUS_HOST=127.0.0.1
@@ -31,6 +32,52 @@ copied over HTTP. Protect non-loopback HTTP with the deployment's private networ
 or TLS reverse proxy, and configure the matching token environment reference in
 the application. The worker never forwards its bearer credential or provider
 environment to the scientific child process.
+
+`QZ_TICK_JOB_BINARY` explicitly selects an optional high-precision companion for
+`evaluate-tick-factor`. All BAR operations keep `QZ_JOB_BINARY`. Configure the
+companion for the official 16-decimal TradeTick catalogs produced by the
+Hyperliquid importer; a standard nine-decimal job cannot decode that native
+format. Omitting the companion retains single-binary operation for existing
+standard-format inputs. Catalog paths never choose or infer an executable.
+
+With a companion, the advertised implementation identity binds both executable
+byte identities and their standard/tick roles. Both are checked again before
+executing new work; replacing either file requires restarting the worker and
+obtaining its new capabilities. Original receipts retain their original
+implementation identity. Without a companion, the existing single-binary digest
+is unchanged.
+
+`deploy/docker/native-build.sh` preserves `job`, `source-tools` and the standard
+acceptance helpers before building `job-high-precision`,
+`catalog-prepare-high-precision` and `market-history` with the official
+high-precision feature. The remote native image carries the two job formats and
+matching offline preparation/import operators side by side; the application
+image carries no native executable. Use the matching preparation format and do
+not overwrite or relabel old catalogs to change their binary precision.
+
+`evaluate-tick-factor` uses the same native request, receipt, attachment and
+cancellation contract. Its first installation profile admits one tick execution
+at a time; a new invocation over capacity receives HTTP 429 before an execution
+receipt is created. Existing original receipts and active-request observers stay
+readable, and BAR computations keep their existing concurrency behavior. Set
+`QZ_NAUTILUS_TICK_CONCURRENCY` to configure that owner limit.
+
+The refusal contains the original `requestId`, `schemaVersion:1`,
+`admission:"REJECTED"` and a specific capacity/resource-enforcement error. The
+application retains it as non-execution evidence in the existing remote-reference
+facts; it does not invent a terminal scientific receipt. A generic HTTP error or
+a refusal with another request identity cannot settle an uncertain execution.
+
+Tick execution requires Linux `/usr/bin/prlimit`. The worker applies both soft
+and hard address-space limits to the configured native executable, defaulting to
+2 GiB through `QZ_NAUTILUS_TICK_MEMORY_BYTES`. This is a virtual-address-space
+ceiling, not a measurement of resident memory; a native build using larger
+mappings or thread reservations may require an explicitly larger installation
+limit. Unsupported resource enforcement fails explicitly. Tick standard output
+is limited to 64 MiB by `QZ_NAUTILUS_TICK_OUTPUT_BYTES`; exceeding it stops and
+joins the child and retains a failed receipt. These owner settings cannot be
+raised by fields in the scientific request. They do not qualify the source or
+replace native row, cohort, output-file or scientific budget checks.
 
 The version 1 contract is defined in
 [`packages/contracts/src/nautilus.ts`](../../packages/contracts/src/nautilus.ts):

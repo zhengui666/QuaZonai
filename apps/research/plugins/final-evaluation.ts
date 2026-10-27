@@ -13,9 +13,11 @@ import { freezeSelection } from '../src/pm-comparison.ts';
 import { CampaignResearchDoc } from '../src/pm-campaign.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { runFittedEnsemble } from './fitted-ensemble-task.ts';
+import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 export async function finalizePortfolio(args: {trialId: number; reason: string}, api: ResearchRuntime, context: Context): Promise<void> {
       const input = await studyInput(api, context);
+      if (isTickResearchInput(input.data)) throw new Error('tick_portfolio_unsupported');
       if (input.campaign?.independentConsumer === 'PM_PORTFOLIO') throw new Error('independent_evaluation_reserved_for_pm');
       if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
       const data = object(input.data.sealed, 'heldout_data');
@@ -70,7 +72,9 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
         const proposal = object(trial.proposal, 'proposal');
         if (typeof proposal.model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
         const iterative = iterationRequest(data);
-        if (canonical(iterative) !== canonical(object(trial.result, 'trial_result').request!)) throw new Error('heldout_criteria_mismatch');
+        if (canonical(iterative) !== canonical(object(trial.result, 'trial_result').request!)
+          || canonical(iterative) !== canonical(iterationRequest(input.data))
+          || input.data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(input.data))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
         study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);

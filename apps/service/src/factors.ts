@@ -1,6 +1,7 @@
 import type { Cursor } from '@earendil-works/pi-durable';
 import type { FactorView, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
 import { researchCriterion } from '../../../packages/contracts/src/research.ts';
+import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { strategyMembers } from '../../research/src/strategy.ts';
 import { metrics } from './projections.ts';
@@ -15,6 +16,7 @@ export function factorReference(id: string) {
 }
 export function factorViews(id: number, study: { input: import('../../research/src/documents.ts').ResearchInput | null; deletedAt?: string; deletedFactors?: Record<string, string>; trials: import('@earendil-works/pi-durable').JsonObject[]; final: import('@earendil-works/pi-durable').JsonObject | null }, admissions?: ResearchAdmissions, requestId?: string): FactorView[] {
   const input = study.input; if (!input || study.deletedAt) return [];
+  const nativeInput = nativeResearchInput(input.data); const tick = nativeInput?.modality === 'TRADE_TICK';
   const admission = requestId ? admissions?.[`request:${requestId}`] : undefined;
   const dataset = admission?.dataset;
   const strategy = input.policy.strategy ? object(input.policy.strategy) : null;
@@ -35,13 +37,14 @@ export function factorViews(id: number, study: { input: import('../../research/s
       const heldout = diagnostic && Array.isArray(diagnostic.partitions) ? diagnostic.partitions.map(item => object(item)).find(item => item.partition === 'HELDOUT') : null;
       const included = heldout ? object(object(heldout.metric).counts).included : null;
       const evidence = independentlyComputed ? strategy?.evidenceMode === 'HISTORICAL_REASSESSMENT' ? 'historical' : 'independent' : members.length > 1 ? 'component_only' : trial.status === 'COMPUTED' ? 'validation_only' : 'unavailable';
-      const reason = !independentlyComputed ? evidence === 'component_only' ? 'component_not_independently_assessed' : 'independent_evidence_missing'
+      const reason = tick ? 'tick_portfolio_unsupported' : !independentlyComputed ? evidence === 'component_only' ? 'component_not_independently_assessed' : 'independent_evidence_missing'
         : typeof included !== 'string' || !/^\d+$/.test(included) || BigInt(included) === 0n ? 'heldout_observations_missing'
           : criterion && !['computed', 'met'].includes(criterion.status) ? criterion.status === 'insufficient' ? 'research_criterion_insufficient' : 'research_criterion_not_met' : input.data.catalog_scan_request !== undefined ? 'catalog_factor_only_account_binding_required' : !strategy ? 'strategy_policy_missing' : null;
       return { id: factorId(id, Number(trial.taskId), memberIndex), researchId: id, trialId: Number(trial.taskId), memberIndex,
+        ...(tick ? { nativeModality: 'TRADE_TICK' as const, availability: 'EVENT_TIME_PROXY_UNVERIFIED' as const, scientificQualification: 'UNQUALIFIED_EXPLORATORY' as const } : {}),
         name: input.specification?.name ?? input.goal, hypothesis: String(proposal.hypothesis ?? ''), modelSource: member.model,
         datasetId: typeof dataset?.id === 'string' ? dataset.id : null, currency: typeof dataset?.currency === 'string' ? dataset.currency : typeof (simulationSettings as Record<string, unknown> | undefined)?.base_currency === 'string' ? String((simulationSettings as Record<string, unknown>).base_currency) : null,
-        market: Array.isArray(proposal.allocations) ? proposal.allocations.map(item => String(object(item).instrumentId)) : [proposal.instrumentId ?? strategy?.instrumentId].filter((item): item is string => typeof item === 'string'),
+        market: nativeInput?.modality === 'TRADE_TICK' ? nativeInput.request.input.instrument_ids : Array.isArray(proposal.allocations) ? proposal.allocations.map(item => String(object(item).instrumentId)) : [proposal.instrumentId ?? strategy?.instrumentId].filter((item): item is string => typeof item === 'string'),
         status: String(trial.status), ...(input.specification?.capital ? { capacityAssumptions: input.specification.capital } : {}), evidence, metrics: measured, criterion: criterion ?? null, combinable: reason === null, reason };
     }).filter(member => !study.deletedFactors?.[member.id]);
   });

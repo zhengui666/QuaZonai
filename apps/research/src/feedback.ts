@@ -1,5 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
+import { isTickResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS } from '../../../packages/contracts/src/tick-input.ts';
 
 function record(value: JsonValue | undefined): JsonObject | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
@@ -57,6 +58,15 @@ function modelRequest(value: JsonValue | undefined): JsonValue {
 /** Only a model-facing projection. Original admitted facts are never rewritten. */
 export function modelBriefInput(input: { data: JsonObject; policy: JsonObject }): { data: JsonObject; policy: JsonObject } {
   const { sealed: _sealed, ...data } = input.data;
+  if (isTickResearchInput(data)) return { data: { ...data, feature_model: {
+    abi: TICK_FEATURE_ABI, features: [...TICK_FEATURE_KEYS],
+    definitions: ['Quantity-weighted price over exactly the current complete instrument/event-time cohort; previous complete cohort price.',
+      'Fast/slow native EMA advance once per complete cohort; periods count cohorts.',
+      'Sum of original cohort quantities, original trade count and elapsed event nanoseconds since the preceding cohort.'],
+    missing: 'The first previous-price/elapsed-time and incomplete indicator warmup remain unavailable; masks are not observed zero.',
+    scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',
+    evidence: 'EVENT_TIME_PROXY_UNVERIFIED: exploratory computation, not PIT qualification, independent source validation or execution evidence.',
+  } }, policy: input.policy };
   const strategy = record(input.policy.strategy);
   if (strategy?.kind === 'catalog-ensemble') {
     const { catalog_partitions: _partitions, ...visible } = data;

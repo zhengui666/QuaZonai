@@ -10,6 +10,7 @@ import { canonical } from '../src/documents.ts';
 import { partitionBoundaries } from './native-exposure.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
 import { jsonChunks } from '../src/native-json.ts';
+import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 const wabt = await wabtFactory();
 
@@ -28,7 +29,11 @@ export function normalizedRequest(data: JsonObject): JsonObject {
   const ensemble = data.catalog_ensemble_request !== undefined;
   const catalog = data.catalog_scan_request !== undefined;
   if ([data.catalog_ensemble_request, data.catalog_scan_request, data.request].filter(value => value !== undefined).length > 1) throw new Error('ambiguous_factor_request');
-  const request = JSON.parse(JSON.stringify(object(ensemble ? data.catalog_ensemble_request : catalog ? data.catalog_scan_request : data.request, 'native_request'))) as JsonObject;
+  const request = nativeResearchRequest(data);
+  if (isTickResearchInput(data)) {
+    partitionBoundaries(request);
+    return request;
+  }
   if (ensemble) {
     partitionBoundaries({ ...request, train_end_ns: data.train_end_ns!, validation_end_ns: data.validation_end_ns! }, true);
     object(request.settings, 'simulation_settings');
@@ -48,6 +53,12 @@ export function normalizedRequest(data: JsonObject): JsonObject {
 
 export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): JsonObject {
   const request = normalizedRequest(data);
+  if (isTickResearchInput(data)) {
+    const selection = object(request.input, 'native_tick_input');
+    selection.event_end_ns = request.validation_end_ns!;
+    if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;
+    return request;
+  }
   if (data.catalog_ensemble_request !== undefined) {
     request.event_end_ns = data.validation_end_ns!;
     request.evaluation_start_ns = data.train_end_ns!;
@@ -64,7 +75,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
   if (typeof data.catalog !== 'string') throw new Error('catalog_required');
   const request = normalizedRequest(data);
   const catalog = data.catalog_scan_request !== undefined;
-  const operation = catalog ? 'scan-factor-catalog' : 'evaluate-factor';
+  const operation = isTickResearchInput(data) ? 'evaluate-tick-factor' : catalog ? 'scan-factor-catalog' : 'evaluate-factor';
   if (catalog && (!Array.isArray(scope?.barTypes) || !scope.barTypes.every((type) => typeof type === 'string'))) throw new Error('catalog_scope_required');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-factor-'));
   let stage: 'execute' | 'decode' | 'validate' = 'execute';

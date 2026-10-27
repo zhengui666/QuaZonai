@@ -100,7 +100,7 @@ impl MetricPairs {
     }
 }
 
-fn metric<'a>(
+pub(crate) fn metric<'a>(
     points: impl Iterator<Item = &'a NativeFactorPointV1>,
 ) -> Result<NativeFactorMetricV1> {
     let mut pairs = MetricPairs::default();

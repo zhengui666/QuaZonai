@@ -27,7 +27,7 @@ test('historical Hyperliquid provider is discoverable and disabled without autom
   const sources = await dataSources(configDefaults({ dataDir: f.dataDir }));
   try {
     const source = sources.view().find(source => source.name === 'qz.data.hyperliquid')!;
-    assert.equal(source.enabled, false); assert.equal(source.lastLoadedAt, null); assert.equal(source.fields.length, 6);
+    assert.equal(source.enabled, false); assert.equal(source.lastLoadedAt, null); assert.equal(source.fields.length, 12);
     await sources.save(source.name, { enabled: true, config: { acquisitionDirectory: 'archive' } });
     await sources.refresh(source.name);
     assert.deepEqual(sources.view().find(item => item.name === source.name)!.datasetIds, ['hyperliquid-history']);
@@ -119,4 +119,69 @@ test('disabling or closing a source aborts an active cooperative historical oper
     run = sources.refresh('test.history'); rejected = assert.rejects(run, /data_source_refresh_cancelled/);
     await new Promise(resolve => setImmediate(resolve)); await sources.close(); await rejected;
   } finally { await sources.close(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test('explicit TradeTick preparation selects spot/perpetual paths and uses no BAR conversion flags', async () => {
+  const f = await fixture();
+  const calls: { command: string; args: string[]; memory?: number }[] = [];
+  let missingNativeFile = false;
+  const runner: HyperliquidOperator = async (command, args, options) => {
+    calls.push({ command, args, memory: options.maxMemoryBytes });
+    if (command === 'python3') return;
+    const output = args[args.indexOf('--output') + 1]!;
+    await mkdir(join(output, 'catalog'), { recursive: true });
+    if (!missingNativeFile) await writeFile(join(output, 'catalog/native-test.parquet'), 'records');
+    await writeFile(join(output, 'import-report.json'), JSON.stringify({ status: 'IMPORTED', source_revision: f.manifest.revision,
+      modality: 'TRADE_TICK', selected_path_prefixes: ['perp_fills_all/', 'spot_fills/'], duplicate_trades: 0,
+      event_start_ns: '1791850200000000000', event_end_ns: '1791850500000000000', native_files: [{ path: 'native-test.parquet', size: 7 }],
+      readback_records: 2, missing_symbols: {}, missing_definitions: {}, rejected_rows: {}, missing_partitions: [],
+      availability: 'EVENT_TIME_PROXY_UNVERIFIED', source_coverage: { trades: { selected_rows: 2 } },
+      native_records: { trades: { 'BTC-USD-PERP.HYPERLIQUID': 2 } } }).replace('"selected_rows":2', '"selected_rows":2,"first_event_ns":1791849600000000001'));
+  };
+  try {
+    f.manifest.missing.push({ stream: 'trades', pattern: 'outcome_fills/all/date=2026-10-13/fills.parquet' });
+    f.manifest.files.push({ path: 'outcome_fills/all/date=2026-10-13/fills.parquet', size: 99, stream: 'trades' });
+    await f.save();
+    const [dataset] = await hyperliquidDataPlugin(runner).load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK',
+      startDate: '2026-10-13', endDate: '2026-10-14', nativeBinary: 'market-history', instrumentsFile: 'definitions.json', nativeOutputDirectory: 'prepared-ticks',
+      eventStartSeconds: 1791850200, eventEndSeconds: 1791850500 }, { dataDir: f.dataDir });
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+      assert.deepEqual(call.args.flatMap((arg, index) => arg === '--path-prefix' ? [call.args[index + 1]] : []), ['perp_fills_all/', 'spot_fills/']);
+      assert.equal(call.args.includes('--bar-milliseconds'), false); assert.equal(call.args.includes('--bar-seconds'), false);
+    }
+    assert.equal(calls[1]!.args.includes('--trade-ticks'), true); assert.equal(calls[1]!.args.includes('--resume'), true);
+    assert.equal(calls[1]!.args[calls[1]!.args.indexOf('--start-seconds') + 1], '1791850200'); assert.equal(calls[1]!.args[calls[1]!.args.indexOf('--end-seconds') + 1], '1791850500');
+    assert.equal(calls[1]!.memory, 2 * 1024 * 1024 * 1024);
+    assert.equal(dataset!.id, 'hyperliquid-trade-ticks'); assert.equal(dataset!.nativeModality, 'TRADE_TICK');
+    assert.equal(dataset!.ready, false); assert.deepEqual(dataset!.preparation, { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' });
+    assert.equal(dataset!.data.barIntervalMilliseconds, undefined); assert.equal(dataset!.data.nativeInput, undefined, 'source conversion does not invent research partitions or sampling policy');
+    assert.equal(((dataset!.inputCoverage as { sourceCoverage: { trades: { first_event_ns: string } } }).sourceCoverage.trades.first_event_ns), '1791849600000000001', 'u64 clocks remain exact through the Web/service metadata path');
+    assert.equal(dataset!.inputCoverage!.event_start_ns, '1791850200000000000'); assert.equal(dataset!.inputCoverage!.event_end_ns, '1791850500000000000');
+    assert.equal(dataset!.data.catalog, join(f.dataDir, 'prepared-ticks/catalog'));
+    await rm(join(f.dataDir, 'prepared-ticks/catalog/native-test.parquet')); missingNativeFile = true;
+    await assert.rejects(hyperliquidDataPlugin(runner).load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK',
+      nativeBinary: 'market-history', instrumentsFile: 'definitions.json', nativeOutputDirectory: 'prepared-ticks', eventStartSeconds: 1791850200, eventEndSeconds: 1791850500 }, { dataDir: f.dataDir }), /inventory_mismatch/);
+    f.manifest.missing.push({ stream: 'trades', pattern: 'spot_fills/date=2026-10-13/fills.parquet' }); await f.save();
+    await assert.rejects(hyperliquidDataPlugin(runner).load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK' }, { dataDir: f.dataDir }), /archive_incomplete/);
+  } finally { await f.clean(); }
+});
+
+test('TradeTick mode rejects implicit BAR adaptation, unsupported modality and mismatched native evidence', async () => {
+  const f = await fixture();
+  try {
+    const plugin = hyperliquidDataPlugin(async (_command, args) => {
+      const output = args[args.indexOf('--output') + 1]!;
+      await mkdir(join(output, 'catalog'), { recursive: true });
+      await writeFile(join(output, 'import-report.json'), JSON.stringify({ status: 'IMPORTED', readback_records: 1,
+        source_revision: f.manifest.revision, modality: 'TRADE_TICK', selected_path_prefixes: ['perp_fills_all/', 'spot_fills/'],
+        duplicate_trades: 1, missing_symbols: {}, missing_definitions: {}, rejected_rows: {}, missing_partitions: [], native_records: { trades: { BTC: 1 } } }));
+    });
+    await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', barMilliseconds: 100 }, { dataDir: f.dataDir }), /tick_bar_conflict/);
+    await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TICKS' }, { dataDir: f.dataDir }), /modality_unsupported/);
+    await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', maxTradeRows: 1_000_001 }, { dataDir: f.dataDir }), /config_invalid/);
+    await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', nativeBinary: 'market-history', instrumentsFile: 'definitions.json' }, { dataDir: f.dataDir }), /tick_receipt_mismatch/);
+    const [raw] = await plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK' }, { dataDir: f.dataDir });
+    assert.deepEqual(raw!.preparation, { archiveLoaded: true, nativePrepared: false, scientificQualification: 'UNVERIFIED' });
+  } finally { await f.clean(); }
 });

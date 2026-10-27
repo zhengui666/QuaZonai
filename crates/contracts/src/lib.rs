@@ -39,6 +39,7 @@ pub mod spot_cash_report;
 pub mod spot_cash_source;
 pub mod spot_fees;
 pub mod strategy_portfolio;
+pub mod ticks;
 
 pub use scalars::{DbCounter, DecimalValue, Id, Revision, SchemaV1, Timestamp};
 
@@ -79,6 +80,8 @@ use utoipa::OpenApi;
     factors::NativeFactorEvaluationRequestV1,
     factors::NativeFactorEvaluationResultV1,
     factors::NativeFactorEvaluationSummaryV1,
+    ticks::NativeTradeTickFactorEvaluationRequestV1,
+    ticks::NativeTradeTickFactorEvaluationResultV1,
     factors::NativeCatalogFactorScanRequestV1,
     factors::NativeCatalogFactorScanSummaryV1,
     catalog_ensemble::NativeCatalogEnsembleRequestV1,

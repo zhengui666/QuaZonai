@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { ExtensionView, JsonObject } from '../../../packages/contracts/src/index.ts';
 import type { DataSourceField, DataSourceView } from '../../../packages/contracts/src/data-sources.ts';
-import { bindScienceData, resolveDatasetPaths, scienceDataWithoutBinding } from './config.ts';
+import { bindScienceData, resolveDatasetPaths, scienceDataWithoutBinding, validateDatasetInput } from './config.ts';
 import type { DatasetConfig, ServiceConfig } from './config.ts';
 import { object, Problem } from './facts.ts';
 import { validateNumbers } from '../../research/src/input.ts';
@@ -39,6 +39,7 @@ function datasets(value: unknown): DatasetConfig[] {
       || ['start', 'end'].some(key => row[key] !== null && (typeof row[key] !== 'string' || !Number.isFinite(Date.parse(String(row[key])))))
       || typeof row.ready !== 'boolean' || row.revisionManifest !== undefined && typeof row.revisionManifest !== 'string') throw new Problem('data_source_dataset_invalid');
     object(row.data, 'data_source_dataset_data');
+    validateDatasetInput(row as unknown as DatasetConfig);
     if (row.policy !== undefined) object(row.policy, 'data_source_dataset_policy');
     if (ids.has(String(row.id))) throw new Problem('data_source_dataset_id_conflict', 409);
     ids.add(String(row.id));
@@ -52,6 +53,7 @@ function validateConfig(plugin: DataSourcePlugin, value: unknown, requireFields 
     const value = config[field.key];
     if (value === undefined || value === null || value === '') { if (field.required && requireFields) throw new Problem('data_source_config_required'); delete config[field.key]; continue; }
     if (typeof value !== (['text', 'password'].includes(field.type) ? 'string' : field.type) || typeof value === 'number' && !Number.isFinite(value)) throw new Problem('data_source_config_invalid');
+    if (field.choices && !field.choices.some(choice => choice.value === value)) throw new Problem('data_source_config_invalid');
   }
   return structuredClone(config);
 }
@@ -60,7 +62,10 @@ function validatePlugin(value: unknown, name: string): DataSourcePlugin {
   if (!plugin || plugin.name !== name || typeof plugin.load !== 'function' || !Array.isArray(plugin.fields)
     || plugin.version !== undefined && typeof plugin.version !== 'string'
     || plugin.fields.some(field => !field || typeof field.key !== 'string' || !field.key || typeof field.label !== 'string'
-      || !['text', 'password', 'number', 'boolean'].includes(field.type))
+      || !['text', 'password', 'number', 'boolean'].includes(field.type)
+      || field.choices !== undefined && (field.type !== 'text' || !Array.isArray(field.choices) || !field.choices.length
+        || field.choices.some(choice => !choice || typeof choice.value !== 'string' || !choice.value || typeof choice.label !== 'string' || !choice.label)
+        || new Set(field.choices.map(choice => choice.value)).size !== field.choices.length))
     || new Set(plugin.fields.map(field => field.key)).size !== plugin.fields.length) throw new Problem('data_source_plugin_invalid');
   return plugin;
 }

@@ -2,6 +2,7 @@ import type { ResearchInput } from './documents.ts';
 import { publicLiteratureQueries, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { researchCampaignBinding } from './pm-campaign.ts';
 import { compareDecimal } from '../../../packages/contracts/src/pm-validation.ts';
+import { nativeResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 export function record(value: unknown, name: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
@@ -28,12 +29,18 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  const tagged = nativeResearchInput(data);
+  const sealed = data.sealed === undefined ? null : nativeResearchInput(record(data.sealed, 'heldout_data'));
+  if ((tagged || sealed) && tagged?.modality !== sealed?.modality && data.sealed !== undefined) throw new Error('native_research_modality_mismatch');
+  if (tagged?.modality === 'TRADE_TICK') {
+    if (policy.strategy !== undefined && policy.strategy !== null || input.specification !== undefined && researchSpecification(input.specification).search.scope !== 'single-factor') throw new Error('tick_factor_only_required');
+  }
   if (input.specification !== undefined && policy.max_trials === undefined) throw new Error('research_trial_budget_required');
   if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || (policy.max_trials as number) < 0)) throw new Error('invalid_trial_budget');
   if (input.campaign !== undefined) {
     const campaign = researchCampaignBinding(input.campaign);
     if (policy.max_trials !== campaign.budget.maximumTrials) throw new Error('campaign_trial_budget_mismatch');
-    const raw = data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request;
+    const raw = tagged ? nativeResearchRequest(data) : data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request;
     if (raw !== undefined) {
       const request = record(raw, 'native_request');
       const scope = campaign.scopes[0]!;

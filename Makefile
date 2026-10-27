@@ -62,7 +62,7 @@ check-source:
 
 check-deploy: check-source
 	for script in deploy/install.sh deploy/docker/manage.sh deploy/docker/entrypoint.sh deploy/docker/native-build.sh deploy/docker/deploy.sh deploy/docker/update.sh; do bash -n "$$script" || exit; done
-	node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs deploy/docker/pm-maintenance.test.mjs deploy/docker/workflow.test.mjs runtimes/native/native-files.test.mjs runtimes/native/native-image-contract.test.mjs
+	node --test deploy/install.test.mjs deploy/docker/manage_shell.test.mjs deploy/docker/pm-maintenance.test.mjs deploy/docker/native-build.test.mjs deploy/docker/workflow.test.mjs runtimes/native/native-files.test.mjs runtimes/native/native-image-contract.test.mjs
 	python3 -B -m unittest discover -s deploy -p package_test.py
 	python3 -B -m unittest discover -s deploy/docker -p release_test.py
 

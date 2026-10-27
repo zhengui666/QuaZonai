@@ -1,0 +1,173 @@
+//! Controlled native TradeTick/Wasmi counterexamples; not market-quality evidence.
+use super::*;
+use nautilus_model::{
+    enums::AggressorSide,
+    identifiers::{InstrumentId, TradeId},
+    types::{Price, Quantity},
+};
+use serde_json::json;
+
+fn request() -> NativeTradeTickFactorEvaluationRequestV1 {
+    serde_json::from_value(json!({"schema_version":1,
+        "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],"event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,"source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+        "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+        "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+        "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+        "train_end_ns":"30","validation_end_ns":"50"})).unwrap()
+}
+
+fn trade(time: u64, id: &str, price: &str, quantity: &str) -> TradeTick {
+    TradeTick::new(
+        InstrumentId::from("AUD/USD.SIM"),
+        Price::from(price),
+        Quantity::from(quantity),
+        AggressorSide::Buy,
+        TradeId::from(id),
+        time.into(),
+        time.into(),
+    )
+}
+
+fn series() -> BTreeMap<String, Vec<TradeTick>> {
+    BTreeMap::from([(
+        "AUD/USD.SIM".to_owned(),
+        (1..=7)
+            .map(|i| trade(i * 10, &i.to_string(), &(10 + i).to_string(), "1"))
+            .collect(),
+    )])
+}
+
+fn model(slot: i32) -> Vec<u8> {
+    wat::parse_str(format!(r#"(module
+        (global $value (mut f64) (f64.const 0))
+        (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 0 i32.const {slot} i32.eq
+            if local.get 1 global.set $value end)
+        (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#)).unwrap()
+}
+
+#[test]
+fn exact_cohort_reduction_is_tie_order_invariant_and_has_no_last_trade_mark() {
+    let rows = vec![trade(10, "a", "10", "1"), trade(10, "b", "20", "3")];
+    let mut reversed = rows.clone();
+    reversed.reverse();
+    let a = cohorts(&rows, 100).unwrap();
+    let b = cohorts(&reversed, 100).unwrap();
+    assert_eq!(a[0].vwap, 17.5);
+    assert_eq!(a[0].quantity, 4.0);
+    assert_eq!(a[0].count, 2);
+    assert_eq!(a[0].vwap, b[0].vwap);
+    assert_eq!(rows[0].price, Price::from("10"));
+}
+
+#[test]
+fn future_cohort_changes_labels_without_changing_prior_features_or_forecasts() {
+    let req = request();
+    let wasm = model(0);
+    let original = evaluate_series(&req, series(), &wasm, false).unwrap();
+    let mut changed = series();
+    changed.get_mut("AUD/USD.SIM").unwrap()[3].price = Price::from("10000");
+    let changed = evaluate_series(&req, changed, &wasm, false).unwrap();
+    let original = original.points.unwrap();
+    let changed = changed.points.unwrap();
+    for i in 0..3 {
+        assert_eq!(
+            original[i].observation.forecast,
+            changed[i].observation.forecast
+        );
+    }
+    assert_ne!(
+        original[2].observation.label_return,
+        changed[2].observation.label_return
+    );
+    assert_eq!(original[2].observation.forecast, Some(13.0));
+}
+
+#[test]
+fn same_instrument_horizon_is_censored_at_each_protected_partition() {
+    let result = evaluate_series(&request(), series(), &model(0), false).unwrap();
+    let p = &result.partitions;
+    assert_eq!(p[0].metric.counts.indicator_warmup.get(), 1);
+    assert_eq!(p[0].metric.counts.cross_boundary_labels.get(), 1);
+    assert_eq!(p[1].metric.counts.included.get(), 1);
+    assert_eq!(p[1].metric.counts.cross_boundary_labels.get(), 1);
+    assert_eq!(p[2].metric.counts.included.get(), 2);
+    assert_eq!(p[2].metric.counts.incomplete_labels.get(), 1);
+    assert_eq!(result.coverage.trade_count.get(), 7);
+    assert!(result
+        .coverage
+        .limitations
+        .iter()
+        .any(|x| x == "NOT_PIT_QUALIFIED"));
+    let summary = evaluate_series(&request(), series(), &model(0), true).unwrap();
+    assert!(!serde_json::to_value(summary)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("points"));
+}
+
+#[test]
+fn a_cohort_is_one_prediction_and_oversized_cohorts_fail_without_truncation() {
+    let mut data = series();
+    data.get_mut("AUD/USD.SIM")
+        .unwrap()
+        .insert(0, trade(10, "other", "19", "1"));
+    let result = evaluate_series(&request(), data.clone(), &model(5), false).unwrap();
+    assert_eq!(result.coverage.trade_count.get(), 8);
+    assert_eq!(result.coverage.cohort_count.get(), 7);
+    let mut req = request();
+    req.sampling.maximum_cohort_rows = 1;
+    assert_eq!(
+        evaluate_series(&req, data, &model(0), false)
+            .unwrap_err()
+            .to_string(),
+        "TICK_COHORT_ROW_LIMIT"
+    );
+}
+
+#[test]
+fn tick_model_requires_explicit_feature_abi_and_native_request_rejects_invalid_limits() {
+    let bar=wat::parse_str("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))").unwrap();
+    assert_eq!(
+        evaluate_series(&request(), series(), &bar, false)
+            .unwrap_err()
+            .to_string(),
+        "FEATURE_MODEL_ABI_MISMATCH"
+    );
+    let mut req = request();
+    req.input.maximum_rows = 1_000_001;
+    assert!(evaluation_request(&req).is_err());
+    req = request();
+    req.validation_end_ns = req.train_end_ns;
+    assert!(evaluation_request(&req).is_err());
+}
+
+#[test]
+fn coverage_distinguishes_empty_requested_instrument_from_observed_trade_ranges() {
+    let mut request = request();
+    request.input.instrument_ids.push("EUR/USD.SIM".into());
+    let mut data = series();
+    data.insert("EUR/USD.SIM".into(), Vec::new());
+    let result = evaluate_series(&request, data, &model(0), false).unwrap();
+    let observed = &result.coverage.instrument_coverage[0];
+    assert_eq!(observed.trade_count.get(), 7);
+    assert_eq!(observed.first_event_ns.unwrap().get(), 10);
+    assert_eq!(observed.last_event_ns.unwrap().get(), 70);
+    let empty = &result.coverage.instrument_coverage[1];
+    assert_eq!(empty.trade_count.get(), 0);
+    assert!(empty.first_event_ns.is_none());
+    assert!(empty.last_event_ns.is_none());
+}
+
+#[test]
+fn explicit_tick_universe_does_not_inherit_the_bar_256_instrument_limit() {
+    let mut request = request();
+    request.input.instrument_ids = (0..257).map(|i| format!("ASSET{i}.SIM")).collect();
+    assert!(evaluation_request(&request).is_ok());
+    request
+        .input
+        .instrument_ids
+        .push(request.input.instrument_ids[0].clone());
+    assert!(evaluation_request(&request).is_err());
+}

@@ -10,12 +10,12 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { setTimeout } from 'node:timers/promises';
 import { Agent, fetch } from 'undici';
-import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { canonical } from './documents.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
 
 /** Settings credentials stay outside research facts; targets carry only this random reference. */
@@ -38,6 +38,10 @@ class RemoteUncertaintyError extends Error {
     super(`${code}:${requestId}`, { cause });
     this.reference = { requestId, target: { ...target }, error: code };
   }
+}
+class RemoteAdmissionRejectedError extends Error {
+  readonly rejection: NativeExecutionRejection;
+  constructor(rejection: NativeExecutionRejection) { super(rejection.error); this.rejection = rejection; }
 }
 
 type ReceiptRuntime = Pick<TaskRuntime<unknown, unknown, unknown, object>, 'commit' | 'conversationId' | 'signal'>;
@@ -115,7 +119,30 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
   const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0, connect: { timeout: 30_000 } });
   try {
     const response = await fetch(url, { method, headers, ...(body === undefined ? {} : { body: Readable.from(jsonChunks(body)), duplex: 'half' as const }), signal, dispatcher, redirect: 'error' });
-    if (!response.ok) { await response.body?.cancel(); throw new Error(`nautilus_http_${response.status}`); }
+    if (!response.ok) {
+      // Only the original invocation's explicit pre-execution refusal settles
+      // non-execution. A proxy error or generic 4xx/5xx is not that evidence.
+      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && body.command === 'evaluate-tick-factor') {
+        let encoded = ''; let size = 0;
+        if (response.body) for await (const bytes of response.body) {
+          size += bytes.length;
+          if (size > 4096) break;
+          encoded += Buffer.from(bytes).toString('utf8');
+        }
+        if (size <= 4096) {
+          let value: unknown;
+          try { value = JSON.parse(encoded); } catch { /* Preserve ordinary HTTP failure below. */ }
+          const rejected = value as Partial<NativeExecutionRejection> | null;
+          const code = response.status === 429 ? 'nautilus_tick_capacity_exhausted' : 'nautilus_tick_resource_limits_unavailable';
+          if (rejected && typeof rejected === 'object' && !Array.isArray(rejected)
+            && Object.keys(rejected).every(key => ['schemaVersion', 'requestId', 'admission', 'error'].includes(key))
+            && rejected.schemaVersion === 1 && rejected.requestId === body.requestId && rejected.admission === 'REJECTED' && rejected.error === code) {
+            throw new RemoteAdmissionRejectedError(rejected as NativeExecutionRejection);
+          }
+        }
+      } else await response.body?.cancel();
+      throw new Error(`nautilus_http_${response.status}`);
+    }
     if (!response.body) throw new Error('nautilus_response_missing');
     const parser = new JsonReader(); const decoder = new TextDecoder();
     for await (const bytes of response.body) parser.write(decoder.decode(bytes, { stream: true }));
@@ -187,6 +214,10 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
     let state: NativeExecutionReceipt;
     try { state = receipt(await remoteRequest(target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal), requestId); }
     catch (error) {
+      if (error instanceof RemoteAdmissionRejectedError) {
+        if (owner && !owner.runtime.signal.aborted) await retainRemoteReference({ ...reference, status: 'REJECTED', admission: 'REJECTED', error: error.rejection.error }, owner);
+        throw error;
+      }
       if (context.abortSignal?.aborted) throw error;
       if (error instanceof Error && /^nautilus_http_4\d\d$/.test(error.message)) throw error;
       // A lost POST response is reconciled with its original receipt; a new
@@ -211,6 +242,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
     if (state.status === 'FAILED') throw new Error(state.error);
     throw new Error('nautilus_receipt_invalid');
   } catch (error) {
+    if (error instanceof RemoteAdmissionRejectedError) throw error;
     if (!context.abortSignal?.aborted) throw error;
     // Cancellation is confirmed only after the worker joins the actual child.
     // If the transport is unavailable, retain an explicit unknown diagnosis;

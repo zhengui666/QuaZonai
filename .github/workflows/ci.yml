@@ -139,13 +139,23 @@ jobs:
         run: make check-science check-core PROFILE="$PROFILE"
       - name: Mapped public history in the optional native format
         run: |
+          profile_args=()
+          if [[ "$PROFILE" == release ]]; then profile_args+=(--release); fi
           python3 -I -B -m unittest discover -s runtimes/data -p test_hub.py -v
-          cargo test --locked -p job --features market-history,catalog-prepare --bin market-history --test catalog --test catalog_prepare --test managed --test instrument_versions --test native_instrument_updates
-          cargo test --locked -p job --features market-history --lib catalog::currencies
+          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --bin market-history --test catalog --test catalog_prepare --test managed --test instrument_versions --test native_instrument_updates
+          tick_fixture="$RUNNER_TEMP/tick-native-fixture"
+          test ! -e "$tick_fixture"
+          QZ_TICK_NATIVE_FIXTURE_DIR="$tick_fixture" cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib ticks::
+          cargo test --locked "${profile_args[@]}" -p job --features market-history,catalog-prepare,hyperliquid-offline --lib catalog::currencies
+          test -s "$tick_fixture/prepared/catalog-metadata.json"
+          test -s "$tick_fixture/SOFTWARE_FIXTURE.txt"
+          test -x "$RUNNER_TEMP/native-artifacts/job"
+          test -x "$RUNNER_TEMP/native-artifacts/job-high-precision"
+          QZ_JOB_BINARY="$RUNNER_TEMP/native-artifacts/job" QZ_TICK_JOB_BINARY="$RUNNER_TEMP/native-artifacts/job-high-precision" QZ_TICK_NATIVE_FIXTURE_DIR="$tick_fixture" node --experimental-strip-types --test apps/service/test/tick-native.test.ts
       - name: Retain the exact tested native binaries, not a second build
         run: |
           git rev-parse HEAD > "$RUNNER_TEMP/native-artifacts/tested-revision"
-          tar -czf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts" job source-tools catalog-prepare browser_catalog_fixture tested-revision
+          tar -czf "$RUNNER_TEMP/native.tar.gz" -C "$RUNNER_TEMP/native-artifacts" job source-tools catalog-prepare browser_catalog_fixture job-high-precision catalog-prepare-high-precision market-history tested-revision
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-${{ env.TEST_REVISION }}

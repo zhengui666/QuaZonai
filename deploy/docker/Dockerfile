@@ -55,6 +55,10 @@ WORKDIR /opt/quazonai
 # Deploy this image on the separately configured Nautilus host. It is never
 # started by the application Compose project and is not copied into that image.
 FROM execution-base AS nautilus
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends util-linux \
+ && test -x /usr/bin/prlimit \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=dependencies /opt/quazonai/apps/ ./apps/
 # Includes the matching source-revision exporter used by operator data tools.
 COPY --from=nautilus-source / /
@@ -63,6 +67,9 @@ RUN --mount=type=bind,from=native,source=/,target=/native \
     --mount=type=bind,from=compiler,source=/,target=/compiler \
     mkdir -p /opt/quazonai/bin /opt/quazonai/operator/bin \
  && install -m755 /native/job /opt/quazonai/bin/job \
+ && install -m755 /native/job-high-precision /opt/quazonai/bin/job-high-precision \
+ && install -m755 /native/catalog-prepare-high-precision /opt/quazonai/operator/bin/catalog-prepare-high-precision \
+ && install -m755 /native/market-history /opt/quazonai/operator/bin/market-history \
  && install -m755 /native/source-tools /opt/quazonai/operator/bin/source-tools \
  && cp -a /compiler/opt/rust /opt/rust \
  && cp -a /compiler/usr/share/doc/rust /usr/share/doc/rust
@@ -72,7 +79,7 @@ LABEL org.opencontainers.image.title="QuaZonai remote Nautilus" \
       org.opencontainers.image.source="https://github.com/zhengui666/QuaZonai" \
       org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
-ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
+ENV QZ_JOB_BINARY=/opt/quazonai/bin/job QZ_TICK_JOB_BINARY=/opt/quazonai/bin/job-high-precision QZ_NAUTILUS_HOST=0.0.0.0 QZ_NAUTILUS_PORT=8090 QZ_NAUTILUS_DATA_DIR=/data/nautilus QZ_SCRATCH_DIR=/tmp TMPDIR=/tmp
 USER node
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \

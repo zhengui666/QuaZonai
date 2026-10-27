@@ -34,12 +34,14 @@ mod classic_zip;
 #[cfg(feature = "polymarket-history")]
 #[path = "preparation/polymarket_forward.rs"]
 mod polymarket_forward;
+#[path = "preparation/ticks.rs"]
+mod ticks;
 
 #[derive(Parser)]
 #[command(
     version,
     about = "Prepare an isolated native BAR catalog without certifying its source",
-    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help; catalog-prepare prepare-forward --help"
+    after_help = "Native source imports: catalog-prepare ingest-candles --help; catalog-prepare ingest-archive-candles --help; catalog-prepare prepare-forward --help; catalog-prepare prepare-ticks --help"
 )]
 struct Arguments {
     /// Original local native catalog; never modified.
@@ -376,6 +378,8 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
 }
 
 pub fn run(argv: Vec<std::ffi::OsString>) {
+    let is_tick =
+        argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks"));
     let is_forward =
         argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-forward"));
     // Preserve the original root invocation; the explicit source-import mode has
@@ -395,6 +399,11 @@ pub fn run(argv: Vec<std::ffi::OsString>) {
                 "FORWARD_POLYMARKET_HISTORY_CAPABILITY_REQUIRED"
             ))
         }
+    } else if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("prepare-ticks"))
+    {
+        let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare prepare-ticks"))
+            .chain(argv.into_iter().skip(2));
+        ticks::run(&ticks::Arguments::parse_from(argv))
     } else if argv.get(1).map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("ingest-candles"))
     {
         let argv = std::iter::once(std::ffi::OsString::from("catalog-prepare ingest-candles"))
@@ -428,6 +437,17 @@ pub fn run(argv: Vec<std::ffi::OsString>) {
                                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
                     })
                     .unwrap_or_else(|| "QZ_FORWARD_PREPARATION_FAILED".into());
+                eprintln!("{reason}");
+            } else if is_tick {
+                let reason = error
+                    .chain()
+                    .map(ToString::to_string)
+                    .find(|message| {
+                        message.starts_with("TICK_")
+                            || message == "OUTPUT_MUST_BE_NEW"
+                            || message == "OUTPUT_MUST_NOT_OVERLAP_SOURCE"
+                    })
+                    .unwrap_or_else(|| "TICK_CATALOG_PREPARATION_FAILED".into());
                 eprintln!("{reason}");
             } else {
                 eprintln!("QZ_CATALOG_PREPARATION_FAILED");

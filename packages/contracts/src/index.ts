@@ -1,6 +1,7 @@
 export type * from './pm.ts';
 export type * from './maintenance.ts';
 export type * from './data-sources.ts';
+export * from './tick-input.ts';
 export type * from './pm-intent.ts';
 export * from './decision.ts';
 export * from './pm-validation.ts';
@@ -61,10 +62,16 @@ export interface ResearchSummary {
   id: number; title: string; status: string; trials: number; model: string; datasetId?: string | null;
   createdAt: string | null; updatedAt: string | null;
 }
-export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; error: string | null; errorDetail?: ExecutionErrorDetail | null }
+export interface TrialView { id: number; hypothesis: string; status: string; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; error: string | null; errorDetail?: ExecutionErrorDetail | null }
 export interface DailyReturn { timestamp_ns: string; value: number | null; reason_code: string | null }
 export interface TaskView { id: number; name: string; status: string; error: string | null; outcome?: string }
-export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null }
+export interface DatasetPreparation {
+  archiveLoaded: boolean;
+  nativePrepared: boolean;
+  /** Operational readiness is separate from scientific evidence. */
+  scientificQualification: 'UNVERIFIED' | 'NOT_ASSESSED';
+}
+export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
 export interface ResearchDetail extends ResearchSummary {
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   literature?: LiteratureView;
@@ -72,12 +79,15 @@ export interface ResearchDetail extends ResearchSummary {
   submission?: ResearchSubmissionView | null; originalSubmission?: ResearchSubmissionView | null;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
   criterion?: CriterionView; factors?: string[];
-  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
+  final: { status: string; trialId: number | null; reason: string | null; error?: string | null; errorDetail?: ExecutionErrorDetail | null; metrics: Metric[]; account?: JsonObject; assumptions?: string[]; inputCoverage?: JsonObject; dailyReturns?: DailyReturn[]; executionRequest?: JsonObject; registeredRequest?: JsonObject } | null;
 }
 export interface DatasetView {
   id: string; name: string; assetClass: string; currency: string; source: string;
   start: string | null; end: string | null; ready: boolean;
-  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; partitions: JsonObject | null; strategy: JsonObject | null };
+  nativeModality?: 'BAR' | 'TRADE_TICK';
+  preparation?: DatasetPreparation;
+  inputCoverage?: JsonObject;
+  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };
 }
 export interface EquityPoint { at: string; value: string | null }
 export interface TargetWeight { instrumentId: string; weight: string }
@@ -86,6 +96,7 @@ export interface FactorView extends FactorReference {
   id: string; name: string; hypothesis: string; modelSource: string; datasetId: string | null; currency: string | null; market: string[];
   status: string; evidence: 'independent' | 'historical' | 'component_only' | 'validation_only' | 'unavailable';
   metrics: Metric[]; criterion: CriterionView | null; combinable: boolean; reason: string | null; capacity?: CapacityReport; capacityAssumptions?: CapitalAssumptions;
+  nativeModality?: 'BAR' | 'TRADE_TICK'; availability?: 'EVENT_TIME_PROXY_UNVERIFIED'; scientificQualification?: 'UNQUALIFIED_EXPLORATORY';
 }
 export interface FactorAllocation { factorId: string; weight: string }
 export interface PortfolioStart {

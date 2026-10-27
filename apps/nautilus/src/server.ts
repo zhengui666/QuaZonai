@@ -1,18 +1,18 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { access, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { JsonReader, jsonChunks } from '../../research/src/native-json.ts';
-import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt } from '../../../packages/contracts/src/nautilus.ts';
+import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
 type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
-export const commands = ['evaluate-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
+export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
@@ -23,10 +23,22 @@ const catalogOptions = new Set(['--catalog', '--partitions']);
 
 export interface WorkerOptions {
   binary: string;
+  /** Explicit matching native format for tick research; never inferred from catalog paths. */
+  tickBinary?: string;
   dataDir: string;
   catalogRoots: string[];
   token?: string;
   maximumRequestBytes?: number;
+  /** Worker-owned tick limits; scientific JSON cannot raise these limits. */
+  maximumConcurrentTickExecutions?: number;
+  tickMaximumMemoryBytes?: number;
+  tickMaximumOutputBytes?: number;
+}
+
+function positiveLimit(value: number | undefined, fallback: number, code: string): number {
+  const limit = value ?? fallback;
+  if (!Number.isSafeInteger(limit) || limit <= 0) fail(code);
+  return limit;
 }
 
 function canonical(value: Json): string {
@@ -38,6 +50,10 @@ export function executionId(request: Omit<Request, 'requestId'>): string {
   return createHash('sha256').update(canonical(request)).digest('hex');
 }
 function fail(message: string, statusCode = 400): never { throw Object.assign(new Error(message), { statusCode }); }
+function rejectAdmission(requestId: string, error: NativeExecutionRejection['error'], statusCode: number): never {
+  const rejection: NativeExecutionRejection = { schemaVersion: 1, requestId, admission: 'REJECTED', error };
+  throw Object.assign(new Error(error), { statusCode, rejection });
+}
 function object(value: unknown): value is Record<string, Json> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function validName(name: string): boolean { return /^[a-zA-Z0-9_-][a-zA-Z0-9_./-]*$/.test(name) && name.split('/').every(part => part !== '.' && part !== '..' && part !== ''); }
 function below(root: string, path: string): boolean { const suffix = relative(root, path); return suffix === '' || !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`); }
@@ -83,14 +99,28 @@ function validateRequest(value: unknown, digest: string): Request {
 }
 
 export async function createNautilusWorker(options: WorkerOptions) {
+  const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
+  const tickMemoryBytes = positiveLimit(options.tickMaximumMemoryBytes, 2 * 1024 ** 3, 'nautilus_tick_memory_limit_invalid');
+  const tickOutputBytes = positiveLimit(options.tickMaximumOutputBytes, 64 * 1024 ** 2, 'nautilus_tick_output_limit_invalid');
   const binary = await realpath(options.binary);
-  const implementationDigest = await digestFile(binary);
+  const tickBinary = options.tickBinary === undefined ? binary : await realpath(options.tickBinary);
+  async function implementationIdentity() {
+    const standard = await digestFile(binary);
+    // Preserve existing single-binary receipt identity when no companion is configured.
+    if (options.tickBinary === undefined) return standard;
+    const tick = await digestFile(tickBinary);
+    return `sha256:${createHash('sha256').update(canonical({ standard, tick })).digest('hex')}`;
+  }
+  const implementationDigest = await implementationIdentity();
   const root = resolve(options.dataDir);
   const receipts = join(root, 'executions'); const scratch = join(root, 'scratch');
   await mkdir(receipts, { recursive: true }); await mkdir(scratch, { recursive: true });
   const roots = await Promise.all(options.catalogRoots.map(path => realpath(path)));
   const active = new Map<string, Active>();
   const launching = new Map<string, Promise<Active>>();
+  // Admission reservations only, not a queue. Existing receipts never consume
+  // another slot or authorize a second execution.
+  const tickSlots = new Set<string>();
   let closing = false;
 
   async function save(receipt: Receipt) {
@@ -169,16 +199,26 @@ export async function createNautilusWorker(options: WorkerOptions) {
       try {
         directory = await mkdtemp(join(scratch, 'run-'));
         const args = await argumentsFor(request, directory);
-        if (await digestFile(binary) !== implementationDigest) fail('nautilus_implementation_changed', 409);
+        if (await implementationIdentity() !== implementationDigest) fail('nautilus_implementation_changed', 409);
         if (cancelRequested) receipt = { ...running, status: 'CANCELLED' };
         else {
           // The worker launches only the configured scientific executable. Provider
           // tokens, worker auth and unrelated host environment never reach it.
-          child = spawn(binary, [request.command, ...args], { cwd: directory, detached: true,
+          const tick = request.command === 'evaluate-tick-factor';
+          const selectedBinary = tick ? tickBinary : binary;
+          const executable = tick ? '/usr/bin/prlimit' : selectedBinary;
+          const childArgs = tick ? [`--as=${tickMemoryBytes}:${tickMemoryBytes}`, '--', selectedBinary, request.command, ...args] : [request.command, ...args];
+          child = spawn(executable, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory }, stdio: ['pipe', 'pipe', 'pipe'] });
-          const parser = new JsonReader(); let parseError: unknown; let stderr = '';
+          const parser = new JsonReader(); let parseError: unknown; let stderr = ''; let outputBytes = 0; let outputExceeded = false;
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
-          child.stdout!.on('data', chunk => { if (!parseError) { try { parser.write(chunk); } catch (error) { parseError = error; } } });
+          child.stdout!.on('data', chunk => {
+            if (tick) {
+              outputBytes += Buffer.byteLength(chunk);
+              if (outputBytes > tickOutputBytes) { outputExceeded = true; signal('SIGKILL'); return; }
+            }
+            if (!parseError) { try { parser.write(chunk); } catch (error) { parseError = error; } }
+          });
           child.stderr!.on('data', chunk => { if (stderr.length < 65_536) stderr += chunk.slice(0, 65_536 - stderr.length); });
           const closed = new Promise<number | null>((resolve, reject) => { child!.once('error', reject); child!.once('close', resolve); });
           void pipeline(Readable.from(jsonChunks(request.input as never)), child.stdin!).catch(() => {});
@@ -189,6 +229,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
             signal('SIGKILL');
             receipt = { ...running, status: 'CANCELLED' };
           }
+          else if (outputExceeded) receipt = { ...running, status: 'FAILED', error: 'nautilus_tick_output_limit_exceeded' };
           else if (code !== 0) receipt = { ...running, status: 'FAILED', error: stderr.trim() || `native_${request.command}_exit_${code}` };
           else {
             if (parseError) throw parseError;
@@ -204,9 +245,29 @@ export async function createNautilusWorker(options: WorkerOptions) {
     return execution;
   }
   function launch(request: Request): Promise<Active> {
+    const running = active.get(request.requestId);
+    if (running) return Promise.resolve(running);
     const existing = launching.get(request.requestId);
     if (existing) return existing;
-    const pending = launchNew(request).finally(() => launching.delete(request.requestId));
+    const pending = (async () => {
+      const tick = request.command === 'evaluate-tick-factor';
+      if (tick) {
+        // A completed or uncertain original receipt remains readable even while
+        // another tick invocation occupies the installation's capacity.
+        const original = await read(request.requestId);
+        if (original) return { promise: Promise.resolve(original), cancel() {}, observers: 0 };
+        if (process.platform !== 'linux') rejectAdmission(request.requestId, 'nautilus_tick_resource_limits_unavailable', 501);
+        try { await access('/usr/bin/prlimit', constants.X_OK); }
+        catch { rejectAdmission(request.requestId, 'nautilus_tick_resource_limits_unavailable', 501); }
+        if (tickSlots.size >= tickConcurrency) rejectAdmission(request.requestId, 'nautilus_tick_capacity_exhausted', 429);
+        tickSlots.add(request.requestId);
+      }
+      try {
+        const execution = await launchNew(request);
+        if (tick) void execution.promise.then(() => tickSlots.delete(request.requestId), () => tickSlots.delete(request.requestId));
+        return execution;
+      } catch (error) { if (tick) tickSlots.delete(request.requestId); throw error; }
+    })().finally(() => launching.delete(request.requestId));
     launching.set(request.requestId, pending);
     return pending;
   }
@@ -244,7 +305,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
       disconnect();
     } catch (error) {
       await send(response, typeof (error as { statusCode?: unknown }).statusCode === 'number' ? (error as { statusCode: number }).statusCode : 400,
-        { error: error instanceof Error ? error.message : 'nautilus_request_failed' });
+        error instanceof Error && 'rejection' in error ? error.rejection : { error: error instanceof Error ? error.message : 'nautilus_request_failed' });
     }
   });
   // Native work may outlast an HTTP server's ordinary request/idle timeout.
