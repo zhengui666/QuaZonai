@@ -777,6 +777,16 @@ impl NativeLedger {
         };
         result
     }
+    pub fn open_instrument_ids(&self) -> Vec<InstrumentId> {
+        self.engine
+            .kernel()
+            .cache
+            .borrow()
+            .positions_open_refs(Some(&self.venue), None, None, None, None)
+            .into_iter()
+            .map(|position| position.instrument_id)
+            .collect()
+    }
     pub fn positions(&self) -> Vec<Position> {
         self.engine
             .kernel()
@@ -946,6 +956,27 @@ mod tests {
             .unwrap();
         assert!(native.balance(Currency::USDC()).unwrap().as_decimal() >= Decimal::ZERO);
         assert!(native.balance(Currency::BTC()).unwrap().as_decimal() < Decimal::from(10));
+        native.finish().unwrap();
+    }
+    #[test]
+    fn open_instrument_ids_match_positions_after_open_and_close() {
+        let instrument = perp();
+        let mut native = ledger(&instrument, true, Decimal::ZERO);
+        for (event, target) in [(1, None), (2, Some(Decimal::ONE)), (3, Some(Decimal::ZERO))] {
+            native
+                .step(event * 1_000_000_000, &instrument, 100.0, 10.0, target)
+                .unwrap();
+            let ids = native.open_instrument_ids();
+            assert_eq!(
+                ids,
+                native
+                    .positions()
+                    .iter()
+                    .map(|p| p.instrument_id)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(ids.len(), usize::from(event == 2));
+        }
         native.finish().unwrap();
     }
     #[test]
