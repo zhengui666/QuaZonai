@@ -650,7 +650,7 @@ fn import(
             };
             for data in converted {
                 if let Data::Trade(trade) = &data {
-                    let key = (trade.instrument_id, trade.trade_id);
+                    let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
                     if let Some(previous) = trades.get(&key) {
                         if previous != trade && options.trade_ticks {
                             *report
@@ -924,6 +924,39 @@ mod tests {
             fs::read(output.join("import-report.json")).unwrap(),
             receipt
         );
+    }
+
+    #[test]
+    fn tick_import_scopes_trade_identity_to_its_event_time() {
+        for (second_time, status, conflicts) in [
+            (1767225600002_u64, "IMPORTED", 0),
+            (1767225600001_u64, "INCOMPLETE", 1),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let rows = format!(
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,{second_time},11.12,0.1234567890,T-1,B\n"
+            );
+            let (manifest, instruments, _) = tick_source(temp.path(), &rows);
+            let prefixes = vec!["perps/".into(), "spot/".into()];
+            let report = import(
+                &manifest,
+                &instruments,
+                &temp.path().join("native"),
+                tick_options(&prefixes, false, 10, 10_000_000),
+            )
+            .unwrap();
+            assert_eq!(report.status, status);
+            assert_eq!(report.readback_records, 2 - conflicts);
+            assert_eq!(report.duplicate_trades, 0);
+            assert_eq!(
+                report
+                    .rejected_rows
+                    .get("CONFLICTING_SOURCE_TRADE_ID")
+                    .copied()
+                    .unwrap_or(0),
+                conflicts
+            );
+        }
     }
 
     #[test]
