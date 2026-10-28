@@ -81,7 +81,7 @@ fn source(directory: &Path, after_positive: i8) -> (PathBuf, NativeTickEconomicR
     request.scenario.jitter_max_ns = counter(0).unwrap();
     request.fx_instrument_ids = vec![BRIDGE.into()];
     let mut rows = Vec::new();
-    let mut append = |id: &str, event, price: &str, side| {
+    let mut append = |id: &str, event: u64, price: &str, side: AggressorSide| {
         rows.push(TradeTick::new(
             InstrumentId::from(id),
             Price::from(price),
