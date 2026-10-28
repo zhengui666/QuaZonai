@@ -64,8 +64,9 @@ fn actual_rate_stream_rejects_repeated_clock_and_does_not_erase_submillisecond_o
 fn missing_exposed_funding_hour_is_unknown_but_zero_rate_observation_is_present() {
     let mut expected = BTreeSet::from([("BTC".into(), 0), ("BTC".into(), 1)]);
     let mut seen = BTreeSet::from([("BTC".into(), 0)]);
-    assert!(!missing_rates_before(HOUR, &mut expected, &mut seen));
-    assert!(missing_rates_before(2 * HOUR, &mut expected, &mut seen));
+    assert!(missing_rates_before(HOUR, &mut expected, &mut seen).is_none());
+    let cause = missing_rates_before(2 * HOUR, &mut expected, &mut seen).unwrap();
+    assert_eq!(cause, format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=BTC:rate_hour=1", 2 * HOUR));
     assert!(expected.is_empty() && seen.is_empty());
 }
 
