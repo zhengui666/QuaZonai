@@ -116,6 +116,13 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
                 .all(|p| matches!(p, Component::Normal(_))),
         "ECONOMIC_FUNDING_PATH_INVALID"
     );
+    ensure!(
+        request
+            .context_source
+            .as_deref()
+            .is_none_or(|name| name == "context-prices.manifest.json"),
+        "ECONOMIC_CONTEXT_PATH_INVALID"
+    );
     let ids = &request.research.input.instrument_ids;
     ensure!(
         !request.fx_instrument_ids.is_empty()
@@ -195,6 +202,235 @@ impl Funding {
     }
 }
 
+const CONTEXT_MANIFEST: &str = "context-prices.manifest.json";
+#[derive(Deserialize)]
+struct ContextFile {
+    instrument_id: String,
+    path: String,
+    bytes: DbCounter,
+    rows: DbCounter,
+    first_event_ns: Option<DbCounter>,
+    last_event_ns: Option<DbCounter>,
+}
+#[derive(Deserialize)]
+struct ContextManifest {
+    schema_version: SchemaV1,
+    format: String,
+    clock: String,
+    source_revision: String,
+    research_source_revision: String,
+    start_ns: DbCounter,
+    end_ns: DbCounter,
+    rows: DbCounter,
+    instrument_ids: Vec<String>,
+    files: Vec<ContextFile>,
+}
+fn context_manifest(
+    root: &Path,
+    request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+) -> Result<ContextManifest> {
+    let state = std::fs::symlink_metadata(root.join(CONTEXT_MANIFEST))?;
+    ensure!(
+        state.is_file() && !state.file_type().is_symlink(),
+        "ECONOMIC_CONTEXT_MANIFEST_INVALID"
+    );
+    let m: ContextManifest =
+        serde_json::from_reader(BufReader::new(File::open(root.join(CONTEXT_MANIFEST))?))?;
+    let _ = m.schema_version;
+    ensure!(
+        m.format == "EVENT_TIME_CONTEXT_PRICE_CSV_V1"
+            && m.clock == "EVENT_TIME_PROXY_UNVERIFIED"
+            && !m.source_revision.trim().is_empty()
+            && m.research_source_revision == request.input.source_revision
+            && m.start_ns <= request.input.event_start_ns
+            && m.end_ns >= request.input.event_end_ns
+            && m.start_ns < m.end_ns
+            && !m.instrument_ids.is_empty()
+            && m.instrument_ids.windows(2).all(|p| p[0] < p[1])
+            && m.instrument_ids
+                .iter()
+                .all(|id| request.input.instrument_ids.contains(id))
+            && m.files.len() == m.instrument_ids.len(),
+        "ECONOMIC_CONTEXT_MANIFEST_INVALID"
+    );
+    let mut rows = 0u64;
+    for (index, f) in m.files.iter().enumerate() {
+        ensure!(
+            f.instrument_id == m.instrument_ids[index]
+                && !f.instrument_id.is_empty()
+                && f.path == format!("context-prices-{index:03}.csv"),
+            "ECONOMIC_CONTEXT_FILE_INVALID"
+        );
+        let state = std::fs::symlink_metadata(root.join(&f.path))?;
+        ensure!(
+            state.is_file()
+                && !state.file_type().is_symlink()
+                && state.len() == f.bytes.get()
+                && state.len() >= "event_ns,oracle_px,mark_px\n".len() as u64,
+            "ECONOMIC_CONTEXT_FILE_INVALID"
+        );
+        ensure!(
+            if f.rows.get() == 0 {
+                f.first_event_ns.is_none() && f.last_event_ns.is_none()
+            } else {
+                matches!((f.first_event_ns, f.last_event_ns), (Some(first), Some(last))
+                if first <= last && first >= m.start_ns && last < m.end_ns)
+            },
+            "ECONOMIC_CONTEXT_RANGE_INVALID"
+        );
+        rows = rows
+            .checked_add(f.rows.get())
+            .context("ECONOMIC_CONTEXT_ROW_OVERFLOW")?;
+    }
+    ensure!(rows == m.rows.get(), "ECONOMIC_CONTEXT_ROW_COUNT_MISMATCH");
+    Ok(m)
+}
+struct ContextRow {
+    event: u64,
+    oracle: Option<Decimal>,
+    mark: Option<Decimal>,
+}
+struct ContextReader {
+    reader: BufReader<File>,
+    line: String,
+    file: ContextFile,
+    next: Option<ContextRow>,
+    current: Option<ContextRow>,
+    first: Option<u64>,
+    last: Option<u64>,
+    rows: u64,
+}
+fn context_decimal(text: &str) -> Result<Option<Decimal>> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let value = if text.contains(['e', 'E']) {
+        Decimal::from_scientific(text)?
+    } else {
+        Decimal::from_str_exact(text)?
+    };
+    ensure!(value > Decimal::ZERO, "ECONOMIC_CONTEXT_PRICE_INVALID");
+    Ok(Some(value))
+}
+impl ContextReader {
+    fn open(root: &Path, file: ContextFile) -> Result<Self> {
+        let mut reader = BufReader::new(File::open(root.join(&file.path))?);
+        let mut header = String::new();
+        reader.by_ref().take(4097).read_line(&mut header)?;
+        ensure!(
+            header == "event_ns,oracle_px,mark_px\n",
+            "ECONOMIC_CONTEXT_HEADER_INVALID"
+        );
+        let mut result = Self {
+            reader,
+            line: String::new(),
+            file,
+            next: None,
+            current: None,
+            first: None,
+            last: None,
+            rows: 0,
+        };
+        result.advance()?;
+        Ok(result)
+    }
+    fn advance(&mut self) -> Result<()> {
+        self.line.clear();
+        let n = self.reader.by_ref().take(4097).read_line(&mut self.line)?;
+        if n == 0 {
+            ensure!(
+                self.rows == self.file.rows.get()
+                    && self.first == self.file.first_event_ns.map(|v| v.get())
+                    && self.last == self.file.last_event_ns.map(|v| v.get()),
+                "ECONOMIC_CONTEXT_ROW_COUNT_MISMATCH"
+            );
+            self.next = None;
+            return Ok(());
+        }
+        ensure!(
+            n <= 4096 && self.line.ends_with('\n'),
+            "ECONOMIC_CONTEXT_ROW_INVALID"
+        );
+        let mut fields = self.line[..self.line.len() - 1].split(',');
+        let event = counter(
+            fields
+                .next()
+                .context("ECONOMIC_CONTEXT_ROW_INVALID")?
+                .parse()?,
+        )?
+        .get();
+        let oracle = context_decimal(fields.next().context("ECONOMIC_CONTEXT_ROW_INVALID")?)?;
+        let mark = context_decimal(fields.next().context("ECONOMIC_CONTEXT_ROW_INVALID")?)?;
+        ensure!(fields.next().is_none(), "ECONOMIC_CONTEXT_ROW_INVALID");
+        ensure!(
+            self.last.is_none_or(|previous| previous < event),
+            "ECONOMIC_CONTEXT_ORDER_INVALID"
+        );
+        let row = ContextRow {
+            event,
+            oracle,
+            mark,
+        };
+        self.first.get_or_insert(event);
+        self.last = Some(event);
+        self.rows += 1;
+        ensure!(
+            self.rows <= self.file.rows.get(),
+            "ECONOMIC_CONTEXT_ROW_COUNT_MISMATCH"
+        );
+        self.next = Some(row);
+        Ok(())
+    }
+    fn price(&mut self, at: u64, age: u64, oracle: bool) -> Result<Option<Decimal>> {
+        while self.next.as_ref().is_some_and(|row| row.event <= at) {
+            self.current = self.next.take();
+            self.advance()?;
+        }
+        Ok(self
+            .current
+            .as_ref()
+            .filter(|row| {
+                at.checked_sub(row.event)
+                    .is_some_and(|elapsed| elapsed <= age)
+            })
+            .and_then(|row| if oracle { row.oracle } else { row.mark }))
+    }
+}
+struct ContextPrices {
+    source_revision: String,
+    readers: BTreeMap<String, ContextReader>,
+}
+impl ContextPrices {
+    fn open(
+        root: &Path,
+        request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+    ) -> Result<Self> {
+        let manifest = context_manifest(root, request)?;
+        let readers = manifest
+            .files
+            .into_iter()
+            .map(|file| Ok((file.instrument_id.clone(), ContextReader::open(root, file)?)))
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            source_revision: manifest.source_revision,
+            readers,
+        })
+    }
+    fn price(&mut self, id: &str, at: u64, age: u64, oracle: bool) -> Result<Option<Decimal>> {
+        self.readers
+            .get_mut(id)
+            .map_or(Ok(None), |reader| reader.price(at, age, oracle))
+    }
+    fn finish(&mut self) -> Result<()> {
+        for reader in self.readers.values_mut() {
+            while reader.next.is_some() {
+                reader.advance()?;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn expected_until(
     limit: u64,
     next_hour: &mut u64,
@@ -223,6 +459,7 @@ fn rates_at(
     age: u64,
     unknown: &mut Option<(u64, String)>,
     seen: &mut BTreeSet<(String, u64)>,
+    contexts: &mut Option<ContextPrices>,
 ) -> Result<Vec<NativeRate>> {
     let mut native = Vec::new();
     while funding
@@ -247,7 +484,11 @@ fn rates_at(
                         .into_iter()
                         .filter(|p| p.instrument_id == asset.instrument.id())
                     {
-                        if let Some(price) = mark(asset, at, age) {
+                        let price = match contexts.as_mut() {
+                            Some(context) => context.price(&r.instrument_id, at, age, true)?,
+                            None => mark(asset, at, age),
+                        };
+                        if let Some(price) = price {
                             let amount = -p.quantity.as_decimal()
                                 * if p.side == nautilus_model::enums::PositionSide::Short {
                                     -Decimal::ONE
@@ -261,11 +502,18 @@ fn rates_at(
                                 Money::from_decimal(amount, Currency::USDC())?,
                             )?;
                         } else {
-                            retain_first_funding_cause(unknown, (at, format!(
-                                "FUNDING_FIRST_CAUSE:STALE_OR_MISSING_MARK:event_ns={at}:instrument_id={}:last_mark_ns={}",
-                                r.instrument_id,
-                                asset.mark.map(|(at, _)| at.to_string()).unwrap_or_else(|| "NONE".into())
-                            )));
+                            let cause = if let Some(context) = contexts.as_ref() {
+                                let last = context
+                                    .readers
+                                    .get(&r.instrument_id)
+                                    .and_then(|reader| reader.current.as_ref())
+                                    .map(|row| row.event.to_string())
+                                    .unwrap_or_else(|| "NONE".into());
+                                format!("FUNDING_FIRST_CAUSE:STALE_OR_MISSING_ORACLE:event_ns={at}:instrument_id={}:last_context_ns={last}", r.instrument_id)
+                            } else {
+                                format!("FUNDING_FIRST_CAUSE:STALE_OR_MISSING_MARK:event_ns={at}:instrument_id={}:last_mark_ns={}", r.instrument_id, asset.mark.map(|(at, _)| at.to_string()).unwrap_or_else(|| "NONE".into()))
+                            };
+                            retain_first_funding_cause(unknown, (at, cause));
                         }
                     }
                 }
@@ -289,6 +537,7 @@ fn funding_before(
     age: u64,
     unknown: &mut Option<(u64, String)>,
     seen: &mut BTreeSet<(String, u64)>,
+    contexts: &mut Option<ContextPrices>,
 ) -> Result<()> {
     while let Some(at) = funding
         .next
@@ -296,7 +545,9 @@ fn funding_before(
         .map(|r| r.event_ns.get())
         .filter(|at| *at < limit)
     {
-        let rows = rates_at(funding, ledger, assets, at, start, age, unknown, seen)?;
+        let rows = rates_at(
+            funding, ledger, assets, at, start, age, unknown, seen, contexts,
+        )?;
         if let Some(ledger) = ledger.as_mut() {
             if !rows.is_empty() {
                 ledger.funding_batch(at, &rows)?;
@@ -415,6 +666,7 @@ fn value(
     now: u64,
     age: u64,
     margin: bool,
+    contexts: &mut Option<ContextPrices>,
 ) -> Result<Option<Decimal>> {
     let mut total = Decimal::ZERO;
     for balance in ledger.balances() {
@@ -435,7 +687,13 @@ fn value(
             else {
                 anyhow::bail!("ECONOMIC_POSITION_OUTSIDE_SCOPE")
             };
-            let Some(price) = mark(asset, now, age) else {
+            let price = match contexts.as_mut() {
+                Some(context) => {
+                    context.price(&position.instrument_id.to_string(), now, age, false)?
+                }
+                None => mark(asset, now, age),
+            };
+            let Some(price) = price else {
                 return Ok(None);
             };
             let pnl = position.try_calculate_pnl(
@@ -490,6 +748,19 @@ pub(crate) fn funding_sources(
             && manifest.end_ns >= request.input.event_end_ns,
         "ECONOMIC_FUNDING_COVERAGE_INVALID"
     );
+    if root.join(CONTEXT_MANIFEST).exists() {
+        let context = context_manifest(root, request)?;
+        files.push((
+            CONTEXT_MANIFEST.into(),
+            std::fs::metadata(root.join(CONTEXT_MANIFEST))?.len(),
+        ));
+        files.extend(
+            context
+                .files
+                .into_iter()
+                .map(|file| (file.path, file.bytes.get())),
+        );
+    }
     Ok(files)
 }
 
@@ -623,6 +894,11 @@ pub fn replay_with_funding(
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
+    let mut contexts = request
+        .context_source
+        .as_ref()
+        .map(|_| ContextPrices::open(funding_root, &request.research))
+        .transpose()?;
     let mut seed = s.random_seed.get();
     let mut cash: Option<NativeLedger> = None;
     let mut margin: Option<NativeLedger> = None;
@@ -664,6 +940,7 @@ pub fn replay_with_funding(
                 age,
                 &mut funding_unknown,
                 &mut seen_rates,
+                &mut contexts,
             )?;
             if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates)
             {
@@ -683,6 +960,7 @@ pub fn replay_with_funding(
                 converted,
                 reserve_usdc,
                 funding_unknown.is_some(),
+                &mut contexts,
             )?;
             day_end = day_end
                 .checked_add(DAY)
@@ -703,6 +981,7 @@ pub fn replay_with_funding(
             age,
             &mut funding_unknown,
             &mut seen_rates,
+            &mut contexts,
         )?;
         // Same-timestamp rates and marks share one complete native streaming cohort.
         let rates = rates_at(
@@ -714,6 +993,7 @@ pub fn replay_with_funding(
             age,
             &mut funding_unknown,
             &mut seen_rates,
+            &mut contexts,
         )?;
         let mut marks_cash = Vec::new();
         let mut marks_margin = Vec::new();
@@ -858,7 +1138,16 @@ pub fn replay_with_funding(
             }
         }
         if event >= next_grid && cash.is_some() {
-            schedule(&mut assets, &cash, &margin, &fx_ids, event, s, &mut seed)?;
+            schedule(
+                &mut assets,
+                &cash,
+                &margin,
+                &fx_ids,
+                event,
+                s,
+                &mut seed,
+                &mut contexts,
+            )?;
             last_target_asof = Some(event);
             next_grid = (event / s.decision_interval_ns.get() + 1)
                 .checked_mul(s.decision_interval_ns.get())
@@ -877,6 +1166,7 @@ pub fn replay_with_funding(
             age,
             &mut funding_unknown,
             &mut seen_rates,
+            &mut contexts,
         )?;
         if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates) {
             retain_first_funding_cause(&mut funding_unknown, cause);
@@ -895,6 +1185,7 @@ pub fn replay_with_funding(
             converted,
             reserve_usdc,
             funding_unknown.is_some(),
+            &mut contexts,
         )?;
         day_end = day_end
             .checked_add(DAY)
@@ -909,6 +1200,7 @@ pub fn replay_with_funding(
         age,
         &mut funding_unknown,
         &mut seen_rates,
+        &mut contexts,
     )?;
     while funding.next.is_some() {
         funding.advance()?;
@@ -917,6 +1209,9 @@ pub fn replay_with_funding(
         funding.rows == funding_manifest.rows,
         "ECONOMIC_FUNDING_ROW_COUNT_MISMATCH"
     );
+    if let Some(context) = contexts.as_mut() {
+        context.finish()?;
+    }
     if let Some(c) = cash.as_mut() {
         c.finish()?;
     }
@@ -982,7 +1277,7 @@ pub fn replay_with_funding(
             ("execution".into(),"Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation; native bar liquidity can fill less, and unchanged quantized marks do not imply a refreshed observed book. Ties use deterministic native ordering, not original queue evidence.".into()),
             ("policy".into(),"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
-            ("funding".into(),"Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into()),
+            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture observed oracle; context source {}, maximum age {}ns, EVENT_TIME_PROXY_UNVERIFIED; perpetual NAV/capital PnL uses context mark under the same clock/age, without changing trade execution or feature prices; native funding disabled. Only acknowledged adjustments enter reported funding total.", context.source_revision, age) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
             ("statistics".into(),"UTC daily total-wealth net returns; risk-free zero, sample-standard-deviation Sharpe times sqrt(365). Regime conditional annualization exp(365*mean(log(1+r)))-1, not concatenated-calendar CAGR; missing returns excluded and counted.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
@@ -1004,7 +1299,7 @@ pub fn replay_with_funding(
         targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     })
 }
 
@@ -1047,6 +1342,7 @@ fn append_day(
     converted: Decimal,
     reserve_usdc: Decimal,
     funding_unknown: bool,
+    contexts: &mut Option<ContextPrices>,
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     let usdt0 = Currency::from_str("USDT0")?;
@@ -1054,8 +1350,8 @@ fn append_day(
         None
     } else if let (Some(c), Some(m)) = (cash, margin) {
         match (
-            value(c, assets, fx_ids, at, age, false)?,
-            value(m, assets, fx_ids, at, age, true)?,
+            value(c, assets, fx_ids, at, age, false, contexts)?,
+            value(m, assets, fx_ids, at, age, true, contexts)?,
             fx(usdt0, assets, fx_ids, at, age),
         ) {
             (Some(c), Some(m), Some(fx)) => {
@@ -1095,10 +1391,27 @@ fn schedule(
     event: u64,
     s: &NativeTickEconomicScenarioV1,
     seed: &mut u64,
+    contexts: &mut Option<ContextPrices>,
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
-    let c = value(cash.as_ref().unwrap(), assets, fx_ids, event, age, false)?;
-    let m = value(margin.as_ref().unwrap(), assets, fx_ids, event, age, true)?;
+    let c = value(
+        cash.as_ref().unwrap(),
+        assets,
+        fx_ids,
+        event,
+        age,
+        false,
+        contexts,
+    )?;
+    let m = value(
+        margin.as_ref().unwrap(),
+        assets,
+        fx_ids,
+        event,
+        age,
+        true,
+        contexts,
+    )?;
     let sums = assets
         .iter()
         .filter(|a| mark(a, event, age).is_some())

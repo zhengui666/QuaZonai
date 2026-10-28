@@ -223,3 +223,173 @@ fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_p
         );
     }
 }
+
+#[test]
+fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, request, _) = source(directory.path(), 0);
+    let original = directory.path().join("source/catalog");
+    let csv = format!(
+        "event_ns,oracle_px,mark_px\n{},50,150\n{},60,160\n",
+        HOUR,
+        2 * HOUR
+    );
+    std::fs::write(original.join("context-prices-000.csv"), &csv).unwrap();
+    let manifest = json!({"schema_version":1,"format":"EVENT_TIME_CONTEXT_PRICE_CSV_V1","clock":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"independent-observations","research_source_revision":"fixed-source","start_ns":"0","end_ns":(3*DAY).to_string(),
+        "rows":"2","instrument_ids":[LATE],"files":[{"instrument_id":LATE,"path":"context-prices-000.csv","bytes":csv.len().to_string(),
+            "rows":"2","first_event_ns":HOUR.to_string(),"last_event_ns":(2*HOUR).to_string()}],"missing_dates":["observational-gap"]});
+    std::fs::write(
+        original.join(CONTEXT_MANIFEST),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let context_prepared = directory.path().join("context-prepared");
+    let metadata =
+        cohort_cache::prepare_views(&original, &request.research, &context_prepared, 1_000_000)
+            .unwrap();
+    assert_eq!(metadata["economic_sources"].as_array().unwrap().len(), 4);
+    let context_root = context_prepared.join("research/catalog");
+    let mut unrelated = request.research.clone();
+    unrelated.input.instrument_ids.retain(|id| id != LATE);
+    assert!(context_manifest(&context_root, &unrelated).is_err());
+    assert_eq!(
+        std::fs::read(context_root.join("context-prices-000.csv")).unwrap(),
+        csv.as_bytes()
+    );
+    assert_eq!(
+        std::fs::read(context_prepared.join("independent/catalog/context-prices-000.csv")).unwrap(),
+        csv.as_bytes()
+    );
+    let cache =
+        cohort_cache::load(&prepared.join("independent/catalog"), &request.research).unwrap();
+    let instrument = definitions()
+        .into_iter()
+        .find(|i| i.id().to_string() == LATE)
+        .unwrap();
+    let mut assets = vec![Asset {
+        instrument: instrument.clone(),
+        reader: cache
+            .cohorts(
+                cache
+                    .assets
+                    .iter()
+                    .find(|a| a.instrument_id == LATE)
+                    .unwrap(),
+            )
+            .unwrap(),
+        head: None,
+        previous: None,
+        fast: ExponentialMovingAverage::new(1, None),
+        slow: ExponentialMovingAverage::new(2, None),
+        model: None,
+        score: None,
+        mark: Some((0, Decimal::from(100))),
+        cohorts: 0,
+        decisions: 0,
+        attempts: 0,
+        pending: None,
+        target_weight: None,
+    }];
+    let mut margin = Some(build(&assets, true, Decimal::from(1000), &request.scenario).unwrap());
+    margin
+        .as_mut()
+        .unwrap()
+        .step(SECOND, &instrument, 100.0, 10.0, None)
+        .unwrap();
+    margin
+        .as_mut()
+        .unwrap()
+        .step(2 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(margin.as_ref().unwrap().positions().len(), 1);
+    let at = HOUR + 30_000_000;
+    let mut none = None;
+    assert!(value(
+        margin.as_ref().unwrap(),
+        &assets,
+        &BTreeSet::new(),
+        at,
+        HOUR,
+        true,
+        &mut none
+    )
+    .unwrap()
+    .is_none());
+    let mut contexts = Some(ContextPrices::open(&context_root, &request.research).unwrap());
+    let before = value(
+        margin.as_ref().unwrap(),
+        &assets,
+        &BTreeSet::new(),
+        at,
+        HOUR,
+        true,
+        &mut contexts,
+    )
+    .unwrap()
+    .unwrap();
+    let rates = original.join("actual-rate.jsonl");
+    std::fs::write(
+        &rates,
+        format!(
+            "{}\n",
+            json!({"instrument_id":LATE,"event_ns":at.to_string(),"rate":"0.01"})
+        ),
+    )
+    .unwrap();
+    let mut funding = Funding::open(&rates, BTreeSet::from([LATE.into()])).unwrap();
+    let mut unknown = None;
+    let batch = rates_at(
+        &mut funding,
+        &mut margin,
+        &assets,
+        at,
+        0,
+        HOUR,
+        &mut unknown,
+        &mut BTreeSet::new(),
+        &mut contexts,
+    )
+    .unwrap();
+    assert!(unknown.is_none());
+    margin.as_mut().unwrap().funding_batch(at, &batch).unwrap();
+    assert_eq!(
+        margin.as_ref().unwrap().summary().adjustment_totals["USDC"],
+        Decimal::new(-5, 1)
+    );
+    let after = value(
+        margin.as_ref().unwrap(),
+        &assets,
+        &BTreeSet::new(),
+        at,
+        HOUR,
+        true,
+        &mut contexts,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(before - after, Decimal::new(5, 1));
+    assert!(
+        before > Decimal::from(1040),
+        "NAV uses the observed 150 mark, not the stale 100 trade or 50 oracle"
+    );
+    assert_eq!(assets[0].mark, Some((0, Decimal::from(100))));
+    let stale = 3 * HOUR + 1;
+    assets[0].mark = Some((stale, Decimal::from(100)));
+    assert!(
+        value(
+            margin.as_ref().unwrap(),
+            &assets,
+            &BTreeSet::new(),
+            stale,
+            HOUR,
+            true,
+            &mut contexts
+        )
+        .unwrap()
+        .is_none(),
+        "explicit context cannot fall back to a fresh trade when context expires"
+    );
+    contexts.as_mut().unwrap().finish().unwrap();
+    margin.as_mut().unwrap().finish().unwrap();
+}

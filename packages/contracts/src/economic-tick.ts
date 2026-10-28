@@ -12,7 +12,7 @@ export type NativeTickEconomicScenario = {
 };
 export type NativeTickEconomicRequest = {
   schema_version: 1; research: NativeTickFactorRequest; scenario: NativeTickEconomicScenario;
-  fx_instrument_ids: string[]; funding_source: string;
+  fx_instrument_ids: string[]; funding_source: string; context_source?: string;
 };
 
 const decimalFields = ['initial_usdt', 'usdt0_per_usdt', 'spot_fraction', 'gross_fraction', 'maximum_asset_weight',
@@ -29,7 +29,7 @@ function fields(value: Record<string, unknown>, names: readonly string[]) {
 /** Exact native wire values; no floating-point conversion or inferred costs/capital. */
 export function validateNativeTickEconomicRequest(value: unknown): NativeTickEconomicRequest {
   const request = object(value);
-  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source']);
+  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source', 'context_source']);
   if (request.schema_version !== 1) throw new Error('tick_economic_schema_version_unsupported');
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
@@ -56,9 +56,11 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   if (s.decision_interval_ns === '0' || s.maximum_mark_age_ns === '0' || BigInt(s.jitter_min_ns) > BigInt(s.jitter_max_ns)) throw new Error('tick_economic_clocks_invalid');
   if (!Array.isArray(request.fx_instrument_ids) || !request.fx_instrument_ids.length || request.fx_instrument_ids.some(id => typeof id !== 'string' || !id || id.length > 200 || /[\s\u0000-\u001f\u007f]/.test(id)) || new Set(request.fx_instrument_ids).size !== request.fx_instrument_ids.length) throw new Error('tick_economic_fx_instrument_ids_invalid');
   if (typeof request.funding_source !== 'string' || !request.funding_source.endsWith('.jsonl') || /[/\\\u0000-\u001f\u007f]/.test(request.funding_source)) throw new Error('tick_economic_funding_source_invalid');
+  if (request.context_source !== undefined && request.context_source !== 'context-prices.manifest.json') throw new Error('tick_economic_context_source_invalid');
   const normalized = { ...s }; for (const key of decimalFields) normalized[key] = addDecimal(s[key], '0');
   return { schema_version: 1, research, scenario: normalized,
-    fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source };
+    fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,
+    ...(request.context_source === undefined ? {} : { context_source: request.context_source }) };
 }
 
 

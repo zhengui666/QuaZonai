@@ -60,3 +60,15 @@ test('economic daily partitions require UTC cuts without restricting ordinary fa
     assert.throws(() => validateNativeTickEconomicRequest(request), /tick_economic_utc_daily_boundaries_required/);
   }
 });
+
+
+test('economic context is explicit and preserves absent-field legacy requests', () => {
+  const legacy = validateNativeTickEconomicRequest(economicRequest());
+  assert.equal(Object.hasOwn(legacy, 'context_source'), false);
+  assert.equal(JSON.stringify(legacy).includes('context_source'), false);
+  const requested = { ...economicRequest(), context_source: 'context-prices.manifest.json' };
+  assert.equal(validateNativeTickEconomicRequest(requested).context_source, requested.context_source);
+  for (const context_source of [null, '', '../context-prices.manifest.json', '/context-prices.manifest.json', 'other.json']) {
+    assert.throws(() => validateNativeTickEconomicRequest({ ...economicRequest(), context_source }), /context_source_invalid/);
+  }
+});

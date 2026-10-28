@@ -36,6 +36,9 @@ pub struct NativeTickEconomicRequestV1 {
     pub fx_instrument_ids: Vec<String>,
     /// Catalog-relative chronological JSONL of actual instrument_id/event_ns/rate.
     pub funding_source: String,
+    /// Explicit optional oracle/mark observations in the independent economic catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_source: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
