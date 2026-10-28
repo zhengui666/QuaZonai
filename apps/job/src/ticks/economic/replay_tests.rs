@@ -62,7 +62,12 @@ fn definitions() -> Vec<InstrumentAny> {
     ]
 }
 
-fn source(directory: &Path, after_positive: i8) -> (PathBuf, NativeTickEconomicRequestV1, Vec<u8>) {
+fn source(
+    directory: &Path,
+    after_positive: i8,
+    late_close_at: Option<u64>,
+    include_four_hour_rate: bool,
+) -> (PathBuf, NativeTickEconomicRequestV1, Vec<u8>) {
     let instruments = definitions();
     let mut request = super::tests::request();
     request.research.input.instrument_ids = vec![BRIDGE.into(), SPOT.into(), LATE.into()];
@@ -117,8 +122,24 @@ fn source(directory: &Path, after_positive: i8) -> (PathBuf, NativeTickEconomicR
             append(SPOT, event, price, AggressorSide::Sell);
         }
     }
-    // Present in the full source, absent from the clipped research view.
-    append(LATE, 2 * DAY + SECOND, "100.00", AggressorSide::Buy);
+    if let Some(close_at) = late_close_at {
+        for offset in [0, 10, 20, 30, 40, 50] {
+            append(
+                LATE,
+                3 * HOUR + 15 * 60 * SECOND + offset * SECOND,
+                "100.00",
+                AggressorSide::Buy,
+            );
+        }
+        for offset in [0, 10, 20, 30] {
+            let at = close_at + offset * SECOND;
+            append(LATE, at, "100.00", AggressorSide::Buy);
+            append(LATE, at, "100.00", AggressorSide::Sell);
+        }
+    } else {
+        // Present in the full source, absent from the clipped research view.
+        append(LATE, 2 * DAY + SECOND, "100.00", AggressorSide::Buy);
+    }
     rows.sort_by_key(|row| (row.ts_event, row.instrument_id));
     let output = directory.join("source");
     let mut builder = cohort_cache::Builder::new_flow(&output, 100, 100, 1_000_000).unwrap();
@@ -136,14 +157,25 @@ fn source(directory: &Path, after_positive: i8) -> (PathBuf, NativeTickEconomicR
         )
         .unwrap();
     let catalog = output.join("catalog");
-    // A real test-source event after the late instrument first appears; no invented prior rates.
-    let rate =
-        json!({"instrument_id":LATE,"event_ns":(2 * DAY + 2 * SECOND).to_string(),"rate":"0"});
-    std::fs::write(catalog.join("funding-rates.jsonl"), format!("{rate}\n")).unwrap();
+    let rate_times = if late_close_at.is_some() {
+        (4..72)
+            .filter(|hour| *hour != 4 || include_four_hour_rate)
+            .map(|hour| hour * HOUR + 91_000_000)
+            .collect::<Vec<_>>()
+    } else {
+        vec![2 * DAY + 2 * SECOND]
+    };
+    let rates = rate_times
+        .iter()
+        .map(|at| {
+            json!({"instrument_id":LATE,"event_ns":at.to_string(),"rate":if late_close_at.is_some() && *at / HOUR == 4 {"0.001"} else {"0"}}).to_string() + "\n"
+        })
+        .collect::<String>();
+    std::fs::write(catalog.join("funding-rates.jsonl"), rates).unwrap();
     std::fs::write(
         catalog.join("funding-rates.manifest.json"),
         serde_json::to_vec(&json!({"source_revision":"fixed-source","start_ns":"0",
-            "end_ns":(3 * DAY).to_string(),"instruments":[LATE],"rows":1,"missing_instruments":[]}))
+            "end_ns":(3 * DAY).to_string(),"instruments":[LATE],"rows":rate_times.len(),"missing_instruments":[]}))
         .unwrap(),
     )
     .unwrap();
@@ -155,7 +187,7 @@ fn source(directory: &Path, after_positive: i8) -> (PathBuf, NativeTickEconomicR
 #[test]
 fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fake_events() {
     let directory = tempfile::tempdir().unwrap();
-    let (prepared, mut request, wasm) = source(directory.path(), 0);
+    let (prepared, mut request, wasm) = source(directory.path(), 0, None, true);
     request.research.clip_end(counter(2 * DAY).unwrap());
     let result = replay(&prepared.join("research/catalog"), &request, &wasm).unwrap();
     assert_eq!(result.coverage.instrument_ids.len(), 3);
@@ -185,7 +217,7 @@ fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fak
 fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_price_exposure() {
     for score in [-1, 0] {
         let directory = tempfile::tempdir().unwrap();
-        let (prepared, request, wasm) = source(directory.path(), score);
+        let (prepared, request, wasm) = source(directory.path(), score, None, true);
         let result = replay(&prepared.join("independent/catalog"), &request, &wasm).unwrap();
         assert_eq!(result.assets.len(), 3);
         assert_eq!(result.days.len(), 3);
@@ -227,7 +259,7 @@ fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_p
 #[test]
 fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price() {
     let directory = tempfile::tempdir().unwrap();
-    let (prepared, request, _) = source(directory.path(), 0);
+    let (prepared, request, _) = source(directory.path(), 0, None, true);
     let original = directory.path().join("source/catalog");
     let csv = format!(
         "event_ns,oracle_px,mark_px\n{},50,150\n{},60,160\n",
@@ -392,4 +424,37 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
     );
     contexts.as_mut().unwrap().finish().unwrap();
     margin.as_mut().unwrap().finish().unwrap();
+}
+
+#[test]
+fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
+    for (close_hour, include_rate, missing_hour) in
+        [(4, true, None), (4, false, Some(4)), (3, false, None)]
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let close_at = close_hour * HOUR + 45 * 60 * SECOND;
+        let (prepared, request, wasm) = source(directory.path(), 0, Some(close_at), include_rate);
+        let result = replay(&prepared.join("independent/catalog"), &request, &wasm).unwrap();
+        assert_eq!(
+            result.native_fills.get(),
+            4,
+            "actual native spot and perp open/close fills"
+        );
+        let cause = result
+            .limitations
+            .iter()
+            .find(|reason| reason.starts_with("FUNDING_FIRST_CAUSE:"));
+        if let Some(hour) = missing_hour {
+            assert_eq!(cause.unwrap(), &format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id={LATE}:rate_hour={hour}", hour * HOUR));
+            assert!(result.days.iter().all(|day| day.equity_usdt.is_none()));
+        } else {
+            assert!(cause.is_none());
+            assert!(result.days.iter().all(|day| day.equity_usdt.is_some()));
+            if close_hour == 4 {
+                assert!(decimal(&result.funding_usdc).unwrap() < Decimal::ZERO);
+            } else {
+                assert_eq!(decimal(&result.funding_usdc).unwrap(), Decimal::ZERO);
+            }
+        }
+    }
 }

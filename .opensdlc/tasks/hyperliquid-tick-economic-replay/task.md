@@ -23,3 +23,7 @@ TypeScript worker/API, idempotency/recovery and funding binding checks passed, i
 ## Review and delivery
 
 Draft PR #254 is open. Exact-head CI/review remain pending. Review fixes cover zero-score exits, UTC daily partitions, global VM fuel, empty primary-view assets, non-parity FX output precision, and per-pair cash inventories with separate wallet FX reserves. No factor trial, backtest performance result or deployment is claimed. Native input readers are bounded; official open-position audit history can grow and remains subject to the existing worker resource limit.
+
+## Funding boundary correction
+
+Missing-rate expectations now use the native positions held at the nominal hourly boundary before cohort execution. A position first opened at 03:15 does not create an obligation for an absent 03:00 rate. Actual funding records retain their original timestamps and continue booking through the existing exact-time path; no rates or prices are synthesized. Controlled native replay regression cases cover a later-listed entry with an observed 04:00:00.091 rate, a held 04:00 position with a missing rate, and a position closed before 04:00. This correction does not diagnose or fill separate NAV valuation gaps.

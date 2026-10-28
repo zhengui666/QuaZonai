@@ -1133,7 +1133,6 @@ pub fn replay_with_funding(
                             "FUNDING_FIRST_CAUSE:MISSING_INSTRUMENT:event_ns={event}:instrument_id={id}"
                         )));
                     }
-                    expected_rates.insert((id, event / HOUR));
                 }
             }
         }
@@ -1299,7 +1298,7 @@ pub fn replay_with_funding(
         targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     })
 }
 
