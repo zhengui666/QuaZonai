@@ -152,7 +152,8 @@ test('offline export preserves original requests and exact decimal strings, with
     const result = await exportDataset({ ...f.options, policy: policyPath, strategy: strategyPath });
     assert.equal(result.ready, false);
     assert.equal(result.currency, 'pUSD'); assert.match(result.source, /FIXTURE.*UNVERIFIED.*UNPROVEN/);
-    assert.deepEqual(result.data, { catalog: f.catalog, request: f.request });
+    assert.deepEqual(result.data, (await readSourceRevision(result))!.configured.data);
+    assert.notEqual(result.data.catalog, f.catalog); assert.deepEqual(result.data.request, f.request);
     assert.deepEqual(result.policy, policy); assert.deepEqual(result.strategy, strategy);
     assert.deepEqual(JSON.parse(await readFile(f.options.output, 'utf8')), result);
     assert.deepEqual(await readFile(f.metadataPath), originalMetadata); assert.deepEqual(await readFile(f.requestPath), originalRequest);
@@ -193,7 +194,10 @@ test('explicit price-volume HELDOUT strategy retains a prefix primary and its or
     const originals = await Promise.all([readFile(primary.requestPath, 'utf8'), readFile(sealed.requestPath, 'utf8')]);
     const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath, strategy: strategyPath });
     assert.deepEqual(result.strategy, strategy);
-    assert.deepEqual(result.data, { catalog: primary.catalog, request: JSON.parse(originals[0]!), sealed: { catalog: sealed.catalog, request: JSON.parse(originals[1]!) } });
+    assert.deepEqual(result.data, (await readSourceRevision(result))!.configured.data);
+    assert.notEqual(result.data.catalog, primary.catalog); assert.deepEqual(result.data.request, JSON.parse(originals[0]!));
+    assert.notEqual((result.data.sealed as { catalog: string }).catalog, sealed.catalog);
+    assert.deepEqual((result.data.sealed as { request: unknown }).request, JSON.parse(originals[1]!));
     assert.deepEqual(await Promise.all([readFile(primary.requestPath, 'utf8'), readFile(sealed.requestPath, 'utf8')]), originals);
     assert.notEqual(result.data.catalog, (result.data.sealed as { catalog: string }).catalog);
     const config = join(primary.directory, 'service.json'); await writeFile(config, JSON.stringify({ datasets: [result], extensions: [] }));
@@ -226,7 +230,9 @@ test('compatible heldout request uses the same clipped criteria and keeps full o
     const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath, ready: true });
     assert.equal(result.ready, true);
     assert.deepEqual(result.data.request, JSON.parse(await readFile(primary.requestPath, 'utf8')));
-    assert.deepEqual(result.data.sealed, { catalog: sealed.catalog, request: JSON.parse(await readFile(sealed.requestPath, 'utf8')) });
+    assert.deepEqual(result.data, (await readSourceRevision(result))!.configured.data);
+    assert.notEqual((result.data.sealed as { catalog: string }).catalog, sealed.catalog);
+    assert.deepEqual((result.data.sealed as { request: unknown }).request, JSON.parse(await readFile(sealed.requestPath, 'utf8')));
     assert.equal(result.end, sealed.metadata.event_end);
   } finally { await primary.cleanup(); await sealed.cleanup(); }
 });
@@ -238,7 +244,9 @@ test('heldout compatibility treats source token enumeration as a set without rew
     await primary.saveReceipt(); await sealed.saveReceipt();
     const original = await readFile(sealed.receiptPath);
     const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath });
-    assert.deepEqual(result.data.sealed, { catalog: sealed.catalog, request: sealed.request });
+    assert.deepEqual(result.data, (await readSourceRevision(result))!.configured.data);
+    assert.notEqual((result.data.sealed as { catalog: string }).catalog, sealed.catalog);
+    assert.deepEqual((result.data.sealed as { request: unknown }).request, sealed.request);
     assert.deepEqual(await readFile(sealed.receiptPath), original);
   } finally { await primary.cleanup(); await sealed.cleanup(); }
 });

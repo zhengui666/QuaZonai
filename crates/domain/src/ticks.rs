@@ -33,8 +33,18 @@ pub fn evaluation_request(
     {
         return fail("TICK_PARTITION_BOUNDARIES");
     }
-    if input.maximum_rows == 0
-        || input.maximum_rows > MAXIMUM_TICK_ROWS
+    let budget_valid = if input.is_cohort_cache() {
+        input.maximum_rows.is_none()
+            && input
+                .maximum_source_rows
+                .is_some_and(|value| value.get() > 0)
+    } else {
+        input.maximum_source_rows.is_none()
+            && input
+                .maximum_rows
+                .is_some_and(|value| value > 0 && value <= MAXIMUM_TICK_ROWS)
+    };
+    if !budget_valid
         || request.sampling.maximum_cohort_rows == 0
         || request.sampling.maximum_cohort_rows > MAXIMUM_COHORT_ROWS
     {
@@ -84,5 +94,59 @@ pub fn partition_for_event(
         Some(Validation)
     } else {
         Some(Heldout)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contracts::ticks::NativeTickRepresentationV1;
+    use serde_json::json;
+
+    #[test]
+    fn cache_representation_uses_a_separate_exact_source_budget() {
+        let native: NativeTradeTickFactorEvaluationRequestV1 = serde_json::from_value(json!({
+            "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
+                "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,
+                "source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+            "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+            "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+            "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+            "train_end_ns":"30","validation_end_ns":"50"
+        })).unwrap();
+        let legacy = serde_json::to_value(&native).unwrap();
+        assert_eq!(legacy["input"]["maximum_rows"], 100);
+        assert!(!legacy["input"]
+            .as_object()
+            .unwrap()
+            .contains_key("representation"));
+        assert!(!legacy["input"]
+            .as_object()
+            .unwrap()
+            .contains_key("maximum_source_rows"));
+        assert!(evaluation_request(&native).is_ok());
+        let mut cache = native.clone();
+        cache.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
+        cache.input.maximum_rows = None;
+        cache.input.maximum_source_rows = Some(DbCounter::new(4_500_000_000).unwrap());
+        assert!(evaluation_request(&cache).is_ok());
+        assert_eq!(cache.input.source_row_limit(), Some(4_500_000_000));
+        let encoded = serde_json::to_value(&cache).unwrap();
+        assert_eq!(encoded["input"]["maximum_source_rows"], "4500000000");
+        assert!(!encoded["input"]
+            .as_object()
+            .unwrap()
+            .contains_key("maximum_rows"));
+        cache.input.maximum_rows = Some(100);
+        assert!(evaluation_request(&cache).is_err());
+        cache.input.maximum_rows = None;
+        cache.input.maximum_source_rows = None;
+        assert!(evaluation_request(&cache).is_err());
+        let mut invalid_native = native;
+        invalid_native.input.maximum_source_rows = Some(DbCounter::new(1).unwrap());
+        assert!(evaluation_request(&invalid_native).is_err());
+        invalid_native.input.maximum_source_rows = None;
+        invalid_native.input.maximum_rows = Some(MAXIMUM_TICK_ROWS + 1);
+        assert!(evaluation_request(&invalid_native).is_err());
     }
 }
