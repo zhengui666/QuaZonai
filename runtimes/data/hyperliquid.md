@@ -53,6 +53,23 @@ unsupported platform fails instead of running unbounded. The direct
 through the pinned Rustix process API, preserving any stricter inherited limit.
 The existing BAR command does not acquire this tick-only limit.
 
+For a unit inside a longer acquisition, concrete existing file prefixes such as
+`--path-prefix perp_fills_all/date=2026-10-13/` and
+`--path-prefix spot_fills/date=2026-10-13/` select those files before decoding.
+The event-time window then selects rows within them; it does not make the unit
+a complete full-history research input. Top-level prefixes retain their existing
+behavior, and concrete date selections must remain inside the original acquisition.
+
+An explicitly separate processing manifest can declare scalar row exclusions,
+for example `"not_equals": {"direction": "Spot Dust Conversion"}` on its trade
+stream alongside `"equals": {"crossed": true}`. Every equality must match and
+every exclusion must not match. The existing `filtered_rows` count and embedded
+`source_manifest` retain the selection and its rules. Preserve the original
+acquisition manifest and raw files; a processing manifest may sit beside it so
+the original relative file paths remain usable. Use a matching operator build:
+older builds can ignore unknown filter keys. The shipped profile is unchanged,
+and other special record classes still require their own interpretation.
+
 `--resume` verifies a completed immutable unit by re-reading its source,
 definitions, currencies and native records, and comparing its final receipt;
 it does not rewrite that catalog. A changed source/selection/definition or
