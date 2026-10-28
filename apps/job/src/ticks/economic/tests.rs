@@ -65,8 +65,9 @@ fn missing_exposed_funding_hour_is_unknown_but_zero_rate_observation_is_present(
     let mut expected = BTreeSet::from([("BTC".into(), 0), ("BTC".into(), 1)]);
     let mut seen = BTreeSet::from([("BTC".into(), 0)]);
     assert!(missing_rates_before(HOUR, &mut expected, &mut seen).is_none());
-    let cause = missing_rates_before(2 * HOUR, &mut expected, &mut seen).unwrap();
-    assert_eq!(cause, format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=BTC:rate_hour=1", 2 * HOUR));
+    let (at, cause) = missing_rates_before(2 * HOUR, &mut expected, &mut seen).unwrap();
+    assert_eq!(at, HOUR);
+    assert_eq!(cause, format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=BTC:rate_hour=1", HOUR));
     assert!(expected.is_empty() && seen.is_empty());
 }
 
@@ -74,9 +75,21 @@ fn missing_exposed_funding_hour_is_unknown_but_zero_rate_observation_is_present(
 fn first_missing_funding_cause_uses_hour_before_instrument_name() {
     let mut expected = BTreeSet::from([("BTC".into(), 20), ("ETH".into(), 1)]);
     let mut seen = BTreeSet::new();
-    assert_eq!(missing_rates_before(24 * HOUR, &mut expected, &mut seen).unwrap(),
-        format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=ETH:rate_hour=1", 24 * HOUR));
+    assert_eq!(missing_rates_before(24 * HOUR, &mut expected, &mut seen).unwrap().1,
+        format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=ETH:rate_hour=1", HOUR));
     assert!(expected.is_empty());
+}
+
+#[test]
+fn earlier_missing_hour_replaces_later_mark_cause_discovered_first() {
+    let mut first = Some((20 * HOUR, "STALE_MARK".into()));
+    let mut expected = BTreeSet::from([("BTC".into(), 1)]);
+    let mut seen = BTreeSet::new();
+    retain_first_funding_cause(&mut first, missing_rates_before(24 * HOUR, &mut expected, &mut seen).unwrap());
+    assert_eq!(first.as_ref().unwrap().0, HOUR);
+    assert!(first.as_ref().unwrap().1.contains("MISSING_RATE"));
+    retain_first_funding_cause(&mut first, (21 * HOUR, "LATER_STALE_MARK".into()));
+    assert!(first.unwrap().1.contains("MISSING_RATE"));
 }
 
 #[test]
