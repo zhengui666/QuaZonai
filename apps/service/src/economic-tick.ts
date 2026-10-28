@@ -29,13 +29,13 @@ export const TickEconomicReplays = defineDoc<{ runs: Record<string, JsonObject> 
   kind: 'qz.tick-economic-replays', version: 1, scope: 'session', initial: () => ({ runs: {} }),
 });
 type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayView };
-type ReplayInput = { id: string; dataDir: string; catalog: string; target: NativeTarget; model: string; request: NativeTickEconomicRequest };
+type ReplayInput = { id: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string; request: NativeTickEconomicRequest };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
 function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
   if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
     || canonical(source.request) !== canonical(request) || canonical(configured.request) !== canonical(source.request)) return null;
-  return { request: source.request, catalog: text(sourceData.catalog, 'catalog') };
+  return { request: source.request, catalog: text(sourceData.catalog, 'catalog'), fundingCatalog: text(configuredData.catalog, 'catalog') };
 }
 
 export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, null>({
@@ -71,7 +71,7 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
         const model = join(directory, 'model.wasm');
         await writeFile(model, compileWasm(task.input.model, 'retained-factor.wat', 'replay-tick-economic'));
         result = await withNativeRemoteTracking(task.id, runtime, ctx, () => replayTickEconomic(task.input.target,
-          task.input.request, { catalog: task.input.catalog, model }, directory!, ctx));
+          task.input.request, { catalog: task.input.catalog, fundingCatalog: task.input.fundingCatalog, model }, directory!, ctx));
       }
       await runtime.commit(async tx => {
         const stored = fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!);
@@ -113,9 +113,10 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
   }
   async function start(value: unknown) {
     const body = object(value);
-    if (Object.keys(body).some(key => !['requestId', 'datasetId', 'factorId', 'request'].includes(key))) throw new Problem('tick_economic_unknown_field');
+    if (Object.keys(body).some(key => !['requestId', 'datasetId', 'factorId', 'fundingCatalog', 'request'].includes(key))) throw new Problem('tick_economic_unknown_field');
     const input: TickEconomicReplayStart = { requestId: text(body.requestId, 'request_id'), datasetId: text(body.datasetId, 'dataset_id'),
-      factorId: text(body.factorId, 'factor_id'), request: validateNativeTickEconomicRequest(body.request) };
+      factorId: text(body.factorId, 'factor_id'), request: validateNativeTickEconomicRequest(body.request),
+      ...(body.fundingCatalog === undefined ? {} : { fundingCatalog: text(body.fundingCatalog, 'funding_catalog') }) };
     const reference = factorReference(input.factorId);
     return host.harness.commit(async tx => {
       const replays = await tx.doc(TickEconomicReplays);
@@ -142,16 +143,17 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
         ?? (study.input.data.sealed && dataset.data.sealed
           ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research) : null);
       if (!source) throw new Problem('tick_economic_original_request_mismatch', 409);
+      if (input.fundingCatalog !== undefined && input.fundingCatalog !== source.fundingCatalog) throw new Problem('tick_economic_funding_catalog_mismatch', 409);
       const native = object(trial.result);
       const coverage = object(native.coverage, 'native_coverage');
       if (canonical(native.request!) !== canonical(iterationRequest(study.input.data)) || coverage.modality !== 'TRADE_TICK'
         || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
         || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
       const id = randomUUID();
-      const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: source.catalog,
+      const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: source.catalog, fundingCatalog: source.fundingCatalog,
         model: members[0]!.model, request: input.request, target: boundScienceTarget(config, study.input.data) },
       { conversationId: reference.researchId as ConversationId, ownership: { kind: 'conversation' } });
-      const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId, factorId: input.factorId, taskId,
+      const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId, factorId: input.factorId, taskId, fundingCatalog: source.fundingCatalog,
         status: 'QUEUED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null };
       replays.runs[id] = json({ original: input, view });
       return view;

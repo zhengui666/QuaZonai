@@ -20,7 +20,7 @@ export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'replay-tick
 const flags = new Set(['--summary-only', '--plan-only']);
 const scalarOptions = new Set(['--dataset-revision-id', '--model-artifact-id', '--feature-artifact-id']);
 const fileOptions = new Set(['--model', '--scope', '--features', '--calibration']);
-const catalogOptions = new Set(['--catalog', '--partitions']);
+const catalogOptions = new Set(['--catalog', '--funding-catalog', '--partitions']);
 
 export interface WorkerOptions {
   binary: string;

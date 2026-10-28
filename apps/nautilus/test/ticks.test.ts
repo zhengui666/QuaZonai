@@ -157,13 +157,15 @@ test('economic replay shares tick precision, mounted catalogs, hard limits and a
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
     assert.ok(caps.commands.includes('replay-tick-economic'));
-    const mounted = ['--catalog', f.options.catalogRoots[0]!, '--model', '@file:model'];
+    const mounted = ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.options.catalogRoots[0]!, '--model', '@file:model'];
     const files = { model: Buffer.from('controlled model artifact').toString('base64') };
     const result = await (await f.post(f.request({}, 'replay-tick-economic', mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
     assert.deepEqual(result.result.limits, [2 * 1024 ** 3, 2 * 1024 ** 3]);
     const outside = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
+    const outsideFunding = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
+    assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
     const waiting = f.request({ wait: true }, 'replay-tick-economic', mounted, files);
     const active = f.post(waiting); await f.started(2);
     const refused = await f.post(f.request({}));

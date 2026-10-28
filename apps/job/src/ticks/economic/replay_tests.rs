@@ -195,6 +195,15 @@ fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_p
             "one delayed native buy and one delayed native close"
         );
         assert_eq!(result.native_rejections.get(), 0);
+        if result.target_asof_ns.is_none() {
+            assert!(result.targets.is_empty());
+            assert!(result.target_cash_weight.is_none());
+            assert!(result
+                .limitations
+                .iter()
+                .any(|reason| reason
+                    == "TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"));
+        }
         assert_eq!(decimal(&result.funding_usdc).unwrap(), Decimal::ZERO);
         assert_eq!(
             decimal(&result.initial_conversion_cost_usdc).unwrap(),

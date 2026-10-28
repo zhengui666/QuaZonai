@@ -75,9 +75,9 @@ export type NativeTickEconomicResult = {
   targets: { instrument_id: string; currency: string; weight: string }[]; target_asof_ns: string | null; target_cash_weight: string | null;
   skipped_cash: string; skipped_minimum: string; consumed_fuel: string | null; limitations: string[];
 };
-export type TickEconomicReplayStart = { requestId: string; datasetId: string; factorId: string; request: NativeTickEconomicRequest };
+export type TickEconomicReplayStart = { requestId: string; datasetId: string; factorId: string; fundingCatalog?: string; request: NativeTickEconomicRequest };
 export type TickEconomicReplayView = {
-  id: string; requestId: string; datasetId: string; factorId: string; taskId: number;
+  id: string; requestId: string; datasetId: string; factorId: string; taskId: number; fundingCatalog?: string;
   status: 'QUEUED' | 'RUNNING' | 'COMPUTED' | 'FAILED' | 'STOPPED';
   scientificQualification: 'UNQUALIFIED_EXPLORATORY'; result: NativeTickEconomicResult | null; error: string | null;
 };

@@ -34,7 +34,7 @@ request=json.load(sys.stdin)
 assert sys.argv[1]=='replay-tick-economic'
 assert os.path.isfile(sys.argv[sys.argv.index('--model')+1])
 with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
-print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','catalog':sys.argv[sys.argv.index('--catalog')+1]},
+print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','catalog':sys.argv[sys.argv.index('--catalog')+1],'funding_catalog':sys.argv[sys.argv.index('--funding-catalog')+1]},
 'coverage':{'modality':'TRADE_TICK','source_revision':request['research']['input']['source_revision']},
 'assets':[{'instrument_id':'BTC.SIM','native_kind':'CryptoPerpetual','cohorts':'2','decisions':'1','execution_attempts':'0'}],
 'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'controlled_missing_mark'}],
@@ -86,6 +86,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     const result = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json();
     assert.equal(result.status, 'COMPUTED', JSON.stringify(result)); assert.equal(result.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
     assert.equal(result.result.methods.catalog, catalog);
+    assert.equal(result.result.methods.funding_catalog, republishedPrimary); assert.equal(result.fundingCatalog, republishedPrimary);
     assert.deepEqual(result.result.request, request); assert.equal(result.result.targets[0].weight, '0.1234567890123456789012345678'); assert.equal(result.result.days[0].equity_usdt, null); assert.equal(result.result.days[0].net_return, null);
     assert.equal((await service.research.harness.snapshot(Study, researchId, context))!.trials.length, 1);
     assert.equal((await service.research.harness.snapshot(Study, researchId, context))!.final, null);
@@ -94,14 +95,16 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: { ...payload, request: { ...request, scenario: { ...request.scenario, random_seed: '1' } } } })).statusCode, 409);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: { ...payload, requestId: 'different-model', request: { ...request, research: { ...request.research, parameters: { ...request.research.parameters, slow_period_cohorts: 3 } } } } })).statusCode, 409);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/portfolios', headers, payload: { requestId: 'still-unsupported', name: 'No BAR reinterpretation', datasetId: 'ticks', capital: '3000', researchIds: [researchId] } })).statusCode, 422);
+    assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: { ...payload, requestId: 'arbitrary-funding', fundingCatalog: catalog } })).statusCode, 409);
     const fullRequest = validateNativeTickEconomicRequest({ ...request, research: full });
     const final = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
-      payload: { ...payload, requestId: 'economic-full-original', request: fullRequest } });
+      payload: { ...payload, requestId: 'economic-full-original', fundingCatalog: republishedIndependent, request: fullRequest } });
     assert.equal(final.statusCode, 202, final.body);
     await service.research.harness.waitForTask(final.json().taskId as TaskId, context);
     const fullResult = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${final.json().id}`, headers })).json();
     assert.equal(fullResult.status, 'COMPUTED'); assert.equal(fullResult.result.methods.catalog, independent);
     assert.deepEqual(fullResult.result.request, fullRequest);
+    assert.equal(fullResult.result.methods.funding_catalog, republishedIndependent);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
       payload: { ...payload, requestId: 'unregistered-window', request: { ...request, research: { ...request.research, input: { ...request.research.input, event_end_ns: '604800000000000' } } } } })).statusCode, 409);
     const references = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(view.taskId), context))!.requests;
@@ -109,9 +112,9 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     for (const completed of [true, false]) {
       const id = completed ? 'recovered-original' : 'uncertain-original';
       const taskId = await service.research.harness.commit(async tx => {
-        const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir, catalog, target, request,
+        const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir, catalog, fundingCatalog: republishedPrimary, target, request,
           model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: { ...payload, requestId: id }, view: { ...view, id, taskId, status: 'QUEUED' } });
+        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: { ...payload, requestId: id }, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
         (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId,
           requestId: completed ? originalReference.requestId! : '0'.repeat(64), status: 'PENDING' });
         return taskId;
@@ -119,7 +122,8 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       await service.research.harness.waitForTask(taskId, context);
       const recovered = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${id}`, headers })).json();
       assert.equal(recovered.status, completed ? 'COMPUTED' : 'FAILED');
-      if (completed) assert.deepEqual(recovered.result, result.result);
+      assert.equal(recovered.fundingCatalog, republishedPrimary);
+      if (completed) { assert.deepEqual(recovered.result, result.result); assert.equal(recovered.result.methods.funding_catalog, republishedPrimary); }
       else {
         const unknown = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(taskId), context))!.requests[0]!;
         assert.equal(unknown.requestId, '0'.repeat(64)); assert.equal(unknown.status, 'UNKNOWN');
@@ -141,7 +145,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
         const taskId = await service.research.harness.commit(async tx => {
           const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir,
             catalog, target: recoveryTarget, request, model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-          (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, id, taskId, status: 'QUEUED' } });
+          (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
           (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId, target: recoveryTarget, status: 'PENDING' });
           return taskId;
         }, context);
@@ -158,7 +162,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
         const id = 'locally-stopped-original';
         const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: service.config.dataDir,
           catalog, target: recoveryTarget, request, model: '(module)' }, { conversationId: researchId, ownership: { kind: 'conversation' } });
-        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, id, taskId, status: 'QUEUED' } });
+        (await tx.doc(TickEconomicReplays)).runs[id] = json({ original: payload, view: { ...view, fundingCatalog: republishedPrimary, id, taskId, status: 'QUEUED' } });
         (await tx.doc(NativeRemoteUncertainty, researchId, String(taskId), null)).requests.push({ ...originalReference, taskId, target: recoveryTarget, status: 'PENDING' });
         return taskId;
       }, context);

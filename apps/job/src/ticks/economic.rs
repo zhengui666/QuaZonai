@@ -932,11 +932,17 @@ pub fn replay_with_funding(
                         )?,
             )
         });
+    let target_asof = last_target_asof.filter(|at| {
+        assets
+            .iter()
+            .filter(|a| a.score.is_some() || a.target_weight.is_some())
+            .all(|a| a.target_weight.is_some_and(|(clock, _)| clock == *at))
+    });
     let targets = assets
         .iter()
         .filter_map(|a| {
             a.target_weight
-                .filter(|(at, _)| Some(*at) == last_target_asof)
+                .filter(|(at, _)| Some(*at) == target_asof)
                 .map(|(_, weight)| (a.instrument.id().to_string(), weight))
         })
         .map(|(instrument_id, weight)| {
@@ -979,10 +985,10 @@ pub fn replay_with_funding(
         native_fills:counter(fills)?, native_rejections:counter(rejections)?,
         native_perp_pnl_rounding_events:counter(margin_summary.fills)?, perp_pnl_rounding_bound_usdc:exact(Decimal::new(1,2)*Decimal::from(margin_summary.fills))?,
         funding_missing_instruments:funding_manifest.missing_instruments,
-        targets, target_asof_ns:last_target_asof.map(counter).transpose()?,target_cash_weight:last_target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
+        targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec!["EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown{"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()],
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown{"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()],
     })
 }
 
