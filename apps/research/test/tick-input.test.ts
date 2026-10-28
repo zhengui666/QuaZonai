@@ -165,6 +165,10 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.deepEqual(validateNativeTickFactorRequest(flow), flow);
   const brief = modelBriefInput({ data: tagged(flow), policy: {} }).data.feature_model as JsonObject;
   assert.equal(brief.schema, 'qz.tick-cohort-flow-features.v1');
+  assert.match(String(brief.setter), /mask=0 means an observed finite value/);
+  assert.match(String(brief.setter), /mask=1 means NotYetAvailable, 2 Expired, 3 SourceMissing/);
+  assert.match(String(brief.prediction), /must return a finite f64/);
+  assert.match(String(brief.missing), /skips prediction/);
   assert.equal((brief.features as string[]).length, 8); assert.equal((brief.features as string[])[7], 'signed_quantity');
   assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
   assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
@@ -279,5 +283,25 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     await host.close();
     if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('full-market tick feedback keeps coverage totals and availability without repeated source reports or asset rows', () => {
+  const coverage: JsonObject = { modality: 'TRADE_TICK', source_revision: 'original-source', trade_count: '1308222597',
+    cohort_count: '614393279', first_event_ns: '1', last_event_ns: '9007199254740993', availability: 'EVENT_TIME_PROXY_UNVERIFIED',
+    instrument_ids: Array.from({ length: 523 }, (_, i) => `A${i}.SIM`),
+    instrument_coverage: Array.from({ length: 523 }, (_, i) => ({ instrument_id: `A${i}.SIM`, trade_count: '1', cohort_count: '1', first_event_ns: null, last_event_ns: null })),
+    limitations: ['UNQUALIFIED_EXPLORATORY', 'VWAP_IS_NOT_EXECUTABLE_PRICE'],
+    source_evidence: { representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', source_report: {
+      instruments: Array.from({ length: 523 }, () => ({ definition: 'SOURCE_REPORT_OWNER_ONLY'.repeat(100) })) } } };
+  for (const regime of [false, true]) {
+    const result: JsonObject = { coverage, partitions: [], ...(regime ? { regime_partitions: [] } : {}) };
+    const original = structuredClone(result); const feedback = modelFeedback(result); const projected = feedback.coverage as JsonObject;
+    assert.equal(projected.trade_count, '1308222597'); assert.equal(projected.cohort_count, '614393279');
+    assert.equal(projected.last_event_ns, '9007199254740993'); assert.equal(projected.instrument_count, 523);
+    assert.equal(projected.availability, 'EVENT_TIME_PROXY_UNVERIFIED'); assert.deepEqual(projected.limitations, coverage.limitations);
+    assert.deepEqual(projected.source_evidence, { representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' });
+    assert.equal('instrument_ids' in projected, false); assert.equal('instrument_coverage' in projected, false);
+    assert.ok(JSON.stringify(feedback).length < 2000); assert.deepEqual(result, original);
   }
 });

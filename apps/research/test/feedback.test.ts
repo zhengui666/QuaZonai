@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { modelFeedback } from '../src/feedback.ts';
+import { modelBriefInput, modelFeedback } from '../src/feedback.ts';
 
 const count = '9007199254740993';
 const metric = { counts: { included: count }, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES' } };
@@ -39,4 +39,11 @@ test('portfolio feedback cannot expose a final partition', () => {
 test('existing non-portfolio feedback remains unchanged', () => {
   const original = { request: {}, partitions: [{ partition: 'VALIDATION', metric }] };
   assert.equal(modelFeedback(original), original);
+});
+
+test('catalog ensemble brief exposes the same v2 observed and unavailable mask contract', () => {
+  const brief = modelBriefInput({ data: {}, policy: { strategy: { kind: 'catalog-ensemble' } } }).data.feature_model as JsonObject;
+  assert.match(String(brief.setter), /mask=0 means an observed finite value/);
+  assert.match(String(brief.setter), /mask=1 means NotYetAvailable, 2 Expired, 3 SourceMissing/);
+  assert.match(String(brief.prediction), /nonfinite output is not a missing-prediction marker/);
 });
