@@ -74,7 +74,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     return BigInt(value);
   }
   type CacheFile = { inode: string; bytes: bigint; begin: bigint; end: bigint };
-  async function cacheCatalog(directory: string, request: NativeTickFactorRequest): Promise<{ trades: bigint; cohorts: bigint; source: string; assets: Map<string, CacheFile> }> {
+  async function cacheCatalog(directory: string, request: NativeTickFactorRequest): Promise<{ trades: bigint; cohorts: bigint; source: string; assets: Map<string, CacheFile>; contextFiles: Map<string, string> }> {
     const manifestPath = join(directory, 'cohort-cache.json'); await observe(manifestPath);
     const manifest = object(parseOriginalJson(await readFile(manifestPath, 'utf8')), 'tick_cache_manifest'); validateNumbers(manifest);
     if (manifest.schema_version !== 1 || manifest.representation !== request.input.representation
@@ -84,6 +84,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     const source = object(manifest.source_report, 'tick_cache_source_report');
     if (source.status !== 'IMPORTED' || (source.source_revision ?? source.revision) !== manifest.source_revision) throw new Error('tick_cache_source_report_mismatch');
     const frameBytes = request.input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1' ? 40n : 32n;
+    const contextFiles = new Map<string, string>();
     const files = new Set<string>([manifestPath]); const instruments = new Set<string>(); const assets = new Map<string, CacheFile>(); let trades = 0n; let cohorts = 0n;
     for (const raw of manifest.files) {
       const entry = object(raw, 'tick_cache_file'); const name = text(entry.path, 'tick_cache_path'); const id = text(entry.instrument_id, 'tick_cache_instrument');
@@ -120,16 +121,43 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       || cohorts !== cacheCounter(manifest.cohort_count)) throw new Error('tick_cache_coverage_mismatch');
     if (metadata.economic_sources !== undefined) {
       const extras = metadata.economic_sources;
-      if (!Array.isArray(extras) || extras.length !== 2) throw new Error('tick_economic_source_manifest_invalid');
+      if (!Array.isArray(extras)) throw new Error('tick_economic_source_manifest_invalid');
       const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
+      const contextSizes = new Map<string, bigint>();
+      if (extras.some(extra => object(extra, 'tick_economic_source').path === 'context-prices.manifest.json')) {
+        const path = join(directory, 'context-prices.manifest.json'); await observe(path);
+        const context = object(parseOriginalJson(await readFile(path, 'utf8')), 'tick_context_manifest'); validateNumbers(context);
+        const ids = context.instrument_ids;
+        if (context.schema_version !== 1 || context.format !== 'EVENT_TIME_CONTEXT_PRICE_CSV_V1' || context.clock !== 'EVENT_TIME_PROXY_UNVERIFIED'
+          || typeof context.source_revision !== 'string' || !context.source_revision.trim()
+          || context.research_source_revision !== request.input.source_revision
+          || cacheCounter(context.start_ns) > BigInt(request.input.event_start_ns) || cacheCounter(context.end_ns) < BigInt(request.input.event_end_ns)
+          || !Array.isArray(ids) || ids.length === 0 || ids.some((id, index) => typeof id !== 'string' || !id || index > 0 && String(ids[index - 1]) >= id)
+          || !Array.isArray(context.files) || context.files.length !== ids.length) throw new Error('tick_context_source_coverage_mismatch');
+        names.add('context-prices.manifest.json');
+        const seenIds = new Set<string>(); let rows = 0n;
+        for (const raw of context.files) {
+          const file = object(raw, 'tick_context_file'); const id = text(file.instrument_id, 'tick_context_instrument'); const name = text(file.path, 'tick_context_path');
+          if (!ids.includes(id) || seenIds.has(id) || !/^context-prices-\d{3}\.csv$/.test(name) || names.has(name)) throw new Error('tick_context_file_invalid');
+          const count = cacheCounter(file.rows); const bytes = cacheCounter(file.bytes);
+          if (bytes === 0n || (count === 0n ? file.first_event_ns !== null || file.last_event_ns !== null
+            : cacheCounter(file.first_event_ns) > cacheCounter(file.last_event_ns) || cacheCounter(file.first_event_ns) < cacheCounter(context.start_ns)
+              || cacheCounter(file.last_event_ns) >= cacheCounter(context.end_ns))) throw new Error('tick_context_file_coverage_invalid');
+          rows += count; names.add(name); seenIds.add(id); contextSizes.set(name, bytes);
+        }
+        if (rows !== cacheCounter(context.rows)) throw new Error('tick_context_row_count_mismatch');
+      }
       for (const extra of extras) {
         const row = object(extra, 'tick_economic_source');
         if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');
         const path = join(directory, row.path); await observe(path);
         const state = await lstat(path, { bigint: true });
-        if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.bytes)) throw new Error('tick_economic_source_size_mismatch');
+        if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.bytes)
+          || contextSizes.has(row.path) && state.size !== contextSizes.get(row.path)) throw new Error('tick_economic_source_size_mismatch');
+        if (row.path === 'context-prices.manifest.json' || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
         files.add(path);
       }
+      if (names.size) throw new Error('tick_economic_source_manifest_invalid');
       const funding = object(parseOriginalJson(await readFile(join(directory, 'funding-rates.manifest.json'), 'utf8')), 'funding_manifest');
       const fundingInstruments = Array.isArray(funding.instruments) ? funding.instruments : [];
       if (funding.source_revision !== request.input.source_revision || cacheCounter(funding.start_ns) > BigInt(request.input.event_start_ns)
@@ -146,12 +174,14 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       await observe(path);
     }
     await visit(directory); if (files.size) throw new Error('tick_cache_file_missing');
-    return { trades, cohorts, source: canonical(source), assets };
+    return { trades, cohorts, source: canonical(source), assets, contextFiles };
   }
   const cacheCoverage = cache ? await cacheCatalog(primary, research) : null;
   const fullCacheCoverage = cache ? await cacheCatalog(independent, full) : null;
   if (cacheCoverage && fullCacheCoverage) {
     if (cacheCoverage.source !== fullCacheCoverage.source) throw new Error('tick_cache_source_view_mismatch');
+    if (cacheCoverage.contextFiles.size !== fullCacheCoverage.contextFiles.size
+      || [...cacheCoverage.contextFiles].some(([name, identity]) => fullCacheCoverage.contextFiles.get(name) !== identity)) throw new Error('tick_context_source_view_mismatch');
     for (const [id, view] of cacheCoverage.assets) {
       const original = fullCacheCoverage.assets.get(id)!;
       if (view.inode !== original.inode || view.bytes !== original.bytes || view.begin !== original.begin || view.end > original.end) throw new Error('tick_cache_source_view_mismatch');
