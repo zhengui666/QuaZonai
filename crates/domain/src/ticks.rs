@@ -2,13 +2,14 @@
 use crate::DomainError;
 use contracts::{
     factors::NativeFactorPartitionV1,
-    ticks::{NativeTickTargetV1, NativeTradeTickFactorEvaluationRequestV1},
+    ticks::{NativeTickRegimeV1, NativeTickTargetV1, NativeTradeTickFactorEvaluationRequestV1},
     DbCounter,
 };
 use std::collections::BTreeSet;
 
 pub const MAXIMUM_TICK_ROWS: u32 = 1_000_000;
 pub const MAXIMUM_COHORT_ROWS: u32 = 100_000;
+pub const UTC_DAY_NS: u64 = 86_400_000_000_000;
 
 pub fn evaluation_request(
     request: &NativeTradeTickFactorEvaluationRequestV1,
@@ -83,7 +84,91 @@ pub fn evaluation_request(
     if !valid_target {
         return fail("TICK_PARAMETERS_INVALID");
     }
+    evaluation_regimes(request)?;
     Ok(())
+}
+
+/// Evaluation-only states use completed BTC endpoint days; no future marks enter features.
+pub fn evaluation_regimes(
+    request: &NativeTradeTickFactorEvaluationRequestV1,
+) -> Result<Vec<NativeTickRegimeV1>, DomainError> {
+    use bigdecimal::BigDecimal;
+    use std::str::FromStr;
+    let Some(evaluation) = &request.evaluation_regimes else {
+        return Ok(Vec::new());
+    };
+    let invalid = || DomainError::Invalid("TICK_REGIME_EVALUATION_INVALID");
+    let start = request.input.event_start_ns.get();
+    let end = request.input.event_end_ns.get();
+    if !request.input.is_cohort_cache()
+        || start >= end
+        || [
+            start,
+            end,
+            request.train_end_ns.get(),
+            request.validation_end_ns.get(),
+        ]
+        .iter()
+        .any(|value| !value.is_multiple_of(UTC_DAY_NS))
+        || u64::try_from(evaluation.days.len()).map_err(|_| invalid())?
+            != (end - start) / UTC_DAY_NS
+    {
+        return Err(invalid());
+    }
+    evaluation
+        .days
+        .iter()
+        .enumerate()
+        .map(|(index, day)| {
+            let expected = start
+                .checked_add(
+                    u64::try_from(index)
+                        .map_err(|_| invalid())?
+                        .checked_mul(UTC_DAY_NS)
+                        .ok_or_else(invalid)?,
+                )
+                .ok_or_else(invalid)?;
+            if day.day_start_ns.get() != expected {
+                return Err(invalid());
+            }
+            let mark = |mark: &Option<contracts::ticks::NativeTickRegimeMarkV1>,
+                        offset: u64|
+             -> Result<Option<BigDecimal>, DomainError> {
+                let Some(mark) = mark else { return Ok(None) };
+                let lower = expected
+                    .checked_sub(offset * UTC_DAY_NS)
+                    .ok_or_else(invalid)?;
+                if mark.event_ns.get() < lower
+                    || mark.event_ns.get() >= lower + UTC_DAY_NS
+                    || mark.price.is_empty()
+                    || mark.price.len() > 512
+                    || mark
+                        .price
+                        .bytes()
+                        .any(|byte| !byte.is_ascii_digit() && !matches!(byte, b'.' | b'+' | b'-'))
+                {
+                    return Err(invalid());
+                }
+                let value = BigDecimal::from_str(&mark.price).map_err(|_| invalid())?;
+                if value <= BigDecimal::from(0) {
+                    return Err(invalid());
+                }
+                Ok(Some(value))
+            };
+            let previous = mark(&day.previous, 1)?;
+            let lookback = mark(&day.lookback, 31)?;
+            Ok(match (previous, lookback) {
+                (Some(previous), Some(lookback)) if &previous * 100 > &lookback * 105 => {
+                    NativeTickRegimeV1::Bull
+                }
+                (Some(previous), Some(lookback)) if &previous * 100 < &lookback * 95 => {
+                    NativeTickRegimeV1::Bear
+                }
+                (Some(_), Some(_)) => NativeTickRegimeV1::Range,
+                _ => NativeTickRegimeV1::Unknown,
+            })
+        })
+        .collect()
 }
 
 pub fn partition_bounds(
@@ -212,5 +297,84 @@ mod tests {
             horizon_ns: DbCounter::new(i64::MAX as u64 - 79).unwrap(),
         };
         assert!(evaluation_request(&req).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod regime_tests {
+    use super::*;
+    use contracts::ticks::*;
+    use serde_json::json;
+
+    #[test]
+    fn daily_states_use_exact_completed_endpoint_days_and_preserve_unknown() {
+        let mut request: NativeTradeTickFactorEvaluationRequestV1 = serde_json::from_value(json!({
+            "schema_version":1,"input":{"modality":"TRADE_TICK","representation":"EVENT_TIME_COHORT_FLOW_CACHE_V1",
+                "instrument_ids":["BTC-USD-PERP.HYPERLIQUID"],"event_start_ns":(32*UTC_DAY_NS).to_string(),
+                "event_end_ns":(36*UTC_DAY_NS).to_string(),"decision_cutoff_ns":(36*UTC_DAY_NS).to_string(),
+                "maximum_source_rows":"100","source_revision":"source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
+            "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+            "target":{"kind":"FIXED_EVENT_TIME","horizon_ns":"60000000000"},
+            "parameters":{"fast_period_cohorts":8,"slow_period_cohorts":32},
+            "train_end_ns":(33*UTC_DAY_NS).to_string(),"validation_end_ns":(35*UTC_DAY_NS).to_string(),
+            "evaluation_regimes":{"kind":"BTC_COMPLETED_30_DAY_RETURN_V1","days":[]}
+        })).unwrap();
+        request.evaluation_regimes.as_mut().unwrap().days = [
+            Some("105.0000000000000000000000000001"),
+            Some("94.9999999999999999999999999999"),
+            Some("105"),
+            None,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, price)| {
+            let day = (32 + index as u64) * UTC_DAY_NS;
+            NativeTickRegimeDayV1 {
+                day_start_ns: DbCounter::new(day).unwrap(),
+                previous: price.map(|price| NativeTickRegimeMarkV1 {
+                    event_ns: DbCounter::new(day - UTC_DAY_NS + 1).unwrap(),
+                    price: price.into(),
+                }),
+                lookback: Some(NativeTickRegimeMarkV1 {
+                    event_ns: DbCounter::new(day - 31 * UTC_DAY_NS + 1).unwrap(),
+                    price: "100".into(),
+                }),
+            }
+        })
+        .collect();
+        assert!(evaluation_request(&request).is_ok());
+        assert_eq!(
+            evaluation_regimes(&request).unwrap(),
+            [
+                NativeTickRegimeV1::Bull,
+                NativeTickRegimeV1::Bear,
+                NativeTickRegimeV1::Range,
+                NativeTickRegimeV1::Unknown
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["evaluation_regimes"]["kind"],
+            "BTC_COMPLETED_30_DAY_RETURN_V1"
+        );
+        let mut invalid = request.clone();
+        invalid.evaluation_regimes.as_mut().unwrap().days[0]
+            .previous
+            .as_mut()
+            .unwrap()
+            .event_ns = request.input.event_start_ns;
+        assert!(evaluation_request(&invalid).is_err());
+        let mut invalid = request.clone();
+        invalid.evaluation_regimes.as_mut().unwrap().days.swap(0, 1);
+        assert!(evaluation_request(&invalid).is_err());
+        let mut invalid = request.clone();
+        invalid.evaluation_regimes.as_mut().unwrap().days[0]
+            .previous
+            .as_mut()
+            .unwrap()
+            .price = "1e2".into();
+        assert!(evaluation_request(&invalid).is_err());
+        request.clip_end(request.validation_end_ns);
+        assert_eq!(request.evaluation_regimes.as_ref().unwrap().days.len(), 3);
+        assert!(evaluation_request(&request).is_ok());
     }
 }

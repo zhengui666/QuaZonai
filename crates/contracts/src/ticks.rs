@@ -1,6 +1,9 @@
 //! Explicit exploratory native TradeTick factor inputs. BAR contracts are unchanged.
 use crate::{
-    factors::{NativeFactorPartitionReportV1, NativeFactorPointV1},
+    factors::{
+        NativeFactorAssetMetricV1, NativeFactorMetricV1, NativeFactorPartitionReportV1,
+        NativeFactorPartitionV1, NativeFactorPointV1,
+    },
     DbCounter, SchemaV1,
 };
 use serde::{Deserialize, Serialize};
@@ -161,6 +164,95 @@ pub struct NativeTradeTickFactorEvaluationRequestV1 {
     pub parameters: NativeTickParametersV1,
     pub train_end_ns: DbCounter,
     pub validation_end_ns: DbCounter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_regimes: Option<NativeTickRegimeEvaluationV1>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickRegimeMethodV1 {
+    #[serde(rename = "BTC_COMPLETED_30_DAY_RETURN_V1")]
+    BtcCompleted30DayReturnV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTickRegimeMarkV1 {
+    pub event_ns: DbCounter,
+    /// Original positive plain decimal VWAP, without NUMERIC(38,18) rounding.
+    #[schema(min_length = 1, max_length = 512)]
+    pub price: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTickRegimeDayV1 {
+    pub day_start_ns: DbCounter,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true)]
+    pub previous: Option<NativeTickRegimeMarkV1>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schema(required = true)]
+    pub lookback: Option<NativeTickRegimeMarkV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTickRegimeEvaluationV1 {
+    pub kind: NativeTickRegimeMethodV1,
+    pub days: Vec<NativeTickRegimeDayV1>,
+}
+
+impl NativeTradeTickFactorEvaluationRequestV1 {
+    pub fn clip_end(&mut self, end: DbCounter) {
+        self.input.event_end_ns = end;
+        if let Some(regimes) = &mut self.evaluation_regimes {
+            regimes.days.retain(|day| day.day_start_ns < end);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickRegimeV1 {
+    Bull,
+    Bear,
+    Range,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeTickLabelSpanBucketV1 {
+    pub lower_ns: DbCounter,
+    pub upper_ns: Option<DbCounter>,
+    pub count: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeTickLabelSpansV1 {
+    pub count: DbCounter,
+    pub min_ns: Option<DbCounter>,
+    pub max_ns: Option<DbCounter>,
+    pub buckets: Vec<NativeTickLabelSpanBucketV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeTickRegimeMetricV1 {
+    pub regime: NativeTickRegimeV1,
+    pub days: DbCounter,
+    pub metric: NativeFactorMetricV1,
+    pub assets: Vec<NativeFactorAssetMetricV1>,
+    pub observed_assets: DbCounter,
+    pub included_assets: DbCounter,
+    pub label_spans: NativeTickLabelSpansV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct NativeTickRegimePartitionV1 {
+    pub partition: NativeFactorPartitionV1,
+    pub start_ns: DbCounter,
+    pub end_ns: DbCounter,
+    pub regimes: Vec<NativeTickRegimeMetricV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -202,6 +294,8 @@ pub struct NativeTradeTickFactorEvaluationResultV1 {
     pub consumed_fuel: Option<DbCounter>,
     pub coverage: NativeTradeTickCoverageV1,
     pub partitions: Vec<NativeFactorPartitionReportV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regime_partitions: Option<Vec<NativeTickRegimePartitionV1>>,
     /// Omitted on the summary-only path; labels remain evaluation evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<NativeFactorPointV1>>,

@@ -1,6 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 function record(value: JsonValue | undefined): JsonObject | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
@@ -21,6 +21,13 @@ function partitions(value: JsonValue | undefined): JsonObject[] {
 
 /** Model projection only. The complete original result and native evidence stay unchanged. */
 export function modelFeedback(result: JsonObject): JsonObject {
+  if (result.portfolio === undefined && result.regime_partitions !== undefined) {
+    const request = record(result.request);
+    return { ...result,
+      ...(request?.evaluation_regimes ? { request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns)) } : {}),
+      partitions: (Array.isArray(result.partitions) ? result.partitions : []).filter(item => ['TRAIN', 'VALIDATION'].includes(String(record(item)?.partition))),
+      regime_partitions: (Array.isArray(result.regime_partitions) ? result.regime_partitions : []).filter(item => ['TRAIN', 'VALIDATION'].includes(String(record(item)?.partition))) };
+  }
   if (result.portfolio === undefined) return result;
   const portfolio = record(result.portfolio);
   if (portfolio?.partition !== 'VALIDATION') throw new Error('validation_feedback_required');
@@ -60,7 +67,10 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
   const { sealed: _sealed, ...data } = input.data;
   const tagged = nativeResearchInput(data);
   const flow = tagged?.modality === 'TRADE_TICK' && tagged.request.input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1';
-  if (tagged?.modality === 'TRADE_TICK') return { data: { ...data, feature_model: {
+  const { evaluation_regimes: _regimes, ...tickRequest } = tagged?.modality === 'TRADE_TICK' ? tagged.request : {};
+  if (tagged?.modality === 'TRADE_TICK') return { data: { ...data,
+    ...(tagged.request.evaluation_regimes ? { nativeInput: { modality: 'TRADE_TICK', request: tickRequest } } : {}),
+    feature_model: {
     abi: TICK_FEATURE_ABI, features: [...(flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
     ...(flow ? { schema: 'qz.tick-cohort-flow-features.v1' } : {}),
     definitions: ['Quantity-weighted price over exactly the current complete instrument/event-time cohort; previous complete cohort price.',
