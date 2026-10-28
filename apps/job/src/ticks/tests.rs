@@ -174,7 +174,7 @@ fn explicit_tick_universe_does_not_inherit_the_bar_256_instrument_limit() {
 
 #[test]
 fn derived_cache_prepares_bounded_views_and_preserves_native_factor_results() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
     let output = temp.path().join("source");
     let mut data = series();
     data.get_mut("AUD/USD.SIM")
@@ -207,6 +207,19 @@ fn derived_cache_prepares_bounded_views_and_preserves_native_factor_results() {
     cached.input.maximum_source_rows = Some(counter(8).unwrap());
     let prepared = temp.path().join("prepared");
     cohort_cache::prepare_views(&output.join("catalog"), &cached, &prepared, 1_000_000).unwrap();
+    let relative = tempfile::Builder::new()
+        .prefix(".qz-relative-prepared-")
+        .tempdir_in(std::env::current_dir().unwrap())
+        .unwrap();
+    std::fs::remove_dir(relative.path()).unwrap();
+    cohort_cache::prepare_views(
+        &output.join("catalog"),
+        &cached,
+        Path::new(relative.path().file_name().unwrap()),
+        1_000_000,
+    )
+    .unwrap();
+    assert!(relative.path().join("catalog-metadata.json").is_file());
     let independent = prepared.join("independent/catalog");
     let primary = prepared.join("research/catalog");
     let primary_manifest = cohort_cache::manifest(&primary).unwrap();
