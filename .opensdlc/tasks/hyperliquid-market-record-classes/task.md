@@ -34,7 +34,7 @@ Reuse the native importer's `Stream::matches` and source report. Add a small mix
 
 Implemented optional `not_in` predicates using the existing scalar comparator. Regression coverage combines `crossed`, scalar method exclusions and direction lists: actual market Close Long/Short and ordinary spot records remain; protocol/Dust and maker rows are filtered. Null values, empty sets, multiple fields and malformed nested comparisons are covered without changing the default profile.
 
-`cargo fmt --all -- --check` and `git diff --check` passed. Native execution has not run locally; CI remains required. Independent data checks found every source identity maps to its original official native type: 206 CryptoPerpetual and 317 CurrencyPair. All source order IDs were nonzero, including protocol events. The native raw-record conversion measurements are resource tests, not scientific strategy results.
+`cargo fmt --all -- --check` and `git diff --check` passed. Native execution has not run locally; CI remains required. Independent data checks found every source identity maps to its original official native type: 206 CryptoPerpetual and 317 CurrencyPair. All taker-side source order IDs were nonzero, including protocol events; maker-wide order-ID checks were not performed. The native raw-record conversion measurements are resource tests, not scientific strategy results.
 
 <a id="handoff"></a>
 ## Handoff
