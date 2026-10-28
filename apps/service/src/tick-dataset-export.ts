@@ -132,13 +132,13 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
           || typeof context.source_revision !== 'string' || !context.source_revision.trim()
           || context.research_source_revision !== request.input.source_revision
           || cacheCounter(context.start_ns) > BigInt(request.input.event_start_ns) || cacheCounter(context.end_ns) < BigInt(request.input.event_end_ns)
-          || !Array.isArray(ids) || ids.length === 0 || ids.some((id, index) => typeof id !== 'string' || !id || index > 0 && String(ids[index - 1]) >= id)
+          || !Array.isArray(ids) || ids.length === 0 || ids.some((id, index) => typeof id !== 'string' || !id || !request.input.instrument_ids.includes(id) || index > 0 && String(ids[index - 1]) >= id)
           || !Array.isArray(context.files) || context.files.length !== ids.length) throw new Error('tick_context_source_coverage_mismatch');
         names.add('context-prices.manifest.json');
         const seenIds = new Set<string>(); let rows = 0n;
-        for (const raw of context.files) {
+        for (const [index, raw] of context.files.entries()) {
           const file = object(raw, 'tick_context_file'); const id = text(file.instrument_id, 'tick_context_instrument'); const name = text(file.path, 'tick_context_path');
-          if (!ids.includes(id) || seenIds.has(id) || !/^context-prices-\d{3}\.csv$/.test(name) || names.has(name)) throw new Error('tick_context_file_invalid');
+          if (id !== ids[index] || seenIds.has(id) || name !== `context-prices-${String(index).padStart(3, '0')}.csv` || names.has(name)) throw new Error('tick_context_file_invalid');
           const count = cacheCounter(file.rows); const bytes = cacheCounter(file.bytes);
           if (bytes === 0n || (count === 0n ? file.first_event_ns !== null || file.last_event_ns !== null
             : cacheCounter(file.first_event_ns) > cacheCounter(file.last_event_ns) || cacheCounter(file.first_event_ns) < cacheCounter(context.start_ns)

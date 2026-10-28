@@ -230,7 +230,7 @@ test('fixed event-time target survives prepared cache export in both bounded req
 
 
 test('explicit context sidecars retain exact source identity and owned bytes', async () => {
-  for (const failure of [null, 'revision', 'rows', 'path', 'bytes', 'view'] as const) {
+  for (const failure of [null, 'revision', 'scope', 'rows', 'path', 'bytes', 'view'] as const) {
     const f = await preparedCache(undefined, true);
     try {
       const rates = '{"instrument_id":"BTCUSDT.SIM","event_ns":"10","rate":"0.00001"}\n';
@@ -243,6 +243,7 @@ test('explicit context sidecars retain exact source identity and owned bytes', a
         files: [{ instrument_id: 'BTCUSDT.SIM', path: 'context-prices-000.csv', bytes: String(Buffer.byteLength(csv)), rows: '2', first_event_ns: '10', last_event_ns: '20' }],
         missing_dates: ['controlled missing source date'], limitations: ['EVENT_TIME_PROXY_UNVERIFIED'] };
       if (failure === 'revision') manifest.research_source_revision = 'different-source';
+      if (failure === 'scope') { manifest.instrument_ids = ['UNRELATED.SIM']; manifest.files[0]!.instrument_id = 'UNRELATED.SIM'; }
       if (failure === 'rows') manifest.rows = '3';
       if (failure === 'path') manifest.files[0]!.path = '../context-prices-000.csv';
       if (failure === 'bytes') manifest.files[0]!.bytes = String(Buffer.byteLength(csv) + 1);
@@ -259,7 +260,7 @@ test('explicit context sidecars retain exact source identity and owned bytes', a
       metadata.economic_sources = [...sources].map(([path, bytes]) => ({ path, bytes: String(Buffer.byteLength(bytes)) }));
       await writeFile(f.options.prepared, JSON.stringify(metadata));
       if (failure) {
-        await assert.rejects(exportDataset(f.options), failure === 'revision' ? /context_source_coverage_mismatch/ : failure === 'rows' ? /context_row_count_mismatch/
+        await assert.rejects(exportDataset(f.options), failure === 'revision' || failure === 'scope' ? /context_source_coverage_mismatch/ : failure === 'rows' ? /context_row_count_mismatch/
           : failure === 'path' ? /context_file_invalid/ : failure === 'bytes' ? /economic_source_size_mismatch/ : /context_source_view_mismatch/);
       } else {
         const result = await exportDataset(f.options); const primary = String(result.data.catalog);

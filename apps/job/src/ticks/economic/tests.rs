@@ -229,3 +229,77 @@ fn derived_wire_values_round_only_at_output_boundary() {
     let serialized = exact(wealth).unwrap();
     assert!((decimal(&serialized).unwrap() - wealth).abs() <= Decimal::new(5, 19));
 }
+
+#[test]
+fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
+    assert_eq!(context_decimal("1e-8").unwrap(), Some(Decimal::new(1, 8)));
+    assert_eq!(
+        context_decimal("0.0000000200").unwrap(),
+        Some(Decimal::new(2, 8))
+    );
+    for invalid in ["0", "-1", "NaN", "Infinity"] {
+        assert!(context_decimal(invalid).is_err());
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("context-prices-000.csv");
+    let text = format!(
+        "event_ns,oracle_px,mark_px\n0,3.0440,3.042500\n{},,4\n{},5,6\n",
+        HOUR,
+        2 * HOUR
+    );
+    std::fs::write(&path, &text).unwrap();
+    let file = ContextFile {
+        instrument_id: "UNIT".into(),
+        path: "context-prices-000.csv".into(),
+        bytes: counter(text.len() as u64).unwrap(),
+        rows: counter(3).unwrap(),
+        first_event_ns: Some(counter(0).unwrap()),
+        last_event_ns: Some(counter(2 * HOUR).unwrap()),
+    };
+    let mut reader = ContextReader::open(directory.path(), file).unwrap();
+    assert_eq!(
+        reader.price(HOUR - 1, HOUR, true).unwrap(),
+        Some(Decimal::new(30440, 4))
+    );
+    assert_eq!(reader.price(HOUR, HOUR, true).unwrap(), None);
+    assert_eq!(
+        reader.price(HOUR, HOUR, false).unwrap(),
+        Some(Decimal::from(4))
+    );
+    assert_eq!(reader.price(2 * HOUR - 1, HOUR, true).unwrap(), None);
+    assert_eq!(
+        reader.price(2 * HOUR, HOUR, true).unwrap(),
+        Some(Decimal::from(5))
+    );
+    assert_eq!(
+        reader.price(3 * HOUR, HOUR, false).unwrap(),
+        Some(Decimal::from(6))
+    );
+    assert_eq!(reader.price(3 * HOUR + 1, HOUR, false).unwrap(), None);
+    // Exact repeated clocks are rejected instead of silently selecting an ordering.
+    std::fs::write(&path, "event_ns,oracle_px,mark_px\n0,1,2\n0,3,4\n").unwrap();
+    let file = ContextFile {
+        instrument_id: "UNIT".into(),
+        path: "context-prices-000.csv".into(),
+        bytes: counter(0).unwrap(),
+        rows: counter(2).unwrap(),
+        first_event_ns: Some(counter(0).unwrap()),
+        last_event_ns: Some(counter(0).unwrap()),
+    };
+    let mut reader = ContextReader::open(directory.path(), file).unwrap();
+    assert_eq!(
+        reader.price(0, HOUR, true).unwrap_err().to_string(),
+        "ECONOMIC_CONTEXT_ORDER_INVALID"
+    );
+    let original = request();
+    assert!(!serde_json::to_value(&original)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("context_source"));
+    let mut enabled = original;
+    enabled.context_source = Some(CONTEXT_MANIFEST.into());
+    validate(&enabled).unwrap();
+    enabled.context_source = Some("other.json".into());
+    assert!(validate(&enabled).is_err());
+}
