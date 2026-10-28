@@ -220,6 +220,18 @@ fn evaluate_asset(
                 && current.quantity > 0.0,
             "TICK_FEATURE_NONFINITE"
         );
+        let signed_quantity = if request.input.is_flow_cache() {
+            let value = current
+                .signed_quantity
+                .ok_or_else(|| anyhow::anyhow!("TICK_FLOW_QUANTITY_MISSING"))?;
+            ensure!(
+                value.is_finite() && value.abs() <= current.quantity,
+                "TICK_FLOW_QUANTITY_INVALID"
+            );
+            Some(value)
+        } else {
+            None
+        };
         if let Some(previous) = &previous {
             ensure!(current.event > previous.event, "TICK_CACHE_EVENT_ORDER");
         }
@@ -252,7 +264,22 @@ fn evaluate_asset(
                 )?,
             ];
             summary.predictions += 1;
-            Some(model.predict(current.event, current.event, ordinal, &features)?)
+            Some(if let Some(signed) = signed_quantity {
+                let [a, b, c, d, e, f, g] = features;
+                let flow_features = [
+                    a,
+                    b,
+                    c,
+                    d,
+                    e,
+                    f,
+                    g,
+                    feature(signed, current.event, ordinal)?,
+                ];
+                model.predict(current.event, current.event, ordinal, &flow_features)?
+            } else {
+                model.predict(current.event, current.event, ordinal, &features)?
+            })
         } else {
             record(
                 &mut summary.metrics,
@@ -441,8 +468,8 @@ pub(super) fn evaluate(
         schema_version: SchemaV1, request: request.clone(),
         native_versions: BTreeMap::from([("nautilus-model".into(), "0.63.0".into()), ("nautilus-persistence".into(), "0.63.0".into()), ("nautilus-indicators".into(), "0.63.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
-            ("input".into(), "EVENT_TIME_COHORT_CACHE_V1: derived complete-event cohorts; no BAR catalog or simulation".into()),
-            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), FEATURE_SCHEMA.into()),
+            ("input".into(), format!("{}: derived complete-event cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
+            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), if request.input.is_flow_cache() { FLOW_FEATURE_SCHEMA } else { FEATURE_SCHEMA }.into()),
             ("sampling".into(), "EVENT_TIME_COHORT_V1: complete current cohort visible; earlier selected cohorts only; unknown source sequence".into()),
             ("label".into(), request.target.label_method().into()),
             ("partitioning".into(), "shared half-open event cuts; cross-boundary labels excluded; warmup and state continue across source units".into()),
@@ -507,6 +534,40 @@ mod tests {
             online.push(score, label).unwrap();
         }
         assert!((online.finish().value.unwrap() - expected.value.unwrap()).abs() <= 1e-12);
+    }
+
+    #[test]
+    fn flow_stream_refuses_missing_or_invalid_flow_even_during_warmup() {
+        let mut request = request();
+        request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
+        request.input.maximum_rows = None;
+        request.input.maximum_source_rows = Some(counter(7).unwrap());
+        let original = super::super::cohorts(&series()["AUD/USD.SIM"], 100).unwrap();
+        let module = SignalModule::new(&model(7), false).unwrap();
+        for (signed, expected) in [
+            (None, "TICK_FLOW_QUANTITY_MISSING"),
+            (Some(f64::NAN), "TICK_FLOW_QUANTITY_INVALID"),
+            (Some(2.0), "TICK_FLOW_QUANTITY_INVALID"),
+        ] {
+            let mut rows = original.clone();
+            rows[0].signed_quantity = signed;
+            let mut budget = Budget {
+                fuel: None,
+                source_rows: 7,
+            };
+            let mut pooled = std::array::from_fn(|_| Metric::default());
+            let failure = evaluate_asset(
+                &request,
+                (rows.into_iter().map(Ok), None),
+                7,
+                &module,
+                &mut budget,
+                &mut pooled,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(failure.to_string(), expected);
+        }
     }
 
     fn compare(

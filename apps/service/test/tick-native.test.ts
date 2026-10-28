@@ -15,13 +15,14 @@ import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 const fixture = process.env.QZ_TICK_NATIVE_FIXTURE_DIR;
 const standard = process.env.QZ_JOB_BINARY; const high = process.env.QZ_TICK_JOB_BINARY;
 
-for (const representation of ['native', 'cache'] as const) test(`HTTP and Durable evaluate actual high-precision ticks (${representation}) with separate BAR kernel and owner-only final evidence`, { skip: !fixture || !standard || !high, timeout: 120_000 }, async () => {
+for (const representation of ['native', 'cache', 'flow'] as const) test(`HTTP and Durable evaluate actual high-precision ticks (${representation}) with separate BAR kernel and owner-only final evidence`, { skip: !fixture || !standard || !high, timeout: 120_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-tick-native-http-'));
   const worker = await createNautilusWorker({ binary: standard!, tickBinary: high!, dataDir: join(directory, 'worker'), catalogRoots: [fixture!, directory] });
   try {
     await new Promise<void>(resolve => worker.server.listen(0, '127.0.0.1', resolve));
     const address = worker.server.address(); assert.ok(address && typeof address !== 'string');
-    const dataset = await exportDataset({ prepared: join(fixture!, representation === 'cache' ? 'cohort-prepared/catalog-metadata.json' : 'prepared/catalog-metadata.json'), request: join(fixture!, representation === 'cache' ? 'cohort-request.json' : 'request.json'),
+    const prefix = representation === 'native' ? '' : representation === 'flow' ? 'cohort-flow-' : 'cohort-';
+    const dataset = await exportDataset({ prepared: join(fixture!, `${prefix}prepared/catalog-metadata.json`), request: join(fixture!, `${prefix}request.json`),
       output: join(directory, 'dataset.json'), id: 'native-ticks', name: 'Controlled high-precision ticks, not market evidence', ready: true });
     const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
     const config = configDefaults({ dataDir: join(directory, 'service'), research: { database: join(directory, 'research.sqlite') }, datasets: [dataset],
@@ -31,7 +32,7 @@ for (const representation of ['native', 'cache'] as const) test(`HTTP and Durabl
       const session = await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'controlled-tick-native-only' } });
       assert.equal(session.statusCode, 200, session.body);
       const headers = { cookie: session.cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ') };
-      const model = await readFile(join(fixture!, 'model.wat'), 'utf8');
+      const model = await readFile(join(fixture!, representation === 'flow' ? 'cohort-flow-model.wat' : 'model.wat'), 'utf8');
       faux.setResponses([
         fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'Controlled cohort-price factor; no profitability or PIT claim', model }), { stopReason: 'toolUse' }),
         async () => {
@@ -51,7 +52,7 @@ for (const representation of ['native', 'cache'] as const) test(`HTTP and Durabl
       assert.equal(result.final.status, 'COMPUTED', detail.body);
       assert.equal(result.final.inputCoverage.modality, 'TRADE_TICK'); assert.equal(result.final.inputCoverage.availability, 'EVENT_TIME_PROXY_UNVERIFIED');
       assert.equal(result.final.inputCoverage.trade_count, '32');
-      assert.equal(result.final.inputCoverage.representation, representation === 'cache' ? 'EVENT_TIME_COHORT_CACHE_V1' : undefined);
+      assert.equal(result.final.inputCoverage.representation, representation === 'flow' ? 'EVENT_TIME_COHORT_FLOW_CACHE_V1' : representation === 'cache' ? 'EVENT_TIME_COHORT_CACHE_V1' : undefined);
       assert.equal(result.trialRecords[0].metrics.filter((metric: { key: string }) => metric.key.startsWith('HELDOUT.pearson_ic'))[0].value, null);
       assert.ok(result.final.metrics.some((metric: { key: string }) => metric.key === 'HELDOUT.pearson_ic'));
       const factors = await service.app.inject({ url: '/api/v3/factors', headers });

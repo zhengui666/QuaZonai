@@ -12,13 +12,16 @@ export function labelHorizon(settings?: DatasetView['researchSettings']): string
 
 export function NativeInputFacts({ modality, settings, preparation, coverage }: { modality?: DatasetView['nativeModality']; settings?: DatasetView['researchSettings']; preparation?: DatasetView['preparation']; coverage?: JsonObject }) {
   const tick = (modality ?? settings?.modality) === 'TRADE_TICK';
-  const items: Parameters<typeof Facts>[0]['items'] = [['输入类型', tick ? '原生逐笔 TradeTick' : 'BAR']];
+  const flow = coverage?.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1';
+  const cache = flow || coverage?.representation === 'EVENT_TIME_COHORT_CACHE_V1';
+  const items: Parameters<typeof Facts>[0]['items'] = [['输入类型', flow ? '派生成交组缓存（含主动净量）' : cache ? '派生成交组缓存' : tick ? '原生逐笔 TradeTick' : 'BAR']];
+  if (flow) items.push(['特征', '8 项，含 signed_quantity（主动买量 − 主动卖量）']);
   if (settings?.sampling) items.push(['采样', settings.sampling === 'EVENT_TIME_COHORT_V1' ? '每品种完整同时间戳成交组' : settings.sampling]);
   if (settings) items.push(['标签预测跨度', labelHorizon(settings)]);
   if (settings?.sourceRevision) items.push(['来源修订', <code>{settings.sourceRevision}</code>]);
   if (tick) items.push(['可得时间', '事件时间代理（未验证）'], ['科学资格', '未获资格；仅供探索性分析']);
   else if (preparation) items.push(['科学资格', preparation.scientificQualification === 'UNVERIFIED' ? '未验证' : '尚未评定']);
-  if (preparation) items.push(['原始档案', preparation.archiveLoaded ? '已加载' : '未加载'], ['原生目录', preparation.nativePrepared ? '已准备' : '未准备']);
+  if (preparation) items.push(['原始档案', preparation.archiveLoaded ? '已加载' : '未加载'], [cache ? '研究输入' : '原生目录', preparation.nativePrepared ? '已准备' : '未准备']);
   if (coverage) {
     if (typeof coverage.trade_count === 'string') items.push(['原始成交数', coverage.trade_count]);
     if (typeof coverage.cohort_count === 'string') items.push(['成交组数', coverage.cohort_count]);

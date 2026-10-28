@@ -9,7 +9,7 @@ use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
     indicator::{Indicator, MovingAverage},
 };
-use nautilus_model::data::TradeTick;
+use nautilus_model::{data::TradeTick, enums::AggressorSide};
 use std::{collections::BTreeMap, path::Path};
 
 pub mod catalog;
@@ -17,6 +17,7 @@ pub mod cohort_cache;
 mod stream;
 
 pub const FEATURE_SCHEMA: &str = "qz.tick-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_event_ns";
+pub const FLOW_FEATURE_SCHEMA: &str = "qz.tick-cohort-flow-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_event_ns,signed_quantity";
 
 #[derive(Clone, Debug)]
 struct Cohort {
@@ -24,6 +25,7 @@ struct Cohort {
     vwap: f64,
     quantity: f64,
     count: usize,
+    signed_quantity: Option<f64>,
 }
 
 fn counter(value: u64) -> Result<DbCounter> {
@@ -32,12 +34,17 @@ fn counter(value: u64) -> Result<DbCounter> {
 
 /// Integer/decimal reductions precede finite feature conversion, making tie order irrelevant.
 fn cohorts(trades: &[TradeTick], maximum: u32) -> Result<Vec<Cohort>> {
+    cohorts_with_flow(trades, maximum, false)
+}
+
+fn cohorts_with_flow(trades: &[TradeTick], maximum: u32, flow: bool) -> Result<Vec<Cohort>> {
     trades
         .chunk_by(|a, b| a.ts_event == b.ts_event)
         .map(|rows| {
             ensure!(rows.len() <= maximum as usize, "TICK_COHORT_ROW_LIMIT");
             let mut quantity = BigDecimal::zero();
             let mut cash = BigDecimal::zero();
+            let mut signed = BigDecimal::zero();
             for trade in rows {
                 let price: BigDecimal = trade.price.to_string().parse()?;
                 let size: BigDecimal = trade.size.to_string().parse()?;
@@ -46,6 +53,13 @@ fn cohorts(trades: &[TradeTick], maximum: u32) -> Result<Vec<Cohort>> {
                     "TICK_PRICE_QUANTITY_INVALID"
                 );
                 cash += &price * &size;
+                if flow {
+                    match trade.aggressor_side {
+                        AggressorSide::Buy => signed += &size,
+                        AggressorSide::Sell => signed -= &size,
+                        AggressorSide::NoAggressor => anyhow::bail!("TICK_FLOW_AGGRESSOR_UNKNOWN"),
+                    }
+                }
                 quantity += size;
             }
             let vwap = (&cash / &quantity)
@@ -63,6 +77,15 @@ fn cohorts(trades: &[TradeTick], maximum: u32) -> Result<Vec<Cohort>> {
                 vwap,
                 quantity,
                 count: rows.len(),
+                signed_quantity: if flow {
+                    let value = signed
+                        .to_f64()
+                        .ok_or_else(|| anyhow::anyhow!("TICK_FEATURE_NONFINITE"))?;
+                    ensure!(value.is_finite(), "TICK_FEATURE_NONFINITE");
+                    Some(value)
+                } else {
+                    None
+                },
             })
         })
         .collect()

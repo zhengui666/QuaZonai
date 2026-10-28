@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { NativeInputFacts } from './native-input';
 
 describe('native input evidence presentation', () => {
+  it('identifies signed-flow derived input without claiming native ticks or qualification', () => {
+    const html = renderToStaticMarkup(createElement(NativeInputFacts, { modality: 'TRADE_TICK',
+      coverage: { representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' } }));
+    expect(html).toContain('派生成交组缓存'); expect(html).toContain('主动净量'); expect(html).toContain('signed_quantity');
+    expect(html).toContain('仅供探索性分析'); expect(html).not.toContain('原生逐笔 TradeTick');
+  });
   it('does not relabel a loaded tick archive as BAR or scientific qualification before a study contract exists', () => {
     const html = renderToStaticMarkup(createElement(NativeInputFacts, { modality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: false, scientificQualification: 'UNVERIFIED' } }));
     expect(html).toContain('TradeTick'); expect(html).toContain('仅供探索性分析'); expect(html).toContain('事件时间代理（未验证）');

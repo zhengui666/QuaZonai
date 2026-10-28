@@ -95,8 +95,8 @@ fuel and pending labels continue across source units and partitions. Partition
 and asset metrics use stable online pooled covariance, with unavailable statuses
 preserved; local IC values are never averaged into a portfolio or global IC.
 
-This path provides exploratory price/quantity/cohort-intensity controls only.
-It does not add signed-flow features, fixed decision-clock sampling, network-jitter
+The 32-byte representation provides price/quantity/cohort-intensity controls.
+It does not include signed flow or fixed decision-clock sampling, network-jitter
 simulation, tick portfolios, historical funding settlement or execution
 qualification. Duration labels permit common event-time prediction horizons,
 not an execution or holding-time guarantee. A cohort horizon is not a fixed
@@ -104,6 +104,30 @@ holding time, and a VWAP mark is not an executable quote. Labels missing a futur
 cohort are incomplete; labels reaching a partition end are excluded from that
 partition. Both readers stay inside the declared primary or independent view.
 `ready` records operational preparation only.
+
+## Signed aggressive flow
+
+`EVENT_TIME_COHORT_FLOW_CACHE_V1` is a separate 40-byte representation. It
+preserves the original first four frame fields and appends signed quantity:
+exact BigDecimal BUY quantity minus SELL quantity, converted to f64 only after
+reduction. The native conversion and total quantity/VWAP formulas are unchanged.
+Unknown aggressors fail flow preparation; known balanced flow is a valid zero,
+not a missing-value placeholder. No TWAP or future annotation enters this value.
+
+Use `market-history import --cohort-flow-cache` instead of `--cohort-cache`, and
+set the prepared request's representation to `EVENT_TIME_COHORT_FLOW_CACHE_V1`.
+The explicit `qz.tick-cohort-flow-features.v1` schema appends `signed_quantity`
+as slot seven (the eighth feature) under the same function ABI v2. Native and
+32-byte requests keep their existing seven-feature schema. Both fixed-cohort
+and fixed-event-time labels work without changing their meaning.
+
+Preparation, publication and worker transport use the same commands and mounted
+output roots as above; byte ranges and framing follow the declared representation,
+never directory inference. For the measured cohort count, 40-byte data estimates
+22.888 GiB per physical copy, before metadata. Reserve for one source cache and
+one publication copy when reflinks are unavailable, and measure actual free space
+before conversion. This feature does not establish receive-clock PIT, executable
+price, queue priority, market capacity or the owner's return targets.
 
 ## Native TradeTick preparation
 

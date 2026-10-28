@@ -11,7 +11,7 @@ export default defineExtension({
   name: 'qz.factor-wasm', tasks: [FactorTask, CatalogScopeTask],
   tools: [defineTool({
     name: 'factor_evaluate',
-    description: 'Evaluate an arbitrary factor, not a position. BAR models export predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Explicit TRADE_TICK models use feature ABI v2 and the seven cohort features in research_brief; BAR slots are never reinterpreted. Values may have any finite sign or scale. Validation statistics are feedback, not profitability or qualification.',
+    description: 'Evaluate an arbitrary factor, not a position. BAR models export predict(close,previous_close,fastEMA,slowEMA,volume,open,high,low)->f64. Explicit TRADE_TICK models use feature ABI v2 and the explicit cohort feature schema in research_brief (seven base features, or eight with signed quantity for FLOW_CACHE); BAR slots are never reinterpreted. Values may have any finite sign or scale. Validation statistics are feedback, not profitability or qualification.',
     parameters: Type.Object({ hypothesis: Type.String(), model: Type.String(), hypothesisId: Type.Optional(Type.String()), parentTrialIds: Type.Optional(Type.Array(Type.String())) }), replay: 'safe', executionMode: 'sequential',
     async execute(args, api, context) {
       const input = await studyInput(api, context);
