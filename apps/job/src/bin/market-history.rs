@@ -1227,6 +1227,47 @@ mod tests {
                     fs::read(mono.join("catalog").join(&e.path)).unwrap()
                 );
             }
+            let start = actual.event_start_ns.get();
+            let request = serde_json::from_value(serde_json::json!({"schema_version":1,
+                "input":{"modality":"TRADE_TICK","instrument_ids":actual.files.iter().map(|file| &file.instrument_id).collect::<Vec<_>>(),
+                    "event_start_ns":actual.event_start_ns,"event_end_ns":actual.event_end_ns,
+                    "decision_cutoff_ns":actual.event_end_ns,"source_revision":actual.source_revision,
+                    "availability":"EVENT_TIME_PROXY_UNVERIFIED","representation":actual.representation,
+                    "maximum_source_rows":actual.trade_count},
+                "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+                "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+                "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+                "train_end_ns":(start+1_000_000_000).to_string(),
+                "validation_end_ns":(start+86_401_000_000_000).to_string()})).unwrap();
+            let prepared = temp.path().join("prepared-composed");
+            job::ticks::cohort_cache::prepare_views(
+                &output.join("catalog"),
+                &request,
+                &prepared,
+                10_000_000,
+            )
+            .unwrap();
+            let model = wat::parse_str(r#"(module
+                (global $value (mut f64) (f64.const 0))
+                (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+                    local.get 0 i32.eqz if local.get 1 global.set $value end)
+                (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#).unwrap();
+            assert_eq!(
+                serde_json::to_value(
+                    job::ticks::evaluate(&mono.join("catalog"), &request, &model, true).unwrap()
+                )
+                .unwrap(),
+                serde_json::to_value(
+                    job::ticks::evaluate(
+                        &prepared.join("independent/catalog"),
+                        &request,
+                        &model,
+                        true
+                    )
+                    .unwrap()
+                )
+                .unwrap()
+            );
             assert!(compose::run(
                 &manifest,
                 &instruments,
