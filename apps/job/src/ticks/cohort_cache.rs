@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -53,7 +53,7 @@ pub struct Manifest {
     pub source_report: Value,
 }
 
-fn exact_json(value: &mut Value) {
+pub fn exact_json(value: &mut Value) {
     match value {
         Value::Number(number) if number.as_u64().is_some_and(|n| n > 9_007_199_254_740_991) => {
             *value = Value::String(number.to_string());
@@ -784,6 +784,237 @@ pub(super) fn load(
     })
 }
 
+/// Concatenate complete chronological cache units without retaining their reports or frames.
+pub fn concatenate(
+    units: &[PathBuf],
+    output: &Path,
+    mut source_report: Value,
+    maximum_output_bytes: u64,
+) -> Result<Manifest> {
+    ensure!(
+        !units.is_empty() && maximum_output_bytes > 0,
+        "TICK_CACHE_RESOURCE_LIMIT"
+    );
+    let output = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .canonicalize()?
+        .join(
+            output
+                .file_name()
+                .context("TICK_OUTPUT_DIRECTORY_REQUIRED")?,
+        );
+    for unit in units {
+        let unit = unit.canonicalize()?;
+        ensure!(!output.starts_with(&unit), "OUTPUT_MUST_NOT_OVERLAP_SOURCE");
+    }
+    fs::create_dir(&output).context("OUTPUT_MUST_BE_NEW")?;
+    let root = output.join("catalog");
+    fs::create_dir_all(root.join("data/cohorts"))?;
+    let mut combined: Option<Manifest> = None;
+    let mut outputs: BTreeMap<String, CacheFile> = BTreeMap::new();
+    let mut written = 0_u64;
+    for unit in units {
+        let unit = crate::catalog::catalog_root(unit)?;
+        let current = manifest(&unit)?;
+        let width = frame_bytes(&current.representation)?;
+        ensure!(
+            current.event_start_ns < current.event_end_ns
+                && current.availability == "EVENT_TIME_PROXY_UNVERIFIED",
+            "TICK_CACHE_VIEW_MISMATCH"
+        );
+        if let Some(previous) = &mut combined {
+            ensure!(
+                previous.representation == current.representation
+                    && previous.source_revision == current.source_revision
+                    && previous.availability == current.availability
+                    && previous.event_end_ns == current.event_start_ns,
+                "TICK_CACHE_UNIT_MISMATCH"
+            );
+            previous.event_end_ns = current.event_end_ns;
+        } else {
+            combined = Some(Manifest {
+                schema_version: SchemaV1,
+                representation: current.representation.clone(),
+                source_revision: current.source_revision.clone(),
+                availability: current.availability.clone(),
+                event_start_ns: current.event_start_ns,
+                event_end_ns: current.event_end_ns,
+                trade_count: counter(0)?,
+                cohort_count: counter(0)?,
+                files: Vec::new(),
+                source_report: Value::Null,
+            });
+        }
+        let mut ids = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        let mut trades = 0_u64;
+        let mut cohorts = 0_u64;
+        for record in current.files {
+            ensure!(
+                ids.insert(record.instrument_id.clone()) && paths.insert(record.path.clone()),
+                "TICK_CACHE_IDENTITY_DUPLICATE"
+            );
+            ensure!(
+                record.byte_start.get() == 0
+                    && record.byte_end == record.bytes
+                    && record.bytes.get().is_multiple_of(width)
+                    && record.bytes.get() / width == record.cohort_count.get(),
+                "TICK_CACHE_FULL_UNIT_REQUIRED"
+            );
+            let path = cache_path(&unit, &record.path)?;
+            let source = File::open(path)?;
+            ensure!(
+                source.metadata()?.is_file() && source.metadata()?.len() == record.bytes.get(),
+                "TICK_CACHE_FILE_INCOMPLETE"
+            );
+            if !outputs.contains_key(&record.instrument_id) {
+                let path = format!(
+                    "data/cohorts/{}.bin",
+                    nautilus_persistence::backend::catalog::urisafe_instrument_id(
+                        &record.instrument_id
+                    )
+                );
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(root.join(&path))?;
+                outputs.insert(
+                    record.instrument_id.clone(),
+                    CacheFile {
+                        instrument_id: record.instrument_id.clone(),
+                        path,
+                        bytes: counter(0)?,
+                        byte_start: counter(0)?,
+                        byte_end: counter(0)?,
+                        trade_count: counter(0)?,
+                        cohort_count: counter(0)?,
+                        first_event_ns: None,
+                        last_event_ns: None,
+                    },
+                );
+            }
+            let reader = CacheReader {
+                frame_bytes: width,
+                input: BufReader::new(source.take(record.bytes.get())),
+                file: record.clone(),
+                start: current.event_start_ns.get(),
+                end: current.event_end_ns.get(),
+                maximum_cohort_rows: domain::ticks::MAXIMUM_COHORT_ROWS,
+                seen: 0,
+                trades: 0,
+                first: None,
+                last: None,
+                finished: false,
+            };
+            let target = outputs.get_mut(&record.instrument_id).unwrap();
+            let mut writer = BufWriter::with_capacity(
+                WRITE_BATCH,
+                OpenOptions::new()
+                    .append(true)
+                    .open(root.join(&target.path))?,
+            );
+            for cohort in reader {
+                let cohort = cohort?;
+                ensure!(
+                    target
+                        .last_event_ns
+                        .is_none_or(|last| last.get() < cohort.event),
+                    "TICK_CACHE_EVENT_ORDER_OR_SCOPE"
+                );
+                written = written
+                    .checked_add(width)
+                    .context("TICK_CACHE_OUTPUT_LIMIT")?;
+                ensure!(written <= maximum_output_bytes, "TICK_CACHE_OUTPUT_LIMIT");
+                writer.write_all(&frame(&cohort, width == FLOW_FRAME_BYTES)?[..width as usize])?;
+                target.first_event_ns.get_or_insert(counter(cohort.event)?);
+                target.last_event_ns = Some(counter(cohort.event)?);
+            }
+            writer.flush()?;
+            drop(writer);
+            target.bytes = counter(
+                target
+                    .bytes
+                    .get()
+                    .checked_add(record.bytes.get())
+                    .context("TICK_CACHE_COUNT_RANGE")?,
+            )?;
+            target.byte_end = target.bytes;
+            target.trade_count = counter(
+                target
+                    .trade_count
+                    .get()
+                    .checked_add(record.trade_count.get())
+                    .context("TICK_CACHE_COUNT_RANGE")?,
+            )?;
+            target.cohort_count = counter(
+                target
+                    .cohort_count
+                    .get()
+                    .checked_add(record.cohort_count.get())
+                    .context("TICK_CACHE_COUNT_RANGE")?,
+            )?;
+            trades = trades
+                .checked_add(record.trade_count.get())
+                .context("TICK_CACHE_COUNT_RANGE")?;
+            cohorts = cohorts
+                .checked_add(record.cohort_count.get())
+                .context("TICK_CACHE_COUNT_RANGE")?;
+        }
+        ensure!(
+            trades == current.trade_count.get() && cohorts == current.cohort_count.get(),
+            "TICK_CACHE_COUNTS_MISMATCH"
+        );
+    }
+    let mut result = combined.unwrap();
+    for (_, record) in outputs {
+        File::open(root.join(&record.path))?.sync_all()?;
+        result.trade_count = counter(
+            result
+                .trade_count
+                .get()
+                .checked_add(record.trade_count.get())
+                .context("TICK_CACHE_COUNT_RANGE")?,
+        )?;
+        result.cohort_count = counter(
+            result
+                .cohort_count
+                .get()
+                .checked_add(record.cohort_count.get())
+                .context("TICK_CACHE_COUNT_RANGE")?,
+        )?;
+        result.files.push(record);
+    }
+    ensure!(result.cohort_count.get() > 0, "TICK_CACHE_EMPTY_SELECTION");
+    source_report["native_files"] = json!(result
+        .files
+        .iter()
+        .map(|file| json!({"path": file.path, "size": file.bytes.get()}))
+        .collect::<Vec<_>>());
+    source_report["native_records"] = json!({"cohorts": result.files.iter().map(|file|
+        (file.instrument_id.clone(), file.cohort_count.get())).collect::<BTreeMap<_, _>>()});
+    source_report["readback_records"] = json!(result.cohort_count.get());
+    source_report["representation"] = json!(result.representation);
+    source_report["event_start_ns"] = json!(result.event_start_ns.get());
+    source_report["event_end_ns"] = json!(result.event_end_ns.get());
+    result.source_report = source_report.clone();
+    exact_json(&mut result.source_report);
+    let metadata_bytes = u64::try_from(serde_json::to_vec(&result)?.len())?
+        .checked_add(u64::try_from(serde_json::to_vec(&source_report)?.len())?)
+        .and_then(|bytes| bytes.checked_add(2))
+        .context("TICK_CACHE_OUTPUT_LIMIT")?;
+    ensure!(
+        written
+            .checked_add(metadata_bytes)
+            .is_some_and(|bytes| bytes <= maximum_output_bytes),
+        "TICK_CACHE_OUTPUT_LIMIT"
+    );
+    publish(&output.join("import-report.json"), &source_report)?;
+    publish(&root.join(MANIFEST_FILE), &result)?;
+    Ok(result)
+}
+
 pub fn prepare_views(
     source: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
@@ -900,6 +1131,87 @@ pub fn prepare_views(
     load(&output.join("independent/catalog"), request)?;
     publish(&output.join("catalog-metadata.json"), &metadata)?;
     Ok(metadata)
+}
+
+#[cfg(test)]
+mod concatenate_tests {
+    use super::*;
+
+    #[test]
+    fn concatenate_preserves_both_frame_layouts_and_rejects_partial_units() {
+        for flow in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut units = Vec::new();
+            let mut expected = Vec::new();
+            for index in 0..2_u64 {
+                let root = temp.path().join(index.to_string());
+                fs::create_dir_all(root.join("data/cohorts")).unwrap();
+                let cohort = Cohort {
+                    event: index * 10 + 1,
+                    vwap: 1.2345678901234567,
+                    quantity: 2.0,
+                    count: 2,
+                    signed_quantity: flow.then_some(-0.0),
+                };
+                let width = if flow { FLOW_FRAME_BYTES } else { FRAME_BYTES };
+                let encoded = frame(&cohort, flow).unwrap();
+                let bytes = &encoded[..width as usize];
+                expected.extend_from_slice(bytes);
+                fs::write(root.join("data/cohorts/input.bin"), bytes).unwrap();
+                publish(
+                    &root.join(MANIFEST_FILE),
+                    &Manifest {
+                        schema_version: SchemaV1,
+                        representation: if flow {
+                            FLOW_REPRESENTATION
+                        } else {
+                            REPRESENTATION
+                        }
+                        .into(),
+                        source_revision: "a".repeat(40),
+                        availability: "EVENT_TIME_PROXY_UNVERIFIED".into(),
+                        event_start_ns: counter(index * 10).unwrap(),
+                        event_end_ns: counter(index * 10 + 10).unwrap(),
+                        trade_count: counter(2).unwrap(),
+                        cohort_count: counter(1).unwrap(),
+                        files: vec![CacheFile {
+                            instrument_id: "BTC.HYPERLIQUID".into(),
+                            path: "data/cohorts/input.bin".into(),
+                            bytes: counter(width).unwrap(),
+                            byte_start: counter(0).unwrap(),
+                            byte_end: counter(width).unwrap(),
+                            trade_count: counter(2).unwrap(),
+                            cohort_count: counter(1).unwrap(),
+                            first_event_ns: Some(counter(cohort.event).unwrap()),
+                            last_event_ns: Some(counter(cohort.event).unwrap()),
+                        }],
+                        source_report: Value::Null,
+                    },
+                )
+                .unwrap();
+                units.push(root);
+            }
+            let output = temp.path().join("combined");
+            let result =
+                concatenate(&units, &output, json!({"event_end_ns": 20}), 100_000).unwrap();
+            assert_eq!(result.trade_count.get(), 4);
+            assert_eq!(result.cohort_count.get(), 2);
+            assert_eq!(
+                fs::read(output.join("catalog").join(&result.files[0].path)).unwrap(),
+                expected
+            );
+            let report: Value =
+                serde_json::from_reader(File::open(output.join("import-report.json")).unwrap())
+                    .unwrap();
+            assert_eq!(report["readback_records"], 2);
+            assert_eq!(report["native_files"][0]["size"], expected.len());
+            let mut partial = manifest(&units[0]).unwrap();
+            partial.files[0].byte_end = counter(0).unwrap();
+            fs::remove_file(units[0].join(MANIFEST_FILE)).unwrap();
+            publish(&units[0].join(MANIFEST_FILE), &partial).unwrap();
+            assert!(concatenate(&units, &temp.path().join("partial"), json!({}), 100_000).is_err());
+        }
+    }
 }
 
 #[cfg(test)]

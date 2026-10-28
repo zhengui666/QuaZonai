@@ -16,6 +16,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+#[path = "market/compose.rs"]
+mod compose;
 #[path = "market/records.rs"]
 mod records;
 #[path = "market/writer.rs"]
@@ -33,6 +35,19 @@ struct Arguments {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Concatenate complete, disjoint source-day cohort units without changing their marks.
+    ComposeCohorts {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        instruments: PathBuf,
+        #[arg(long, required = true)]
+        units: Vec<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 48_u64 * 1024 * 1024 * 1024)]
+        max_output_bytes: u64,
+    },
     /// Obtain current definitions using the official public adapter, without historical backdating.
     HyperliquidInstruments {
         #[arg(long)]
@@ -139,7 +154,7 @@ struct Manifest {
     selected_path_prefixes: Vec<String>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 struct SourceCoverage {
     source_rows: u64,
     selected_rows: u64,
@@ -147,7 +162,7 @@ struct SourceCoverage {
     last_event_ns: Option<u64>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 struct Report {
     schema_version: u32,
     status: String,
@@ -188,7 +203,7 @@ struct Report {
     registered_in_quazonai: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct NativeFile {
     path: String,
     size: u64,
@@ -435,6 +450,20 @@ fn selection_prefixes(manifest: &Manifest, requested: &[String]) -> Result<Vec<S
     Ok(prefixes)
 }
 
+fn selected_missing(manifest: &Manifest, prefixes: &[String]) -> Vec<serde_json::Value> {
+    manifest
+        .missing
+        .iter()
+        .filter(|missing| {
+            missing
+                .get("pattern")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|path| selected_path(path, prefixes))
+        })
+        .cloned()
+        .collect()
+}
+
 fn import(
     manifest_path: &Path,
     instruments_path: &Path,
@@ -626,7 +655,7 @@ fn import(
         } else {
             "INSTRUMENT_DEFINITION; derived BARs use exact maximum observed precision, including equal-availability groups".into()
         },
-        missing_partitions: manifest.missing.iter().filter(|m| m.get("pattern").and_then(serde_json::Value::as_str).is_none_or(|p| selected_path(p, &prefixes))).cloned().collect(),
+        missing_partitions: selected_missing(&manifest, &prefixes),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
         ..Report::default()
     };
@@ -845,6 +874,18 @@ fn trade_memory_limit() -> Result<()> {
 
 fn main() {
     let result = match Arguments::parse().command {
+        Command::ComposeCohorts {
+            manifest,
+            instruments,
+            units,
+            output,
+            max_output_bytes,
+        } => compose::run(&manifest, &instruments, &units, &output, max_output_bytes).and_then(
+            |report| {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                Ok(())
+            },
+        ),
         Command::HyperliquidInstruments { output, manifest } => tokio::runtime::Runtime::new()
             .context("METADATA_RUNTIME_UNAVAILABLE")
             .and_then(|runtime| {
@@ -1123,6 +1164,199 @@ mod tests {
                 );
             }
             assert_eq!(fs::read(csv).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn compose_day_cohorts_matches_monolithic_marks_and_rejects_overlap_or_partial_days() {
+        for flow in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let (manifest, instruments, _) = tick_source(temp.path(), "");
+            let source = manifest.parent().unwrap();
+            let paths = [
+                "perps/date=2026-01-01/fills.csv",
+                "perps/date=2026-01-02/fills.csv",
+            ];
+            let rows = [
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600001,11.12,0.2234567890,T-2,S\nBTCUSDT,1767225602000,12.12,0.3234567890,T-3,B\n",
+                "BTCUSDT,1767312000001,13.12,0.4234567890,T-4,S\nBTCUSDT,1767312000001,14.12,0.4234567890,T-5,B\nBTCUSDT,1767312002000,15.12,0.5234567890,T-6,S\n",
+            ];
+            let mut files = Vec::new();
+            for (path, rows) in paths.iter().zip(rows) {
+                let file = source.join(path);
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(
+                    &file,
+                    format!("coin,timestamp,price,size,trade_id,side\n{rows}"),
+                )
+                .unwrap();
+                files.push(serde_json::json!({"path":path,"size":fs::metadata(file).unwrap().len(),"stream":"trades"}));
+            }
+            let mut metadata: serde_json::Value = json(&manifest).unwrap();
+            metadata["end_date"] = serde_json::json!("2026-01-03");
+            metadata["profile"]["streams"][0]["paths"] =
+                serde_json::json!(["perps/date={date}/fills.csv"]);
+            metadata["files"] = serde_json::json!(files);
+            metadata["missing"] = serde_json::json!([]);
+            metadata["selected_path_prefixes"] = serde_json::json!(["perps/"]);
+            fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let build = |output: &Path, prefixes: &[String], start, end| {
+                let mut options = tick_options(prefixes, false, 100, 10_000_000);
+                options.trade_ticks = false;
+                options.cohort_cache = !flow;
+                options.cohort_flow_cache = flow;
+                options.start = start;
+                options.end = end;
+                import(&manifest, &instruments, output, options).unwrap();
+            };
+            let mono = temp.path().join("monolithic");
+            build(&mono, &["perps/".into()], None, None);
+            let units = vec![temp.path().join("day1"), temp.path().join("day2")];
+            build(
+                &units[0],
+                &["perps/date=2026-01-01/".into()],
+                Some(1767225600),
+                Some(1767312000),
+            );
+            build(
+                &units[1],
+                &["perps/date=2026-01-02/".into()],
+                Some(1767312000),
+                Some(1767398400),
+            );
+            let output = temp.path().join("composed");
+            compose::run(&manifest, &instruments, &units, &output, 10_000_000).unwrap();
+            let expected = job::ticks::cohort_cache::manifest(&mono.join("catalog")).unwrap();
+            let actual = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
+            assert_eq!(actual.representation, expected.representation);
+            assert_eq!(actual.trade_count, expected.trade_count);
+            assert_eq!(actual.cohort_count, expected.cohort_count);
+            assert_eq!(actual.event_start_ns, expected.event_start_ns);
+            assert_eq!(actual.event_end_ns, expected.event_end_ns);
+            assert_eq!(actual.files.len(), expected.files.len());
+            for (a, e) in actual.files.iter().zip(&expected.files) {
+                assert_eq!(a.instrument_id, e.instrument_id);
+                assert_eq!(
+                    fs::read(output.join("catalog").join(&a.path)).unwrap(),
+                    fs::read(mono.join("catalog").join(&e.path)).unwrap()
+                );
+            }
+            let start = actual.event_start_ns.get();
+            let request = serde_json::from_value(serde_json::json!({"schema_version":1,
+                "input":{"modality":"TRADE_TICK","instrument_ids":actual.files.iter().map(|file| &file.instrument_id).collect::<Vec<_>>(),
+                    "event_start_ns":actual.event_start_ns,"event_end_ns":actual.event_end_ns,
+                    "decision_cutoff_ns":actual.event_end_ns,"source_revision":actual.source_revision,
+                    "availability":"EVENT_TIME_PROXY_UNVERIFIED","representation":actual.representation,
+                    "maximum_source_rows":actual.trade_count},
+                "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
+                "target":{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":1},
+                "parameters":{"fast_period_cohorts":1,"slow_period_cohorts":2},
+                "train_end_ns":(start+1_000_000_000).to_string(),
+                "validation_end_ns":(start+86_401_000_000_000).to_string()})).unwrap();
+            let prepared = temp.path().join("prepared-composed");
+            job::ticks::cohort_cache::prepare_views(
+                &output.join("catalog"),
+                &request,
+                &prepared,
+                10_000_000,
+            )
+            .unwrap();
+            let model = wat::parse_str(r#"(module
+                (global $value (mut f64) (f64.const 0))
+                (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+                    local.get 0 i32.eqz if local.get 1 global.set $value end)
+                (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#).unwrap();
+            assert_eq!(
+                serde_json::to_value(
+                    job::ticks::evaluate(&mono.join("catalog"), &request, &model, true).unwrap()
+                )
+                .unwrap(),
+                serde_json::to_value(
+                    job::ticks::evaluate(
+                        &prepared.join("independent/catalog"),
+                        &request,
+                        &model,
+                        true
+                    )
+                    .unwrap()
+                )
+                .unwrap()
+            );
+            let relative = tempfile::Builder::new()
+                .prefix(".qz-relative-compose-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            fs::remove_dir(relative.path()).unwrap();
+            compose::run(
+                &manifest,
+                &instruments,
+                &units,
+                Path::new(relative.path().file_name().unwrap()),
+                10_000_000,
+            )
+            .unwrap();
+            assert!(relative.path().join("catalog/cohort-cache.json").is_file());
+            assert!(compose::run(
+                &manifest,
+                &instruments,
+                &[units[0].clone(), units[0].clone(), units[1].clone()],
+                &temp.path().join("overlap"),
+                10_000_000
+            )
+            .is_err());
+            let partial = temp.path().join("partial");
+            build(
+                &partial,
+                &["perps/date=2026-01-01/".into()],
+                Some(1767225601),
+                Some(1767312000),
+            );
+            assert!(compose::run(
+                &manifest,
+                &instruments,
+                &[partial, units[1].clone()],
+                &temp.path().join("partial-compose"),
+                10_000_000
+            )
+            .is_err());
+            metadata["profile"]["streams"][0]["paths"] =
+                serde_json::json!(["perps/date={date}/fills.csv", "spot/date={date}/fills.csv"]);
+            metadata["selected_path_prefixes"] = serde_json::json!(["perps/", "spot/"]);
+            metadata["missing"] = serde_json::json!([{"pattern":"spot/date=2026-01-01/fills.csv"}]);
+            fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let missing_units = vec![
+                temp.path().join("missing-day1"),
+                temp.path().join("missing-day2"),
+            ];
+            build(
+                &missing_units[0],
+                &["perps/date=2026-01-01/".into()],
+                Some(1767225600),
+                Some(1767312000),
+            );
+            build(
+                &missing_units[1],
+                &["perps/date=2026-01-02/".into()],
+                Some(1767312000),
+                Some(1767398400),
+            );
+            for unit in &missing_units {
+                assert!(json::<Report>(&unit.join("import-report.json"))
+                    .unwrap()
+                    .missing_partitions
+                    .is_empty());
+            }
+            assert!(compose::run(
+                &manifest,
+                &instruments,
+                &missing_units,
+                &temp.path().join("missing-compose"),
+                10_000_000
+            )
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("COHORT_COMPOSE_MISSING_SOURCE_PARTITIONS"));
         }
     }
 

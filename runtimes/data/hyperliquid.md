@@ -129,6 +129,31 @@ one publication copy when reflinks are unavailable, and measure actual free spac
 before conversion. This feature does not establish receive-clock PIT, executable
 price, queue priority, market capacity or the owner's return targets.
 
+## Compose complete day caches
+
+Independent complete UTC-day imports can run concurrently with explicit dated
+`--path-prefix` selections, the original shared processing manifest/instrument
+recipe, and distinct new output directories. Preserve completed outputs when
+resuming scheduling; interrupted imports require new directories.
+
+After every declared source day is complete, combine unit output directories:
+
+```sh
+market-history compose-cohorts --manifest market-data-processing-market-candidates.json \
+  --instruments native-instruments.json --units day-2025-07-28 --units day-2025-07-29 \
+  --output /home/zzy/.local/share/quazonai-ts/data/catalogs/owned-run/full-cache \
+  --max-output-bytes 25769803776
+```
+
+Supply all days in the manifest, not merely the two illustrative arguments.
+Composition rejects partial periods, reused source files, overlapping days,
+nonzero outside-window rows and differing conversion recipes. It validates and
+concatenates existing native cache frames without revisiting raw prices. Both
+32-byte and 40-byte formats retain one continuous file per instrument and the
+same preparation commands; no research model runs per day. Budget for unit data
+plus the new complete cache until full composition and preparation succeed.
+Raw source files remain untouched.
+
 ## Native TradeTick preparation
 
 Settings → Data Plugins → `qz.data.hyperliquid` accepts an explicit
