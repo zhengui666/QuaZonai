@@ -26,7 +26,8 @@ pub(super) fn run(
 ) -> Result<Report> {
     let destination = output
         .parent()
-        .context("TICK_OUTPUT_DIRECTORY_REQUIRED")?
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
         .canonicalize()?
         .join(
             output
@@ -43,6 +44,10 @@ pub(super) fn run(
     let source: Value = json(manifest_path)?;
     let instruments: Value = json(instruments_path)?;
     let prefixes = selection_prefixes(&manifest, &[])?;
+    ensure!(
+        selected_missing(&manifest, &prefixes).is_empty(),
+        "COHORT_COMPOSE_MISSING_SOURCE_PARTITIONS"
+    );
     let expected = manifest
         .files
         .iter()

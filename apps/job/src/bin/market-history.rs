@@ -450,6 +450,20 @@ fn selection_prefixes(manifest: &Manifest, requested: &[String]) -> Result<Vec<S
     Ok(prefixes)
 }
 
+fn selected_missing(manifest: &Manifest, prefixes: &[String]) -> Vec<serde_json::Value> {
+    manifest
+        .missing
+        .iter()
+        .filter(|missing| {
+            missing
+                .get("pattern")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|path| selected_path(path, prefixes))
+        })
+        .cloned()
+        .collect()
+}
+
 fn import(
     manifest_path: &Path,
     instruments_path: &Path,
@@ -641,7 +655,7 @@ fn import(
         } else {
             "INSTRUMENT_DEFINITION; derived BARs use exact maximum observed precision, including equal-availability groups".into()
         },
-        missing_partitions: manifest.missing.iter().filter(|m| m.get("pattern").and_then(serde_json::Value::as_str).is_none_or(|p| selected_path(p, &prefixes))).cloned().collect(),
+        missing_partitions: selected_missing(&manifest, &prefixes),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
         ..Report::default()
     };
@@ -1268,6 +1282,20 @@ mod tests {
                 )
                 .unwrap()
             );
+            let relative = tempfile::Builder::new()
+                .prefix(".qz-relative-compose-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            fs::remove_dir(relative.path()).unwrap();
+            compose::run(
+                &manifest,
+                &instruments,
+                &units,
+                Path::new(relative.path().file_name().unwrap()),
+                10_000_000,
+            )
+            .unwrap();
+            assert!(relative.path().join("catalog/cohort-cache.json").is_file());
             assert!(compose::run(
                 &manifest,
                 &instruments,
@@ -1291,6 +1319,44 @@ mod tests {
                 10_000_000
             )
             .is_err());
+            metadata["profile"]["streams"][0]["paths"] =
+                serde_json::json!(["perps/date={date}/fills.csv", "spot/date={date}/fills.csv"]);
+            metadata["selected_path_prefixes"] = serde_json::json!(["perps/", "spot/"]);
+            metadata["missing"] = serde_json::json!([{"pattern":"spot/date=2026-01-01/fills.csv"}]);
+            fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let missing_units = vec![
+                temp.path().join("missing-day1"),
+                temp.path().join("missing-day2"),
+            ];
+            build(
+                &missing_units[0],
+                &["perps/date=2026-01-01/".into()],
+                Some(1767225600),
+                Some(1767312000),
+            );
+            build(
+                &missing_units[1],
+                &["perps/date=2026-01-02/".into()],
+                Some(1767312000),
+                Some(1767398400),
+            );
+            for unit in &missing_units {
+                assert!(json::<Report>(&unit.join("import-report.json"))
+                    .unwrap()
+                    .missing_partitions
+                    .is_empty());
+            }
+            assert!(compose::run(
+                &manifest,
+                &instruments,
+                &missing_units,
+                &temp.path().join("missing-compose"),
+                10_000_000
+            )
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("COHORT_COMPOSE_MISSING_SOURCE_PARTITIONS"));
         }
     }
 
