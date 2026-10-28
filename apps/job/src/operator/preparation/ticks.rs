@@ -274,7 +274,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
     let mut coverage = crate::ticks::coverage(&request, &series)?;
     coverage.source_evidence = crate::ticks::catalog::source_evidence(&source, &request)?;
     let mut research_request = request.clone();
-    research_request.input.event_end_ns = request.validation_end_ns;
+    research_request.clip_end(request.validation_end_ns);
     let research: BTreeMap<_, _> = series
         .iter()
         .map(|(id, rows)| {

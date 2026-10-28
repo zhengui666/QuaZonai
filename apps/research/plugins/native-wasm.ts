@@ -10,7 +10,7 @@ import { canonical } from '../src/documents.ts';
 import { partitionBoundaries } from './native-exposure.ts';
 import { ExecutionFailure } from '../src/execution-errors.ts';
 import { jsonChunks } from '../src/native-json.ts';
-import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, isTickResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 const wabt = await wabtFactory();
 
@@ -54,10 +54,9 @@ export function normalizedRequest(data: JsonObject): JsonObject {
 export function iterationRequest(data: JsonObject, clipDecisionCutoff = false): JsonObject {
   const request = normalizedRequest(data);
   if (isTickResearchInput(data)) {
-    const selection = object(request.input, 'native_tick_input');
-    selection.event_end_ns = request.validation_end_ns!;
-    if (clipDecisionCutoff) selection.decision_cutoff_ns = request.validation_end_ns!;
-    return request;
+    const clipped = clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns));
+    if (clipDecisionCutoff) clipped.input.decision_cutoff_ns = clipped.validation_end_ns;
+    return clipped;
   }
   if (data.catalog_ensemble_request !== undefined) {
     request.event_end_ns = data.validation_end_ns!;

@@ -6,11 +6,11 @@ import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { nativeResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, nativeResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import type { NativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import { researchInput } from '../src/input.ts';
-import { modelBriefInput } from '../src/feedback.ts';
+import { modelBriefInput, modelFeedback } from '../src/feedback.ts';
 import { evaluateWasm, iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
 import { openResearch } from '../src/host.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
@@ -33,6 +33,65 @@ const bar = (instrument = 'A.SIM', validation = '20'): JsonObject => ({ schema_v
 const model = '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))';
 const legacyModel = '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))';
 const tool = (name: string, args: JsonObject = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
+
+const dayNs = 86_400_000_000_000n;
+function regimeRequest(): NativeTickFactorRequest {
+  const request = tick(); const { maximum_rows: _rows, ...input } = request.input;
+  return { ...request, input: { ...input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '100',
+    event_start_ns: String(31n * dayNs), event_end_ns: String(35n * dayNs), decision_cutoff_ns: String(35n * dayNs) },
+    train_end_ns: String(32n * dayNs), validation_end_ns: String(33n * dayNs),
+    evaluation_regimes: { kind: 'BTC_COMPLETED_30_DAY_RETURN_V1', days: Array.from({ length: 4 }, (_, index) => {
+      const beginning = BigInt(index + 31) * dayNs;
+      return { day_start_ns: String(beginning), previous: { event_ns: String(beginning - 1n), price: index === 3 ? '91314159.987654321' : '1.050000000000000000000000000000000001' },
+        lookback: index === 0 ? null : { event_ns: String(beginning - 30n * dayNs - 1n), price: '1' } };
+    }) } };
+}
+
+test('tick regime evaluation binds a complete causal UTC calendar and exact positive decimal marks', () => {
+  const request = regimeRequest();
+  assert.deepEqual(validateNativeTickFactorRequest(request), request);
+  const invalid = (mutate: (value: NativeTickFactorRequest) => void) => {
+    const value = structuredClone(request); mutate(value); assert.throws(() => validateNativeTickFactorRequest(value));
+  };
+  invalid(value => { delete value.input.representation; value.input.maximum_rows = 100; delete value.input.maximum_source_rows; });
+  invalid(value => { value.evaluation_regimes!.days.pop(); });
+  invalid(value => { value.evaluation_regimes!.days[1]!.day_start_ns = value.evaluation_regimes!.days[0]!.day_start_ns; });
+  invalid(value => { value.evaluation_regimes!.days[1]!.previous!.event_ns = value.evaluation_regimes!.days[1]!.day_start_ns; });
+  invalid(value => { value.evaluation_regimes!.days[1]!.lookback!.event_ns = String(2n * dayNs); });
+  invalid(value => { value.validation_end_ns = String(33n * dayNs - 1n); });
+  for (const price of ['0', '-0.01', '1e3', 'NaN', '1'.repeat(513)]) invalid(value => { value.evaluation_regimes!.days[0]!.previous!.price = price; });
+  const early = structuredClone(request);
+  early.input.event_start_ns = '0'; early.input.event_end_ns = String(4n * dayNs); early.input.decision_cutoff_ns = String(4n * dayNs);
+  early.train_end_ns = String(dayNs); early.validation_end_ns = String(2n * dayNs);
+  early.evaluation_regimes!.days = Array.from({ length: 4 }, (_, index) => ({ day_start_ns: String(BigInt(index) * dayNs), previous: null, lookback: null }));
+  assert.deepEqual(validateNativeTickFactorRequest(early), early);
+  early.evaluation_regimes!.days[0]!.previous = { event_ns: '0', price: '1' };
+  assert.throws(() => validateNativeTickFactorRequest(early), /mark_clock_invalid/);
+});
+
+test('regime iteration and feedback preserve evaluation data without exposing sealed days or changing originals', () => {
+  const request = regimeRequest(); const before = structuredClone(request);
+  const clipped = iterationRequest(tagged(request));
+  assert.deepEqual(clipped, clipTickRegimeEvaluation(request, request.validation_end_ns));
+  assert.equal(((clipped.evaluation_regimes as JsonObject).days as unknown[]).length, 2);
+  assert.deepEqual(validateNativeTickFactorRequest(clipped), clipped);
+  const brief = modelBriefInput({ data: { ...tagged(request), sealed: { ...tagged(request), catalog: 'PRIVATE_HELDOUT' } }, policy: {} });
+  assert.equal(JSON.stringify(brief).includes('evaluation_regimes'), false);
+  assert.equal(JSON.stringify(brief).includes('91314159.987654321'), false);
+  assert.equal(JSON.stringify(brief).includes('PRIVATE_HELDOUT'), false);
+  assert.equal(((brief.data.feature_model as JsonObject).features as string[]).length, 8);
+  const result: JsonObject = { request, partitions: [{ partition: 'TRAIN' }, { partition: 'VALIDATION' }, { partition: 'HELDOUT', secret: 'OWNER_ONLY' }],
+    regime_partitions: [{ partition: 'TRAIN', regimes: [{ regime: 'UNKNOWN', observed_assets: '0', assets: [{ instrument_id: 'OWNER_ASSET_DETAIL' }], metric: { counts: { observations: '0' }, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES' } } }] },
+      { partition: 'VALIDATION', regimes: [{ regime: 'BULL' }] }, { partition: 'HELDOUT', secret: 'OWNER_ONLY' }] };
+  const original = structuredClone(result); const feedback = modelFeedback(result);
+  assert.equal(JSON.stringify(feedback).includes('OWNER_ONLY'), false);
+  assert.equal(JSON.stringify(feedback).includes('91314159.987654321'), false);
+  assert.equal(JSON.stringify(feedback).includes('OWNER_ASSET_DETAIL'), false);
+  const projected = ((feedback.regime_partitions as JsonObject[])[0]!.regimes as JsonObject[])[0]!;
+  assert.equal(projected.regime, 'UNKNOWN'); assert.equal(projected.observed_assets, '0');
+  assert.deepEqual(projected.metric, (((result.regime_partitions as JsonObject[])[0]!.regimes as JsonObject[])[0]!).metric);
+  assert.deepEqual(result, original); assert.deepEqual(request, before);
+});
 
 test('explicit tick contract preserves nanosecond strings and rejects incompatible or mixed modalities', () => {
   const request = tick();

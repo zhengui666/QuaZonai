@@ -1091,7 +1091,7 @@ pub fn prepare_views(
         .checked_mul(2)
         .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
     let mut research_request = request.clone();
-    research_request.input.event_end_ns = request.validation_end_ns;
+    research_request.clip_end(request.validation_end_ns);
     let mut metadata = json!({"schema_version":1,"modality":"TRADE_TICK","representation":full.representation,
         "operational_state":"NATIVE_PREPARED","scientific_qualification":"UNQUALIFIED_EXPLORATORY",
         "catalog_format":format!("QZ_{}", full.representation),"request":request,"research_request":research_request,

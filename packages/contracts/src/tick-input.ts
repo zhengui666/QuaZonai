@@ -1,4 +1,11 @@
 import type { JsonObject } from './index.ts';
+import { compareDecimal } from './pm-validation.ts';
+
+export type NativeTickRegimeEvaluation = {
+  kind: 'BTC_COMPLETED_30_DAY_RETURN_V1';
+  days: Array<{ day_start_ns: string; previous: { event_ns: string; price: string } | null;
+    lookback: { event_ns: string; price: string } | null }>;
+};
 
 export type NativeTickFactorRequest = {
   schema_version: 1;
@@ -14,6 +21,7 @@ export type NativeTickFactorRequest = {
   target: { kind: 'FIXED_TRADE_COHORTS'; horizon_cohorts: number } | { kind: 'FIXED_EVENT_TIME'; horizon_ns: string };
   parameters: { fast_period_cohorts: number; slow_period_cohorts: number; total_fuel?: string };
   train_end_ns: string; validation_end_ns: string;
+  evaluation_regimes?: NativeTickRegimeEvaluation;
 };
 
 /** Tagged BAR currently wraps the existing explicit-selection factor request.
@@ -45,7 +53,7 @@ function integer(value: unknown, name: string, maximum: number): number {
 
 export function validateNativeTickFactorRequest(value: unknown): NativeTickFactorRequest {
   const request = object(value, 'native_tick_request');
-  fields(request, ['schema_version', 'input', 'sampling', 'target', 'parameters', 'train_end_ns', 'validation_end_ns']);
+  fields(request, ['schema_version', 'input', 'sampling', 'target', 'parameters', 'train_end_ns', 'validation_end_ns', 'evaluation_regimes']);
   if (request.schema_version !== 1) throw new Error('native_tick_schema_version_unsupported');
   const input = object(request.input, 'native_tick_input');
   fields(input, ['modality', 'instrument_ids', 'event_start_ns', 'event_end_ns', 'decision_cutoff_ns', 'maximum_rows', 'source_revision', 'availability', 'representation', 'maximum_source_rows']);
@@ -86,7 +94,37 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   const slow = integer(parameters.slow_period_cohorts, 'slow_period_cohorts', 1_000_000);
   if (fast >= slow) throw new Error('native_tick_ema_periods_invalid');
   if (parameters.total_fuel !== undefined) counter(parameters.total_fuel, 'total_fuel', true);
+  if (request.evaluation_regimes !== undefined) {
+    const dayNs = 86_400_000_000_000n;
+    if (input.representation === undefined || [start, train, validation, end].some(value => value % dayNs !== 0n)) throw new Error('native_tick_regime_scope_invalid');
+    const evaluation = object(request.evaluation_regimes, 'native_tick_regime_evaluation');
+    fields(evaluation, ['kind', 'days']);
+    if (evaluation.kind !== 'BTC_COMPLETED_30_DAY_RETURN_V1' || !Array.isArray(evaluation.days)
+      || BigInt(evaluation.days.length) !== (end - start) / dayNs) throw new Error('native_tick_regime_days_invalid');
+    for (const [index, value] of evaluation.days.entries()) {
+      const day = object(value, 'native_tick_regime_day'); fields(day, ['day_start_ns', 'previous', 'lookback']);
+      const beginning = counter(day.day_start_ns, 'regime_day_start');
+      if (beginning !== start + BigInt(index) * dayNs) throw new Error('native_tick_regime_days_invalid');
+      for (const [name, offset] of [['previous', 1n], ['lookback', 31n]] as const) {
+        if (day[name] === null) continue;
+        const mark = object(day[name], 'native_tick_regime_mark'); fields(mark, ['event_ns', 'price']);
+        const event = counter(mark.event_ns, 'regime_mark_event');
+        if (beginning < offset * dayNs || event < beginning - offset * dayNs || event >= beginning - (offset - 1n) * dayNs) throw new Error('native_tick_regime_mark_clock_invalid');
+        try {
+          if (typeof mark.price !== 'string' || compareDecimal(mark.price, '0') <= 0) throw new Error();
+        } catch { throw new Error('native_tick_regime_mark_price_invalid'); }
+      }
+    }
+  }
   return copy(request) as NativeTickFactorRequest;
+}
+
+/** The primary request carries only the evaluator's iterative calendar prefix. */
+export function clipTickRegimeEvaluation(request: NativeTickFactorRequest, end: string): NativeTickFactorRequest {
+  const clipped = copy(request);
+  clipped.input.event_end_ns = end;
+  if (clipped.evaluation_regimes) clipped.evaluation_regimes.days = clipped.evaluation_regimes.days.filter(day => BigInt(day.day_start_ns) < BigInt(end));
+  return clipped;
 }
 
 /** No directory inference and no tagged/legacy joins. Legacy absence stays legacy. */

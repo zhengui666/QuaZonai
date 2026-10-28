@@ -131,6 +131,23 @@ price, queue priority, market capacity or the owner's return targets.
 
 ## Compose complete day caches
 
+Optional tick-cache `evaluation_regimes` uses `BTC_COMPLETED_30_DAY_RETURN_V1`
+and consecutive UTC `days`, each containing `day_start_ns`, nullable `previous`
+and `lookback` marks (`event_ns`, positive plain-decimal `price`). Supply the
+last complete BTC cohort on D-1 and D-31 from the declared source; missing marks
+remain null. Native validation checks those past-day clocks and derives BULL
+above +5%, BEAR below -5%, RANGE otherwise, or UNKNOWN when either mark is absent.
+This is evaluation metadata, not an extra factor feature or proof of receive-time
+PIT. Whole-day selection/partition boundaries are required for this option.
+
+`regime_partitions` retains every selected asset and existing exclusion counts,
+with decision-day groups and pooled Pearson IC. Labels may cross regime days;
+only the original partition boundary excludes them. Actual included-pair label
+spans use fixed buckets [0,60), [60,61), [61,120), [120,300), [300,3600) and
+[3600,infinity) seconds. These are prediction diagnostics, not net strategy
+performance. Preparation clips the primary day table at validation end; keep
+full independent inputs in the sealed binding. Old requests omit this option.
+
 Independent complete UTC-day imports can run concurrently with explicit dated
 `--path-prefix` selections, the original shared processing manifest/instrument
 recipe, and distinct new output directories. Preserve completed outputs when
