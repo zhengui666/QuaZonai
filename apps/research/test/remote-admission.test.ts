@@ -14,7 +14,7 @@ import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../sr
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
 test('only original-id explicit admission refusal settles a Durable remote reference without a terminal receipt', { timeout: 15_000 }, async () => {
-  for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
+  for (const command of ['evaluate-tick-factor', 'replay-tick-economic']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
     let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
     const server = createServer(async (request, response) => {
@@ -24,7 +24,7 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       }
       if (request.method === 'POST') {
         posts++; let data = ''; for await (const chunk of request) data += chunk;
-        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, 'evaluate-tick-factor');
+        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
         response.statusCode = 429;
         response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
           schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
@@ -39,7 +39,7 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       name: 'test.remote-admission.compute', version: 1, initial: () => ({ phase: 'compute' }),
       phases: { async compute(task, runtime, context) {
         try {
-          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, 'evaluate-tick-factor', {}, [], directory, context));
+          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, command, {}, [], directory, context));
           assert.fail('controlled endpoint rejected admission');
         } catch (error) {
           await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: String(error) } } }), context);

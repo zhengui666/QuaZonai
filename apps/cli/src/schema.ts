@@ -13,15 +13,16 @@ async function installed(source: string, packed: string) {
 export async function schemas(name?: string, domain = false) {
   try {
     if (!domain) {
-      const [legacy, pm, maintenance, intent, forward, tick] = await Promise.all([
+      const [legacy, pm, maintenance, intent, forward, tick, economic] = await Promise.all([
         installed('../../../packages/contracts/src/index.ts', '../schemas/contracts.ts.txt'),
         installed('../../../packages/contracts/src/pm.ts', '../schemas/pm.ts.txt'),
         installed('../../../packages/contracts/src/maintenance.ts', '../schemas/maintenance.ts.txt'),
         installed('../../../packages/contracts/src/pm-intent.ts', '../schemas/pm-intent.ts.txt'),
         installed('../../../packages/contracts/src/pm-forward.ts', '../schemas/pm-forward.ts.txt'),
         installed('../../../packages/contracts/src/tick-input.ts', '../schemas/tick-input.ts.txt'),
+        installed('../../../packages/contracts/src/economic-tick.ts', '../schemas/economic-tick.ts.txt'),
       ]);
-      const source = `${legacy}\n\n// PM business contracts\n${pm}\n\n// Maintenance contracts\n${maintenance}\n\n// Intent clarification contracts\n${intent}\n\n// Current execution evidence contracts\n${forward}\n\n// Explicit historical native research input\n${tick}`;
+      const source = `${legacy}\n\n// PM business contracts\n${pm}\n\n// Maintenance contracts\n${maintenance}\n\n// Intent clarification contracts\n${intent}\n\n// Current execution evidence contracts\n${forward}\n\n// Explicit historical native research input\n${tick}\n\n// Owner-only economic tick replay\n${economic}`;
       const names = [...source.matchAll(/export (?:interface|type) (\w+)/g)].map((match) => match[1]!);
       if (name && !names.includes(name)) throw new CliError('schema_not_found');
       return name ? { format: 'typescript', entry: name, source } : { format: 'typescript', names };

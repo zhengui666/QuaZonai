@@ -7,12 +7,13 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { JsonReader, jsonChunks } from '../../research/src/native-json.ts';
+import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
 type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
-export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
+export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;
@@ -204,7 +205,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
         else {
           // The worker launches only the configured scientific executable. Provider
           // tokens, worker auth and unrelated host environment never reach it.
-          const tick = request.command === 'evaluate-tick-factor';
+          const tick = isTickNativeCommand(request.command);
           const selectedBinary = tick ? tickBinary : binary;
           const executable = tick ? '/usr/bin/prlimit' : selectedBinary;
           const childArgs = tick ? [`--as=${tickMemoryBytes}:${tickMemoryBytes}`, '--', selectedBinary, request.command, ...args] : [request.command, ...args];
@@ -250,7 +251,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
     const existing = launching.get(request.requestId);
     if (existing) return existing;
     const pending = (async () => {
-      const tick = request.command === 'evaluate-tick-factor';
+      const tick = isTickNativeCommand(request.command);
       if (tick) {
         // A completed or uncertain original receipt remains readable even while
         // another tick invocation occupies the installation's capacity.

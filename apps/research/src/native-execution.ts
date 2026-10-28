@@ -10,12 +10,13 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { setTimeout } from 'node:timers/promises';
 import { Agent, fetch } from 'undici';
+import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { canonical } from './documents.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
 
 /** Settings credentials stay outside research facts; targets carry only this random reference. */
@@ -122,7 +123,7 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
     if (!response.ok) {
       // Only the original invocation's explicit pre-execution refusal settles
       // non-execution. A proxy error or generic 4xx/5xx is not that evidence.
-      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && body.command === 'evaluate-tick-factor') {
+      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && typeof body.command === 'string' && isTickNativeCommand(body.command)) {
         let encoded = ''; let size = 0;
         if (response.body) for await (const bytes of response.body) {
           size += bytes.length;

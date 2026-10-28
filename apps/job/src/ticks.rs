@@ -1,9 +1,9 @@
 //! Explicit TradeTick cohorts -> causal generic features -> factor-only evidence.
 //! Native source decimals remain untouched. Derived statistical marks are finite f64.
 use crate::{feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
-use contracts::{factors::*, science::*, ticks::*, DbCounter, SchemaV1};
+use contracts::{DbCounter, SchemaV1, factors::*, science::*, ticks::*};
 use domain::ticks::{evaluation_request, partition_bounds, partition_for_event};
 use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, path::Path};
 
 pub mod catalog;
 pub mod cohort_cache;
+pub mod economic;
 mod stream;
 
 pub const FEATURE_SCHEMA: &str = "qz.tick-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_event_ns";

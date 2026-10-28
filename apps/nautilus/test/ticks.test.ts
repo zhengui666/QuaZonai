@@ -45,8 +45,8 @@ print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocat
   }
   let url = await listen();
   const headers = { 'content-type': 'application/json' };
-  function request(input: NativeExecutionRequest['input'], command = 'evaluate-tick-factor') {
-    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command, input, args: [], files: {} };
+  function request(input: NativeExecutionRequest['input'], command = 'evaluate-tick-factor', args: string[] = [], files: Record<string, string> = {}) {
+    const body = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: worker.implementationDigest, command, input, args, files };
     return { ...body, requestId: executionId(body) };
   }
   async function started(count = 1) {
@@ -148,5 +148,27 @@ test('explicit precision companions route tick-only and bind both native files w
     await writeFile(f.options.binary, await readFile(f.options.binary, 'utf8') + '\n# changed standard bytes\n');
     const standardChanged = await (await f.post(f.request({}))).json();
     assert.equal(standardChanged.status, 'FAILED'); assert.equal(standardChanged.error, 'nautilus_implementation_changed');
+  } finally { await f.cleanup(); }
+});
+
+
+test('economic replay shares tick precision, mounted catalogs, hard limits and admission slots', async () => {
+  const f = await fixture({}, true);
+  try {
+    const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
+    assert.ok(caps.commands.includes('replay-tick-economic'));
+    const mounted = ['--catalog', f.options.catalogRoots[0]!, '--model', '@file:model'];
+    const files = { model: Buffer.from('controlled model artifact').toString('base64') };
+    const result = await (await f.post(f.request({}, 'replay-tick-economic', mounted, files))).json();
+    assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
+    assert.deepEqual(result.result.limits, [2 * 1024 ** 3, 2 * 1024 ** 3]);
+    const outside = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.directory]))).json();
+    assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
+    const waiting = f.request({ wait: true }, 'replay-tick-economic', mounted, files);
+    const active = f.post(waiting); await f.started(2);
+    const refused = await f.post(f.request({}));
+    assert.equal(refused.status, 429); assert.equal((await refused.json()).admission, 'REJECTED');
+    assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');
+    assert.equal((await (await active).json()).status, 'CANCELLED');
   } finally { await f.cleanup(); }
 });

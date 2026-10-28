@@ -40,3 +40,8 @@ export interface NativeExecutionRejection {
   admission: 'REJECTED';
   error: 'nautilus_tick_capacity_exhausted' | 'nautilus_tick_resource_limits_unavailable';
 }
+
+/** Both tick research operations use the configured precision companion and worker limits. */
+export function isTickNativeCommand(command: string): boolean {
+  return command === 'evaluate-tick-factor' || command === 'replay-tick-economic';
+}

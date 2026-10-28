@@ -1,5 +1,5 @@
 //! Preserve native currency definitions: InstrumentAny serializes currency codes only.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use nautilus_model::{
     enums::CurrencyType,
     instruments::{Instrument, InstrumentAny},
@@ -70,7 +70,10 @@ fn register(definitions: Vec<Definition>) -> Result<()> {
 
 /// Legacy native arrays still work for currencies already known to Nautilus.
 pub fn read_instruments(path: &Path) -> Result<Vec<InstrumentAny>> {
-    let mut document: serde_json::Value = serde_json::from_reader(fs::File::open(path)?)?;
+    instruments_from_value(serde_json::from_reader(fs::File::open(path)?)?)
+}
+
+pub fn instruments_from_value(mut document: serde_json::Value) -> Result<Vec<InstrumentAny>> {
     if document.is_object() {
         register(serde_json::from_value(document["currencies"].take())?)?;
         document = document["instruments"].take();
