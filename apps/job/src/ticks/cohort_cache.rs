@@ -18,6 +18,7 @@ pub const FLOW_FRAME_BYTES: u64 = 40;
 pub const MANIFEST_FILE: &str = "cohort-cache.json";
 pub const FRAME_BYTES: u64 = 32;
 const WRITE_BATCH: usize = 4096 * FRAME_BYTES as usize;
+const BUFFERED_BYTES: usize = 8 * 1024 * 1024;
 
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
@@ -138,7 +139,6 @@ fn decode(bytes: &[u8]) -> Result<Cohort> {
 
 struct Output {
     flow: bool,
-    file: BufWriter<File>,
     path: PathBuf,
     expected: Vec<u8>,
     verified: u64,
@@ -149,15 +149,22 @@ struct Output {
 
 impl Output {
     fn verify(&mut self) -> Result<()> {
-        self.file.flush()?;
         if !self.expected.is_empty() {
-            let mut input = File::open(&self.path)?;
-            input.seek(SeekFrom::Start(self.verified))?;
+            let mut file = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(&self.path)?;
+            ensure!(
+                file.metadata()?.len() == self.verified,
+                "TICK_CACHE_READBACK_MISMATCH"
+            );
+            file.write_all(&self.expected)?;
+            file.seek(SeekFrom::Start(self.verified))?;
             let mut actual = vec![0; self.expected.len()];
-            input.read_exact(&mut actual)?;
+            file.read_exact(&mut actual)?;
             ensure!(actual == self.expected, "TICK_CACHE_READBACK_MISMATCH");
             self.verified += u64::try_from(actual.len())?;
-            self.expected.clear();
+            self.expected = Vec::new();
         }
         Ok(())
     }
@@ -175,7 +182,6 @@ impl Output {
         } else {
             FRAME_BYTES
         };
-        self.file.write_all(&encoded[..width as usize])?;
         self.expected.extend_from_slice(&encoded[..width as usize]);
         self.record.cohort_count = counter(self.record.cohort_count.get() + 1)?;
         self.record.trade_count =
@@ -187,7 +193,7 @@ impl Output {
         self.record.bytes = counter(self.record.bytes.get() + width)?;
         self.record.byte_end = self.record.bytes;
         let count = self.pending.len();
-        self.pending.clear();
+        self.pending = Vec::new();
         self.identities.clear();
         if self.expected.len() >= WRITE_BATCH {
             self.verify()?;
@@ -202,6 +208,7 @@ pub struct Builder {
     root: PathBuf,
     outputs: BTreeMap<String, Output>,
     pending_rows: usize,
+    buffered_bytes: usize,
     maximum_working_rows: usize,
     maximum_cohort_rows: u32,
     maximum_output_bytes: u64,
@@ -262,6 +269,7 @@ impl Builder {
             root,
             outputs: BTreeMap::new(),
             pending_rows: 0,
+            buffered_bytes: 0,
             maximum_working_rows,
             maximum_cohort_rows,
             maximum_output_bytes,
@@ -282,7 +290,7 @@ impl Builder {
                 nautilus_persistence::backend::catalog::urisafe_instrument_id(&id)
             );
             let file_path = self.root.join(&path);
-            let file = OpenOptions::new()
+            OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&file_path)?;
@@ -290,9 +298,8 @@ impl Builder {
                 id.clone(),
                 Output {
                     flow: self.flow,
-                    file: BufWriter::with_capacity(WRITE_BATCH, file),
                     path: file_path,
-                    expected: Vec::with_capacity(WRITE_BATCH),
+                    expected: Vec::new(),
                     verified: 0,
                     pending: Vec::new(),
                     identities: BTreeMap::new(),
@@ -317,7 +324,9 @@ impl Builder {
                 "TICK_CACHE_SOURCE_TIME_REVERSAL"
             );
             if trade.ts_event != previous.ts_event {
+                let buffered = output.expected.len();
                 let flushed = output.flush_cohort(self.maximum_cohort_rows)?;
+                self.buffered_bytes = self.buffered_bytes - buffered + output.expected.len();
                 self.pending_rows -= flushed;
                 self.written_bytes += if self.flow {
                     FLOW_FRAME_BYTES
@@ -344,6 +353,12 @@ impl Builder {
         );
         output.pending.push(trade);
         self.pending_rows += 1;
+        if self.buffered_bytes >= BUFFERED_BYTES {
+            for output in self.outputs.values_mut() {
+                output.verify()?;
+            }
+            self.buffered_bytes = 0;
+        }
         Ok(())
     }
 
@@ -362,7 +377,7 @@ impl Builder {
                 "TICK_CACHE_OUTPUT_LIMIT"
             );
             output.verify()?;
-            output.file.get_ref().sync_all()?;
+            File::open(&output.path)?.sync_all()?;
         }
         self.sealed = true;
         let files = self
@@ -1194,5 +1209,82 @@ mod concatenate_tests {
             publish(&units[0].join(MANIFEST_FILE), &partial).unwrap();
             assert!(concatenate(&units, &temp.path().join("partial"), json!({}), 100_000).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    use nautilus_model::{
+        enums::AggressorSide,
+        identifiers::InstrumentId,
+        types::{Price, Quantity},
+    };
+
+    #[test]
+    fn cache_releases_flushed_trade_storage_and_idle_descriptors() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut builder = Builder::new(&temp.path().join("cache"), 100, 2000, 10_000_000).unwrap();
+        for asset in 0..1200 {
+            let id = InstrumentId::from(format!("ASSET{asset}.SIM").as_str());
+            for (event, count) in [(1_u64, 100), (2, 1)] {
+                for number in 0..count {
+                    builder
+                        .push(TradeTick::new(
+                            id,
+                            Price::from("10"),
+                            Quantity::from("1"),
+                            AggressorSide::Buy,
+                            TradeId::from(number.to_string().as_str()),
+                            event.into(),
+                            event.into(),
+                        ))
+                        .unwrap();
+                }
+            }
+            let output = &builder.outputs[&id.to_string()];
+            assert!(
+                output.pending.capacity() <= 4,
+                "flushed peak allocation retained"
+            );
+            assert!(builder.buffered_bytes < BUFFERED_BYTES);
+        }
+        for event in 3_u64..260 {
+            for asset in 0..1200 {
+                let id = InstrumentId::from(format!("ASSET{asset}.SIM").as_str());
+                builder
+                    .push(TradeTick::new(
+                        id,
+                        Price::from("10"),
+                        Quantity::from("1"),
+                        AggressorSide::Buy,
+                        TradeId::from("0"),
+                        event.into(),
+                        event.into(),
+                    ))
+                    .unwrap();
+                assert!(builder.buffered_bytes < BUFFERED_BYTES);
+            }
+        }
+        assert!(builder
+            .outputs
+            .values()
+            .any(|output| fs::metadata(&output.path).unwrap().len() > 0));
+        #[cfg(target_os = "linux")]
+        for entry in fs::read_dir("/proc/self/fd").unwrap() {
+            if let Ok(path) = fs::read_link(entry.unwrap().path()) {
+                assert!(
+                    !path.starts_with(temp.path()),
+                    "idle cache file remains open"
+                );
+            }
+        }
+        let manifest = builder.seal("fixed-source", 0, 260).unwrap();
+        assert_eq!(manifest.trade_count.get(), 1200 * (101 + 257));
+        assert_eq!(manifest.cohort_count.get(), 1200 * 259);
+        assert!(builder
+            .outputs
+            .values()
+            .all(|output| output.pending.capacity() == 0 && output.expected.capacity() == 0));
     }
 }

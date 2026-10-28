@@ -66,3 +66,7 @@ The first CI run reached native execution but failed the existing exact native-s
 ## Handoff
 
 Managed worktree `/home/zzy/.codex/worktrees/hyperliquid-cohort-research/QuaZonai`, branch `feat/hyperliquid-cohort-research`, initially stacked on PR #246 Head `e96517fac9cc5f7fbce5c5aad73f822b96a516cc`. The original dirty worktree and the entire raw archive remain unchanged. No factor trial budget has been consumed by this implementation work.
+
+### Resource review correction
+
+The current-head Codex review identified persistent per-instrument file handles and retained peak TradeTick capacities. Cache output now uses the existing readback buffer as a bounded write batch, opening one temporary append/readback handle only while flushing and closing it immediately. Pending trade storage and verified byte storage release their allocations; aggregate completed-byte buffering flushes at 8 MiB. Frame encoding, exact reduction, counts and publication semantics are unchanged. The 1,200-instrument regression exercises allocation release, aggregate buffering and absence of idle output descriptors. Actual local checks passed: 22 tick tests and 24 market-history CLI tests. Current corrected-head CI and review remain required.
