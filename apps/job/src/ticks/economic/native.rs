@@ -826,7 +826,7 @@ impl Drop for NativeLedger {
 fn bar_type(id: InstrumentId) -> BarType {
     BarType::new(
         id,
-        BarSpecification::new(1, BarAggregation::Tick, PriceType::Last),
+        BarSpecification::new(1, BarAggregation::Millisecond, PriceType::Last),
         AggregationSource::External,
     )
 }
