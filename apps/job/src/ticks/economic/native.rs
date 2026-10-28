@@ -756,7 +756,7 @@ impl NativeLedger {
     }
     pub fn balance(&self, currency: Currency) -> Option<Money> {
         let cache = self.engine.kernel().cache.borrow();
-        match cache.account_for_venue(&self.venue) {
+        let result = match cache.account_for_venue(&self.venue) {
             Some(account) => account.balance_total(Some(currency)),
             // Configured collateral remains allocated before the first real native event.
             None if self.last_event.is_none() => self
@@ -765,15 +765,17 @@ impl NativeLedger {
                 .find(|money| money.currency == currency)
                 .copied(),
             None => None,
-        }
+        };
+        result
     }
     pub fn balances(&self) -> Vec<Money> {
         let cache = self.engine.kernel().cache.borrow();
-        match cache.account_for_venue(&self.venue) {
+        let result = match cache.account_for_venue(&self.venue) {
             Some(account) => account.balances_total().into_values().collect(),
             None if self.last_event.is_none() => self.initial_balances.clone(),
             None => Vec::new(),
-        }
+        };
+        result
     }
     pub fn positions(&self) -> Vec<Position> {
         self.engine
