@@ -18,14 +18,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: linux-x86_64, runner: ubuntu-22.04, node: linux-x64, suffix: tar.gz}
-          - {platform: macos-x86_64, runner: macos-15-intel, node: darwin-x64, suffix: tar.gz}
-          - {platform: macos-aarch64, runner: macos-15, node: darwin-arm64, suffix: tar.gz}
-          - {platform: windows-x86_64, runner: windows-2025, node: win-x64, suffix: zip}
+          - {platform: linux-x86_64, runner: ubuntu-22.04, suffix: tar.gz}
+          - {platform: macos-x86_64, runner: macos-15-intel, suffix: tar.gz}
+          - {platform: macos-aarch64, runner: macos-15, suffix: tar.gz}
+          - {platform: windows-x86_64, runner: windows-2025, suffix: zip}
     env:
       VERSION: ${{ inputs.version }}
       REVISION: ${{ inputs.revision }}
-      NODE_VERSION: '22.19.0'
     defaults:
       run:
         shell: bash
@@ -43,25 +42,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Fetch the official pinned platform runtime, not a custom executable
-        env:
-          NODE_PLATFORM: ${{ matrix.node }}
-          SUFFIX: ${{ matrix.suffix }}
-        run: |
-          curl --fail --location --retry 3 --max-time 180 \
-            --output "$RUNNER_TEMP/node.$SUFFIX" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-$NODE_PLATFORM.$SUFFIX"
-          if [[ "$SUFFIX" == zip ]]; then
-            python -m zipfile -e "$RUNNER_TEMP/node.zip" "$RUNNER_TEMP"
-          else
-            tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
-          fi
       - name: Package JS/dependencies and execute the extracted distribution
         env:
-          NODE_PLATFORM: ${{ matrix.node }}
           PLATFORM: ${{ matrix.platform }}
           SUFFIX: ${{ matrix.suffix }}
         run: |
-          python -B deploy/package.py pack-cli --runtime "$RUNNER_TEMP/node-v$NODE_VERSION-$NODE_PLATFORM" \
+          runtime=$(node -p "require('node:path').resolve(process.execPath, process.platform === 'win32' ? '..' : '../..')")
+          python -B deploy/package.py pack-cli --runtime "$runtime" \
             --platform "$PLATFORM" --version "$VERSION" --revision "$REVISION" --output "$RUNNER_TEMP/cli-assets"
           python -B deploy/package.py smoke-cli --archive "$RUNNER_TEMP/cli-assets/quazonai-cli-$PLATFORM.$SUFFIX" \
             --platform "$PLATFORM" --version "$VERSION"
