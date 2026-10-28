@@ -35,7 +35,7 @@ function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, req
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
   if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
     || canonical(source.request) !== canonical(request) || canonical(configured.request) !== canonical(source.request)) return null;
-  return { request: source.request, catalog: text(configuredData.catalog, 'catalog') };
+  return { request: source.request, catalog: text(sourceData.catalog, 'catalog') };
 }
 
 export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, null>({

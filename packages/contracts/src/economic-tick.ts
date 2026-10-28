@@ -5,7 +5,7 @@ import { validateNativeTickFactorRequest, type NativeTickFactorRequest } from '.
 export type NativeTickEconomicScenario = {
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
-  taker_fee_bps: string; extra_cost_bps: string;
+  perp_taker_fee_bps: string; spot_taker_fee_bps: string; extra_cost_bps: string;
   initial_margin_fraction: string; maintenance_margin_fraction: string;
   decision_interval_ns: string; base_latency_ns: string; jitter_min_ns: string; jitter_max_ns: string;
   random_seed: string; maximum_mark_age_ns: string;
@@ -16,7 +16,7 @@ export type NativeTickEconomicRequest = {
 };
 
 const decimalFields = ['initial_usdt', 'usdt0_per_usdt', 'spot_fraction', 'gross_fraction', 'maximum_asset_weight',
-  'participation_fraction', 'taker_fee_bps', 'extra_cost_bps', 'initial_margin_fraction', 'maintenance_margin_fraction'] as const;
+  'participation_fraction', 'perp_taker_fee_bps', 'spot_taker_fee_bps', 'extra_cost_bps', 'initial_margin_fraction', 'maintenance_margin_fraction'] as const;
 const counterFields = ['decision_interval_ns', 'base_latency_ns', 'jitter_min_ns', 'jitter_max_ns', 'random_seed', 'maximum_mark_age_ns'] as const;
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('tick_economic_object_required');
@@ -32,6 +32,8 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source']);
   if (request.schema_version !== 1) throw new Error('tick_economic_schema_version_unsupported');
   const research = validateNativeTickFactorRequest(request.research);
+  if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
+    .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
   const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields]);
   for (const key of decimalFields) {
     const value = scenario[key];
@@ -47,7 +49,10 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
     if (compareDecimal(s[key], '0') <= 0 || compareDecimal(s[key], '1') > 0) throw new Error(`tick_economic_${key}_invalid`);
   }
   if (compareDecimal(s.spot_fraction, '1') >= 0 || compareDecimal(s.maintenance_margin_fraction, s.initial_margin_fraction) >= 0) throw new Error('tick_economic_allocation_or_margin_invalid');
-  if (compareDecimal(s.taker_fee_bps, '0') < 0 || compareDecimal(s.extra_cost_bps, '0') < 0 || compareDecimal(addDecimal(s.taker_fee_bps, s.extra_cost_bps), '10000') >= 0) throw new Error('tick_economic_costs_invalid');
+  if (compareDecimal(s.extra_cost_bps, '0') < 0 || (['perp_taker_fee_bps', 'spot_taker_fee_bps'] as const).some(key => {
+    const fee = s[key];
+    return compareDecimal(fee, '0') < 0 || compareDecimal(addDecimal(fee, s.extra_cost_bps), '10000') >= 0;
+  })) throw new Error('tick_economic_costs_invalid');
   if (s.decision_interval_ns === '0' || s.maximum_mark_age_ns === '0' || BigInt(s.jitter_min_ns) > BigInt(s.jitter_max_ns)) throw new Error('tick_economic_clocks_invalid');
   if (!Array.isArray(request.fx_instrument_ids) || !request.fx_instrument_ids.length || request.fx_instrument_ids.some(id => typeof id !== 'string' || !id || id.length > 200 || /[\s\u0000-\u001f\u007f]/.test(id)) || new Set(request.fx_instrument_ids).size !== request.fx_instrument_ids.length) throw new Error('tick_economic_fx_instrument_ids_invalid');
   if (typeof request.funding_source !== 'string' || !request.funding_source.endsWith('.jsonl') || /[/\\\u0000-\u001f\u007f]/.test(request.funding_source)) throw new Error('tick_economic_funding_source_invalid');

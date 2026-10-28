@@ -1,7 +1,7 @@
 //! One-process native science entrypoints. No database or delivery authority.
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs,
     io::{Read, Write},
@@ -107,6 +107,8 @@ enum Operation {
     ReplayTickEconomic {
         #[arg(long)]
         catalog: PathBuf,
+        #[arg(long)]
+        funding_catalog: Option<PathBuf>,
         #[arg(long)]
         model: PathBuf,
     },
@@ -332,8 +334,13 @@ fn run(operation: Operation) -> Result<()> {
                 output(&result)
             }
         }
-        Operation::ReplayTickEconomic { catalog, model } => output(&job::ticks::economic::replay(
+        Operation::ReplayTickEconomic {
+            catalog,
+            funding_catalog,
+            model,
+        } => output(&job::ticks::economic::replay_with_funding(
             &catalog,
+            funding_catalog.as_deref().unwrap_or(&catalog),
             &input()?,
             &model_bytes(&model)?,
         )?),
@@ -520,7 +527,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Arguments, Operation, public_error_code, public_failure};
+    use super::{public_error_code, public_failure, Arguments, Operation};
     use clap::Parser;
 
     #[test]
@@ -611,15 +618,13 @@ mod tests {
         for command in ["allocate", "run-bounded", "execute"] {
             assert!(Arguments::try_parse_from(["job", command]).is_ok());
         }
-        assert!(
-            Arguments::try_parse_from([
-                "job",
-                "verify-native",
-                "--output",
-                "unused-output-directory",
-            ])
-            .is_err()
-        );
+        assert!(Arguments::try_parse_from([
+            "job",
+            "verify-native",
+            "--output",
+            "unused-output-directory",
+        ])
+        .is_err());
     }
 
     #[cfg(feature = "native-paper")]
@@ -788,35 +793,31 @@ mod tests {
             .command,
             Operation::PolymarketDataProbe(_)
         ));
-        assert!(
-            Arguments::try_parse_from([
-                "job",
-                "polymarket-data-probe",
-                "--instrument-id",
-                "condition-1.POLYMARKET",
-                "--output",
-                "probe.json",
-                "--credential-file",
-                "never-read",
-            ])
-            .is_err()
-        );
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-data-probe",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "probe.json",
+            "--credential-file",
+            "never-read",
+        ])
+        .is_err());
     }
 
     #[cfg(not(feature = "native-node-observer"))]
     #[test]
     fn default_scientific_job_has_no_public_polymarket_probe() {
-        assert!(
-            Arguments::try_parse_from([
-                "job",
-                "polymarket-data-probe",
-                "--instrument-id",
-                "condition-1.POLYMARKET",
-                "--output",
-                "probe.json",
-            ])
-            .is_err()
-        );
+        assert!(Arguments::try_parse_from([
+            "job",
+            "polymarket-data-probe",
+            "--instrument-id",
+            "condition-1.POLYMARKET",
+            "--output",
+            "probe.json",
+        ])
+        .is_err());
     }
 
     #[cfg(feature = "native-paper")]

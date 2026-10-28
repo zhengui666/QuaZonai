@@ -1,8 +1,8 @@
 //! Explicit derived-cohort execution estimate; no source trades/quotes are invented.
-use super::{Cohort, cohort_cache, feature};
+use super::{cohort_cache, feature, Cohort};
 use crate::{feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{Context, Result, ensure};
-use contracts::{DbCounter, DecimalValue, SchemaV1, economic_tick::*};
+use anyhow::{ensure, Context, Result};
+use contracts::{economic_tick::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,
     indicator::{Indicator, MovingAverage},
@@ -12,8 +12,8 @@ use nautilus_model::{
     types::{Currency, Money},
 };
 use rust_decimal::{
-    Decimal,
     prelude::{FromPrimitive, ToPrimitive},
+    Decimal,
 };
 use serde::Deserialize;
 use std::{
@@ -37,7 +37,11 @@ fn decimal(v: &DecimalValue) -> Result<Decimal> {
     Ok(Decimal::from_str(&v.as_decimal().to_plain_string())?)
 }
 fn exact(v: Decimal) -> Result<DecimalValue> {
-    v.to_string().parse().map_err(anyhow::Error::msg)
+    v.round_dp_with_strategy(18, rust_decimal::RoundingStrategy::MidpointNearestEven)
+        .normalize()
+        .to_string()
+        .parse()
+        .map_err(anyhow::Error::msg)
 }
 fn finite(v: f64) -> Result<Decimal> {
     Decimal::from_f64(v).context("ECONOMIC_NONFINITE")
@@ -45,6 +49,17 @@ fn finite(v: f64) -> Result<Decimal> {
 
 pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
     domain::ticks::evaluation_request(&request.research)?;
+    ensure!(
+        [
+            request.research.input.event_start_ns,
+            request.research.input.event_end_ns,
+            request.research.train_end_ns,
+            request.research.validation_end_ns,
+        ]
+        .into_iter()
+        .all(|v| v.get().is_multiple_of(DAY)),
+        "ECONOMIC_UTC_DAILY_BOUNDARIES_REQUIRED"
+    );
     ensure!(
         request.research.input.is_flow_cache(),
         "ECONOMIC_FLOW_CACHE_REQUIRED"
@@ -70,12 +85,14 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             "ECONOMIC_FRACTION_INVALID"
         );
     }
-    ensure!(
-        decimal(&s.taker_fee_bps)? >= Decimal::ZERO
-            && decimal(&s.extra_cost_bps)? >= Decimal::ZERO
-            && decimal(&s.taker_fee_bps)? + decimal(&s.extra_cost_bps)? < Decimal::from(10000),
-        "ECONOMIC_COST_INVALID"
-    );
+    for fee in [&s.perp_taker_fee_bps, &s.spot_taker_fee_bps] {
+        ensure!(
+            decimal(fee)? >= Decimal::ZERO
+                && decimal(&s.extra_cost_bps)? >= Decimal::ZERO
+                && decimal(fee)? + decimal(&s.extra_cost_bps)? < Decimal::from(10000),
+            "ECONOMIC_COST_INVALID"
+        );
+    }
     ensure!(
         decimal(&s.maintenance_margin_fraction)? > Decimal::ZERO
             && decimal(&s.maintenance_margin_fraction)? < decimal(&s.initial_margin_fraction)?
@@ -305,7 +322,7 @@ struct Asset {
     previous: Option<Cohort>,
     fast: ExponentialMovingAverage,
     slow: ExponentialMovingAverage,
-    model: FeatureModel,
+    model: Option<FeatureModel>,
     score: Option<f64>,
     mark: Option<(u64, Decimal)>,
     cohorts: u64,
@@ -470,13 +487,27 @@ pub fn replay(
     request: &NativeTickEconomicRequestV1,
     wasm: &[u8],
 ) -> Result<NativeTickEconomicResultV1> {
+    replay_with_funding(root, root, request, wasm)
+}
+
+pub fn replay_with_funding(
+    root: &Path,
+    funding_root: &Path,
+    request: &NativeTickEconomicRequestV1,
+    wasm: &[u8],
+) -> Result<NativeTickEconomicResultV1> {
     validate(request)?;
+    ensure!(
+        !funding_sources(funding_root, &request.research)?.is_empty(),
+        "ECONOMIC_FUNDING_SOURCE_REQUIRED"
+    );
     let cache = cohort_cache::load(root, &request.research)?;
     let mut defs = definitions(root)?
         .into_iter()
         .map(|i| (i.id().to_string(), i))
         .collect::<BTreeMap<_, _>>();
     let module = SignalModule::new(wasm, request.research.parameters.total_fuel.is_some())?;
+    let mut consumed = 0u64;
     let mut assets = Vec::new();
     let mut heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
     for a in &cache.assets {
@@ -502,6 +533,20 @@ pub fn replay(
         if let Some(h) = &head {
             heap.push(Reverse((h.event, index)));
         }
+        let fuel = request
+            .research
+            .parameters
+            .total_fuel
+            .map(|v| v.get() - consumed);
+        let model = if a.cohort_count == 0 {
+            None
+        } else {
+            let model = FeatureModel::new(&module, Some(a.cohort_count), fuel)?;
+            if let (Some(before), Some(after)) = (fuel, model.remaining_fuel()) {
+                consumed += before - after;
+            }
+            Some(model)
+        };
         assets.push(Asset {
             instrument,
             reader,
@@ -515,11 +560,7 @@ pub fn replay(
                 request.research.parameters.slow_period_cohorts as usize,
                 None,
             ),
-            model: FeatureModel::new(
-                &module,
-                Some(a.cohort_count),
-                request.research.parameters.total_fuel.map(|v| v.get()),
-            )?,
+            model,
             score: None,
             mark: None,
             cohorts: 0,
@@ -545,8 +586,9 @@ pub fn replay(
                 && a.instrument.quote_currency() == Currency::USDC()
         })
         .context("ECONOMIC_USDT0_USDC_BRIDGE_REQUIRED")?;
-    let funding_manifest: FundingManifest =
-        serde_json::from_reader(File::open(root.join("funding-rates.manifest.json"))?)?;
+    let funding_manifest: FundingManifest = serde_json::from_reader(File::open(
+        funding_root.join("funding-rates.manifest.json"),
+    )?)?;
     let funding_ids = funding_manifest
         .instruments
         .iter()
@@ -568,7 +610,7 @@ pub fn replay(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let mut funding = Funding::open(&root.join(&request.funding_source), funding_ids)?;
+    let mut funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
     let mut seed = s.random_seed.get();
     let mut cash: Option<NativeLedger> = None;
     let mut margin: Option<NativeLedger> = None;
@@ -589,7 +631,6 @@ pub fn replay(
         .context("ECONOMIC_CLOCK_OVERFLOW")?;
     let mut days = Vec::new();
     let mut previous_equity = Some(decimal(&s.initial_usdt)?);
-    let mut consumed = 0u64;
     let start = request.research.input.event_start_ns.get();
     let mut next_hour = (start / HOUR + u64::from(!start.is_multiple_of(HOUR))) * HOUR;
     let mut expected_rates = BTreeSet::new();
@@ -598,7 +639,7 @@ pub fn replay(
         // Complete each global timestamp before scheduling new decisions.
         let mut group = vec![index];
         while heap.peek().is_some_and(|Reverse((at, _))| *at == event) {
-            group.push(heap.pop().unwrap().0.1);
+            group.push(heap.pop().unwrap().0 .1);
         }
         while day_end <= event {
             expected_until(day_end, &mut next_hour, &margin, &mut expected_rates)?;
@@ -683,9 +724,13 @@ pub fn replay(
                         .into_iter()
                         .map(|v| feature(v, current.event, ordinal))
                         .collect::<Result<Vec<_>>>()?;
-                    let before = a.model.remaining_fuel();
-                    a.score = Some(a.model.predict(event, event, ordinal, &features)?);
-                    if let (Some(before), Some(after)) = (before, a.model.remaining_fuel()) {
+                    let model = a.model.as_mut().context("ECONOMIC_MODEL_MISSING")?;
+                    if let Some(total) = request.research.parameters.total_fuel {
+                        model.cap_remaining_fuel(total.get() - consumed)?;
+                    }
+                    let before = model.remaining_fuel();
+                    a.score = Some(model.predict(event, event, ordinal, &features)?);
+                    if let (Some(before), Some(after)) = (before, model.remaining_fuel()) {
                         consumed = consumed
                             .checked_add(before - after)
                             .context("ECONOMIC_FUEL_RANGE")?;
@@ -744,11 +789,12 @@ pub fn replay(
                 converted += quantity
                     * price
                     * (Decimal::ONE
-                        - (decimal(&s.taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                        - (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
                             / Decimal::from(10000));
-                conversion_cost +=
-                    quantity * price * (decimal(&s.taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                        / Decimal::from(10000);
+                conversion_cost += quantity
+                    * price
+                    * (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                    / Decimal::from(10000);
                 remaining -= quantity;
                 if converted > Decimal::ZERO
                     && conversion_quantity(remaining, remaining, price, &assets[bridge].instrument)?
@@ -761,7 +807,14 @@ pub fn replay(
                     let margin_capital = (converted - cash_capital)
                         .round_dp_with_strategy(precision, rust_decimal::RoundingStrategy::ToZero);
                     reserve_usdc = converted - cash_capital - margin_capital;
-                    cash = Some(build(&assets, false, cash_capital, s)?);
+                    let ledger = build(&assets, false, cash_capital, s)?;
+                    let bridges = assets
+                        .iter()
+                        .filter(|a| fx_ids.contains(&a.instrument.id().to_string()))
+                        .map(|a| a.instrument.id())
+                        .collect::<Vec<_>>();
+                    ledger.inventory_target_instruments(&bridges)?;
+                    cash = Some(ledger);
                     margin = Some(build(&assets, true, margin_capital, s)?);
                     conversion_ns = Some(counter(event)?);
                     initial_usdc = Some(exact(converted)?);
@@ -902,13 +955,15 @@ pub fn replay(
     Ok(NativeTickEconomicResultV1 {
         schema_version: SchemaV1, request: request.clone(), model: "SEGREGATED_COHORT_MARK_ESTIMATE_V1".into(),
         methods: BTreeMap::from([
+            ("funding_source".into(), format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", funding_manifest.source_revision, funding_manifest.start_ns.get(), funding_manifest.end_ns.get(), funding_manifest.rows, request.funding_source)),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),"Derived cohort simulation bars OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation; native bar liquidity can fill less, and unchanged quantized marks do not imply a refreshed observed book. Ties use deterministic native ordering, not original queue evidence.".into()),
-            ("policy".into(),"Fixed global rebalance grid; absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()),
+            ("policy".into(),"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(),"Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into()),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
             ("statistics".into(),"UTC daily total-wealth net returns; risk-free zero, sample-standard-deviation Sharpe times sqrt(365). Regime conditional annualization exp(365*mean(log(1+r)))-1, not concatenated-calendar CAGR; missing returns excluded and counted.".into()),
+            ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
             ("precision".into(),"Native USD-quoted perp PnL uses USD 2-decimal Money, explicitly swept in nominal quote units to USDC; no instrument rewrite. Full USD minor unit 0.01 times all perp fills conservatively bounds native PnL rounding, not VWAP/price precision or execution-model error.".into()),
         ]),
         coverage: cache.coverage,
@@ -927,7 +982,7 @@ pub fn replay(
         targets, target_asof_ns:last_target_asof.map(counter).transpose()?,target_cash_weight:last_target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec!["EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown{"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()],
+        limitations:vec!["EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown{"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()],
     })
 }
 
@@ -945,7 +1000,11 @@ fn build(
             .collect(),
         capital,
         margin,
-        decimal(&s.taker_fee_bps)?,
+        decimal(if margin {
+            &s.perp_taker_fee_bps
+        } else {
+            &s.spot_taker_fee_bps
+        })?,
         decimal(&s.extra_cost_bps)?,
         decimal(&s.initial_margin_fraction)?,
         decimal(&s.maintenance_margin_fraction)?,
@@ -1044,12 +1103,13 @@ fn schedule(
             continue;
         };
         let Some(score) = a.score else { continue };
-        if sums[margin] == 0.0 {
-            continue;
-        }
         let score = if margin == 0 { score.max(0.0) } else { score };
-        let weight = (finite(score.abs() / sums[margin])? * decimal(&s.gross_fraction)?)
-            .min(decimal(&s.maximum_asset_weight)?)
+        let weight = (if sums[margin] == 0.0 {
+            Decimal::ZERO
+        } else {
+            finite(score.abs() / sums[margin])?
+        } * decimal(&s.gross_fraction)?)
+        .min(decimal(&s.maximum_asset_weight)?)
             * if score < 0.0 {
                 -Decimal::ONE
             } else {
@@ -1071,16 +1131,18 @@ fn schedule(
         if matches!(a.instrument, InstrumentAny::CurrencyPair(_))
             && a.instrument.quote_currency() != Currency::USDC()
         {
-            let base = a.instrument.base_currency().unwrap();
             let held = cash
                 .as_ref()
                 .unwrap()
-                .balance(base)
-                .map_or(Decimal::ZERO, |m| m.as_decimal());
+                .positions()
+                .into_iter()
+                .filter(|p| p.instrument_id == a.instrument.id())
+                .map(|p| p.signed_decimal_qty())
+                .sum::<Decimal>();
             let required = (*q - held).max(Decimal::ZERO)
                 * mark(a, event, age).unwrap()
                 * (Decimal::ONE
-                    + (decimal(&s.taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                    + (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
                         / Decimal::from(10000));
             let quote = a.instrument.quote_currency();
             let entry = quote_needs
@@ -1161,6 +1223,11 @@ fn schedule(
         }
     }
     for (i, q) in plans {
+        // One outstanding decision per asset survives sparse market arrivals.
+        // Intermediate grid decisions are coalesced until that attempt is consumed.
+        if assets[i].pending.is_some() {
+            continue;
+        }
         let due = event
             .checked_add(delay(seed, s)?)
             .and_then(|v| v.checked_add(1))
@@ -1256,6 +1323,8 @@ fn metrics(
     Ok(reports)
 }
 
+#[cfg(test)]
+mod replay_tests;
 #[cfg(test)]
 mod tests;
 

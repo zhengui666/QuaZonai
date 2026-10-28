@@ -126,7 +126,46 @@ impl FeatureModel {
         Ok(value)
     }
 
+    /// Tighten a shared caller budget without replenishing this instance.
+    pub fn cap_remaining_fuel(&mut self, maximum: u64) -> Result<()> {
+        if let Some(remaining) = &mut self.remaining_fuel {
+            let capped = (*remaining).min(maximum);
+            self.store.set_fuel(capped)?;
+            *remaining = capped;
+        }
+        Ok(())
+    }
+
     pub fn remaining_fuel(&self) -> Option<u64> {
         self.remaining_fuel
+    }
+}
+
+#[cfg(test)]
+mod shared_fuel_tests {
+    use super::*;
+
+    #[test]
+    fn per_asset_budget_can_only_shrink_to_global_remainder() {
+        let bytes = wat::parse_str(
+            r#"(module
+          (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64))
+          (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            f64.const 1))"#,
+        )
+        .unwrap();
+        let module = SignalModule::new(&bytes, true).unwrap();
+        let mut first = FeatureModel::new(&module, Some(10), Some(100)).unwrap();
+        let mut second = FeatureModel::new(&module, Some(10), Some(100)).unwrap();
+        first.cap_remaining_fuel(10).unwrap();
+        first.cap_remaining_fuel(100).unwrap();
+        assert_eq!(first.remaining_fuel(), Some(10));
+        second.cap_remaining_fuel(0).unwrap();
+        assert_eq!(second.remaining_fuel(), Some(0));
+        assert!(second
+            .predict(1, 1, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("FEATURE_MODEL_BUDGET_EXHAUSTED"));
     }
 }

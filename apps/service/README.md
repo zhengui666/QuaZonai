@@ -48,12 +48,15 @@ and `NativeTickEconomicRequest` expose the source DTOs. The authenticated CLI ca
 `quazonai portfolio tick-replay REPLAY_ID`.
 
 The factor must be a retained, computed single-model trial of that admitted
-dataset; final selection is optional. The request must exactly match its original prepared primary or sealed tick input
+dataset; final selection is optional. Economic start/end/train/validation boundaries must fall on UTC day boundaries.
+The request must exactly match its original prepared primary or sealed tick input
 and feature parameters, and execution uses that matching view’s catalog. Candidate
 comparisons use primary TRAIN/VALIDATION; the operator records the chosen candidate
 before requesting its full sealed replay. All capital, cash/perpetual allocation,
 costs, participation, margin, clock and latency assumptions are explicit exact
-strings. Funding uses a registered catalog-relative JSONL source, and the worker
+strings. Both `perp_taker_fee_bps` and `spot_taker_fee_bps` are required; FX
+conversion uses the spot cost. Each fee plus `extra_cost_bps` must be below
+10,000 bps. Funding uses a registered catalog-relative JSONL source, and the worker
 validates the mounted catalog. The original model is compiled and attached through
 `replay-tick-economic`, using the tick precision companion and existing worker
 concurrency, memory and output limits.

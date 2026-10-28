@@ -25,6 +25,8 @@ test('owner API binds a retained unselected computed factor through the actual r
   const directory = await mkdtemp(join(tmpdir(), 'qz-economic-api-'));
   const catalog = join(directory, 'primary-catalog'); await mkdir(catalog);
   const independent = join(directory, 'independent-catalog'); await mkdir(independent);
+  const republishedPrimary = join(directory, 'republished-primary'); await mkdir(republishedPrimary);
+  const republishedIndependent = join(directory, 'republished-independent'); await mkdir(republishedIndependent);
   const binary = join(directory, 'controlled-job'); const calls = join(directory, 'calls');
   await writeFile(binary, `#!/usr/bin/python3
 import json, os, sys
@@ -42,13 +44,13 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
 'native_fills':'0','native_rejections':'0','native_perp_pnl_rounding_events':'0','perp_pnl_rounding_bound_usdc':'0',
 'funding_missing_instruments':[],'targets':[{'instrument_id':'BTC.SIM','currency':'USDC','weight':'0.1234567890123456789012345678'}],'target_asof_ns':None,'target_cash_weight':None,'skipped_cash':'0','skipped_minimum':'0','consumed_fuel':None,'limitations':['CONTROLLED_PROTOCOL_NOT_MARKET_EVIDENCE']}))
 `, { mode: 0o700 });
-  const worker = await createNautilusWorker({ binary, tickBinary: binary, dataDir: join(directory, 'worker'), catalogRoots: [catalog, independent] });
+  const worker = await createNautilusWorker({ binary, tickBinary: binary, dataDir: join(directory, 'worker'), catalogRoots: [catalog, independent, republishedPrimary, republishedIndependent] });
   worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening');
   const target = { id: 'test-economic-worker', url: `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}` };
-  const full = { schema_version: 1 as const, input: { modality: 'TRADE_TICK' as const, instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '80000000000', decision_cutoff_ns: '80000000000',
+  const full = { schema_version: 1 as const, input: { modality: 'TRADE_TICK' as const, instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000',
     representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' as const, maximum_source_rows: '2', source_revision: 'controlled-original-source', availability: 'EVENT_TIME_PROXY_UNVERIFIED' as const },
     sampling: { kind: 'EVENT_TIME_COHORT_V1' as const, maximum_cohort_rows: 100 }, target: { kind: 'FIXED_EVENT_TIME' as const, horizon_ns: '10000000000' },
-    parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '30000000000', validation_end_ns: '50000000000' };
+    parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '259200000000000', validation_end_ns: '432000000000000' };
   const research = { ...full, input: { ...full.input, event_end_ns: full.validation_end_ns } };
   const data = { catalog, nativeInput: { modality: 'TRADE_TICK', request: research }, sealed: { catalog: independent, nativeInput: { modality: 'TRADE_TICK', request: full } }, nautilusTarget: target };
   const dataset = { id: 'ticks', name: 'Controlled original ticks', assetClass: 'TEST', currency: 'USDT', source: 'test protocol only', start: null, end: null, ready: true,
@@ -70,8 +72,11 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
       (await tx.doc(Application)).researchRequests['request:original'] = { original: { datasetId: 'ticks' }, input, dataset: json(dataset) };
       return conversation.id;
     }, context);
+    // Republishing the registry must not redirect the retained factor's frozen inputs.
+    service.config.datasets[0]!.data = { ...service.config.datasets[0]!.data, catalog: republishedPrimary,
+      sealed: { ...json(service.config.datasets[0]!.data.sealed), catalog: republishedIndependent } };
     const request = validateNativeTickEconomicRequest({ schema_version: 1, research, scenario: { initial_usdt: '3000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '0.02', participation_fraction: '0.01',
-      taker_fee_bps: '3.5', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
+      perp_taker_fee_bps: '4.5', spot_taker_fee_bps: '7', extra_cost_bps: '1.5', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '10000000000', base_latency_ns: '1000000', jitter_min_ns: '100000', jitter_max_ns: '1500000', random_seed: '0', maximum_mark_age_ns: '60000000000' },
       fx_instrument_ids: ['USDT0-USDC.HYPERLIQUID'], funding_source: 'funding-rates.jsonl' });
     const payload = { requestId: 'economic-original', datasetId: 'ticks', factorId: `r${researchId}.t77.m0`, request };
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', payload })).statusCode, 401);
@@ -98,7 +103,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal(fullResult.status, 'COMPUTED'); assert.equal(fullResult.result.methods.catalog, independent);
     assert.deepEqual(fullResult.result.request, fullRequest);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
-      payload: { ...payload, requestId: 'unregistered-window', request: { ...request, research: { ...request.research, input: { ...request.research.input, event_end_ns: '70000000000' } } } } })).statusCode, 409);
+      payload: { ...payload, requestId: 'unregistered-window', request: { ...request, research: { ...request.research, input: { ...request.research.input, event_end_ns: '604800000000000' } } } } })).statusCode, 409);
     const references = (await service.research.harness.snapshot(NativeRemoteUncertainty, researchId, String(view.taskId), context))!.requests;
     const originalReference = references[0]!;
     for (const completed of [true, false]) {

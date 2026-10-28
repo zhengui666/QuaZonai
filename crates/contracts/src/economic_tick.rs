@@ -1,5 +1,5 @@
 //! Explicit economic estimates over derived cohorts, separate from factor evidence.
-use crate::{DbCounter, DecimalValue, SchemaV1, ticks::*};
+use crate::{ticks::*, DbCounter, DecimalValue, SchemaV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -13,7 +13,8 @@ pub struct NativeTickEconomicScenarioV1 {
     pub gross_fraction: DecimalValue,
     pub maximum_asset_weight: DecimalValue,
     pub participation_fraction: DecimalValue,
-    pub taker_fee_bps: DecimalValue,
+    pub perp_taker_fee_bps: DecimalValue,
+    pub spot_taker_fee_bps: DecimalValue,
     pub extra_cost_bps: DecimalValue,
     pub initial_margin_fraction: DecimalValue,
     pub maintenance_margin_fraction: DecimalValue,

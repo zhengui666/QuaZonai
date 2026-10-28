@@ -1,8 +1,8 @@
 use super::*;
 use serde_json::json;
 
-fn request() -> NativeTickEconomicRequestV1 {
-    let mut research = super::super::super::tests::request();
+pub(super) fn request() -> NativeTickEconomicRequestV1 {
+    let mut research = crate::ticks::tests::request();
     research.input.representation =
         Some(contracts::ticks::NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
     research.input.maximum_rows = None;
@@ -14,7 +14,7 @@ fn request() -> NativeTickEconomicRequestV1 {
     serde_json::from_value(json!({"schema_version":1,"research":research,
         "scenario":{"initial_usdt":"3000","usdt0_per_usdt":"1","spot_fraction":"0.5",
             "gross_fraction":"0.5","maximum_asset_weight":"0.1","participation_fraction":"0.01",
-            "taker_fee_bps":"5","extra_cost_bps":"10","initial_margin_fraction":"0.5","maintenance_margin_fraction":"0.25",
+            "perp_taker_fee_bps":"4.5","spot_taker_fee_bps":"7","extra_cost_bps":"10","initial_margin_fraction":"0.5","maintenance_margin_fraction":"0.25",
             "decision_interval_ns":"60000000000","base_latency_ns":"1000000000","jitter_min_ns":"100000","jitter_max_ns":"1500000",
             "random_seed":"0","maximum_mark_age_ns":"172800000000000"},
         "fx_instrument_ids":["AUD/USD.SIM"],"funding_source":"funding-rates.jsonl"})).unwrap()
@@ -33,6 +33,13 @@ fn registered_latency_seed_is_reproducible_and_absolute_lag_is_not_jitter() {
     let mut invalid = request.clone();
     invalid.scenario.spot_fraction = "1".parse().unwrap();
     assert!(validate(&invalid).is_err());
+    invalid = request.clone();
+    invalid.research.validation_end_ns = counter(4 * DAY + DAY / 2).unwrap();
+    assert!(invalid.research.evaluation_regimes.is_none());
+    assert_eq!(
+        validate(&invalid).unwrap_err().to_string(),
+        "ECONOMIC_UTC_DAILY_BOUNDARIES_REQUIRED"
+    );
 }
 
 #[test]
@@ -152,11 +159,9 @@ fn bridge_conversion_respects_native_lot_and_minimum_without_spending_dust() {
 fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     let dir = tempfile::tempdir().unwrap();
     let request = request();
-    assert!(
-        funding_sources(dir.path(), &request.research)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(funding_sources(dir.path(), &request.research)
+        .unwrap()
+        .is_empty());
     std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());
     let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
@@ -171,4 +176,17 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     manifest["end_ns"] = json!("1");
     std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());
+}
+
+#[test]
+fn derived_wire_values_round_only_at_output_boundary() {
+    let value = Decimal::ONE / Decimal::from(3);
+    assert_eq!(
+        exact(value).unwrap().as_decimal().to_plain_string(),
+        "0.333333333333333333"
+    );
+    let fx = Decimal::from_str("1.003").unwrap();
+    let wealth = Decimal::from(3000) / fx;
+    let serialized = exact(wealth).unwrap();
+    assert!((decimal(&serialized).unwrap() - wealth).abs() <= Decimal::new(5, 19));
 }

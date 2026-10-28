@@ -1,9 +1,9 @@
 //! Explicit TradeTick cohorts -> causal generic features -> factor-only evidence.
 //! Native source decimals remain untouched. Derived statistical marks are finite f64.
 use crate::{feature_model::FeatureModel, signals::SignalModule};
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
-use contracts::{DbCounter, SchemaV1, factors::*, science::*, ticks::*};
+use contracts::{factors::*, science::*, ticks::*, DbCounter, SchemaV1};
 use domain::ticks::{evaluation_request, partition_bounds, partition_for_event};
 use nautilus_indicators::{
     average::ema::ExponentialMovingAverage,

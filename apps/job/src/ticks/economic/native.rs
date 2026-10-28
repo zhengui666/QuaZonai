@@ -1,5 +1,5 @@
 //! Official-engine adapter for an explicit cohort-mark simulation, never a source BAR catalog.
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use nautilus_backtest::{
     config::{BacktestEngineConfig, SimulatedVenueConfig},
     engine::BacktestEngine,
@@ -12,7 +12,7 @@ use nautilus_common::{
     actor::DataActor,
     cache::config::CacheConfig,
     logging::logger::LoggerConfig,
-    msgbus::{MessageBus, get_message_bus, set_message_bus},
+    msgbus::{get_message_bus, set_message_bus, MessageBus},
 };
 use nautilus_core::UnixNanos;
 use nautilus_execution::models::{
@@ -21,8 +21,8 @@ use nautilus_execution::models::{
 };
 use nautilus_model::{
     accounts::{
-        Account,
         margin_model::{MarginModel, MarginModelHandle},
+        Account,
     },
     data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate},
     enums::{
@@ -43,7 +43,7 @@ use nautilus_trading::{
 use rust_decimal::Decimal;
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     rc::Rc,
 };
@@ -137,6 +137,7 @@ pub(super) struct NativeSummary {
 struct State {
     targets: BTreeMap<InstrumentId, Decimal>,
     capacities: BTreeMap<InstrumentId, Decimal>,
+    inventory_targets: BTreeSet<InstrumentId>,
     summary: NativeSummary,
     failure: Option<String>,
 }
@@ -196,7 +197,7 @@ impl DataActor for CohortStrategy {
             .instruments
             .get(&id)
             .context("TICK_ECONOMIC_INSTRUMENT_UNKNOWN")?;
-        let current = if self.cash {
+        let current = if self.cash && self.state.borrow().inventory_targets.contains(&id) {
             let currency = instrument
                 .base_currency()
                 .context("TICK_ECONOMIC_SPOT_BASE_MISSING")?;
@@ -439,6 +440,7 @@ pub(super) struct NativeLedger {
     bus: Rc<RefCell<MessageBus>>,
     venue: Venue,
     instruments: BTreeMap<InstrumentId, InstrumentAny>,
+    initial_balances: Vec<Money>,
     state: Rc<RefCell<State>>,
     adjustments: Adjustments,
     last_event: Option<u64>,
@@ -520,6 +522,12 @@ impl NativeLedger {
                     .or_insert((currency, Decimal::ZERO));
             }
         }
+        let initial_balances = balances
+            .into_iter()
+            .map(|(_, (currency, value))| {
+                Money::from_decimal(value, currency).map_err(anyhow::Error::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
         engine.add_venue(
             SimulatedVenueConfig::builder()
                 .venue(venue)
@@ -531,12 +539,7 @@ impl NativeLedger {
                 })
                 .book_type(BookType::L1_MBP)
                 .allow_cash_borrowing(false)
-                .starting_balances(
-                    balances
-                        .into_iter()
-                        .map(|(_, (c, v))| Money::from_decimal(v, c).map_err(anyhow::Error::from))
-                        .collect::<Result<Vec<_>>>()?,
-                )
+                .starting_balances(initial_balances.clone())
                 .default_leverage(Decimal::ONE)
                 .margin_model(MarginModelHandle::new(ScenarioMargin {
                     initial: initial_margin_fraction,
@@ -585,11 +588,28 @@ impl NativeLedger {
             bus,
             venue,
             instruments,
+            initial_balances,
             state,
             adjustments,
             last_event: None,
             purge_day: None,
         })
+    }
+
+    /// FX bridge targets reserve actual quote inventory; alpha targets remain per pair.
+    pub fn inventory_target_instruments(&self, ids: &[InstrumentId]) -> Result<()> {
+        ensure!(
+            ids.iter().all(|id| self
+                .instruments
+                .get(id)
+                .is_some_and(|instrument| matches!(instrument, InstrumentAny::CurrencyPair(_)))),
+            "TICK_ECONOMIC_INVENTORY_TARGET_INVALID"
+        );
+        self.state
+            .borrow_mut()
+            .inventory_targets
+            .extend(ids.iter().copied());
+        Ok(())
     }
 
     /// All marks at a shared event timestamp form one complete streaming batch.
@@ -735,21 +755,25 @@ impl NativeLedger {
         Ok(())
     }
     pub fn balance(&self, currency: Currency) -> Option<Money> {
-        self.engine
-            .kernel()
-            .cache
-            .borrow()
-            .account_for_venue(&self.venue)
-            .and_then(|a| a.balance_total(Some(currency)))
+        let cache = self.engine.kernel().cache.borrow();
+        match cache.account_for_venue(&self.venue) {
+            Some(account) => account.balance_total(Some(currency)),
+            // Configured collateral remains allocated before the first real native event.
+            None if self.last_event.is_none() => self
+                .initial_balances
+                .iter()
+                .find(|money| money.currency == currency)
+                .copied(),
+            None => None,
+        }
     }
     pub fn balances(&self) -> Vec<Money> {
-        self.engine
-            .kernel()
-            .cache
-            .borrow()
-            .account_for_venue(&self.venue)
-            .map(|a| a.balances_total().into_values().collect())
-            .unwrap_or_default()
+        let cache = self.engine.kernel().cache.borrow();
+        match cache.account_for_venue(&self.venue) {
+            Some(account) => account.balances_total().into_values().collect(),
+            None if self.last_event.is_none() => self.initial_balances.clone(),
+            None => Vec::new(),
+        }
     }
     pub fn positions(&self) -> Vec<Position> {
         self.engine
@@ -779,7 +803,9 @@ impl NativeLedger {
     }
     pub fn finish(&mut self) -> Result<()> {
         set_message_bus(self.bus.clone());
-        self.engine.end()?;
+        if self.last_event.is_some() {
+            self.engine.end()?;
+        }
         self.check()?;
         ensure!(
             self.adjustments.state.borrow().queue.is_empty()
@@ -1106,17 +1132,161 @@ mod tests {
     }
 
     #[test]
+    fn same_base_quote_pairs_keep_positions_separate_while_fx_reserves_follow_wallet() {
+        let pair = |id: &str, base: Currency, quote: Currency| {
+            InstrumentAny::CurrencyPair(
+                CurrencyPair::builder()
+                    .instrument_id(InstrumentId::from(id))
+                    .raw_symbol(Symbol::new("TEST"))
+                    .base_currency(base)
+                    .quote_currency(quote)
+                    .price_precision(2)
+                    .size_precision(4)
+                    .price_increment(Price::from("0.01"))
+                    .size_increment(Quantity::from("0.0001"))
+                    .ts_event(0_u64.into())
+                    .ts_init(0_u64.into())
+                    .build()
+                    .unwrap(),
+            )
+        };
+        let first = pair(
+            "BTC-USDC-SPOT.HYPERLIQUID",
+            Currency::BTC(),
+            Currency::USDC(),
+        );
+        let second = pair(
+            "BTC-USDT-SPOT.HYPERLIQUID",
+            Currency::BTC(),
+            Currency::USDT(),
+        );
+        let bridge = pair(
+            "USDT-USDC-SPOT.HYPERLIQUID",
+            Currency::USDT(),
+            Currency::USDC(),
+        );
+        let mut native = NativeLedger::new(
+            vec![first.clone(), second.clone(), bridge.clone()],
+            Decimal::from(1000),
+            false,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+        )
+        .unwrap();
+        native.inventory_target_instruments(&[bridge.id()]).unwrap();
+        let mark = |asset: &InstrumentAny, price: f64, target| NativeMark {
+            instrument_id: asset.id(),
+            mark: price,
+            capacity: Decimal::from(10000),
+            target_quantity: target,
+        };
+        native
+            .step_batch(
+                1_000_000_000,
+                &[
+                    mark(&first, 10.0, None),
+                    mark(&second, 10.0, None),
+                    mark(&bridge, 1.0, None),
+                ],
+            )
+            .unwrap();
+        // Quote inventory comes from an actual native FX fill, never an injected balance.
+        native
+            .step_batch(
+                2_000_000_000,
+                &[mark(&bridge, 1.0, Some(Decimal::from(100)))],
+            )
+            .unwrap();
+        native
+            .step_batch(
+                3_000_000_000,
+                &[mark(&first, 10.0, Some(Decimal::from(10)))],
+            )
+            .unwrap();
+        native
+            .step_batch(
+                4_000_000_000,
+                &[mark(&second, 10.0, Some(Decimal::from(5)))],
+            )
+            .unwrap();
+        assert_eq!(
+            native.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::from(15)
+        );
+        assert_eq!(
+            native.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(800)
+        );
+        assert_eq!(
+            native.balance(Currency::USDT()).unwrap().as_decimal(),
+            Decimal::from(50)
+        );
+        let positions = native.positions();
+        assert_eq!(
+            positions
+                .iter()
+                .find(|p| p.instrument_id == first.id())
+                .unwrap()
+                .signed_decimal_qty(),
+            Decimal::from(10)
+        );
+        assert_eq!(
+            positions
+                .iter()
+                .find(|p| p.instrument_id == second.id())
+                .unwrap()
+                .signed_decimal_qty(),
+            Decimal::from(5)
+        );
+        // Spending USDT changes the wallet, not the original FX pair position.
+        native
+            .step_batch(
+                5_000_000_000,
+                &[mark(&bridge, 1.0, Some(Decimal::from(50)))],
+            )
+            .unwrap();
+        assert_eq!(
+            native.balance(Currency::USDT()).unwrap().as_decimal(),
+            Decimal::from(50)
+        );
+        assert_eq!(native.summary().fills, 3);
+        // Closing one route must not sell the other route's five units.
+        native
+            .step_batch(6_000_000_000, &[mark(&first, 10.0, Some(Decimal::ZERO))])
+            .unwrap();
+        assert_eq!(
+            native.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::from(5)
+        );
+        assert_eq!(
+            native.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(900)
+        );
+        assert_eq!(
+            native
+                .positions()
+                .iter()
+                .find(|p| p.instrument_id == second.id())
+                .unwrap()
+                .signed_decimal_qty(),
+            Decimal::from(5)
+        );
+        assert_eq!(native.summary().fills, 4);
+        native.finish().unwrap();
+    }
+
+    #[test]
     fn same_timestamp_must_arrive_in_one_complete_native_batch() {
         let instrument = spot();
         let mut native = ledger(&instrument, false, Decimal::ZERO);
         native
             .step(1_000_000_000, &instrument, 100.0, 10.0, None)
             .unwrap();
-        assert!(
-            native
-                .step(1_000_000_000, &instrument, 100.0, 10.0, None)
-                .is_err()
-        );
+        assert!(native
+            .step(1_000_000_000, &instrument, 100.0, 10.0, None)
+            .is_err());
         native.finish().unwrap();
     }
 }
