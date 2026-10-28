@@ -831,15 +831,12 @@ pub fn replay_with_funding(
             if !marks_margin.is_empty() || !rates.is_empty() {
                 ledger.step_batch_with_rates(event, &marks_margin, &rates)?;
                 margin_started = true;
-                for p in ledger.positions() {
-                    expected_rates.insert((p.instrument_id.to_string(), event / HOUR));
-                }
-                if ledger
-                    .positions()
-                    .iter()
-                    .any(|p| missing_funding.contains(&p.instrument_id.to_string()))
-                {
-                    funding_unknown = true;
+                for id in ledger.open_instrument_ids() {
+                    let id = id.to_string();
+                    if missing_funding.contains(&id) {
+                        funding_unknown = true;
+                    }
+                    expected_rates.insert((id, event / HOUR));
                 }
             }
         }
