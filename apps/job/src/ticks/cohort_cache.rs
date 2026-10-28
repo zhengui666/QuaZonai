@@ -13,6 +13,8 @@ use std::{
 };
 
 pub const REPRESENTATION: &str = "EVENT_TIME_COHORT_CACHE_V1";
+pub const FLOW_REPRESENTATION: &str = "EVENT_TIME_COHORT_FLOW_CACHE_V1";
+pub const FLOW_FRAME_BYTES: u64 = 40;
 pub const MANIFEST_FILE: &str = "cohort-cache.json";
 pub const FRAME_BYTES: u64 = 32;
 const WRITE_BATCH: usize = 4096 * FRAME_BYTES as usize;
@@ -90,8 +92,16 @@ fn cache_path(root: &Path, name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn frame(cohort: &Cohort) -> Result<[u8; FRAME_BYTES as usize]> {
-    let mut encoded = [0; FRAME_BYTES as usize];
+fn frame_bytes(representation: &str) -> Result<u64> {
+    match representation {
+        REPRESENTATION => Ok(FRAME_BYTES),
+        FLOW_REPRESENTATION => Ok(FLOW_FRAME_BYTES),
+        _ => anyhow::bail!("TICK_CACHE_REPRESENTATION_UNSUPPORTED"),
+    }
+}
+
+fn frame(cohort: &Cohort, flow: bool) -> Result<[u8; FLOW_FRAME_BYTES as usize]> {
+    let mut encoded = [0; FLOW_FRAME_BYTES as usize];
     for (slot, value) in [
         cohort.event,
         cohort.vwap.to_bits(),
@@ -103,20 +113,32 @@ fn frame(cohort: &Cohort) -> Result<[u8; FRAME_BYTES as usize]> {
     {
         encoded[slot * 8..slot * 8 + 8].copy_from_slice(&value.to_le_bytes());
     }
+    if flow {
+        encoded[32..40].copy_from_slice(
+            &cohort
+                .signed_quantity
+                .context("TICK_FLOW_REQUIRED")?
+                .to_bits()
+                .to_le_bytes(),
+        );
+    }
     Ok(encoded)
 }
 
-fn decode(bytes: [u8; FRAME_BYTES as usize]) -> Result<Cohort> {
+fn decode(bytes: &[u8]) -> Result<Cohort> {
     let value = |slot: usize| u64::from_le_bytes(bytes[slot * 8..slot * 8 + 8].try_into().unwrap());
     Ok(Cohort {
         event: value(0),
         vwap: f64::from_bits(value(1)),
         quantity: f64::from_bits(value(2)),
         count: usize::try_from(value(3))?,
+        signed_quantity: (bytes.len() == FLOW_FRAME_BYTES as usize)
+            .then(|| f64::from_bits(value(4))),
     })
 }
 
 struct Output {
+    flow: bool,
     path: PathBuf,
     expected: Vec<u8>,
     verified: u64,
@@ -151,11 +173,16 @@ impl Output {
         if self.pending.is_empty() {
             return Ok(0);
         }
-        let cohort = super::cohorts(&self.pending, maximum)?
+        let cohort = super::cohorts_with_flow(&self.pending, maximum, self.flow)?
             .pop()
             .context("TICK_CACHE_EMPTY_COHORT")?;
-        let encoded = frame(&cohort)?;
-        self.expected.extend_from_slice(&encoded);
+        let encoded = frame(&cohort, self.flow)?;
+        let width = if self.flow {
+            FLOW_FRAME_BYTES
+        } else {
+            FRAME_BYTES
+        };
+        self.expected.extend_from_slice(&encoded[..width as usize]);
         self.record.cohort_count = counter(self.record.cohort_count.get() + 1)?;
         self.record.trade_count =
             counter(self.record.trade_count.get() + u64::try_from(cohort.count)?)?;
@@ -163,7 +190,7 @@ impl Output {
             .first_event_ns
             .get_or_insert(counter(cohort.event)?);
         self.record.last_event_ns = Some(counter(cohort.event)?);
-        self.record.bytes = counter(self.record.bytes.get() + FRAME_BYTES)?;
+        self.record.bytes = counter(self.record.bytes.get() + width)?;
         self.record.byte_end = self.record.bytes;
         let count = self.pending.len();
         self.pending = Vec::new();
@@ -177,6 +204,7 @@ impl Output {
 
 /// Source conversion retains only unfinished cohorts and bounded buffered readback.
 pub struct Builder {
+    flow: bool,
     root: PathBuf,
     outputs: BTreeMap<String, Output>,
     pending_rows: usize,
@@ -195,6 +223,37 @@ impl Builder {
         maximum_working_rows: usize,
         maximum_output_bytes: u64,
     ) -> Result<Self> {
+        Self::create(
+            output,
+            maximum_cohort_rows,
+            maximum_working_rows,
+            maximum_output_bytes,
+            false,
+        )
+    }
+
+    pub fn new_flow(
+        output: &Path,
+        maximum_cohort_rows: u32,
+        maximum_working_rows: usize,
+        maximum_output_bytes: u64,
+    ) -> Result<Self> {
+        Self::create(
+            output,
+            maximum_cohort_rows,
+            maximum_working_rows,
+            maximum_output_bytes,
+            true,
+        )
+    }
+
+    fn create(
+        output: &Path,
+        maximum_cohort_rows: u32,
+        maximum_working_rows: usize,
+        maximum_output_bytes: u64,
+        flow: bool,
+    ) -> Result<Self> {
         ensure!(
             maximum_cohort_rows > 0
                 && maximum_cohort_rows <= domain::ticks::MAXIMUM_COHORT_ROWS
@@ -206,6 +265,7 @@ impl Builder {
         let root = output.join("catalog");
         fs::create_dir_all(root.join("data/cohorts"))?;
         Ok(Self {
+            flow,
             root,
             outputs: BTreeMap::new(),
             pending_rows: 0,
@@ -237,6 +297,7 @@ impl Builder {
             self.outputs.insert(
                 id.clone(),
                 Output {
+                    flow: self.flow,
                     path: file_path,
                     expected: Vec::new(),
                     verified: 0,
@@ -267,7 +328,11 @@ impl Builder {
                 let flushed = output.flush_cohort(self.maximum_cohort_rows)?;
                 self.buffered_bytes = self.buffered_bytes - buffered + output.expected.len();
                 self.pending_rows -= flushed;
-                self.written_bytes += FRAME_BYTES;
+                self.written_bytes += if self.flow {
+                    FLOW_FRAME_BYTES
+                } else {
+                    FRAME_BYTES
+                };
                 ensure!(
                     self.written_bytes <= self.maximum_output_bytes,
                     "TICK_CACHE_OUTPUT_LIMIT"
@@ -301,7 +366,11 @@ impl Builder {
         ensure!(!self.sealed, "TICK_CACHE_ALREADY_SEALED");
         for output in self.outputs.values_mut() {
             if output.flush_cohort(self.maximum_cohort_rows)? > 0 {
-                self.written_bytes += FRAME_BYTES;
+                self.written_bytes += if self.flow {
+                    FLOW_FRAME_BYTES
+                } else {
+                    FRAME_BYTES
+                };
             }
             ensure!(
                 self.written_bytes <= self.maximum_output_bytes,
@@ -319,7 +388,12 @@ impl Builder {
         ensure!(!files.is_empty(), "TICK_CACHE_EMPTY_SELECTION");
         Ok(Manifest {
             schema_version: SchemaV1,
-            representation: REPRESENTATION.into(),
+            representation: if self.flow {
+                FLOW_REPRESENTATION
+            } else {
+                REPRESENTATION
+            }
+            .into(),
             source_revision: source_revision.into(),
             availability: "EVENT_TIME_PROXY_UNVERIFIED".into(),
             event_start_ns: counter(start)?,
@@ -361,6 +435,7 @@ pub(super) struct CacheAsset {
 }
 
 pub(super) struct CacheInput {
+    frame_bytes: u64,
     pub coverage: NativeTradeTickCoverageV1,
     pub assets: Vec<CacheAsset>,
     root: PathBuf,
@@ -370,6 +445,7 @@ pub(super) struct CacheInput {
 }
 
 pub(super) struct CacheReader {
+    frame_bytes: u64,
     input: BufReader<std::io::Take<File>>,
     file: CacheFile,
     start: u64,
@@ -398,11 +474,11 @@ impl Iterator for CacheReader {
                 );
                 return Ok(None);
             }
-            let mut encoded = [0; FRAME_BYTES as usize];
+            let mut encoded = [0; FLOW_FRAME_BYTES as usize];
             self.input
-                .read_exact(&mut encoded)
+                .read_exact(&mut encoded[..self.frame_bytes as usize])
                 .context("TICK_CACHE_FRAME_TRUNCATED")?;
-            let cohort = decode(encoded)?;
+            let cohort = decode(&encoded[..self.frame_bytes as usize])?;
             ensure!(
                 cohort.event >= self.start
                     && cohort.event < self.end
@@ -417,6 +493,12 @@ impl Iterator for CacheReader {
                     && cohort.count > 0
                     && cohort.count <= self.maximum_cohort_rows as usize,
                 "TICK_CACHE_FRAME_INVALID"
+            );
+            ensure!(
+                cohort
+                    .signed_quantity
+                    .is_none_or(|flow| flow.is_finite() && flow.abs() <= cohort.quantity),
+                "TICK_FLOW_INVALID"
             );
             self.seen += 1;
             self.trades = self
@@ -446,6 +528,7 @@ impl CacheInput {
         let mut file = File::open(cache_path(&self.root, &asset.file.path)?)?;
         file.seek(SeekFrom::Start(asset.file.byte_start.get()))?;
         Ok(CacheReader {
+            frame_bytes: self.frame_bytes,
             input: BufReader::new(
                 file.take(asset.file.byte_end.get() - asset.file.byte_start.get()),
             ),
@@ -492,8 +575,9 @@ pub(super) fn load(
     );
     let root = crate::catalog::catalog_root(root)?;
     let manifest = manifest(&root)?;
+    let frame_bytes = frame_bytes(&manifest.representation)?;
     ensure!(
-        manifest.representation == REPRESENTATION
+        Some(manifest.representation.as_str()) == request.input.cache_representation()
             && manifest.source_revision == request.input.source_revision
             && manifest.availability == "EVENT_TIME_PROXY_UNVERIFIED"
             && manifest.event_start_ns == request.input.event_start_ns
@@ -547,12 +631,12 @@ pub(super) fn load(
             "TICK_CACHE_IDENTITY_DUPLICATE"
         );
         ensure!(
-            file.bytes.get().is_multiple_of(FRAME_BYTES)
-                && file.byte_start.get().is_multiple_of(FRAME_BYTES)
-                && file.byte_end.get().is_multiple_of(FRAME_BYTES)
+            file.bytes.get().is_multiple_of(frame_bytes)
+                && file.byte_start.get().is_multiple_of(frame_bytes)
+                && file.byte_end.get().is_multiple_of(frame_bytes)
                 && file.byte_start <= file.byte_end
                 && file.byte_end <= file.bytes
-                && (file.byte_end.get() - file.byte_start.get()) / FRAME_BYTES
+                && (file.byte_end.get() - file.byte_start.get()) / frame_bytes
                     == file.cohort_count.get(),
             "TICK_CACHE_RANGE_INVALID"
         );
@@ -564,7 +648,7 @@ pub(super) fn load(
         );
         let mut input = File::open(path)?;
         for (position, before) in [
-            (file.byte_start.get().checked_sub(FRAME_BYTES), true),
+            (file.byte_start.get().checked_sub(frame_bytes), true),
             (
                 (file.byte_end < file.bytes).then_some(file.byte_end.get()),
                 false,
@@ -685,11 +769,12 @@ pub(super) fn load(
                 .into(),
         ],
         source_evidence: BTreeMap::from([
-            ("representation".into(), json!(REPRESENTATION)),
+            ("representation".into(), json!(manifest.representation)),
             ("source_report".into(), manifest.source_report),
         ]),
     };
     Ok(CacheInput {
+        frame_bytes,
         coverage,
         assets,
         root,
@@ -747,7 +832,7 @@ pub fn prepare_views(
                 last = Some(counter(cohort.event)?);
             }
         }
-        file.byte_end = counter(file.byte_start.get() + count * FRAME_BYTES)?;
+        file.byte_end = counter(file.byte_start.get() + count * input.frame_bytes)?;
         file.trade_count = counter(trades)?;
         file.cohort_count = counter(count)?;
         file.first_event_ns = first;
@@ -776,9 +861,9 @@ pub fn prepare_views(
         .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
     let mut research_request = request.clone();
     research_request.input.event_end_ns = request.validation_end_ns;
-    let mut metadata = json!({"schema_version":1,"modality":"TRADE_TICK","representation":REPRESENTATION,
+    let mut metadata = json!({"schema_version":1,"modality":"TRADE_TICK","representation":full.representation,
         "operational_state":"NATIVE_PREPARED","scientific_qualification":"UNQUALIFIED_EXPLORATORY",
-        "catalog_format":"QZ_EVENT_TIME_COHORT_CACHE_V1","request":request,"research_request":research_request,
+        "catalog_format":format!("QZ_{}", full.representation),"request":request,"research_request":research_request,
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
         "maximum_output_bytes":maximum_output_bytes.to_string(),"output_bytes":"0"});
     let views_bytes =

@@ -7,7 +7,7 @@ export type NativeTickFactorRequest = {
     event_start_ns: string; event_end_ns: string; decision_cutoff_ns: string;
     source_revision: string;
     availability: 'EVENT_TIME_PROXY_UNVERIFIED';
-    representation?: 'EVENT_TIME_COHORT_CACHE_V1';
+    representation?: 'EVENT_TIME_COHORT_CACHE_V1' | 'EVENT_TIME_COHORT_FLOW_CACHE_V1';
     maximum_rows?: number; maximum_source_rows?: string;
   };
   sampling: { kind: 'EVENT_TIME_COHORT_V1'; maximum_cohort_rows: number };
@@ -23,6 +23,7 @@ export type NativeResearchInput = { modality: 'TRADE_TICK'; request: NativeTickF
 
 export const TICK_FEATURE_ABI = 'qz_set_feature_v2(i32,f64,i32,i64,i64)->();qz_predict_v2(i64,i64,i32,i32,i32)->f64';
 export const TICK_FEATURE_KEYS = ['cohort_vwap', 'previous_cohort_vwap', 'fast_ema', 'slow_ema', 'cohort_quantity', 'trade_count', 'elapsed_event_ns'] as const;
+export const TICK_FLOW_FEATURE_KEYS = [...TICK_FEATURE_KEYS, 'signed_quantity'] as const;
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name}_required`);
@@ -52,7 +53,7 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   if (input.availability !== 'EVENT_TIME_PROXY_UNVERIFIED') throw new Error('native_tick_availability_unsupported');
   if (!Array.isArray(input.instrument_ids) || !input.instrument_ids.length || input.instrument_ids.length > 1_000_000 || input.instrument_ids.some(id => typeof id !== 'string' || !id || id.length > 200 || /[\s\u0000-\u001f\u007f]/.test(id)) || new Set(input.instrument_ids).size !== input.instrument_ids.length) throw new Error('native_tick_instrument_ids_invalid');
   if (typeof input.source_revision !== 'string' || !input.source_revision.trim() || input.source_revision.length > 512 || /[\u0000-\u001f\u007f]/.test(input.source_revision)) throw new Error('native_tick_source_revision_required');
-  if (input.representation === 'EVENT_TIME_COHORT_CACHE_V1') {
+  if (input.representation === 'EVENT_TIME_COHORT_CACHE_V1' || input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1') {
     if (input.maximum_rows !== undefined) throw new Error('native_tick_cache_row_budget_ambiguous');
     counter(input.maximum_source_rows, 'maximum_source_rows', true);
   } else {

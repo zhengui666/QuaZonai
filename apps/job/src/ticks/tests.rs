@@ -47,6 +47,119 @@ pub(super) fn model(slot: i32) -> Vec<u8> {
 }
 
 #[test]
+fn flow_reduction_preserves_marks_and_distinguishes_balanced_zero_from_unknown_side() {
+    let mut rows = vec![
+        trade(10, "a", "10", "0.1"),
+        trade(10, "b", "20", "0.2"),
+        trade(10, "c", "30", "0.3"),
+    ];
+    rows[2].aggressor_side = AggressorSide::Sell;
+    let original = cohorts(&rows, 100).unwrap();
+    let balanced = cohorts_with_flow(&rows, 100, true).unwrap();
+    assert_eq!(balanced[0].signed_quantity, Some(0.0));
+    assert_eq!(balanced[0].vwap.to_bits(), original[0].vwap.to_bits());
+    assert_eq!(
+        balanced[0].quantity.to_bits(),
+        original[0].quantity.to_bits()
+    );
+    rows.reverse();
+    assert_eq!(
+        cohorts_with_flow(&rows, 100, true).unwrap()[0].signed_quantity,
+        Some(0.0)
+    );
+    rows.pop();
+    assert_eq!(
+        cohorts_with_flow(&rows, 100, true).unwrap()[0].signed_quantity,
+        Some(-0.1)
+    );
+    rows[0].aggressor_side = AggressorSide::Buy;
+    assert_eq!(
+        cohorts_with_flow(&rows, 100, true).unwrap()[0].signed_quantity,
+        Some(0.5)
+    );
+    rows[0].aggressor_side = AggressorSide::NoAggressor;
+    assert!(cohorts(&rows, 100).unwrap()[0].signed_quantity.is_none());
+    assert_eq!(
+        cohorts_with_flow(&rows, 100, true).unwrap_err().to_string(),
+        "TICK_FLOW_AGGRESSOR_UNKNOWN"
+    );
+}
+
+#[test]
+fn flow_cache_delivers_explicit_eighth_feature_for_positive_negative_and_balanced_cohorts() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("flow");
+    let mut rows = series().remove("AUD/USD.SIM").unwrap();
+    rows[1].aggressor_side = AggressorSide::Sell;
+    rows[4].aggressor_side = AggressorSide::Sell;
+    for (event, id, price) in [(40, "balanced-40", "14"), (70, "balanced-70", "17")] {
+        let mut sell = trade(event, id, price, "1");
+        sell.aggressor_side = AggressorSide::Sell;
+        rows.push(sell);
+    }
+    rows.sort_by_key(|row| row.ts_event);
+    let mut builder = cohort_cache::Builder::new_flow(&output, 100, 100, 1_000_000).unwrap();
+    for row in &rows {
+        builder.push(*row).unwrap();
+    }
+    let manifest = builder.seal("fixed-source", 0, 80).unwrap();
+    assert_eq!(manifest.files[0].bytes.get(), 7 * 40);
+    builder
+        .publish(
+            manifest,
+            json!({"status":"IMPORTED","availability":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"fixed-source","event_start_ns":"0","event_end_ns":"80",
+        "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0}),
+        )
+        .unwrap();
+    let mut request = request();
+    request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
+    request.input.maximum_rows = None;
+    request.input.maximum_source_rows = Some(counter(9).unwrap());
+    let prepared = temp.path().join("prepared");
+    cohort_cache::prepare_views(&output.join("catalog"), &request, &prepared, 1_000_000).unwrap();
+    let root = prepared.join("independent/catalog");
+    let wasm = wat::parse_str(
+        r#"(module
+        (global $flow (mut f64) (f64.const 99))
+        (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 0 i32.const 7 i32.eq if
+                local.get 2 i32.const 0 i32.ne if unreachable end
+                local.get 1 global.set $flow end)
+        (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            local.get 4 i32.const 8 i32.ne if unreachable end
+            local.get 3 i32.const 3 i32.rem_u i32.const 1 i32.eq
+            if (result f64) f64.const -1 else
+                local.get 3 i32.const 3 i32.rem_u i32.const 2 i32.eq
+                if (result f64) f64.const 1 else f64.const 0 end end
+            global.get $flow f64.ne if unreachable end
+            global.get $flow))"#,
+    )
+    .unwrap();
+    for target in [
+        NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts: 1 },
+        NativeTickTargetV1::FixedEventTime {
+            horizon_ns: counter(10).unwrap(),
+        },
+    ] {
+        request.target = target;
+        let result = evaluate(&root, &request, &wasm, true).unwrap();
+        assert_eq!(result.methods["features"], FLOW_FEATURE_SCHEMA);
+        assert_eq!(
+            result.coverage.source_evidence["representation"],
+            "EVENT_TIME_COHORT_FLOW_CACHE_V1"
+        );
+        assert!(result.methods["input"].contains("EVENT_TIME_COHORT_FLOW_CACHE_V1"));
+        assert_eq!(result.coverage.trade_count.get(), 9);
+        assert_eq!(result.coverage.cohort_count.get(), 7);
+        assert!(result.points.is_none());
+    }
+    let mut wrong = request.clone();
+    wrong.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
+    assert!(evaluate(&root, &wrong, &model(0), true).is_err());
+}
+
+#[test]
 fn exact_cohort_reduction_is_tie_order_invariant_and_has_no_last_trade_mark() {
     let rows = vec![trade(10, "a", "10", "1"), trade(10, "b", "20", "3")];
     let mut reversed = rows.clone();

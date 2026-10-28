@@ -154,6 +154,19 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("maximum_rows"));
+        let mut flow = cache.clone();
+        flow.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1);
+        assert!(evaluation_request(&flow).is_ok());
+        assert!(flow.input.is_cohort_cache() && flow.input.is_flow_cache());
+        assert_eq!(
+            flow.input.cache_representation(),
+            Some("EVENT_TIME_COHORT_FLOW_CACHE_V1")
+        );
+        assert_eq!(
+            serde_json::to_value(&flow).unwrap()["input"]["representation"],
+            "EVENT_TIME_COHORT_FLOW_CACHE_V1"
+        );
+        assert_eq!(flow.input.source_row_limit(), Some(4_500_000_000));
         cache.input.maximum_rows = Some(100);
         assert!(evaluation_request(&cache).is_err());
         cache.input.maximum_rows = None;

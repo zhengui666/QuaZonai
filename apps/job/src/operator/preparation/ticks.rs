@@ -617,46 +617,67 @@ mod tests {
         })
         .unwrap();
         assert_eq!(metadata["coverage"]["trade_count"], "32");
-        let mut cohort_request = selected.clone();
-        cohort_request.input.representation =
-            Some(contracts::ticks::NativeTickRepresentationV1::EventTimeCohortCacheV1);
-        cohort_request.input.maximum_rows = None;
-        cohort_request.input.maximum_source_rows = Some(contracts::DbCounter::new(100).unwrap());
-        let mut builder = crate::ticks::cohort_cache::Builder::new(
-            &destination.join("cohort-source"),
-            100,
-            100,
-            10_000_000,
-        )
-        .unwrap();
-        for trade in &trades {
-            builder.push(*trade).unwrap();
-        }
-        let cached = builder
-            .seal("native-test-source", 0, 33_000_000_000)
+        for flow in [false, true] {
+            let mut cohort_request = selected.clone();
+            cohort_request.input.representation = Some(if flow {
+                contracts::ticks::NativeTickRepresentationV1::EventTimeCohortFlowCacheV1
+            } else {
+                contracts::ticks::NativeTickRepresentationV1::EventTimeCohortCacheV1
+            });
+            cohort_request.input.maximum_rows = None;
+            cohort_request.input.maximum_source_rows =
+                Some(contracts::DbCounter::new(100).unwrap());
+            let prefix = if flow { "cohort-flow" } else { "cohort" };
+            let create = if flow {
+                crate::ticks::cohort_cache::Builder::new_flow
+            } else {
+                crate::ticks::cohort_cache::Builder::new
+            };
+            let mut builder = create(
+                &destination.join(format!("{prefix}-source")),
+                100,
+                100,
+                10_000_000,
+            )
             .unwrap();
-        builder.publish(cached, json!({
+            for (index, trade) in trades.iter().enumerate() {
+                let mut trade = *trade;
+                if flow && index % 3 == 0 {
+                    trade.aggressor_side = AggressorSide::Sell;
+                }
+                builder.push(trade).unwrap();
+            }
+            let cached = builder
+                .seal("native-test-source", 0, 33_000_000_000)
+                .unwrap();
+            builder.publish(cached, json!({
             "status":"IMPORTED","source_revision":"native-test-source","availability":"EVENT_TIME_PROXY_UNVERIFIED",
             "source_reference":"CONTROLLED_NATIVE_SOFTWARE_FIXTURE_NOT_MARKET_DATA",
             "missing_symbols":{},"missing_definitions":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
             "event_start_ns":"0","event_end_ns":"33000000000"
         })).unwrap();
-        let cohort_request_file = destination.join("cohort-request.json");
-        publish(&cohort_request_file, &cohort_request).unwrap();
-        let cohort_metadata = run(&Arguments {
-            catalog: destination.join("cohort-source/catalog"),
-            request: cohort_request_file,
-            output: destination.join("cohort-prepared"),
-            maximum_output_bytes: 10_000_000,
-        })
-        .unwrap();
-        assert_eq!(cohort_metadata["coverage"]["trade_count"], "32");
+            let cohort_request_file = destination.join(format!("{prefix}-request.json"));
+            publish(&cohort_request_file, &cohort_request).unwrap();
+            let cohort_metadata = run(&Arguments {
+                catalog: destination.join(format!("{prefix}-source/catalog")),
+                request: cohort_request_file,
+                output: destination.join(format!("{prefix}-prepared")),
+                maximum_output_bytes: 10_000_000,
+            })
+            .unwrap();
+            assert_eq!(cohort_metadata["coverage"]["trade_count"], "32");
+        }
         let model = r#"(module
             (global $value (mut f64) (f64.const 0))
             (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
                 local.get 0 i32.eqz if local.get 1 global.set $value end)
             (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) global.get $value))"#;
         fs::write(destination.join("model.wat"), model).unwrap();
+        fs::write(
+            destination.join("cohort-flow-model.wat"),
+            model.replace("local.get 0 i32.eqz", "local.get 0 i32.const 7 i32.eq"),
+        )
+        .unwrap();
         fs::write(
             destination.join("model.wasm"),
             wat::parse_str(model).unwrap(),

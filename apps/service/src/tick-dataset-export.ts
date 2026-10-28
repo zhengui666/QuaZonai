@@ -22,11 +22,13 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   validateNumbers(metadata);
   if (metadata.schema_version !== 1 || metadata.modality !== 'TRADE_TICK' || metadata.operational_state !== 'NATIVE_PREPARED'
     || metadata.scientific_qualification !== 'UNQUALIFIED_EXPLORATORY'
-    || !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9', 'QZ_EVENT_TIME_COHORT_CACHE_V1'].includes(String(metadata.catalog_format))) throw new Error('tick_prepared_metadata_invalid');
+    || !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9', 'QZ_EVENT_TIME_COHORT_CACHE_V1', 'QZ_EVENT_TIME_COHORT_FLOW_CACHE_V1'].includes(String(metadata.catalog_format))) throw new Error('tick_prepared_metadata_invalid');
   const originalRequest = parseOriginalJson(requestBytes.toString()); validateNumbers(originalRequest);
   const full = validateNativeTickFactorRequest(originalRequest);
-  const cache = full.input.representation === 'EVENT_TIME_COHORT_CACHE_V1';
-  if (cache !== (metadata.catalog_format === 'QZ_EVENT_TIME_COHORT_CACHE_V1')
+  const flow = full.input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1';
+  const cache = flow || full.input.representation === 'EVENT_TIME_COHORT_CACHE_V1';
+  if ((cache ? metadata.catalog_format !== (flow ? 'QZ_EVENT_TIME_COHORT_FLOW_CACHE_V1' : 'QZ_EVENT_TIME_COHORT_CACHE_V1')
+    : !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9'].includes(String(metadata.catalog_format)))
     || (cache ? metadata.representation !== full.input.representation : metadata.representation !== undefined)) throw new Error('tick_prepared_representation_mismatch');
   if (canonical(full) !== canonical(metadata.request!)) throw new Error('tick_prepared_request_mismatch');
   const research = validateNativeTickFactorRequest(metadata.research_request);
@@ -75,12 +77,13 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   async function cacheCatalog(directory: string, request: NativeTickFactorRequest): Promise<{ trades: bigint; cohorts: bigint; source: string; assets: Map<string, CacheFile> }> {
     const manifestPath = join(directory, 'cohort-cache.json'); await observe(manifestPath);
     const manifest = object(parseOriginalJson(await readFile(manifestPath, 'utf8')), 'tick_cache_manifest'); validateNumbers(manifest);
-    if (manifest.schema_version !== 1 || manifest.representation !== 'EVENT_TIME_COHORT_CACHE_V1'
+    if (manifest.schema_version !== 1 || manifest.representation !== request.input.representation
       || manifest.source_revision !== request.input.source_revision || manifest.availability !== request.input.availability
       || manifest.event_start_ns !== request.input.event_start_ns || manifest.event_end_ns !== request.input.event_end_ns
       || !Array.isArray(manifest.files)) throw new Error('tick_cache_manifest_mismatch');
     const source = object(manifest.source_report, 'tick_cache_source_report');
     if (source.status !== 'IMPORTED' || (source.source_revision ?? source.revision) !== manifest.source_revision) throw new Error('tick_cache_source_report_mismatch');
+    const frameBytes = request.input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1' ? 40n : 32n;
     const files = new Set<string>([manifestPath]); const instruments = new Set<string>(); const assets = new Map<string, CacheFile>(); let trades = 0n; let cohorts = 0n;
     for (const raw of manifest.files) {
       const entry = object(raw, 'tick_cache_file'); const name = text(entry.path, 'tick_cache_path'); const id = text(entry.instrument_id, 'tick_cache_instrument');
@@ -92,8 +95,8 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       const bytes = cacheCounter(entry.bytes); const begin = cacheCounter(entry.byte_start); const end = cacheCounter(entry.byte_end);
       const count = cacheCounter(entry.cohort_count); const rows = cacheCounter(entry.trade_count);
       if (!state.isFile() || state.isSymbolicLink() || await realpath(path) !== path || state.size !== bytes
-        || bytes % 32n !== 0n || begin % 32n !== 0n || end % 32n !== 0n || begin > end || end > bytes
-        || (end - begin) / 32n !== count || rows < count || (count === 0n) !== (rows === 0n)
+        || bytes % frameBytes !== 0n || begin % frameBytes !== 0n || end % frameBytes !== 0n || begin > end || end > bytes
+        || (end - begin) / frameBytes !== count || rows < count || (count === 0n) !== (rows === 0n)
         || !Number.isSafeInteger(Number(end))) throw new Error('tick_cache_frame_range_invalid');
       assets.set(id, { inode: `${state.dev}:${state.ino}`, bytes, begin, end });
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -106,9 +109,9 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         if (count > 0n) {
           const first = cacheCounter(entry.first_event_ns); const last = cacheCounter(entry.last_event_ns);
           if (first > last || first < BigInt(request.input.event_start_ns) || last >= BigInt(request.input.event_end_ns)) throw new Error('tick_cache_event_range_invalid');
-          if (await clock(begin) !== first || await clock(end - 32n) !== last) throw new Error('tick_cache_boundary_mismatch');
+          if (await clock(begin) !== first || await clock(end - frameBytes) !== last) throw new Error('tick_cache_boundary_mismatch');
         } else if (entry.first_event_ns !== null || entry.last_event_ns !== null) throw new Error('tick_cache_event_range_invalid');
-        if (begin > 0n && await clock(begin - 32n) >= BigInt(request.input.event_start_ns)
+        if (begin > 0n && await clock(begin - frameBytes) >= BigInt(request.input.event_start_ns)
           || end < bytes && await clock(end) < BigInt(request.input.event_end_ns)) throw new Error('tick_cache_boundary_incomplete');
       } finally { await file.close(); }
       trades += rows; cohorts += count; await observe(path);
@@ -146,7 +149,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     || cacheCoverage!.trades > fullCacheCoverage.trades)) throw new Error('tick_cache_coverage_mismatch');
   const result: DatasetConfig = {
     id: text(options.id, 'dataset_id'), name: text(options.name, 'dataset_name'), assetClass: options.assetClass ?? 'CRYPTO', currency: 'MULTI',
-    source: `${cache ? 'Derived event-time cohort cache' : 'Native trade archive'} ${full.input.source_revision} | PIT UNVERIFIED; market completeness UNPROVEN`,
+    source: `${flow ? 'Derived event-time signed-flow cohort cache' : cache ? 'Derived event-time cohort cache' : 'Native trade archive'} ${full.input.source_revision} | PIT UNVERIFIED; market completeness UNPROVEN`,
     start: new Date(Number(BigInt(full.input.event_start_ns) / 1_000_000n)).toISOString(),
     end: new Date(Number(BigInt(full.input.event_end_ns) / 1_000_000n)).toISOString(), ready: options.ready === true,
     nativeModality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' },

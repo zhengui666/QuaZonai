@@ -99,6 +99,21 @@ test('derived cohort cache has an exact full-source budget without changing the 
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
 });
 
+test('signed-flow cache exposes an explicit eighth feature and preserves old seven-feature briefs', () => {
+  const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
+  const flow: NativeTickFactorRequest = { ...original, input: { ...input,
+    representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '1308222597' } };
+  assert.deepEqual(validateNativeTickFactorRequest(flow), flow);
+  const brief = modelBriefInput({ data: tagged(flow), policy: {} }).data.feature_model as JsonObject;
+  assert.equal(brief.schema, 'qz.tick-cohort-flow-features.v1');
+  assert.equal((brief.features as string[]).length, 8); assert.equal((brief.features as string[])[7], 'signed_quantity');
+  assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
+  assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
+  assert.equal(((modelBriefInput({ data: tagged(original), policy: {} }).data.feature_model as JsonObject).features as string[]).length, 7);
+  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }), /ambiguous/);
+  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }), /invalid/);
+});
+
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {
   const request = bar();
   const legacy = { request };

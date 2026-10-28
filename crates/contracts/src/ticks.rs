@@ -23,6 +23,7 @@ pub enum NativeTickAvailabilityV1 {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NativeTickRepresentationV1 {
     EventTimeCohortCacheV1,
+    EventTimeCohortFlowCacheV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -49,7 +50,21 @@ pub struct NativeTradeTickInputV1 {
 
 impl NativeTradeTickInputV1 {
     pub fn is_cohort_cache(&self) -> bool {
-        self.representation == Some(NativeTickRepresentationV1::EventTimeCohortCacheV1)
+        self.representation.is_some()
+    }
+
+    pub fn is_flow_cache(&self) -> bool {
+        self.representation == Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1)
+    }
+
+    pub fn cache_representation(&self) -> Option<&'static str> {
+        self.representation
+            .map(|representation| match representation {
+                NativeTickRepresentationV1::EventTimeCohortCacheV1 => "EVENT_TIME_COHORT_CACHE_V1",
+                NativeTickRepresentationV1::EventTimeCohortFlowCacheV1 => {
+                    "EVENT_TIME_COHORT_FLOW_CACHE_V1"
+                }
+            })
     }
 
     pub fn source_row_limit(&self) -> Option<u64> {
