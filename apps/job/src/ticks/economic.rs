@@ -665,7 +665,8 @@ pub fn replay_with_funding(
                 &mut funding_unknown,
                 &mut seen_rates,
             )?;
-            if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates) {
+            if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates)
+            {
                 retain_first_funding_cause(&mut funding_unknown, cause);
             }
             append_day(
