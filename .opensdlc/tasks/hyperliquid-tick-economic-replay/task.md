@@ -3,7 +3,7 @@
 <a id="task"></a>
 ## Task
 
-Task ID: hyperliquid-tick-economic-replay. Deliver an explicitly modeled, retained economic replay for admitted tick-factor candidates, preserving the complete source universe and period and the existing shared trial budget. Endpoint: reviewed code, applicable CI and PR delivery; no real orders or local full native build.
+Task ID: hyperliquid-tick-economic-replay. Deliver an explicitly modeled, retained economic replay for admitted tick-factor candidates, preserving the complete source universe and period and the existing shared trial budget. Endpoint: reviewed code, applicable CI and PR delivery; no real orders. Local checks use one owned debug target after disk capacity became available.
 
 <a id="spec"></a>
 ## Design
@@ -17,7 +17,7 @@ The new explicit HTTP replay path binds an admitted retained COMPUTED single fac
 <a id="verification"></a>
 ## Verification
 
-TypeScript worker/API, idempotency and recovery checks and typechecking have run during implementation. Rust formatting and diff checks pass. Native compilation passed on c7ad; its subsequent formatting check failed before tests, and repository formatting has been corrected. Native tests are added for cash inventory, quantity/cost constraints, isolated ledgers, nominal settlement, once-only actual-rate adjustment and streaming timestamp cohorts; final-head native compilation/execution awaits CI. Local Cargo builds are intentionally not run because the host is reserved for full-source preparation.
+TypeScript worker/API, idempotency/recovery and funding binding checks passed, including 12 independent exact-source tests and service/research/worker/CLI typechecks. Local scoped high-precision tests passed: 15 economic/native replay tests and one shared-fuel test. They exercise actual official Cash/Margin engines, same-clock rates, fees, message-bus isolation, daily purge, per-pair cash inventory, sparse delayed execution, absent primary-view assets, non-parity FX and zero/negative-score exits. The official engine requires a time-based bar label; the model uses a nominal 1ms external label at unchanged irregular cohort clocks without resampling. Repository formatting and diff checks pass. Applicable final-head CI remains required; these software regressions are not historical performance results.
 
 <a id="review"></a>
 ## Review and delivery
