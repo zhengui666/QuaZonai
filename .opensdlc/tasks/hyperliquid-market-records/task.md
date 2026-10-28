@@ -19,7 +19,7 @@ The original archive and raw native trade IDs remain unchanged. Same-time duplic
 <a id="spec"></a>
 ## Requirements and design
 
-- Include the original trade event timestamp in the importer's identity key, alongside its native instrument and source trade ID.
+- Include the original trade event timestamp in the importer and shared tick catalog reader identity keys, alongside its native instrument and source trade ID.
 - Preserve records sharing instrument/ID at different event times. Continue detecting repeated or conflicting records at the same event time.
 - Keep existing BAR aggregation, native precision, source provenance, counts and failure behavior.
 - Do not invent IDs for special source rows. Separate diagnostics found `Spot Dust Conversion` rows with ID zero at one timestamp; event-time identity alone does not resolve those rows. Their market-versus-account classification remains separate work.
@@ -32,11 +32,16 @@ Inspect the shared import loop and its existing duplicate/resource tests. Change
 <a id="verification"></a>
 ## Verification
 
-The shared importer key now includes `trade.ts_event`; the original native ID is unchanged. One regression test covers both a reused ID at a later time and a conflicting value at the same time. Existing exact-duplicate coverage remains.
+The importer and shared tick reader keys now include `trade.ts_event`; the original native ID is unchanged. Importer and reader regressions cover a reused ID at a later time, same-time duplicates and same-time conflicting values. Existing exact-duplicate coverage remains. Catalog preparation and tick evaluation reuse the shared reader, so imported records remain consumable downstream.
 
 `cargo fmt --all -- --check` and `git diff --check` passed. Native tests have not run locally: no matching recent Cargo target cache was found, and a duplicate full build would consume the limited disk reserved for the source archive. The existing CI mapped-public-history step executes the changed binary tests with `market-history,catalog-prepare,hyperliquid-offline`; its actual result remains pending.
 
 The investment-research diagnostic inspected 886 original files and 2,617,960,184 raw rows; these data statistics are not tests of this patch. The original worktree remains untouched by product edits.
+
+<a id="review"></a>
+## Review
+
+Independent review of the initial importer-only commit found that the shared reader still used the old identity. The reader and its regressions were added before delivery. Other identity maps in the independent Polymarket importer and simulated fill accounting have different source meanings and remain unchanged. Review of the final corrected Head and its CI is pending in PR #244.
 
 <a id="handoff"></a>
 ## Handoff
