@@ -32,3 +32,7 @@ Actual local checks passed: 26 native tick tests (including both label modes and
 ## Handoff
 
 Managed worktree `/home/zzy/.codex/worktrees/hyperliquid-flow-cache/QuaZonai`, branch `feat/hyperliquid-flow-cache`, based on `333ee22e9d000da63b4f1b30e8605f3817f77a0d`. Other worktrees and their CI continue independently. This task does not change the owner's 100-trial budget.
+
+### Upstream resource correction
+
+Merged the actual PR #248 ancestor containing PR #247's resource correction. Flow preparation retains its exact 40-byte encoding and signed reduction while using temporary batch append/readback handles, released TradeTick capacities and bounded aggregate completed-byte buffering. The current flow tree passes all 27 tick tests, including the 1,200-asset resource regression. Final corrected-head CI/review remains separate from the earlier Head's results.
