@@ -221,7 +221,7 @@ fn rates_at(
     at: u64,
     start: u64,
     age: u64,
-    unknown: &mut bool,
+    unknown: &mut Option<(u64, String)>,
     seen: &mut BTreeSet<(String, u64)>,
 ) -> Result<Vec<NativeRate>> {
     let mut native = Vec::new();
@@ -261,7 +261,11 @@ fn rates_at(
                                 Money::from_decimal(amount, Currency::USDC())?,
                             )?;
                         } else {
-                            *unknown = true;
+                            retain_first_funding_cause(unknown, (at, format!(
+                                "FUNDING_FIRST_CAUSE:STALE_OR_MISSING_MARK:event_ns={at}:instrument_id={}:last_mark_ns={}",
+                                r.instrument_id,
+                                asset.mark.map(|(at, _)| at.to_string()).unwrap_or_else(|| "NONE".into())
+                            )));
                         }
                     }
                 }
@@ -283,7 +287,7 @@ fn funding_before(
     assets: &[Asset],
     start: u64,
     age: u64,
-    unknown: &mut bool,
+    unknown: &mut Option<(u64, String)>,
     seen: &mut BTreeSet<(String, u64)>,
 ) -> Result<()> {
     while let Some(at) = funding
@@ -301,15 +305,23 @@ fn funding_before(
     }
     Ok(())
 }
+fn retain_first_funding_cause(first: &mut Option<(u64, String)>, cause: (u64, String)) {
+    if first.as_ref().is_none_or(|(at, _)| cause.0 < *at) {
+        *first = Some(cause);
+    }
+}
+
 fn missing_rates_before(
     end: u64,
     expected: &mut BTreeSet<(String, u64)>,
     seen: &mut BTreeSet<(String, u64)>,
-) -> bool {
+) -> Option<(u64, String)> {
     let limit = end / HOUR;
     let missing = expected
         .iter()
-        .any(|(id, hour)| *hour < limit && !seen.contains(&(id.clone(), *hour)));
+        .filter(|(id, hour)| *hour < limit && !seen.contains(&(id.clone(), *hour)))
+        .min_by_key(|(id, hour)| (*hour, id))
+        .map(|(id, hour)| (*hour * HOUR, format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id={id}:rate_hour={hour}", *hour * HOUR)));
     expected.retain(|(_, hour)| *hour >= limit);
     seen.retain(|(_, hour)| *hour >= limit);
     missing
@@ -616,7 +628,7 @@ pub fn replay_with_funding(
     let mut margin: Option<NativeLedger> = None;
     let mut cash_started = false;
     let mut margin_started = false;
-    let mut funding_unknown = false;
+    let mut funding_unknown = None;
     let mut remaining = decimal(&s.initial_usdt)? * decimal(&s.usdt0_per_usdt)?;
     let mut converted = Decimal::ZERO;
     let mut reserve_usdc = Decimal::ZERO;
@@ -653,7 +665,10 @@ pub fn replay_with_funding(
                 &mut funding_unknown,
                 &mut seen_rates,
             )?;
-            funding_unknown |= missing_rates_before(day_end, &mut expected_rates, &mut seen_rates);
+            if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates)
+            {
+                retain_first_funding_cause(&mut funding_unknown, cause);
+            }
             append_day(
                 &mut days,
                 day_end - DAY,
@@ -667,7 +682,7 @@ pub fn replay_with_funding(
                 remaining,
                 converted,
                 reserve_usdc,
-                funding_unknown,
+                funding_unknown.is_some(),
             )?;
             day_end = day_end
                 .checked_add(DAY)
@@ -834,7 +849,9 @@ pub fn replay_with_funding(
                 for id in ledger.open_instrument_ids() {
                     let id = id.to_string();
                     if missing_funding.contains(&id) {
-                        funding_unknown = true;
+                        retain_first_funding_cause(&mut funding_unknown, (event, format!(
+                            "FUNDING_FIRST_CAUSE:MISSING_INSTRUMENT:event_ns={event}:instrument_id={id}"
+                        )));
                     }
                     expected_rates.insert((id, event / HOUR));
                 }
@@ -861,7 +878,9 @@ pub fn replay_with_funding(
             &mut funding_unknown,
             &mut seen_rates,
         )?;
-        funding_unknown |= missing_rates_before(day_end, &mut expected_rates, &mut seen_rates);
+        if let Some(cause) = missing_rates_before(day_end, &mut expected_rates, &mut seen_rates) {
+            retain_first_funding_cause(&mut funding_unknown, cause);
+        }
         append_day(
             &mut days,
             day_end - DAY,
@@ -875,7 +894,7 @@ pub fn replay_with_funding(
             remaining,
             converted,
             reserve_usdc,
-            funding_unknown,
+            funding_unknown.is_some(),
         )?;
         day_end = day_end
             .checked_add(DAY)
@@ -985,7 +1004,7 @@ pub fn replay_with_funding(
         targets, target_asof_ns:target_asof.map(counter).transpose()?,target_cash_weight:target_asof.map(|_|exact(Decimal::ONE-target_net)).transpose()?,
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
-        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown{"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()],
+        limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),"MISSING_RATE_CHECK_CONSERVATIVELY_INCLUDES_POST_BOUNDARY_ENTRIES".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     })
 }
 
