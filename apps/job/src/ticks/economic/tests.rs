@@ -71,6 +71,15 @@ fn missing_exposed_funding_hour_is_unknown_but_zero_rate_observation_is_present(
 }
 
 #[test]
+fn first_missing_funding_cause_uses_hour_before_instrument_name() {
+    let mut expected = BTreeSet::from([("BTC".into(), 20), ("ETH".into(), 1)]);
+    let mut seen = BTreeSet::new();
+    assert_eq!(missing_rates_before(24 * HOUR, &mut expected, &mut seen).unwrap(),
+        format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={}:instrument_id=ETH:rate_hour=1", 24 * HOUR));
+    assert!(expected.is_empty());
+}
+
+#[test]
 fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_elapsed_time() {
     use contracts::{factors::NativeFactorPartitionV1, ticks::NativeTickRegimeV1};
     let request = request();

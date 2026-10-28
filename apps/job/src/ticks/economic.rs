@@ -313,7 +313,8 @@ fn missing_rates_before(
     let limit = end / HOUR;
     let missing = expected
         .iter()
-        .find(|(id, hour)| *hour < limit && !seen.contains(&(id.clone(), *hour)))
+        .filter(|(id, hour)| *hour < limit && !seen.contains(&(id.clone(), *hour)))
+        .min_by_key(|(id, hour)| (*hour, id))
         .map(|(id, hour)| format!("FUNDING_FIRST_CAUSE:MISSING_RATE:event_ns={end}:instrument_id={id}:rate_hour={hour}"));
     expected.retain(|(_, hour)| *hour >= limit);
     seen.retain(|(_, hour)| *hour >= limit);
