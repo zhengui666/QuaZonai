@@ -416,7 +416,7 @@ pub(crate) fn load(
             !id.trim().is_empty() && !id.chars().any(char::is_control),
             "TICK_ID_MISSING"
         );
-        let key = (trade.instrument_id, trade.trade_id);
+        let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
         if let Some(previous) = identities.insert(key, trade) {
             ensure!(previous == trade, "TICK_ID_CONFLICT");
             anyhow::bail!("TICK_ID_DUPLICATE");
@@ -559,6 +559,32 @@ mod tests {
             event.into(),
             available.into(),
         )
+    }
+
+    #[test]
+    fn native_query_preserves_trade_id_reuse_at_distinct_event_times() {
+        let original = vec![tick(10, 10, "reused"), tick(20, 20, "reused")];
+        let temp = native_fixture(original.clone());
+        assert_eq!(
+            load(temp.path(), &request()).unwrap()["AUD/USD.SIM"],
+            original
+        );
+    }
+
+    #[test]
+    fn native_query_rejects_duplicate_or_conflicting_event_scoped_trade_ids() {
+        for (conflicting, expected) in [(false, "TICK_ID_DUPLICATE"), (true, "TICK_ID_CONFLICT")] {
+            let first = tick(10, 10, "same");
+            let mut second = first;
+            if conflicting {
+                second.price = Price::from("1.30000");
+            }
+            let temp = native_fixture(vec![first, second]);
+            assert_eq!(
+                load(temp.path(), &request()).unwrap_err().to_string(),
+                expected
+            );
+        }
     }
 
     #[test]
