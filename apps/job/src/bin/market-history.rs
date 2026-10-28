@@ -91,6 +91,8 @@ struct Stream {
     #[serde(default)]
     equals: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
+    not_equals: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
     sides: BTreeMap<String, String>,
     #[serde(default)]
     symbol_from_file_stem: bool,
@@ -391,11 +393,16 @@ fn selection_prefixes(manifest: &Manifest, requested: &[String]) -> Result<Vec<S
                     .components()
                     .all(|p| matches!(p, Component::Normal(_)))
                 && !prefix.contains('\\')
-                && manifest
-                    .profile
-                    .streams
-                    .iter()
-                    .any(|s| s.paths.iter().any(|p| p.starts_with(prefix))),
+                && manifest.profile.streams.iter().any(|s| {
+                    s.paths.iter().any(|path| {
+                        path.starts_with(prefix)
+                            || (prefix.starts_with(path.split(['{', '*']).next().unwrap())
+                                && manifest.files.iter().any(|file| {
+                                    file.stream.as_deref() == Some(s.name.as_str())
+                                        && file.path.starts_with(prefix)
+                                }))
+                    })
+                }),
             "SOURCE_PATH_PREFIX_INVALID"
         );
         ensure!(
@@ -924,6 +931,112 @@ mod tests {
             fs::read(output.join("import-report.json")).unwrap(),
             receipt
         );
+    }
+
+    #[test]
+    fn tick_import_selects_existing_dated_files_before_scanning_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest_path, instruments, csv) = tick_source(
+            temp.path(),
+            "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\n",
+        );
+        let source = manifest_path.parent().unwrap();
+        let first = "perps/date=2026-01-01/fills.csv";
+        let second = "perps/date=2026-01-02/fills.csv";
+        for path in [first, second] {
+            fs::create_dir_all(source.join(path).parent().unwrap()).unwrap();
+            fs::copy(&csv, source.join(path)).unwrap();
+        }
+        fs::write(
+            source.join(second),
+            fs::read_to_string(&csv)
+                .unwrap()
+                .replace("1767225600001", "1767312000001"),
+        )
+        .unwrap();
+        let mut metadata: serde_json::Value = json(&manifest_path).unwrap();
+        metadata["end_date"] = serde_json::json!("2026-01-03");
+        metadata["profile"]["streams"][0]["paths"] =
+            serde_json::json!(["perps/date={date}/fills.csv"]);
+        metadata["files"] = serde_json::json!([
+            {"path":first,"size":fs::metadata(&csv).unwrap().len(),"stream":"trades"},
+            {"path":second,"size":fs::metadata(&csv).unwrap().len(),"stream":"trades"}
+        ]);
+        metadata["missing"] = serde_json::json!([]);
+        metadata["selected_path_prefixes"] = serde_json::json!(["perps/"]);
+        fs::write(&manifest_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let parsed: Manifest = json(&manifest_path).unwrap();
+        let prefixes = vec!["perps/date=2026-01-01/".into()];
+        let mut options = tick_options(&prefixes, false, 10, 10_000_000);
+        options.end = Some(1767312000);
+        let report = import(
+            &manifest_path,
+            &instruments,
+            &temp.path().join("native"),
+            options,
+        )
+        .unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.source_rows, 1);
+        assert_eq!(report.readback_records, 1);
+        assert_eq!(report.selected_path_prefixes, prefixes);
+        assert!(selection_prefixes(&parsed, &["perps/".into()]).is_ok());
+        for prefix in [
+            "perps/date=2026-01-03/",
+            "other/date=2026-01-01/",
+            "../perps/",
+            "perps/date=2026-01-01",
+        ] {
+            assert!(selection_prefixes(&parsed, &[prefix.into()]).is_err());
+        }
+        let mut restricted = parsed;
+        restricted.selected_path_prefixes = vec!["perps/date=2026-01-02/".into()];
+        assert_eq!(
+            selection_prefixes(&restricted, &prefixes)
+                .unwrap_err()
+                .to_string(),
+            "SOURCE_PATH_PREFIX_OUTSIDE_ACQUISITION"
+        );
+    }
+
+    #[test]
+    fn tick_import_applies_declared_exclusions_and_preserves_their_provenance() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, instruments, csv) = tick_source(temp.path(), "");
+        fs::write(
+            &csv,
+            concat!(
+                "coin,timestamp,price,size,trade_id,side,crossed,direction\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B,true,Buy\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,0,S,true,Spot Dust Conversion\n",
+                "BTCUSDT,1767225600001,11.12,0.1234567890,0,S,true,Spot Dust Conversion\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-2,B,false,Buy\n"
+            ),
+        )
+        .unwrap();
+        let original = fs::read(&csv).unwrap();
+        let mut metadata: serde_json::Value = json(&manifest).unwrap();
+        metadata["profile"]["streams"][0]["equals"] = serde_json::json!({"crossed":true});
+        metadata["profile"]["streams"][0]["not_equals"] =
+            serde_json::json!({"direction":"Spot Dust Conversion"});
+        metadata["files"][0]["size"] = serde_json::json!(original.len());
+        fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let prefixes = vec!["perps/".into()];
+        let report = import(
+            &manifest,
+            &instruments,
+            &temp.path().join("native"),
+            tick_options(&prefixes, false, 10, 10_000_000),
+        )
+        .unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.source_rows, 4);
+        assert_eq!(report.filtered_rows, 3);
+        assert_eq!(report.selected_rows, 1);
+        assert_eq!(report.readback_records, 1);
+        assert_eq!(report.duplicate_trades, 0);
+        assert_eq!(report.source_manifest, metadata);
+        assert_eq!(fs::read(csv).unwrap(), original);
     }
 
     #[test]

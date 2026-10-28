@@ -85,24 +85,26 @@ impl Stream {
     }
 
     pub(super) fn matches(&self, row: &Row) -> Result<bool> {
-        for (name, expected) in &self.equals {
-            let actual = field(row, name)?;
-            let matches = match (actual, expected) {
-                (Field::Bool(a), serde_json::Value::Bool(b)) => a == b,
-                (Field::Str(a), serde_json::Value::Bool(b)) => a.parse::<bool>()? == *b,
-                (Field::Str(a), serde_json::Value::String(b)) => a == b,
-                (Field::Null, serde_json::Value::Null) => true,
-                (Field::Null, _) => false,
-                (_, serde_json::Value::Number(b)) => {
-                    decimal(actual)? == Decimal::from_str_exact(&b.to_string())?
+        for (filters, excluded) in [(&self.equals, false), (&self.not_equals, true)] {
+            for (name, expected) in filters {
+                let actual = field(row, name)?;
+                let matches = match (actual, expected) {
+                    (_, serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
+                        anyhow::bail!("FILTER_SCALAR_REQUIRED")
+                    }
+                    (Field::Bool(a), serde_json::Value::Bool(b)) => a == b,
+                    (Field::Str(a), serde_json::Value::Bool(b)) => a.parse::<bool>()? == *b,
+                    (Field::Str(a), serde_json::Value::String(b)) => a == b,
+                    (Field::Null, serde_json::Value::Null) => true,
+                    (Field::Null, _) => false,
+                    (_, serde_json::Value::Number(b)) => {
+                        decimal(actual)? == Decimal::from_str_exact(&b.to_string())?
+                    }
+                    _ => false,
+                };
+                if matches == excluded {
+                    return Ok(false);
                 }
-                (_, serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
-                    anyhow::bail!("FILTER_SCALAR_REQUIRED")
-                }
-                _ => false,
-            };
-            if !matches {
-                return Ok(false);
             }
         }
         Ok(true)
@@ -541,6 +543,26 @@ impl Aggregation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_filters_reject_nonscalar_conditions_including_on_null_rows() {
+        for filter in ["equals", "not_equals"] {
+            for expected in [serde_json::json!([]), serde_json::json!({})] {
+                let mut value = serde_json::json!({
+                    "name":"trades", "kind":"trades", "format":"csv", "time_unit":"ms", "columns":{}
+                });
+                value[filter] = serde_json::json!({"direction":expected});
+                let stream: Stream = serde_json::from_value(value).unwrap();
+                for actual in [Field::Null, Field::Str("Buy".into())] {
+                    let row = Row::new(vec![("direction".into(), actual)]);
+                    assert_eq!(
+                        stream.matches(&row).unwrap_err().to_string(),
+                        "FILTER_SCALAR_REQUIRED"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn csv_millisecond_bars_preserve_interval_values_and_receipt_time() {
