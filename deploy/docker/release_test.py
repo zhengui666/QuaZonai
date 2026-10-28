@@ -13,6 +13,27 @@ from release_support import DATABASE_IMAGE, validate_manifest, version
 
 REVISION = 'a' * 40
 class ReleaseTests(unittest.TestCase):
+    def test_image_completion_waits_for_independent_assessment(self):
+        details = [{'trialRecords': [{'status': 'COMPUTED', 'error': None}],
+                    'final': {'status': status, 'reason': 'Stop before heldout'}}
+                   for status in ['STARTED', 'COMPUTED']]
+        with patch.object(smoke, 'api', side_effect=details) as api, \
+             patch.object(smoke.time, 'sleep') as sleep:
+            self.assertIs(smoke.completed(None, 'http://test-only', 1), details[-1])
+        self.assertEqual(api.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_image_completion_still_rejects_terminal_noncomputed_results(self):
+        for status in ['STOPPED', 'FAILED']:
+            detail = {'trialRecords': [{'status': 'COMPUTED', 'error': None}],
+                      'final': {'status': status, 'reason': 'Terminal controlled failure'}}
+            with self.subTest(status=status), patch.object(smoke, 'api', return_value=detail) as api, \
+                 patch.object(smoke.time, 'sleep') as sleep:
+                with self.assertRaisesRegex(AssertionError, status):
+                    smoke.completed(None, 'http://test-only', 1)
+                self.assertEqual(api.call_count, 1)
+                sleep.assert_not_called()
+
     def test_image_smoke_uses_model_only_settings_and_distinct_restore_values(self):
         stored = None
         writes = []
