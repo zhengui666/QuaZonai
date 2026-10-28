@@ -88,27 +88,44 @@ impl Stream {
         for (filters, excluded) in [(&self.equals, false), (&self.not_equals, true)] {
             for (name, expected) in filters {
                 let actual = field(row, name)?;
-                let matches = match (actual, expected) {
-                    (_, serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
-                        anyhow::bail!("FILTER_SCALAR_REQUIRED")
-                    }
-                    (Field::Bool(a), serde_json::Value::Bool(b)) => a == b,
-                    (Field::Str(a), serde_json::Value::Bool(b)) => a.parse::<bool>()? == *b,
-                    (Field::Str(a), serde_json::Value::String(b)) => a == b,
-                    (Field::Null, serde_json::Value::Null) => true,
-                    (Field::Null, _) => false,
-                    (_, serde_json::Value::Number(b)) => {
-                        decimal(actual)? == Decimal::from_str_exact(&b.to_string())?
-                    }
-                    _ => false,
-                };
+                let matches = scalar_matches(actual, expected)?;
                 if matches == excluded {
                     return Ok(false);
                 }
             }
         }
+        for (name, values) in &self.not_in {
+            if values.is_empty() {
+                continue;
+            }
+            let actual = field(row, name)?;
+            let mut excluded = false;
+            for expected in values {
+                excluded |= scalar_matches(actual, expected)?;
+            }
+            if excluded {
+                return Ok(false);
+            }
+        }
         Ok(true)
     }
+}
+
+fn scalar_matches(actual: &Field, expected: &serde_json::Value) -> Result<bool> {
+    Ok(match (actual, expected) {
+        (_, serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
+            anyhow::bail!("FILTER_SCALAR_REQUIRED")
+        }
+        (Field::Bool(a), serde_json::Value::Bool(b)) => a == b,
+        (Field::Str(a), serde_json::Value::Bool(b)) => a.parse::<bool>()? == *b,
+        (Field::Str(a), serde_json::Value::String(b)) => a == b,
+        (Field::Null, serde_json::Value::Null) => true,
+        (Field::Null, _) => false,
+        (_, serde_json::Value::Number(b)) => {
+            decimal(actual)? == Decimal::from_str_exact(&b.to_string())?
+        }
+        _ => false,
+    })
 }
 
 pub(super) fn scalar(value: &Field) -> Result<String> {
@@ -546,12 +563,16 @@ mod tests {
 
     #[test]
     fn source_filters_reject_nonscalar_conditions_including_on_null_rows() {
-        for filter in ["equals", "not_equals"] {
+        for filter in ["equals", "not_equals", "not_in"] {
             for expected in [serde_json::json!([]), serde_json::json!({})] {
                 let mut value = serde_json::json!({
                     "name":"trades", "kind":"trades", "format":"csv", "time_unit":"ms", "columns":{}
                 });
-                value[filter] = serde_json::json!({"direction":expected});
+                value[filter] = if filter == "not_in" {
+                    serde_json::json!({"direction":["Buy", expected]})
+                } else {
+                    serde_json::json!({"direction":expected})
+                };
                 let stream: Stream = serde_json::from_value(value).unwrap();
                 for actual in [Field::Null, Field::Str("Buy".into())] {
                     let row = Row::new(vec![("direction".into(), actual)]);
@@ -561,6 +582,29 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn source_not_in_conditions_preserve_nulls_and_empty_sets() {
+        let stream: Stream = serde_json::from_value(serde_json::json!({
+            "name":"trades", "kind":"trades", "format":"csv", "time_unit":"ms", "columns":{},
+            "equals":{"crossed":true}, "not_equals":{"liquidation_method":"backstop"},
+            "not_in":{"direction":["Net Child Vaults","Settlement"],"asset_class":["ledger"],"absent":[]}
+        })).unwrap();
+        for (direction, asset_class, expected) in [
+            (Field::Str("Buy".into()), "spot", true),
+            (Field::Null, "spot", true),
+            (Field::Str("Settlement".into()), "perp", false),
+            (Field::Str("Buy".into()), "ledger", false),
+        ] {
+            let row = Row::new(vec![
+                ("crossed".into(), Field::Bool(true)),
+                ("liquidation_method".into(), Field::Null),
+                ("direction".into(), direction),
+                ("asset_class".into(), Field::Str(asset_class.into())),
+            ]);
+            assert_eq!(stream.matches(&row).unwrap(), expected);
         }
     }
 
