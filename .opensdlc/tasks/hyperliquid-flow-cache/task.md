@@ -26,7 +26,7 @@ The existing full-source coverage result reports zero unmapped taker sides for b
 <a id="verification"></a>
 ## Verification
 
-Actual local checks passed: 26 native tick tests (including both label modes and the eighth feature), two domain tick tests, job library/binary/test metadata checking, service/research/web typechecks, 74 selected TypeScript tests, four web input tests and the production web build. Source-import CLI runtime and connected native HTTP checks remain pending, as do the final source-derived schema regeneration, immutable-head review and CI. No full archive conversion, model trial or profitability result is claimed.
+Actual local checks passed: 26 native tick tests (including both label modes and the eighth feature), two domain tick tests, job library/binary/test metadata checking, service/research/web typechecks, 74 selected TypeScript tests, four web input tests and the production web build. The complete market-history binary suite passed (24 tests); the native source-derived export and strict tagged-union contract suite passed (19 tests), and an additional exact export comparison passed after merging the current PR #248 ancestor without changing the tested tree. The real HTTP/Durable/native check passed all three representations (native, 32-byte cache, 40-byte flow), including separate primary and independent computation and owned revision publication. That local compatibility run used the tested e965 standard BAR executable and the current flow high-precision executable; final CI must still exercise matching-Head binaries. Immutable-head review and CI remain pending. No full archive conversion, model trial or profitability result is claimed.
 
 <a id="handoff"></a>
 ## Handoff
