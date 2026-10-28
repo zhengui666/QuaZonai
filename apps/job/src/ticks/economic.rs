@@ -659,6 +659,71 @@ fn fx(
             )
         })
 }
+fn missing_mark_reason(
+    source: &str,
+    id: &str,
+    observation: Option<(u64, bool)>,
+    now: u64,
+    age: u64,
+) -> String {
+    let state = match observation {
+        None => "MISSING",
+        Some((at, _)) if at > now => "FUTURE",
+        Some((at, _)) if now - at > age => "STALE",
+        Some((_, false)) => "NULL_PRICE",
+        Some(_) => "UNAVAILABLE",
+    };
+    let last = observation.map_or_else(|| "NONE".into(), |(at, _)| at.to_string());
+    format!("source={source}:instrument_id={id}:last_ns={last}:at_ns={now}:maximum_age_ns={age}:state={state}")
+}
+
+fn missing_fx_reason(
+    currency: Currency,
+    assets: &[Asset],
+    fx_ids: &BTreeSet<String>,
+    now: u64,
+    age: u64,
+) -> String {
+    let candidate = assets
+        .iter()
+        .find(|asset| {
+            fx_ids.contains(&asset.instrument.id().to_string())
+                && asset.instrument.base_currency() == Some(currency)
+                && asset.instrument.quote_currency() == Currency::USDC()
+        })
+        .or_else(|| {
+            assets.iter().find(|asset| {
+                matches!(asset.instrument, InstrumentAny::CurrencyPair(_))
+                    && asset.instrument.base_currency() == Some(currency)
+            })
+        });
+    let detail = match candidate {
+        Some(asset) if mark(asset, now, age).is_none() => missing_mark_reason(
+            "COHORT_MARK",
+            &asset.instrument.id().to_string(),
+            asset.mark.map(|(at, _)| (at, true)),
+            now,
+            age,
+        ),
+        Some(asset) => {
+            let quote = asset.instrument.quote_currency();
+            let bridge = assets.iter().find(|asset| {
+                fx_ids.contains(&asset.instrument.id().to_string())
+                    && asset.instrument.base_currency() == Some(quote)
+                    && asset.instrument.quote_currency() == Currency::USDC()
+            });
+            match bridge {
+                Some(bridge) => missing_mark_reason("QUOTE_FX_COHORT_MARK", &bridge.instrument.id().to_string(), bridge.mark.map(|(at, _)| (at, true)), now, age),
+                None => format!("source=QUOTE_FX_ROUTE:instrument_id={}:quote={quote}:at_ns={now}:maximum_age_ns={age}:state=NO_ROUTE", asset.instrument.id()),
+            }
+        }
+        None => format!(
+            "source=FX_ROUTE:instrument_id=NONE:at_ns={now}:maximum_age_ns={age}:state=NO_ROUTE"
+        ),
+    };
+    format!("currency={currency}:{detail}")
+}
+
 fn value(
     ledger: &NativeLedger,
     assets: &[Asset],
@@ -667,6 +732,7 @@ fn value(
     age: u64,
     margin: bool,
     contexts: &mut Option<ContextPrices>,
+    reason: Option<&mut String>,
 ) -> Result<Option<Decimal>> {
     let mut total = Decimal::ZERO;
     for balance in ledger.balances() {
@@ -675,6 +741,13 @@ fn value(
             continue;
         }
         let Some(rate) = fx(balance.currency, assets, fx_ids, now, age) else {
+            if let Some(reason) = reason.filter(|reason| reason.is_empty()) {
+                *reason = format!(
+                    "BALANCE_FX_UNAVAILABLE:ledger={}:amount={amount}:{}",
+                    if margin { "MARGIN" } else { "CASH" },
+                    missing_fx_reason(balance.currency, assets, fx_ids, now, age)
+                );
+            }
             return Ok(None);
         };
         total += amount * rate;
@@ -694,6 +767,34 @@ fn value(
                 None => mark(asset, now, age),
             };
             let Some(price) = price else {
+                if let Some(reason) = reason.filter(|reason| reason.is_empty()) {
+                    let id = position.instrument_id.to_string();
+                    let detail = if let Some(context) = contexts.as_ref() {
+                        missing_mark_reason(
+                            "CONTEXT_MARK",
+                            &id,
+                            context
+                                .readers
+                                .get(&id)
+                                .and_then(|reader| reader.current.as_ref())
+                                .map(|row| (row.event, row.mark.is_some())),
+                            now,
+                            age,
+                        )
+                    } else {
+                        missing_mark_reason(
+                            "COHORT_MARK",
+                            &id,
+                            asset.mark.map(|(at, _)| (at, true)),
+                            now,
+                            age,
+                        )
+                    };
+                    *reason = format!(
+                        "PERP_MARK_UNAVAILABLE:quantity={}:{}",
+                        position.quantity, detail
+                    );
+                }
                 return Ok(None);
             };
             let pnl = position.try_calculate_pnl(
@@ -1345,24 +1446,58 @@ fn append_day(
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     let usdt0 = Currency::from_str("USDT0")?;
+    let mut reason = String::new();
     let equity = if funding_unknown {
+        reason = "FUNDING_UNAVAILABLE".into();
         None
     } else if let (Some(c), Some(m)) = (cash, margin) {
         match (
-            value(c, assets, fx_ids, at, age, false, contexts)?,
-            value(m, assets, fx_ids, at, age, true, contexts)?,
+            value(
+                c,
+                assets,
+                fx_ids,
+                at,
+                age,
+                false,
+                contexts,
+                Some(&mut reason),
+            )?,
+            value(
+                m,
+                assets,
+                fx_ids,
+                at,
+                age,
+                true,
+                contexts,
+                Some(&mut reason),
+            )?,
             fx(usdt0, assets, fx_ids, at, age),
         ) {
             (Some(c), Some(m), Some(fx)) => {
                 Some(((c + m + reserve_usdc) / fx + remaining) / decimal(&s.usdt0_per_usdt)?)
             }
-            _ => None,
+            _ => {
+                if reason.is_empty() {
+                    reason = format!(
+                        "REPORTING_FX_UNAVAILABLE:{}",
+                        missing_fx_reason(usdt0, assets, fx_ids, at, age)
+                    );
+                }
+                None
+            }
         }
     } else if converted.is_zero() {
         Some(decimal(&s.initial_usdt)?)
     } else {
-        fx(usdt0, assets, fx_ids, at, age)
-            .map(|price| (remaining + converted / price) / decimal(&s.usdt0_per_usdt).unwrap())
+        let rate = fx(usdt0, assets, fx_ids, at, age);
+        if rate.is_none() {
+            reason = format!(
+                "REPORTING_FX_UNAVAILABLE:{}",
+                missing_fx_reason(usdt0, assets, fx_ids, at, age)
+            );
+        }
+        rate.map(|price| (remaining + converted / price) / decimal(&s.usdt0_per_usdt).unwrap())
     };
     let net_return = match (equity, *previous) {
         (Some(now), Some(before)) if before > Decimal::ZERO => {
@@ -1375,9 +1510,7 @@ fn append_day(
         day_start_ns: counter(day)?,
         equity_usdt: equity.map(exact).transpose()?,
         net_return,
-        unknown_reason: equity
-            .is_none()
-            .then(|| "MISSING_OR_STALE_VALUATION_OR_FUNDING".into()),
+        unknown_reason: equity.is_none().then_some(reason),
     });
     Ok(())
 }
@@ -1401,6 +1534,7 @@ fn schedule(
         age,
         false,
         contexts,
+        None,
     )?;
     let m = value(
         margin.as_ref().unwrap(),
@@ -1410,6 +1544,7 @@ fn schedule(
         age,
         true,
         contexts,
+        None,
     )?;
     let sums = assets
         .iter()

@@ -344,7 +344,8 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         at,
         HOUR,
         true,
-        &mut none
+        &mut none,
+        None
     )
     .unwrap()
     .is_none());
@@ -357,6 +358,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         HOUR,
         true,
         &mut contexts,
+        None,
     )
     .unwrap()
     .unwrap();
@@ -397,6 +399,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
         HOUR,
         true,
         &mut contexts,
+        None,
     )
     .unwrap()
     .unwrap();
@@ -408,6 +411,7 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
     assert_eq!(assets[0].mark, Some((0, Decimal::from(100))));
     let stale = 3 * HOUR + 1;
     assets[0].mark = Some((stale, Decimal::from(100)));
+    let mut reason = String::new();
     assert!(
         value(
             margin.as_ref().unwrap(),
@@ -416,14 +420,166 @@ fn independent_context_funds_at_oracle_values_perp_at_mark_and_keeps_trade_price
             stale,
             HOUR,
             true,
-            &mut contexts
+            &mut contexts,
+            Some(&mut reason)
         )
         .unwrap()
         .is_none(),
         "explicit context cannot fall back to a fresh trade when context expires"
     );
+    assert!(reason.starts_with("PERP_MARK_UNAVAILABLE:quantity="));
+    assert!(reason.contains(&format!(
+        "source=CONTEXT_MARK:instrument_id={LATE}:last_ns={}",
+        2 * HOUR
+    )));
+    assert!(reason.contains("state=STALE"));
     contexts.as_mut().unwrap().finish().unwrap();
     margin.as_mut().unwrap().finish().unwrap();
+}
+
+#[test]
+fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request, _) = source(directory.path(), 0, None, true);
+    request.scenario.maximum_mark_age_ns = counter(HOUR).unwrap();
+    let cache =
+        cohort_cache::load(&prepared.join("independent/catalog"), &request.research).unwrap();
+    let at = HOUR + 2 * SECOND + 1;
+    let mut assets: Vec<_> = definitions()
+        .into_iter()
+        .map(|instrument| {
+            let id = instrument.id().to_string();
+            Asset {
+                instrument,
+                reader: cache
+                    .cohorts(
+                        cache
+                            .assets
+                            .iter()
+                            .find(|asset| asset.instrument_id == id)
+                            .unwrap(),
+                    )
+                    .unwrap(),
+                head: None,
+                previous: None,
+                fast: ExponentialMovingAverage::new(1, None),
+                slow: ExponentialMovingAverage::new(2, None),
+                model: None,
+                score: None,
+                mark: Some(if id == SPOT {
+                    (2 * SECOND, Decimal::from(100))
+                } else {
+                    (at, Decimal::new(1003, 3))
+                }),
+                cohorts: 0,
+                decisions: 0,
+                attempts: 0,
+                pending: None,
+                target_weight: None,
+            }
+        })
+        .collect();
+    let instrument = assets
+        .iter()
+        .find(|asset| asset.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .instrument
+        .clone();
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    let mut cash = Some(build(&assets, false, Decimal::from(1000), &request.scenario).unwrap());
+    cash.as_mut()
+        .unwrap()
+        .step(SECOND, &instrument, 100.0, 10.0, None)
+        .unwrap();
+    cash.as_mut()
+        .unwrap()
+        .step(2 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ONE))
+        .unwrap();
+    assert!(
+        cash.as_ref()
+            .unwrap()
+            .balance(Currency::BTC())
+            .unwrap()
+            .as_decimal()
+            > Decimal::ZERO
+    );
+    let margin = Some(build(&assets, true, Decimal::from(1000), &request.scenario).unwrap());
+    let mut days = Vec::new();
+    let mut previous = Some(Decimal::from(2000));
+    append_day(
+        &mut days,
+        0,
+        at,
+        &mut previous,
+        &cash,
+        &margin,
+        &assets,
+        &fx_ids,
+        &request.scenario,
+        Decimal::ZERO,
+        Decimal::from(2000),
+        Decimal::ZERO,
+        false,
+        &mut None,
+    )
+    .unwrap();
+    assert!(days[0].equity_usdt.is_none());
+    assert!(days[0].net_return.is_none());
+    let reason = days[0].unknown_reason.as_ref().unwrap();
+    assert!(reason.starts_with("BALANCE_FX_UNAVAILABLE:ledger=CASH:amount="));
+    assert!(reason.contains(&format!(
+        "currency=BTC:source=COHORT_MARK:instrument_id={SPOT}:last_ns={}",
+        2 * SECOND
+    )));
+    assert!(reason.contains(&format!("at_ns={at}:maximum_age_ns={HOUR}:state=STALE")));
+    assert!(previous.is_none());
+    let zero_cash = Some(build(&assets, false, Decimal::from(1000), &request.scenario).unwrap());
+    append_day(
+        &mut days,
+        DAY,
+        at,
+        &mut previous,
+        &zero_cash,
+        &margin,
+        &assets,
+        &fx_ids,
+        &request.scenario,
+        Decimal::ZERO,
+        Decimal::from(2000),
+        Decimal::ZERO,
+        false,
+        &mut None,
+    )
+    .unwrap();
+    assert!(days[1].equity_usdt.is_some());
+    assert!(days[1].unknown_reason.is_none());
+    assets
+        .iter_mut()
+        .find(|asset| asset.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .mark = Some((at, Decimal::from(100)));
+    append_day(
+        &mut days,
+        2 * DAY,
+        at,
+        &mut previous,
+        &cash,
+        &margin,
+        &assets,
+        &fx_ids,
+        &request.scenario,
+        Decimal::ZERO,
+        Decimal::from(2000),
+        Decimal::ZERO,
+        false,
+        &mut None,
+    )
+    .unwrap();
+    assert!(days[2].equity_usdt.is_some());
+    assert!(
+        days[2].unknown_reason.is_none(),
+        "valuation failures are not sticky"
+    );
 }
 
 #[test]
