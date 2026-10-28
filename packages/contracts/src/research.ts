@@ -69,9 +69,11 @@ export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject)
   if (tagged?.modality === 'TRADE_TICK') {
     const request = tagged.request as JsonObject;
     const selection = request.input as JsonObject;
+    const target = request.target as JsonObject;
+    const duration = target.kind === 'FIXED_EVENT_TIME';
     return { instruments: selection.instrument_ids as string[], inputFamily: 'tick-cohort-v1: cohort_vwap, previous_cohort_vwap, fast_ema, slow_ema, quantity, trade_count, elapsed_event_ns',
-      modality: 'TRADE_TICK' as const, sampling: 'EVENT_TIME_COHORT_V1', horizonUnit: 'TRADE_COHORTS' as const,
-      horizon: (request.target as JsonObject).horizon_cohorts as number, sourceRevision: selection.source_revision as string, availability: selection.availability as string,
+      modality: 'TRADE_TICK' as const, sampling: 'EVENT_TIME_COHORT_V1', horizonUnit: duration ? 'EVENT_TIME_NS' as const : 'TRADE_COHORTS' as const,
+      horizon: duration ? null : target.horizon_cohorts as number, ...(duration ? { horizonNs: target.horizon_ns as string } : {}), sourceRevision: selection.source_revision as string, availability: selection.availability as string,
       partitions: { trainEndNs: request.train_end_ns!, validationEndNs: request.validation_end_ns!, endNs: selection.event_end_ns! }, strategy: null };
   }
   if (tagged?.modality === 'BAR') { const { nativeInput: _tagged, ...legacy } = data; data = { ...legacy, request: tagged.request! }; }

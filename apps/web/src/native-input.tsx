@@ -1,11 +1,20 @@
 import type { DatasetView, JsonObject } from '../../../packages/contracts/src/index.ts';
 import { Facts } from './ui';
 
+export function labelHorizon(settings?: DatasetView['researchSettings']): string {
+  if (settings?.horizonUnit === 'EVENT_TIME_NS' && settings.horizonNs !== undefined) {
+    const ns = BigInt(settings.horizonNs);
+    return `${ns % 1_000_000_000n === 0n ? `${ns / 1_000_000_000n} 秒` : `${ns} ns`}（事件时间；取首个达标成交组）`;
+  }
+  if (settings?.horizon === null || settings?.horizon === undefined) return '未记录';
+  return `${settings.horizon} ${settings.horizonUnit === 'TRADE_COHORTS' ? '个后续成交组' : '次 BAR 观测'}`;
+}
+
 export function NativeInputFacts({ modality, settings, preparation, coverage }: { modality?: DatasetView['nativeModality']; settings?: DatasetView['researchSettings']; preparation?: DatasetView['preparation']; coverage?: JsonObject }) {
   const tick = (modality ?? settings?.modality) === 'TRADE_TICK';
   const items: Parameters<typeof Facts>[0]['items'] = [['输入类型', tick ? '原生逐笔 TradeTick' : 'BAR']];
   if (settings?.sampling) items.push(['采样', settings.sampling === 'EVENT_TIME_COHORT_V1' ? '每品种完整同时间戳成交组' : settings.sampling]);
-  if (settings?.horizon !== null && settings?.horizon !== undefined) items.push(['标签预测跨度', `${settings.horizon} ${tick ? '个后续成交组' : '次 BAR 观测'}`]);
+  if (settings) items.push(['标签预测跨度', labelHorizon(settings)]);
   if (settings?.sourceRevision) items.push(['来源修订', <code>{settings.sourceRevision}</code>]);
   if (tick) items.push(['可得时间', '事件时间代理（未验证）'], ['科学资格', '未获资格；仅供探索性分析']);
   else if (preparation) items.push(['科学资格', preparation.scientificQualification === 'UNVERIFIED' ? '未验证' : '尚未评定']);

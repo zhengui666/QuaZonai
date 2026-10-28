@@ -11,13 +11,13 @@ import factorWasm from '../../research/plugins/factor-wasm.ts';
 import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 
 // Controlled framing/publication only; native numerical cache checks belong to Rust.
-async function preparedCache() {
+async function preparedCache(target: NativeTickFactorRequest['target'] = { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 }) {
   const directory = await mkdtemp(join(tmpdir(), 'qz-cohort-export-')); const prepared = join(directory, 'prepared');
   const request: NativeTickFactorRequest = { schema_version: 1,
     input: { modality: 'TRADE_TICK', representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597',
       instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '0', event_end_ns: '80', decision_cutoff_ns: '80',
       source_revision: 'controlled-source-not-market-evidence', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
-    sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 },
+    sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target,
     parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '30', validation_end_ns: '50' };
   const research = { ...request, input: { ...request.input, event_end_ns: request.validation_end_ns } };
   const source = join(directory, 'derived-cache.bin'); const bytes = Buffer.alloc(6 * 32);
@@ -134,4 +134,17 @@ test('cohort export requires both range views to bind the same derived file and 
       await assert.rejects(exportDataset(f.options), /source_view_mismatch/);
     } finally { await rm(f.directory, { recursive: true, force: true }); }
   }
+});
+
+
+test('fixed event-time target survives prepared cache export in both bounded requests', async () => {
+  const target = { kind: 'FIXED_EVENT_TIME' as const, horizon_ns: '60000000000' };
+  const f = await preparedCache(target);
+  try {
+    const exported = await exportDataset(f.options);
+    const primary = exported.data.nativeInput as { request: NativeTickFactorRequest };
+    const independent = (exported.data.sealed as { nativeInput: { request: NativeTickFactorRequest } }).nativeInput;
+    assert.deepEqual(primary.request.target, target); assert.deepEqual(independent.request.target, target);
+    assert.equal(primary.request.input.event_end_ns, '50'); assert.equal(independent.request.input.event_end_ns, '80');
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
 });

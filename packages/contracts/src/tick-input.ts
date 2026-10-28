@@ -11,7 +11,7 @@ export type NativeTickFactorRequest = {
     maximum_rows?: number; maximum_source_rows?: string;
   };
   sampling: { kind: 'EVENT_TIME_COHORT_V1'; maximum_cohort_rows: number };
-  target: { kind: 'FIXED_TRADE_COHORTS'; horizon_cohorts: number };
+  target: { kind: 'FIXED_TRADE_COHORTS'; horizon_cohorts: number } | { kind: 'FIXED_EVENT_TIME'; horizon_ns: string };
   parameters: { fast_period_cohorts: number; slow_period_cohorts: number; total_fuel?: string };
   train_end_ns: string; validation_end_ns: string;
 };
@@ -71,9 +71,14 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   if (sampling.kind !== 'EVENT_TIME_COHORT_V1') throw new Error('native_tick_sampling_unsupported');
   integer(sampling.maximum_cohort_rows, 'maximum_cohort_rows', 100_000);
   const target = object(request.target, 'native_tick_target');
-  fields(target, ['kind', 'horizon_cohorts']);
-  if (target.kind !== 'FIXED_TRADE_COHORTS') throw new Error('native_tick_target_unsupported');
-  integer(target.horizon_cohorts, 'horizon_cohorts', 1_000_000);
+  if (target.kind === 'FIXED_TRADE_COHORTS') {
+    fields(target, ['kind', 'horizon_cohorts']);
+    integer(target.horizon_cohorts, 'horizon_cohorts', 1_000_000);
+  } else if (target.kind === 'FIXED_EVENT_TIME') {
+    fields(target, ['kind', 'horizon_ns']);
+    const horizon = counter(target.horizon_ns, 'horizon_ns', true);
+    if (end - 1n + horizon > 9223372036854775807n) throw new Error('native_tick_horizon_ns_overflow');
+  } else throw new Error('native_tick_target_unsupported');
   const parameters = object(request.parameters, 'native_tick_parameters');
   fields(parameters, ['fast_period_cohorts', 'slow_period_cohorts', 'total_fuel']);
   const fast = integer(parameters.fast_period_cohorts, 'fast_period_cohorts', 1_000_000);

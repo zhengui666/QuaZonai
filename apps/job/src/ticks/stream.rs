@@ -174,12 +174,16 @@ fn record(
 
 fn evaluate_asset(
     request: &NativeTradeTickFactorEvaluationRequestV1,
-    mut rows: impl Iterator<Item = Result<Cohort>>,
+    readers: (
+        impl Iterator<Item = Result<Cohort>>,
+        Option<&mut dyn Iterator<Item = Result<Cohort>>>,
+    ),
     cohort_count: u64,
     module: &SignalModule,
     budget: &mut Budget,
     pooled: &mut [Metric; 3],
 ) -> Result<AssetSummary> {
+    let (mut rows, mut label_rows) = readers;
     let mut summary = AssetSummary {
         metrics: std::array::from_fn(|_| Metric::default()),
         predictions: 0,
@@ -198,7 +202,7 @@ fn evaluate_asset(
         ExponentialMovingAverage::new(request.parameters.fast_period_cohorts as usize, None);
     let mut slow =
         ExponentialMovingAverage::new(request.parameters.slow_period_cohorts as usize, None);
-    let horizon = u64::from(request.target.horizon_cohorts);
+    let mut future: Option<Cohort> = None;
     let mut pending = VecDeque::<Pending>::new();
     let mut previous: Option<Cohort> = None;
     let mut seen = 0_u64;
@@ -260,33 +264,71 @@ fn evaluate_asset(
             )?;
             None
         };
-        // Current prediction has returned before this cohort supplies any earlier label.
-        if pending
-            .front()
-            .is_some_and(|point| u64::from(point.ordinal) + horizon == seen)
-        {
-            let point = pending.pop_front().expect("front was present");
-            let label = current.vwap / point.mark - 1.0;
-            ensure!(label.is_finite(), "TICK_LABEL_NONFINITE");
-            let (_, end) = partition_bounds(request, PARTITIONS[point.partition]);
-            let reason = (current.event >= end.get())
-                .then_some(NativeFactorExclusionReasonV1::LabelCrossesPartition);
-            record(
-                &mut summary.metrics,
-                pooled,
-                point.partition,
-                Some(point.prediction),
-                Some(label),
-                reason,
-            )?;
-        }
-        if let Some(prediction) = prediction {
-            pending.push_back(Pending {
-                ordinal,
-                mark: current.vwap,
-                prediction,
-                partition,
-            });
+        // The model returns before either reader supplies a future label.
+        match request.target {
+            NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts } => {
+                if pending.front().is_some_and(|point| {
+                    u64::from(point.ordinal) + u64::from(horizon_cohorts) == seen
+                }) {
+                    let point = pending.pop_front().expect("front was present");
+                    let label = current.vwap / point.mark - 1.0;
+                    ensure!(label.is_finite(), "TICK_LABEL_NONFINITE");
+                    let (_, end) = partition_bounds(request, PARTITIONS[point.partition]);
+                    let reason = (current.event >= end.get())
+                        .then_some(NativeFactorExclusionReasonV1::LabelCrossesPartition);
+                    record(
+                        &mut summary.metrics,
+                        pooled,
+                        point.partition,
+                        Some(point.prediction),
+                        Some(label),
+                        reason,
+                    )?;
+                }
+                if let Some(prediction) = prediction {
+                    pending.push_back(Pending {
+                        ordinal,
+                        mark: current.vwap,
+                        prediction,
+                        partition,
+                    });
+                }
+            }
+            NativeTickTargetV1::FixedEventTime { horizon_ns } => {
+                if let Some(prediction) = prediction {
+                    let threshold = current
+                        .event
+                        .checked_add(horizon_ns.get())
+                        .ok_or_else(|| anyhow::anyhow!("TICK_LABEL_TIME_RANGE"))?;
+                    let reader = label_rows
+                        .as_deref_mut()
+                        .ok_or_else(|| anyhow::anyhow!("TICK_LABEL_READER_REQUIRED"))?;
+                    while future.as_ref().is_none_or(|row| row.event < threshold) {
+                        future = reader.next().transpose()?;
+                        if future.is_none() {
+                            break;
+                        }
+                    }
+                    let label = future.as_ref().map(|row| row.vwap / current.vwap - 1.0);
+                    ensure!(label.is_none_or(f64::is_finite), "TICK_LABEL_NONFINITE");
+                    let (_, end) = partition_bounds(request, PARTITIONS[partition]);
+                    let reason = match &future {
+                        None => Some(NativeFactorExclusionReasonV1::LabelNotComplete),
+                        Some(row) if row.event >= end.get() => {
+                            Some(NativeFactorExclusionReasonV1::LabelCrossesPartition)
+                        }
+                        _ => None,
+                    };
+                    record(
+                        &mut summary.metrics,
+                        pooled,
+                        partition,
+                        Some(prediction),
+                        label,
+                        reason,
+                    )?;
+                }
+            }
         }
         previous = Some(current);
         seen += 1;
@@ -329,9 +371,18 @@ pub(super) fn evaluate(
     let mut assets = BTreeMap::new();
     let mut predictions = 0_u64;
     for asset in &cache.assets {
+        let mut label_rows = match request.target {
+            NativeTickTargetV1::FixedEventTime { .. } => Some(cache.cohorts(asset)?),
+            NativeTickTargetV1::FixedTradeCohorts { .. } => None,
+        };
         let summary = evaluate_asset(
             request,
-            cache.cohorts(asset)?,
+            (
+                cache.cohorts(asset)?,
+                label_rows
+                    .as_mut()
+                    .map(|reader| reader as &mut dyn Iterator<Item = Result<Cohort>>),
+            ),
             asset.cohort_count,
             &module,
             &mut budget,
@@ -393,7 +444,7 @@ pub(super) fn evaluate(
             ("input".into(), "EVENT_TIME_COHORT_CACHE_V1: derived complete-event cohorts; no BAR catalog or simulation".into()),
             ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), FEATURE_SCHEMA.into()),
             ("sampling".into(), "EVENT_TIME_COHORT_V1: complete current cohort visible; earlier selected cohorts only; unknown source sequence".into()),
-            ("label".into(), "FIXED_TRADE_COHORTS: VWAP(j+H)/VWAP(j)-1; same instrument; no labels supplied to model".into()),
+            ("label".into(), request.target.label_method().into()),
             ("partitioning".into(), "shared half-open event cuts; cross-boundary labels excluded; warmup and state continue across source units".into()),
             ("qualification".into(), "UNQUALIFIED_EXPLORATORY; event time proxy is not original availability evidence".into()),
             ("ic".into(), "stable online covariance raw pooled Pearson correlation; not averaged asset/unit IC".into()),
@@ -474,9 +525,10 @@ mod tests {
         for (id, rows) in data {
             let cohorts =
                 super::super::cohorts(&rows, request.sampling.maximum_cohort_rows).unwrap();
+            let mut label_rows = cohorts.clone().into_iter().map(Ok);
             let summary = evaluate_asset(
                 request,
-                cohorts.clone().into_iter().map(Ok),
+                (cohorts.clone().into_iter().map(Ok), Some(&mut label_rows)),
                 cohorts.len() as u64,
                 &module,
                 &mut budget,
@@ -519,7 +571,18 @@ mod tests {
         last.ts_init = 75_u64.into();
         for horizon in [1, 2, 3] {
             let mut request = request();
-            request.target.horizon_cohorts = horizon;
+            request.target = NativeTickTargetV1::FixedTradeCohorts {
+                horizon_cohorts: horizon,
+            };
+            for slot in 0..7 {
+                compare(&request, data.clone(), &model(slot));
+            }
+        }
+        for horizon in [1, 9, 10, 20, 60] {
+            let mut request = request();
+            request.target = NativeTickTargetV1::FixedEventTime {
+                horizon_ns: counter(horizon).unwrap(),
+            };
             for slot in 0..7 {
                 compare(&request, data.clone(), &model(slot));
             }
@@ -571,7 +634,7 @@ mod tests {
             };
             let result = evaluate_asset(
                 &request,
-                rows.into_iter().map(Ok),
+                (rows.into_iter().map(Ok), None),
                 expected_count,
                 &module,
                 &mut budget,
@@ -579,5 +642,30 @@ mod tests {
             );
             assert_eq!(result.err().unwrap().to_string(), error);
         }
+    }
+    #[test]
+    fn duration_label_reader_failures_are_not_silently_censored() {
+        let mut request = request();
+        request.target = NativeTickTargetV1::FixedEventTime {
+            horizon_ns: counter(10).unwrap(),
+        };
+        let wasm = model(0);
+        let module = SignalModule::new(&wasm, false).unwrap();
+        let rows = super::super::cohorts(&series()["AUD/USD.SIM"], 100).unwrap();
+        let mut labels = std::iter::once(Err(anyhow::anyhow!("label read failed")));
+        let mut budget = Budget {
+            fuel: None,
+            source_rows: 7,
+        };
+        let result = evaluate_asset(
+            &request,
+            (rows.into_iter().map(Ok), Some(&mut labels)),
+            7,
+            &module,
+            &mut budget,
+            &mut std::array::from_fn(|_| Metric::default()),
+        );
+        assert_eq!(result.err().unwrap().to_string(), "label read failed");
+        assert_eq!(budget.source_rows, 5);
     }
 }

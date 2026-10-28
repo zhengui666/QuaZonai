@@ -87,7 +87,7 @@ export interface DatasetView {
   nativeModality?: 'BAR' | 'TRADE_TICK';
   preparation?: DatasetPreparation;
   inputCoverage?: JsonObject;
-  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };
+  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonNs?: string; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS' | 'EVENT_TIME_NS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };
 }
 export interface EquityPoint { at: string; value: string | null }
 export interface TargetWeight { instrumentId: string; weight: string }

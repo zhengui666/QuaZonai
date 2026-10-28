@@ -74,17 +74,25 @@ pub struct NativeTickSamplingV1 {
     pub maximum_cohort_rows: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum NativeTickTargetKindV1 {
-    FixedTradeCohorts,
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum NativeTickTargetV1 {
+    FixedTradeCohorts {
+        horizon_cohorts: u32,
+    },
+    /// First complete same-instrument cohort at or after t + horizon_ns.
+    FixedEventTime {
+        horizon_ns: DbCounter,
+    },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NativeTickTargetV1 {
-    pub kind: NativeTickTargetKindV1,
-    pub horizon_cohorts: u32,
+impl NativeTickTargetV1 {
+    pub fn label_method(&self) -> &'static str {
+        match self {
+            Self::FixedTradeCohorts { .. } => "FIXED_TRADE_COHORTS: VWAP(j+H)/VWAP(j)-1; same instrument; no labels supplied to model",
+            Self::FixedEventTime { .. } => "FIXED_EVENT_TIME: VWAP(first complete same-instrument cohort with event >= t+horizon_ns)/VWAP(t)-1; actual span may exceed horizon; no labels supplied to model; not executable price",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
