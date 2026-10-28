@@ -14,8 +14,9 @@ import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { strategyMembers } from '../../research/src/strategy.ts';
 import { compileWasm, iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { replayTickEconomic } from '../../research/plugins/tick-economic.ts';
-import { NativeRemoteUncertainty, remoteNativeExecutionReceipt, retainNativeRemoteUncertainty, validateRemoteTarget, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { NativeRemoteUncertainty, waitForRemoteNativeExecutionReceipt, retainNativeRemoteUncertainty, validateRemoteTarget, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { executionDiagnostic } from '../../research/src/execution-errors.ts';
+import { assertNativeRemoteTaskSettled } from '../../research/src/native-remote-receipts.ts';
 import type { ServiceConfig } from './config.ts';
 import { boundScienceTarget } from './science-binding.ts';
 import { factorReference } from './factors.ts';
@@ -30,7 +31,12 @@ export const TickEconomicReplays = defineDoc<{ runs: Record<string, JsonObject> 
 type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayView };
 type ReplayInput = { id: string; dataDir: string; catalog: string; target: NativeTarget; model: string; request: NativeTickEconomicRequest };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
-function binding(data: JsonObject) { return data.sealed ? object(data.sealed, 'sealed_data') : data; }
+function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
+  const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
+  if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
+    || canonical(source.request) !== canonical(request) || canonical(configured.request) !== canonical(source.request)) return null;
+  return { request: source.request, catalog: text(configuredData.catalog, 'catalog') };
+}
 
 export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, null>({
   name: 'qz.tick-economic-replay', version: 1, initial: () => ({ phase: 'compute' }),
@@ -48,7 +54,15 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
         if (references.length !== 1 || references[0]!.taskId !== task.id || canonical(references[0]!.target!) !== canonical(task.input.target)) throw new Error('tick_economic_remote_reference_invalid');
         const original = references[0]!;
         if (original.status === 'REJECTED') throw new Error(text(original.error, 'native_admission_error'));
-        const receipt = await remoteNativeExecutionReceipt(validateRemoteTarget(original.target), text(original.requestId, 'native_request_id'), ctx.abortSignal ?? runtime.signal);
+        const receipt = await waitForRemoteNativeExecutionReceipt(validateRemoteTarget(original.target), text(original.requestId, 'native_request_id'), ctx.abortSignal ?? runtime.signal);
+        if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(receipt.status)) await runtime.commit(async tx => {
+          const native = await tx.doc(NativeRemoteUncertainty, task.conversationId, String(task.id), null);
+          const reference = native.requests.find(row => row.requestId === original.requestId && row.taskId === task.id)!;
+          reference.status = receipt.status; reference.error = receipt.status === 'FAILED' ? 'nautilus_execution_failed' : null;
+          return undefined;
+        }, ctx);
+        if (receipt.status === 'FAILED') throw new Error(receipt.error);
+        if (receipt.status === 'CANCELLED') throw new Error('nautilus_execution_cancelled');
         if (receipt.status !== 'COMPLETED') throw new Error('tick_economic_remote_execution_unsettled');
         result = validateNativeTickEconomicResult(receipt.result);
         if (canonical(result.request) !== canonical(task.input.request)) throw new Error('tick_economic_result_request_mismatch');
@@ -78,7 +92,13 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
   } },
   async abort(task, runtime, ctx) {
     await runtime.commit(async tx => {
-      fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!).view.status = 'STOPPED';
+      const view = fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!).view;
+      view.status = 'STOPPED'; view.error = null;
+      try { await assertNativeRemoteTaskSettled(tx, task.conversationId, task.id); }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== 'native_remote_execution_unsettled') throw error;
+        view.error = 'tick_economic_local_stop_remote_receipt_unsettled';
+      }
       return { status: 'terminal', outcome: { status: 'aborted' } };
     }, ctx);
   },
@@ -104,9 +124,9 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
         if (canonical(existing.original) !== canonical(input)) throw new Problem('request_id_conflict', 409);
         return json(existing.view) as unknown as TickEconomicReplayView;
       }
-    const dataset = config.datasets.find(row => row.id === input.datasetId);
-    if (!dataset) throw new Problem('dataset_not_found', 404);
-    if (!dataset.ready || !dataset.preparation?.nativePrepared) throw new Problem('dataset_not_ready', 409);
+      const dataset = config.datasets.find(row => row.id === input.datasetId);
+      if (!dataset) throw new Problem('dataset_not_found', 404);
+      if (!dataset.ready || !dataset.preparation?.nativePrepared) throw new Problem('dataset_not_ready', 409);
       const application = await tx.doc(Application); assertBusinessAdmission(application);
       const study = await tx.doc(Study, reference.researchId as ConversationId);
       if (!study.input || study.deletedAt || study.deletedFactors?.[input.factorId]) throw new Problem('factor_not_found', 404);
@@ -118,17 +138,17 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       if (!trial || trial.status !== 'COMPUTED' || !trial.result) throw new Problem('tick_economic_computed_factor_required', 422);
       const members = strategyMembers(object(trial.proposal));
       if (members.length !== 1 || reference.memberIndex !== 0) throw new Problem('tick_economic_single_factor_required', 422);
-      const source = nativeResearchInput(binding(study.input.data));
-      const configured = nativeResearchInput(binding(dataset.data));
-      if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
-        || canonical(source.request) !== canonical(input.request.research) || canonical(configured.request) !== canonical(source.request)) throw new Problem('tick_economic_original_request_mismatch', 409);
+      const source = matchingBinding(study.input.data, dataset.data, input.request.research)
+        ?? (study.input.data.sealed && dataset.data.sealed
+          ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research) : null);
+      if (!source) throw new Problem('tick_economic_original_request_mismatch', 409);
       const native = object(trial.result);
       const coverage = object(native.coverage, 'native_coverage');
       if (canonical(native.request!) !== canonical(iterationRequest(study.input.data)) || coverage.modality !== 'TRADE_TICK'
         || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
         || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
       const id = randomUUID();
-      const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: text(binding(dataset.data).catalog, 'catalog'),
+      const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: source.catalog,
         model: members[0]!.model, request: input.request, target: boundScienceTarget(config, study.input.data) },
       { conversationId: reference.researchId as ConversationId, ownership: { kind: 'conversation' } });
       const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId, factorId: input.factorId, taskId,

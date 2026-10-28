@@ -251,3 +251,25 @@ test('delete commands retain exact original identities, send once without bodies
     for (const line of [/pm list \| get ID \| delete ID/, /research models.*delete ID/, /factor list \| get ID \| delete ID/, /portfolio build.*delete ID/]) assert.match(help, line);
   } finally { await config.close(); await api.close(); }
 });
+
+
+test('economic tick CLI submits original bytes and reads the opaque replay through existing device auth', async () => {
+  const requests: { method: string; path: string; body: string }[] = [];
+  const api = await server((request, response, body) => {
+    assert.equal(request.headers.authorization, `Bearer ${fakeToken}`);
+    assert.equal(request.headers['x-quazonai-cli'], '1');
+    requests.push({ method: request.method!, path: request.url!, body });
+    json(response, { id: 'replay:original', status: 'QUEUED' });
+  });
+  const config = await configuration(api.origin);
+  try {
+    const body = '{\n "requestId":"original-economic", "datasetId":"ticks", "factorId":"r1.t2.m0", "request":{"scenario":{"initial_usdt":"3000.000000000000000001"}}\n}\n';
+    const file = join(config.directory, 'economic.json'); await writeFile(file, body);
+    await run(['portfolio', 'replay-ticks', '--file', file], () => {});
+    await run(['portfolio', 'tick-replay', 'replay:original'], () => {});
+    assert.deepEqual(requests, [
+      { method: 'POST', path: '/api/v3/tick-economic-replays', body },
+      { method: 'GET', path: '/api/v3/tick-economic-replays/replay%3Aoriginal', body: '' },
+    ]);
+  } finally { await config.close(); await api.close(); }
+});

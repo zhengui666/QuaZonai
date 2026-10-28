@@ -168,9 +168,26 @@ function receipt(value: NativeJson, requestId: string): NativeExecutionReceipt {
 
 /** Read only the receipt for this original invocation and retained instance.
  * This does not submit or cancel any remote execution. */
-export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal: AbortSignal): Promise<NativeExecutionReceipt> {
+export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal): Promise<NativeExecutionReceipt> {
   if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
+}
+
+/** Poll only an original receipt. Unknown/missing outcomes never authorize a new POST. */
+export async function waitForRemoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal,
+  initial?: NativeExecutionReceipt): Promise<NativeExecutionReceipt> {
+  try {
+    let state = initial ?? await remoteNativeExecutionReceipt(target, requestId, signal);
+    while (state.status === 'RUNNING') {
+      await setTimeout(100, undefined, { signal });
+      state = await remoteNativeExecutionReceipt(target, requestId, signal);
+    }
+    if (state.status === 'UNKNOWN') throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target);
+    return state;
+  } catch (error) {
+    if (signal?.aborted || error instanceof RemoteUncertaintyError) throw error;
+    throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error);
+  }
 }
 
 async function attachments(original: string[]): Promise<{ args: string[]; files: Record<string, string> }> {
@@ -226,14 +243,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       try { state = receipt(await remoteRequest(target, path, 'GET', undefined, context.abortSignal), requestId); }
       catch { throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error); }
     }
-    while (state.status === 'RUNNING') {
-      await setTimeout(100, undefined, { signal: context.abortSignal });
-      try { state = receipt(await remoteRequest(target, path, 'GET', undefined, context.abortSignal), requestId); }
-      catch (error) {
-        if (context.abortSignal?.aborted) throw error;
-        throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error);
-      }
-    }
+    state = await waitForRemoteNativeExecutionReceipt(target, requestId, context.abortSignal, state);
     if (owner && !owner.runtime.signal.aborted && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(state.status)) {
       await retainRemoteReference({ ...reference, status: state.status, error: state.status === 'FAILED' ? 'nautilus_execution_failed' : null }, owner);
     }

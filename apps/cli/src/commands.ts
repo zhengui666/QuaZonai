@@ -30,6 +30,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID | delete ID
   portfolio capacity ID --file ASSUMPTIONS.json
+  portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
   capital status OBSERVATION_ID | preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
@@ -193,7 +194,11 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       const input = file.body as unknown as PortfolioStart;
       if (typeof input.capital !== 'string') throw new CliError('capital_decimal_string_required');
       body = file.bytes; method = 'POST'; path = '/portfolios';
-    } else if (action === 'list') path = '/portfolios';
+    } else if (action === 'replay-ticks') {
+      const file = await fileBody(values.file); requestId(file.body, values['request-id']);
+      body = file.bytes; method = 'POST'; path = '/tick-economic-replays';
+    } else if (action === 'tick-replay') path = `/tick-economic-replays/${resourceId(id)}`;
+    else if (action === 'list') path = '/portfolios';
     else if (action === 'get' || action === 'delete') { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
     else if (action === 'capacity') {
       const file = await fileBody(values.file);

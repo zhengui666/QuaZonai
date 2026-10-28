@@ -431,6 +431,39 @@ fn definitions(root: &Path) -> Result<Vec<InstrumentAny>> {
     )
 }
 
+/// Preserve the optional original funding sidecars through native preparation.
+/// Decoding remains the economic runner's job; preparation does not qualify rates.
+pub(crate) fn funding_sources(
+    root: &Path,
+    request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+) -> Result<Vec<(String, u64)>> {
+    let names = ["funding-rates.jsonl", "funding-rates.manifest.json"];
+    if names.iter().all(|name| !root.join(name).exists()) {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for name in names {
+        let state = std::fs::symlink_metadata(root.join(name))?;
+        ensure!(
+            state.is_file() && !state.file_type().is_symlink(),
+            "ECONOMIC_FUNDING_REGULAR_SOURCE_REQUIRED"
+        );
+        files.push((name.into(), state.len()));
+    }
+    ensure!(
+        files[1].1 <= 16 * 1024 * 1024,
+        "ECONOMIC_FUNDING_MANIFEST_LIMIT"
+    );
+    let manifest: FundingManifest = serde_json::from_reader(File::open(root.join(names[1]))?)?;
+    ensure!(
+        manifest.source_revision == request.input.source_revision
+            && manifest.start_ns <= request.input.event_start_ns
+            && manifest.end_ns >= request.input.event_end_ns,
+        "ECONOMIC_FUNDING_COVERAGE_INVALID"
+    );
+    Ok(files)
+}
+
 /// Model and research definition are the retained candidate's, never an unlogged formula.
 pub fn replay(
     root: &Path,
@@ -869,11 +902,13 @@ pub fn replay(
     Ok(NativeTickEconomicResultV1 {
         schema_version: SchemaV1, request: request.clone(), model: "SEGREGATED_COHORT_MARK_ESTIMATE_V1".into(),
         methods: BTreeMap::from([
-            ("execution".into(),"Derived cohort simulation bars OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target fills at first observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation.".into()),
+            ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
+            ("execution".into(),"Derived cohort simulation bars OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation; native bar liquidity can fill less, and unchanged quantized marks do not imply a refreshed observed book. Ties use deterministic native ordering, not original queue evidence.".into()),
             ("policy".into(),"Fixed global rebalance grid; absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(),"Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into()),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
+            ("statistics".into(),"UTC daily total-wealth net returns; risk-free zero, sample-standard-deviation Sharpe times sqrt(365). Regime conditional annualization exp(365*mean(log(1+r)))-1, not concatenated-calendar CAGR; missing returns excluded and counted.".into()),
             ("precision".into(),"Native USD-quoted perp PnL uses USD 2-decimal Money, explicitly swept in nominal quote units to USDC; no instrument rewrite. Full USD minor unit 0.01 times all perp fills conservatively bounds native PnL rounding, not VWAP/price precision or execution-model error.".into()),
         ]),
         coverage: cache.coverage,

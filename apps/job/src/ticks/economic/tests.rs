@@ -98,3 +98,77 @@ fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_el
     assert_eq!(train.sharpe_365, Some(0.0));
     assert!(train.conditional_annualized_return_365.unwrap() < 0.0);
 }
+
+#[test]
+fn bridge_conversion_respects_native_lot_and_minimum_without_spending_dust() {
+    use nautilus_model::{
+        identifiers::{InstrumentId, Symbol},
+        instruments::CurrencyPair,
+        types::{Price, Quantity},
+    };
+    let bridge = InstrumentAny::CurrencyPair(
+        CurrencyPair::builder()
+            .instrument_id(InstrumentId::from("USDT-USDC.HYPERLIQUID"))
+            .raw_symbol(Symbol::new("@test-fx"))
+            .base_currency(Currency::USDT())
+            .quote_currency(Currency::USDC())
+            .price_precision(4)
+            .size_precision(2)
+            .price_increment(Price::from("0.0001"))
+            .size_increment(Quantity::from("0.01"))
+            .min_notional(Money::from("10 USDC"))
+            .ts_event(0_u64.into())
+            .ts_init(0_u64.into())
+            .build()
+            .unwrap(),
+    );
+    assert_eq!(
+        conversion_quantity(
+            Decimal::from(3000),
+            Decimal::new(1, 3),
+            Decimal::ONE,
+            &bridge
+        )
+        .unwrap(),
+        Decimal::ZERO
+    );
+    let spent = conversion_quantity(
+        Decimal::from(3000),
+        Decimal::new(20555, 3),
+        Decimal::ONE,
+        &bridge,
+    )
+    .unwrap();
+    assert_eq!(spent, Decimal::new(2055, 2));
+    let dust = Decimal::new(1, 3);
+    assert_eq!(
+        conversion_quantity(dust, dust, Decimal::ONE, &bridge).unwrap(),
+        Decimal::ZERO
+    );
+    assert_eq!(Decimal::from(3000) - spent, Decimal::new(297945, 2));
+}
+
+#[test]
+fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
+    let dir = tempfile::tempdir().unwrap();
+    let request = request();
+    assert!(
+        funding_sources(dir.path(), &request.research)
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
+    assert!(funding_sources(dir.path(), &request.research).is_err());
+    let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
+    let path = dir.path().join("funding-rates.manifest.json");
+    std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(
+        funding_sources(dir.path(), &request.research)
+            .unwrap()
+            .len(),
+        2
+    );
+    manifest["end_ns"] = json!("1");
+    std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert!(funding_sources(dir.path(), &request.research).is_err());
+}

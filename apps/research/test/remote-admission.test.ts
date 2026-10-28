@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeRemoteUncertainty, executeNativeValue, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { NativeRemoteUncertainty, executeNativeValue, waitForRemoteNativeExecutionReceipt, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
@@ -88,4 +88,40 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       await rm(directory, { recursive: true, force: true });
     }
   }
+});
+
+
+test('original receipt polling waits for completion, retains missing/unknown handles and honors abort without POST', async () => {
+  const requestId = 'b'.repeat(64); let mode = 'complete'; let reads = 0; let writes = 0;
+  const server = createServer((request, response) => {
+    if (request.method !== 'GET') writes++;
+    assert.equal(request.url, `/v1/executions/${requestId}`); reads++;
+    response.setHeader('content-type', 'application/json');
+    if (mode === 'missing') { response.statusCode = 404; response.end('{"error":"not_found"}'); return; }
+    const status = mode === 'unknown' ? 'UNKNOWN' : mode === 'failed' ? 'FAILED' : mode === 'cancelled' ? 'CANCELLED' : mode === 'abort' || reads < 3 ? 'RUNNING' : 'COMPLETED';
+    response.end(JSON.stringify({ schemaVersion: 1, requestId, status,
+      ...(status === 'COMPLETED' ? { result: { original: true } } : ['UNKNOWN', 'FAILED'].includes(status) ? { error: 'native_outcome_unknown' } : {}) }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const target = { id: 'original-receipt-only', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  try {
+    const result = await waitForRemoteNativeExecutionReceipt(target, requestId);
+    assert.equal(result.status, 'COMPLETED'); assert.equal(reads, 3);
+    for (const next of ['missing', 'unknown']) {
+      mode = next; reads = 0;
+      await assert.rejects(waitForRemoteNativeExecutionReceipt(target, requestId), new RegExp(`nautilus_execution_unknown:${requestId}`));
+      assert.equal(reads, 1);
+    }
+    for (const terminal of ['failed', 'cancelled']) {
+      mode = terminal; reads = 0;
+      assert.equal((await waitForRemoteNativeExecutionReceipt(target, requestId)).status, terminal.toUpperCase()); assert.equal(reads, 1);
+    }
+    mode = 'abort'; reads = 0;
+    const controller = new AbortController();
+    const waiting = waitForRemoteNativeExecutionReceipt(target, requestId, controller.signal);
+    const timer = setTimeout(() => controller.abort(), 150);
+    try { await assert.rejects(waiting, error => controller.signal.aborted && error instanceof Error && error.name === 'AbortError'); }
+    finally { clearTimeout(timer); }
+    assert.equal(writes, 0);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

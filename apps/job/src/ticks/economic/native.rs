@@ -70,7 +70,7 @@ impl FeeModel for ScenarioFee {
         } else {
             instrument.settlement_currency()
         };
-        Money::from_decimal(amount, currency)
+        Ok(Money::from_decimal(amount, currency)?)
     }
 }
 
@@ -89,10 +89,10 @@ impl ScenarioMargin {
     ) -> Result<Money> {
         let notional = arithmetic(quantity.as_decimal().checked_mul(price.as_decimal()))?;
         let notional = arithmetic(notional.checked_mul(instrument.multiplier().as_decimal()))?;
-        Money::from_decimal(
+        Ok(Money::from_decimal(
             arithmetic(notional.checked_mul(fraction))?,
             instrument.settlement_currency(),
-        )
+        )?)
     }
 }
 impl MarginModel for ScenarioMargin {
@@ -534,7 +534,7 @@ impl NativeLedger {
                 .starting_balances(
                     balances
                         .into_iter()
-                        .map(|(_, (c, v))| Money::from_decimal(v, c))
+                        .map(|(_, (c, v))| Money::from_decimal(v, c).map_err(anyhow::Error::from))
                         .collect::<Result<Vec<_>>>()?,
                 )
                 .default_leverage(Decimal::ONE)

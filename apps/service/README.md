@@ -43,11 +43,15 @@ Owner-authenticated `POST /api/v3/tick-economic-replays` accepts
 `{requestId, datasetId, factorId, request: NativeTickEconomicRequest}` and returns
 `202` with an original replay `id` and Durable `taskId`. Read it with
 `GET /api/v3/tick-economic-replays/:id`. `quazonai schema show TickEconomicReplayStart`
-and `NativeTickEconomicRequest` expose the source DTOs.
+and `NativeTickEconomicRequest` expose the source DTOs. The authenticated CLI callers are
+`quazonai portfolio replay-ticks --file REQUEST.json` and
+`quazonai portfolio tick-replay REPLAY_ID`.
 
 The factor must be a retained, computed single-model trial of that admitted
-dataset; final selection is optional. The request retains its original prepared
-full tick input and feature parameters. All capital, cash/perpetual allocation,
+dataset; final selection is optional. The request must exactly match its original prepared primary or sealed tick input
+and feature parameters, and execution uses that matching view’s catalog. Candidate
+comparisons use primary TRAIN/VALIDATION; the operator records the chosen candidate
+before requesting its full sealed replay. All capital, cash/perpetual allocation,
 costs, participation, margin, clock and latency assumptions are explicit exact
 strings. Funding uses a registered catalog-relative JSONL source, and the worker
 validates the mounted catalog. The original model is compiled and attached through

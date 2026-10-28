@@ -1,10 +1,10 @@
 //! Derived exact-cohort marks, with bounded range reads; never a native TradeTick catalog.
 use super::{Cohort, NativeTradeTickCoverageV1, NativeTradeTickFactorEvaluationRequestV1};
-use anyhow::{ensure, Context, Result};
-use contracts::{ticks::*, DbCounter, SchemaV1};
+use anyhow::{Context, Result, ensure};
+use contracts::{DbCounter, SchemaV1, ticks::*};
 use nautilus_model::{data::TradeTick, identifiers::TradeId};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
@@ -987,11 +987,13 @@ pub fn concatenate(
         result.files.push(record);
     }
     ensure!(result.cohort_count.get() > 0, "TICK_CACHE_EMPTY_SELECTION");
-    source_report["native_files"] = json!(result
-        .files
-        .iter()
-        .map(|file| json!({"path": file.path, "size": file.bytes.get()}))
-        .collect::<Vec<_>>());
+    source_report["native_files"] = json!(
+        result
+            .files
+            .iter()
+            .map(|file| json!({"path": file.path, "size": file.bytes.get()}))
+            .collect::<Vec<_>>()
+    );
     source_report["native_records"] = json!({"cohorts": result.files.iter().map(|file|
         (file.instrument_id.clone(), file.cohort_count.get())).collect::<BTreeMap<_, _>>()});
     source_report["readback_records"] = json!(result.cohort_count.get());
@@ -1023,6 +1025,7 @@ pub fn prepare_views(
 ) -> Result<Value> {
     let input = load(source, request)?;
     let source = source.canonicalize()?;
+    let economic_sources = super::economic::funding_sources(&source, request)?;
     let parent = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1089,6 +1092,11 @@ pub fn prepare_views(
         .map(|file| file.bytes.get())
         .sum::<u64>()
         .checked_mul(2)
+        .and_then(|bytes| {
+            economic_sources.iter().try_fold(bytes, |total, (_, size)| {
+                total.checked_add(size.checked_mul(2)?)
+            })
+        })
         .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
     let mut research_request = request.clone();
     research_request.clip_end(request.validation_end_ns);
@@ -1097,6 +1105,14 @@ pub fn prepare_views(
         "catalog_format":format!("QZ_{}", full.representation),"request":request,"research_request":research_request,
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
         "maximum_output_bytes":maximum_output_bytes.to_string(),"output_bytes":"0"});
+    if !economic_sources.is_empty() {
+        metadata["economic_sources"] = json!(
+            economic_sources
+                .iter()
+                .map(|(path, bytes)| json!({"path":path,"bytes":bytes.to_string()}))
+                .collect::<Vec<_>>()
+        );
+    }
     let views_bytes =
         u64::try_from(serde_json::to_vec(&full)?.len() + serde_json::to_vec(&primary)?.len() + 2)?;
     loop {
@@ -1126,6 +1142,9 @@ pub fn prepare_views(
             fs::hard_link(cache_path(&source, &file.path)?, target)?;
         }
         publish(&root.join(MANIFEST_FILE), manifest)?;
+        for (name, _) in &economic_sources {
+            fs::hard_link(cache_path(&source, name)?, root.join(name))?;
+        }
     }
     load(&output.join("research/catalog"), &research_request)?;
     load(&output.join("independent/catalog"), request)?;
@@ -1268,10 +1287,12 @@ mod resource_tests {
                 assert!(builder.buffered_bytes < BUFFERED_BYTES);
             }
         }
-        assert!(builder
-            .outputs
-            .values()
-            .any(|output| fs::metadata(&output.path).unwrap().len() > 0));
+        assert!(
+            builder
+                .outputs
+                .values()
+                .any(|output| fs::metadata(&output.path).unwrap().len() > 0)
+        );
         #[cfg(target_os = "linux")]
         for entry in fs::read_dir("/proc/self/fd").unwrap() {
             if let Ok(path) = fs::read_link(entry.unwrap().path()) {
@@ -1284,9 +1305,11 @@ mod resource_tests {
         let manifest = builder.seal("fixed-source", 0, 260).unwrap();
         assert_eq!(manifest.trade_count.get(), 1200 * (101 + 257));
         assert_eq!(manifest.cohort_count.get(), 1200 * 259);
-        assert!(builder
-            .outputs
-            .values()
-            .all(|output| output.pending.capacity() == 0 && output.expected.capacity() == 0));
+        assert!(
+            builder
+                .outputs
+                .values()
+                .all(|output| output.pending.capacity() == 0 && output.expected.capacity() == 0)
+        );
     }
 }
