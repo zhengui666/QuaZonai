@@ -797,7 +797,7 @@ pub fn concatenate(
     let root = output.join("catalog");
     fs::create_dir_all(root.join("data/cohorts"))?;
     let mut combined: Option<Manifest> = None;
-    let mut outputs: BTreeMap<String, (BufWriter<File>, CacheFile)> = BTreeMap::new();
+    let mut outputs: BTreeMap<String, CacheFile> = BTreeMap::new();
     let mut written = 0_u64;
     for unit in units {
         let unit = crate::catalog::catalog_root(unit)?;
@@ -860,26 +860,23 @@ pub fn concatenate(
                         &record.instrument_id
                     )
                 );
-                let file = OpenOptions::new()
+                OpenOptions::new()
                     .write(true)
                     .create_new(true)
                     .open(root.join(&path))?;
                 outputs.insert(
                     record.instrument_id.clone(),
-                    (
-                        BufWriter::with_capacity(WRITE_BATCH, file),
-                        CacheFile {
-                            instrument_id: record.instrument_id.clone(),
-                            path,
-                            bytes: counter(0)?,
-                            byte_start: counter(0)?,
-                            byte_end: counter(0)?,
-                            trade_count: counter(0)?,
-                            cohort_count: counter(0)?,
-                            first_event_ns: None,
-                            last_event_ns: None,
-                        },
-                    ),
+                    CacheFile {
+                        instrument_id: record.instrument_id.clone(),
+                        path,
+                        bytes: counter(0)?,
+                        byte_start: counter(0)?,
+                        byte_end: counter(0)?,
+                        trade_count: counter(0)?,
+                        cohort_count: counter(0)?,
+                        first_event_ns: None,
+                        last_event_ns: None,
+                    },
                 );
             }
             let reader = CacheReader {
@@ -895,7 +892,13 @@ pub fn concatenate(
                 last: None,
                 finished: false,
             };
-            let (writer, target) = outputs.get_mut(&record.instrument_id).unwrap();
+            let target = outputs.get_mut(&record.instrument_id).unwrap();
+            let mut writer = BufWriter::with_capacity(
+                WRITE_BATCH,
+                OpenOptions::new()
+                    .append(true)
+                    .open(root.join(&target.path))?,
+            );
             for cohort in reader {
                 let cohort = cohort?;
                 ensure!(
@@ -912,6 +915,8 @@ pub fn concatenate(
                 target.first_event_ns.get_or_insert(counter(cohort.event)?);
                 target.last_event_ns = Some(counter(cohort.event)?);
             }
+            writer.flush()?;
+            drop(writer);
             target.bytes = counter(
                 target
                     .bytes
@@ -947,9 +952,8 @@ pub fn concatenate(
         );
     }
     let mut result = combined.unwrap();
-    for (_, (mut writer, record)) in outputs {
-        writer.flush()?;
-        writer.get_ref().sync_all()?;
+    for (_, record) in outputs {
+        File::open(root.join(&record.path))?.sync_all()?;
         result.trade_count = counter(
             result
                 .trade_count

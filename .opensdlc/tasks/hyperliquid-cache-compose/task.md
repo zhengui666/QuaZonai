@@ -22,4 +22,4 @@ Coordinator owns `bin/market/compose.rs`, documentation and integration. The CLI
 <a id="verification"></a>
 ## Verification
 
-Implementation authored while the parent's optimized build owns the shared Cargo target. No compilation or tests have run yet. Planned existing tests compare actual two-day CSV imports against monolithic imports for both formats, including overlap and partial-day rejection; cache tests cover exact values and full-frame validation. Final CI and immutable-head review remain required.
+After the parent optimized build released the shared target, actual local checks passed: all 27 tick tests and all 25 market-history CLI tests. These include actual two-day CSV imports composed versus monolithic imports for both formats, overlap/partial-day rejection and exact frame preservation including signed zero. Formatting/diff checks and the independent immutable-head Rust review passed. Current-head CI and GitHub Codex review remain required; no full source conversion or trial was submitted.
