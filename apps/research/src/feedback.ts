@@ -25,8 +25,15 @@ export function modelFeedback(result: JsonObject): JsonObject {
     const request = record(result.request);
     return { ...result,
       ...(request?.evaluation_regimes ? { request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), String(request.validation_end_ns)) } : {}),
-      partitions: (Array.isArray(result.partitions) ? result.partitions : []).filter(item => ['TRAIN', 'VALIDATION'].includes(String(record(item)?.partition))),
-      regime_partitions: (Array.isArray(result.regime_partitions) ? result.regime_partitions : []).filter(item => ['TRAIN', 'VALIDATION'].includes(String(record(item)?.partition))) };
+      partitions: partitions(result.partitions),
+      regime_partitions: (Array.isArray(result.regime_partitions) ? result.regime_partitions : []).flatMap(item => {
+        const partition = record(item);
+        if (!partition || !['TRAIN', 'VALIDATION'].includes(String(partition.partition))) return [];
+        return [{ ...scalars(partition), regimes: (Array.isArray(partition.regimes) ? partition.regimes : []).map(item => {
+          const regime = record(item) ?? {};
+          return { ...scalars(regime), metric: regime.metric ?? null, label_spans: regime.label_spans ?? null };
+        }) }];
+      }) };
   }
   if (result.portfolio === undefined) return result;
   const portfolio = record(result.portfolio);

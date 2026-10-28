@@ -81,12 +81,15 @@ test('regime iteration and feedback preserve evaluation data without exposing se
   assert.equal(JSON.stringify(brief).includes('PRIVATE_HELDOUT'), false);
   assert.equal(((brief.data.feature_model as JsonObject).features as string[]).length, 8);
   const result: JsonObject = { request, partitions: [{ partition: 'TRAIN' }, { partition: 'VALIDATION' }, { partition: 'HELDOUT', secret: 'OWNER_ONLY' }],
-    regime_partitions: [{ partition: 'TRAIN', regimes: [{ regime: 'UNKNOWN', metric: { counts: { observations: '0' }, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES' } } }] },
+    regime_partitions: [{ partition: 'TRAIN', regimes: [{ regime: 'UNKNOWN', observed_assets: '0', assets: [{ instrument_id: 'OWNER_ASSET_DETAIL' }], metric: { counts: { observations: '0' }, pearson_ic: { value: null, status: 'INSUFFICIENT_SAMPLES' } } }] },
       { partition: 'VALIDATION', regimes: [{ regime: 'BULL' }] }, { partition: 'HELDOUT', secret: 'OWNER_ONLY' }] };
   const original = structuredClone(result); const feedback = modelFeedback(result);
   assert.equal(JSON.stringify(feedback).includes('OWNER_ONLY'), false);
   assert.equal(JSON.stringify(feedback).includes('91314159.987654321'), false);
-  assert.deepEqual((feedback.regime_partitions as JsonObject[])[0], (result.regime_partitions as JsonObject[])[0]);
+  assert.equal(JSON.stringify(feedback).includes('OWNER_ASSET_DETAIL'), false);
+  const projected = ((feedback.regime_partitions as JsonObject[])[0]!.regimes as JsonObject[])[0]!;
+  assert.equal(projected.regime, 'UNKNOWN'); assert.equal(projected.observed_assets, '0');
+  assert.deepEqual(projected.metric, (((result.regime_partitions as JsonObject[])[0]!.regimes as JsonObject[])[0]!).metric);
   assert.deepEqual(result, original); assert.deepEqual(request, before);
 });
 

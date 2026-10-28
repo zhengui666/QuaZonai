@@ -466,6 +466,7 @@ fn evaluate_asset(
                 pooled,
                 partition,
                 None,
+                None,
                 Some(NativeFactorExclusionReasonV1::IndicatorWarmup),
                 &mut groups,
                 current.event,
