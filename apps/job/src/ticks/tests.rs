@@ -271,30 +271,100 @@ fn derived_cache_prepares_bounded_views_and_preserves_native_factor_results() {
         } else {
             &independent
         };
-        for slot in 0..7 {
-            let wasm = model(slot);
-            let expected = evaluate_series(&native, selected.clone(), &wasm, true).unwrap();
-            let actual = evaluate(root, &cached, &wasm, true).unwrap();
-            assert!(actual.points.is_none());
-            assert_eq!(actual.consumed_fuel, expected.consumed_fuel);
-            assert_eq!(actual.coverage.trade_count, expected.coverage.trade_count);
-            assert_eq!(actual.coverage.cohort_count, expected.coverage.cohort_count);
-            for (actual, expected) in actual.partitions.iter().zip(&expected.partitions) {
-                assert_eq!(
-                    serde_json::to_value(&actual.metric.counts).unwrap(),
-                    serde_json::to_value(&expected.metric.counts).unwrap()
-                );
-                assert_eq!(
-                    actual.metric.pearson_ic.status,
-                    expected.metric.pearson_ic.status
-                );
-                if let (Some(actual), Some(expected)) = (
-                    actual.metric.pearson_ic.value,
-                    expected.metric.pearson_ic.value,
-                ) {
-                    assert!((actual - expected).abs() <= 1e-12);
+        for target in [
+            NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts: 1 },
+            NativeTickTargetV1::FixedEventTime {
+                horizon_ns: counter(10).unwrap(),
+            },
+            NativeTickTargetV1::FixedEventTime {
+                horizon_ns: counter(25).unwrap(),
+            },
+        ] {
+            native.target = target;
+            cached.target = target;
+            for slot in 0..7 {
+                let wasm = model(slot);
+                let expected = evaluate_series(&native, selected.clone(), &wasm, true).unwrap();
+                let actual = evaluate(root, &cached, &wasm, true).unwrap();
+                assert!(actual.points.is_none());
+                assert_eq!(actual.consumed_fuel, expected.consumed_fuel);
+                assert_eq!(actual.coverage.trade_count, expected.coverage.trade_count);
+                assert_eq!(actual.coverage.cohort_count, expected.coverage.cohort_count);
+                for (actual, expected) in actual.partitions.iter().zip(&expected.partitions) {
+                    assert_eq!(
+                        serde_json::to_value(&actual.metric.counts).unwrap(),
+                        serde_json::to_value(&expected.metric.counts).unwrap()
+                    );
+                    assert_eq!(
+                        actual.metric.pearson_ic.status,
+                        expected.metric.pearson_ic.status
+                    );
+                    if let (Some(actual), Some(expected)) = (
+                        actual.metric.pearson_ic.value,
+                        expected.metric.pearson_ic.value,
+                    ) {
+                        assert!((actual - expected).abs() <= 1e-12);
+                    }
                 }
             }
         }
     }
+}
+
+#[test]
+fn duration_labels_use_first_complete_event_and_never_change_prior_predictions() {
+    let mut req = request();
+    req.target = NativeTickTargetV1::FixedEventTime {
+        horizon_ns: counter(10).unwrap(),
+    };
+    let mut data = series();
+    for (trade, time) in data
+        .get_mut("AUD/USD.SIM")
+        .unwrap()
+        .iter_mut()
+        .zip([10_u64, 20, 21, 29, 40, 50, 70])
+    {
+        trade.ts_event = time.into();
+        trade.ts_init = time.into();
+    }
+    let points = evaluate_series(&req, data.clone(), &model(0), false)
+        .unwrap()
+        .points
+        .unwrap();
+    let actual: Vec<_> = points
+        .iter()
+        .map(|p| p.label_event_ns.map(|v| v.get()))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![None, Some(40), Some(40), Some(40), Some(50), Some(70), None]
+    );
+    assert_eq!(
+        points[1].exclusion_reason,
+        Some(NativeFactorExclusionReasonV1::LabelCrossesPartition)
+    );
+    assert_eq!(
+        points[4].exclusion_reason,
+        Some(NativeFactorExclusionReasonV1::LabelCrossesPartition)
+    );
+    assert!(points[5].exclusion_reason.is_none());
+    assert_eq!(
+        points[6].exclusion_reason,
+        Some(NativeFactorExclusionReasonV1::LabelNotComplete)
+    );
+    data.get_mut("AUD/USD.SIM").unwrap()[4].price = Price::from("10000");
+    let changed = evaluate_series(&req, data, &model(0), false)
+        .unwrap()
+        .points
+        .unwrap();
+    for i in 0..4 {
+        assert_eq!(
+            points[i].observation.forecast,
+            changed[i].observation.forecast
+        );
+    }
+    assert_ne!(
+        points[1].observation.label_return,
+        changed[1].observation.label_return
+    );
 }

@@ -183,6 +183,7 @@ fn evaluate_series(
             ExponentialMovingAverage::new(request.parameters.fast_period_cohorts as usize, None);
         let mut slow =
             ExponentialMovingAverage::new(request.parameters.slow_period_cohorts as usize, None);
+        let mut future_index = 0;
         for (index, current) in cohorts.iter().enumerate() {
             fast.update_raw(current.vwap);
             slow.update_raw(current.vwap);
@@ -209,11 +210,28 @@ fn evaluate_series(
                 None
             };
             // The model has returned before any future cohort is used for the label.
-            let future = prediction.and_then(|_| {
-                index
-                    .checked_add(request.target.horizon_cohorts as usize)
-                    .and_then(|future| cohorts.get(future))
-            });
+            let future = if prediction.is_some() {
+                match request.target {
+                    NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts } => index
+                        .checked_add(horizon_cohorts as usize)
+                        .and_then(|future| cohorts.get(future)),
+                    NativeTickTargetV1::FixedEventTime { horizon_ns } => {
+                        let threshold = current
+                            .event
+                            .checked_add(horizon_ns.get())
+                            .ok_or_else(|| anyhow::anyhow!("TICK_LABEL_TIME_RANGE"))?;
+                        while cohorts
+                            .get(future_index)
+                            .is_some_and(|future| future.event < threshold)
+                        {
+                            future_index += 1;
+                        }
+                        cohorts.get(future_index)
+                    }
+                }
+            } else {
+                None
+            };
             let label = future.map(|future| future.vwap / current.vwap - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "TICK_LABEL_NONFINITE");
             let event_ns = counter(current.event)?;
@@ -289,7 +307,7 @@ fn evaluate_series(
         })
     })
     .collect::<Result<Vec<_>>>()?;
-    Ok(NativeTradeTickFactorEvaluationResultV1{schema_version:SchemaV1,request:request.clone(),native_versions:BTreeMap::from([("nautilus-model".into(),"0.63.0".into()),("nautilus-persistence".into(),"0.63.0".into()),("nautilus-indicators".into(),"0.63.0".into()),("wasmi".into(),"2.0.0".into())]),methods:BTreeMap::from([("input".into(),"original native TradeTick; no BAR catalog or simulation".into()),("prediction".into(),crate::feature_model::ABI.into()),("features".into(),FEATURE_SCHEMA.into()),("sampling".into(),"EVENT_TIME_COHORT_V1: complete current cohort visible; earlier selected cohorts only; unknown source sequence".into()),("label".into(),"FIXED_TRADE_COHORTS: VWAP(j+H)/VWAP(j)-1; same instrument; no labels supplied to model".into()),("partitioning".into(),"shared half-open event cuts; cross-boundary labels excluded; warmup stays within selected interval".into()),("qualification".into(),"UNQUALIFIED_EXPLORATORY; event time proxy is not original availability evidence".into()),("ic".into(),"existing ndarray-stats raw pooled Pearson correlation".into())]),consumed_fuel:request.parameters.total_fuel.zip(remaining).map(|(total,left)|counter(total.get()-left)).transpose()?,coverage,partitions,points:(!summary_only).then_some(points)})
+    Ok(NativeTradeTickFactorEvaluationResultV1{schema_version:SchemaV1,request:request.clone(),native_versions:BTreeMap::from([("nautilus-model".into(),"0.63.0".into()),("nautilus-persistence".into(),"0.63.0".into()),("nautilus-indicators".into(),"0.63.0".into()),("wasmi".into(),"2.0.0".into())]),methods:BTreeMap::from([("input".into(),"original native TradeTick; no BAR catalog or simulation".into()),("prediction".into(),crate::feature_model::ABI.into()),("features".into(),FEATURE_SCHEMA.into()),("sampling".into(),"EVENT_TIME_COHORT_V1: complete current cohort visible; earlier selected cohorts only; unknown source sequence".into()),("label".into(),request.target.label_method().into()),("partitioning".into(),"shared half-open event cuts; cross-boundary labels excluded; warmup stays within selected interval".into()),("qualification".into(),"UNQUALIFIED_EXPLORATORY; event time proxy is not original availability evidence".into()),("ic".into(),"existing ndarray-stats raw pooled Pearson correlation".into())]),consumed_fuel:request.parameters.total_fuel.zip(remaining).map(|(total,left)|counter(total.get()-left)).transpose()?,coverage,partitions,points:(!summary_only).then_some(points)})
 }
 
 #[cfg(test)]

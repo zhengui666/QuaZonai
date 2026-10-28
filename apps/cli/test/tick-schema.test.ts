@@ -7,5 +7,6 @@ test('CLI exposes the same explicit native request source used by service and We
   assert.equal(value.entry, 'NativeTickFactorRequest');
   assert.match(value.source!, /modality: 'TRADE_TICK'/);
   assert.match(value.source!, /horizon_cohorts: number/);
+  assert.match(value.source!, /kind: 'FIXED_EVENT_TIME'; horizon_ns: string/);
   assert.match(value.source!, /EVENT_TIME_PROXY_UNVERIFIED/);
 });

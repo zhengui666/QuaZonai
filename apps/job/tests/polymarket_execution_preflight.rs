@@ -491,6 +491,14 @@ fn assert_closed_variants<T: serde::de::DeserializeOwned + serde::Serialize>(
 fn all_tagged_union_schema_variants_match_strict_serde_fields() {
     let export: Value = serde_json::from_str(&contracts::openapi_json().unwrap()).unwrap();
     let schemas = &export["components"]["schemas"];
+    assert_closed_variants::<contracts::ticks::NativeTickTargetV1>(
+        &schemas["NativeTickTargetV1"],
+        "kind",
+        &[
+            json!({"kind":"FIXED_TRADE_COHORTS", "horizon_cohorts":1}),
+            json!({"kind":"FIXED_EVENT_TIME", "horizon_ns":"10000000000"}),
+        ],
+    );
     assert_closed_variants::<PolymarketPreflightQuantityV1>(
         &schemas["PolymarketPreflightQuantityV1"],
         "unit",

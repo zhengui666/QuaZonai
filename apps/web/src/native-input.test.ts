@@ -17,4 +17,15 @@ describe('native input evidence presentation', () => {
     expect(html).toContain('2 个后续成交组'); expect(html).toContain('original-revision');
     expect(html).toContain('900719925474099301'); expect(html).toContain('900719925474099399'); expect(html).not.toContain('次 BAR 观测');
   });
+  it('displays event-time duration exactly without relabeling it as cohorts', () => {
+    for (const [ns, expected] of [['10000000000', '10 秒'], ['60000000000', '60 秒'], ['9007199254740993', '9007199254740993 ns']]) {
+      const html = renderToStaticMarkup(createElement(NativeInputFacts, {
+        settings: { modality: 'TRADE_TICK', instruments: ['BTC.SIM'], inputFamily: 'tick-cohort-v1', horizon: null,
+          horizonNs: ns, horizonUnit: 'EVENT_TIME_NS', partitions: null, strategy: null },
+      }));
+      expect(html).toContain(expected); expect(html).toContain('取首个达标成交组');
+      expect(html).not.toContain('个后续成交组'); expect(html).not.toContain('次 BAR 观测');
+    }
+  });
+
 });

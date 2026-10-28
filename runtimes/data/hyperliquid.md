@@ -38,7 +38,21 @@ Use `catalog-prepare prepare-ticks` with a request whose input explicitly declar
 `"representation":"EVENT_TIME_COHORT_CACHE_V1"` and
 `"maximum_source_rows":"1308222597"`, omitting the legacy `maximum_rows`.
 The old native TradeTick request and its million-row limit remain unchanged.
-Sampling, fixed-cohort horizon and the seven feature slots remain the same.
+Sampling and the seven feature slots remain the same. Both native and cache
+inputs accept the original fixed-cohort target or an explicit event-time target:
+
+```json
+{"kind":"FIXED_EVENT_TIME","horizon_ns":"10000000000"}
+```
+
+Use `"60000000000"` for 60 seconds. The positive nanosecond value stays an exact
+JSON string. The label uses the first complete same-instrument cohort whose
+event is at least `t + horizon_ns`, divided by the current cohort VWAP minus
+one. Its actual event time may be later on sparse markets. No future cohort is
+passed to the feature model. The original
+`{"kind":"FIXED_TRADE_COHORTS","horizon_cohorts":H}` request retains its meaning.
+Duration labels in cache mode use a second monotonic reader and constant label
+memory; this adds a sequential read without counting source rows twice.
 
 ```sh
 target/debug/catalog-prepare prepare-ticks \
@@ -82,10 +96,14 @@ and asset metrics use stable online pooled covariance, with unavailable statuses
 preserved; local IC values are never averaged into a portfolio or global IC.
 
 This path provides exploratory price/quantity/cohort-intensity controls only.
-It does not add signed-flow features, fixed-clock labels, network-jitter
+It does not add signed-flow features, fixed decision-clock sampling, network-jitter
 simulation, tick portfolios, historical funding settlement or execution
-qualification. A cohort horizon is not a fixed holding time, and a VWAP mark is
-not an executable quote. `ready` records operational preparation only.
+qualification. Duration labels permit common event-time prediction horizons,
+not an execution or holding-time guarantee. A cohort horizon is not a fixed
+holding time, and a VWAP mark is not an executable quote. Labels missing a future
+cohort are incomplete; labels reaching a partition end are excluded from that
+partition. Both readers stay inside the declared primary or independent view.
+`ready` records operational preparation only.
 
 ## Native TradeTick preparation
 

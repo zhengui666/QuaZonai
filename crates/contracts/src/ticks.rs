@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use utoipa::ToSchema;
+use utoipa::{PartialSchema, ToSchema};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -74,17 +74,57 @@ pub struct NativeTickSamplingV1 {
     pub maximum_cohort_rows: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum NativeTickTargetKindV1 {
-    FixedTradeCohorts,
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum NativeTickTargetV1 {
+    FixedTradeCohorts {
+        horizon_cohorts: u32,
+    },
+    /// First complete same-instrument cohort at or after t + horizon_ns.
+    FixedEventTime {
+        horizon_ns: DbCounter,
+    },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NativeTickTargetV1 {
-    pub kind: NativeTickTargetKindV1,
-    pub horizon_cohorts: u32,
+// Utoipa's internally tagged derive leaves variant objects open despite Serde's strict fields.
+impl PartialSchema for NativeTickTargetV1 {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{AdditionalProperties, ObjectBuilder, OneOfBuilder, Type};
+        let variant = |kind| {
+            ObjectBuilder::new()
+                .schema_type(Type::Object)
+                .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+                .property(
+                    "kind",
+                    ObjectBuilder::new()
+                        .schema_type(Type::String)
+                        .enum_values(Some([kind])),
+                )
+                .required("kind")
+        };
+        OneOfBuilder::new()
+            .item(
+                variant("FIXED_TRADE_COHORTS")
+                    .property("horizon_cohorts", u32::schema())
+                    .required("horizon_cohorts"),
+            )
+            .item(
+                variant("FIXED_EVENT_TIME")
+                    .property("horizon_ns", DbCounter::schema())
+                    .required("horizon_ns"),
+            )
+            .into()
+    }
+}
+impl ToSchema for NativeTickTargetV1 {}
+
+impl NativeTickTargetV1 {
+    pub fn label_method(&self) -> &'static str {
+        match self {
+            Self::FixedTradeCohorts { .. } => "FIXED_TRADE_COHORTS: VWAP(j+H)/VWAP(j)-1; same instrument; no labels supplied to model",
+            Self::FixedEventTime { .. } => "FIXED_EVENT_TIME: VWAP(first complete same-instrument cohort with event >= t+horizon_ns)/VWAP(t)-1; actual span may exceed horizon; no labels supplied to model; not executable price",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

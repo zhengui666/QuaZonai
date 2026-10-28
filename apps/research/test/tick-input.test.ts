@@ -8,6 +8,7 @@ import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } from '
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { nativeResearchInput, nativeResearchRequest, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import type { NativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { datasetResearchSettings } from '../../../packages/contracts/src/research.ts';
 import { researchInput } from '../src/input.ts';
 import { modelBriefInput } from '../src/feedback.ts';
 import { evaluateWasm, iterationRequest, normalizedRequest } from '../plugins/native-wasm.ts';
@@ -54,6 +55,31 @@ test('explicit tick contract preserves nanosecond strings and rejects incompatib
   assert.deepEqual(researchInput(original), original);
   assert.throws(() => researchInput({ ...original, policy: { strategy: { kind: 'factor-threshold' } } }), /tick_factor_only_required/);
   assert.throws(() => researchInput({ ...original, data: { ...tagged(), sealed: { request: bar() } } }), /native_research_modality_mismatch/);
+});
+
+test('fixed event-time labels preserve exact duration through clipping and expose a true duration unit', () => {
+  const request: NativeTickFactorRequest = { ...tick(), target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '10000000000' } };
+  assert.deepEqual(validateNativeTickFactorRequest(request), request);
+  assert.deepEqual(iterationRequest(tagged(request)).target, request.target);
+  assert.deepEqual(nativeResearchRequest(tagged(request)).target, request.target);
+  const settings = datasetResearchSettings(tagged(request));
+  assert.equal(settings.horizon, null); assert.equal(settings.horizonNs, '10000000000');
+  assert.equal(settings.horizonUnit, 'EVENT_TIME_NS');
+  const precise = { ...request, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '9007199254740993' } };
+  assert.deepEqual(validateNativeTickFactorRequest(precise), precise);
+  const maximum = { ...request, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: String(9223372036854775807n - 39n) } };
+  assert.deepEqual(validateNativeTickFactorRequest(maximum), maximum);
+  for (const target of [
+    { kind: 'FIXED_EVENT_TIME', horizon_ns: '0' }, { kind: 'FIXED_EVENT_TIME', horizon_ns: 10 },
+    { kind: 'FIXED_EVENT_TIME', horizon_ns: '01' }, { kind: 'FIXED_EVENT_TIME', horizon_ns: '1.5' },
+    { kind: 'FIXED_EVENT_TIME', horizon_ns: '9223372036854775808' },
+    { kind: 'FIXED_EVENT_TIME', horizon_ns: '9223372036854775769' },
+    { kind: 'FIXED_EVENT_TIME', horizon_ns: '1', horizon_cohorts: 1 },
+    { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1, horizon_ns: '1' },
+  ]) assert.throws(() => validateNativeTickFactorRequest({ ...request, target }));
+  const original = datasetResearchSettings(tagged());
+  assert.equal(original.horizon, 1); assert.equal(original.horizonUnit, 'TRADE_COHORTS');
+  assert.equal('horizonNs' in original, false);
 });
 
 test('derived cohort cache has an exact full-source budget without changing the native tick row limit', () => {

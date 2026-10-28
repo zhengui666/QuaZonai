@@ -7,7 +7,7 @@ import { api } from './api';
 import { Mandate } from './mandate';
 import { CapitalFields, capitalInput } from './capacity';
 import { datasetResearchSettings, researchSpecification } from '../../../packages/contracts/src/research.ts';
-import { NativeInputFacts } from './native-input';
+import { labelHorizon, NativeInputFacts } from './native-input';
 import { draftIsPersisted, readDraft, removeDraft, saveDraft, useCommand } from './commands';
 import { useResource, useStudies } from './data-hooks';
 import { currentRoute, href, navigate, type Route } from './router';
@@ -139,7 +139,7 @@ function NewStudy({ route }: { route: Route }) {
       <div className="form-section-heading"><DatabaseIcon size={16} /><h2>市场与数据</h2></div>
       <Form.Item label="数据集" name="datasetId" rules={[{ required: true, message: '请选择数据集' }, { validator: (_rule, value: string) => !value || datasets.data?.some(item => item.id === value && item.ready) ? Promise.resolve() : Promise.reject(new Error('数据集尚未就绪')) }]}><Select showSearch optionFilterProp="label" suffixIcon={<CaretDownIcon size={14} />} placeholder="选择已登记数据集" options={datasets.data?.map(item => ({ value: item.id, label: `${item.nativeModality === 'TRADE_TICK' ? 'TradeTick / ' : ''}${item.name} / ${item.currency}`, disabled: !item.ready }))} /></Form.Item>
       {selectedDataset && <div className="dataset-context"><span><DatabaseIcon size={13} />{selectedDataset.source}</span><code>{selectedDataset.id}</code><code>{selectedDataset.currency}</code>{(selectedDataset.start || selectedDataset.end) && <span><Timestamp value={selectedDataset.start} /> 至 <Timestamp value={selectedDataset.end} /></span>}<span>{selectedDataset.ready ? '已就绪' : '未就绪'}</span></div>}
-      {selectedDataset?.researchSettings && <Facts items={[["信号输入", selectedDataset.researchSettings.inputFamily], ["标签预测跨度", selectedDataset.researchSettings.horizon === null ? '未记录' : `${selectedDataset.researchSettings.horizon} ${selectedDataset.researchSettings.horizonUnit === 'TRADE_COHORTS' ? '个后续成交组' : '次原始观测'}`], ["可选市场", selectedDataset.researchSettings.instruments.join(' / ') || '由原生目录继承'], ["评估方式", selectedDataset.researchSettings.partitions?.historical ? '历史重新评估（不是未触及样本）' : '原登记分区 / 独立最终评估']]} />}
+      {selectedDataset?.researchSettings && <Facts items={[["信号输入", selectedDataset.researchSettings.inputFamily], ["标签预测跨度", labelHorizon(selectedDataset.researchSettings)], ["可选市场", selectedDataset.researchSettings.instruments.join(' / ') || '由原生目录继承'], ["评估方式", selectedDataset.researchSettings.partitions?.historical ? '历史重新评估（不是未触及样本）' : '原登记分区 / 独立最终评估']]} />}
       {selectedDataset?.researchSettings?.modality === 'TRADE_TICK' && <NativeInputFacts settings={selectedDataset.researchSettings} preparation={selectedDataset.preparation} coverage={selectedDataset.inputCoverage} />}
       <p className="quiet">预测跨度、分区、费用、执行映射与基准均继承登记输入；不支持浏览器覆写或自设基准。</p>
       <div className="form-section-heading"><ChartLineUpIcon size={16} /><h2>评价标准</h2><MetricLabel metricKey={preview?.metric ?? 'pearson_ic'} /></div>
