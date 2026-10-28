@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     fs,
-    io::Write,
+    io::{BufReader, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -242,7 +242,8 @@ fn native_files(root: &Path) -> Result<Vec<NativeFile>> {
 }
 
 fn json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
-    Ok(serde_json::from_reader(fs::File::open(path)?)?)
+    let file = fs::File::open(path)?;
+    Ok(serde_json::from_reader(BufReader::new(file))?)
 }
 
 fn publish<T: Serialize>(path: &Path, value: &T) -> Result<()> {

@@ -561,7 +561,7 @@ pub fn manifest(root: &Path) -> Result<Manifest> {
         file.metadata()?.len() <= 16 * 1024 * 1024,
         "TICK_CACHE_MANIFEST_LIMIT"
     );
-    serde_json::from_reader(file).context("TICK_CACHE_MANIFEST_INVALID")
+    serde_json::from_reader(BufReader::new(file)).context("TICK_CACHE_MANIFEST_INVALID")
 }
 
 pub(super) fn load(
