@@ -10,12 +10,13 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { setTimeout } from 'node:timers/promises';
 import { Agent, fetch } from 'undici';
+import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { canonical } from './documents.ts';
 import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
 
 /** Settings credentials stay outside research facts; targets carry only this random reference. */
@@ -122,7 +123,7 @@ async function remoteRequest(target: RemoteNativeTarget, path: string, method: '
     if (!response.ok) {
       // Only the original invocation's explicit pre-execution refusal settles
       // non-execution. A proxy error or generic 4xx/5xx is not that evidence.
-      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && body.command === 'evaluate-tick-factor') {
+      if (method === 'POST' && path === 'v1/execute' && [429, 501].includes(response.status) && body && typeof body === 'object' && !Array.isArray(body) && typeof body.command === 'string' && isTickNativeCommand(body.command)) {
         let encoded = ''; let size = 0;
         if (response.body) for await (const bytes of response.body) {
           size += bytes.length;
@@ -167,9 +168,26 @@ function receipt(value: NativeJson, requestId: string): NativeExecutionReceipt {
 
 /** Read only the receipt for this original invocation and retained instance.
  * This does not submit or cancel any remote execution. */
-export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal: AbortSignal): Promise<NativeExecutionReceipt> {
+export async function remoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal): Promise<NativeExecutionReceipt> {
   if (!/^[a-f0-9]{64}$/.test(requestId)) throw new Error('nautilus_request_id_invalid');
   return receipt(await remoteRequest(target, `v1/executions/${requestId}`, 'GET', undefined, signal), requestId);
+}
+
+/** Poll only an original receipt. Unknown/missing outcomes never authorize a new POST. */
+export async function waitForRemoteNativeExecutionReceipt(target: RemoteNativeTarget, requestId: string, signal?: AbortSignal,
+  initial?: NativeExecutionReceipt): Promise<NativeExecutionReceipt> {
+  try {
+    let state = initial ?? await remoteNativeExecutionReceipt(target, requestId, signal);
+    while (state.status === 'RUNNING') {
+      await setTimeout(100, undefined, { signal });
+      state = await remoteNativeExecutionReceipt(target, requestId, signal);
+    }
+    if (state.status === 'UNKNOWN') throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target);
+    return state;
+  } catch (error) {
+    if (signal?.aborted || error instanceof RemoteUncertaintyError) throw error;
+    throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error);
+  }
 }
 
 async function attachments(original: string[]): Promise<{ args: string[]; files: Record<string, string> }> {
@@ -225,14 +243,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       try { state = receipt(await remoteRequest(target, path, 'GET', undefined, context.abortSignal), requestId); }
       catch { throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error); }
     }
-    while (state.status === 'RUNNING') {
-      await setTimeout(100, undefined, { signal: context.abortSignal });
-      try { state = receipt(await remoteRequest(target, path, 'GET', undefined, context.abortSignal), requestId); }
-      catch (error) {
-        if (context.abortSignal?.aborted) throw error;
-        throw new RemoteUncertaintyError('nautilus_execution_unknown', requestId, target, error);
-      }
-    }
+    state = await waitForRemoteNativeExecutionReceipt(target, requestId, context.abortSignal, state);
     if (owner && !owner.runtime.signal.aborted && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(state.status)) {
       await retainRemoteReference({ ...reference, status: state.status, error: state.status === 'FAILED' ? 'nautilus_execution_failed' : null }, owner);
     }

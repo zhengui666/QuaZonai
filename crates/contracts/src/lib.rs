@@ -11,6 +11,7 @@ pub mod catalog_prefix;
 pub mod catalogs;
 pub mod data;
 pub mod delivery;
+pub mod economic_tick;
 pub mod ensemble_fit;
 pub mod equity_curve;
 pub mod evidence;
@@ -82,6 +83,8 @@ use utoipa::OpenApi;
     factors::NativeFactorEvaluationSummaryV1,
     ticks::NativeTradeTickFactorEvaluationRequestV1,
     ticks::NativeTradeTickFactorEvaluationResultV1,
+    economic_tick::NativeTickEconomicRequestV1,
+    economic_tick::NativeTickEconomicResultV1,
     factors::NativeCatalogFactorScanRequestV1,
     factors::NativeCatalogFactorScanSummaryV1,
     catalog_ensemble::NativeCatalogEnsembleRequestV1,

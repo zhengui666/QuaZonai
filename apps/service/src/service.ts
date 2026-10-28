@@ -14,6 +14,7 @@ import type { ExtensionView, ResearchSummary, WorkspaceView, UsageView } from '.
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
 import type { ServiceOptions } from './config.ts';
 import { science } from './science.ts';
+import { tickEconomicExtension, tickEconomicWorkbench, registerTickEconomicRoutes } from './economic-tick.ts';
 import { registerAuth } from './auth.ts';
 import { registerModels } from './models.ts';
 import { instanceSettings, registerInstanceSettings } from './instance-settings.ts';
@@ -56,6 +57,8 @@ export async function createService(options: ServiceOptions) {
     if (wanted) installed.push(extension);
     extensions.set(extension.name, { name: extension.name, version, enabled: wanted, kind, state: wanted ? 'loaded' : 'disabled', error: null });
   }
+  install(tickEconomicExtension, true, '1', 'science');
+  requiredExtensions.add(tickEconomicExtension.name);
   for (const extension of options.extensions ?? []) install(extension);
   for (const path of config.research.modules ?? []) {
     const name = moduleNames[path];
@@ -103,6 +106,7 @@ export async function createService(options: ServiceOptions) {
   registerAuth(app, research, config);
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
+  registerTickEconomicRoutes(app, tickEconomicWorkbench(research, config));
   await research.harness.commit(async (tx) => {
     const facts = await tx.doc(Application);
     facts.settings ??= json({ defaultModel: config.defaultModel, thinkingLevel: config.thinkingLevel, serviceTier: config.serviceTier });

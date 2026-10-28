@@ -118,6 +118,26 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     }
     if (instruments.size !== request.input.instrument_ids.length || trades !== cacheCounter(manifest.trade_count)
       || cohorts !== cacheCounter(manifest.cohort_count)) throw new Error('tick_cache_coverage_mismatch');
+    if (metadata.economic_sources !== undefined) {
+      const extras = metadata.economic_sources;
+      if (!Array.isArray(extras) || extras.length !== 2) throw new Error('tick_economic_source_manifest_invalid');
+      const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
+      for (const extra of extras) {
+        const row = object(extra, 'tick_economic_source');
+        if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');
+        const path = join(directory, row.path); await observe(path);
+        const state = await lstat(path, { bigint: true });
+        if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.bytes)) throw new Error('tick_economic_source_size_mismatch');
+        files.add(path);
+      }
+      const funding = object(parseOriginalJson(await readFile(join(directory, 'funding-rates.manifest.json'), 'utf8')), 'funding_manifest');
+      const fundingInstruments = Array.isArray(funding.instruments) ? funding.instruments : [];
+      if (funding.source_revision !== request.input.source_revision || cacheCounter(funding.start_ns) > BigInt(request.input.event_start_ns)
+        || cacheCounter(funding.end_ns) < BigInt(request.input.event_end_ns) || !Array.isArray(funding.instruments)
+        || funding.instruments.some(id => typeof id !== 'string' || !id) || new Set(funding.instruments).size !== funding.instruments.length
+        || typeof funding.rows !== 'number' || !Number.isSafeInteger(funding.rows) || funding.rows < 0
+        || !Array.isArray(funding.missing_instruments) || funding.missing_instruments.some(id => typeof id !== 'string' || !fundingInstruments.includes(id))) throw new Error('tick_economic_source_coverage_mismatch');
+    }
     async function visit(path: string): Promise<void> {
       await observe(path); const state = await lstat(path);
       if (state.isSymbolicLink() || await realpath(path) !== path) throw new Error('dataset_symlink_not_allowed');

@@ -35,7 +35,37 @@ Supply `simulationSettings` exactly as the kernel requires (`adapter_kind`, offi
 
 Settings GET/PATCH exposes only `{defaultModel,thinkingLevel}`. PATCH rejects all other fields, validates configured model/capability and affects only new research; original admitted inputs replay unchanged. Historical name/trial/timeout settings remain stored but are neither projected nor enforced. `/workspace` supplies application identity and observation connections. `/models` lists actual providers, supported auth methods, active login and available models; `/models/login` starts an original request ID, `/models/login/:id` observes/cancels it, and `/models/login/:id/respond` answers its current prompt ID. `/models/providers/:provider` DELETE logs out through the official API; environment-provided auth may remain configured. All routes require owner authentication. API Key/OAuth values are transient browser inputs and private native credentials, not public DTOs; only safe auth links/events and static failure codes are exposed.
 
-At the Node entry point, resolved config `jobBinary` sets `QZ_JOB_BINARY` before the sole host loads factor extensions, selecting the same kernel for research and portfolios. Programmatic `createService` callers with factor extensions supply that startup environment themselves; native children still receive no provider credentials. Retired factor timeout/memory environment variables are ignored. No native process deadline, memory ulimit or adapter output cap is imposed; explicit scientific budgets and owner cancellation remain. Downstream HTTP headers/body/connect have no QZ deadline. Extension changes report `pending_restart` without hot-swapping admitted tasks. Back up original SQLite/sidecars, its `.auth` directory, `dataDir/catalogs` and `dataDir/extensions.json` together.
+At the Node entry point, resolved config `jobBinary` sets `QZ_JOB_BINARY` before the sole host loads factor extensions, selecting the same kernel for research and portfolios. Programmatic `createService` callers with factor extensions supply that startup environment themselves; native children still receive no provider credentials. Retired factor timeout/memory environment variables are ignored. Standard native operations retain their existing process behavior; tick factor and economic replay operations use worker-owned concurrency, memory and output limits. Explicit scientific budgets and owner cancellation remain. Downstream HTTP headers/body/connect have no QZ deadline. Extension changes report `pending_restart` without hot-swapping admitted tasks. Back up original SQLite/sidecars, its `.auth` directory, `dataDir/catalogs` and `dataDir/extensions.json` together.
+
+## Explicit economic tick replay
+
+Owner-authenticated `POST /api/v3/tick-economic-replays` accepts
+`{requestId, datasetId, factorId, request: NativeTickEconomicRequest}` and returns
+`202` with an original replay `id` and Durable `taskId`. Read it with
+`GET /api/v3/tick-economic-replays/:id`. `quazonai schema show TickEconomicReplayStart`
+and `NativeTickEconomicRequest` expose the source DTOs. The authenticated CLI callers are
+`quazonai portfolio replay-ticks --file REQUEST.json` and
+`quazonai portfolio tick-replay REPLAY_ID`.
+
+The factor must be a retained, computed single-model trial of that admitted
+dataset; final selection is optional. Economic start/end/train/validation boundaries must fall on UTC day boundaries.
+The request must exactly match its original prepared primary or sealed tick input
+and feature parameters, and execution uses that matching view’s catalog. Candidate
+comparisons use primary TRAIN/VALIDATION; the operator records the chosen candidate
+before requesting its full sealed replay. All capital, cash/perpetual allocation,
+costs, participation, margin, clock and latency assumptions are explicit exact
+strings. Both `perp_taker_fee_bps` and `spot_taker_fee_bps` are required; FX
+conversion uses the spot cost. Each fee plus `extra_cost_bps` must be below
+10,000 bps. Funding uses a registered catalog-relative JSONL source, and the worker
+validates the mounted catalog. The original model is compiled and attached through
+`replay-tick-economic`, using the tick precision companion and existing worker
+concurrency, memory and output limits.
+
+This replay creates no new factor trial. Its economic days and gaps remain in a
+separate owner-only document and never become Agent selection feedback. A repeated
+request ID reuses its original result; changed input conflicts. Recovery reads an
+original remote receipt instead of submitting a replacement. Results and terminal
+simulated targets remain exploratory, without account or delivery authority.
 
 ## Operator dataset configuration
 
@@ -68,3 +98,5 @@ QZ_BROWSER_FIXTURE="$PI_SCRATCH_DIR/new-browser-catalog/prepared.json" npm run t
 ```
 
 Default protocol tests use real official SQLite/Harness, provider prompt/retry/cancel/shutdown, persisted inputs and actual child cancellation. The labelled ensemble wire probe tests attempt accounting, exact member preservation, independent final isolation, original sealed capture and nested native command delegation; it performs no scientific/account calculation. `test:native` runs the retained two-study strict-forecast/group-final flow and the ensemble extension's explicit `forecast-factor` → member blend → validation-only account → independent heldout account → sealed consumer replay. Both reuse the existing native catalog preparation helper and original test-only fee settings; the new case has separate prefix/full catalogs and disclosed synthetic causal clocks. Only matching real scientific executables can pass this integration suite. These checks establish neither historical PIT/quality, market profit, real-account performance nor deployment.
+
+Economic replay accepts optional `fundingCatalog`, restricted to the current registered catalog for the matching research window and revision. Omission uses that registered catalog. The run retains this funding root separately from the original study price catalog; native replay validates its funding manifest against the request.

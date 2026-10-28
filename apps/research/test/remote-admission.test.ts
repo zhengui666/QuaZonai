@@ -9,12 +9,12 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTask, defineTool } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { NativeRemoteUncertainty, executeNativeValue, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
+import { NativeRemoteUncertainty, executeNativeValue, waitForRemoteNativeExecutionReceipt, nativeCommands, withNativeRemoteTracking } from '../src/native-execution.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../src/native-remote-receipts.ts';
 import type { NativeExecutionRequest } from '../../../packages/contracts/src/nautilus.ts';
 
 test('only original-id explicit admission refusal settles a Durable remote reference without a terminal receipt', { timeout: 15_000 }, async () => {
-  for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
+  for (const command of ['evaluate-tick-factor', 'replay-tick-economic']) for (const mode of ['explicit', 'generic', 'wrong-id'] as const) {
     const directory = await mkdtemp(join(tmpdir(), 'qz-remote-admission-'));
     let posts = 0; let reads = 0; let original: NativeExecutionRequest | undefined;
     const server = createServer(async (request, response) => {
@@ -24,7 +24,7 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       }
       if (request.method === 'POST') {
         posts++; let data = ''; for await (const chunk of request) data += chunk;
-        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, 'evaluate-tick-factor');
+        original = JSON.parse(data) as NativeExecutionRequest; assert.equal(original.command, command);
         response.statusCode = 429;
         response.end(JSON.stringify(mode === 'generic' ? { error: 'too_many_requests' } : {
           schemaVersion: 1, requestId: mode === 'wrong-id' ? '0'.repeat(64) : original.requestId,
@@ -39,7 +39,7 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       name: 'test.remote-admission.compute', version: 1, initial: () => ({ phase: 'compute' }),
       phases: { async compute(task, runtime, context) {
         try {
-          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, 'evaluate-tick-factor', {}, [], directory, context));
+          await withNativeRemoteTracking(task.id, runtime, context, () => executeNativeValue(target, command, {}, [], directory, context));
           assert.fail('controlled endpoint rejected admission');
         } catch (error) {
           await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: { message: String(error) } } }), context);
@@ -88,4 +88,40 @@ test('only original-id explicit admission refusal settles a Durable remote refer
       await rm(directory, { recursive: true, force: true });
     }
   }
+});
+
+
+test('original receipt polling waits for completion, retains missing/unknown handles and honors abort without POST', async () => {
+  const requestId = 'b'.repeat(64); let mode = 'complete'; let reads = 0; let writes = 0;
+  const server = createServer((request, response) => {
+    if (request.method !== 'GET') writes++;
+    assert.equal(request.url, `/v1/executions/${requestId}`); reads++;
+    response.setHeader('content-type', 'application/json');
+    if (mode === 'missing') { response.statusCode = 404; response.end('{"error":"not_found"}'); return; }
+    const status = mode === 'unknown' ? 'UNKNOWN' : mode === 'failed' ? 'FAILED' : mode === 'cancelled' ? 'CANCELLED' : mode === 'abort' || reads < 3 ? 'RUNNING' : 'COMPLETED';
+    response.end(JSON.stringify({ schemaVersion: 1, requestId, status,
+      ...(status === 'COMPLETED' ? { result: { original: true } } : ['UNKNOWN', 'FAILED'].includes(status) ? { error: 'native_outcome_unknown' } : {}) }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const target = { id: 'original-receipt-only', url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+  try {
+    const result = await waitForRemoteNativeExecutionReceipt(target, requestId);
+    assert.equal(result.status, 'COMPLETED'); assert.equal(reads, 3);
+    for (const next of ['missing', 'unknown']) {
+      mode = next; reads = 0;
+      await assert.rejects(waitForRemoteNativeExecutionReceipt(target, requestId), new RegExp(`nautilus_execution_unknown:${requestId}`));
+      assert.equal(reads, 1);
+    }
+    for (const terminal of ['failed', 'cancelled']) {
+      mode = terminal; reads = 0;
+      assert.equal((await waitForRemoteNativeExecutionReceipt(target, requestId)).status, terminal.toUpperCase()); assert.equal(reads, 1);
+    }
+    mode = 'abort'; reads = 0;
+    const controller = new AbortController();
+    const waiting = waitForRemoteNativeExecutionReceipt(target, requestId, controller.signal);
+    const timer = setTimeout(() => controller.abort(), 150);
+    try { await assert.rejects(waiting, error => controller.signal.aborted && error instanceof Error && error.name === 'AbortError'); }
+    finally { clearTimeout(timer); }
+    assert.equal(writes, 0);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

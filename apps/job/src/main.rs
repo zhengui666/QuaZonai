@@ -103,6 +103,15 @@ enum Operation {
         #[arg(long)]
         summary_only: bool,
     },
+    /// Explicit segregated-cash/margin economic estimate over derived cohorts.
+    ReplayTickEconomic {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        funding_catalog: Option<PathBuf>,
+        #[arg(long)]
+        model: PathBuf,
+    },
     /// Exact native BAR identities for private exposure tracking; no observations.
     CatalogFactorScope {
         #[arg(long)]
@@ -325,6 +334,16 @@ fn run(operation: Operation) -> Result<()> {
                 output(&result)
             }
         }
+        Operation::ReplayTickEconomic {
+            catalog,
+            funding_catalog,
+            model,
+        } => output(&job::ticks::economic::replay_with_funding(
+            &catalog,
+            funding_catalog.as_deref().unwrap_or(&catalog),
+            &input()?,
+            &model_bytes(&model)?,
+        )?),
         Operation::CatalogFactorScope { catalog } => {
             output(&job::factors::catalog_factor_scope(&catalog)?)
         }

@@ -11,4 +11,5 @@ await copyFile(new URL('packages/contracts/src/pm-forward.ts', root), new URL('s
 await copyFile(new URL('packages/contracts/src/maintenance.ts', root), new URL('schemas/maintenance.ts.txt', local));
 await copyFile(new URL('packages/contracts/src/research.ts', root), new URL('schemas/research.ts', local));
 await copyFile(new URL('packages/contracts/src/tick-input.ts', root), new URL('schemas/tick-input.ts.txt', local));
+await copyFile(new URL('packages/contracts/src/economic-tick.ts', root), new URL('schemas/economic-tick.ts.txt', local));
 await copyFile(new URL('contracts/generated/domain-v1.openapi.json', root), new URL('schemas/domain-v1.openapi.json', local));

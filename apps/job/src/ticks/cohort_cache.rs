@@ -1023,6 +1023,7 @@ pub fn prepare_views(
 ) -> Result<Value> {
     let input = load(source, request)?;
     let source = source.canonicalize()?;
+    let economic_sources = super::economic::funding_sources(&source, request)?;
     let parent = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1089,6 +1090,11 @@ pub fn prepare_views(
         .map(|file| file.bytes.get())
         .sum::<u64>()
         .checked_mul(2)
+        .and_then(|bytes| {
+            economic_sources.iter().try_fold(bytes, |total, (_, size)| {
+                total.checked_add(size.checked_mul(2)?)
+            })
+        })
         .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
     let mut research_request = request.clone();
     research_request.clip_end(request.validation_end_ns);
@@ -1097,6 +1103,12 @@ pub fn prepare_views(
         "catalog_format":format!("QZ_{}", full.representation),"request":request,"research_request":research_request,
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
         "maximum_output_bytes":maximum_output_bytes.to_string(),"output_bytes":"0"});
+    if !economic_sources.is_empty() {
+        metadata["economic_sources"] = json!(economic_sources
+            .iter()
+            .map(|(path, bytes)| json!({"path":path,"bytes":bytes.to_string()}))
+            .collect::<Vec<_>>());
+    }
     let views_bytes =
         u64::try_from(serde_json::to_vec(&full)?.len() + serde_json::to_vec(&primary)?.len() + 2)?;
     loop {
@@ -1126,6 +1138,9 @@ pub fn prepare_views(
             fs::hard_link(cache_path(&source, &file.path)?, target)?;
         }
         publish(&root.join(MANIFEST_FILE), manifest)?;
+        for (name, _) in &economic_sources {
+            fs::hard_link(cache_path(&source, name)?, root.join(name))?;
+        }
     }
     load(&output.join("research/catalog"), &research_request)?;
     load(&output.join("independent/catalog"), request)?;

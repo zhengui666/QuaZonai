@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, path::Path};
 
 pub mod catalog;
 pub mod cohort_cache;
+pub mod economic;
 mod stream;
 
 pub const FEATURE_SCHEMA: &str = "qz.tick-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_event_ns";
