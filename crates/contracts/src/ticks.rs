@@ -19,6 +19,12 @@ pub enum NativeTickAvailabilityV1 {
     EventTimeProxyUnverified,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickRepresentationV1 {
+    EventTimeCohortCacheV1,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTradeTickInputV1 {
@@ -28,9 +34,31 @@ pub struct NativeTradeTickInputV1 {
     /// Exclusive event boundary, independently rechecked after native queries.
     pub event_end_ns: DbCounter,
     pub decision_cutoff_ns: DbCounter,
-    pub maximum_rows: u32,
+    /// Absence retains the original native TradeTick representation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub representation: Option<NativeTickRepresentationV1>,
+    /// Original total selected-row cap; not a streaming memory limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_rows: Option<u32>,
+    /// Exact full-source budget for the explicitly derived cache representation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_source_rows: Option<DbCounter>,
     pub source_revision: String,
     pub availability: NativeTickAvailabilityV1,
+}
+
+impl NativeTradeTickInputV1 {
+    pub fn is_cohort_cache(&self) -> bool {
+        self.representation == Some(NativeTickRepresentationV1::EventTimeCohortCacheV1)
+    }
+
+    pub fn source_row_limit(&self) -> Option<u64> {
+        if self.is_cohort_cache() {
+            self.maximum_source_rows.map(|value| value.get())
+        } else {
+            self.maximum_rows.map(u64::from)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

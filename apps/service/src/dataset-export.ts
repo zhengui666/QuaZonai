@@ -259,6 +259,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     primary: { source: primary.source, metadataSha256: primary.metadataSha256, nativeDatasetRevisionId: primary.nativeDatasetRevisionId },
     sealed: sealed ? { source: sealed.source, metadataSha256: sealed.metadataSha256, nativeDatasetRevisionId: sealed.nativeDatasetRevisionId } : null,
     limitations: ['LOCAL_PUBLICATION_AVAILABILITY_NOT_HISTORICAL_PIT', 'NATIVE_PREPARATION_NOT_INVESTMENT_QUALIFICATION'] });
+  result.data = revision.data;
   const temporary = await mkdtemp(join(dirname(output), '.qz-dataset-'));
   try {
     const file = join(temporary, 'dataset.json');

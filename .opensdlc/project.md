@@ -88,7 +88,7 @@ A research winner is not investment authorization. Historical configurations ret
 
 ### Source contracts
 
-Current API DTOs live in [packages/contracts](../packages/contracts/src/index.ts), imported directly by Service, Web and CLI. Scientific wire rules remain in [Rust contracts](../crates/contracts/src); edit source before running any source-derived export. `contracts/generated/` and `apps/web/src/generated/` are retained historical snapshots and are not the new HTTP API. Never hand-edit them or invoke removed server/runtime generators. `quazonai schema show NAME` exposes the CLI's supported schema views without opening service storage.
+Current API DTOs live in [packages/contracts](../packages/contracts/src/index.ts), imported directly by Service, Web and CLI. Scientific wire rules remain in [Rust contracts](../crates/contracts/src); after changing their native schema, run `make generate-native-schema` to update the actively checked `contracts/generated/domain-v1.openapi.json` through its existing native generator. Other retained generated snapshots are not the new HTTP API. Never hand-edit generated files or invoke removed server/runtime generators. `quazonai schema show NAME` exposes the CLI's supported schema views without opening service storage.
 
 Deterministic tests use official Faux Provider and controlled downstream protocols. Browser HTTP tests use an explicitly TEST_ONLY scientific protocol subprocess; they establish HTTP/storage/interaction recovery, not scientific evidence. `check-core` and retained scientific CI execute the matching real kernel. Synthetic catalogs do not establish market/PIT quality, paid-model quality, profitability, real-account results or a literal 24-hour run. Record those separately if authorized.
 

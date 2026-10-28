@@ -1,4 +1,4 @@
-.PHONY: check check-ts check-web check-science check-core check-native-full check-source check-deploy check-links
+.PHONY: check check-ts check-web check-science check-core check-native-full check-source check-deploy check-links generate-native-schema
 
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)
 CARGO := rustup run $(RUST_TOOLCHAIN) cargo
@@ -12,6 +12,11 @@ QZ_PM_FORWARD_FIXTURE_DIR ?= $(abspath $(or $(PI_SCRATCH_DIR),$(RUNNER_TEMP),$(T
 LYCHEE ?= lychee
 
 check: check-ts check-web check-deploy
+
+generate-native-schema:
+	@schema_tmp=$$(mktemp contracts/generated/.domain-v1.XXXXXX); \
+	trap 'rm -f "$$schema_tmp"' EXIT; \
+	$(CARGO) run --locked -p contracts --example generate > "$$schema_tmp" && mv "$$schema_tmp" contracts/generated/domain-v1.openapi.json
 
 check-ts:
 	npm --prefix apps/service run typecheck

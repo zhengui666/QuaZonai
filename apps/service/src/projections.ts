@@ -40,7 +40,8 @@ function tickInputDetails(value: Json | undefined): { inputCoverage?: JsonObject
   if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage) || coverage.modality !== 'TRADE_TICK') return {};
   const request = value.request && typeof value.request === 'object' && !Array.isArray(value.request) ? value.request : undefined;
   const input = request?.input && typeof request.input === 'object' && !Array.isArray(request.input) ? request.input : undefined;
-  return { inputCoverage: { ...coverage, ...(typeof input?.event_start_ns === 'string' && typeof input?.event_end_ns === 'string' ? { event_start_ns: input.event_start_ns, event_end_ns: input.event_end_ns } : {}) } };
+  return { inputCoverage: { ...coverage, ...(typeof input?.representation === 'string' ? { representation: input.representation } : {}),
+    ...(typeof input?.event_start_ns === 'string' && typeof input?.event_end_ns === 'string' ? { event_start_ns: input.event_start_ns, event_end_ns: input.event_end_ns } : {}) } };
 }
 
 /** Retain native scalar values; missing metrics are not converted into zero. */

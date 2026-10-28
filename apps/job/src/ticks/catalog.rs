@@ -315,6 +315,10 @@ pub(crate) fn load(
     root: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<BTreeMap<String, Vec<TradeTick>>> {
+    ensure!(
+        !request.input.is_cohort_cache(),
+        "TICK_NATIVE_REPRESENTATION_REQUIRED"
+    );
     let provenance = source_provenance(root)?;
     validate_provenance(&provenance, request)?;
     validate_inventory(root, &provenance)?;
@@ -394,7 +398,10 @@ pub(crate) fn load(
                 && available <= request.input.decision_cutoff_ns.get(),
             "TICK_QUERY_OUTSIDE_SELECTION"
         );
-        ensure!(rows < request.input.maximum_rows as usize, "TICK_ROW_LIMIT");
+        ensure!(
+            rows < request.input.maximum_rows.context("TICK_RESOURCE_LIMIT")? as usize,
+            "TICK_ROW_LIMIT"
+        );
         let name = trade.instrument_id.to_string();
         let trades = selected
             .get_mut(&name)

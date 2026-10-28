@@ -56,6 +56,23 @@ test('explicit tick contract preserves nanosecond strings and rejects incompatib
   assert.throws(() => researchInput({ ...original, data: { ...tagged(), sealed: { request: bar() } } }), /native_research_modality_mismatch/);
 });
 
+test('derived cohort cache has an exact full-source budget without changing the native tick row limit', () => {
+  const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
+  const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597' } };
+  assert.deepEqual(validateNativeTickFactorRequest(cache), cache);
+  const clipped = iterationRequest({ catalog: '/controlled/cache-view', ...tagged(cache) });
+  assert.equal((clipped.input as JsonObject).maximum_source_rows, '1308222597');
+  assert.equal((clipped.input as JsonObject).event_end_ns, original.validation_end_ns);
+  for (const invalid of [
+    { ...cache, input: { ...cache.input, maximum_rows: 1_000_000 } },
+    { ...cache, input: { ...cache.input, maximum_source_rows: 1308222597 } },
+    { ...cache, input: { ...cache.input, maximum_source_rows: '0' } },
+    { ...cache, input: { ...cache.input, maximum_source_rows: '9223372036854775808' } },
+    { ...original, input: { ...original.input, maximum_rows: 1_000_001 } },
+    { ...original, input: { ...original.input, maximum_source_rows: '100' } },
+  ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
+});
+
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {
   const request = bar();
   const legacy = { request };

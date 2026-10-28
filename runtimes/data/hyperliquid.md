@@ -1,5 +1,92 @@
 # Hyperliquid public history
 
+## Full-history derived cohort research
+
+The explicit `EVENT_TIME_COHORT_CACHE_V1` representation avoids retaining the
+complete trade history or factor observations in memory. It is a derived cache,
+not a native TradeTick catalog: source rows still pass through the same native
+decimal conversion and exact BigDecimal reduction before the derived VWAP and
+quantity marks are stored as their original IEEE f64 bits. Each instrument file
+contains 32-byte little-endian frames: event nanoseconds, VWAP bits, quantity
+bits and original trade count. Availability is the explicitly unverified event
+proxy, not an extra observed receive clock.
+
+```sh
+target/debug/market-history import \
+  --manifest /absolute/data/market-data-processing.json \
+  --instruments /absolute/data/original-hyperliquid-instruments.json \
+  --cohort-cache --native-precision \
+  --path-prefix perp_fills_all/ --path-prefix spot_fills/ \
+  --max-trade-rows 1308222597 --max-output-bytes 25769803776 \
+  --output /absolute/catalogs/hyperliquid-cohorts
+```
+
+The row budget above is the measured candidate count for the pinned archive and
+its declared processing filters, not a general default or a profitability claim.
+Set an explicit budget for the actual source. Cache mode keeps at most one
+unfinished cohort per instrument, up to 100,000 trades per cohort and 1,000,000
+unfinished source rows in aggregate, under the existing 2 GiB address-space
+limit. It retains cohorts across file boundaries and rejects source time reversal
+or repeated/conflicting identities within an event. This source's published
+stream/date file order must therefore remain chronological; arbitrary unsorted
+archives are not silently sorted or sampled. Completed cache frames are read
+back bit-for-bit in bounded batches. Output limits include data and reports.
+An interrupted cache has no completed `cohort-cache.json`; use a new output
+directory rather than overwriting or admitting it.
+
+Use `catalog-prepare prepare-ticks` with a request whose input explicitly declares
+`"representation":"EVENT_TIME_COHORT_CACHE_V1"` and
+`"maximum_source_rows":"1308222597"`, omitting the legacy `maximum_rows`.
+The old native TradeTick request and its million-row limit remain unchanged.
+Sampling, fixed-cohort horizon and the seven feature slots remain the same.
+
+```sh
+target/debug/catalog-prepare prepare-ticks \
+  --catalog /absolute/catalogs/hyperliquid-cohorts/catalog \
+  --request /absolute/catalogs/hyperliquid-research/cohort-request.json \
+  --maximum-output-bytes 51539607552 \
+  --output /absolute/catalogs/hyperliquid-cohort-prepared
+
+node --experimental-strip-types apps/service/src/dataset-export.ts \
+  --prepared /absolute/catalogs/hyperliquid-cohort-prepared/catalog-metadata.json \
+  --request /absolute/catalogs/hyperliquid-research/cohort-request.json \
+  --id hyperliquid-cohort-research --name 'Hyperliquid full-history cohort research' \
+  --output /absolute/catalogs/hyperliquid-cohort-dataset.json --ready
+```
+
+Preparation creates explicit primary and independent byte-range views, linking
+only newly produced immutable derived files. The primary range ends before the
+validation cutoff; boundary checks prevent it from omitting an in-range cohort
+or expanding into held-out observations. Reads never decode prices outside the
+declared view; neighboring frame clocks are used only to check completeness.
+The preparation byte budget counts both logical view file sets and metadata,
+even though their data files share physical blocks. Publication clones or copies
+each shared inode once into its owned revision, then links aliases only within
+that revision. Exported research inputs point to that owned immutable copy.
+Allow room for one physical cache plus one publication copy when reflinks are
+unavailable; the 614,393,279-cohort census estimates 18.310 GiB per physical copy,
+but actual output and free disk must be measured.
+
+Keep the cache, prepared views and exported JSON under a catalog root mounted
+into the native worker. On the installed local deployment, use an owned run
+directory below `/home/zzy/.local/share/quazonai-ts/data/catalogs/`; publication
+creates `.qz-source-revisions` beside the exported JSON, so placing that JSON
+under an unmounted `imports` or temporary directory is insufficient.
+
+Load the exported JSON through the existing `qz.data.local-config` data plugin.
+The existing native worker's `--catalog` binding and `evaluate-tick-factor`
+operation handle this explicit representation; no new worker path argument is
+introduced. Cache evaluation requires `--summary-only`. EMA, VM state, ordinals,
+fuel and pending labels continue across source units and partitions. Partition
+and asset metrics use stable online pooled covariance, with unavailable statuses
+preserved; local IC values are never averaged into a portfolio or global IC.
+
+This path provides exploratory price/quantity/cohort-intensity controls only.
+It does not add signed-flow features, fixed-clock labels, network-jitter
+simulation, tick portfolios, historical funding settlement or execution
+qualification. A cohort horizon is not a fixed holding time, and a VWAP mark is
+not an executable quote. `ready` records operational preparation only.
+
 ## Native TradeTick preparation
 
 Settings → Data Plugins → `qz.data.hyperliquid` accepts an explicit

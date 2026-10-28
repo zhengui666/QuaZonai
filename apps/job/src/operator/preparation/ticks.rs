@@ -239,6 +239,14 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
     );
     let request: NativeTradeTickFactorEvaluationRequestV1 = super::read_json(&args.request)?;
     domain::ticks::evaluation_request(&request)?;
+    if request.input.is_cohort_cache() {
+        return crate::ticks::cohort_cache::prepare_views(
+            &args.catalog,
+            &request,
+            &args.output,
+            args.maximum_output_bytes,
+        );
+    }
     let source = crate::catalog::catalog_root(&args.catalog)?;
     let parent = args
         .output
@@ -609,6 +617,40 @@ mod tests {
         })
         .unwrap();
         assert_eq!(metadata["coverage"]["trade_count"], "32");
+        let mut cohort_request = selected.clone();
+        cohort_request.input.representation =
+            Some(contracts::ticks::NativeTickRepresentationV1::EventTimeCohortCacheV1);
+        cohort_request.input.maximum_rows = None;
+        cohort_request.input.maximum_source_rows = Some(contracts::DbCounter::new(100).unwrap());
+        let mut builder = crate::ticks::cohort_cache::Builder::new(
+            &destination.join("cohort-source"),
+            100,
+            100,
+            10_000_000,
+        )
+        .unwrap();
+        for trade in &trades {
+            builder.push(*trade).unwrap();
+        }
+        let cached = builder
+            .seal("native-test-source", 0, 33_000_000_000)
+            .unwrap();
+        builder.publish(cached, json!({
+            "status":"IMPORTED","source_revision":"native-test-source","availability":"EVENT_TIME_PROXY_UNVERIFIED",
+            "source_reference":"CONTROLLED_NATIVE_SOFTWARE_FIXTURE_NOT_MARKET_DATA",
+            "missing_symbols":{},"missing_definitions":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
+            "event_start_ns":"0","event_end_ns":"33000000000"
+        })).unwrap();
+        let cohort_request_file = destination.join("cohort-request.json");
+        publish(&cohort_request_file, &cohort_request).unwrap();
+        let cohort_metadata = run(&Arguments {
+            catalog: destination.join("cohort-source/catalog"),
+            request: cohort_request_file,
+            output: destination.join("cohort-prepared"),
+            maximum_output_bytes: 10_000_000,
+        })
+        .unwrap();
+        assert_eq!(cohort_metadata["coverage"]["trade_count"], "32");
         let model = r#"(module
             (global $value (mut f64) (f64.const 0))
             (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)

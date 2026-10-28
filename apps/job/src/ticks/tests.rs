@@ -7,7 +7,7 @@ use nautilus_model::{
 };
 use serde_json::json;
 
-fn request() -> NativeTradeTickFactorEvaluationRequestV1 {
+pub(super) fn request() -> NativeTradeTickFactorEvaluationRequestV1 {
     serde_json::from_value(json!({"schema_version":1,
         "input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],"event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,"source_revision":"fixed-source","availability":"EVENT_TIME_PROXY_UNVERIFIED"},
         "sampling":{"kind":"EVENT_TIME_COHORT_V1","maximum_cohort_rows":100},
@@ -28,7 +28,7 @@ fn trade(time: u64, id: &str, price: &str, quantity: &str) -> TradeTick {
     )
 }
 
-fn series() -> BTreeMap<String, Vec<TradeTick>> {
+pub(super) fn series() -> BTreeMap<String, Vec<TradeTick>> {
     BTreeMap::from([(
         "AUD/USD.SIM".to_owned(),
         (1..=7)
@@ -37,7 +37,7 @@ fn series() -> BTreeMap<String, Vec<TradeTick>> {
     )])
 }
 
-fn model(slot: i32) -> Vec<u8> {
+pub(super) fn model(slot: i32) -> Vec<u8> {
     wat::parse_str(format!(r#"(module
         (global $value (mut f64) (f64.const 0))
         (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
@@ -136,7 +136,7 @@ fn tick_model_requires_explicit_feature_abi_and_native_request_rejects_invalid_l
         "FEATURE_MODEL_ABI_MISMATCH"
     );
     let mut req = request();
-    req.input.maximum_rows = 1_000_001;
+    req.input.maximum_rows = Some(1_000_001);
     assert!(evaluation_request(&req).is_err());
     req = request();
     req.validation_end_ns = req.train_end_ns;
@@ -170,4 +170,131 @@ fn explicit_tick_universe_does_not_inherit_the_bar_256_instrument_limit() {
         .instrument_ids
         .push(request.input.instrument_ids[0].clone());
     assert!(evaluation_request(&request).is_err());
+}
+
+#[test]
+fn derived_cache_prepares_bounded_views_and_preserves_native_factor_results() {
+    let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let output = temp.path().join("source");
+    let mut data = series();
+    data.get_mut("AUD/USD.SIM")
+        .unwrap()
+        .insert(2, trade(20, "extra", "19", "3"));
+    let mut builder = cohort_cache::Builder::new(&output, 100, 100, 1_000_000).unwrap();
+    // One complete event deliberately spans producer batches.
+    for batch in data["AUD/USD.SIM"].chunks(2) {
+        for trade in batch {
+            builder.push(*trade).unwrap();
+        }
+    }
+    let manifest = builder.seal("fixed-source", 0, 80).unwrap();
+    assert_eq!(manifest.trade_count.get(), 8);
+    assert_eq!(manifest.cohort_count.get(), 7);
+    assert_eq!(manifest.files[0].bytes.get(), 7 * cohort_cache::FRAME_BYTES);
+    builder
+        .publish(
+            manifest,
+            json!({"status":"IMPORTED","availability":"EVENT_TIME_PROXY_UNVERIFIED",
+                "source_revision":"fixed-source","event_start_ns":"0","event_end_ns":"80",
+                "missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0}),
+        )
+        .unwrap();
+    let mut native = request();
+    native.parameters.total_fuel = Some(counter(1_000_000).unwrap());
+    let mut cached = native.clone();
+    cached.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
+    cached.input.maximum_rows = None;
+    cached.input.maximum_source_rows = Some(counter(8).unwrap());
+    let prepared = temp.path().join("prepared");
+    cohort_cache::prepare_views(&output.join("catalog"), &cached, &prepared, 1_000_000).unwrap();
+    let relative = tempfile::Builder::new()
+        .prefix(".qz-relative-prepared-")
+        .tempdir_in(std::env::current_dir().unwrap())
+        .unwrap();
+    std::fs::remove_dir(relative.path()).unwrap();
+    cohort_cache::prepare_views(
+        &output.join("catalog"),
+        &cached,
+        Path::new(relative.path().file_name().unwrap()),
+        1_000_000,
+    )
+    .unwrap();
+    assert!(relative.path().join("catalog-metadata.json").is_file());
+    let independent = prepared.join("independent/catalog");
+    let primary = prepared.join("research/catalog");
+    let primary_manifest = cohort_cache::manifest(&primary).unwrap();
+    assert_eq!(primary_manifest.cohort_count.get(), 4);
+    assert_eq!(primary_manifest.trade_count.get(), 5);
+    assert!(primary_manifest.files[0].byte_end < primary_manifest.files[0].bytes);
+    assert_eq!(
+        evaluate(&primary, &cached, &model(0), true)
+            .unwrap_err()
+            .to_string(),
+        "TICK_CACHE_VIEW_MISMATCH"
+    );
+    assert_eq!(
+        evaluate(&independent, &cached, &model(0), false)
+            .unwrap_err()
+            .to_string(),
+        "TICK_CACHE_SUMMARY_ONLY_REQUIRED"
+    );
+    let mut incomplete = primary_manifest.clone();
+    incomplete.files[0].byte_end = counter(3 * cohort_cache::FRAME_BYTES).unwrap();
+    incomplete.files[0].cohort_count = counter(3).unwrap();
+    incomplete.files[0].trade_count = counter(4).unwrap();
+    incomplete.files[0].last_event_ns = Some(counter(30).unwrap());
+    incomplete.cohort_count = counter(3).unwrap();
+    incomplete.trade_count = counter(4).unwrap();
+    let primary_path = primary.join(cohort_cache::MANIFEST_FILE);
+    std::fs::write(&primary_path, serde_json::to_vec(&incomplete).unwrap()).unwrap();
+    let mut prefix_request = cached.clone();
+    prefix_request.input.event_end_ns = prefix_request.validation_end_ns;
+    assert_eq!(
+        cohort_cache::load(&primary, &prefix_request)
+            .err()
+            .unwrap()
+            .to_string(),
+        "TICK_CACHE_VIEW_OMITS_IN_RANGE_COHORTS"
+    );
+    std::fs::write(primary_path, serde_json::to_vec(&primary_manifest).unwrap()).unwrap();
+    for prefix in [false, true] {
+        let mut native = native.clone();
+        let mut cached = cached.clone();
+        let mut selected = data.clone();
+        let root = if prefix {
+            native.input.event_end_ns = native.validation_end_ns;
+            cached.input.event_end_ns = cached.validation_end_ns;
+            for rows in selected.values_mut() {
+                rows.retain(|trade| trade.ts_event.as_u64() < native.validation_end_ns.get());
+            }
+            &primary
+        } else {
+            &independent
+        };
+        for slot in 0..7 {
+            let wasm = model(slot);
+            let expected = evaluate_series(&native, selected.clone(), &wasm, true).unwrap();
+            let actual = evaluate(root, &cached, &wasm, true).unwrap();
+            assert!(actual.points.is_none());
+            assert_eq!(actual.consumed_fuel, expected.consumed_fuel);
+            assert_eq!(actual.coverage.trade_count, expected.coverage.trade_count);
+            assert_eq!(actual.coverage.cohort_count, expected.coverage.cohort_count);
+            for (actual, expected) in actual.partitions.iter().zip(&expected.partitions) {
+                assert_eq!(
+                    serde_json::to_value(&actual.metric.counts).unwrap(),
+                    serde_json::to_value(&expected.metric.counts).unwrap()
+                );
+                assert_eq!(
+                    actual.metric.pearson_ic.status,
+                    expected.metric.pearson_ic.status
+                );
+                if let (Some(actual), Some(expected)) = (
+                    actual.metric.pearson_ic.value,
+                    expected.metric.pearson_ic.value,
+                ) {
+                    assert!((actual - expected).abs() <= 1e-12);
+                }
+            }
+        }
+    }
 }

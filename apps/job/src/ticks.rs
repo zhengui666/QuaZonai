@@ -13,6 +13,8 @@ use nautilus_model::data::TradeTick;
 use std::{collections::BTreeMap, path::Path};
 
 pub mod catalog;
+pub mod cohort_cache;
+mod stream;
 
 pub const FEATURE_SCHEMA: &str = "qz.tick-cohort-features.v1: cohort_vwap,previous_cohort_vwap,fast_ema,slow_ema,cohort_quantity,trade_count,elapsed_event_ns";
 
@@ -139,6 +141,9 @@ pub fn evaluate(
     summary_only: bool,
 ) -> Result<NativeTradeTickFactorEvaluationResultV1> {
     evaluation_request(request)?;
+    if request.input.is_cohort_cache() {
+        return stream::evaluate(root, request, wasm, summary_only);
+    }
     let series = catalog::load(root, request)?;
     let mut result = evaluate_series(request, series, wasm, summary_only)?;
     result.coverage.source_evidence = catalog::source_evidence(root, request)?;

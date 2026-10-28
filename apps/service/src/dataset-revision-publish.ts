@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { copyFile, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { JsonObject } from '../../../packages/contracts/src/index.ts';
@@ -26,7 +26,7 @@ const identity = (stat: Awaited<ReturnType<typeof lstat>>) => [stat.dev, stat.in
 /** Snapshot complete native files into a NEW owned directory before publishing
  * the stable alias. Existing revisions and caller catalogs are never rewritten.
  * The availability clock is local completed publication, not historical PIT. */
-export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvidence: JsonObject) {
+export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvidence: JsonObject, options: { shareDuplicateFiles?: boolean } = {}) {
   if (!dataset.revisionManifest) throw new Problem('dataset_revision_manifest_required');
   const manifestPath = resolve(dataset.revisionManifest); const root = dirname(manifestPath);
   await mkdir(join(root, 'revisions'), { recursive: true });
@@ -57,6 +57,7 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
   }
   try {
     const files: FileEntry[] = []; const originalStates = new Map<string, string>(); const data = json(dataset.data);
+    const cloned = new Map<string, { path: string; sha256: string }>();
     async function snapshot(source: string, destination: string): Promise<void> {
       const stat = await lstat(source);
       if (stat.isSymbolicLink() || await realpath(source) !== source) throw new Problem('dataset_revision_symlink_unsupported');
@@ -66,10 +67,16 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
         for (const name of (await readdir(source)).sort()) await snapshot(join(source, name), join(destination, name));
       } else if (stat.isFile()) {
         await mkdir(dirname(destination), { recursive: true });
-        await copyFile(source, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+        const inode = options.shareDuplicateFiles ? await lstat(source, { bigint: true }) : null;
+        const key = inode ? `${inode.dev}:${inode.ino}` : null; const previous = key ? cloned.get(key) : undefined;
+        // Cache range views share derived files; clone once, then link only inside this owned snapshot.
+        if (previous) await link(previous.path, destination);
+        else await copyFile(source, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
         const copied = await lstat(destination);
         if (copied.size !== stat.size) throw new Problem('dataset_revision_copy_incomplete');
-        files.push({ path: relative(staging, destination), bytes: String(copied.size), sha256: await fingerprint(destination) });
+        const sha256 = previous?.sha256 ?? await fingerprint(destination);
+        if (key && !previous) cloned.set(key, { path: destination, sha256 });
+        files.push({ path: relative(staging, destination), bytes: String(copied.size), sha256 });
       } else throw new Problem('dataset_revision_regular_files_required');
     }
     let catalogs = 0;
@@ -93,7 +100,7 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
         for (const key of ['catalog', 'catalog_partitions']) if (typeof candidate[key] === 'string') candidate[key] = candidate[key].replace(/^revisions\/[^/]+\//, '');
       }
       const oldFiles = (prior.manifest.files as JsonObject[]).map(entry => ({ ...entry, path: String(entry.path).replace(/^revisions\/[^/]+\//, '') }));
-      if (content === digest({ datasetId: dataset.id, data: oldData, files: oldFiles })) return { manifestPath, sourceRevision: prior.sourceRevision,
+      if (content === digest({ datasetId: dataset.id, data: oldData, files: oldFiles })) return { manifestPath, sourceRevision: prior.sourceRevision, data: json(prior.configured.data),
         publish: () => publishCompared(expectedHead, async head => head!) };
     }
     // A genuine correction back to former bytes still gets a fresh directory;
@@ -111,8 +118,12 @@ export async function prepareDatasetRevision(dataset: DatasetConfig, producerEvi
     }
     const entries = files.map(entry => ({ ...entry, path: `revisions/${id}/${entry.path}` }));
     const candidate = { schemaVersion: 1, datasetId: dataset.id, sourceRevision, revisionKind: prior ? 'CORRECTION' : 'APPEND', data, files: entries };
+    const configuredData = json(data);
+    for (const scope of [configuredData, configuredData.sealed]) if (scope && typeof scope === 'object' && !Array.isArray(scope)) {
+      for (const key of ['catalog', 'catalog_partitions']) if (typeof scope[key] === 'string') scope[key] = resolve(root, scope[key]);
+    }
     const history = join(directory, 'manifest.json');
-    return { manifestPath, sourceRevision, publish: () => publishCompared(expectedHead, async () => {
+    return { manifestPath, sourceRevision, data: configuredData, publish: () => publishCompared(expectedHead, async () => {
       // A failed unpublished attempt may be finalized again at its actual retry
       // clock. The process lock and original-head comparison ensure that a
       // previously published revision's receipt can never be rewritten here.

@@ -64,6 +64,9 @@ enum Command {
         /// Explicit native trade-only preparation; never aggregates or admits other record kinds.
         #[arg(long, conflicts_with_all = ["bar_seconds", "bar_milliseconds"])]
         trade_ticks: bool,
+        /// Derived event-time cohort marks for bounded-memory full-history factor research.
+        #[arg(long, conflicts_with_all = ["trade_ticks", "bar_seconds", "bar_milliseconds", "resume"])]
+        cohort_cache: bool,
         /// Select declared source directories without requiring unrelated streams or paths.
         #[arg(long = "path-prefix")]
         path_prefixes: Vec<String>,
@@ -151,6 +154,8 @@ struct Report {
     selected_streams: Vec<String>,
     selected_path_prefixes: Vec<String>,
     modality: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    representation: Option<String>,
     availability: String,
     source_manifest: serde_json::Value,
     instrument_source: serde_json::Value,
@@ -370,6 +375,7 @@ struct ImportOptions<'a> {
     bar_interval: (Option<u32>, Option<u32>),
     native_precision: bool,
     trade_ticks: bool,
+    cohort_cache: bool,
     path_prefixes: &'a [String],
     resume: bool,
     max_trade_rows: u64,
@@ -433,7 +439,7 @@ fn import(
     );
     let prefixes = selection_prefixes(&manifest, options.path_prefixes)?;
     ensure!(
-        !options.trade_ticks
+        !(options.trade_ticks || options.cohort_cache)
             || (manifest.revision.len() == 40
                 && manifest.revision.bytes().all(|c| c.is_ascii_hexdigit())),
         "SOURCE_REVISION_REQUIRED"
@@ -458,7 +464,7 @@ fn import(
         .filter(|f| f.stream.is_some() && selected_path(&f.path, &prefixes))
         .collect::<Vec<_>>();
     ensure!(!selected_files.is_empty(), "SOURCE_SELECTION_EMPTY");
-    if options.trade_ticks {
+    if options.trade_ticks || options.cohort_cache {
         for file in &selected_files {
             ensure!(
                 manifest
@@ -553,12 +559,37 @@ fn import(
     for versions in by_symbol.values_mut() {
         versions.sort_by_key(|v| v.ts_init());
     }
-    let mut sink = writer::Writer::configured(
-        output,
-        &instruments,
-        previous_report.is_some(),
-        options.trade_ticks.then_some(options.max_output_bytes),
-    )?;
+    ensure!(
+        !options.cohort_cache
+            || (!options.resume
+                && bar_seconds.is_none()
+                && bar_milliseconds.is_none()
+                && options.max_trade_rows > 0
+                && options.max_trade_rows <= i64::MAX as u64
+                && options.max_output_bytes > 0),
+        "COHORT_CACHE_OPTIONS_INVALID"
+    );
+    let mut cache = options
+        .cohort_cache
+        .then(|| {
+            job::ticks::cohort_cache::Builder::new(
+                output,
+                domain::ticks::MAXIMUM_COHORT_ROWS,
+                domain::ticks::MAXIMUM_TICK_ROWS as usize,
+                options.max_output_bytes,
+            )
+        })
+        .transpose()?;
+    let mut sink = if options.cohort_cache {
+        None
+    } else {
+        Some(writer::Writer::configured(
+            output,
+            &instruments,
+            previous_report.is_some(),
+            options.trade_ticks.then_some(options.max_output_bytes),
+        )?)
+    };
     let mut aggregation = records::Aggregation::with_milliseconds(bar_seconds, bar_milliseconds)?;
     let mut report = Report {
         schema_version: 1,
@@ -566,7 +597,8 @@ fn import(
         revision: manifest.revision.clone(), source_revision: manifest.revision.clone(),
         selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
         selected_path_prefixes: prefixes.clone(),
-        modality: if options.trade_ticks { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
+        modality: if options.trade_ticks || options.cohort_cache { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
+        representation: options.cohort_cache.then(|| job::ticks::cohort_cache::REPRESENTATION.into()),
         availability: if selected_files.iter().all(|f| manifest.stream(f.stream.as_deref().unwrap()).is_ok_and(|s| !s.columns.contains_key("available_at"))) { "EVENT_TIME_PROXY_UNVERIFIED" } else { "SOURCE_AVAILABILITY_UNVERIFIED" }.into(),
         source_manifest: json(manifest_path)?, instrument_source: json(instruments_path)?,
         source_observed_at: Some(manifest.retrieved_at),
@@ -607,7 +639,8 @@ fn import(
             }
             report.selected_rows += 1;
             ensure!(
-                !options.trade_ticks || report.selected_rows <= options.max_trade_rows,
+                !(options.trade_ticks || options.cohort_cache)
+                    || report.selected_rows <= options.max_trade_rows,
                 "TRADE_INPUT_ROW_LIMIT; use smaller immutable import units"
             );
             coverage.selected_rows += 1;
@@ -658,6 +691,13 @@ fn import(
                 }
             };
             for data in converted {
+                if let Some(cache) = &mut cache {
+                    let Data::Trade(trade) = data else {
+                        anyhow::bail!("COHORT_CACHE_REQUIRES_TRADE_SOURCE");
+                    };
+                    cache.push(trade)?;
+                    continue;
+                }
                 if let Data::Trade(trade) = &data {
                     let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
                     if let Some(previous) = trades.get(&key) {
@@ -674,16 +714,56 @@ fn import(
                     }
                     trades.insert(key, *trade);
                     if let Some(bar) = aggregation.update(trade)? {
-                        sink.push(Data::Bar(bar))?;
+                        sink.as_mut().unwrap().push(Data::Bar(bar))?;
                     }
                 }
-                sink.push(data)?;
+                sink.as_mut().unwrap().push(data)?;
             }
             Ok(())
         })
         .with_context(|| format!("source file {}", file.path))?;
         eprintln!("scanned {}", file.path);
     }
+    if let Some(mut cache) = cache {
+        let manifest = cache.seal(&manifest.revision, start, end)?;
+        report.native_files = manifest
+            .files
+            .iter()
+            .map(|file| NativeFile {
+                path: file.path.clone(),
+                size: file.bytes.get(),
+            })
+            .collect();
+        report.native_records.insert(
+            "cohorts".into(),
+            manifest
+                .files
+                .iter()
+                .map(|file| (file.instrument_id.clone(), file.cohort_count.get()))
+                .collect(),
+        );
+        report.readback_records = manifest.cohort_count.get();
+        report.status = if report.missing_symbols.is_empty()
+            && report.rejected_rows.is_empty()
+            && report.missing_partitions.is_empty()
+            && report.duplicate_trades == 0
+            && report.readback_records > 0
+            && manifest.trade_count.get() == report.selected_rows
+        {
+            "IMPORTED"
+        } else {
+            "INCOMPLETE"
+        }
+        .into();
+        publish(&output.join("import-report.json"), &report)?;
+        ensure!(
+            report.status == "IMPORTED",
+            "INCOMPLETE_COHORT_CACHE_IMPORT"
+        );
+        cache.publish(manifest, serde_json::to_value(&report)?)?;
+        return Ok(report);
+    }
+    let mut sink = sink.unwrap();
     for bar in aggregation.finish()? {
         sink.push(Data::Bar(bar))?;
     }
@@ -764,12 +844,13 @@ fn main() {
             bar_milliseconds,
             native_precision,
             trade_ticks,
+            cohort_cache,
             path_prefixes,
             resume,
             max_trade_rows,
             max_output_bytes,
             output,
-        } => (if trade_ticks {
+        } => (if trade_ticks || cohort_cache {
             trade_memory_limit()
         } else {
             Ok(())
@@ -785,6 +866,7 @@ fn main() {
                     bar_interval: (bar_seconds, bar_milliseconds),
                     native_precision,
                     trade_ticks,
+                    cohort_cache,
                     path_prefixes: &path_prefixes,
                     resume,
                     max_trade_rows,
@@ -818,6 +900,7 @@ mod tests {
             bar_interval: (None, None),
             native_precision: true,
             trade_ticks: true,
+            cohort_cache: false,
             path_prefixes: prefixes,
             resume,
             max_trade_rows: rows,
@@ -933,6 +1016,82 @@ mod tests {
             fs::read(output.join("import-report.json")).unwrap(),
             receipt
         );
+    }
+
+    #[test]
+    fn source_cohort_cache_preserves_complete_events_and_original_archive() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, instruments, csv) = tick_source(temp.path(),
+            "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600001,11.12,0.2234567890,T-2,S\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n");
+        let original = fs::read(&csv).unwrap();
+        let prefixes = vec!["perps/".into(), "spot/".into()];
+        let output = temp.path().join("cohorts");
+        let mut options = tick_options(&prefixes, false, 10, 10_000_000);
+        options.trade_ticks = false;
+        options.cohort_cache = true;
+        let report = import(&manifest, &instruments, &output, options).unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.selected_rows, 3);
+        assert_eq!(report.readback_records, 2);
+        assert_eq!(
+            report.representation.as_deref(),
+            Some(job::ticks::cohort_cache::REPRESENTATION)
+        );
+        let cached = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
+        assert_eq!(cached.trade_count.get(), 3);
+        assert_eq!(cached.cohort_count.get(), 2);
+        assert_eq!(cached.files[0].bytes.get(), 64);
+        assert_eq!(
+            cached.source_report["event_start_ns"],
+            "1767225600000000000"
+        );
+        assert!(!output.join("catalog/data/trades").exists());
+        assert_eq!(fs::read(csv).unwrap(), original);
+    }
+
+    #[test]
+    fn source_cohort_cache_keeps_file_boundary_cohorts_and_identity_checks() {
+        for (id, price, rejected) in [
+            ("T-4", "13.12", None),
+            ("T-3", "12.12", Some("TICK_CACHE_SOURCE_ID_DUPLICATE")),
+            ("T-3", "13.12", Some("TICK_CACHE_SOURCE_ID_CONFLICT")),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let (manifest, instruments, csv) = tick_source(temp.path(),
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\nBTCUSDT,1767225600002,12.12,0.3234567890,T-3,B\n");
+            let source = manifest.parent().unwrap();
+            fs::create_dir(source.join("spot")).unwrap();
+            let next = source.join("spot/fills.csv");
+            fs::write(&next, format!("coin,timestamp,price,size,trade_id,side\nBTCUSDT,1767225600002,{price},0.3234567890,{id},B\nBTCUSDT,1767225600003,14.12,0.4234567890,T-5,B\n")).unwrap();
+            let original = fs::read(&csv).unwrap();
+            let mut declared: serde_json::Value = json(&manifest).unwrap();
+            declared["files"].as_array_mut().unwrap().push(serde_json::json!({
+                "path":"spot/fills.csv","size":fs::metadata(next).unwrap().len(),"stream":"trades"
+            }));
+            fs::write(&manifest, serde_json::to_vec(&declared).unwrap()).unwrap();
+            let prefixes = vec!["perps/".into(), "spot/".into()];
+            let mut options = tick_options(&prefixes, false, 10, 10_000_000);
+            options.trade_ticks = false;
+            options.cohort_cache = true;
+            let output = temp.path().join("cohorts");
+            let result = import(&manifest, &instruments, &output, options);
+            if let Some(reason) = rejected {
+                assert!(format!("{:#}", result.err().unwrap()).contains(reason));
+                assert!(!output.join("catalog/cohort-cache.json").exists());
+            } else {
+                let report = result.unwrap();
+                assert_eq!(report.selected_rows, 4);
+                assert_eq!(report.readback_records, 3);
+                assert_eq!(
+                    job::ticks::cohort_cache::manifest(&output.join("catalog"))
+                        .unwrap()
+                        .trade_count
+                        .get(),
+                    4
+                );
+            }
+            assert_eq!(fs::read(csv).unwrap(), original);
+        }
     }
 
     #[test]
