@@ -21,6 +21,11 @@ function partitions(value: JsonValue | undefined): JsonObject[] {
 
 /** Model projection only. The complete original result and native evidence stay unchanged. */
 export function modelFeedback(result: JsonObject): JsonObject {
+  const coverage = record(result.coverage);
+  if (result.portfolio === undefined && coverage?.modality === 'TRADE_TICK') result = { ...result, coverage: {
+    ...scalars(coverage), instrument_count: Array.isArray(coverage.instrument_ids) ? coverage.instrument_ids.length : null,
+    limitations: coverage.limitations ?? null, source_evidence: scalars(record(coverage.source_evidence) ?? {}),
+  } };
   if (result.portfolio === undefined && result.regime_partitions !== undefined) {
     const request = record(result.request);
     return { ...result,

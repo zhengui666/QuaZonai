@@ -13,7 +13,11 @@ No native contract, computation, trial admission, old facts, model selection or 
 ## Verification
 
 - Read actual persisted model tool calls and native setter: generated WAT returned NaN when mask was zero; native assigns zero to observed finite values. Native tick prediction already skips incomplete warmup.
-- `node --experimental-strip-types --test apps/research/test/feedback.test.ts apps/research/test/tick-input.test.ts`: 13 passed.
+- `node --experimental-strip-types --test apps/research/test/feedback.test.ts apps/research/test/tick-input.test.ts`: 14 passed.
 - `npm --prefix apps/research run typecheck`: passed.
 - `git diff --check`: passed.
 - No local Cargo, source-data replay or new factor trial run for this change. Final-head CI and independent review are pending.
+
+## Runtime feedback correction
+
+The first corrected actual trial returned an 859KB coverage object with repeated source report and per-instrument rows, causing model tool text truncation. Keep only scalar coverage totals, availability, limitations, instrument count, and scalar source-evidence descriptors in model feedback (both ordinary and regime tick results). Full original owner results stay unchanged. A 523-market regression checks bounded projection, nullable clocks, exact counters and availability. No historical rerun.

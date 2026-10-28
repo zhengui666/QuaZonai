@@ -285,3 +285,23 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('full-market tick feedback keeps coverage totals and availability without repeated source reports or asset rows', () => {
+  const coverage: JsonObject = { modality: 'TRADE_TICK', source_revision: 'original-source', trade_count: '1308222597',
+    cohort_count: '614393279', first_event_ns: '1', last_event_ns: '9007199254740993', availability: 'EVENT_TIME_PROXY_UNVERIFIED',
+    instrument_ids: Array.from({ length: 523 }, (_, i) => `A${i}.SIM`),
+    instrument_coverage: Array.from({ length: 523 }, (_, i) => ({ instrument_id: `A${i}.SIM`, trade_count: '1', cohort_count: '1', first_event_ns: null, last_event_ns: null })),
+    limitations: ['UNQUALIFIED_EXPLORATORY', 'VWAP_IS_NOT_EXECUTABLE_PRICE'],
+    source_evidence: { representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', source_report: {
+      instruments: Array.from({ length: 523 }, () => ({ definition: 'SOURCE_REPORT_OWNER_ONLY'.repeat(100) })) } } };
+  for (const regime of [false, true]) {
+    const result: JsonObject = { coverage, partitions: [], ...(regime ? { regime_partitions: [] } : {}) };
+    const original = structuredClone(result); const feedback = modelFeedback(result); const projected = feedback.coverage as JsonObject;
+    assert.equal(projected.trade_count, '1308222597'); assert.equal(projected.cohort_count, '614393279');
+    assert.equal(projected.last_event_ns, '9007199254740993'); assert.equal(projected.instrument_count, 523);
+    assert.equal(projected.availability, 'EVENT_TIME_PROXY_UNVERIFIED'); assert.deepEqual(projected.limitations, coverage.limitations);
+    assert.deepEqual(projected.source_evidence, { representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' });
+    assert.equal('instrument_ids' in projected, false); assert.equal('instrument_coverage' in projected, false);
+    assert.ok(JSON.stringify(feedback).length < 2000); assert.deepEqual(result, original);
+  }
+});
