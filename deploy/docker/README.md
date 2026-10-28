@@ -79,7 +79,12 @@ PostgreSQL and backup data are preserved. Restart/restore reuse the original
 receipt identities, not replacement requests. Restore is explicit and requires
 the matching original owner, path, database identity and retained release bundle;
 pre-restore state is retained in another stopped backup. Protect the entire backup
-as it contains secrets and keys. External databases/modules need a separate
+as it contains secrets and keys. On filesystems supporting reflinks in the backup
+location, the complete `data/` directory is copied with copy-on-write isolation;
+otherwise backups retain `data.tar.gz`. Restore accepts both formats and stages
+an owned data copy before replacement. Writers outside the application must also
+be paused; copy-on-write is not a running-writer consistency mechanism.
+External databases/modules need a separate
 owner-managed recovery plan and are not silently omitted or relocated.
 
 ### Legacy Rust installations

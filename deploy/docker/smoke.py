@@ -215,7 +215,11 @@ def smoke(args):
             assert api(opener, origin, 'research', command) == receipt
             manage(target, root, 'backup')
             backup = max((root / 'backups').iterdir(), key=lambda item: item.stat().st_mtime_ns)
-            assert (backup / 'data.tar.gz').is_file() and (backup / 'database.dump').is_file()
+            assert (backup / 'database.dump').is_file()
+            if (backup / 'data').is_dir():
+                assert (backup / 'data/service.json').read_bytes() == path.read_bytes()
+            else:
+                assert (backup / 'data.tar.gz').is_file()
             manage(target, root, 'start')
             model_settings(opener, origin)
             manage(target, root, 'restore', str(backup))
