@@ -106,7 +106,13 @@ qz_backup() {
     destination=$(mktemp -d "$root/backups/$(date +%Y%m%dT%H%M%S)-XXXXXX")
     qz_compose "$file" exec -T database pg_dump -U quazonai -d quazonai -Fc > "$destination/database.dump"
     # Includes original config, modules, env, keys, artifacts, SQLite/WAL and journals.
-    tar -czf "$destination/data.tar.gz" -C "$root" data
+    if cp --reflink=always "$destination/database.dump" "$destination/.reflink-probe" 2>/dev/null; then
+        rm -f "$destination/.reflink-probe"
+        cp -a --reflink=auto "$root/data" "$destination/data"
+    else
+        rm -f "$destination/.reflink-probe"
+        tar -czf "$destination/data.tar.gz" -C "$root" data
+    fi
     cp "$file" "$destination/installation.json"
     if [[ -e "$root/compose.override.yaml" ]]; then cp "$root/compose.override.yaml" "$destination/compose.override.yaml"; fi
     sync -f "$destination"
@@ -187,8 +193,12 @@ qz_restore() {
     destination="$QZ_BACKUP/data.original"
     [[ ! -e "$root/data.restore" ]] || qz_fail 'Preserve interrupted data.restore before retrying.'
     mkdir "$root/data.restore"
-    tar -tzf "$backup/data.tar.gz" | awk '$0 !~ /^data(\/|$)/ || $0 ~ /(^|\/)\.\.(\/|$)/ {bad=1} END {exit bad}' || qz_fail 'Unexpected backup paths.'
-    tar -xzf "$backup/data.tar.gz" -C "$root/data.restore" --no-same-owner
+    if [[ -d "$backup/data" ]]; then
+        cp -a --reflink=auto "$backup/data" "$root/data.restore/data"
+    else
+        tar -tzf "$backup/data.tar.gz" | awk '$0 !~ /^data(\/|$)/ || $0 ~ /(^|\/)\.\.(\/|$)/ {bad=1} END {exit bad}' || qz_fail 'Unexpected backup paths.'
+        tar -xzf "$backup/data.tar.gz" -C "$root/data.restore" --no-same-owner
+    fi
     printf '{"operation":"restore","phase":"restoring","source":%s,"target":%s,"backup":%s}\n' "$(qz_quote "$backup")" "$(qz_raw "$file")" "$(qz_quote "$QZ_BACKUP")" | qz_save "$root/pending.json"
     qz_compose "$QZ_CONFIG" exec -T database pg_restore -U quazonai -d quazonai --clean --if-exists --single-transaction --exit-on-error < "$backup/database.dump"
     mv "$root/data" "$destination"; mv "$root/data.restore/data" "$root/data"; rmdir "$root/data.restore"

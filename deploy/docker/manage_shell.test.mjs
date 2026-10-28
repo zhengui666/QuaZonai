@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +45,7 @@ test('stopped official storage inspection rejects unresolved native work, never 
   const readback = await openNodeSqliteStorage(database); assert.equal((await readback.task(id, context)).state.status, 'pending'); await readback.close(context);
 });
 
-test('restore an override-free backup preserves the newer override only in pre-restore recovery, including starting retry', async (t) => {
+for (const format of ['directory', 'tar']) test(`restore ${format}: an override-free backup preserves the newer override only in pre-restore recovery, including starting retry`, async (t) => {
   const root = await directory(t); const bundle = join(root, 'bundle');
   for (const name of ['data', 'work', 'bundle']) await mkdir(join(root, name));
   const image = `sha256:${'a'.repeat(64)}`;
@@ -58,6 +58,12 @@ test('restore an override-free backup preserves the newer override only in pre-r
   // the Docker process boundary and activation failure are controlled here.
   const shell = (body, backup = '') => spawnSync('bash', ['-c', `source "$1"
 ROOT=$2; QZ_WORK="$ROOT/work"
+cp() {
+  if [[ "$1" == --reflink=always ]]; then
+    ${format === 'tar' ? 'return 1' : 'shift; command cp --reflink=auto "$@"; return'}
+  fi
+  command cp "$@"
+}
 qz_stop() { :; }; qz_idle() { :; }
 qz_compose() {
   case " $* " in
@@ -71,6 +77,10 @@ ${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.ur
   assert.equal(result.status, 0, result.stderr);
   const selected = await readFile(join(root, 'selected-backup'), 'utf8');
   await assert.rejects(readFile(join(selected, 'compose.override.yaml')), { code: 'ENOENT' });
+  assert.equal((await stat(selected)).mode & 0o777, 0o700);
+  assert.equal((await stat(join(selected, 'installation.json'))).mode & 0o777, 0o600);
+  if (format === 'directory') assert.equal(await readFile(join(selected, 'data/original'), 'utf8'), 'selected backup data');
+  else assert.ok((await readFile(join(selected, 'data.tar.gz'))).length > 0);
   const newerOverride = 'services:\n  app:\n    environment:\n      NEWER_SETTING: newer\n';
   await writeFile(join(root, 'compose.override.yaml'), newerOverride);
   await writeFile(join(root, 'data/original'), 'pre-restore data');
@@ -84,9 +94,18 @@ ${body}`, 'qz-restore-test', fileURLToPath(new URL('./manage.sh', import.meta.ur
   result = shell('qz_start() { [[ ! -e "$ROOT/compose.override.yaml" ]]; }; qz_restore "$ROOT" "$3"', selected);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(join(root, 'data/original'), 'utf8'), 'selected backup data');
+  if (format === 'directory') {
+    await writeFile(join(root, 'data/original'), 'changed after restore');
+    assert.equal(await readFile(join(selected, 'data/original'), 'utf8'), 'selected backup data');
+  }
   assert.equal(await readFile(join(root, 'pg-restores'), 'utf8'), 'restore\n');
   assert.equal((await readdir(join(root, 'backups'))).length, 2, 'starting retry must not replace the pre-restore backup');
   await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
+  if (format === 'directory') {
+    result = shell('cp() { [[ "$1" != -a ]] || return 17; if [[ "$1" == --reflink=always ]]; then shift; fi; command cp "$@"; }; qz_backup "$ROOT/installation.json"');
+    assert.equal(result.status, 17, result.stderr);
+    assert.doesNotMatch(result.stdout, /Stopped-writer recovery point/);
+  }
 });
 
 test('scientific scratch uses the writable data volume on fresh and existing configuration', async (t) => {
@@ -149,4 +168,5 @@ qz_apply_update "$ROOT"`, 'qz-scratch-update-test', fileURLToPath(new URL('./man
   assert.equal(await readFile(join(root, 'data/research/provider.env'), 'utf8'), '# test-only unchanged provider file\n');
   assert.equal((await readdir(join(root, 'backups'))).length, 1);
   await assert.rejects(readFile(join(root, 'pending.json')), { code: 'ENOENT' });
+
 });

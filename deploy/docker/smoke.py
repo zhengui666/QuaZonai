@@ -83,10 +83,10 @@ def expanded_catalog(native, directory, fixture):
 def completed(opener, origin, id, *, native=True):
     for _ in range(90):
         detail = api(opener, origin, f'research/{id}')
-        if detail['final'] is not None:
+        if detail['final'] is not None and detail['final']['status'] != 'STARTED':
             if native:
                 assert detail['trialRecords'][0]['status'] == 'COMPUTED', detail['trialRecords'][0]['error']
-                assert detail['final']['status'] == 'COMPUTED', detail['final']['reason']
+                assert detail['final']['status'] == 'COMPUTED', (detail['final']['status'], detail['final']['reason'])
             else:
                 assert detail['trialRecords'] == [] and detail['final']['status'] == 'STOPPED'
             return detail
@@ -215,7 +215,11 @@ def smoke(args):
             assert api(opener, origin, 'research', command) == receipt
             manage(target, root, 'backup')
             backup = max((root / 'backups').iterdir(), key=lambda item: item.stat().st_mtime_ns)
-            assert (backup / 'data.tar.gz').is_file() and (backup / 'database.dump').is_file()
+            assert (backup / 'database.dump').is_file()
+            if (backup / 'data').is_dir():
+                assert (backup / 'data/service.json').read_bytes() == path.read_bytes()
+            else:
+                assert (backup / 'data.tar.gz').is_file()
             manage(target, root, 'start')
             model_settings(opener, origin)
             manage(target, root, 'restore', str(backup))
