@@ -1025,7 +1025,8 @@ pub fn prepare_views(
     let source = source.canonicalize()?;
     let parent = output
         .parent()
-        .context("TICK_OUTPUT_DIRECTORY_REQUIRED")?
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
         .canonicalize()?;
     let output = parent.join(
         output
