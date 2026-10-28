@@ -69,6 +69,11 @@ function modelRequest(value: JsonValue | undefined): JsonValue {
   return request && forecast ? { ...request, forecast: { ...forecast, selection: modelSelection(forecast.selection) } } : value ?? null;
 }
 
+const featureV2Semantics = {
+  setter: 'qz_set_feature_v2(index, value, mask, event_ns, effective_available_ns): mask=0 means an observed finite value; mask=1 means NotYetAvailable, 2 Expired, 3 SourceMissing. For nonzero masks the numeric slot is canonical zero, not an observed zero. Never reject a value because its mask is zero.',
+  prediction: 'qz_predict_v2(decision_ns, event_ns, target_index, ordinal, feature_count) must return a finite f64. NaN, infinity or a trap fails the counted trial; a nonfinite output is not a missing-prediction marker.',
+};
+
 /** Only a model-facing projection. Original admitted facts are never rewritten. */
 export function modelBriefInput(input: { data: JsonObject; policy: JsonObject }): { data: JsonObject; policy: JsonObject } {
   const { sealed: _sealed, ...data } = input.data;
@@ -78,13 +83,13 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
   if (tagged?.modality === 'TRADE_TICK') return { data: { ...data,
     ...(tagged.request.evaluation_regimes ? { nativeInput: { modality: 'TRADE_TICK', request: tickRequest } } : {}),
     feature_model: {
-    abi: TICK_FEATURE_ABI, features: [...(flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
+    abi: TICK_FEATURE_ABI, ...featureV2Semantics, features: [...(flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
     ...(flow ? { schema: 'qz.tick-cohort-flow-features.v1' } : {}),
     definitions: ['Quantity-weighted price over exactly the current complete instrument/event-time cohort; previous complete cohort price.',
       'Fast/slow native EMA advance once per complete cohort; periods count cohorts.',
       'Sum of original cohort quantities, original trade count and elapsed event nanoseconds since the preceding cohort.',
       ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : [])],
-    missing: 'The first previous-price/elapsed-time and incomplete indicator warmup remain unavailable; masks are not observed zero.',
+    missing: 'The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.',
     scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',
     evidence: 'EVENT_TIME_PROXY_UNVERIFIED: exploratory computation, not PIT qualification, independent source validation or execution evidence.',
   } }, policy: input.policy };
@@ -92,7 +97,7 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
   if (strategy?.kind === 'catalog-ensemble') {
     const { catalog_partitions: _partitions, ...visible } = data;
     return { data: { ...visible, feature_model: {
-      abi: 'qz_set_feature_v2(i32,f64,i32,i64,i64)->();qz_predict_v2(i64,i64,i32,i32,i32)->f64',
+      abi: TICK_FEATURE_ABI, ...featureV2Semantics,
       features: ['completed_bar_close', 'previous_observed_bar_return', 'source_taker_quantity_imbalance', 'source_taker_cash_imbalance',
         'source_trade_count', 'source_fee_per_cash', 'source_within_minute_price_response'],
       definitions: ['Native completed BAR close; close/previous observed market BAR close minus 1 (first BAR missing).',

@@ -165,6 +165,10 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.deepEqual(validateNativeTickFactorRequest(flow), flow);
   const brief = modelBriefInput({ data: tagged(flow), policy: {} }).data.feature_model as JsonObject;
   assert.equal(brief.schema, 'qz.tick-cohort-flow-features.v1');
+  assert.match(String(brief.setter), /mask=0 means an observed finite value/);
+  assert.match(String(brief.setter), /mask=1 means NotYetAvailable, 2 Expired, 3 SourceMissing/);
+  assert.match(String(brief.prediction), /must return a finite f64/);
+  assert.match(String(brief.missing), /skips prediction/);
   assert.equal((brief.features as string[]).length, 8); assert.equal((brief.features as string[])[7], 'signed_quantity');
   assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
   assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
