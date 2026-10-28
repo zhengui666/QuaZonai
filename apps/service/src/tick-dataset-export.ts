@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatasetConfig } from './config.ts';
 import type { DatasetExportOptions } from './dataset-export.ts';
 import { canonical } from '../../research/src/documents.ts';
-import { validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import type { NativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { datasetRevisionManifest, prepareDatasetRevision } from './dataset-revision-publish.ts';
 import { object, text } from './facts.ts';
@@ -32,7 +32,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     || (cache ? metadata.representation !== full.input.representation : metadata.representation !== undefined)) throw new Error('tick_prepared_representation_mismatch');
   if (canonical(full) !== canonical(metadata.request!)) throw new Error('tick_prepared_request_mismatch');
   const research = validateNativeTickFactorRequest(metadata.research_request);
-  const clipped = { ...full, input: { ...full.input, event_end_ns: full.validation_end_ns } };
+  const clipped = clipTickRegimeEvaluation(full, full.validation_end_ns);
   if (canonical(research) !== canonical(clipped) || full.validation_end_ns === full.input.event_end_ns) throw new Error('tick_prepared_partitions_required');
   if (metadata.research_catalog !== 'research/catalog' || metadata.independent_catalog !== 'independent/catalog') throw new Error('tick_prepared_path_mismatch');
   const root = dirname(metadataPath); const primary = join(root, 'research/catalog'); const independent = join(root, 'independent/catalog');

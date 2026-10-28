@@ -142,8 +142,180 @@ fn partition_index(
     })
 }
 
+const REGIMES: [NativeTickRegimeV1; 4] = [
+    NativeTickRegimeV1::Bull,
+    NativeTickRegimeV1::Bear,
+    NativeTickRegimeV1::Range,
+    NativeTickRegimeV1::Unknown,
+];
+const SPAN_CUTS: [u64; 6] = [
+    0,
+    60_000_000_000,
+    61_000_000_000,
+    120_000_000_000,
+    300_000_000_000,
+    3_600_000_000_000,
+];
+type GroupMetrics = [[Metric; 4]; 3];
+fn group_metrics() -> GroupMetrics {
+    std::array::from_fn(|_| std::array::from_fn(|_| Metric::default()))
+}
+
+#[derive(Default)]
+struct Spans {
+    count: u64,
+    minimum: Option<u64>,
+    maximum: Option<u64>,
+    buckets: [u64; 6],
+}
+impl Spans {
+    fn push(&mut self, span: u64) {
+        self.count += 1;
+        self.minimum = Some(self.minimum.map_or(span, |value| value.min(span)));
+        self.maximum = Some(self.maximum.map_or(span, |value| value.max(span)));
+        self.buckets[SPAN_CUTS.partition_point(|lower| *lower <= span) - 1] += 1;
+    }
+    fn finish(&self) -> Result<NativeTickLabelSpansV1> {
+        Ok(NativeTickLabelSpansV1 {
+            count: counter(self.count)?,
+            min_ns: self.minimum.map(counter).transpose()?,
+            max_ns: self.maximum.map(counter).transpose()?,
+            buckets: SPAN_CUTS
+                .iter()
+                .enumerate()
+                .map(|(index, lower)| {
+                    Ok(NativeTickLabelSpanBucketV1 {
+                        lower_ns: counter(*lower)?,
+                        upper_ns: SPAN_CUTS.get(index + 1).copied().map(counter).transpose()?,
+                        count: counter(self.buckets[index])?,
+                    })
+                })
+                .collect::<Result<_>>()?,
+        })
+    }
+}
+
+struct Groups {
+    start: u64,
+    states: Vec<NativeTickRegimeV1>,
+    current: GroupMetrics,
+    pooled: GroupMetrics,
+    spans: [[Spans; 4]; 3],
+    assets: BTreeMap<String, GroupMetrics>,
+}
+impl Groups {
+    fn new(request: &NativeTradeTickFactorEvaluationRequestV1) -> Result<Self> {
+        Ok(Self {
+            start: request.input.event_start_ns.get(),
+            states: domain::ticks::evaluation_regimes(request)?,
+            current: group_metrics(),
+            pooled: group_metrics(),
+            spans: std::array::from_fn(|_| std::array::from_fn(|_| Spans::default())),
+            assets: BTreeMap::new(),
+        })
+    }
+    fn record(
+        &mut self,
+        event: u64,
+        partition: usize,
+        prediction: Option<f64>,
+        label: Option<f64>,
+        reason: Option<NativeFactorExclusionReasonV1>,
+        span: Option<u64>,
+    ) -> Result<()> {
+        let day = usize::try_from((event - self.start) / domain::ticks::UTC_DAY_NS)?;
+        let state = *self
+            .states
+            .get(day)
+            .ok_or_else(|| anyhow::anyhow!("TICK_REGIME_EVENT_OUTSIDE_SELECTION"))?;
+        let index = REGIMES
+            .iter()
+            .position(|candidate| *candidate == state)
+            .unwrap();
+        self.current[partition][index].push(prediction, label, reason)?;
+        self.pooled[partition][index].push(prediction, label, reason)?;
+        if reason.is_none() {
+            self.spans[partition][index]
+                .push(span.ok_or_else(|| anyhow::anyhow!("TICK_LABEL_SPAN_MISSING"))?);
+        }
+        Ok(())
+    }
+    fn finish_asset(&mut self, id: &str) {
+        self.assets.insert(
+            id.to_owned(),
+            std::mem::replace(&mut self.current, group_metrics()),
+        );
+    }
+    fn finish(
+        self,
+        request: &NativeTradeTickFactorEvaluationRequestV1,
+    ) -> Result<Vec<NativeTickRegimePartitionV1>> {
+        PARTITIONS
+            .iter()
+            .enumerate()
+            .map(|(partition_index, partition)| {
+                let (start_ns, end_ns) = partition_bounds(request, *partition);
+                let regimes = REGIMES
+                    .iter()
+                    .enumerate()
+                    .map(|(index, regime)| {
+                        let assets = request
+                            .input
+                            .instrument_ids
+                            .iter()
+                            .map(|id| {
+                                Ok(NativeFactorAssetMetricV1 {
+                                    instrument_id: id.clone(),
+                                    metric: self.assets[id][partition_index][index].finish()?,
+                                })
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        let days = self
+                            .states
+                            .iter()
+                            .enumerate()
+                            .filter(|(day, state)| {
+                                let event = self.start + *day as u64 * domain::ticks::UTC_DAY_NS;
+                                **state == *regime
+                                    && event >= start_ns.get()
+                                    && event < end_ns.get()
+                            })
+                            .count();
+                        Ok(NativeTickRegimeMetricV1 {
+                            regime: *regime,
+                            days: counter(days as u64)?,
+                            metric: self.pooled[partition_index][index].finish()?,
+                            observed_assets: counter(
+                                assets
+                                    .iter()
+                                    .filter(|asset| asset.metric.counts.observations.get() > 0)
+                                    .count() as u64,
+                            )?,
+                            included_assets: counter(
+                                assets
+                                    .iter()
+                                    .filter(|asset| asset.metric.counts.included.get() > 0)
+                                    .count() as u64,
+                            )?,
+                            assets,
+                            label_spans: self.spans[partition_index][index].finish()?,
+                        })
+                    })
+                    .collect::<Result<_>>()?;
+                Ok(NativeTickRegimePartitionV1 {
+                    partition: *partition,
+                    start_ns,
+                    end_ns,
+                    regimes,
+                })
+            })
+            .collect()
+    }
+}
+
 struct Pending {
     ordinal: u32,
+    event: u64,
     mark: f64,
     prediction: f64,
     partition: usize,
@@ -167,9 +339,16 @@ fn record(
     prediction: Option<f64>,
     label: Option<f64>,
     reason: Option<NativeFactorExclusionReasonV1>,
+    groups: &mut Option<&mut Groups>,
+    event: u64,
+    span: Option<u64>,
 ) -> Result<()> {
     metrics[partition].push(prediction, label, reason)?;
-    pooled[partition].push(prediction, label, reason)
+    pooled[partition].push(prediction, label, reason)?;
+    if let Some(groups) = groups {
+        groups.record(event, partition, prediction, label, reason, span)?;
+    }
+    Ok(())
 }
 
 fn evaluate_asset(
@@ -182,6 +361,7 @@ fn evaluate_asset(
     module: &SignalModule,
     budget: &mut Budget,
     pooled: &mut [Metric; 3],
+    mut groups: Option<&mut Groups>,
 ) -> Result<AssetSummary> {
     let (mut rows, mut label_rows) = readers;
     let mut summary = AssetSummary {
@@ -288,6 +468,9 @@ fn evaluate_asset(
                 None,
                 None,
                 Some(NativeFactorExclusionReasonV1::IndicatorWarmup),
+                &mut groups,
+                current.event,
+                None,
             )?;
             None
         };
@@ -310,11 +493,15 @@ fn evaluate_asset(
                         Some(point.prediction),
                         Some(label),
                         reason,
+                        &mut groups,
+                        point.event,
+                        Some(current.event - point.event),
                     )?;
                 }
                 if let Some(prediction) = prediction {
                     pending.push_back(Pending {
                         ordinal,
+                        event: current.event,
                         mark: current.vwap,
                         prediction,
                         partition,
@@ -353,6 +540,9 @@ fn evaluate_asset(
                         Some(prediction),
                         label,
                         reason,
+                        &mut groups,
+                        current.event,
+                        future.as_ref().map(|row| row.event - current.event),
                     )?;
                 }
             }
@@ -369,6 +559,9 @@ fn evaluate_asset(
             Some(point.prediction),
             None,
             Some(NativeFactorExclusionReasonV1::LabelNotComplete),
+            &mut groups,
+            point.event,
+            None,
         )?;
     }
     budget.fuel = model.remaining_fuel();
@@ -397,6 +590,11 @@ pub(super) fn evaluate(
     let mut pooled: [Metric; 3] = std::array::from_fn(|_| Metric::default());
     let mut assets = BTreeMap::new();
     let mut predictions = 0_u64;
+    let mut groups = request
+        .evaluation_regimes
+        .as_ref()
+        .map(|_| Groups::new(request))
+        .transpose()?;
     for asset in &cache.assets {
         let mut label_rows = match request.target {
             NativeTickTargetV1::FixedEventTime { .. } => Some(cache.cohorts(asset)?),
@@ -414,7 +612,11 @@ pub(super) fn evaluate(
             &module,
             &mut budget,
             &mut pooled,
+            groups.as_mut(),
         )?;
+        if let Some(groups) = &mut groups {
+            groups.finish_asset(&asset.instrument_id);
+        }
         let expected = cache
             .coverage
             .instrument_coverage
@@ -464,7 +666,8 @@ pub(super) fn evaluate(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(NativeTradeTickFactorEvaluationResultV1 {
+    let regime_partitions = groups.map(|groups| groups.finish(request)).transpose()?;
+    let mut result = NativeTradeTickFactorEvaluationResultV1 {
         schema_version: SchemaV1, request: request.clone(),
         native_versions: BTreeMap::from([("nautilus-model".into(), "0.63.0".into()), ("nautilus-persistence".into(), "0.63.0".into()), ("nautilus-indicators".into(), "0.63.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
@@ -477,8 +680,12 @@ pub(super) fn evaluate(
             ("ic".into(), "stable online covariance raw pooled Pearson correlation; not averaged asset/unit IC".into()),
         ]),
         consumed_fuel: request.parameters.total_fuel.zip(budget.fuel).map(|(total, left)| counter(total.get() - left)).transpose()?,
-        coverage: cache.coverage, partitions, points: None,
-    })
+        coverage: cache.coverage, partitions, regime_partitions, points: None,
+    };
+    if result.regime_partitions.is_some() {
+        result.methods.insert("regimes".into(), "BTC_COMPLETED_30_DAY_RETURN_V1: decision UTC day; exact completed D-1 / D-31 endpoints with strict +/-5% cuts; missing endpoint UNKNOWN; evaluation only; label state does not add exclusions. Label spans describe included pairs only.".into());
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -563,6 +770,7 @@ mod tests {
                 &module,
                 &mut budget,
                 &mut pooled,
+                None,
             )
             .err()
             .unwrap();
@@ -594,6 +802,7 @@ mod tests {
                 &module,
                 &mut budget,
                 &mut pooled,
+                None,
             )
             .unwrap();
             assert_eq!(summary.trades, rows.len() as u64);
@@ -700,6 +909,7 @@ mod tests {
                 &module,
                 &mut budget,
                 &mut std::array::from_fn(|_| Metric::default()),
+                None,
             );
             assert_eq!(result.err().unwrap().to_string(), error);
         }
@@ -725,8 +935,168 @@ mod tests {
             &module,
             &mut budget,
             &mut std::array::from_fn(|_| Metric::default()),
+            None,
         );
         assert_eq!(result.err().unwrap().to_string(), "label read failed");
         assert_eq!(budget.source_rows, 5);
+    }
+    #[test]
+    fn regime_metrics_match_explicit_pairs_without_changing_states_fuel_or_labels() {
+        let day = domain::ticks::UTC_DAY_NS;
+        let mut request = request();
+        request.input.event_start_ns = counter(32 * day).unwrap();
+        request.input.event_end_ns = counter(36 * day).unwrap();
+        request.input.decision_cutoff_ns = request.input.event_end_ns;
+        request.train_end_ns = counter(33 * day).unwrap();
+        request.validation_end_ns = counter(35 * day).unwrap();
+        request.input.representation = Some(NativeTickRepresentationV1::EventTimeCohortCacheV1);
+        request.input.maximum_rows = None;
+        request.input.maximum_source_rows = Some(counter(100).unwrap());
+        request.parameters.total_fuel = Some(counter(1_000_000).unwrap());
+        request.input.instrument_ids = vec![
+            "AUD/USD.SIM".into(),
+            "EMPTY.SIM".into(),
+            "ZZZ/USD.SIM".into(),
+        ];
+        request.evaluation_regimes = Some(NativeTickRegimeEvaluationV1 {
+            kind: NativeTickRegimeMethodV1::BtcCompleted30DayReturnV1,
+            days: [Some("106"), Some("94"), Some("100"), None]
+                .into_iter()
+                .enumerate()
+                .map(|(index, price)| {
+                    let start = (32 + index as u64) * day;
+                    NativeTickRegimeDayV1 {
+                        day_start_ns: counter(start).unwrap(),
+                        previous: price.map(|price| NativeTickRegimeMarkV1 {
+                            event_ns: counter(start - day + 1).unwrap(),
+                            price: price.into(),
+                        }),
+                        lookback: Some(NativeTickRegimeMarkV1 {
+                            event_ns: counter(start - 31 * day + 1).unwrap(),
+                            price: "100".into(),
+                        }),
+                    }
+                })
+                .collect(),
+        });
+        domain::ticks::evaluation_request(&request).unwrap();
+        let times = [
+            32 * day + 1,
+            32 * day + 2,
+            33 * day - 20_000_000_000,
+            33 * day + 10_000_000_000,
+            34 * day - 20_000_000_000,
+            34 * day + 60_000_000_000,
+            35 * day - 20_000_000_000,
+            35 * day + 60_000_000_000,
+            36 * day - 1,
+        ];
+        let mut data = BTreeMap::new();
+        for (id, scale) in [("AUD/USD.SIM", 1), ("ZZZ/USD.SIM", 3)] {
+            let rows = times
+                .iter()
+                .enumerate()
+                .map(|(index, event)| {
+                    let mut row = series()["AUD/USD.SIM"][0];
+                    row.instrument_id = nautilus_model::identifiers::InstrumentId::from(id);
+                    row.trade_id =
+                        nautilus_model::identifiers::TradeId::from(index.to_string().as_str());
+                    row.ts_event = (*event).into();
+                    row.ts_init = (*event).into();
+                    row.price = nautilus_model::types::Price::from(
+                        ((10 + index) * scale).to_string().as_str(),
+                    );
+                    row
+                })
+                .collect::<Vec<_>>();
+            data.insert(id.to_owned(), rows);
+        }
+        data.insert("EMPTY.SIM".into(), vec![]);
+        for target in [
+            NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts: 1 },
+            NativeTickTargetV1::FixedEventTime {
+                horizon_ns: counter(60_000_000_000).unwrap(),
+            },
+        ] {
+            request.target = target;
+            let wasm = model(0);
+            let expected =
+                super::super::evaluate_series(&request, data.clone(), &wasm, false).unwrap();
+            let module = SignalModule::new(&wasm, true).unwrap();
+            let mut budget = Budget {
+                fuel: Some(1_000_000),
+                source_rows: 100,
+            };
+            let mut pooled = std::array::from_fn(|_| Metric::default());
+            let mut groups = Groups::new(&request).unwrap();
+            for (id, trades) in &data {
+                let rows = super::super::cohorts(trades, 100).unwrap();
+                let mut labels = rows.clone().into_iter().map(Ok);
+                evaluate_asset(
+                    &request,
+                    (rows.clone().into_iter().map(Ok), Some(&mut labels)),
+                    rows.len() as u64,
+                    &module,
+                    &mut budget,
+                    &mut pooled,
+                    Some(&mut groups),
+                )
+                .unwrap();
+                groups.finish_asset(id);
+            }
+            assert_eq!(
+                expected.consumed_fuel.unwrap().get(),
+                1_000_000 - budget.fuel.unwrap()
+            );
+            let reports = groups.finish(&request).unwrap();
+            let states = domain::ticks::evaluation_regimes(&request).unwrap();
+            for (index, report) in reports.iter().enumerate() {
+                same_metric(
+                    &pooled[index].finish().unwrap(),
+                    &expected.partitions[index].metric,
+                );
+                assert_eq!(
+                    report
+                        .regimes
+                        .iter()
+                        .map(|group| group.metric.counts.observations.get())
+                        .sum::<u64>(),
+                    expected.partitions[index].metric.counts.observations.get()
+                );
+                for group in &report.regimes {
+                    let metric = crate::factors::metric(
+                        expected.points.as_ref().unwrap().iter().filter(|point| {
+                            point.partition == report.partition
+                                && states
+                                    [((point.observation.event_ns.get() - 32 * day) / day) as usize]
+                                    == group.regime
+                        }),
+                    )
+                    .unwrap();
+                    same_metric(&group.metric, &metric);
+                    assert_eq!(group.assets.len(), 3);
+                    assert_eq!(group.assets[1].metric.counts.observations.get(), 0);
+                    assert_eq!(group.label_spans.count, group.metric.counts.included);
+                    assert_eq!(
+                        group
+                            .label_spans
+                            .buckets
+                            .iter()
+                            .map(|bucket| bucket.count.get())
+                            .sum::<u64>(),
+                        group.label_spans.count.get()
+                    );
+                    if matches!(target, NativeTickTargetV1::FixedEventTime { .. }) {
+                        assert!(group
+                            .label_spans
+                            .min_ns
+                            .is_none_or(|span| span.get() >= 60_000_000_000));
+                    }
+                }
+            }
+            // A BEAR decision at day 34 minus 20 seconds labels a RANGE observation,
+            // without introducing a regime-boundary exclusion inside VALIDATION.
+            assert!(reports[1].regimes[1].metric.counts.included.get() > 0);
+        }
     }
 }
