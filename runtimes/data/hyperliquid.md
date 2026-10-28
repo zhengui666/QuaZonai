@@ -70,6 +70,37 @@ the original relative file paths remain usable. Use a matching operator build:
 older builds can ignore unknown filter keys. The shipped profile is unchanged,
 and other special record classes still require their own interpretation.
 
+For the inspected spot/perpetual archive, an explicit candidate-market processing
+view separates account/protocol events with these additional stream conditions:
+
+```json
+{
+  "equals": { "crossed": true },
+  "not_equals": { "liquidation_method": "backstop" },
+  "not_in": {
+    "direction": [
+      "Net Child Vaults", "Settlement", "Spot Dust Conversion",
+      "Backstop Borrow Liquidation", "Partial Borrow Liquidation"
+    ]
+  }
+}
+```
+
+`not_in` lists contain scalar values: any match excludes the row, separate fields
+remain conjunctive, and an empty list excludes nothing. Existing scalar conditions
+retain their meaning. This declaration requires a matching operator build and
+does not change the shipped acquisition profile.
+
+Actual market liquidations remain: the venue's [liquidation rules](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations)
+distinguish market orders from backstop position transfers, and [ADL](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/auto-deleveraging)
+uses the previous mark price. [Borrow takeovers](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/portfolio-margin)
+precede subsequent TWAP executions; [delisting settlement](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/delisting)
+is a cashflow/position event. Preserve those original records for separate event
+and accounting consumers. `crossed`, positive order IDs or an account's liquidation
+flag alone do not establish an ordinary book execution in this archive. Source
+classification still does not establish original receive times, historical rules,
+exchange-wide completeness or executable backtest results.
+
 `--resume` verifies a completed immutable unit by re-reading its source,
 definitions, currencies and native records, and comparing its final receipt;
 it does not rewrite that catalog. A changed source/selection/definition or

@@ -93,6 +93,8 @@ struct Stream {
     #[serde(default)]
     not_equals: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
+    not_in: BTreeMap<String, Vec<serde_json::Value>>,
+    #[serde(default)]
     sides: BTreeMap<String, String>,
     #[serde(default)]
     symbol_from_file_stem: bool,
@@ -1006,11 +1008,19 @@ mod tests {
         fs::write(
             &csv,
             concat!(
-                "coin,timestamp,price,size,trade_id,side,crossed,direction\n",
-                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B,true,Buy\n",
-                "BTCUSDT,1767225600001,10.12,0.1234567890,0,S,true,Spot Dust Conversion\n",
-                "BTCUSDT,1767225600001,11.12,0.1234567890,0,S,true,Spot Dust Conversion\n",
-                "BTCUSDT,1767225600001,10.12,0.1234567890,T-2,B,false,Buy\n"
+                "coin,timestamp,price,size,trade_id,side,crossed,direction,liquidation_method\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,S,true,Close Long,market\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-2,B,true,Close Short,market\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-3,B,true,Buy,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-4,S,true,Auto-Deleveraging,backstop\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-5,S,true,Liquidated Cross Long,backstop\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-6,B,true,Net Child Vaults,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-7,B,true,Settlement,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-8,S,true,Backstop Borrow Liquidation,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-9,S,true,Partial Borrow Liquidation,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,0,S,true,Spot Dust Conversion,\n",
+                "BTCUSDT,1767225600001,11.12,0.1234567890,0,S,true,Spot Dust Conversion,\n",
+                "BTCUSDT,1767225600001,10.12,0.1234567890,T-10,B,false,Buy,\n"
             ),
         )
         .unwrap();
@@ -1018,7 +1028,10 @@ mod tests {
         let mut metadata: serde_json::Value = json(&manifest).unwrap();
         metadata["profile"]["streams"][0]["equals"] = serde_json::json!({"crossed":true});
         metadata["profile"]["streams"][0]["not_equals"] =
-            serde_json::json!({"direction":"Spot Dust Conversion"});
+            serde_json::json!({"direction":"Spot Dust Conversion","liquidation_method":"backstop"});
+        metadata["profile"]["streams"][0]["not_in"] = serde_json::json!({"direction":[
+            "Net Child Vaults", "Settlement", "Backstop Borrow Liquidation", "Partial Borrow Liquidation"
+        ]});
         metadata["files"][0]["size"] = serde_json::json!(original.len());
         fs::write(&manifest, serde_json::to_vec(&metadata).unwrap()).unwrap();
         let prefixes = vec!["perps/".into()];
@@ -1030,10 +1043,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.status, "IMPORTED");
-        assert_eq!(report.source_rows, 4);
-        assert_eq!(report.filtered_rows, 3);
-        assert_eq!(report.selected_rows, 1);
-        assert_eq!(report.readback_records, 1);
+        assert_eq!(report.source_rows, 12);
+        assert_eq!(report.filtered_rows, 9);
+        assert_eq!(report.selected_rows, 3);
+        assert_eq!(report.readback_records, 3);
         assert_eq!(report.duplicate_trades, 0);
         assert_eq!(report.source_manifest, metadata);
         assert_eq!(fs::read(csv).unwrap(), original);
