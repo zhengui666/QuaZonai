@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { constants, createReadStream } from 'node:fs';
-import { access, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
@@ -10,7 +10,7 @@ import { JsonReader, jsonChunks } from '../../research/src/native-json.ts';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
-type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number };
+type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number; progressPath?: string };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
 export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
@@ -135,7 +135,18 @@ export async function createNautilusWorker(options: WorkerOptions) {
       for await (const chunk of createReadStream(join(receipts, id, 'receipt.json'), { encoding: 'utf8' })) parser.write(chunk);
       const receipt = parser.finish() as unknown as Receipt;
       // An old RUNNING receipt never grants permission to repeat an uncertain run.
-      return receipt.status === 'RUNNING' && !active.has(id) ? { ...receipt, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' } : receipt;
+      if (receipt.status === 'RUNNING') {
+        const execution = active.get(id);
+        if (!execution) return { ...receipt, status: 'UNKNOWN', error: 'nautilus_execution_outcome_unknown' };
+        if (execution.progressPath) {
+          try {
+            const rows = (await readFile(execution.progressPath, 'utf8')).split('\n'); rows.pop();
+            const snapshots = rows.filter(Boolean).map(row => (JSON.parse(row) as { snapshot: Json }).snapshot);
+            return { ...receipt, progress: { snapshots } };
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+      }
+      return receipt;
     } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
   }
   async function argumentsFor(request: Request, directory: string): Promise<string[]> {
@@ -209,8 +220,9 @@ export async function createNautilusWorker(options: WorkerOptions) {
           const selectedBinary = tick ? tickBinary : binary;
           const executable = tick ? '/usr/bin/prlimit' : selectedBinary;
           const childArgs = tick ? [`--as=${tickMemoryBytes}:${tickMemoryBytes}`, '--', selectedBinary, request.command, ...args] : [request.command, ...args];
+          if (['simulate', 'replay-catalog-ensemble'].includes(request.command)) execution.progressPath = join(directory, 'progress.ndjson');
           child = spawn(executable, childArgs, { cwd: directory, detached: true,
-            env: { PATH: '/usr/bin:/bin', TMPDIR: directory }, stdio: ['pipe', 'pipe', 'pipe'] });
+            env: { PATH: '/usr/bin:/bin', TMPDIR: directory, ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
           const parser = new JsonReader(); let parseError: unknown; let stderr = ''; let outputBytes = 0; let outputExceeded = false;
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
           child.stdout!.on('data', chunk => {

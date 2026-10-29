@@ -227,6 +227,77 @@ fn native_stream_retains_one_account_and_fees_while_dynamic_market_changes() {
 }
 
 #[test]
+fn native_preview_from_catalog_ensemble_is_original_account_data() {
+    // Isolate the observational environment variable from parallel unit tests.
+    if std::env::var_os("QZ_TEST_CATALOG_LIVE_CHILD").is_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "catalog_ensemble::tests::native_preview_from_catalog_ensemble_is_original_account_data",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("QZ_TEST_CATALOG_LIVE_CHILD", "1")
+            .env("QZ_PROGRESS_PATH", directory.path().join("preview.ndjson"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            fs::metadata(directory.path().join("preview.ndjson"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let (catalog, manifest) = fixture(directory.path());
+    let result = super::replay(
+        &catalog,
+        &manifest,
+        &request(),
+        &[model(), model()],
+        &crate::factors::catalog_factor_scope(&catalog).unwrap(),
+    )
+    .unwrap();
+    let original = result.simulation.canonical_result["portfolio_snapshots"]
+        .as_array()
+        .unwrap();
+    let encoded = fs::read_to_string(std::env::var_os("QZ_PROGRESS_PATH").unwrap()).unwrap();
+    let preview: Vec<serde_json::Value> = encoded
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["snapshot"].clone())
+        .collect();
+    assert!(preview.len() >= 2);
+    for snapshot in &preview {
+        assert!(original
+            .iter()
+            .any(|point| point["ts_event"] == snapshot["ts_event"]
+                && point["ts_init"] == snapshot["ts_init"]
+                && point["account_id"] == snapshot["account_id"]
+                && point["total_equity"] == snapshot["total_equity"]));
+    }
+    let clock = |snapshot: &serde_json::Value| {
+        snapshot["ts_event"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+    };
+    assert_eq!(
+        clock(preview.last().unwrap()),
+        original.iter().map(clock).max().unwrap()
+    );
+}
+
+#[test]
 fn long_modeled_lag_and_pending_order_keep_original_pool_across_source_partitions() {
     let directory = tempfile::tempdir().unwrap();
     let (catalog, manifest) = fixture(directory.path());

@@ -273,3 +273,38 @@ test('economic tick CLI submits original bytes and reads the opaque replay throu
     ]);
   } finally { await config.close(); await api.close(); }
 });
+
+test('portfolio watch reads running progress and partial equity until the same portfolio settles', async () => {
+  const requests: string[] = [];
+  const native = await server((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    const finished = requests.length > 1;
+    json(response, { id: 'running-id', status: finished ? 'COMPUTED' : 'RUNNING', progress: { phase: finished ? 'COMPLETED' : 'SIMULATING', updatedAt: '2026-10-29T00:00:00Z' }, curve: [{ at: '2026-10-29T00:00:00Z', value: '100.000000000000000001' }] });
+  });
+  const config = await configuration(native.origin);
+  try {
+    const receipts: any[] = [];
+    assert.equal(await run(['portfolio', 'watch', 'running/id', '--timeout', '5'], value => receipts.push(value)), 0);
+    assert.equal(receipts[0].status, 'RUNNING');
+    assert.equal(receipts[0].progress.phase, 'SIMULATING');
+    assert.equal(receipts[0].curve[0].value, '100.000000000000000001');
+    assert.equal(receipts.at(-1).settled, true);
+    assert.deepEqual(requests, ['GET /api/v3/portfolios/running%2Fid', 'GET /api/v3/portfolios/running%2Fid']);
+  } finally { await config.close(); await native.close(); }
+});
+
+test('backtest wait timeout detaches without canceling or restarting the running portfolio', async () => {
+  const requests: string[] = [];
+  const native = await server((request, response) => {
+    requests.push(request.method!);
+    json(response, { id: 'running-id', status: 'RUNNING', curve: [] });
+  });
+  const config = await configuration(native.origin);
+  try {
+    const receipts: any[] = [];
+    assert.equal(await run(['backtest', 'wait', 'running-id', '--timeout', '0.05'], value => receipts.push(value)), 124);
+    assert.equal(receipts.at(-1).settled, false);
+    assert.equal(receipts.at(-1).cancellationRequested, false);
+    assert.deepEqual(requests, ['GET']);
+  } finally { await config.close(); await native.close(); }
+});

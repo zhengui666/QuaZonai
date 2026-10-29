@@ -363,7 +363,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         await assertMembersAvailable(tx, researchIds, input);
         assertBusinessAdmission(facts);
         const fact: PortfolioFact = { input: structuredClone(input), evidence, weights, policy: json(configured.strategy), native: null, target: null,
-          view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', capital, currency: configured.currency,
+          view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', progress: { phase: 'QUEUED', updatedAt: new Date().toISOString() }, capital, currency: configured.currency,
             createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null } };
         const taskId = await tx.createTask(BuildPortfolio, { id, evidence, weights, policy: configured.strategy!, capital, currency: configured.currency,
           dataDir: config.dataDir, catalog: capture, binary: scienceTarget(config), ...(input.capacityPolicy ? { capacityPolicy: input.capacityPolicy } : {}) },

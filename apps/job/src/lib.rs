@@ -15,6 +15,7 @@ pub mod factors;
 pub mod feature_model;
 pub mod forecast;
 pub mod forward;
+mod live_progress;
 pub mod managed;
 #[cfg(any(feature = "native-sandbox-test", feature = "native-paper"))]
 pub mod native_capital_exit;

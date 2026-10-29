@@ -16,11 +16,14 @@ quazonai factor list
 quazonai factor capacity FACTOR_ID
 quazonai factor capacity FACTOR_ID --file CAPACITY.json
 quazonai portfolio build --file original-portfolio.json
+quazonai portfolio list
+quazonai portfolio get PORTFOLIO_ID
+quazonai portfolio watch PORTFOLIO_ID --timeout 60
 quazonai portfolio capacity PORTFOLIO_ID --file CAPACITY.json
 quazonai observation start --file original-observation.json
 ```
 
-Run `quazonai --help` for all compact commands. `client` is an optional spelling alias; `backtest build/list/get/delete` aliases the portfolio consumer. Source DTOs are `packages/contracts/src/index.ts`; native scientific input schemas remain Rust-owned. Offline `schema list/show NAME [--domain]` reads live source/native schemas in source-tree distributions. `npm pack` includes original license and contract assets generated directly from those sources, so installed packages can inspect them offline too. Unavailable assets report `installed_schema_unavailable` without inventing schemas. The npm launcher uses public Node `registerHooks/stripTypeScriptTypes` for its own source because Node does not auto-strip TypeScript under `node_modules`.
+Run `quazonai --help` for all compact commands. `client` is an optional spelling alias; `backtest build/list/get/watch/wait/delete` aliases the portfolio consumer. Source DTOs are `packages/contracts/src/index.ts`; native scientific input schemas remain Rust-owned. Offline `schema list/show NAME [--domain]` reads live source/native schemas in source-tree distributions. `npm pack` includes original license and contract assets generated directly from those sources, so installed packages can inspect them offline too. Unavailable assets report `installed_schema_unavailable` without inventing schemas. The npm launcher uses public Node `registerHooks/stripTypeScriptTypes` for its own source because Node does not auto-strip TypeScript under `node_modules`.
 
 Login accepts a password only through hidden input in the user's own terminal, never argv/environment/stdin pipes. Setup remains in the auth UI. A saved login is reused until `login --replace` deliberately creates a replacement; that does not revoke the old device. The profile retains `{schema_version:1,origin,token,development_http,ca_certificate}` under XDG/HOME or APPDATA. Unix writes are atomic/private (0700 directory, 0600 file); Windows uses a private current-owner DACL. Token bytes, including `qzc`, are preserved; legacy acceptance depends on the service. No provider-credential discovery runs.
 
@@ -49,3 +52,5 @@ npm --prefix apps/cli test
 ```
 
 Tests concentrate on private synthetic auth/profile reuse, exact HTTP requests and explicit replay/conflict/error, and bounded native-status observation. They establish client protocol behavior, not real provider/account authorization or model quality.
+
+`portfolio list/get` includes running portfolios, recorded `progress` and current native `curve`. `watch` emits successive views; `wait` emits the terminal view (exit 0 for computed, 2 for failed/stopped, 124 on timeout). Both use only reads and accept optional positive `--timeout SECONDS`; detaching never cancels or restarts a backtest. An empty curve means no snapshot has arrived. Intermediate equity is provisional; final metrics and target weights require a completed backtest.

@@ -14,12 +14,13 @@ import { PortfolioCapacity, CapitalFields, capitalFields, capitalInput, type Cap
 import { AtomicPortfolioBuilder } from './portfolio-builder';
 import { FactorIdentity } from './factors';
 import { DeleteRecord } from './delete-record';
+import { BacktestProgress } from './backtest-progress';
 const EquityPlot = lazy(() => import('./equity-plot'));
 export default function Portfolios({ route }: { route: Route }) { return route.creating ? (route.params.has('research') ? <PortfolioBuilder route={route} /> : <AtomicPortfolioBuilder route={route} />) : route.id ? <PortfolioDetail id={route.id} /> : <PortfolioList />; }
 function PortfolioList() {
   const query = useResource<PortfolioView[]>('/portfolios', { poll: 5000 });
   return <div className="index-page"><header className="page-heading"><h1>组合回测</h1><Button type="primary" icon={<PlusIcon size={15} />} onClick={() => navigate('/portfolios/new')}>创建组合</Button></header><ErrorNotice error={query.error} retry={() => { void query.refetch(); }} />{query.isPending ? <Loading /> : !query.data?.length ? !query.error && <Empty title="尚无策略组合" action={<a className="text-link" href={href('/research')}>查看研究 <ArrowUpRightIcon size={14} /></a>} /> : <Table<PortfolioView> rowKey="id" dataSource={query.data} pagination={{ pageSize: 20, hideOnSinglePage: true }} scroll={{ x: 700 }} columns={[
-    { title: '组合名称', render: (_value, row) => <><a className="record-link" href={href(`/portfolios/${encodeURIComponent(row.id)}`)}>{shortTitle(row.name, undefined, '组合')}</a>{shortTitle(row.name) !== row.name && <TextDisclosure label="完整组合名称" value={row.name} collapsed />}</> }, { title: '状态', render: (_value, row) => <Status plain value={row.status} /> },
+    { title: '组合名称', render: (_value, row) => <><a className="record-link" href={href(`/portfolios/${encodeURIComponent(row.id)}`)}>{shortTitle(row.name, undefined, '组合')}</a>{shortTitle(row.name) !== row.name && <TextDisclosure label="完整组合名称" value={row.name} collapsed />}</> }, { title: '状态', render: (_value, row) => <><Status plain value={row.status} /><BacktestProgress portfolio={row} compact /></> },
     { title: '数据集', dataIndex: 'datasetId' }, { title: <MetricLabel metricKey="members" />, align: 'right', render: (_value, row) => `${row.factors?.length ?? row.researchIds.length}${(row.factors?.length ?? row.researchIds.length) === 1 ? '（单因子配置）' : ''}` }, { title: <MetricLabel metricKey="capital" />, align: 'right', render: (_value, row) => <Exact value={row.capital} unit={row.currency} /> }, { title: '创建时间', render: (_value, row) => <Timestamp value={row.createdAt} /> },
   ]} />}</div>;
 }
@@ -30,6 +31,7 @@ function PortfolioDetail({ id }: { id: string }) {
     <Facts items={[["数据集", value.datasetId], ["本金", <Exact value={value.capital} unit={value.currency} />], ["创建时间", <Timestamp value={value.createdAt} />], ["计算任务", value.taskId ?? '未记录']]} />
     {value.factors && <section className="result-section"><h3>原子因子与权重</h3><Table rowKey="factorId" size="small" pagination={false} dataSource={value.factors} columns={[{ title: '因子来源', render: (_cell, row) => <FactorIdentity id={row.factorId} /> }, { title: <MetricLabel metricKey="weight" />, render: (_cell, row) => <Exact value={row.weight} /> }]} /></section>}
     {!value.factors && <section className="result-section"><h3>研究与权重（历史方式）</h3><Table rowKey="researchId" size="small" pagination={false} dataSource={value.researchIds.map(researchId => ({ researchId, weight: value.weights?.find(item => item.researchId === researchId)?.weight }))} columns={[{ title: '原始研究', render: (_cell, row) => <a href={href(`/research/${row.researchId}`)}>研究 #{row.researchId}</a> }, { title: <MetricLabel metricKey="weight" />, align: 'right', render: (_cell, row) => <Exact value={row.weight} missing="未记录" /> }]} /></section>}
+    <BacktestProgress portfolio={value} />
     <PortfolioCapacity key={value.id} portfolio={value} />
     <section className="result-section"><Suspense fallback={<Loading />}><EquityPlot points={value.curve} currency={value.currency} initialCapital={value.capital} /></Suspense></section>
     <section className="result-section"><h3>回测指标</h3><Metrics metrics={value.metrics} /></section>

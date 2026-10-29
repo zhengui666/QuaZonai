@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { connect } from './client.ts';
 import { CliError, forgetProfile, loadProfile, origin } from './profile.ts';
 import { login } from './login.ts';
-import { observe } from './watch.ts';
+import { observe, observePortfolio } from './watch.ts';
 import { schemas } from './schema.ts';
 import { researchCapital, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import type { ObservationStart, PortfolioStart, ResearchStart, SessionView } from '../../../packages/contracts/src/index.ts';
@@ -29,6 +29,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
   factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
   portfolio build --file REQUEST.json | list | get ID | delete ID
+  portfolio watch ID [--timeout SECONDS] | portfolio wait ID [--timeout SECONDS]
   portfolio capacity ID --file ASSUMPTIONS.json
   portfolio replay-ticks --file REQUEST.json | tick-replay ID
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
@@ -199,7 +200,7 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       body = file.bytes; method = 'POST'; path = '/tick-economic-replays';
     } else if (action === 'tick-replay') path = `/tick-economic-replays/${resourceId(id)}`;
     else if (action === 'list') path = '/portfolios';
-    else if (action === 'get' || action === 'delete') { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
+    else if (['get', 'delete', 'watch', 'wait'].includes(action)) { path = `/portfolios/${resourceId(id)}`; if (action === 'delete') method = 'DELETE'; }
     else if (action === 'capacity') {
       const file = await fileBody(values.file);
       try { researchCapital(file.body); } catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_capacity_assumptions'); }
@@ -247,6 +248,14 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       emit(result);
       if (signal?.aborted) return 130;
       return result.settled ? (result.submissionStatus === 'done' ? 0 : 2) : action === 'wait' ? 124 : 0;
+    }
+    if ((group === 'portfolio' || group === 'backtest') && (action === 'watch' || action === 'wait')) {
+      const seconds = values.timeout === undefined ? undefined : Number(values.timeout);
+      if (seconds !== undefined && (!Number.isFinite(seconds) || seconds <= 0 || !Number.isSafeInteger(seconds * 1000))) throw new CliError('positive_timeout_seconds_required');
+      const result = await observePortfolio(client, id!, seconds, action === 'watch' ? emit : undefined, signal);
+      emit(result);
+      if (signal?.aborted) return 130;
+      return result.settled ? (result.portfolio?.status === 'COMPUTED' ? 0 : 2) : action === 'wait' ? 124 : 0;
     }
     const result = await client.request(method, path, body, signal);
     if (group === 'observation' && action === 'get') {

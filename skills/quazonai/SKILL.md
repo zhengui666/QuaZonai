@@ -32,6 +32,7 @@ Run `quazonai identity`. Without a login, have the user run `quazonai login --or
 | Delete specifically requested investment decisions, studies, atomic factors or portfolios | `pm delete ID`, `research delete ID`, `factor delete ID`, `portfolio delete ID`; [deletion and limits](references/deletion.md) |
 | Inspect original atomic factors and conditional capacity | `factor list`, `factor get ID`, `factor capacity ID` |
 | Build a requested shared-account portfolio/backtest | `portfolio build --file FILE`, `portfolio list`, `portfolio get ID` |
+| Inspect a queued/running portfolio, progress and current native curve | `portfolio list`, `portfolio get ID`, `portfolio watch ID [--timeout SECONDS]`, `portfolio wait ID [--timeout SECONDS]`; [progress and partial-result limits](references/results.md) |
 | Reassess original portfolio capacity without rebuilding | `portfolio capacity ID --file FILE`; [assumptions and limits](references/results.md) |
 | Bind Paper/Live account observation and target receipts | [Observations](references/account-transport.md) |
 | Requested account sizing or capital reservation | `observation automatic ID --file FILE`, `capital status/preview/command ID`; [account transport](references/account-transport.md) |
