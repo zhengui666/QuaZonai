@@ -61,6 +61,15 @@ validates the mounted catalog. The original model is compiled and attached throu
 `replay-tick-economic`, using the tick precision companion and existing worker
 concurrency, memory and output limits.
 
+An optional `small_capital_policy` specifies exact-string `maximum_entry_notional_usdc`
+and `maximum_holding_ns`. It uses fresh signals, the declared round-trip fee threshold,
+a frozen fast-EMA exit reference and an expiry intent. Exits still require a later
+eligible trade and may remain partial or below the minimum order. FX instruments and
+their reserve currencies serve conversion rather than alpha under this policy. The
+optional diagnostics report actual opened, closed and remaining positions; an unfilled
+entry is an intent that never filled. Missing prices remain unknown. Omitting this
+policy retains the existing allocation behavior.
+
 This replay creates no new factor trial. Its economic days and gaps remain in a
 separate owner-only document and never become Agent selection feedback. A repeated
 request ID reuses its original result; changed input conflicts. Recovery reads an
