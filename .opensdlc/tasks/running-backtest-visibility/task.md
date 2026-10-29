@@ -16,3 +16,7 @@ From current remote `dev`, support inspecting running portfolios, recorded progr
 ## Delivery
 
 Branch: `feat/running-backtest-visibility`, based on remote `dev` at `114344eb`.
+
+PR: [#265](https://github.com/zhengui666/QuaZonai/pull/265).
+
+Local verification: Web typecheck, 37 tests and production build; CLI typecheck and 14 protocol tests; native writer isolation tests; real Nautilus simulation subprocess preview before completion and catalog ensemble original-account snapshot comparison. Service full suite: 338 passed, 24 explicitly skipped for unavailable native fixtures/prerequisites, zero failures. Final-Head CI must run the applicable native/core/browser prerequisites before merge. These checks do not establish market profitability or real account authorization.
