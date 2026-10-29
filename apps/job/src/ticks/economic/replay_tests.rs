@@ -1669,4 +1669,323 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         8,
         "profitable-looking source event after the prepared primary-view end is outside the replay"
     );
+    assert_eq!(result.model, "SEGREGATED_COHORT_MARK_ESTIMATE_V1");
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let quote_result = replay(
+        &prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    assert_eq!(quote_result.model, "SEGREGATED_SYNTHETIC_QUOTE_IOC_V1");
+    assert_eq!(
+        serde_json::to_value(&quote_result.request).unwrap(),
+        serde_json::to_value(&request).unwrap()
+    );
+    assert!(quote_result.methods["execution"].contains("not observed quotes or book depth"));
+}
+
+#[test]
+fn ioc_bounded_flat_bar_investigation() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let instrument = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    cash.step(SECOND, &instrument, 100.0, 4.0, None).unwrap();
+    cash.step(2 * SECOND, &instrument, 101.0, 0.4, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(4, 1))
+    );
+    cash.step(3 * SECOND, &instrument, 101.0, 0.4, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(8, 1))
+    );
+    cash.step(4 * SECOND, &instrument, 102.0, 0.4, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::ONE)
+    );
+    cash.step(5 * SECOND, &instrument, 101.0, 0.95, Some(Decimal::ZERO))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(5, 2))
+    );
+    cash.step(6 * SECOND, &instrument, 99.0, 1.0, Some(Decimal::ZERO))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(5, 2))
+    );
+}
+
+#[test]
+fn ioc_zero_capacity_quote_probe() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let instrument = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    cash.step(SECOND, &instrument, 100.0, 0.4, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(4, 1))
+    );
+    cash.step(2 * SECOND, &instrument, 101.0, 0.0, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(
+        cash.balance(Currency::BTC()).map(|m| m.as_decimal()),
+        Some(Decimal::new(4, 1))
+    );
+}
+
+#[test]
+fn quote_batch_ioc_instruments_do_not_reuse_capacity() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let instrument = |name: &str| {
+        assets
+            .iter()
+            .find(|a| a.instrument.id().to_string() == name)
+            .unwrap()
+            .instrument
+            .clone()
+    };
+    let spot = instrument(SPOT);
+    let bridge = instrument(BRIDGE);
+    let bridge_currency = bridge.base_currency().unwrap();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    cash.inventory_target_instruments(&[bridge.id()]).unwrap();
+    let rows = |cap_btc: Decimal, cap_bridge: Decimal, target: Decimal| {
+        vec![
+            NativeMark {
+                instrument_id: spot.id(),
+                mark: 100.0,
+                capacity: cap_btc,
+                target_quantity: Some(target),
+            },
+            NativeMark {
+                instrument_id: bridge.id(),
+                mark: 100.0,
+                capacity: cap_bridge,
+                target_quantity: Some(target),
+            },
+        ]
+    };
+    cash.step_batch(
+        SECOND,
+        &rows(Decimal::new(4, 1), Decimal::new(3, 1), Decimal::ONE),
+    )
+    .unwrap();
+    assert_eq!(cash.summary().submitted, 2);
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC()).unwrap().as_decimal(),
+        Decimal::new(4, 1)
+    );
+    assert_eq!(
+        cash.balance(bridge_currency).unwrap().as_decimal(),
+        Decimal::new(3, 1)
+    );
+    cash.step_batch(
+        2 * SECOND,
+        &rows(Decimal::new(2, 1), Decimal::new(1, 1), Decimal::ONE),
+    )
+    .unwrap();
+    assert_eq!(cash.summary().submitted, 4);
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC()).unwrap().as_decimal(),
+        Decimal::new(6, 1)
+    );
+    assert_eq!(
+        cash.balance(bridge_currency).unwrap().as_decimal(),
+        Decimal::new(4, 1)
+    );
+    cash.step_batch(
+        3 * SECOND,
+        &rows(Decimal::ZERO, Decimal::ZERO, Decimal::ONE),
+    )
+    .unwrap();
+    assert_eq!(cash.summary().submitted, 6);
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC()).unwrap().as_decimal(),
+        Decimal::new(6, 1)
+    );
+    assert_eq!(
+        cash.balance(bridge_currency).unwrap().as_decimal(),
+        Decimal::new(4, 1)
+    );
+    cash.step_batch(
+        4 * SECOND,
+        &rows(Decimal::new(55, 2), Decimal::new(35, 2), Decimal::ZERO),
+    )
+    .unwrap();
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC()).unwrap().as_decimal(),
+        Decimal::new(5, 2)
+    );
+    assert_eq!(
+        cash.balance(bridge_currency).unwrap().as_decimal(),
+        Decimal::new(5, 2)
+    );
+    let before = cash.summary().submitted;
+    assert_eq!(before, 8);
+    cash.step_batch(5 * SECOND, &rows(Decimal::ONE, Decimal::ONE, Decimal::ZERO))
+        .unwrap();
+    assert_eq!(cash.summary().submitted, before);
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC()).unwrap().as_decimal(),
+        Decimal::new(5, 2)
+    );
+    assert_eq!(
+        cash.balance(bridge_currency).unwrap().as_decimal(),
+        Decimal::new(5, 2)
+    );
+}
+
+#[test]
+fn quote_batch_duplicate_instrument_rejected_before_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let spot = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    let row = || NativeMark {
+        instrument_id: spot.id(),
+        mark: 100.0,
+        capacity: Decimal::ONE,
+        target_quantity: Some(Decimal::ONE),
+    };
+    assert!(cash
+        .step_batch(SECOND, &[row(), row()])
+        .unwrap_err()
+        .to_string()
+        .contains("TICK_ECONOMIC_DUPLICATE_MARK"));
+    assert_eq!(cash.summary().submitted, 0);
+    assert_eq!(cash.pending_order_count(), 0);
+}
+
+#[test]
+fn quote_zero_capacity_does_not_reuse_prior_unused_size() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let instrument = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    cash.step(SECOND, &instrument, 100.0, 0.4, None).unwrap();
+    assert_eq!(cash.summary().submitted, 0);
+    cash.step(2 * SECOND, &instrument, 100.0, 0.0, Some(Decimal::ONE))
+        .unwrap();
+    assert_eq!(cash.summary().submitted, 1);
+    assert_eq!(cash.pending_order_count(), 0);
+    assert_eq!(
+        cash.balance(Currency::BTC())
+            .map(|m| m.as_decimal())
+            .unwrap_or(Decimal::ZERO),
+        Decimal::ZERO
+    );
+}
+
+#[test]
+fn quote_ioc_same_timestamp_funding_uses_previous_position() {
+    let directory = tempfile::tempdir().unwrap();
+    let (assets, mut request) = small_assets(directory.path());
+    request.scenario.execution_model =
+        Some(contracts::economic_tick::NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1);
+    let instrument = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == LATE)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut margin = Some(build(&assets, true, Decimal::from(1000), &request.scenario).unwrap());
+    margin
+        .as_mut()
+        .unwrap()
+        .step(SECOND, &instrument, 100.0, 10.0, None)
+        .unwrap();
+    margin
+        .as_mut()
+        .unwrap()
+        .step(2 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ONE))
+        .unwrap();
+    let path = directory.path().join("same-time-rates.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            json!({"instrument_id":LATE,"event_ns":(3*SECOND).to_string(),"rate":"0.01"})
+        ),
+    )
+    .unwrap();
+    let mut funding = Funding::open(&path, BTreeSet::from([LATE.into()])).unwrap();
+    let rates = rates_at(
+        &mut funding,
+        &mut margin,
+        &assets,
+        3 * SECOND,
+        0,
+        HOUR,
+        &mut None,
+        &mut BTreeSet::new(),
+        &mut None,
+    )
+    .unwrap();
+    margin
+        .as_mut()
+        .unwrap()
+        .step_batch_with_rates(
+            3 * SECOND,
+            &[NativeMark {
+                instrument_id: instrument.id(),
+                mark: 100.0,
+                capacity: Decimal::from(10),
+                target_quantity: Some(Decimal::ZERO),
+            }],
+            &rates,
+        )
+        .unwrap();
+    assert!(margin.as_ref().unwrap().positions().is_empty());
+    assert_eq!(
+        margin.as_ref().unwrap().summary().adjustment_totals["USDC"],
+        Decimal::from(-1)
+    );
 }
