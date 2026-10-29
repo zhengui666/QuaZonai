@@ -1976,6 +1976,7 @@ fn run_with_strategy_and_spot(
         ..BacktestEngineConfig::default()
     };
     let mut engine = BacktestEngine::new(config)?;
+    let live_progress = crate::live_progress::LiveProgress::attach();
     let result = (|| -> Result<Option<NativeSimulationResultV1>> {
         let settings = &request.settings;
         let fill_fees = crate::prediction::FillFeeObserver::default();
@@ -2280,6 +2281,7 @@ fn run_with_strategy_and_spot(
             canonical_result: serde_json::from_slice(&engine.get_canonical_result()?.to_bytes()?)?,
         }))
     })();
+    drop(live_progress);
     engine.dispose();
     let frames = std::mem::take(&mut status.borrow_mut().frames);
     Ok((result?, frames))

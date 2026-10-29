@@ -527,6 +527,7 @@ pub fn replay(
         ..Default::default()
     };
     let mut engine = BacktestEngine::new(config)?;
+    let live_progress = crate::live_progress::LiveProgress::attach();
     let result = (|| -> Result<NativeCatalogEnsembleResultV1> {
         let mut fees = None;
         let mut liquidity = None;
@@ -864,6 +865,7 @@ pub fn replay(
                 "All positive current scores participate in dynamic normalization; only markets with current real BARs can rebalance, and other native holdings retain their original last real marks".into(),
             ] })
     })();
+    drop(live_progress);
     engine.dispose();
     result
 }

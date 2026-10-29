@@ -18,6 +18,7 @@ async function fixture() {
 fs.appendFileSync(${JSON.stringify(count)}, process.pid + '\\n');
 let text=''; for await (const chunk of process.stdin) text+=chunk;
 const input=JSON.parse(text); const args=process.argv.slice(3);
+if(input.progress && process.env.QZ_PROGRESS_PATH) fs.writeFileSync(process.env.QZ_PROGRESS_PATH, JSON.stringify({snapshot:input.progress}) + '\\n' + '{\"snapshot\":');
 if(input.wait) { console.error('waiting'); setInterval(()=>{},1000); }
 else if(input.fail) { console.error('NATIVE_CONTROLLED_FAILURE'); process.exitCode=2; }
 else if(input.invalid) { console.log('invalid'); }
@@ -152,5 +153,30 @@ test('disconnect stops the actual child and independent invocations do not reuse
     }
     assert.equal(receipt?.status, 'CANCELLED');
     assert.throws(() => process.kill(pid!, 0), { code: 'ESRCH' });
+  } finally { await f.cleanup(); }
+});
+
+
+test('running receipt exposes original snapshot previews without waiting for or repeating execution', async () => {
+  const f = await fixture();
+  try {
+    const snapshot = { ts_event: '1790000000000000001', total_equity: ['1000.000000000000000001 USD'] };
+    const body = f.request({ wait: true, progress: snapshot }); body.command = 'simulate';
+    const { requestId: _originalId, ...content } = body; body.requestId = executionId(content);
+    const pending = f.post(body);
+    let running: NativeExecutionReceipt | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const response = await fetch(`${f.url}/v1/executions/${body.requestId}`, { headers: f.headers });
+      if (response.ok) {
+        running = await response.json() as NativeExecutionReceipt;
+        if (running.status === 'RUNNING' && running.progress?.snapshots.length) break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(running?.status, 'RUNNING');
+    assert.deepEqual(running?.status === 'RUNNING' && running.progress?.snapshots, [snapshot], 'incomplete final line is ignored, decimals and clocks are preserved');
+    const cancelled = await (await fetch(`${f.url}/v1/executions/${body.requestId}`, { method: 'DELETE', headers: f.headers })).json();
+    assert.equal(cancelled.status, 'CANCELLED'); await pending;
+    assert.equal((await readFile(f.count, 'utf8')).trim().split('\n').length, 1);
   } finally { await f.cleanup(); }
 });

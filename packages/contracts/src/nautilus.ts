@@ -29,7 +29,7 @@ export type NativeExecutionReceipt = {
 } & (
   { status: 'COMPLETED'; result: NativeJson } |
   { status: 'FAILED' | 'UNKNOWN'; error: string } |
-  { status: 'RUNNING' | 'CANCELLED' }
+  { status: 'RUNNING' | 'CANCELLED'; progress?: { snapshots: NativeJson[] } }
 );
 
 /** Authoritative admission refusal, before any execution receipt or process.

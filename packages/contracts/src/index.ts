@@ -128,7 +128,9 @@ export interface CapacityReport {
   volumeStress?: { volumeMultiplier: string; maximumCapital: string | null; status: string; reason: string | null; scenarios: CapacityScenario[] }[];
   economicCapacity?: { status: 'UNAVAILABLE'; maximumCapital: null; reason: string; missingInputs: string[] };
 }
+export interface PortfolioProgress { phase: string; updatedAt: string; completed?: number; total?: number }
 export interface PortfolioView {
+  progress?: PortfolioProgress;
   id: string; name: string; researchIds: number[]; datasetId: string; status: string;
   capital: string; currency: string; createdAt: string; taskId: number | null;
   metrics: Metric[]; curve: EquityPoint[]; targets: TargetWeight[]; error: string | null; errorDetail?: ExecutionErrorDetail | null;

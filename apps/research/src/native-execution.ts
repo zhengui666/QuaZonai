@@ -18,6 +18,11 @@ import { JsonReader, jsonChunks } from './native-json.ts';
 
 export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
+const progressTracking = new AsyncLocalStorage<(snapshots: NativeJson[]) => Promise<void>>();
+/** Observes original account snapshots; never changes invocation or cancellation identity. */
+export function withNativeProgress<T>(observer: (snapshots: NativeJson[]) => Promise<void>, operation: () => Promise<T>): Promise<T> {
+  return progressTracking.run(observer, operation);
+}
 
 /** Settings credentials stay outside research facts; targets carry only this random reference. */
 export function setRemoteNativeCredential(reference: string, token?: string): void {
@@ -228,6 +233,21 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   const reference: JsonObject = { requestId, target: { ...target }, error: 'nautilus_execution_unknown' };
   if (owner) await retainRemoteReference({ ...reference, status: 'PENDING' }, owner);
   context.abortSignal?.throwIfAborted();
+  // Keep the original POST attached (disconnect cancels native execution), while
+  // reading only that same invocation's original receipt for live snapshots.
+  const observer = progressTracking.getStore(); let progressRead = Promise.resolve(); let progressBusy = false;
+  const progressAbort = new AbortController();
+  const progressSignal = context.abortSignal ? AbortSignal.any([context.abortSignal, progressAbort.signal]) : progressAbort.signal;
+  const timer = observer && ['simulate', 'replay-catalog-ensemble'].includes(command) ? globalThis.setInterval(() => {
+    if (progressBusy) return; progressBusy = true;
+    progressRead = (async () => {
+      try {
+        const state = await remoteNativeExecutionReceipt(target, requestId, progressSignal);
+        if (state.status === 'RUNNING' && state.progress) await observer(state.progress.snapshots);
+      } catch { /* Optional observation cannot change the original scientific outcome. */ }
+      finally { progressBusy = false; }
+    })();
+  }, 1000) : undefined;
   try {
     let state: NativeExecutionReceipt;
     try { state = receipt(await remoteRequest(target, 'v1/execute', 'POST', request as unknown as NativeJson, context.abortSignal), requestId); }
@@ -263,7 +283,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
       if (!['CANCELLED', 'COMPLETED', 'FAILED'].includes(state.status)) throw new Error('remote_not_terminal');
     } catch { throw new RemoteUncertaintyError('nautilus_cancellation_unknown', requestId, target, error); }
     throw error;
-  }
+  } finally { if (timer) clearInterval(timer); progressAbort.abort(); await progressRead; }
 }
 
 /** Shared transport for the research and service scientific entry points. */
@@ -277,14 +297,27 @@ export async function executeNativeValue(target: NativeTarget, command: string, 
   if (!target) throw new Error('native_executable_required');
   const inputPath = join(directory, 'request.json'); await writeFile(inputPath, jsonChunks(input));
   const env = new NodeExecutionEnv({ cwd: directory });
+  const observer = progressTracking.getStore();
+  const progressPath = observer && ['simulate', 'replay-catalog-ensemble'].includes(command) ? join(directory, `progress-${randomUUID()}.ndjson`) : undefined;
+  let progressRead = Promise.resolve(); let progressBusy = false;
+  const timer = progressPath ? globalThis.setInterval(() => {
+    if (progressBusy) return; progressBusy = true;
+    progressRead = (async () => {
+      try {
+        const rows = (await readFile(progressPath, 'utf8')).split('\n'); rows.pop();
+        await observer!(rows.filter(Boolean).map(row => (JSON.parse(row) as { snapshot: NativeJson }).snapshot));
+      } catch { /* Optional observation cannot change the original scientific outcome. */ }
+      finally { progressBusy = false; }
+    })();
+  }, 1000) : undefined;
   const stdout = new JsonReader(); let parseError: unknown; let stderr = ''; let stage: 'execute' | 'decode' = 'execute';
   try {
     const result = getOrThrow(await env.exec(['bash', '-c', 'file="$1"; shift; exec "$@" < "$file"', 'qz-native', inputPath, target, command, ...args], {
-      inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: directory },
+      inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: directory, ...(progressPath ? { QZ_PROGRESS_PATH: progressPath } : {}) },
       onOutput: (chunk, _ctx, info) => { if (info.stream === 'stderr') stderr += chunk; else if (parseError === undefined) { try { stdout.write(chunk); } catch (error) { parseError = error; } } },
     }, context));
     if (result.exitCode !== 0) throw new Error(stderr.trim() || `native_${command}_failed`);
     stage = 'decode'; if (parseError !== undefined) throw parseError; return stdout.finish();
   } catch (error) { throw new ExecutionFailure(error, { operation: command, stage }); }
-  finally { await env.cleanup(withoutAbortSignal(context)); }
+  finally { if (timer) clearInterval(timer); await progressRead; await env.cleanup(withoutAbortSignal(context)); }
 }

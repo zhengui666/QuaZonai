@@ -11,7 +11,7 @@ import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import type { StrategyPolicy } from './config.ts';
 import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
-import type { CapacityReport, Metric, ResearchSpecification } from '../../../packages/contracts/src/index.ts';
+import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
 
 export interface PortfolioTaskInput {
@@ -26,10 +26,12 @@ export async function nativeJob(binary: NativeTarget, command: string, input: Js
 }
 
 /** Original ensembles → native exact member blending → optional study blending → ONE shared account. */
-export async function computePortfolio(input: PortfolioTaskInput, context: Context, scope?: JsonObject) {
+export async function computePortfolio(input: PortfolioTaskInput, context: Context, scope?: JsonObject, report?: (progress: PortfolioProgress, curve?: EquityPoint[]) => Promise<void>) {
+  const update = async (phase: string, completed?: number, total?: number, curve?: EquityPoint[]) => report?.({ phase, updatedAt: new Date().toISOString(), ...(completed === undefined ? {} : { completed }), ...(total === undefined ? {} : { total }) }, curve);
   const evidence = Array.isArray(input.evidence) ? input.evidence : [input.evidence];
   const weights = input.weights ?? (evidence.length === 1 ? ['1'] : null);
   if (!weights || !evidence.length || weights.length !== evidence.length) throw new Problem('portfolio_weights_required');
+  await update('FORECASTING', 0, evidence.length, []);
   const directory = await mkdtemp(join(input.dataDir, 'native-'));
   try {
     if (input.policy.kind === 'catalog-ensemble') {
@@ -49,17 +51,20 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const settings = object(admitted.settings, 'simulation_settings');
       if (settings.base_currency !== input.currency) throw new Problem('strategy_currency_mismatch');
       const policy = resolvePortfolioPolicy(proposal, originalPolicy);
+      await update('SIMULATING');
       const result = await evaluatePortfolio({ data: { ...binding, catalog: input.catalog,
         catalog_ensemble_request: { ...admitted, settings: { ...settings, starting_capital: input.capital } } },
         members: strategyMembers(proposal), policy, partition: 'HELDOUT', binary: input.binary }, context, scope);
       const simulation = object(result.evidence.simulation, 'native_simulation');
+      const curve = nativeCurve(simulation, input.currency);
+      await update('CAPACITY', undefined, undefined, curve);
       const native: JsonObject = { ...result.evidence, summary: result.summary };
-      return { native, target: null, curve: nativeCurve(simulation, input.currency), metrics: simulationMetrics(simulation),
+      return { native, target: null, curve, metrics: simulationMetrics(simulation),
         capacity: unavailableCapacity(input.currency, 'catalog_ensemble_capacity_unavailable', 'portfolio', input.capacityPolicy ?? capacityPolicy(evidence)) };
     }
     const sources: JsonObject[] = []; const memberRows: JsonObject[][] = [];
     let selection: JsonObject | undefined;
-    for (const source of evidence) {
+    for (const [sourceIndex, source] of evidence.entries()) {
       const studyInput = object(source.input, 'study_input');
       const trial = object(source.selected, 'selected_trial');
       const proposal = object(trial.proposal, 'selected_proposal');
@@ -75,6 +80,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const members = strategyMembers(proposal);
       // Forecast keeps the complete original prefix even when only HELDOUT is traded.
       const targets = await forecastMembers(input.binary, input.catalog, members, request, policy, input.currency, directory, context, false, policy.evaluationPartition, proposal.members !== undefined);
+      await update('FORECASTING', sourceIndex + 1, evidence.length);
       if (selection && canonical(selection) !== canonical(targets.selection)) throw new Problem('strategy_selection_mismatch');
       selection = targets.selection;
       memberRows.push(targets.points);
@@ -87,10 +93,12 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
     const combined = await blendTargets(input.binary, memberRows, weights, directory, context);
     const simulationRequest: JsonObject = { schema_version: 1, selection: selection!,
       settings: { ...object(object(sources[0]!.policy).simulationSettings), starting_capital: input.capital }, target_points: combined.points };
+    await update('SIMULATING');
     const simulation = await nativeJob(input.binary, 'simulate', simulationRequest, ['--catalog', input.catalog], directory, context);
     const curve = nativeCurve(simulation, input.currency);
     const native: JsonObject = { catalog: input.catalog, sources, rows: combined.rows, weights, blend: combined.blend, simulationRequest, simulation };
     if (sources.length === 1) native.forecasts = sources[0]!.forecasts!;
+    await update('CAPACITY', undefined, undefined, curve);
     const capacity: CapacityReport = await assessCapacity(input.binary, input.catalog, simulationRequest, input.capacityPolicy ?? capacityPolicy(evidence), directory, context);
     return { native, target: object(combined.points.at(-1), 'native_target'), curve, metrics: simulationMetrics(simulation), capacity };
   } catch (error) { throw error instanceof Problem || error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'portfolio_failed'); }

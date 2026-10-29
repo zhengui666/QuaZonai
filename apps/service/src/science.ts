@@ -1,7 +1,9 @@
-import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
+import { retainNativeRemoteUncertainty, withNativeRemoteTracking, withNativeProgress } from '../../research/src/native-execution.ts';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { Application, json, object, observation, portfolio, Problem } from './facts.ts';
+import { nativeCurve } from './projections.ts';
+import type { PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { computePortfolio } from './native.ts';
 import type { PortfolioTaskInput } from './native.ts';
 import { acceptReceipt, acceptSnapshot, downstream, isPreTransportRejection } from './downstream.ts';
@@ -29,12 +31,27 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         }
         scope = await readCatalogScope(runtime, object(reference, 'catalog_scope'), context);
       }
-      const result = await withNativeRemoteTracking(runtime.taskId, runtime, context, () => computePortfolio(task.input, context, scope));
+      let phase = 'FORECASTING'; let lastSnapshotCount = 0;
+      const report = async (progress: PortfolioProgress, curve?: EquityPoint[]) => {
+        phase = progress.phase;
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
+          fact.view.status = 'RUNNING'; fact.view.progress = progress;
+          if (curve) fact.view.curve = curve;
+          facts.portfolios[task.input.id] = json(fact); return undefined;
+        }, context);
+      };
+      const result = await withNativeRemoteTracking(runtime.taskId, runtime, context, () => withNativeProgress(async snapshots => {
+        if (phase !== 'SIMULATING' || !snapshots.length || snapshots.length === lastSnapshotCount) return;
+        const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, task.input.currency);
+        await report({ phase, updatedAt: new Date().toISOString() }, curve); lastSnapshotCount = snapshots.length;
+      }, () => computePortfolio(task.input, context, scope, report)));
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
         fact.view.curve = result.curve; fact.view.metrics = result.metrics; fact.view.capacity = result.capacity;
         fact.view.targets = ((result.target?.targets ?? []) as unknown[]).map((item) => { const target = object(item); return { instrumentId: String(target.instrument_id), weight: String(target.weight) }; });
+        fact.view.progress = { phase: 'COMPLETED', updatedAt: new Date().toISOString() };
         fact.view.status = 'COMPUTED'; fact.view.error = null; fact.view.errorDetail = null;
         facts.portfolios[task.input.id] = json(fact);
         return { status: 'terminal', outcome: { status: 'completed', result: null } };
@@ -46,6 +63,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
       const detail = classifyExecutionError(error, 'backtest_failed', { operation: 'portfolio-backtest' });
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
+        fact.view.progress = { phase: 'FAILED', updatedAt: new Date().toISOString() };
         fact.view.status = 'FAILED'; fact.view.error = diagnostic; fact.view.errorDetail = detail; facts.portfolios[task.input.id] = json(fact);
         return { status: 'terminal', outcome: { status: 'failed', error: { message: diagnostic, detail: { ...detail } } } };
       }, context);
@@ -54,6 +72,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
   async abort(task, runtime, context) {
     await runtime.commit(async (tx) => {
       const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
+      fact.view.progress = { phase: 'STOPPED', updatedAt: new Date().toISOString() };
       fact.view.status = 'STOPPED'; facts.portfolios[task.input.id] = json(fact);
       return { status: 'terminal', outcome: { status: 'aborted' } };
     }, context);

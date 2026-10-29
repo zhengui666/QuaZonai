@@ -8,6 +8,10 @@ import type { TaskId } from '@earendil-works/pi-durable';
 import { computePortfolio, nativeJob } from '../src/native.ts';
 import { Problem } from '../src/facts.ts';
 import { classifyExecutionError, ExecutionFailure } from '../../research/src/execution-errors.ts';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { createNautilusWorker } from '../../nautilus/src/server.ts';
+import { withNativeProgress } from '../../research/src/native-execution.ts';
 import { built, setup, wat } from './support.ts';
 
 test('native execution has no application deadline and owner abort joins the real child', { timeout: 10_000 }, async () => {
@@ -67,4 +71,31 @@ test('simulate decoding metadata survives both service wrappers and the original
     assert.equal(replay.statusCode, 202); assert.equal(replay.json().id, view.id); assert.equal(replay.json().taskId, view.taskId);
     assert.deepEqual(replay.json().errorDetail, projected.errorDetail); assert.equal(replay.json().status, 'FAILED');
   } finally { await state.cleanup(); }
+});
+
+
+test('remote live observation reads the original attached invocation and preview failure cannot fail final science', { timeout: 10_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-live-remote-')); const binary = join(directory, 'job'); const script = join(directory, 'job.mjs');
+  const snapshot = { ts_event: '1790000000000000001', total_equity: ['1000.000000000000000001 USD'] };
+  let worker;
+  try {
+    await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
+    await writeFile(script, `import {writeFileSync} from 'node:fs';
+writeFileSync(process.env.QZ_PROGRESS_PATH, JSON.stringify({snapshot:${JSON.stringify(snapshot)}})+'\\n');
+setTimeout(()=>console.log(JSON.stringify({completed:true})),1800);`);
+    worker = await createNautilusWorker({ binary, dataDir: join(directory, 'worker'), catalogRoots: [directory] });
+    worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening');
+    const target = { id: 'live-original', url: `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}` };
+    let completed = false; let observations = 0;
+    const result = await withNativeProgress(async snapshots => {
+      assert.equal(completed, false); assert.deepEqual(snapshots, [snapshot]); observations++;
+      throw new Error('optional preview unavailable');
+    }, () => nativeJob(target, 'simulate', {}, [], directory, BACKGROUND_CONTEXT));
+    completed = true; assert.deepEqual(result, { completed: true }); assert.ok(observations > 0);
+    // The local explicit test executable uses the same optional observation policy.
+    observations = 0;
+    assert.deepEqual(await withNativeProgress(async () => { observations++; throw new Error('optional preview unavailable'); },
+      () => nativeJob(binary, 'simulate', {}, [], directory, BACKGROUND_CONTEXT)), { completed: true });
+    assert.ok(observations > 0);
+  } finally { await worker?.close(); await rm(directory, { recursive: true, force: true }); }
 });
