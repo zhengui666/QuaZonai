@@ -28,6 +28,13 @@ pub struct NativeTickEconomicScenarioV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTickSmallCapitalPolicyV1 {
+    pub maximum_entry_notional_usdc: DecimalValue,
+    pub maximum_holding_ns: DbCounter,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTickEconomicRequestV1 {
     pub schema_version: SchemaV1,
     /// The selected model's original prepared input and feature parameters.
@@ -39,6 +46,8 @@ pub struct NativeTickEconomicRequestV1 {
     /// Explicit optional oracle/mark observations in the independent economic catalog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub small_capital_policy: Option<NativeTickSmallCapitalPolicyV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -73,9 +82,33 @@ pub struct NativeTickEconomicMetricV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTickSmallCapitalPositionV1 {
+    pub instrument_id: String,
+    pub quantity: DecimalValue,
+    pub entry_decision_ns: DbCounter,
+    pub first_fill_ns: DbCounter,
+    pub exit_decision_ns: Option<DbCounter>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTickSmallCapitalDiagnosticsV1 {
+    pub entry_attempts: DbCounter,
+    pub unfilled_entries: DbCounter,
+    pub positions_opened: DbCounter,
+    pub positions_closed: DbCounter,
+    pub exit_attempts: DbCounter,
+    pub maximum_exit_delay_ns: Option<DbCounter>,
+    pub remaining_positions: Vec<NativeTickSmallCapitalPositionV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTickEconomicResultV1 {
     pub schema_version: SchemaV1,
     pub request: NativeTickEconomicRequestV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub small_capital_diagnostics: Option<NativeTickSmallCapitalDiagnosticsV1>,
     pub model: String,
     pub methods: BTreeMap<String, String>,
     pub coverage: NativeTradeTickCoverageV1,

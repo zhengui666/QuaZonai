@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
-import { validateNativeTickEconomicRequest } from '../../../packages/contracts/src/economic-tick.ts';
+import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult } from '../../../packages/contracts/src/economic-tick.ts';
 
 export function economicRequest() {
   return {
@@ -71,4 +71,27 @@ test('economic context is explicit and preserves absent-field legacy requests', 
   for (const context_source of [null, '', '../context-prices.manifest.json', '/context-prices.manifest.json', 'other.json']) {
     assert.throws(() => validateNativeTickEconomicRequest({ ...economicRequest(), context_source }), /context_source_invalid/);
   }
+});
+
+test('small capital policy is optional and preserves exact validated values', () => {
+  assert.equal(Object.hasOwn(validateNativeTickEconomicRequest(economicRequest()), 'small_capital_policy'), false);
+  const request = { ...economicRequest(), small_capital_policy: { maximum_entry_notional_usdc: '+030.00', maximum_holding_ns: '60000000000' } };
+  assert.deepEqual(validateNativeTickEconomicRequest(request).small_capital_policy, { maximum_entry_notional_usdc: '30', maximum_holding_ns: '60000000000' });
+  for (const policy of [null, {}, { ...request.small_capital_policy, maximum_entry_notional_usdc: '0' },
+    { ...request.small_capital_policy, maximum_holding_ns: '0' }, { ...request.small_capital_policy, extra: 1 }]) {
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, small_capital_policy: policy }));
+  }
+});
+
+test('small capital diagnostics are optional on legacy results and strictly validated when present', () => {
+  const result = { schema_version: 1, request: economicRequest(), model: 'test', methods: {}, coverage: {}, assets: [], days: [], metrics: [],
+    conversion_ns: null, initial_usdc_after_cost: null, funding_usdc: '0', fees_usdc_equivalent: null, fees_by_currency: {},
+    initial_conversion_cost_usdc: '0', nominal_usd_settled_usdc: '0', native_fills: '0', native_rejections: '0',
+    native_perp_pnl_rounding_events: '0', perp_pnl_rounding_bound_usdc: '0', funding_missing_instruments: [], targets: [],
+    target_asof_ns: null, target_cash_weight: null, skipped_cash: '0', skipped_minimum: '0', consumed_fuel: null, limitations: [] };
+  assert.doesNotThrow(() => validateNativeTickEconomicResult(result));
+  const diagnostics = { entry_attempts: '1', unfilled_entries: '0', positions_opened: '1', positions_closed: '0', exit_attempts: '1',
+    maximum_exit_delay_ns: null, remaining_positions: [{ instrument_id: 'A.SIM', quantity: '0.1', entry_decision_ns: '1', first_fill_ns: '2', exit_decision_ns: '3' }] };
+  assert.doesNotThrow(() => validateNativeTickEconomicResult({ ...result, small_capital_diagnostics: diagnostics }));
+  assert.throws(() => validateNativeTickEconomicResult({ ...result, small_capital_diagnostics: { ...diagnostics, exit_attempts: '-1' } }));
 });

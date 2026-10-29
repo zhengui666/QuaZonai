@@ -123,6 +123,20 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             .is_none_or(|name| name == "context-prices.manifest.json"),
         "ECONOMIC_CONTEXT_PATH_INVALID"
     );
+    if let Some(policy) = &request.small_capital_policy {
+        ensure!(
+            decimal(&policy.maximum_entry_notional_usdc)? > Decimal::ZERO
+                && policy.maximum_holding_ns.get() > 0,
+            "ECONOMIC_SMALL_POLICY_INVALID"
+        );
+        request
+            .research
+            .input
+            .event_end_ns
+            .get()
+            .checked_add(policy.maximum_holding_ns.get())
+            .context("ECONOMIC_CLOCK_OVERFLOW")?;
+    }
     let ids = &request.research.input.instrument_ids;
     ensure!(
         !request.fx_instrument_ids.is_empty()
@@ -594,6 +608,732 @@ struct Asset {
     pending: Option<(u64, u64, Decimal)>,
     target_weight: Option<(u64, Decimal)>,
 }
+#[derive(Clone, Debug)]
+struct SmallCycle {
+    decision: u64,
+    deadline: u64,
+    reference: Decimal,
+    direction: Decimal,
+    reservation_usdc: Decimal,
+    reservation_quote: Decimal,
+    first_fill: Option<u64>,
+    exit_decision: Option<u64>,
+    quantity: Decimal,
+}
+struct SmallCapital {
+    cycles: Vec<Option<SmallCycle>>,
+    buckets: Vec<Option<u64>>,
+    deadlines: BinaryHeap<Reverse<(u64, usize)>>,
+    entry_attempts: u64,
+    unfilled_entries: u64,
+    positions_opened: u64,
+    positions_closed: u64,
+    exit_attempts: u64,
+    maximum_exit_delay: Option<u64>,
+}
+impl SmallCapital {
+    fn new(count: usize) -> Self {
+        Self {
+            cycles: vec![None; count],
+            buckets: vec![None; count],
+            deadlines: BinaryHeap::new(),
+            entry_attempts: 0,
+            unfilled_entries: 0,
+            positions_opened: 0,
+            positions_closed: 0,
+            exit_attempts: 0,
+            maximum_exit_delay: None,
+        }
+    }
+    fn exit(
+        &mut self,
+        i: usize,
+        at: u64,
+        assets: &mut [Asset],
+        s: &NativeTickEconomicScenarioV1,
+        seed: &mut u64,
+    ) -> Result<()> {
+        let Some(cycle) = self.cycles[i].as_mut() else {
+            return Ok(());
+        };
+        if cycle.exit_decision.is_some() {
+            return Ok(());
+        }
+        if cycle.first_fill.is_none() {
+            assets[i].pending = None;
+            self.cycles[i] = None;
+            self.unfilled_entries += 1;
+        } else {
+            cycle.exit_decision = Some(at);
+            small_queue(&mut assets[i], at, at, Decimal::ZERO, s, seed)?;
+        }
+        Ok(())
+    }
+    fn expire(
+        &mut self,
+        through: u64,
+        assets: &mut [Asset],
+        s: &NativeTickEconomicScenarioV1,
+        seed: &mut u64,
+    ) -> Result<()> {
+        while self
+            .deadlines
+            .peek()
+            .is_some_and(|Reverse((at, _))| *at <= through)
+        {
+            let Reverse((at, i)) = self.deadlines.pop().unwrap();
+            if self.cycles[i].as_ref().is_some_and(|c| c.deadline == at) {
+                self.exit(i, at, assets, s, seed)?;
+            }
+        }
+        Ok(())
+    }
+    fn observe_reference(
+        &mut self,
+        i: usize,
+        at: u64,
+        price: Decimal,
+        assets: &mut [Asset],
+        s: &NativeTickEconomicScenarioV1,
+        seed: &mut u64,
+    ) -> Result<()> {
+        if self.cycles[i]
+            .as_ref()
+            .is_some_and(|c| (price - c.reference) * c.direction >= Decimal::ZERO)
+        {
+            self.exit(i, at, assets, s, seed)?;
+        }
+        Ok(())
+    }
+    fn reconcile(
+        &mut self,
+        i: usize,
+        at: u64,
+        quantity: Decimal,
+        attempted: bool,
+        assets: &mut [Asset],
+        s: &NativeTickEconomicScenarioV1,
+        seed: &mut u64,
+    ) -> Result<()> {
+        let Some(cycle) = self.cycles[i].as_mut() else {
+            return Ok(());
+        };
+        if attempted {
+            if cycle.exit_decision.is_some() {
+                self.exit_attempts += 1
+            } else {
+                self.entry_attempts += 1
+            }
+        }
+        cycle.quantity = quantity;
+        if cycle.first_fill.is_none() {
+            if !quantity.is_zero() {
+                cycle.first_fill = Some(at);
+                self.positions_opened += 1;
+            } else if attempted {
+                self.unfilled_entries += 1;
+                self.cycles[i] = None;
+            }
+        } else if quantity.is_zero() {
+            if let Some(decision) = cycle.exit_decision {
+                let elapsed = at
+                    .checked_sub(decision)
+                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+                self.maximum_exit_delay = Some(
+                    self.maximum_exit_delay
+                        .map_or(elapsed, |old| old.max(elapsed)),
+                );
+            }
+            self.positions_closed += 1;
+            self.cycles[i] = None;
+        } else if let Some(decision) = cycle.exit_decision {
+            if assets[i].pending.is_none() {
+                small_queue(&mut assets[i], decision, at, Decimal::ZERO, s, seed)?;
+            }
+        }
+        Ok(())
+    }
+    fn report(&self, assets: &[Asset]) -> Result<NativeTickSmallCapitalDiagnosticsV1> {
+        Ok(NativeTickSmallCapitalDiagnosticsV1 {
+            entry_attempts: counter(self.entry_attempts)?,
+            unfilled_entries: counter(self.unfilled_entries)?,
+            positions_opened: counter(self.positions_opened)?,
+            positions_closed: counter(self.positions_closed)?,
+            exit_attempts: counter(self.exit_attempts)?,
+            maximum_exit_delay_ns: self.maximum_exit_delay.map(counter).transpose()?,
+            remaining_positions: self
+                .cycles
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cycle)| {
+                    cycle
+                        .as_ref()
+                        .filter(|c| !c.quantity.is_zero())
+                        .map(|c| (i, c))
+                })
+                .map(|(i, c)| {
+                    Ok(NativeTickSmallCapitalPositionV1 {
+                        instrument_id: assets[i].instrument.id().to_string(),
+                        quantity: exact(c.quantity)?,
+                        entry_decision_ns: counter(c.decision)?,
+                        first_fill_ns: counter(
+                            c.first_fill.context("ECONOMIC_SMALL_FILL_MISSING")?,
+                        )?,
+                        exit_decision_ns: c.exit_decision.map(counter).transpose()?,
+                    })
+                })
+                .collect::<Result<_>>()?,
+        })
+    }
+}
+fn small_queue(
+    a: &mut Asset,
+    decision: u64,
+    now: u64,
+    quantity: Decimal,
+    s: &NativeTickEconomicScenarioV1,
+    seed: &mut u64,
+) -> Result<()> {
+    let due = now
+        .checked_add(delay(seed, s)?)
+        .and_then(|v| v.checked_add(1))
+        .context("ECONOMIC_CLOCK_OVERFLOW")?;
+    a.pending = Some((decision, due, quantity));
+    a.target_weight = None;
+    a.decisions += 1;
+    Ok(())
+}
+fn small_quantity(a: &Asset, cash: &NativeLedger, margin: &NativeLedger) -> Decimal {
+    if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
+        a.instrument
+            .base_currency()
+            .and_then(|currency| cash.balance(currency))
+            .map_or(Decimal::ZERO, |b| b.as_decimal())
+    } else {
+        margin
+            .positions()
+            .into_iter()
+            .filter(|p| p.instrument_id == a.instrument.id())
+            .map(|p| p.signed_decimal_qty())
+            .sum()
+    }
+}
+fn small_legal_quantity(
+    instrument: &InstrumentAny,
+    quantity: Decimal,
+    price: Decimal,
+) -> Result<Decimal> {
+    let direction = if quantity < Decimal::ZERO {
+        -Decimal::ONE
+    } else {
+        Decimal::ONE
+    };
+    let step = instrument.size_increment().as_decimal();
+    let amount = (quantity.abs() / step).trunc() * step;
+    if amount.is_zero()
+        || instrument
+            .min_quantity()
+            .is_some_and(|m| amount < m.as_decimal())
+        || instrument
+            .min_notional()
+            .is_some_and(|m| amount * price * instrument.multiplier().as_decimal() < m.as_decimal())
+    {
+        return Ok(Decimal::ZERO);
+    }
+    // Let the official native precision boundary reject unsupported quantities.
+    Ok(instrument
+        .try_make_qty_from_decimal(amount, Some(true))?
+        .as_decimal()
+        * direction)
+}
+fn small_unit(
+    a: &Asset,
+    assets: &[Asset],
+    fx_ids: &BTreeSet<String>,
+    now: u64,
+    age: u64,
+) -> Option<Decimal> {
+    let quote = if matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)) {
+        Decimal::ONE
+    } else {
+        fx(a.instrument.quote_currency(), assets, fx_ids, now, age)?
+    };
+    Some(
+        a.instrument
+            .try_make_price(mark(a, now, age)?.to_f64()?)
+            .ok()?
+            .as_decimal()
+            * quote
+            * a.instrument.multiplier().as_decimal(),
+    )
+}
+fn small_position_price(
+    a: &Asset,
+    now: u64,
+    age: u64,
+    contexts: &mut Option<ContextPrices>,
+) -> Result<Option<Decimal>> {
+    match contexts.as_mut() {
+        Some(context) => context.price(&a.instrument.id().to_string(), now, age, false),
+        None => Ok(mark(a, now, age)),
+    }
+}
+// A missing mark in the other segregated sleeve cannot consume this sleeve's budget.
+fn small_exposure(
+    small: &SmallCapital,
+    assets: &[Asset],
+    cash: &NativeLedger,
+    margin: &NativeLedger,
+    fx_ids: &BTreeSet<String>,
+    now: u64,
+    age: u64,
+    is_margin: bool,
+    contexts: &mut Option<ContextPrices>,
+) -> Result<Option<Vec<Decimal>>> {
+    let mut exposure = vec![Decimal::ZERO; assets.len()];
+    if !is_margin {
+        for balance in cash
+            .balances()
+            .into_iter()
+            .filter(|b| b.currency != Currency::USDC() && !b.as_decimal().is_zero())
+        {
+            let Some(i) = assets
+                .iter()
+                .enumerate()
+                .find(|(i, a)| {
+                    matches!(a.instrument, InstrumentAny::CurrencyPair(_))
+                        && a.instrument.base_currency() == Some(balance.currency)
+                        && (small.cycles[*i].is_some()
+                            || fx_ids.contains(&a.instrument.id().to_string()))
+                })
+                .map(|(i, _)| i)
+            else {
+                return Ok(None);
+            };
+            let Some(rate) = fx(balance.currency, assets, fx_ids, now, age) else {
+                return Ok(None);
+            };
+            exposure[i] += balance.as_decimal().abs() * rate;
+        }
+    } else {
+        for position in margin.positions() {
+            let Some(i) = assets
+                .iter()
+                .position(|a| a.instrument.id() == position.instrument_id)
+            else {
+                return Ok(None);
+            };
+            let price = small_position_price(&assets[i], now, age, contexts)?;
+            let Some(price) = price else { return Ok(None) };
+            exposure[i] += position.quantity.as_decimal()
+                * price
+                * assets[i].instrument.multiplier().as_decimal();
+        }
+    }
+    for (i, a) in assets
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)) == is_margin)
+    {
+        if let Some(cycle) = small.cycles[i].as_ref().filter(|c| c.first_fill.is_none()) {
+            exposure[i] += cycle.reservation_usdc;
+        } else if fx_ids.contains(&a.instrument.id().to_string()) {
+            if let Some((_, _, q)) = a.pending {
+                let Some(unit) = small_unit(a, assets, fx_ids, now, age) else {
+                    return Ok(None);
+                };
+                exposure[i] = exposure[i].max(q.abs() * unit);
+            }
+        }
+    }
+    Ok(Some(exposure))
+}
+fn small_quote_available(
+    small: &SmallCapital,
+    assets: &[Asset],
+    cash: &NativeLedger,
+    currency: Currency,
+    now: u64,
+    age: u64,
+    fee: Decimal,
+) -> Option<Decimal> {
+    let mut available = cash
+        .balance(currency)
+        .map_or(Decimal::ZERO, |b| b.as_decimal());
+    for (i, a) in assets.iter().enumerate() {
+        if matches!(a.instrument, InstrumentAny::CurrencyPair(_))
+            && a.instrument.quote_currency() == currency
+        {
+            if let Some(cycle) = small.cycles[i].as_ref().filter(|c| c.first_fill.is_none()) {
+                available -= cycle.reservation_quote;
+            } else if let Some((_, _, q)) = a.pending {
+                let held = a
+                    .instrument
+                    .base_currency()
+                    .and_then(|c| cash.balance(c))
+                    .map_or(Decimal::ZERO, |b| b.as_decimal());
+                available -=
+                    (q - held).max(Decimal::ZERO) * mark(a, now, age)? * (Decimal::ONE + fee);
+            }
+        }
+    }
+    // Preserve deficits: execution adds back only its own reservation, not everybody else's.
+    Some(available)
+}
+
+fn small_new_entries(
+    small: &mut SmallCapital,
+    fresh: &[usize],
+    assets: &mut [Asset],
+    cash: &NativeLedger,
+    margin: &NativeLedger,
+    fx_ids: &BTreeSet<String>,
+    event: u64,
+    policy: &NativeTickSmallCapitalPolicyV1,
+    s: &NativeTickEconomicScenarioV1,
+    seed: &mut u64,
+    contexts: &mut Option<ContextPrices>,
+) -> Result<()> {
+    let age = s.maximum_mark_age_ns.get();
+    let bucket = event / s.decision_interval_ns.get();
+    let fee_cash =
+        (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?) / Decimal::from(10000);
+    for &i in fresh {
+        if small.buckets[i] == Some(bucket) {
+            continue;
+        }
+        small.buckets[i] = Some(bucket);
+        let a = &assets[i];
+        let is_margin = matches!(a.instrument, InstrumentAny::CryptoPerpetual(_));
+        // Wallet quote reserves are a distinct role, never an alpha position.
+        let reserve_base = a.instrument.base_currency().is_some_and(|currency| {
+            assets.iter().any(|b| {
+                fx_ids.contains(&b.instrument.id().to_string())
+                    && b.instrument.base_currency() == Some(currency)
+            })
+        });
+        if small.cycles[i].is_some()
+            || a.pending.is_some()
+            || fx_ids.contains(&a.instrument.id().to_string())
+            || (!is_margin && reserve_base)
+        {
+            continue;
+        }
+        let Some(score) = a.score.filter(|v| *v != 0.0 && (is_margin || *v > 0.0)) else {
+            continue;
+        };
+        if !is_margin
+            && small.cycles.iter().enumerate().any(|(j, c)| {
+                j != i
+                    && c.is_some()
+                    && matches!(assets[j].instrument, InstrumentAny::CurrencyPair(_))
+                    && assets[j].instrument.base_currency() == a.instrument.base_currency()
+            })
+        {
+            continue;
+        }
+        if !small_quantity(a, cash, margin).is_zero() {
+            continue;
+        }
+        let Some(price) = mark(a, event, age) else {
+            continue;
+        };
+        let reference = finite(a.fast.value())?;
+        let fee = if is_margin {
+            (decimal(&s.perp_taker_fee_bps)? + decimal(&s.extra_cost_bps)?) / Decimal::from(10000)
+        } else {
+            fee_cash
+        };
+        if reference <= Decimal::ZERO
+            || (price - reference).abs() / reference <= Decimal::from(2) * fee
+        {
+            continue;
+        }
+        let direction = if score > 0.0 {
+            Decimal::ONE
+        } else {
+            -Decimal::ONE
+        };
+        if (price - reference) * direction >= Decimal::ZERO {
+            continue;
+        }
+        // An unknown sleeve prevents adding risk, but exits never enter this branch.
+        let Some(capital) = value(
+            if is_margin { margin } else { cash },
+            assets,
+            fx_ids,
+            event,
+            age,
+            is_margin,
+            contexts,
+            None,
+        )?
+        else {
+            continue;
+        };
+        if capital <= Decimal::ZERO {
+            continue;
+        }
+        let Some(exposure) = small_exposure(
+            small, assets, cash, margin, fx_ids, event, age, is_margin, contexts,
+        )?
+        else {
+            continue;
+        };
+        let gross: Decimal = exposure
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| {
+                matches!(assets[*j].instrument, InstrumentAny::CryptoPerpetual(_)) == is_margin
+            })
+            .map(|(_, v)| *v)
+            .sum();
+        let notional = decimal(&policy.maximum_entry_notional_usdc)?
+            .min((capital * decimal(&s.maximum_asset_weight)? - exposure[i]).max(Decimal::ZERO))
+            .min((capital * decimal(&s.gross_fraction)? - gross).max(Decimal::ZERO));
+        if notional <= Decimal::ZERO {
+            continue;
+        }
+        let Some(unit) = small_unit(a, assets, fx_ids, event, age).filter(|u| *u > Decimal::ZERO)
+        else {
+            continue;
+        };
+        let native_price = a
+            .instrument
+            .try_make_price(price.to_f64().context("ECONOMIC_NONFINITE")?)?
+            .as_decimal();
+        let mut quantity =
+            small_legal_quantity(&a.instrument, notional / unit * direction, native_price)?;
+        if quantity.is_zero() {
+            continue;
+        }
+        let quote_rate = if is_margin {
+            Some(Decimal::ONE)
+        } else {
+            fx(a.instrument.quote_currency(), assets, fx_ids, event, age)
+        };
+        let Some(quote_rate) = quote_rate else {
+            continue;
+        };
+        let mut needed = quantity.abs()
+            * native_price
+            * a.instrument.multiplier().as_decimal()
+            * (Decimal::ONE + fee);
+        if !is_margin {
+            let currency = a.instrument.quote_currency();
+            let Some(available) =
+                small_quote_available(small, assets, cash, currency, event, age, fee_cash)
+            else {
+                continue;
+            };
+            let available = available.max(Decimal::ZERO);
+            if available < needed {
+                let affordable = small_legal_quantity(
+                    &a.instrument,
+                    available
+                        / (native_price
+                            * a.instrument.multiplier().as_decimal()
+                            * (Decimal::ONE + fee)),
+                    native_price,
+                )?;
+                if affordable > Decimal::ZERO {
+                    quantity = quantity.min(affordable);
+                    needed = quantity
+                        * native_price
+                        * a.instrument.multiplier().as_decimal()
+                        * (Decimal::ONE + fee);
+                } else {
+                    // Buy only actual missing quote inventory; the alpha must wait for a later fresh signal.
+                    if currency != Currency::USDC() {
+                        let bridge = assets.iter().position(|b| {
+                            fx_ids.contains(&b.instrument.id().to_string())
+                                && b.instrument.base_currency() == Some(currency)
+                                && b.instrument.quote_currency() == Currency::USDC()
+                        });
+                        if let Some(j) = bridge.filter(|j| assets[*j].pending.is_none()) {
+                            let Some(bridge_price) = mark(&assets[j], event, age) else {
+                                continue;
+                            };
+                            let Some(bridge_unit) =
+                                small_unit(&assets[j], assets, fx_ids, event, age)
+                            else {
+                                continue;
+                            };
+                            let Some(usdc) = small_quote_available(
+                                small,
+                                assets,
+                                cash,
+                                Currency::USDC(),
+                                event,
+                                age,
+                                fee_cash,
+                            ) else {
+                                continue;
+                            };
+                            let allowed = (capital * decimal(&s.maximum_asset_weight)?
+                                - exposure[j])
+                                .max(Decimal::ZERO)
+                                .min(
+                                    (capital * decimal(&s.gross_fraction)? - gross)
+                                        .max(Decimal::ZERO),
+                                )
+                                .min(usdc.max(Decimal::ZERO) / (Decimal::ONE + fee_cash));
+                            let additional = ((needed - available) * quote_rate).min(allowed);
+                            let buy = small_legal_quantity(
+                                &assets[j].instrument,
+                                additional / bridge_unit,
+                                bridge_price,
+                            )?;
+                            if buy > Decimal::ZERO {
+                                let held = cash
+                                    .balance(currency)
+                                    .map_or(Decimal::ZERO, |b| b.as_decimal());
+                                small_queue(&mut assets[j], event, event, held + buy, s, seed)?;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        let deadline = event
+            .checked_add(policy.maximum_holding_ns.get())
+            .context("ECONOMIC_CLOCK_OVERFLOW")?;
+        small.cycles[i] = Some(SmallCycle {
+            decision: event,
+            deadline,
+            reference,
+            direction,
+            reservation_usdc: quantity.abs() * unit,
+            reservation_quote: needed,
+            first_fill: None,
+            exit_decision: None,
+            quantity: Decimal::ZERO,
+        });
+        small.deadlines.push(Reverse((deadline, i)));
+        small_queue(&mut assets[i], event, event, quantity, s, seed)?;
+    }
+    Ok(())
+}
+// Price moves may shrink an entry; they never increase its reserved USDC notional.
+fn small_cap_entries(
+    small: &SmallCapital,
+    rows: &mut [NativeMark],
+    assets: &[Asset],
+    cash: &NativeLedger,
+    margin: &NativeLedger,
+    fx_ids: &BTreeSet<String>,
+    event: u64,
+    s: &NativeTickEconomicScenarioV1,
+    contexts: &mut Option<ContextPrices>,
+) -> Result<()> {
+    let age = s.maximum_mark_age_ns.get();
+    for row in rows {
+        let Some(target) = row.target_quantity.filter(|q| !q.is_zero()) else {
+            continue;
+        };
+        let i = assets
+            .iter()
+            .position(|a| a.instrument.id() == row.instrument_id)
+            .context("ECONOMIC_NATIVE_DEFINITION_REQUIRED")?;
+        let a = &assets[i];
+        let is_margin = matches!(a.instrument, InstrumentAny::CryptoPerpetual(_));
+        let capital = value(
+            if is_margin { margin } else { cash },
+            assets,
+            fx_ids,
+            event,
+            age,
+            is_margin,
+            contexts,
+            None,
+        )?;
+        let exposure = small_exposure(
+            small, assets, cash, margin, fx_ids, event, age, is_margin, contexts,
+        )?;
+        let native_price = a.instrument.try_make_price(row.mark)?.as_decimal();
+        let unit = small_unit(a, assets, fx_ids, event, age);
+        let Some((capital, exposure, unit)) = capital
+            .zip(exposure)
+            .zip(unit)
+            .map(|((c, e), u)| (c, e, u))
+            .filter(|(c, _, u)| *c > Decimal::ZERO && *u > Decimal::ZERO)
+        else {
+            row.target_quantity = None;
+            continue;
+        };
+        let other_gross: Decimal = exposure
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| {
+                *j != i
+                    && matches!(assets[*j].instrument, InstrumentAny::CryptoPerpetual(_))
+                        == is_margin
+            })
+            .map(|(_, v)| *v)
+            .sum();
+        let own_limit = small.cycles[i]
+            .as_ref()
+            .map_or(exposure[i], |c| c.reservation_usdc);
+        let allowed = own_limit
+            .min(capital * decimal(&s.maximum_asset_weight)?)
+            .min((capital * decimal(&s.gross_fraction)? - other_gross).max(Decimal::ZERO));
+        let held = if fx_ids.contains(&a.instrument.id().to_string()) {
+            a.instrument
+                .base_currency()
+                .and_then(|currency| cash.balance(currency))
+                .map_or(Decimal::ZERO, |b| b.as_decimal())
+        } else {
+            Decimal::ZERO
+        };
+        let mut capped = target.abs().min(allowed / unit);
+        if !is_margin {
+            let fee = (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                / Decimal::from(10000);
+            let quote_unit =
+                native_price * a.instrument.multiplier().as_decimal() * (Decimal::ONE + fee);
+            let owned = small.cycles[i]
+                .as_ref()
+                .map_or((target - held).max(Decimal::ZERO) * quote_unit, |c| {
+                    c.reservation_quote
+                });
+            let available = small_quote_available(
+                small,
+                assets,
+                cash,
+                a.instrument.quote_currency(),
+                event,
+                age,
+                fee,
+            );
+            let Some(available) = available else {
+                row.target_quantity = None;
+                continue;
+            };
+            capped =
+                capped.min(held + (available + owned).min(owned).max(Decimal::ZERO) / quote_unit);
+        }
+        let quantity = small_legal_quantity(
+            &a.instrument,
+            capped
+                * if target < Decimal::ZERO {
+                    -Decimal::ONE
+                } else {
+                    Decimal::ONE
+                },
+            native_price,
+        )?;
+        // Funding inventory may only grow here; a tighter cap cannot sell an existing reserve.
+        row.target_quantity = if fx_ids.contains(&a.instrument.id().to_string()) && quantity < held
+        {
+            None
+        } else {
+            Some(quantity)
+        };
+    }
+    Ok(())
+}
+
 fn delay(seed: &mut u64, s: &NativeTickEconomicScenarioV1) -> Result<u64> {
     *seed = seed
         .wrapping_mul(6364136223846793005)
@@ -1024,11 +1764,18 @@ pub fn replay_with_funding(
     let mut next_hour = (start / HOUR + u64::from(!start.is_multiple_of(HOUR))) * HOUR;
     let mut expected_rates = BTreeSet::new();
     let mut seen_rates = BTreeSet::new();
+    let mut small = request
+        .small_capital_policy
+        .as_ref()
+        .map(|_| SmallCapital::new(assets.len()));
     while let Some(Reverse((event, index))) = heap.pop() {
         // Complete each global timestamp before scheduling new decisions.
         let mut group = vec![index];
         while heap.peek().is_some_and(|Reverse((at, _))| *at == event) {
             group.push(heap.pop().unwrap().0 .1);
+        }
+        if let Some(small) = &mut small {
+            small.expire(event, &mut assets, s, &mut seed)?;
         }
         while day_end <= event {
             expected_until(day_end, &mut next_hour, &margin, &mut expected_rates)?;
@@ -1098,7 +1845,13 @@ pub fn replay_with_funding(
         )?;
         let mut marks_cash = Vec::new();
         let mut marks_margin = Vec::new();
+        let mut fresh = Vec::new();
+        let mut attempted = Vec::new();
         for &i in &group {
+            if let Some(small) = &mut small {
+                let price = finite(assets[i].head.as_ref().unwrap().vwap)?;
+                small.observe_reference(i, event, price, &mut assets, s, &mut seed)?;
+            }
             let a = &mut assets[i];
             let current = a.head.take().unwrap();
             a.fast.update_raw(current.vwap);
@@ -1126,6 +1879,9 @@ pub fn replay_with_funding(
                     }
                     let before = model.remaining_fuel();
                     a.score = Some(model.predict(event, event, ordinal, &features)?);
+                    if small.is_some() {
+                        fresh.push(i);
+                    }
                     if let (Some(before), Some(after)) = (before, model.remaining_fuel()) {
                         consumed = consumed
                             .checked_add(before - after)
@@ -1142,7 +1898,14 @@ pub fn replay_with_funding(
                 .is_some_and(|(decision, due, _)| decision < event && due <= event)
             {
                 a.attempts += 1;
-                a.pending.take().map(|(_, _, q)| q)
+                if small.is_some() {
+                    attempted.push(i);
+                }
+                if small.is_some() && fx_ids.contains(&a.instrument.id().to_string()) {
+                    a.pending.map(|(_, _, q)| q)
+                } else {
+                    a.pending.take().map(|(_, _, q)| q)
+                }
             } else {
                 None
             };
@@ -1217,6 +1980,37 @@ pub fn replay_with_funding(
                 }
             }
         }
+        if let (Some(small), Some(c), Some(m)) = (&small, &cash, &margin) {
+            small_cap_entries(
+                small,
+                &mut marks_cash,
+                &assets,
+                c,
+                m,
+                &fx_ids,
+                event,
+                s,
+                &mut contexts,
+            )?;
+            small_cap_entries(
+                small,
+                &mut marks_margin,
+                &assets,
+                c,
+                m,
+                &fx_ids,
+                event,
+                s,
+                &mut contexts,
+            )?;
+            if funding_unknown.is_some() {
+                for row in &mut marks_margin {
+                    if row.target_quantity.is_some_and(|q| !q.is_zero()) {
+                        row.target_quantity = None;
+                    }
+                }
+            }
+        }
         if let Some(ledger) = cash.as_mut() {
             if !marks_cash.is_empty() {
                 ledger.step_batch(event, &marks_cash)?;
@@ -1237,7 +2031,85 @@ pub fn replay_with_funding(
                 }
             }
         }
-        if event >= next_grid && cash.is_some() {
+        if let (Some(small), Some(c), Some(m)) = (&mut small, &cash, &margin) {
+            for &i in &group {
+                if small.cycles[i].is_some() {
+                    let quantity = small_quantity(&assets[i], c, m);
+                    small.reconcile(
+                        i,
+                        event,
+                        quantity,
+                        attempted.contains(&i),
+                        &mut assets,
+                        s,
+                        &mut seed,
+                    )?;
+                }
+                if attempted.contains(&i) && fx_ids.contains(&assets[i].instrument.id().to_string())
+                {
+                    assets[i].pending = None;
+                }
+            }
+            if event >= next_grid {
+                let net = value(m, &assets, &fx_ids, event, age, true, &mut contexts, None)?;
+                let maintenance_fraction = decimal(&s.maintenance_margin_fraction)?;
+                let mut maintenance = Some(Decimal::ZERO);
+                for p in m.positions() {
+                    let Some(a) = assets.iter().find(|a| a.instrument.id() == p.instrument_id)
+                    else {
+                        maintenance = None;
+                        break;
+                    };
+                    let Some(price) = small_position_price(a, event, age, &mut contexts)? else {
+                        maintenance = None;
+                        break;
+                    };
+                    maintenance = maintenance.map(|sum| {
+                        sum + p.quantity.as_decimal()
+                            * price
+                            * a.instrument.multiplier().as_decimal()
+                            * maintenance_fraction
+                    });
+                }
+                if net
+                    .zip(maintenance)
+                    .is_some_and(|(net, needed)| needed > Decimal::ZERO && net <= needed)
+                {
+                    for i in 0..assets.len() {
+                        if matches!(assets[i].instrument, InstrumentAny::CryptoPerpetual(_)) {
+                            small.exit(i, event, &mut assets, s, &mut seed)?;
+                        }
+                    }
+                }
+                next_grid = (event / s.decision_interval_ns.get() + 1)
+                    .checked_mul(s.decision_interval_ns.get())
+                    .context("ECONOMIC_CLOCK_OVERFLOW")?;
+            }
+            if event < request.research.input.decision_cutoff_ns.get() {
+                let eligible: Vec<_> = fresh
+                    .iter()
+                    .copied()
+                    .filter(|i| {
+                        funding_unknown.is_none()
+                            || !matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_))
+                    })
+                    .collect();
+                small_new_entries(
+                    small,
+                    &eligible,
+                    &mut assets,
+                    c,
+                    m,
+                    &fx_ids,
+                    event,
+                    request.small_capital_policy.as_ref().unwrap(),
+                    s,
+                    &mut seed,
+                    &mut contexts,
+                )?;
+            }
+        }
+        if event >= next_grid && cash.is_some() && small.is_none() {
             schedule(
                 &mut assets,
                 &cash,
@@ -1255,6 +2127,9 @@ pub fn replay_with_funding(
         }
     }
     let end = request.research.input.event_end_ns.get();
+    if let Some(small) = &mut small {
+        small.expire(end - 1, &mut assets, s, &mut seed)?;
+    }
     while day_end <= end {
         expected_until(day_end, &mut next_hour, &margin, &mut expected_rates)?;
         funding_before(
@@ -1370,12 +2245,13 @@ pub fn replay_with_funding(
     let margin_summary = margin.as_ref().map(|l| l.summary()).unwrap_or_default();
     let cash_summary = cash.as_ref().map(|l| l.summary()).unwrap_or_default();
     Ok(NativeTickEconomicResultV1 {
-        schema_version: SchemaV1, request: request.clone(), model: "SEGREGATED_COHORT_MARK_ESTIMATE_V1".into(),
+        schema_version: SchemaV1, request: request.clone(),
+        small_capital_diagnostics: small.as_ref().map(|p| p.report(&assets)).transpose()?, model: "SEGREGATED_COHORT_MARK_ESTIMATE_V1".into(),
         methods: BTreeMap::from([
             ("funding_source".into(), format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", funding_manifest.source_revision, funding_manifest.start_ns.get(), funding_manifest.end_ns.get(), funding_manifest.rows, request.funding_source)),
             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
             ("execution".into(),"Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation; native bar liquidity can fill less, and unchanged quantized marks do not imply a refreshed observed book. Ties use deterministic native ordering, not original queue evidence.".into()),
-            ("policy".into(),"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()),
+            ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
             ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture observed oracle; context source {}, maximum age {}ns, EVENT_TIME_PROXY_UNVERIFIED; perpetual NAV/capital PnL uses context mark under the same clock/age, without changing trade execution or feature prices; native funding disabled. Only acknowledged adjustments enter reported funding total.", context.source_revision, age) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),

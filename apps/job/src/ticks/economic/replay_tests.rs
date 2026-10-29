@@ -614,3 +614,1059 @@ fn funding_is_expected_only_for_exposure_at_the_hour_boundary() {
         }
     }
 }
+
+fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
+    let (prepared, mut request, _) = source(directory, 0, None, true);
+    request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        maximum_entry_notional_usdc: "30".parse().unwrap(),
+        maximum_holding_ns: counter(60 * SECOND).unwrap(),
+    });
+    let cache =
+        cohort_cache::load(&prepared.join("independent/catalog"), &request.research).unwrap();
+    let assets = definitions()
+        .into_iter()
+        .map(|instrument| {
+            let id = instrument.id().to_string();
+            let mut fast = ExponentialMovingAverage::new(1, None);
+            fast.update_raw(150.0);
+            Asset {
+                instrument,
+                reader: cache
+                    .cohorts(cache.assets.iter().find(|a| a.instrument_id == id).unwrap())
+                    .unwrap(),
+                head: None,
+                previous: None,
+                fast,
+                slow: ExponentialMovingAverage::new(2, None),
+                model: None,
+                score: Some(1.0),
+                mark: Some((
+                    2 * SECOND,
+                    if id == BRIDGE {
+                        Decimal::ONE
+                    } else {
+                        Decimal::from(100)
+                    },
+                )),
+                cohorts: 0,
+                decisions: 0,
+                attempts: 0,
+                pending: None,
+                target_weight: None,
+            }
+        })
+        .collect();
+    (assets, request)
+}
+
+#[test]
+fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasing_dust() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, mut request) = small_assets(directory.path());
+    request.scenario.maximum_mark_age_ns = counter(SECOND).unwrap();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+    let i = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    let instrument = assets[i].instrument.clone();
+    cash.step(SECOND, &instrument, 100.0, 10.0, None).unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    let mut seed = 0;
+    let mut contexts = None;
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    small_new_entries(
+        &mut small,
+        &[i],
+        &mut assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        2 * SECOND,
+        request.small_capital_policy.as_ref().unwrap(),
+        &request.scenario,
+        &mut seed,
+        &mut contexts,
+    )
+    .unwrap();
+    let target = assets[i].pending.take().unwrap().2;
+    assert_eq!(target, Decimal::new(3, 1));
+    cash.step(4 * SECOND, &instrument, 100.0, 0.2, Some(target))
+        .unwrap();
+    let quantity = small_quantity(&assets[i], &cash, &margin);
+    assert_eq!(quantity, Decimal::new(2, 1));
+    small
+        .reconcile(
+            i,
+            4 * SECOND,
+            quantity,
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert_eq!(small.positions_opened, 1);
+    assert_eq!(
+        small.cycles[i].as_ref().unwrap().first_fill,
+        Some(4 * SECOND)
+    );
+    // A partial entry is never topped up on a later signal.
+    small_new_entries(
+        &mut small,
+        &[i],
+        &mut assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        20 * SECOND,
+        request.small_capital_policy.as_ref().unwrap(),
+        &request.scenario,
+        &mut seed,
+        &mut contexts,
+    )
+    .unwrap();
+    assert!(assets[i].pending.is_none());
+    assert!(value(
+        &cash,
+        &assets,
+        &fx_ids,
+        100 * SECOND,
+        SECOND,
+        false,
+        &mut contexts,
+        None
+    )
+    .unwrap()
+    .is_none());
+    small
+        .expire(100 * SECOND, &mut assets, &request.scenario, &mut seed)
+        .unwrap();
+    let pending = assets[i].pending.take().unwrap();
+    assert_eq!(pending.0, 62 * SECOND); // Exact deadline from entry decision, not next event100s.
+    assert_eq!(pending.1, 63 * SECOND + 1);
+    assert_eq!(pending.2, Decimal::ZERO);
+    cash.step(100 * SECOND, &instrument, 100.0, 0.1, Some(Decimal::ZERO))
+        .unwrap();
+    small
+        .reconcile(
+            i,
+            100 * SECOND,
+            small_quantity(&assets[i], &cash, &margin),
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert_eq!(
+        small.cycles[i].as_ref().unwrap().quantity,
+        Decimal::new(1, 1)
+    );
+    assert_eq!(small.positions_closed, 0);
+    // Remaining0.1 BTC at99 is below the actual10USDC minimum: retained, never marked closed.
+    assets[i].pending.take();
+    cash.step(102 * SECOND, &instrument, 99.0, 10.0, Some(Decimal::ZERO))
+        .unwrap();
+    small
+        .reconcile(
+            i,
+            102 * SECOND,
+            small_quantity(&assets[i], &cash, &margin),
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert_eq!(small.positions_closed, 0);
+    assert_eq!(
+        decimal(&small.report(&assets).unwrap().remaining_positions[0].quantity).unwrap(),
+        Decimal::new(1, 1)
+    );
+    assert_eq!(small.exit_attempts, 2);
+    assets[i].pending.take();
+    cash.step(104 * SECOND, &instrument, 101.0, 10.0, Some(Decimal::ZERO))
+        .unwrap();
+    small
+        .reconcile(
+            i,
+            104 * SECOND,
+            small_quantity(&assets[i], &cash, &margin),
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert!(small.cycles[i].is_none());
+    assert_eq!(small.positions_closed, 1);
+    assert_eq!(small.maximum_exit_delay, Some(42 * SECOND));
+    assert!(small
+        .report(&assets)
+        .unwrap()
+        .remaining_positions
+        .is_empty());
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+#[test]
+fn small_unfilled_entry_expires_before_late_execution_and_reference_exit_requires_later_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, request) = small_assets(directory.path());
+    let i = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    let mut seed = 0;
+    let cycle = SmallCycle {
+        decision: 2 * SECOND,
+        deadline: 62 * SECOND,
+        reference: Decimal::from(150),
+        direction: Decimal::ONE,
+        reservation_usdc: Decimal::from(30),
+        reservation_quote: Decimal::from(30),
+        first_fill: None,
+        exit_decision: None,
+        quantity: Decimal::ZERO,
+    };
+    small.cycles[i] = Some(cycle.clone());
+    small.deadlines.push(Reverse((cycle.deadline, i)));
+    small_queue(
+        &mut assets[i],
+        cycle.decision,
+        cycle.decision,
+        Decimal::new(3, 1),
+        &request.scenario,
+        &mut seed,
+    )
+    .unwrap();
+    small
+        .expire(62 * SECOND, &mut assets, &request.scenario, &mut seed)
+        .unwrap();
+    assert!(small.cycles[i].is_none() && assets[i].pending.is_none());
+    assert_eq!(small.unfilled_entries, 1);
+    assert_eq!(small.positions_opened, 0);
+    small.cycles[i] = Some(SmallCycle {
+        first_fill: Some(4 * SECOND),
+        quantity: Decimal::new(3, 1),
+        ..cycle
+    });
+    small
+        .observe_reference(
+            i,
+            10 * SECOND,
+            Decimal::from(150),
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    let (decision, due, target) = assets[i].pending.unwrap();
+    assert_eq!(decision, 10 * SECOND);
+    assert!(due > decision);
+    assert_eq!(target, Decimal::ZERO);
+}
+
+#[test]
+fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, request) = small_assets(directory.path());
+    let mut cash = build(&assets, false, Decimal::from(100), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(100), &request.scenario).unwrap();
+    let i = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    let bridge = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == BRIDGE)
+        .unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    let mut seed = 0;
+    let mut contexts = None;
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    small_new_entries(
+        &mut small,
+        &[bridge, i],
+        &mut assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        2 * SECOND,
+        request.small_capital_policy.as_ref().unwrap(),
+        &request.scenario,
+        &mut seed,
+        &mut contexts,
+    )
+    .unwrap();
+    assert!(small.cycles[bridge].is_none());
+    assert_eq!(
+        small_exposure(
+            &small,
+            &assets,
+            &cash,
+            &margin,
+            &fx_ids,
+            2 * SECOND,
+            request.scenario.maximum_mark_age_ns.get(),
+            false,
+            &mut contexts
+        )
+        .unwrap()
+        .unwrap()[i],
+        Decimal::from(30)
+    );
+    assert_eq!(
+        small_quote_available(
+            &small,
+            &assets,
+            &cash,
+            Currency::USDC(),
+            2 * SECOND,
+            request.scenario.maximum_mark_age_ns.get(),
+            Decimal::ZERO
+        ),
+        Some(Decimal::from(70))
+    );
+    // Execution price200 doubles: the same intent shrinks to0.15 instead of spending60.
+    assets[i].mark = Some((3 * SECOND, Decimal::from(200)));
+    let mut rows = [NativeMark {
+        instrument_id: assets[i].instrument.id(),
+        mark: 200.0,
+        capacity: Decimal::ONE,
+        target_quantity: Some(Decimal::new(3, 1)),
+    }];
+    small_cap_entries(
+        &small,
+        &mut rows,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        3 * SECOND,
+        &request.scenario,
+        &mut contexts,
+    )
+    .unwrap();
+    assert_eq!(rows[0].target_quantity, Some(Decimal::new(15, 2)));
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+#[test]
+fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, request) = small_assets(directory.path());
+    let mut cash = build(&assets, false, Decimal::from(100), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(100), &request.scenario).unwrap();
+    let i = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == LATE)
+        .unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    small.cycles[i] = Some(SmallCycle {
+        decision: SECOND,
+        deadline: 61 * SECOND,
+        reference: Decimal::from(90),
+        direction: -Decimal::ONE,
+        reservation_usdc: Decimal::from(30),
+        reservation_quote: Decimal::from(30),
+        first_fill: None,
+        exit_decision: None,
+        quantity: Decimal::ZERO,
+    });
+    let mut rows = [NativeMark {
+        instrument_id: assets[i].instrument.id(),
+        mark: 100.0,
+        capacity: Decimal::ONE,
+        target_quantity: Some(Decimal::new(-3, 1)),
+    }];
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    let mut contexts = None;
+    small_cap_entries(
+        &small,
+        &mut rows,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        2 * SECOND,
+        &request.scenario,
+        &mut contexts,
+    )
+    .unwrap();
+    assert_eq!(rows[0].target_quantity, Some(Decimal::new(-3, 1)));
+    let spot = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    small.cycles[spot] = Some(SmallCycle {
+        direction: Decimal::ONE,
+        reservation_quote: Decimal::from(20),
+        ..small.cycles[i].as_ref().unwrap().clone()
+    });
+    assets[spot].pending = Some((SECOND, 2 * SECOND, Decimal::new(3, 1)));
+    let mut rows = [NativeMark {
+        instrument_id: assets[spot].instrument.id(),
+        mark: 100.0,
+        capacity: Decimal::ONE,
+        target_quantity: Some(Decimal::new(3, 1)),
+    }];
+    small_cap_entries(
+        &small,
+        &mut rows,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        2 * SECOND,
+        &request.scenario,
+        &mut contexts,
+    )
+    .unwrap();
+    assert_eq!(
+        rows[0].target_quantity,
+        Some(Decimal::new(2, 1)),
+        "cannot spend quote cash reserved beyond this entry's own20"
+    );
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+#[test]
+fn small_same_base_different_quotes_simultaneous_fresh_signals_get_one_pending_cycle() {
+    for reverse in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut assets, request) = small_assets(directory.path());
+        let duplicate_directory = tempfile::tempdir().unwrap();
+        let (mut duplicate_source, _) = small_assets(duplicate_directory.path());
+        let mut other = duplicate_source.remove(1);
+        assert_eq!(other.instrument.base_currency(), Some(Currency::BTC()));
+        let usdt0 = Currency::from_str("USDT0").unwrap();
+        other.instrument = InstrumentAny::CurrencyPair(
+            CurrencyPair::builder()
+                .instrument_id(InstrumentId::from("BTC-USDT0-SPOT.HYPERLIQUID"))
+                .raw_symbol(Symbol::new("SAME-BASE-UNIT-ONLY"))
+                .base_currency(Currency::BTC())
+                .quote_currency(usdt0)
+                .price_precision(2)
+                .size_precision(4)
+                .price_increment(Price::from("0.01"))
+                .size_increment(Quantity::from("0.0001"))
+                .min_notional(Money::new(10.0, usdt0))
+                .ts_event(0_u64.into())
+                .ts_init(0_u64.into())
+                .build()
+                .unwrap(),
+        );
+        let other_index = assets.len();
+        assets.push(other);
+        let i = assets
+            .iter()
+            .position(|a| a.instrument.id().to_string() == SPOT)
+            .unwrap();
+        let bridge = assets
+            .iter()
+            .position(|a| a.instrument.id().to_string() == BRIDGE)
+            .unwrap();
+        let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+        let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+        cash.inventory_target_instruments(&[assets[bridge].instrument.id()])
+            .unwrap();
+        cash.step(
+            SECOND,
+            &assets[bridge].instrument,
+            1.0,
+            1000.0,
+            Some(Decimal::from(25)),
+        )
+        .unwrap();
+        assert_eq!(cash.balance(usdt0).unwrap().as_decimal(), Decimal::from(25));
+        let mut small = SmallCapital::new(assets.len());
+        let mut seed = 0;
+        let mut contexts = None;
+        let fresh = if reverse {
+            vec![other_index, i]
+        } else {
+            vec![i, other_index]
+        };
+        small_new_entries(
+            &mut small,
+            &fresh,
+            &mut assets,
+            &cash,
+            &margin,
+            &BTreeSet::from([BRIDGE.into()]),
+            2 * SECOND,
+            request.small_capital_policy.as_ref().unwrap(),
+            &request.scenario,
+            &mut seed,
+            &mut contexts,
+        )
+        .unwrap();
+        assert!(small.cycles[fresh[0]].is_some() && assets[fresh[0]].pending.is_some());
+        assert!(small.cycles[fresh[1]].is_none() && assets[fresh[1]].pending.is_none());
+        assert_eq!(small.cycles.iter().filter(|c| c.is_some()).count(), 1);
+        cash.finish().unwrap();
+        margin.finish().unwrap();
+    }
+}
+
+#[test]
+fn small_sleeve_budgets_are_independent_and_perp_exposure_uses_context_mark() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, request) = small_assets(directory.path());
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+    let spot = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    let perp = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == LATE)
+        .unwrap();
+    cash.step(SECOND, &assets[spot].instrument, 100.0, 10.0, None)
+        .unwrap();
+    cash.step(
+        2 * SECOND,
+        &assets[spot].instrument,
+        100.0,
+        10.0,
+        Some(Decimal::new(2, 1)),
+    )
+    .unwrap();
+    margin
+        .step(SECOND, &assets[perp].instrument, 100.0, 10.0, None)
+        .unwrap();
+    margin
+        .step(
+            2 * SECOND,
+            &assets[perp].instrument,
+            100.0,
+            10.0,
+            Some(Decimal::ONE),
+        )
+        .unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    small.cycles[spot] = Some(SmallCycle {
+        decision: SECOND,
+        deadline: 61 * SECOND,
+        reference: Decimal::from(150),
+        direction: Decimal::ONE,
+        reservation_usdc: Decimal::from(20),
+        reservation_quote: Decimal::from(20),
+        first_fill: Some(2 * SECOND),
+        exit_decision: None,
+        quantity: Decimal::new(2, 1),
+    });
+    let csv = format!("event_ns,oracle_px,mark_px\n{},50,250\n", 10 * SECOND);
+    std::fs::write(directory.path().join("small-context.csv"), &csv).unwrap();
+    let reader = ContextReader::open(
+        directory.path(),
+        ContextFile {
+            instrument_id: LATE.into(),
+            path: "small-context.csv".into(),
+            bytes: counter(csv.len() as u64).unwrap(),
+            rows: counter(1).unwrap(),
+            first_event_ns: Some(counter(10 * SECOND).unwrap()),
+            last_event_ns: Some(counter(10 * SECOND).unwrap()),
+        },
+    )
+    .unwrap();
+    let mut contexts = Some(ContextPrices {
+        source_revision: "unit-context".into(),
+        readers: BTreeMap::from([(LATE.into(), reader)]),
+    });
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    let exposure = small_exposure(
+        &small,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        10 * SECOND,
+        SECOND,
+        true,
+        &mut contexts,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        exposure[perp],
+        Decimal::from(250),
+        "context250, not stale cohort100 or oracle50"
+    );
+    assert!(
+        small_exposure(
+            &small,
+            &assets,
+            &cash,
+            &margin,
+            &fx_ids,
+            10 * SECOND,
+            SECOND,
+            false,
+            &mut contexts
+        )
+        .unwrap()
+        .is_none(),
+        "cash sleeve independently missing its own BTC valuation"
+    );
+    assets[spot].mark = Some((12 * SECOND, Decimal::from(100)));
+    assets[perp].mark = Some((12 * SECOND, Decimal::from(100)));
+    let exposure = small_exposure(
+        &small,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        12 * SECOND,
+        SECOND,
+        false,
+        &mut contexts,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        exposure[spot],
+        Decimal::from(20),
+        "missing perp context cannot block fresh cash sleeve"
+    );
+    assert!(
+        small_exposure(
+            &small,
+            &assets,
+            &cash,
+            &margin,
+            &fx_ids,
+            12 * SECOND,
+            SECOND,
+            true,
+            &mut contexts
+        )
+        .unwrap()
+        .is_none(),
+        "fresh trade cannot replace expired explicit perp context"
+    );
+    contexts.as_mut().unwrap().finish().unwrap();
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+fn small_spot_template(mut template: Asset, id: &str, base: Currency, quote: Currency) -> Asset {
+    template.instrument = InstrumentAny::CurrencyPair(
+        CurrencyPair::builder()
+            .instrument_id(InstrumentId::from(id))
+            .raw_symbol(Symbol::new("SMALL-CAPITAL-UNIT-ONLY"))
+            .base_currency(base)
+            .quote_currency(quote)
+            .price_precision(2)
+            .size_precision(4)
+            .price_increment(Price::from("0.01"))
+            .size_increment(Quantity::from("0.0001"))
+            .min_notional(Money::new(10.0, quote))
+            .ts_event(0_u64.into())
+            .ts_init(0_u64.into())
+            .build()
+            .unwrap(),
+    );
+    template
+}
+
+#[test]
+fn small_same_base_perp_and_spot_are_independent_and_cash_inventory_belongs_to_spot() {
+    for reverse in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let extra_directory = tempfile::tempdir().unwrap();
+        let (mut assets, request) = small_assets(directory.path());
+        let (mut templates, _) = small_assets(extra_directory.path());
+        let spot = assets.len();
+        assets.push(small_spot_template(
+            templates.remove(1),
+            "ETH-USDC-SPOT.HYPERLIQUID",
+            Currency::ETH(),
+            Currency::USDC(),
+        ));
+        let perp = assets
+            .iter()
+            .position(|a| a.instrument.id().to_string() == LATE)
+            .unwrap();
+        assert!(
+            perp < spot,
+            "perp-first ordering catches inventory attribution bug"
+        );
+        let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+        let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+        let mut small = SmallCapital::new(assets.len());
+        let mut seed = 0;
+        let mut contexts = None;
+        let fx_ids = BTreeSet::from([BRIDGE.into()]);
+        let fresh = if reverse {
+            vec![spot, perp]
+        } else {
+            vec![perp, spot]
+        };
+        small_new_entries(
+            &mut small,
+            &fresh,
+            &mut assets,
+            &cash,
+            &margin,
+            &fx_ids,
+            2 * SECOND,
+            request.small_capital_policy.as_ref().unwrap(),
+            &request.scenario,
+            &mut seed,
+            &mut contexts,
+        )
+        .unwrap();
+        assert!(small.cycles[spot].is_some() && small.cycles[perp].is_some());
+        cash.step(3 * SECOND, &assets[spot].instrument, 100.0, 10.0, None)
+            .unwrap();
+        cash.step(
+            4 * SECOND,
+            &assets[spot].instrument,
+            100.0,
+            10.0,
+            Some(Decimal::new(3, 1)),
+        )
+        .unwrap();
+        assets[spot].pending = None;
+        small
+            .reconcile(
+                spot,
+                4 * SECOND,
+                small_quantity(&assets[spot], &cash, &margin),
+                true,
+                &mut assets,
+                &request.scenario,
+                &mut seed,
+            )
+            .unwrap();
+        let exposure = small_exposure(
+            &small,
+            &assets,
+            &cash,
+            &margin,
+            &fx_ids,
+            4 * SECOND,
+            request.scenario.maximum_mark_age_ns.get(),
+            false,
+            &mut contexts,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(exposure[spot], Decimal::from(30));
+        assert_eq!(
+            exposure[perp],
+            Decimal::ZERO,
+            "cash ETH cannot be attributed to earlier ETH perp cycle"
+        );
+        cash.finish().unwrap();
+        margin.finish().unwrap();
+    }
+}
+
+#[test]
+fn small_quote_shrink_keeps_signed_deficit_and_protects_other_pending_reservation() {
+    let directory = tempfile::tempdir().unwrap();
+    let extra1 = tempfile::tempdir().unwrap();
+    let extra2 = tempfile::tempdir().unwrap();
+    let (mut assets, request) = small_assets(directory.path());
+    let (mut templates1, _) = small_assets(extra1.path());
+    let (mut templates2, _) = small_assets(extra2.path());
+    let quote = Currency::from_str("USDT0").unwrap();
+    let btc = assets.len();
+    assets.push(small_spot_template(
+        templates1.remove(1),
+        "BTC-USDT0-SPOT.HYPERLIQUID",
+        Currency::BTC(),
+        quote,
+    ));
+    let eth = assets.len();
+    assets.push(small_spot_template(
+        templates2.remove(1),
+        "ETH-USDT0-SPOT.HYPERLIQUID",
+        Currency::ETH(),
+        quote,
+    ));
+    let bridge = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == BRIDGE)
+        .unwrap();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+    cash.inventory_target_instruments(&[assets[bridge].instrument.id()])
+        .unwrap();
+    cash.step(
+        SECOND,
+        &assets[bridge].instrument,
+        1.0,
+        1000.0,
+        Some(Decimal::from(60)),
+    )
+    .unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    for i in [btc, eth] {
+        small.cycles[i] = Some(SmallCycle {
+            decision: SECOND,
+            deadline: 61 * SECOND,
+            reference: Decimal::from(150),
+            direction: Decimal::ONE,
+            reservation_usdc: Decimal::from(30),
+            reservation_quote: Decimal::from(30),
+            first_fill: None,
+            exit_decision: None,
+            quantity: Decimal::ZERO,
+        });
+        assets[i].pending = Some((SECOND, 2 * SECOND, Decimal::new(3, 1)));
+    }
+    // A real intervening native fill reduces the quote wallet after the two reservations.
+    cash.step(
+        2 * SECOND,
+        &assets[bridge].instrument,
+        1.0,
+        1000.0,
+        Some(Decimal::from(40)),
+    )
+    .unwrap();
+    assert_eq!(cash.balance(quote).unwrap().as_decimal(), Decimal::from(40));
+    let fx_ids = BTreeSet::from([BRIDGE.into()]);
+    let mut contexts = None;
+    assert_eq!(
+        small_quote_available(
+            &small,
+            &assets,
+            &cash,
+            quote,
+            3 * SECOND,
+            request.scenario.maximum_mark_age_ns.get(),
+            Decimal::ZERO
+        ),
+        Some(Decimal::from(-20))
+    );
+    let mut rows = [NativeMark {
+        instrument_id: assets[btc].instrument.id(),
+        mark: 100.0,
+        capacity: Decimal::ONE,
+        target_quantity: Some(Decimal::new(3, 1)),
+    }];
+    small_cap_entries(
+        &small,
+        &mut rows,
+        &assets,
+        &cash,
+        &margin,
+        &fx_ids,
+        3 * SECOND,
+        &request.scenario,
+        &mut contexts,
+    )
+    .unwrap();
+    assert_eq!(rows[0].target_quantity, Some(Decimal::new(1,1)), "only10 quote is unreserved after protecting the other30; old clamped deficit incorrectly allowed30");
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+#[test]
+fn small_nonzero_roundtrip_cost_hurdle_excludes_equality_and_below() {
+    for (price, allowed) in [("99.81", true), ("99.82", false), ("99.83", false)] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut assets, mut request) = small_assets(directory.path());
+        request.scenario.spot_taker_fee_bps = "7".parse().unwrap();
+        request.scenario.extra_cost_bps = "2".parse().unwrap();
+        let i = assets
+            .iter()
+            .position(|a| a.instrument.id().to_string() == SPOT)
+            .unwrap();
+        assets[i].mark = Some((2 * SECOND, Decimal::from_str(price).unwrap()));
+        assets[i].fast.update_raw(100.0);
+        let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+        let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+        let mut small = SmallCapital::new(assets.len());
+        let mut seed = 0;
+        let mut contexts = None;
+        small_new_entries(
+            &mut small,
+            &[i],
+            &mut assets,
+            &cash,
+            &margin,
+            &BTreeSet::from([BRIDGE.into()]),
+            2 * SECOND,
+            request.small_capital_policy.as_ref().unwrap(),
+            &request.scenario,
+            &mut seed,
+            &mut contexts,
+        )
+        .unwrap();
+        assert_eq!(
+            small.cycles[i].is_some(),
+            allowed,
+            "price{price}: gap must exceed18bp, not equal it"
+        );
+        cash.finish().unwrap();
+        margin.finish().unwrap();
+    }
+}
+
+#[test]
+fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real_later_cohort() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut instruments = definitions();
+    let usdt0 = Currency::from_str("USDT0").unwrap();
+    let alpha = "BTC-USDT0-SPOT.HYPERLIQUID";
+    instruments[1] = InstrumentAny::CurrencyPair(
+        CurrencyPair::builder()
+            .instrument_id(InstrumentId::from(alpha))
+            .raw_symbol(Symbol::new("SMALL-REPLAY-UNIT-ONLY"))
+            .base_currency(Currency::BTC())
+            .quote_currency(usdt0)
+            .price_precision(2)
+            .size_precision(4)
+            .price_increment(Price::from("0.01"))
+            .size_increment(Quantity::from("0.0001"))
+            .min_notional(Money::new(10.0, usdt0))
+            .ts_event(0_u64.into())
+            .ts_init(0_u64.into())
+            .build()
+            .unwrap(),
+    );
+    let mut request = super::tests::request();
+    request.research.input.instrument_ids = vec![BRIDGE.into(), alpha.into(), LATE.into()];
+    request.research.input.event_end_ns = counter(4 * DAY).unwrap();
+    request.research.input.decision_cutoff_ns = request.research.input.event_end_ns;
+    request.research.train_end_ns = counter(DAY).unwrap();
+    request.research.validation_end_ns = counter(3 * DAY).unwrap();
+    request.research.parameters.fast_period_cohorts = 2;
+    request.research.parameters.slow_period_cohorts = 3;
+    request.research.target = contracts::ticks::NativeTickTargetV1::FixedEventTime {
+        horizon_ns: counter(60 * SECOND).unwrap(),
+    };
+    request.scenario.participation_fraction = "1".parse().unwrap();
+    request.scenario.maximum_asset_weight = "0.05".parse().unwrap();
+    request.scenario.spot_taker_fee_bps = "7".parse().unwrap();
+    request.scenario.extra_cost_bps = "2".parse().unwrap();
+    request.scenario.decision_interval_ns = counter(10 * SECOND).unwrap();
+    request.scenario.base_latency_ns = counter(SECOND).unwrap();
+    request.scenario.jitter_min_ns = counter(0).unwrap();
+    request.scenario.jitter_max_ns = counter(0).unwrap();
+    request.scenario.maximum_mark_age_ns = counter(HOUR).unwrap();
+    request.fx_instrument_ids = vec![BRIDGE.into()];
+    request.small_capital_policy = Some(NativeTickSmallCapitalPolicyV1 {
+        maximum_entry_notional_usdc: "30".parse().unwrap(),
+        maximum_holding_ns: counter(60 * SECOND).unwrap(),
+    });
+    let mut rows = Vec::new();
+    let mut add = |id: &str, seconds: u64, price: &str, side: AggressorSide| {
+        rows.push(TradeTick::new(
+            InstrumentId::from(id),
+            Price::from(price),
+            Quantity::from("10000.0000"),
+            side,
+            TradeId::from(format!("SMALL-UNIT-{}", rows.len()).as_str()),
+            (seconds * SECOND).into(),
+            (seconds * SECOND).into(),
+        ));
+    };
+    for seconds in [1, 3, 11, 12, 90, 100] {
+        add(BRIDGE, seconds, "1.000", AggressorSide::Buy);
+        add(BRIDGE, seconds, "1.000", AggressorSide::Sell);
+    }
+    for seconds in [4, 6, 8, 10, 20, 21, 22, 100, 3 * DAY / SECOND + 10] {
+        add(
+            alpha,
+            seconds,
+            if seconds < 10 {
+                "200.00"
+            } else if seconds < 110 {
+                "100.00"
+            } else {
+                "90.00"
+            },
+            AggressorSide::Buy,
+        );
+    }
+    // A real source cohort creates the perp cache identity; clipping then legitimately leaves it empty in primary.
+    add(LATE, 3 * DAY / SECOND + 20, "100.00", AggressorSide::Buy);
+    rows.sort_by_key(|row| (row.ts_event, row.instrument_id));
+    let source = directory.path().join("source");
+    let mut builder = cohort_cache::Builder::new_flow(&source, 100, 100, 1_000_000).unwrap();
+    for row in rows {
+        builder.push(row).unwrap();
+    }
+    let manifest = builder.seal("fixed-source", 0, 4 * DAY).unwrap();
+    builder.publish(manifest, json!({"status":"IMPORTED","availability":"EVENT_TIME_PROXY_UNVERIFIED","source_revision":"fixed-source",
+        "event_start_ns":"0","event_end_ns":(4*DAY).to_string(),"missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0,
+        "instrument_source":{"currencies":crate::catalog::currencies::definitions(&instruments),"instruments":instruments}})).unwrap();
+    let catalog = source.join("catalog");
+    std::fs::write(catalog.join("funding-rates.jsonl"), "").unwrap();
+    std::fs::write(
+        catalog.join("funding-rates.manifest.json"),
+        serde_json::to_vec(&json!({"source_revision":"fixed-source","start_ns":"0",
+        "end_ns":(4*DAY).to_string(),"instruments":[LATE],"rows":0,"missing_instruments":[]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let prepared = directory.path().join("prepared");
+    let metadata =
+        cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
+    // Consume the official clipped request paired with the primary cache, not a mismatched full-window request.
+    request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
+    assert_eq!(request.research.input.event_end_ns.get(), 3 * DAY);
+    let result = replay(
+        &prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    let diagnostics = result.small_capital_diagnostics.as_ref().unwrap();
+    assert_eq!(
+        diagnostics.entry_attempts.get(),
+        1,
+        "bridge fill must precede a new fresh alpha signal; out-of-window source cannot cause re-entry"
+    );
+    assert_eq!(diagnostics.positions_opened.get(), 1);
+    assert_eq!(diagnostics.positions_closed.get(), 1);
+    assert_eq!(diagnostics.exit_attempts.get(), 1);
+    assert_eq!(
+        diagnostics.maximum_exit_delay_ns.unwrap().get(),
+        20 * SECOND,
+        "entry decision20s -> deadline80s -> actual exit100s"
+    );
+    assert!(diagnostics.remaining_positions.is_empty());
+    assert_eq!(result.native_fills.get(), 3, "native quote bridge buy, native alpha buy, native alpha sell; initial wealth conversion is separate");
+    assert!(result
+        .fees_by_currency
+        .values()
+        .any(|fee| decimal(fee).unwrap() > Decimal::ZERO));
+    assert!(
+        result.fees_usdc_equivalent.is_none(),
+        "expired final quote FX leaves fee conversion unknown too"
+    );
+    assert!(
+        result.days.iter().any(|d| d.equity_usdt.is_none()),
+        "unquoted residual FX cannot be magically valued after the source ends"
+    );
+    assert_eq!(
+        result.assets.len(),
+        3,
+        "zero-cohort perp remains in full recorded scope"
+    );
+    assert_eq!(
+        result
+            .assets
+            .iter()
+            .find(|a| a.instrument_id == alpha)
+            .unwrap()
+            .cohorts
+            .get(),
+        8,
+        "profitable-looking source event after the prepared primary-view end is outside the replay"
+    );
+}
