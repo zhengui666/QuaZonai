@@ -24,7 +24,7 @@ use nautilus_model::{
         margin_model::{MarginModel, MarginModelHandle},
         Account,
     },
-    data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate},
+    data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate, QuoteTick},
     enums::{
         AccountType, AggregationSource, BarAggregation, BookType, OmsType, OrderSide, PriceType,
         TimeInForce,
@@ -147,6 +147,7 @@ struct CohortStrategy {
     bars: Vec<BarType>,
     venue: Venue,
     cash: bool,
+    synthetic_quote_ioc: bool,
     cost_fraction: Decimal,
     state: Rc<RefCell<State>>,
 }
@@ -224,7 +225,11 @@ impl DataActor for CohortStrategy {
             .get(&id)
             .copied()
             .context("TICK_ECONOMIC_CAPACITY_MISSING")?;
-        let mut amount = difference.abs().min(capacity);
+        let mut amount = if self.synthetic_quote_ioc {
+            difference.abs()
+        } else {
+            difference.abs().min(capacity)
+        };
         let mut cash_constrained = false;
         if self.cash {
             let currency = if side == OrderSide::Buy {
@@ -445,6 +450,7 @@ pub(super) struct NativeLedger {
     adjustments: Adjustments,
     last_event: Option<u64>,
     purge_day: Option<u64>,
+    synthetic_quote_ioc: bool,
 }
 impl NativeLedger {
     #[allow(clippy::too_many_arguments)]
@@ -456,6 +462,7 @@ impl NativeLedger {
         extra_cost_bps: Decimal,
         initial_margin_fraction: Decimal,
         maintenance_margin_fraction: Decimal,
+        synthetic_quote_ioc: bool,
     ) -> Result<Self> {
         ensure!(
             initial_usdc > Decimal::ZERO && !instruments.is_empty(),
@@ -552,8 +559,8 @@ impl NativeLedger {
                     0.0,
                     Some(1),
                 )?))
-                .bar_execution(true)
-                .liquidity_consumption(true)
+                .bar_execution(!synthetic_quote_ioc)
+                .liquidity_consumption(!synthetic_quote_ioc)
                 .build()?,
         )?;
         let count = instruments.len();
@@ -580,6 +587,7 @@ impl NativeLedger {
             bars,
             venue,
             cash: !margin,
+            synthetic_quote_ioc,
             cost_fraction: fee_fraction,
             state: state.clone(),
         })?;
@@ -593,6 +601,7 @@ impl NativeLedger {
             adjustments,
             last_event: None,
             purge_day: None,
+            synthetic_quote_ioc,
         })
     }
 
@@ -698,6 +707,17 @@ impl NativeLedger {
                 .borrow_mut()
                 .capacities
                 .insert(row.instrument_id, row.capacity);
+            if self.synthetic_quote_ioc {
+                events.push(Data::Quote(QuoteTick::new(
+                    row.instrument_id,
+                    price,
+                    price,
+                    volume,
+                    volume,
+                    event.into(),
+                    event.into(),
+                )));
+            }
             events.push(Data::Bar(Bar::new_checked(
                 bar_type(row.instrument_id),
                 price,
@@ -797,6 +817,13 @@ impl NativeLedger {
             .map(|position| position.clone_without_events())
             .collect()
     }
+    #[cfg(test)]
+    pub fn pending_order_count(&self) -> usize {
+        let cache = self.engine.kernel().cache.borrow();
+        let count = cache.orders_open(None, None, None, None, None).len()
+            + cache.orders_inflight(None, None, None, None, None).len();
+        count
+    }
     pub fn summary(&self) -> NativeSummary {
         let mut summary = self.state.borrow().summary.clone();
         summary.adjustments_applied = self.adjustments.state.borrow().applied;
@@ -894,6 +921,7 @@ mod tests {
             Decimal::ZERO,
             Decimal::new(5, 1),
             Decimal::new(25, 2),
+            false,
         )
         .unwrap()
     }
@@ -956,6 +984,57 @@ mod tests {
             .unwrap();
         assert!(native.balance(Currency::USDC()).unwrap().as_decimal() >= Decimal::ZERO);
         assert!(native.balance(Currency::BTC()).unwrap().as_decimal() < Decimal::from(10));
+        native.finish().unwrap();
+    }
+    #[test]
+    fn synthetic_quote_ioc_applies_fee_and_funding_once() {
+        let instrument = perp();
+        let mut native = NativeLedger::new(
+            vec![instrument.clone()],
+            Decimal::from(1000),
+            true,
+            Decimal::from(100),
+            Decimal::ZERO,
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+            true,
+        )
+        .unwrap();
+        native
+            .step(1_000_000_000, &instrument, 100.0, 10.0, None)
+            .unwrap();
+        native
+            .step(2_000_000_000, &instrument, 100.0, 0.5, Some(Decimal::ONE))
+            .unwrap();
+        assert_eq!(
+            native.positions()[0].quantity.as_decimal(),
+            Decimal::new(5, 1)
+        );
+        assert_eq!(native.summary().commissions["USDC"], Decimal::new(5, 1));
+        native
+            .queue_adjustment(3_000_000_000, Money::from("-5 USDC"))
+            .unwrap();
+        native
+            .step_batch_with_rates(
+                3_000_000_000,
+                &[NativeMark {
+                    instrument_id: instrument.id(),
+                    mark: 100.0,
+                    capacity: Decimal::ONE,
+                    target_quantity: Some(Decimal::ZERO),
+                }],
+                &[NativeRate {
+                    instrument_id: instrument.id(),
+                    rate: Decimal::new(1, 2),
+                }],
+            )
+            .unwrap();
+        assert!(native.positions().is_empty());
+        assert_eq!(native.summary().adjustments_applied, 1);
+        assert_eq!(
+            native.summary().adjustment_totals["USDC"],
+            Decimal::from(-5)
+        );
         native.finish().unwrap();
     }
     #[test]
@@ -1206,6 +1285,7 @@ mod tests {
             Decimal::ZERO,
             Decimal::new(5, 1),
             Decimal::new(25, 2),
+            false,
         )
         .unwrap();
         native.inventory_target_instruments(&[bridge.id()]).unwrap();
