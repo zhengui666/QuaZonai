@@ -190,7 +190,7 @@ fn shape_mode(value: &NativeSimulationResultV1, observed_hold: bool) -> Result<(
     if let Some(report) = &value.spot_cash_report {
         spot_cash_report::shape(report)?;
     }
-    if value.native_version != "0.63.0"
+    if value.native_version != "0.67.0"
         || value.iterations.get() == 0
         || (value.consumed_target_points.get() == 0 && !observed_hold)
         || value.returns_kind != NativeReturnsKind::PortfolioDaily

@@ -1,6 +1,6 @@
 //! Engineering fixture only: new synthetic quotes into the original LiveNode
 //! dispatch and Sandbox matching engine. No network, credentials or historical data.
-use contracts::{account_observation::*, forward::ForwardEnvironmentV1, DbCounter};
+use contracts::{DbCounter, account_observation::*, forward::ForwardEnvironmentV1};
 use job::{account_observer::project_snapshot, native_node_observer::NativeNodeObserver};
 use nautilus_common::{
     actor::DataActor,
@@ -11,13 +11,14 @@ use nautilus_common::{
     msgbus::{self, TypedHandler},
 };
 use nautilus_core::UnixNanos;
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_live::node::{LiveNode, LiveNodeHandle, NodeRunMode, NodeState};
 use nautilus_model::{
     data::{Data, QuoteTick},
     enums::{AccountType, OrderSide},
     events::{AccountState, OrderFilled, PortfolioSnapshot},
     identifiers::{AccountId, ClientId, InstrumentId, StrategyId, TraderId, Venue},
-    instruments::{stubs::crypto_perpetual_ethusdt, Instrument, InstrumentAny},
+    instruments::{Instrument, InstrumentAny, stubs::crypto_perpetual_ethusdt},
     types::{Currency, Money, Price, Quantity},
 };
 use nautilus_portfolio::config::PortfolioConfig;
@@ -113,6 +114,11 @@ fn node() -> LiveNode {
                 starting_balances: vec![Money::from("10000 USDT")],
                 base_currency: Some(Currency::USDT()),
                 account_type: AccountType::Margin,
+                // Original crypto_perpetual_ethusdt fixture: 0.0002 / 0.0004.
+                fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
+                    rust_decimal::Decimal::new(2, 4),
+                    rust_decimal::Decimal::new(4, 4),
+                ))),
                 ..Default::default()
             }),
         )
@@ -263,14 +269,16 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
             "environment" => invalid.environment = ForwardEnvironmentV1::Live,
             _ => unreachable!(),
         }
-        assert!(NativeNodeObserver::attach(
-            &node,
-            invalid,
-            ClientId::new("QZ-SANDBOX"),
-            &invalid_path,
-            64
-        )
-        .is_err());
+        assert!(
+            NativeNodeObserver::attach(
+                &node,
+                invalid,
+                ClientId::new("QZ-SANDBOX"),
+                &invalid_path,
+                64
+            )
+            .is_err()
+        );
         assert!(!invalid_path.exists());
     }
     let observer =
@@ -298,16 +306,24 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
         2,
         "original Sandbox must fill both fixture orders"
     );
+    for fill in fills.borrow().iter() {
+        let oracle = fill.last_qty.as_decimal()
+            * fill.last_px.as_decimal()
+            * rust_decimal::Decimal::new(4, 4);
+        assert_eq!(fill.commission.as_decimal(), oracle);
+        assert_eq!(fill.commission.currency, Currency::USDT());
+    }
     assert!(
         !accounts.borrow().is_empty(),
         "original Sandbox must generate its account state"
     );
-    assert!(node
-        .kernel()
-        .cache()
-        .borrow()
-        .positions_open(None, None, None, Some(&AccountId::from("QZTEST-001")), None)
-        .is_empty());
+    assert!(
+        node.kernel()
+            .cache()
+            .borrow()
+            .positions_open(None, None, None, Some(&AccountId::from("QZTEST-001")), None)
+            .is_empty()
+    );
     let native: HashMap<_, _> = snapshots
         .borrow()
         .iter()
@@ -324,9 +340,11 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
         .collect();
     assert_eq!(cursor.0.get(), records.len() as u64);
     assert_eq!(cursor.1, DbCounter::ZERO);
-    assert!(records
-        .iter()
-        .any(|r| r.connection == AccountConnectionV1::Connected && r.snapshot.is_none()));
+    assert!(
+        records
+            .iter()
+            .any(|r| r.connection == AccountConnectionV1::Connected && r.snapshot.is_none())
+    );
     assert_eq!(
         records.last().unwrap().connection,
         AccountConnectionV1::Disconnected
@@ -341,17 +359,21 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
             assert_eq!(snapshot, &native[&snapshot.event_id]);
         }
     }
-    assert!(projected
-        .windows(2)
-        .any(|s| s[0].total_equity != s[1].total_equity));
-    assert!(NativeNodeObserver::attach(
-        &node,
-        binding(&node),
-        ClientId::new("QZ-SANDBOX"),
-        &path,
-        64
-    )
-    .is_err());
+    assert!(
+        projected
+            .windows(2)
+            .any(|s| s[0].total_equity != s[1].total_equity)
+    );
+    assert!(
+        NativeNodeObserver::attach(
+            &node,
+            binding(&node),
+            ClientId::new("QZ-SANDBOX"),
+            &path,
+            64
+        )
+        .is_err()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -361,23 +383,27 @@ async fn client_bound_observer_uses_actual_native_identity_without_submitting_or
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client-bound.ndjson");
     let invalid_path = directory.path().join("invalid-client.ndjson");
-    assert!(NativeNodeObserver::attach_client_bound(
-        &node,
-        project_id,
-        ClientId::new("MISSING-CLIENT"),
-        &invalid_path,
-        32,
-    )
-    .is_err());
+    assert!(
+        NativeNodeObserver::attach_client_bound(
+            &node,
+            project_id,
+            ClientId::new("MISSING-CLIENT"),
+            &invalid_path,
+            32,
+        )
+        .is_err()
+    );
     assert!(!invalid_path.exists());
-    assert!(NativeNodeObserver::attach_client_bound(
-        &node,
-        project_id,
-        ClientId::new("QZ-SANDBOX"),
-        &invalid_path,
-        0,
-    )
-    .is_err());
+    assert!(
+        NativeNodeObserver::attach_client_bound(
+            &node,
+            project_id,
+            ClientId::new("QZ-SANDBOX"),
+            &invalid_path,
+            0,
+        )
+        .is_err()
+    );
     assert!(!invalid_path.exists());
 
     let snapshots = Rc::new(RefCell::new(Vec::<PortfolioSnapshot>::new()));
@@ -458,9 +484,10 @@ async fn client_bound_observer_uses_actual_native_identity_without_submitting_or
             assert_eq!(snapshot, &native[&snapshot.event_id]);
         }
     }
-    assert!(text
-        .lines()
-        .all(|line| serde_json::from_str::<AccountObservationSubmitV1>(line).is_err()));
+    assert!(
+        text.lines()
+            .all(|line| serde_json::from_str::<AccountObservationSubmitV1>(line).is_err())
+    );
     assert!(
         node.kernel()
             .cache()

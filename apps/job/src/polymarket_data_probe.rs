@@ -117,7 +117,7 @@ fn public_config_from_proxy_lookup(
     if let Some(name) = name {
         validate_proxy_env_name(name)?;
         config.proxy_url =
-            Some(lookup(name).map_err(|_| anyhow!("POLYMARKET_PUBLIC_PROXY_ENV_UNAVAILABLE"))?);
+            Some(lookup(name).map_err(|_| anyhow!("POLYMARKET_PUBLIC_PROXY_ENV_UNAVAILABLE"))?.into());
         // Strict official HTTP/HTTPS validation prevents the lower transport's
         // unsupported-SOCKS direct fallback. Never downgrade failure to None.
         config

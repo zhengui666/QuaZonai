@@ -5,10 +5,10 @@ resolver = "2"
 [workspace.package]
 version = "3.0.0-dev.1"
 edition = "2021"
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 license-file = "LICENSE"
 repository = "https://github.com/zhengui666/QuaZonai"
 
 [workspace.dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = { version = "=1.0.151", features = ["raw_value", "float_roundtrip"] }
+serde_json = { version = "=1.0.154", features = ["raw_value", "float_roundtrip"] }

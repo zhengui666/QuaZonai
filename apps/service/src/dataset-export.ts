@@ -158,7 +158,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     if (bytes !== receipt.metadata_bytes || metadata.schema_version !== 1 || metadata.provider_kind !== 'NAUTILUS_CATALOG' || metadata.data_kind !== 'BAR'
       || metadata.pit_status !== 'UNVERIFIED' || ns(metadata.row_count) < 1n
       || metadata.registered_ref !== hints.native_catalog_ref || metadata.storage_version !== hints.native_storage_version
-      || quality.schema_version !== 1 || quality.native_version !== 'nautilus-persistence/0.63.0'
+      || quality.schema_version !== 1 || quality.native_version !== 'nautilus-persistence/0.67.0'
       || !Array.isArray(quality.datasets) || quality.datasets.length !== 1
       || (heldout ? metadata.partition !== 'SEALED' : metadata.partition === 'SEALED')) throw new Error('prepared_metadata_mismatch');
     const measured = object(quality.datasets[0], 'measured_dataset');

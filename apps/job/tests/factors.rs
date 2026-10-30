@@ -77,7 +77,7 @@ fn price_volume_factors_need_no_simulation_instrument_definitions() {
     let (original, request) = mixed_catalog(0.0, false);
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     let prices = tempfile::tempdir().unwrap();
-    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+    let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
         prices.path().to_str().unwrap(),
         None,
         Some(16),
@@ -211,7 +211,7 @@ fn two_wasm_factor_structures_keep_arbitrary_signed_scores_and_original_forecast
         assert_eq!(result.methods["ic"], "ndarray-stats.pearson_correlation");
         assert_eq!(result.native_versions["ndarray-stats"], "0.7.0");
         assert_eq!(result.native_versions["wasmi"], "2.0.0");
-        assert_eq!(result.native_versions["nautilus-model"], "0.63.0");
+        assert_eq!(result.native_versions["nautilus-model"], "0.67.0");
         // Every report matches the official raw calculation on precisely uncensored pairs.
         for partition in &result.partitions {
             let pairs = || {
@@ -706,7 +706,7 @@ fn price_volume_factors_retain_native_row_and_clock_checks() {
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     for invalid_clock in [false, true] {
         let prices = tempfile::tempdir().unwrap();
-        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+        let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
             prices.path().to_str().unwrap(),
             None,
             Some(16),
@@ -744,7 +744,7 @@ fn price_volume_factors_reject_undefined_native_values() {
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     for undefined_volume in [false, true] {
         let prices = tempfile::tempdir().unwrap();
-        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+        let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
             prices.path().to_str().unwrap(),
             None,
             Some(16),

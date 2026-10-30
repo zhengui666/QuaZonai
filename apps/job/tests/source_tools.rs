@@ -3,11 +3,11 @@
 use std::{ffi::OsStr, fs, process::Command};
 
 use nautilus_model::{
-    data::{Bar, BarType, Data},
+    data::{Bar, BarType},
     instruments::InstrumentAny,
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::{json, Value};
 
 #[path = "support/polymarket.rs"]
@@ -215,16 +215,15 @@ fn history_dispatch_writes_original_native_bars_and_unqualified_evidence() {
         None,
     )
     .unwrap();
-    let definitions: Vec<InstrumentAny> = native.instruments(None, None, None).unwrap();
+    let definitions: Vec<InstrumentAny> =
+        native.query_instruments_filtered(None, None, None).unwrap();
     assert_eq!(
         serde_json::to_value(definitions).unwrap(),
         source["instruments"]
     );
     let rows = native
         .query::<Bar>(None, None, None, None, None, true)
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect::<Vec<_>>();
+        .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(matches!(rows[0], Data::Bar(actual) if actual == bar));
+    assert_eq!(rows[0], bar);
 }

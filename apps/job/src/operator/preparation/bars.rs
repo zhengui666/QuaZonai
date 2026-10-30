@@ -2,10 +2,11 @@
 use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
 use nautilus_model::{
-    data::{Bar, BarType, Data},
+    data::{Bar, BarType, DataBatch, NautilusDataType},
     instruments::{Instrument, InstrumentAny},
     types::{Price, Quantity},
 };
+use nautilus_persistence::catalog::types::CatalogQuery;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -202,23 +203,28 @@ pub(super) fn write_catalog(
     let mut native = super::native(root)?;
     native.write_instruments(instruments.to_vec())?;
     native.write_to_parquet(bars, None, None, None)?;
-    let readback = native
-        .query::<Bar>(
-            Some(vec![bars[0].bar_type.to_string()]),
-            None,
-            None,
-            None,
-            None,
-            true,
-        )?
-        .map(|row| match row? {
-            Data::Bar(bar) => Ok(bar),
-            _ => anyhow::bail!("NATIVE_RECORD_TYPE"),
-        })
-        .collect::<Result<Vec<_>>>()?;
-    ensure!(readback == bars, "NATIVE_BAR_READBACK_MISMATCH");
-    let readback_definitions =
-        native.instruments(Some(&[instruments[0].id().to_string()]), None, Some(cutoff))?;
+    let query = CatalogQuery::new(NautilusDataType::Bar)
+        .with_identifiers(Some(vec![bars[0].bar_type.to_string()]));
+    let mut session = crate::catalog::file_batch_session(&mut native, query, 4096)?;
+    let mut observed = 0;
+    while let Some(batch) = session.next_batch()? {
+        let DataBatch::Bar(batch) = batch else {
+            anyhow::bail!("NATIVE_RECORD_TYPE");
+        };
+        for bar in batch.as_ref() {
+            ensure!(
+                bars.get(observed) == Some(bar),
+                "NATIVE_BAR_READBACK_MISMATCH"
+            );
+            observed += 1;
+        }
+    }
+    ensure!(observed == bars.len(), "NATIVE_BAR_READBACK_MISMATCH");
+    let readback_definitions = native.query_instruments_filtered(
+        Some(&[instruments[0].id().to_string()]),
+        None,
+        Some(cutoff),
+    )?;
     ensure!(
         serde_json::to_value(readback_definitions)? == serde_json::to_value(instruments)?,
         "NATIVE_DEFINITION_READBACK_MISMATCH"

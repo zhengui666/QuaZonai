@@ -4,9 +4,9 @@ mod models;
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod support;
 
-use contracts::{science::*, SchemaV1};
+use contracts::{SchemaV1, science::*};
 use domain::catalogs::{instrument_version_at, instrument_versions};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn versions() -> Vec<Value> {
     let mut original = support::metadata()
@@ -15,8 +15,6 @@ fn versions() -> Vec<Value> {
         .remove(0);
     let payload = &mut original["CurrencyPair"];
     payload["quote_currency"] = "USD".into();
-    payload["maker_fee"] = "0.001".into();
-    payload["taker_fee"] = "0.002".into();
     payload["price_precision"] = 5.into();
     payload["size_increment"] = "1".into();
     let mut update = original.clone();
@@ -44,7 +42,6 @@ fn chains_preserve_originals_and_resolve_only_already_available_versions() {
     );
     for (field, value) in [
         ("quote_currency", json!("EUR")),
-        ("taker_fee", json!("0.003")),
         ("price_precision", json!(4)),
         ("size_increment", json!("10")),
         ("expiration_ns", json!(500)),
@@ -96,6 +93,23 @@ fn metadata_keeps_the_pre_boundary_baseline_and_the_update_at_start() {
 #[test]
 fn metadata_fees_and_slippage_share_one_chain_without_promoting_evidence() {
     let mut metadata = support::metadata();
+    metadata.execution_fees = Some(contracts::catalogs::FrozenMakerTakerFeesV1 {
+        schema_version: SchemaV1,
+        source_reference: "Controlled venue fee fixture; not market fee evidence".into(),
+        source_version: "fixture-fees-v1".into(),
+        origin: contracts::research::DataOrigin::Fixture,
+        venue: "SIM".into(),
+        currency: "USD".into(),
+        currency_precision: 2,
+        available_at_ns: support::count(0),
+        valid_from_ns: support::count(0),
+        valid_until_ns: support::count(600_000_000_000),
+        rates: vec![NativeFeeRateV1 {
+            instrument_id: "EUR/USD.SIM".into(),
+            maker: "0.001".parse().unwrap(),
+            taker: "0.002".parse().unwrap(),
+        }],
+    });
     metadata.universe.instrument_definitions = versions();
     domain::catalogs::metadata(&metadata, support::instant(600)).unwrap();
     assert_eq!(metadata.origin, contracts::research::DataOrigin::Fixture);
@@ -161,13 +175,15 @@ fn metadata_fees_and_slippage_share_one_chain_without_promoting_evidence() {
     domain::catalogs::metadata(&late_original, support::instant(600)).unwrap();
     domain::catalogs::execution_fees(&late_original, &settings).unwrap();
     let ids = vec!["EUR/USD.SIM".into()];
-    assert!(domain::prediction::target_window(
-        &late_original.universe.instrument_definitions,
-        &ids,
-        69_000_000_000,
-        100_000_000_000
-    )
-    .is_err());
+    assert!(
+        domain::prediction::target_window(
+            &late_original.universe.instrument_definitions,
+            &ids,
+            69_000_000_000,
+            100_000_000_000
+        )
+        .is_err()
+    );
     domain::prediction::target_window(
         &late_original.universe.instrument_definitions,
         &ids,

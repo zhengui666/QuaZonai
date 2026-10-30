@@ -11,7 +11,7 @@ import { counter, decimal, json, nowNs, object, Problem, text } from './facts.ts
 import type { CapturedAccount } from './pm-account.ts';
 
 export interface NativeObservedSpotStart extends JsonObject {
-  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.63.0'; snapshot: JsonObject; available_ns: string;
+  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.67.0'; snapshot: JsonObject; available_ns: string;
   open_orders_evidence_ref: string; open_orders_account_id: string; open_orders_asof_ns: string; open_orders_available_ns: string; open_orders_count: 0;
 }
 const refuse = (code: string): never => { throw new Problem(`pm_account_${code}`, 409); };
@@ -36,7 +36,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   if (counter(original.dropped_events, 'dropped_events') !== '0') refuse('native_observation_has_gap');
   const binding = object(original.binding, 'native_binding');
   exactKeys(binding, ['schema_version', 'project_id', 'environment', 'native_trader_id', 'native_session_id', 'native_account_id', 'native_version'], 'native_binding');
-  if (binding.schema_version !== 1 || binding.native_version !== '0.63.0') refuse('native_version_unsupported');
+  if (binding.schema_version !== 1 || binding.native_version !== '0.67.0') refuse('native_version_unsupported');
   for (const field of ['project_id', 'native_trader_id', 'native_session_id', 'native_account_id']) text(binding[field], field);
   const mode = object(capture.artifact.observation).mode;
   if (binding.environment !== (mode === 'paper' ? 'PAPER' : mode === 'live' ? 'LIVE' : null)) refuse('native_environment_mismatch');
@@ -88,7 +88,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   const orderClock = counter(orders.asof_ns, 'open_orders_clock'); const orderAvailable = counter(orders.available_ns, 'open_orders_available');
   if (orders.account_id !== native.account_id || orderClock !== nativeClock) refuse('open_orders_basis_mismatch');
   if (BigInt(orderAvailable) < BigInt(orderClock) || BigInt(orderAvailable) > BigInt(received)) refuse('open_orders_clock_invalid');
-  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: '0.63.0', snapshot: json(native), available_ns: available,
+  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: '0.67.0', snapshot: json(native), available_ns: available,
     open_orders_evidence_ref: capture.evidence.id, open_orders_account_id: String(orders.account_id), open_orders_asof_ns: orderClock,
     open_orders_available_ns: received, open_orders_count: 0 };
 }

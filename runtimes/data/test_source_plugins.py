@@ -137,7 +137,7 @@ class PreparationTest(unittest.TestCase):
             end_seconds=1785357900, bar_seconds=1)
 
     def base_report(self):
-        return {"schema_version": 1, "native_version": "0.63.0", "instruments": 1,
+        return {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "limitations": ["Offline fixture; not qualified"]}
@@ -465,7 +465,7 @@ class CatalogPreparationTest(unittest.TestCase):
         self.selection.write_text('{"selection":{"decision_cutoff_ns":123456789},"settlements":[]}\n')
         self.metadata = self.declared | {"row_count": 2, "quality": {"native_fixture": True}}
         self.body = (json.dumps(self.metadata, indent=4) + "\n").encode()
-        self.report = {"schema_version": 1, "native_version": "0.63.0", "instruments": 1,
+        self.report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "research_qualified": False,

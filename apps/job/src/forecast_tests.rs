@@ -62,6 +62,8 @@ fn fixture(rows: usize) -> (NativeMarketData, NativeForecastRequestV1) {
         NativeMarketData {
             series,
             rows: rows * 2,
+            execution_fees: None,
+            fee_selection: None,
         },
         request,
     )
@@ -145,4 +147,40 @@ fn latest_retention_checks_warmup_and_discarded_clock_and_label_values() {
     let (mut market, request) = fixture(20);
     market.series[0].bars[2].close = Price::from("0.00000");
     same_failure(&market, &request, &wasm);
+}
+
+#[test]
+fn cached_prefixes_keep_fresh_models_and_the_original_remaining_task_fuel() {
+    let wasm = module("i32.const 0 i32.load f64.convert_i32_s local.get 0 f64.add");
+    for metered in [true, false] {
+        let mut cache = SignalModuleCache::default();
+        let mut remaining = metered.then(|| counter(1_000_000).unwrap());
+        for rows in [3, 9, 20, 70] {
+            let (market, mut request) = fixture(rows);
+            request.parameters.total_fuel = remaining;
+            let (cold_fuel, cold_points) =
+                forecast_latest_market(&market, &request, &wasm).unwrap();
+            let (cached_fuel, cached_points) =
+                forecast_latest_market_cached(&market, &request, &wasm, &mut cache).unwrap();
+            assert_eq!(cached_fuel, cold_fuel);
+            assert_eq!(
+                serde_json::to_value(&cached_points).unwrap(),
+                serde_json::to_value(&cold_points).unwrap()
+            );
+            remaining = remaining
+                .zip(cached_fuel)
+                .map(|(total, used)| counter(total.get() - used.get()).unwrap());
+        }
+        let (market, mut request) = fixture(20);
+        request.parameters.total_fuel = Some(counter(1).unwrap());
+        let cached =
+            forecast_latest_market_cached(&market, &request, &wasm, &mut cache).unwrap_err();
+        let cold = forecast_latest_market(&market, &request, &wasm).unwrap_err();
+        assert_eq!(cached.to_string(), cold.to_string());
+        request.parameters.slow_period = 0;
+        let cached =
+            forecast_latest_market_cached(&market, &request, b"invalid", &mut cache).unwrap_err();
+        let cold = forecast_latest_market(&market, &request, b"invalid").unwrap_err();
+        assert_eq!(cached.to_string(), cold.to_string());
+    }
 }

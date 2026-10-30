@@ -1,12 +1,13 @@
 //! Shared synthetic acquisition bytes for native import and full service acceptance.
 //! Provider-shaped fixtures are never original market data or historical PIT evidence.
+#[path = "venue_fees.rs"]
+mod venue_fees;
 use nautilus_model::{
     identifiers::{InstrumentId, Symbol},
     instruments::{CurrencyPair, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use rust_decimal::Decimal;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -48,14 +49,25 @@ pub fn write_acquisition(directory: &Path) -> Acquisition {
             .size_precision(8)
             .price_increment(Price::from("0.01"))
             .size_increment(Quantity::from("0.00000001"))
-            .maker_fee(Decimal::from_str("0.004").unwrap())
-            .taker_fee(Decimal::from_str("0.006").unwrap())
             .ts_event(0_u64.into())
             .ts_init(0_u64.into())
             .build()
             .unwrap(),
     );
     let definitions = directory.join("instruments.json");
+    // This separate fee-policy fixture is retained with the source inputs. A
+    // candle-only import does not silently claim it as execution fee evidence.
+    venue_fees::write(
+        directory,
+        "COINBASE",
+        Currency::USD(),
+        RECEIVED + 60_000_000_000,
+        vec![contracts::science::NativeFeeRateV1 {
+            instrument_id: "BTC-USD.COINBASE".into(),
+            maker: "0.004".parse().unwrap(),
+            taker: "0.006".parse().unwrap(),
+        }],
+    );
     fs::write(
         &definitions,
         serde_json::to_vec(&vec![instrument.clone()]).unwrap(),

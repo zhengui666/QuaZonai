@@ -1,0 +1,70 @@
+{
+  "type": "isolated_SQL_microbenchmark_NOT_native_runtime_or_production_RT",
+  "sqlite": "3.53.1",
+  "python": "3.12.14",
+  "machine": "x86_64",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "source": "apps/runtime/src/journal.rs:182",
+  "repeats": 31,
+  "database": ":memory:",
+  "query": "SELECT COALESCE((SELECT SUM(byte_count) FROM input_objects),0)+COALESCE((SELECT SUM(byte_count) FROM job_outputs),0)+COALESCE((SELECT SUM(output_reservation) FROM runtime_jobs),0)+COALESCE((SELECT SUM(byte_count) FROM materialization_reservations),0)",
+  "results": [
+    {
+      "input_objects": 1000,
+      "payload_bytes_each": 1,
+      "median_ms": 0.028692,
+      "p95_ms": 0.097564,
+      "min_ms": 0.028192,
+      "max_ms": 0.10144,
+      "query_plan": [
+        "SCAN CONSTANT ROW",
+        "SCALAR SUBQUERY 1",
+        "SCAN input_objects",
+        "SCALAR SUBQUERY 2",
+        "SCAN job_outputs",
+        "SCALAR SUBQUERY 3",
+        "SCAN runtime_jobs",
+        "SCALAR SUBQUERY 4",
+        "SCAN materialization_reservations"
+      ]
+    },
+    {
+      "input_objects": 10000,
+      "payload_bytes_each": 1,
+      "median_ms": 0.274364,
+      "p95_ms": 0.369304,
+      "min_ms": 0.268886,
+      "max_ms": 0.397125,
+      "query_plan": [
+        "SCAN CONSTANT ROW",
+        "SCALAR SUBQUERY 1",
+        "SCAN input_objects",
+        "SCALAR SUBQUERY 2",
+        "SCAN job_outputs",
+        "SCALAR SUBQUERY 3",
+        "SCAN runtime_jobs",
+        "SCALAR SUBQUERY 4",
+        "SCAN materialization_reservations"
+      ]
+    },
+    {
+      "input_objects": 100000,
+      "payload_bytes_each": 1,
+      "median_ms": 4.734979,
+      "p95_ms": 14.10461,
+      "min_ms": 4.296644,
+      "max_ms": 17.649234,
+      "query_plan": [
+        "SCAN CONSTANT ROW",
+        "SCALAR SUBQUERY 1",
+        "SCAN input_objects",
+        "SCALAR SUBQUERY 2",
+        "SCAN job_outputs",
+        "SCALAR SUBQUERY 3",
+        "SCAN runtime_jobs",
+        "SCALAR SUBQUERY 4",
+        "SCAN materialization_reservations"
+      ]
+    }
+  ]
+}

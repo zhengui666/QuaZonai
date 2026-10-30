@@ -56,7 +56,7 @@ fn metadata() -> RuntimeCatalogMetadataV1 {
             "selection_asof":instant(0),"has_historical_membership":false,"coverage_start":instant(0),"coverage_end":instant(600_000_000_000),
             "membership":[{"instrument_id":"EUR/USD.SIM","valid_from":instant(0),"valid_until":null,"available_at":instant(0),"groups":null}],
             "instrument_definitions":[{"CurrencyPair":{"id":"EUR/USD.SIM","ts_event":0,"ts_init":0,"price_increment":"0.00001"}}]},
-        "quality":{"schema_version":1,"native_version":"nautilus-persistence/0.63.0","checked_at":instant(301_000_000_000),
+        "quality":{"schema_version":1,"native_version":"nautilus-persistence/0.67.0","checked_at":instant(301_000_000_000),
             "datasets":[{"dataset_revision_id":Id::new(),"selection":{"schema_version":1,
                 "bar_types":["EUR/USD.SIM-1-MINUTE-LAST-EXTERNAL"],"event_start_ns":"60000000000","event_end_ns":"240000000000",
                 "decision_cutoff_ns":"300000000000","maximum_rows":3},"row_count":"3","instrument_ids":["EUR/USD.SIM"],

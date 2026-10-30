@@ -3,11 +3,11 @@
 #[path = "../../../../tests/support/execution_models.rs"]
 mod models;
 use contracts::{
+    DbCounter, Id, SchemaV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
     spot_cash::*,
     spot_fees::*,
-    DbCounter, Id, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},
@@ -15,7 +15,7 @@ use nautilus_model::{
     instruments::{CurrencyPair, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 pub const MINUTE: u64 = 60_000_000_000;
@@ -57,9 +57,7 @@ pub fn fixture_with_delay(
             .size_precision(4)
             .price_increment(Price::from("0.01"))
             .size_increment(Quantity::from("0.0001"))
-            // The independent custom adapter must charge without rewriting defaults.
-            .maker_fee(Decimal::ZERO)
-            .taker_fee(Decimal::ZERO)
+            // Venue charges come from the separate original FrozenSpotFeeSchedule.
             .margin_init(Decimal::ONE)
             .margin_maint(Decimal::ONE)
             .ts_event(0_u64.into())
@@ -168,7 +166,7 @@ pub fn fixture_with_delay(
         }),
         fee_model: NativeModelRefV1::FrozenSpotFeeScenario {
             schema_version: SchemaV1,
-            native_version: "0.63.0".into(),
+            native_version: "0.67.0".into(),
             parameters: FrozenSpotFeeScenarioParametersV1 {
                 acceptance: SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability,
                 schedule,
@@ -253,7 +251,7 @@ pub fn source_fixture_with_prices(
         capture_id: Id::new(),
         method: SpotCashSourceMethodV1::HyperliquidPublicRestCandleSnapshot,
         network: SpotCashSourceNetworkV1::Mainnet,
-        native_version: "0.63.0".into(),
+        native_version: "0.67.0".into(),
         historical_availability: SpotCashHistoricalAvailabilityV1::Unverified,
         instrument_definition: serde_json::to_value(&instrument).unwrap(),
         instrument_request_started_ns: count(1),

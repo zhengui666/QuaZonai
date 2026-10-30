@@ -16,7 +16,7 @@ pub fn starting_balances(
     crate::control::text(&start.snapshot_evidence_ref, 1, 512, false)?;
     crate::control::text(&start.open_orders_evidence_ref, 1, 512, false)?;
     let snapshot = &start.snapshot;
-    if start.source_native_version != "0.63.0"
+    if start.source_native_version != "0.67.0"
         || snapshot.account_type != NativeAccountTypeV1::Cash
         || snapshot.base_currency.is_some()
         || snapshot.account_id != start.open_orders_account_id

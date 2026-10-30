@@ -297,9 +297,9 @@ pub fn scan_factor_catalog_with_scope(
         schema_version: SchemaV1,
         request: request.clone(),
         native_versions: BTreeMap::from([
-            ("nautilus-model".into(), "0.63.0".into()),
-            ("nautilus-serialization".into(), "0.63.0".into()),
-            ("nautilus-indicators".into(), "0.63.0".into()),
+            ("nautilus-model".into(), "0.67.0".into()),
+            ("nautilus-serialization".into(), "0.67.0".into()),
+            ("nautilus-indicators".into(), "0.67.0".into()),
             ("ndarray".into(), "0.17.1".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
             ("wasmi".into(), "2.0.0".into()),

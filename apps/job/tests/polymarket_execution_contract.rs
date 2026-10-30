@@ -16,7 +16,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use nautilus_common::{clock::TestClock, factories::OrderFactory};
+use nautilus_common::{clock::VirtualClock, factories::OrderFactory};
 use nautilus_core::{UnixNanos, UUID4};
 use nautilus_model::{
     enums::{OrderSide, OrderType, TimeInForce},
@@ -243,7 +243,7 @@ fn paper_factory_argument_shape_is_not_a_live_execution_contract() {
         StrategyId::from("FORMAT-001"),
         None,
         None,
-        Rc::new(RefCell::new(TestClock::new())),
+        Rc::new(RefCell::new(VirtualClock::new())),
         false,
         false,
     );

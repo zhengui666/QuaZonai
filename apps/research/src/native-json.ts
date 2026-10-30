@@ -1,8 +1,42 @@
+import { createHash } from 'node:crypto';
+import type { NativeJson } from '../../../packages/contracts/src/nautilus.ts';
 import { JSONParser } from '@streamparser/json';
 import type { JsonObject } from '@earendil-works/pi-durable';
 
 type JsonValue = JsonObject[string];
 
+/** SHA-256 of the original sorted-key native wire JSON, without a whole-request string. */
+export function canonicalJsonDigest(value: NativeJson): string {
+  const hash = createHash('sha256'); let pending = '';
+  function write(fragment: string) {
+    // Keep complete JSON tokens together, including surrogate pairs. The hash
+    // consumes the original canonical bytes without an additional whole-request string.
+    if (pending.length + fragment.length > 64 * 1024) { hash.update(pending); pending = ''; }
+    if (fragment.length >= 64 * 1024) hash.update(fragment);
+    else pending += fragment;
+  }
+  function visit(item: NativeJson) {
+    if (item === null || typeof item !== 'object') { write(JSON.stringify(item)); return; }
+    if (Array.isArray(item)) {
+      write('[');
+      for (let index = 0; index < item.length; index++) {
+        if (index) write(',');
+        visit(item[index]!);
+      }
+      write(']');
+    } else {
+      write('{'); let first = true;
+      for (const key of Object.keys(item).sort()) {
+        if (!first) write(','); first = false;
+        write(JSON.stringify(key)); write(':'); visit(item[key]!);
+      }
+      write('}');
+    }
+  }
+  visit(value);
+  if (pending) hash.update(pending);
+  return hash.digest('hex');
+}
 /** Same JSON values and property order, without creating a whole-result string. */
 function* fragments(value: JsonValue): Generator<string> {
   if (value === null || typeof value !== 'object') { yield JSON.stringify(value) ?? 'null'; return; }

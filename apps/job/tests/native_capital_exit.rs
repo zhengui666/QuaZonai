@@ -3,8 +3,8 @@
 //! No credentials, venue network, real cancellation, transfer or withdrawal.
 use chrono::{Duration as ChronoDuration, Utc};
 use contracts::{
-    account_observation::AccountMoneyV1, capital_exit::*, forward::ForwardEnvironmentV1, DbCounter,
-    Id, Revision, SchemaV1,
+    DbCounter, Id, Revision, SchemaV1, account_observation::AccountMoneyV1, capital_exit::*,
+    forward::ForwardEnvironmentV1,
 };
 use job::{
     capital_exit_gate::CapitalExitGate,
@@ -15,14 +15,15 @@ use nautilus_common::{
     actor::DataActor, enums::Environment, live::get_data_event_sender,
     logging::logger::LoggerConfig, messages::DataEvent,
 };
-use nautilus_core::UnixNanos;
+use nautilus_core::{DurationNanos, UnixNanos};
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_live::node::{LiveNode, NodeRunMode};
 use nautilus_model::{
     data::{Data, QuoteTick},
     enums::{AccountType, OrderSide, OrderStatus, TimeInForce},
     events::{OrderCanceled, OrderFilled},
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId, TraderId, Venue},
-    instruments::{stubs::binary_option, InstrumentAny},
+    instruments::{InstrumentAny, stubs::binary_option},
     orders::Order,
     types::{Currency, Money, Price, Quantity},
 };
@@ -252,7 +253,7 @@ impl DataActor for FixtureStrategy {
         self.subscribe_quotes(InstrumentId::from(INSTRUMENT), None, None);
         self.clock().set_timer_ns(
             "controlled-owner-commands",
-            10_000_000,
+            DurationNanos::new(10_000_000),
             None,
             None,
             None,
@@ -379,6 +380,8 @@ async fn cash_sandbox_fences_cancels_and_reduces_only_needed_quantity() {
         starting_balances: vec![Money::from("100 USDC")],
         base_currency: Some(Currency::USDC()),
         account_type: AccountType::Cash,
+        // Original BinaryOption fixture defaulted both fee rates to zero.
+        fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero())),
         ..Default::default()
     };
     let mut node = LiveNode::builder(TraderId::from("QZEXIT-001"), Environment::Sandbox)
@@ -629,21 +632,20 @@ fn durable_gate_cannot_reset_by_session_alias_or_restart() {
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
     assert!(!first.recovery_required());
-    assert!(CapitalExitGate::open_fresh_sandbox(
-        directory.path(),
-        "physical-a",
-        "owner-a",
-        ACCOUNT
-    )
-    .is_err());
+    assert!(
+        CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
+            .is_err()
+    );
     drop(first);
-    assert!(CapitalExitGate::open_fresh_sandbox(
-        directory.path(),
-        "project-session-alias",
-        "owner-a",
-        ACCOUNT
-    )
-    .is_err());
+    assert!(
+        CapitalExitGate::open_fresh_sandbox(
+            directory.path(),
+            "project-session-alias",
+            "owner-a",
+            ACCOUNT
+        )
+        .is_err()
+    );
     let restarted =
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
@@ -666,11 +668,12 @@ fn unguarded_algorithm_emulator_child_and_wrong_epoch_are_rejected() {
         .quantity(Quantity::from("1.00"))
         .build();
     gate.check_target(DbCounter::ZERO, &ordinary).unwrap();
-    assert!(gate
-        .check_target(DbCounter::new(1).unwrap(), &ordinary)
-        .unwrap_err()
-        .to_string()
-        .contains("obsolete_target_epoch"));
+    assert!(
+        gate.check_target(DbCounter::new(1).unwrap(), &ordinary)
+            .unwrap_err()
+            .to_string()
+            .contains("obsolete_target_epoch")
+    );
     let algorithm = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(InstrumentId::from(INSTRUMENT))
         .quantity(Quantity::from("1.00"))
@@ -694,21 +697,24 @@ fn unguarded_algorithm_emulator_child_and_wrong_epoch_are_rejected() {
         .emulation_trigger(TriggerType::BidAsk)
         .build();
     for order in [algorithm, child, spawned, emulated] {
-        assert!(gate
-            .check_target(DbCounter::ZERO, &order)
-            .unwrap_err()
-            .to_string()
-            .contains("child_path_unsupported"));
+        assert!(
+            gate.check_target(DbCounter::ZERO, &order)
+                .unwrap_err()
+                .to_string()
+                .contains("child_path_unsupported")
+        );
     }
     drop(gate);
     let restarted =
         CapitalExitGate::open_fresh_sandbox(directory.path(), "physical-a", "owner-a", ACCOUNT)
             .unwrap();
-    assert!(restarted
-        .check_target(DbCounter::ZERO, &ordinary)
-        .unwrap_err()
-        .to_string()
-        .contains("recovery_required"));
+    assert!(
+        restarted
+            .check_target(DbCounter::ZERO, &ordinary)
+            .unwrap_err()
+            .to_string()
+            .contains("recovery_required")
+    );
 }
 
 #[path = "support/capital_exit_lifecycle.rs"]

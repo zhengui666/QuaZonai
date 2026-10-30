@@ -1,5 +1,5 @@
 //! Controlled native cash account shared by the observer test and snapshot exporter.
-use nautilus_common::{cache::Cache, clock::TestClock};
+use nautilus_common::{cache::Cache, clock::VirtualClock};
 use nautilus_core::{UnixNanos, UUID4};
 use nautilus_model::{
     accounts::{AccountAny, CashAccount},
@@ -17,13 +17,13 @@ pub const SECOND_TIME: u64 = 1700000000000000002;
 pub struct CashPortfolio {
     pub portfolio: Portfolio,
     pub account_id: AccountId,
-    clock: Rc<RefCell<TestClock>>,
+    clock: Rc<RefCell<VirtualClock>>,
     cache: Rc<RefCell<Cache>>,
 }
 
 impl CashPortfolio {
     pub fn new() -> Self {
-        let clock = Rc::new(RefCell::new(TestClock::new()));
+        let clock = Rc::new(RefCell::new(VirtualClock::new()));
         clock
             .borrow_mut()
             .advance_time(UnixNanos::from(FIRST_TIME), true);

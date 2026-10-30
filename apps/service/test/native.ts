@@ -110,7 +110,7 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
 }
 
 function nativeTestSettings(capital: string) {
-  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.67.0', parameters });
   return json({ schema_version: 1, base_currency: 'USD', starting_capital: capital, account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60_000,
     fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
     fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel', {}),
@@ -172,7 +172,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     assert.ok(study.final, JSON.stringify({ trials: study.trials, final: study.final }));
     assert.equal(study.final.status, 'COMPUTED', JSON.stringify(study.final));
     const result = object(study.final.result);
-    assert.equal(object(result.native_versions)['nautilus-model'], '0.63.0');
+    assert.equal(object(result.native_versions)['nautilus-model'], '0.67.0');
     assert.equal(object(result.coverage).observations, '3');
     assert.equal(object(result.request).event_end_ns, request.event_end_ns);
     assert.equal('points' in result || 'portfolio' in result || 'simulation' in result, false);
@@ -246,7 +246,7 @@ test('two original studies → native target blending → one fee-affected share
       const failures = (await service.research.tasks()).records.items.flatMap((record) => record.state.status === 'terminal' && 'error' in record.state.outcome ? [record.state.outcome.error] : []);
       assert.ok(study.final, JSON.stringify(failures));
       assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
-      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.63.0');
+      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.67.0');
       const detail = (await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json();
       assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: `native-idea-${receipts.indexOf(receipt)}` });
     }
@@ -276,7 +276,7 @@ test('two original studies → native target blending → one fee-affected share
     }
     assert.deepEqual(object(native.simulationRequest).target_points, combined);
     assert.ok(sources.every((source) => !('simulation' in source))); // There is only the combined shared account, never two equity curves.
-    assert.equal(simulation.native_version, '0.63.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
+    assert.equal(simulation.native_version, '0.67.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
     assert.ok(fact.view.curve.length); assert.equal(fact.view.targets[0]!.weight, '0.0625');
     assert.ok(BigInt(String(simulation.orders)) > 0n); assert.ok(BigInt(String(simulation.positions)) > 0n);
     assert.ok(fact.view.curve.some((point) => point.value !== null && decimalUnits(point.value) !== decimalUnits('1000')), 'blended target must affect the native account, including original fees');
@@ -418,7 +418,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
       for (const component of evidence.components as JsonObject[]) {
         assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, crossMarket ? selectedBars : request.forecast.selection.bar_types);
       }
-      assert.equal(object(evidence.simulation).native_version, '0.63.0');
+      assert.equal(object(evidence.simulation).native_version, '0.67.0');
       assert.ok(BigInt(String(object(evidence.simulation).orders)) > 0n);
       assert.ok(BigInt(String(object(evidence.simulation).positions)) > 0n);
       if (crossMarket) {

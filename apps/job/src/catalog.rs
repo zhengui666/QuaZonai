@@ -8,13 +8,19 @@ use contracts::{
     science::NativeBarSelectionV1,
     DbCounter, SchemaV1,
 };
-use nautilus_core::UnixNanos;
+use nautilus_core::{Params, UnixNanos};
 use nautilus_model::{
-    data::{Bar, BarType, Data},
+    data::{Bar, BarType, DataBatch, NautilusDataType},
     enums::{BarAggregation, PriceType},
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::{ParquetDataCatalog, QUERY_OPTIMIZE_FILE_LOADING},
+    catalog::{
+        session::DataBatchQueryResult,
+        traits::{CatalogQuery, CatalogReader},
+    },
+};
 use std::{
     collections::BTreeMap,
     io::{Read, Seek, SeekFrom},
@@ -49,6 +55,8 @@ impl NativeBarSeries {
 pub struct NativeMarketData {
     pub series: Vec<NativeBarSeries>,
     pub rows: usize,
+    pub execution_fees: Option<contracts::catalogs::FrozenMakerTakerFeesV1>,
+    pub fee_selection: Option<NativeBarSelectionV1>,
 }
 
 /// Select original baseline plus updates without copying earlier or future versions.
@@ -127,7 +135,7 @@ pub fn measure_catalog(
 pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
     Ok(NativeDataQualityReportV1 {
         schema_version: SchemaV1,
-        native_version: "nautilus-persistence/0.63.0".into(),
+        native_version: "nautilus-persistence/0.67.0".into(),
         checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
             .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
         datasets,
@@ -263,6 +271,26 @@ pub(crate) fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
     Ok(catalog)
 }
 
+/// Read native typed batches while preserving each file's historical schema metadata.
+/// Timestamp-aligned chunks can exceed `chunk_size` for equal-time records: this is
+/// a streaming target, not a hard memory bound. Callers still enforce their row
+/// contract, and the scientific process retains its external resource limits.
+pub fn file_batch_session(
+    catalog: &mut ParquetDataCatalog,
+    query: CatalogQuery,
+    chunk_size: usize,
+) -> Result<DataBatchQueryResult> {
+    let query = query.with_params(Some(Params::new(
+        [(
+            QUERY_OPTIMIZE_FILE_LOADING.to_owned(),
+            serde_json::json!(false),
+        )]
+        .into(),
+    )));
+    catalog.reset_session();
+    catalog.query_batch_session(&query, Some(chunk_size.max(1)))
+}
+
 /// Load executable market data with original instrument definitions.
 pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
     load_catalog_mode(root, selection, false)
@@ -287,13 +315,16 @@ fn load_catalog_mode(
         .iter()
         .map(|kind| kind.instrument_id().to_string())
         .collect::<Vec<_>>();
-    let instruments = catalog.instruments(
+    let instruments = catalog.query_instruments_filtered(
         Some(&ids),
         None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
     let bars = read_bars(&mut catalog, selection)?;
-    validate_native_mode(instruments, bars, selection, allow_empty_series)
+    let mut market = validate_native_mode(instruments, bars, selection, allow_empty_series)?;
+    market.execution_fees = crate::prediction::catalog_fees::load(root, selection)?;
+    market.fee_selection = Some(selection.clone());
+    Ok(market)
 }
 
 fn read_bars(
@@ -309,27 +340,28 @@ fn read_bars(
         selection.event_start_ns.get(),
         selection.event_end_ns.get()
     );
-    // Native decoding is bounded instead of first materializing an arbitrary Vec.
-    // The query engine itself still runs under external job memory/CPU limits.
-    // File-scoped decoding preserves each historical encoding's schema metadata.
-    let query = catalog.query::<Bar>(
-        Some(selection.bar_types.clone()),
-        Some(UnixNanos::from(selection.event_start_ns.get())),
-        Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
-        Some(&event_interval),
-        None,
-        false,
-    )?;
+    let query = CatalogQuery::new(NautilusDataType::Bar)
+        .with_identifiers(Some(selection.bar_types.clone()))
+        .with_range(
+            Some(UnixNanos::from(selection.event_start_ns.get())),
+            Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
+        )
+        .with_where_clause(Some(event_interval));
+    let mut session = file_batch_session(catalog, query, 4096)?;
     let mut bars = Vec::new();
-    for item in query {
-        ensure!(
-            bars.len() < selection.maximum_rows as usize,
-            "CATALOG_ROW_LIMIT"
-        );
-        let Data::Bar(bar) = item? else {
+    while let Some(batch) = session.next_batch()? {
+        let DataBatch::Bar(batch) = batch else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
         };
-        bars.push(bar);
+        for bar in batch.as_ref() {
+            // Observe the first excess row without retaining it. Do not use the
+            // collected native query API and only then apply this contract.
+            ensure!(
+                bars.len() < selection.maximum_rows as usize,
+                "CATALOG_ROW_LIMIT"
+            );
+            bars.push(*bar);
+        }
     }
     Ok(bars)
 }
@@ -511,5 +543,10 @@ fn validate_native_mode(
         rows > 0 && (allow_empty_series || series.iter().all(|series| !series.bars.is_empty())),
         "CATALOG_EMPTY_SELECTION"
     );
-    Ok(NativeMarketData { series, rows })
+    Ok(NativeMarketData {
+        series,
+        rows,
+        execution_fees: None,
+        fee_selection: None,
+    })
 }

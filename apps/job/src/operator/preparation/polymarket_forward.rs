@@ -11,14 +11,14 @@ use contracts::{
     },
     DbCounter, Id, SchemaV1,
 };
-use nautilus_common::{clock::TestClock, timer::TimeEvent};
+use nautilus_common::{clock::VirtualClock, timer::TimeEvent};
 use nautilus_core::UUID4;
 use nautilus_data::aggregation::{BarAggregator, TimeBarAggregator};
 use nautilus_model::{
     data::{Bar, QuoteTick, TradeTick},
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -123,7 +123,7 @@ fn original_price(instrument: &InstrumentAny, price: nautilus_model::types::Pric
 /// cannot be assigned these meanings merely because their values look similar.
 fn quote_fields<'a>(schema: &'a [FeatureDefinitionV1], instrument: &str) -> Result<Vec<&'a str>> {
     domain::execution::features::schema(schema)?;
-    let expected = format!("nautilus-polymarket/0.63.0/quote/{instrument}");
+    let expected = format!("nautilus-polymarket/0.67.0/quote/{instrument}");
     schema
         .iter()
         .map(|f| {
@@ -193,9 +193,9 @@ fn project(
         + "-INTERNAL";
     let emitted = Rc::new(RefCell::new(Vec::<Bar>::new()));
     let sink = emitted.clone();
-    let clock = Rc::new(RefCell::new(TestClock::new()));
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
     // Replay only actual retained close events through the official aggregator.
-    // TestClock is a deterministic replay clock, never a source availability clock.
+    // VirtualClock is a deterministic replay clock, never a source availability clock.
     let mut aggregator = TimeBarAggregator::new(
         native_type.parse()?,
         original.price_precision(),
@@ -206,6 +206,7 @@ fn project(
         true,
         nautilus_model::enums::BarIntervalType::LeftOpen,
         None,
+        nautilus_core::datetime::get_timezone("UTC")?,
         0,
         false,
     );
@@ -727,7 +728,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         roundtrip.row_count.get() == bars.len() as u64,
         "FORWARD_NATIVE_READBACK"
     );
-    let receipt = json!({"schema_version":1,"status":"PREPARED_UNREGISTERED","native_version":"0.63.0","native_source_session_id":observed.native_session_id,"source_plan":plan.source,"warmup_rows":series.bars.len(),"new_bars":observed.bars.len(),"feature_observations":rows.len(),"catalog":"prepared/catalog","metadata":"prepared/catalog-metadata.json","features":"forward-features.json","pit":"UNVERIFIED","warmup_model_replay":"NOT_PERFORMED_CURRENT_DECISION_RECHECKS_ORIGINAL_POLICY","orders":false});
+    let receipt = json!({"schema_version":1,"status":"PREPARED_UNREGISTERED","native_version":"0.67.0","native_source_session_id":observed.native_session_id,"source_plan":plan.source,"warmup_rows":series.bars.len(),"new_bars":observed.bars.len(),"feature_observations":rows.len(),"catalog":"prepared/catalog","metadata":"prepared/catalog-metadata.json","features":"forward-features.json","pit":"UNVERIFIED","warmup_model_replay":"NOT_PERFORMED_CURRENT_DECISION_RECHECKS_ORIGINAL_POLICY","orders":false});
     write_new(
         &args.output.join("forward-preparation.json"),
         &serde_json::to_vec_pretty(&receipt)?,

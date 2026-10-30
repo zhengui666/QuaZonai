@@ -64,10 +64,10 @@ function nativeExecutables(directory) {
   return result;
 }
 try {
-  const rustcVersion = run('rustc-version', 'rustup', ['run', '1.98.1', 'rustc', '-Vv']).stdout;
-  if (!rustcVersion.includes('release: 1.98.1\n') || !rustcVersion.includes('host: x86_64-unknown-linux-gnu\n')) throw new Error('Exact native Rust toolchain required');
-  const sysroot = fs.realpathSync(run('rust-sysroot', 'rustup', ['run', '1.98.1', 'rustc', '--print', 'sysroot']).stdout.trim());
-  const installed = run('rust-targets', 'rustup', ['target', 'list', '--installed', '--toolchain', '1.98.1']).stdout;
+  const rustcVersion = run('rustc-version', 'rustup', ['run', '1.99.1', 'rustc', '-Vv']).stdout;
+  if (!rustcVersion.includes('release: 1.99.1\n') || !rustcVersion.includes('host: x86_64-unknown-linux-gnu\n')) throw new Error('Exact native Rust toolchain required');
+  const sysroot = fs.realpathSync(run('rust-sysroot', 'rustup', ['run', '1.99.1', 'rustc', '--print', 'sysroot']).stdout.trim());
+  const installed = run('rust-targets', 'rustup', ['target', 'list', '--installed', '--toolchain', '1.99.1']).stdout;
   if (!installed.split(/\r?\n/).includes('wasm32-unknown-unknown')) throw new Error('Install the native wasm32-unknown-unknown standard target first');
   run('job-version', executable, ['--version']);
   const timeoutBinary = '/usr/bin/timeout';
@@ -92,7 +92,7 @@ try {
   for (const [index, file] of inspectedFiles.entries()) {
     // Resolve symlink aliases before ldd so $ORIGIN is the actual executable's
     // directory. Rustup supplies the pinned toolchain's native loader search path.
-    const result = run('native-ldd-' + index, 'rustup', ['run', '1.98.1', 'ldd', file], [0, 1]);
+    const result = run('native-ldd-' + index, 'rustup', ['run', '1.99.1', 'ldd', file], [0, 1]);
     const text = (result.stdout ?? '') + (result.stderr ?? '');
     if (result.status !== 0 && !/not a dynamic executable|statically linked/.test(text)) throw new Error('Unrecognized native dependency inspection: native-ldd-' + index);
     if (/not found/.test(text)) throw new Error('A required native shared library is unavailable: native-ldd-' + index + ' (' + path.basename(file) + ')');
@@ -140,7 +140,7 @@ try {
   };
   normalizePermissions(root);
   fs.chmodSync(destination('/tmp'), 0o1777);
-  const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.98.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
+  const report = { stage: 'PREPARED_NOT_BUILT', native_image_id: null, source_commit: sourceCommit, profile: values.profile, compiler: '1.99.1', target: 'wasm32-unknown-unknown', test_probe_included: Boolean(values['isolation-probe']), base: 'scratch', commands };
   if (!values['prepare-only']) {
     const dockerfile = path.join(repository, 'runtimes/native/native-job.Dockerfile');
     run('native-image-build', 'docker', ['build', '--network=none', '--platform=linux/amd64', '--build-arg', 'VERSION=' + values['image-version'], '--build-arg', 'REVISION=' + sourceCommit, '--iidfile', path.join(directory, 'image-id.txt'), '--file', dockerfile, context]);

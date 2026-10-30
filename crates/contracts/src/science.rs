@@ -112,7 +112,7 @@ pub enum NativeAccountKind {
     Margin,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeFeeRateV1 {
     #[schema(min_length = 1, max_length = 200)]

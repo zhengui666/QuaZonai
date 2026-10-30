@@ -302,7 +302,7 @@ def published_catalog(output):
 def published_native(output):
     report = load_json(snapshot.safe_local(output, "import-report.json"))
     if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
-            or report.get("native_version") != "0.63.0"
+            or report.get("native_version") != "0.67.0"
             or report.get("catalog_relative_path") != "catalog"
             or report.get("coverage") != "UNPROVEN"
             or report.get("historical_availability") != "UNVERIFIED"

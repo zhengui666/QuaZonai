@@ -710,20 +710,22 @@ mod tests {
         assert_eq!(report.coverage, "UNPROVEN");
         assert_eq!(report.historical_availability, "UNVERIFIED");
         assert!(!report.registered_in_quazonai);
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(
             catalog
                 .query::<TradeTick>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap(),
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>(),
             vec![nautilus_model::data::Data::Trade(tick)]
         );
     }

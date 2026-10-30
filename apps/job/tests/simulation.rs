@@ -63,7 +63,7 @@ fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
             assert_eq!(metric.source_artifact_id, artifact);
             assert_eq!(metric.observation_count.get(), result.returns.len() as u64);
             assert_eq!(metric.frequency, "UTC_DAY");
-            assert_eq!(metric.method_version, "0.63.0");
+            assert_eq!(metric.method_version, "0.67.0");
             assert_eq!(metric.scope, "portfolio");
             assert!(metric.period_start < metric.period_end);
         }
@@ -121,9 +121,17 @@ fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
 }
 
 #[test]
-fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds() {
+fn assumptions_bind_frozen_venue_fees_and_original_native_instrument_terms() {
     let (directory, request) = market("0.001", 20);
     let data = job::catalog::load_catalog(directory.path(), &request.selection).unwrap();
+    let source = data.execution_fees.as_ref().unwrap();
+    assert!(!source.source_reference.is_empty());
+    assert!(!source.source_version.is_empty());
+    assert_eq!(source.currency, request.settings.base_currency);
+    assert!(source.available_at_ns <= request.selection.decision_cutoff_ns);
+    assert!(source.valid_from_ns <= request.selection.event_start_ns);
+    assert!(source.valid_until_ns >= request.selection.event_end_ns);
+    assert_eq!(source.rates.len(), request.settings.fee_rates.len());
     for (series, fee) in data.series.iter().zip(&request.settings.fee_rates) {
         let original = serde_json::to_value(&series.instrument).unwrap();
         let (class, definition) = domain::catalogs::instrument_definition(&original).unwrap();
@@ -140,11 +148,15 @@ fn assumptions_read_original_native_instrument_fees_and_shared_settings_bounds()
         .is_ok());
         assert_eq!(definition["id"], fee.instrument_id);
         assert_eq!(definition["quote_currency"], request.settings.base_currency);
-        for (field, expected) in [("maker_fee", &fee.maker), ("taker_fee", &fee.taker)] {
-            let actual: contracts::DecimalValue =
-                serde_json::from_value(definition[field].clone()).unwrap();
-            assert_eq!(&actual, expected);
-        }
+        assert!(definition.get("maker_fee").is_none());
+        assert!(definition.get("taker_fee").is_none());
+        let original = source
+            .rates
+            .iter()
+            .find(|rate| rate.instrument_id == fee.instrument_id)
+            .unwrap();
+        assert_eq!(original.maker, fee.maker);
+        assert_eq!(original.taker, fee.taker);
     }
     assert!(domain::portfolio::simulation_settings(&request.settings).is_ok());
     assert!(domain::catalogs::execution_account(
@@ -174,7 +186,7 @@ fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
     // Daily account returns require snapshots across UTC dates, not 20 minutes.
     let (directory, request) = market("0", 2 * 1440 + 20);
     let result = simulate(directory.path(), &request).unwrap();
-    assert_eq!(result.native_version, "0.63.0");
+    assert_eq!(result.native_version, "0.67.0");
     assert_eq!(result.consumed_target_points.get(), 2);
     assert_eq!(
         result.summary.get("venues.total").map(String::as_str),
@@ -316,6 +328,14 @@ fn frozen_native_fees_change_the_same_shared_capital_simulation() {
     let mut mismatched = cost_request;
     mismatched.settings.fee_rates[0].taker = "0".parse().unwrap();
     assert!(simulate(cost_directory.path(), &mismatched).is_err());
+    // A request saying zero fees cannot replace independently frozen evidence.
+    std::fs::remove_file(
+        free_directory
+            .path()
+            .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+    )
+    .unwrap();
+    assert!(simulate(free_directory.path(), &free_request).is_err());
 }
 
 #[test]
@@ -446,7 +466,7 @@ fn native_equities_rebalance_in_cash_and_margin_accounts_with_original_fees() {
             let (directory, mut request) = market::equity_market(fee, 20);
             request.settings.account_kind = kind;
             let result = simulate(directory.path(), &request).unwrap();
-            assert_eq!(result.native_version, "0.63.0");
+            assert_eq!(result.native_version, "0.67.0");
             assert_eq!(result.consumed_target_points.get(), 2);
             assert_eq!(result.summary["venues.total"], "1");
             assert_eq!(result.summary["account.SIM.type"], label);
@@ -493,7 +513,7 @@ fn binary_options_without_native_fee_contract_are_rejected_before_and_after_expi
         instruments::{BinaryOption, Instrument, InstrumentAny},
         types::{Currency, Price, Quantity},
     };
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (source, request) = market::equity_market("0", 20);
     let observed = job::catalog::load_catalog(source.path(), &request.selection).unwrap();
     for expiration in [instant(5), instant(50)] {
@@ -770,7 +790,7 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
 
 #[test]
 fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_orders() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (source, mut request) = market("0.001", 8);
     let original = job::catalog::load_catalog(source.path(), &request.selection).unwrap();
     let directory = tempfile::tempdir().unwrap();

@@ -16,7 +16,7 @@ use nautilus_model::{
     orders::{builder::OrderTestBuilder, Order, OrderAny},
     types::{Money, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use nautilus_polymarket::models::PolymarketFeeModel;
 use polymarket::{IDS, STEP};
 use serde_json::Value;

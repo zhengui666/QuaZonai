@@ -222,7 +222,7 @@ Nautilus books the returned commission once. No global-average or fitted fee rat
 is charged. Keep prefix and Sealed fee records physically separate.
 
 `POLYMARKET_V2_RECORDED_LIQUIDITY` is an explicit, catalog-backtest-only fill
-policy paired with the recorded-fee adapter, native version `0.63.0` and the
+policy paired with the recorded-fee adapter, native version `0.67.0` and the
 closed native fill probability/seed parameters. It previews that same original
 record pool at the actual replay clock. Positive MARKET IOC fills are capped by
 both order leaves and remaining source quantity; only the actual fee callback

@@ -1,6 +1,6 @@
 use super::*;
 use crate::recorded_fees::tests::{charge, market, set_time};
-use nautilus_common::clock::TestClock;
+use nautilus_common::clock::VirtualClock;
 use nautilus_model::{
     data::BarType,
     identifiers::{InstrumentId, Symbol},
@@ -19,7 +19,7 @@ fn source(id: &str) -> RecordedTradeFeesV1 {
 }
 
 fn clock() -> Rc<RefCell<dyn Clock>> {
-    let clock: Rc<RefCell<dyn Clock>> = Rc::new(RefCell::new(TestClock::new()));
+    let clock: Rc<RefCell<dyn Clock>> = Rc::new(RefCell::new(VirtualClock::new()));
     set_time(&clock, MINUTE_NS);
     clock
 }

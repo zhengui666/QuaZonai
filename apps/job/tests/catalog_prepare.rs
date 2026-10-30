@@ -16,7 +16,7 @@ use nautilus_model::{
     data::{Bar, InstrumentClose},
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -155,14 +155,17 @@ fn partition_readback_preserves_actual_rows_originals_and_unverified_status() {
     let all_bars = catalog
         .query::<Bar>(None, None, None, None, None, true)
         .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+        .into_iter()
+        .map(nautilus_model::data::Data::from)
+        .collect::<Vec<_>>();
     assert_eq!(
         all_bars.len(),
         3,
         "unselected rows must not be in the physical partition"
     );
-    let instruments = catalog.instruments(None, None, None).unwrap();
+    let instruments = catalog
+        .query_instruments_filtered(None, None, None)
+        .unwrap();
     assert_eq!(instruments.len(), 1);
     assert_eq!(instruments[0].id().to_string(), prediction::IDS[0]);
     let source = job::catalog::load_catalog(&f.catalog, &f.selection.selection).unwrap();
@@ -248,13 +251,20 @@ fn settlement_siblings_and_original_closes_survive_without_leaking_sealed_values
             sealed
         );
         let mut catalog = native(&f.output().join("catalog"));
-        assert_eq!(catalog.instruments(None, None, None).unwrap().len(), 2);
+        assert_eq!(
+            catalog
+                .query_instruments_filtered(None, None, None)
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             catalog
                 .query::<InstrumentClose>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             2
         );
@@ -262,8 +272,9 @@ fn settlement_siblings_and_original_closes_survive_without_leaking_sealed_values
             catalog
                 .query::<Bar>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             3
         );
@@ -302,6 +313,35 @@ fn generic_currency_pair_uses_the_same_preparation_without_prediction_metadata()
     assert!(metadata.universe.instrument_definitions[0]
         .get("CurrencyPair")
         .is_some());
+    assert_eq!(
+        serde_json::to_value(&metadata.execution_fees).unwrap(),
+        serde_json::to_value(&original.execution_fees).unwrap(),
+        "preparation preserves the original independent venue policy"
+    );
+    let copied =
+        job::catalog::load_catalog(&f.output().join("catalog"), &f.selection.selection).unwrap();
+    assert_eq!(
+        serde_json::to_value(&copied.execution_fees).unwrap(),
+        serde_json::to_value(&original.execution_fees).unwrap()
+    );
+}
+
+#[test]
+fn preparation_cannot_invent_or_ignore_a_broken_original_fee_source() {
+    let mut declared = Fixture::new();
+    let (source, request) = market::market("0.001", 5);
+    let original = job::catalog::load_catalog(source.path(), &request.selection).unwrap();
+    declared.declaration["execution_fees"] = serde_json::to_value(original.execution_fees).unwrap();
+    declared.reject();
+
+    let broken = Fixture::new();
+    let path = broken
+        .catalog
+        .join(contracts::catalogs::MAKER_TAKER_FEES_FILE);
+    let bytes = b"{invalid-original-policy";
+    fs::write(&path, bytes).unwrap();
+    broken.reject();
+    assert_eq!(fs::read(path).unwrap(), bytes);
 }
 
 #[test]
@@ -385,7 +425,7 @@ fn physical_partition_keeps_causal_versions_and_siblings_without_future_definiti
             sealed
         );
         let output = native(&f.output().join("catalog"));
-        let published = output.instruments(None, None, None).unwrap();
+        let published = output.query_instruments_filtered(None, None, None).unwrap();
         assert_eq!(published.len(), 6);
         for id in prediction::IDS {
             let times = published

@@ -295,7 +295,7 @@ fn upstream_engine_preserves_partial_order_cash_position_and_original_settlement
 
 #[test]
 fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     // Include a transition at selection-start and one after event-end: late
     // market data and pending orders still depend on the receive-time cutoff.
@@ -364,7 +364,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
 
 #[test]
 fn stable_window_after_original_transition_uses_the_original_new_definition() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     let (root, mut request) = market::market("0", 20);
     let catalog =
@@ -407,5 +407,5 @@ fn stable_window_after_original_transition_uses_the_original_new_definition() {
         result.consumed_target_points.get(),
         request.target_points.len() as u64
     );
-    assert_eq!(result.native_version, "0.63.0");
+    assert_eq!(result.native_version, "0.67.0");
 }

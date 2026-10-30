@@ -43,27 +43,27 @@ path = "src/bin/source-tools.rs"
 required-features = ["catalog-prepare", "polymarket-history"]
 
 [dependencies]
-nautilus-hyperliquid = { version = "=0.63.0", default-features = false, optional = true }
-nautilus-live = { version = "=0.63.0", default-features = false, features = ["node"], optional = true }
-nautilus-sandbox = { version = "=0.63.0", default-features = false, optional = true }
-nautilus-binance = { version = "=0.63.0", default-features = false, optional = true }
+nautilus-hyperliquid = { version = "=0.67.0", default-features = false, optional = true }
+nautilus-live = { version = "=0.67.0", default-features = false, features = ["node"], optional = true }
+nautilus-sandbox = { version = "=0.67.0", default-features = false, optional = true }
+nautilus-binance = { version = "=0.67.0", default-features = false, optional = true }
 tempfile = "=3.27.0"
 serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "=0.4.45", features = ["serde"] }
 clarabel = "=0.11.1"
-nautilus-backtest = { version = "=0.63.0", default-features = false }
-nautilus-analysis = { version = "=0.63.0", default-features = false }
-nautilus-common = { version = "=0.63.0", default-features = false }
-nautilus-core = { version = "=0.63.0", default-features = false }
-nautilus-execution = { version = "=0.63.0", default-features = false }
-nautilus-portfolio = { version = "=0.63.0", default-features = false }
-nautilus-persistence = { version = "=0.63.0", default-features = false }
-nautilus-indicators = { version = "=0.63.0", default-features = false }
-nautilus-polymarket = { version = "=0.63.0", default-features = false }
-tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"], optional = true }
-parquet = { version = "=59.3.0", default-features = false, features = ["arrow", "zstd"] }
-nautilus-serialization = { version = "=0.63.0", default-features = false, features = ["arrow"] }
+nautilus-backtest = { version = "=0.67.0", default-features = false }
+nautilus-analysis = { version = "=0.67.0", default-features = false }
+nautilus-common = { version = "=0.67.0", default-features = false }
+nautilus-core = { version = "=0.67.0", default-features = false }
+nautilus-execution = { version = "=0.67.0", default-features = false }
+nautilus-portfolio = { version = "=0.67.0", default-features = false }
+nautilus-persistence = { version = "=0.67.0", default-features = false }
+nautilus-indicators = { version = "=0.67.0", default-features = false }
+nautilus-polymarket = { version = "=0.67.0", default-features = false }
+tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread"], optional = true }
+parquet = { version = "=59.3.1", default-features = false, features = ["arrow", "zstd"] }
+nautilus-serialization = { version = "=0.67.0", default-features = false, features = ["arrow"] }
 sha2 = { version = "=0.10.9", optional = true }
 # Public typed classic-ZIP parsing; winnow 0.5.40 supplies rc-zip's literal API.
 rc-zip = { version = "=5.4.1", default-features = false, optional = true }
@@ -72,12 +72,12 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"]
 crc32fast = { version = "=1.5.2", optional = true }
 csv = { version = "=1.4.0", optional = true }
 lz4_flex = { version = "=0.14.0", optional = true }
-nautilus-data = { version = "=0.63.0", default-features = false, optional = true }
+nautilus-data = { version = "=0.67.0", default-features = false, optional = true }
 alloy-core = { version = "=1.7.3", default-features = false, features = ["std", "sol-types", "serde"], optional = true }
 url = { version = "=2.5.8", optional = true }
-rust_decimal = "=1.42.1"
-nautilus-model = { version = "=0.63.0", default-features = false }
-nautilus-trading = { version = "=0.63.0", default-features = false }
+rust_decimal = "=1.43.0"
+nautilus-model = { version = "=0.67.0", default-features = false }
+nautilus-trading = { version = "=0.67.0", default-features = false }
 anyhow = "=1.0.104"
 clap = { version = "=4.5.46", features = ["derive"] }
 contracts = { path = "../../crates/contracts" }
@@ -97,7 +97,7 @@ wasmi = { version = "=2.0.0", default-features = false, features = ["stable", "s
 [dev-dependencies]
 async-trait = "=0.1.92"
 arrow-array = "=56.2.0"
-nautilus-model = { version = "=0.63.0", default-features = false, features = ["test-support"] }
+nautilus-model = { version = "=0.67.0", default-features = false, features = ["test-support"] }
 wat = "=1.258.0"
 
 [[example]]

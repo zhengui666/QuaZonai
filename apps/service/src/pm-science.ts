@@ -72,7 +72,7 @@ export async function implementationIdentity(binary: NativeTarget, context?: Con
 export async function verifyOriginalPrefix(source: JsonObject, catalog: string, binary: NativeTarget, dataDir: string, context: Context): Promise<JsonObject> {
   const expected = object(source.catalogPrefix, 'original_fit_catalog_prefix_evidence');
   const selection = object(object(object(source.request).forecast).selection, 'original_fit_prefix_selection');
-  if (expected.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V1' || typeof expected.content_sha256 !== 'string'
+  if (expected.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || typeof expected.content_sha256 !== 'string'
     || !/^[0-9a-f]{64}$/.test(expected.content_sha256) || canonical(expected.selection!) !== canonical(selection)) throw new Error('pm_original_catalog_prefix_evidence_invalid');
   const root = join(dataDir, 'scratch'); await mkdir(root, { recursive: true });
   const directory = await mkdtemp(join(root, 'pm-source-prefix-'));

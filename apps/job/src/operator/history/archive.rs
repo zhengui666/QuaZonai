@@ -1327,19 +1327,21 @@ mod tests {
             read_json::<serde_json::Value>(&args.output.join("import-report.json")).unwrap(),
             receipt
         );
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         let trades = catalog
             .query::<TradeTick>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(trades.len(), 3);
         assert!(trades.iter().any(|data| matches!(
             data, nautilus_model::data::Data::Trade(trade)
@@ -1349,8 +1351,9 @@ mod tests {
             catalog
                 .query::<Bar>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             2
         );
@@ -1616,20 +1619,22 @@ mod tests {
         let report = super::super::import(archive, &args.output).unwrap();
         assert_eq!(report.coverage, "UNPROVEN");
         assert_eq!(report.historical_availability, "UNVERIFIED");
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(
             catalog
                 .query::<Bar>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             2
         );
@@ -1741,20 +1746,22 @@ mod tests {
         let source = serde_json::from_value(serde_json::to_value(&archive).unwrap()).unwrap();
         let report = super::super::import(source, &args.output).unwrap();
         assert_eq!((report.deltas, report.quotes), (7, 1));
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         assert_eq!(
             catalog
                 .query::<OrderBookDelta>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             7
         );
@@ -1762,8 +1769,9 @@ mod tests {
             catalog
                 .query::<QuoteTick>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap()
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>()
                 .len(),
             1
         );

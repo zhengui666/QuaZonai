@@ -1,7 +1,7 @@
 //! Regression fixtures use the stock LiveNode queues, native wall clock and
 //! Sandbox matcher. No fabricated order events, account edits or matching rules.
 use super::*;
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 
 async fn wait_for(state: &Rc<RefCell<State>>, ready: impl Fn() -> bool) -> Result<()> {
     let end = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -46,6 +46,8 @@ async fn native_lifecycle(case: StopCase) {
         starting_balances: vec![Money::from("100 USDC")],
         base_currency: Some(Currency::USDC()),
         account_type: AccountType::Cash,
+        // Preserve this original binary fixture's zero-fee scenario explicitly.
+        fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero())),
         liquidity_consumption: true,
         ..Default::default()
     };

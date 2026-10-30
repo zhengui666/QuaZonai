@@ -408,7 +408,7 @@ fn same_order_hash_is_not_a_duplicate_fill_and_half_open_window_is_preserved() {
 #[test]
 fn v1_and_v2_raw_parquet_publish_and_read_back_native_records_without_qualification() {
     use nautilus_model::data::Data;
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     for (contract, currency) in [
         ("CTF_EXCHANGE", "USDC.e"),
         ("NEGRISK_CTF_EXCHANGE_V2", "pUSD"),
@@ -431,7 +431,9 @@ fn v1_and_v2_raw_parquet_publish_and_read_back_native_records_without_qualificat
         let mut catalog =
             ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, None, None, None).unwrap();
         assert_eq!(
-            catalog.instruments(None, None, None).unwrap()[0]
+            catalog
+                .query_instruments_filtered(None, None, None)
+                .unwrap()[0]
                 .quote_currency()
                 .code
                 .as_str(),
@@ -440,14 +442,16 @@ fn v1_and_v2_raw_parquet_publish_and_read_back_native_records_without_qualificat
         let readback = catalog
             .query::<TradeTick>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(readback, vec![Data::Trade(trade)]);
         let bars = catalog
             .query::<Bar>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(bars.len(), 1);
     }
 }

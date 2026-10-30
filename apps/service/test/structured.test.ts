@@ -22,7 +22,7 @@ test('new structured native studies reject missing bindings and unsupported runn
     state.options.extensions.push(factorWasm, strategyPortfolio);
     const extensions = [...state.options.extensions];
     const dataset = state.options.config.datasets[0]!;
-    const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, string> = {}) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+    const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, string> = {}) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.67.0', parameters });
     Object.assign(dataset.strategy!, { simulationSettings: { schema_version: 1, base_currency: 'USD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60000,
       fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
       fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel'),

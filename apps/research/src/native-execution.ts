@@ -3,7 +3,7 @@ import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { defineDocFamily, type JsonObject, type TaskId, type TaskRuntime } from '@earendil-works/pi-durable';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstat, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -12,9 +12,8 @@ import { setTimeout } from 'node:timers/promises';
 import { Agent, fetch } from 'undici';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { canonical } from './documents.ts';
 import { ExecutionFailure } from './execution-errors.ts';
-import { JsonReader, jsonChunks } from './native-json.ts';
+import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 
 export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
@@ -226,7 +225,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   if (!capability.commands.includes(command)) throw new Error('nautilus_command_unsupported');
   const artifacts = await attachments(originalArgs);
   const content = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: capability.implementationDigest, command, input, ...artifacts };
-  const requestId = createHash('sha256').update(canonical(content)).digest('hex');
+  const requestId = canonicalJsonDigest(content);
   const request: NativeExecutionRequest = { ...content, requestId };
   const path = `v1/executions/${requestId}`;
   const owner = tracking.getStore();

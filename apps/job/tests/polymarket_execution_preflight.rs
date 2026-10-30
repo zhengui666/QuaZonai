@@ -62,7 +62,7 @@ fn accepted_format_preserves_explicit_native_identity_quantity_and_time() {
         result.report.scope,
         ExecutionPreflightScopeV1::OrderFormatOnly
     );
-    assert_eq!(result.report.native_version, "0.63.0");
+    assert_eq!(result.report.native_version, "0.67.0");
     match &result.report.outcome {
         PolymarketExecutionPreflightOutcomeV1::FormatValidated { request: echoed } => {
             assert_eq!(**echoed, request);

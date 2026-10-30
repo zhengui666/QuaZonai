@@ -4,8 +4,11 @@
 mod acquisition;
 
 use anyhow::{ensure, Context, Result};
-use nautilus_model::types::{Price, Quantity};
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_model::{
+    data::NautilusDataType,
+    types::{Price, Quantity},
+};
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -110,14 +113,15 @@ fn main() -> Result<()> {
         None,
         None,
     )?;
-    let files = catalog.get_file_list_from_data_cls("bars")?;
+    let data_type = NautilusDataType::Bar.into();
+    let files = catalog.get_file_list_from_data_cls(&data_type)?;
     ensure!(
         files.len() == 1,
         "exactly one native BAR partition required"
     );
     let bar_type = data.series[0].bar_type.to_string();
     ensure!(
-        files == catalog.query_files("bars", Some(vec![bar_type.clone()]), None, None)?,
+        files == catalog.query_files(&data_type, Some(vec![bar_type.clone()]), None, None)?,
         "native BAR partition must belong to the verified series"
     );
     let relative_path = &files[0];

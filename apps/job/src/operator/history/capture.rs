@@ -937,15 +937,18 @@ mod tests {
         let report = super::super::super::import(archive, &args.output).unwrap();
         assert_eq!(report.instruments, 2);
         assert_eq!(report.instrument_versions, 3);
-        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let mut actual = catalog.instruments(None, None, None).unwrap();
+        let catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let mut actual = catalog
+            .query_instruments_filtered(None, None, None)
+            .unwrap();
         actual.sort_by_key(|i| (i.id(), i.ts_init()));
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
@@ -983,19 +986,21 @@ mod tests {
         assert_eq!(report.bars, 1);
         assert_eq!(report.closes, 2);
         assert!(!report.registered_in_quazonai);
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         let bars = catalog
             .query::<Bar>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(bars.len(), 1);
     }
 
@@ -1028,19 +1033,21 @@ mod tests {
                 .map(nautilus_model::data::Data::Trade)
                 .collect::<Vec<_>>();
             super::super::super::import(archive, &args.output).unwrap();
-            let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-                args.output.join("catalog").to_str().unwrap(),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+            let mut catalog =
+                nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                    args.output.join("catalog").to_str().unwrap(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
             let trades = catalog
                 .query::<TradeTick>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>();
             assert_eq!(trades, expected);
         }
     }

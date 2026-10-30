@@ -78,7 +78,7 @@ class PolymarketV2Test(unittest.TestCase):
             selected = snapshot.fetch_local_manifest(Path(argv[argv.index("--selection") + 1]))
             definitions = json.loads(Path(argv[argv.index("--instruments") + 1]).read_text())
             reference = f"{snapshot.HUB}/datasets/{source.REPOSITORY}/tree/{COMMIT}"
-            report = {"schema_version": 1, "native_version": "0.63.0", "instruments": 1,
+            report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
                       "instrument_versions": 1, "bars": 2, "trades": 2, "quotes": 0, "deltas": 0, "closes": 0,
                       "catalog_relative_path": "catalog", "coverage": "UNPROVEN",
                       "historical_availability": "UNVERIFIED", "registered_in_quazonai": False,

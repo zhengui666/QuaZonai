@@ -260,7 +260,7 @@ fn own_and_cross_member_close_bar_receipt_ties_fail_both_scientific_entrypoints(
         enums::InstrumentCloseType,
         types::{Price, Quantity},
     };
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     for cross_member in [false, true] {
         let (_unused, mut request) = simulation("0", None, 0);
         let root = tempfile::tempdir().unwrap();
@@ -334,7 +334,7 @@ fn own_and_cross_member_close_bar_receipt_ties_fail_both_scientific_entrypoints(
 #[test]
 fn unselected_sibling_close_receipt_tie_rejects_selected_bar_at_both_entrypoints() {
     use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType, types::Price};
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     let (root, mut request) = simulation("0", None, 0);
     request.selection.bar_types.truncate(1);
@@ -404,7 +404,7 @@ fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() 
         instruments::InstrumentAny,
         types::{Price, Quantity},
     };
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     for (volume, reject_remainder) in [("1000000.000000", false), ("8.000000", true)] {
         let (_unused, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
@@ -690,7 +690,7 @@ fn close_on_the_exclusive_holding_boundary_is_not_early_cash() {
 #[test]
 fn adding_a_close_to_an_existing_bar_catalog_does_not_authorize_it() {
     use nautilus_model::{data::InstrumentClose, enums::InstrumentCloseType, types::Price};
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (root, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
     let catalog =
         ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)

@@ -11,7 +11,7 @@ use nautilus_model::{
     instruments::{CurrencyPair, Equity, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -84,8 +84,6 @@ pub fn market_direction_with_size(
                     .price_precision(5)
                     .price_increment(Price::from("0.00001"))
                     .lot_size(Quantity::from("1"))
-                    .maker_fee(Decimal::ZERO)
-                    .taker_fee(Decimal::from_str(fee).unwrap())
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -104,8 +102,6 @@ pub fn market_direction_with_size(
                     .size_precision(size_precision)
                     .price_increment(Price::from("0.00001"))
                     .size_increment(Quantity::from(size_increment))
-                    .maker_fee(Decimal::ZERO)
-                    .taker_fee(Decimal::from_str(fee).unwrap())
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -154,6 +150,29 @@ pub fn market_direction_with_size(
         decision_cutoff_ns: end,
         maximum_rows: rows_per_asset * 2,
     };
+    // This declared fixture venue policy is a separate original source. The
+    // request below merely copies its expected rates; it cannot supply them to
+    // the native fee model or manufacture the catalog source during replay.
+    let fee_source = contracts::catalogs::FrozenMakerTakerFeesV1 {
+        schema_version: SchemaV1,
+        source_reference: "fixture://market-catalog/venue-fees".into(),
+        source_version: "1".into(),
+        origin: contracts::research::DataOrigin::Fixture,
+        venue: "SIM".into(),
+        currency: "USD".into(),
+        currency_precision: usd.precision,
+        available_at_ns: DbCounter::ZERO,
+        valid_from_ns: DbCounter::ZERO,
+        valid_until_ns: count(end.get() + INTERVAL_NS),
+        rates: rates.clone(),
+    };
+    std::fs::write(
+        directory
+            .path()
+            .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+        serde_json::to_vec(&fee_source).unwrap(),
+    )
+    .unwrap();
     let mut later = targets.clone();
     later[0].weight = "0.2".parse().unwrap();
     later[1].weight = "0.6".parse().unwrap();

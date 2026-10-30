@@ -100,7 +100,7 @@ pub fn request(r: &NativeForwardRequestV1) -> Result<(), DomainError> {
 }
 pub fn shape(r: &NativeForwardResultV1) -> Result<(), DomainError> {
     window(&r.window)?;
-    if r.native_version != "0.63.0" || r.statistics.len() != STATISTICS.len() {
+    if r.native_version != "0.67.0" || r.statistics.len() != STATISTICS.len() {
         return Err(invalid());
     }
     for (s, (_, key, _, _, _, _)) in r.statistics.iter().zip(STATISTICS) {
@@ -178,7 +178,7 @@ pub fn capabilities() -> Vec<crate::evidence::MetricCapability> {
             |(code, _, method, unit, _, _)| crate::evidence::MetricCapability {
                 metric_code: code.into(),
                 method_id: method.into(),
-                method_version: "0.63.0".into(),
+                method_version: "0.67.0".into(),
                 unit: unit.into(),
                 frequency: "UTC_DAY".into(),
             },

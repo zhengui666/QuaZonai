@@ -5,7 +5,7 @@ mod market;
 mod native;
 use contracts::{catalog_prefix::NativeCatalogPrefixResultV1, science::NativeBarSelectionV1};
 use nautilus_model::{data::Bar, instruments::InstrumentAny, types::Price};
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use std::path::Path;
 
 fn rewritten(root: &Path, full: &NativeBarSelectionV1, mutation: usize) -> tempfile::TempDir {
@@ -27,10 +27,13 @@ fn rewritten(root: &Path, full: &NativeBarSelectionV1, mutation: usize) -> tempf
         .unwrap();
     }
     if mutation == 3 {
+        loaded.execution_fees.as_mut().unwrap().rates[0].maker = "0.0001".parse().unwrap();
+    }
+    if mutation == 5 {
         let InstrumentAny::CurrencyPair(pair) = &mut loaded.series[0].instrument else {
             panic!("fixture currency pair")
         };
-        pair.maker_fee = rust_decimal::Decimal::new(1, 4);
+        pair.margin_init = rust_decimal::Decimal::new(5, 1);
     }
     if mutation == 4 {
         loaded.series[0].bars[1].ts_init = (loaded.series[0].bars[1].ts_init.as_u64() + 1).into();
@@ -39,6 +42,15 @@ fn rewritten(root: &Path, full: &NativeBarSelectionV1, mutation: usize) -> tempf
     let output =
         ParquetDataCatalog::from_uri(result.path().to_str().unwrap(), None, Some(16), None, None)
             .unwrap();
+    if let Some(source) = &loaded.execution_fees {
+        std::fs::write(
+            result
+                .path()
+                .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+            serde_json::to_vec(source).unwrap(),
+        )
+        .unwrap();
+    }
     for series in loaded.series {
         output.write_instruments(vec![series.instrument]).unwrap();
         output
@@ -59,7 +71,7 @@ fn digest_binds_native_values_definitions_and_clocks_but_not_paths_or_future_row
     assert!(original.row_count.get() > 0);
     assert_eq!(original.series_count, 2);
     assert_eq!(original.content_sha256.len(), 64);
-    for mutation in 0..5 {
+    for mutation in 0..6 {
         let copied = rewritten(root.path(), &full, mutation);
         let candidate = job::catalog_prefix::digest(copied.path(), &prefix).unwrap();
         if mutation == 0 || mutation == 2 {
@@ -71,7 +83,7 @@ fn digest_binds_native_values_definitions_and_clocks_but_not_paths_or_future_row
         } else {
             assert_ne!(
                 candidate.content_sha256, original.content_sha256,
-                "past mark/definition/availability mutation {mutation}"
+                "past mark/fee/definition/availability mutation {mutation}"
             );
         }
     }

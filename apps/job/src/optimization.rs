@@ -462,7 +462,11 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             domain::portfolio::allocation_result(input, &result)?;
             Ok(())
         })();
-        if converted.is_err() {
+        if converted.is_ok() {
+            // The exact published decimal result was just fully checked. Keep
+            // boundary validation at consumers, without repeating it here.
+            return Ok(result);
+        } else {
             result.solver_status = AllocationStatus::Failed;
             result.reason_code = Some("POST_SOLVE_CONSTRAINT_REJECTED".into());
             result.targets = None;

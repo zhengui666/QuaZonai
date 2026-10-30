@@ -1539,7 +1539,7 @@ fn value(
             };
             let pnl = position.try_calculate_pnl(
                 position.avg_px_open,
-                price.to_f64().context("ECONOMIC_NONFINITE")?,
+                price,
                 position.quantity,
             )?;
             ensure!(

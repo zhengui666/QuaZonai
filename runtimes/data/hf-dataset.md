@@ -328,7 +328,7 @@ and native catalog readback cases, including the older snapshot path. Run the
 single library target when the pinned compiler/dependencies are already cached:
 
 ```sh
-cargo +1.98.1 test --offline --locked -p job --features polymarket-history \
+cargo +1.99.1 test --offline --locked -p job --features polymarket-history \
   --lib operator::polymarket_history::archive::tests -- --nocapture
 ```
 

@@ -8,7 +8,7 @@ appendFileSync(log, JSON.stringify({ command, input, args }) + '\n');
 if (command === 'catalog-prefix-digest') {
   const content = process.env.QZ_TEST_PREFIX_FILE ? readFileSync(process.env.QZ_TEST_PREFIX_FILE, 'utf8') : 'controlled protocol prefix';
   const hash = createHash('sha256').update(content).digest('hex');
-  console.log(JSON.stringify({ schema_version: 1, method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V1', selection: input, series_count: 1, row_count: '3', content_sha256: hash, series: [{ instrument_id: 'TEST.SIM', bar_type: input.bar_types[0], row_count: '3', instrument_version_count: 1, content_sha256: hash }] }));
+  console.log(JSON.stringify({ schema_version: 1, method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V2', selection: input, series_count: 1, row_count: '3', content_sha256: hash, series: [{ instrument_id: 'TEST.SIM', bar_type: input.bar_types[0], row_count: '3', instrument_version_count: 1, content_sha256: hash }] }));
 } else if (command === 'evaluate-factor') {
   if (process.env.QZ_TEST_PREFIX_MUTATE_DURING_FIT && !args.includes('--summary-only')) writeFileSync(process.env.QZ_TEST_PREFIX_FILE, 'changed while reading full panels');
   const report = { request: input, partitions: [{ partition: 'VALIDATION', metric: { pearson_ic: { status: 'AVAILABLE', value: 0.1 } } }] };

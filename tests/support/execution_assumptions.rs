@@ -52,7 +52,7 @@ pub async fn prepare(
     cap.engine_versions
         .insert("simulation-models".into(), "1".into());
     cap.engine_versions
-        .insert("nautilus".into(), "0.63.0".into());
+        .insert("nautilus".into(), "0.67.0".into());
     cap.engine_versions
         .insert("bar-notional".into(), "1".into());
     cap.engine_versions

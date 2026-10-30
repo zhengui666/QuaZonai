@@ -370,7 +370,7 @@ fn recorded_v2_liquidity_schema_has_native_identity_and_existing_closed_fill_par
     );
     assert_eq!(
         variant["properties"]["native_version"]["enum"],
-        serde_json::json!(["0.63.0"])
+        serde_json::json!(["0.67.0"])
     );
     assert_eq!(
         variant["properties"]["parameters"],
@@ -394,7 +394,7 @@ fn recorded_v2_liquidity_wire_is_closed_and_preserves_default_fill_seed_contract
     assert!(matches!(
         &parsed,
         NativeModelRefV1::PolymarketV2RecordedLiquidity { native_version, .. }
-            if native_version == "0.63.0"
+            if native_version == "0.67.0"
     ));
     assert_eq!(serde_json::to_value(parsed).unwrap(), original);
     for field in ["upstream_class", "upstream_version", "wallet"] {

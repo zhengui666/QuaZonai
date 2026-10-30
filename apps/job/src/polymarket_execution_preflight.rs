@@ -71,7 +71,7 @@ fn finish(
         report: PolymarketExecutionPreflightReportV1 {
             schema_version: SchemaV1,
             scope: ExecutionPreflightScopeV1::OrderFormatOnly,
-            native_version: "0.63.0".into(),
+            native_version: "0.67.0".into(),
             outcome,
         },
         native_order,

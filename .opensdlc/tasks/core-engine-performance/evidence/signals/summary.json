@@ -1,0 +1,42 @@
+{
+  "small": {
+    "n_pairs": 30,
+    "instances": 256,
+    "predictions_per_instance": 16,
+    "fresh_median_us": 1996.5585,
+    "reuse_median_us": 662.62,
+    "ratio_of_medians": 3.0131274335214755,
+    "median_paired_ratio": 2.964388578752108,
+    "fresh_min_max_us": [
+      1578.332,
+      3312.836
+    ],
+    "reuse_min_max_us": [
+      490.762,
+      1318.971
+    ],
+    "checksum": "409.60000000002464",
+    "fuel": "24576",
+    "all_checksum_fuel_equal": true
+  },
+  "long": {
+    "n_pairs": 30,
+    "instances": 32,
+    "predictions_per_instance": 4096,
+    "fresh_median_us": 16063.731500000002,
+    "reuse_median_us": 15748.3875,
+    "ratio_of_medians": 1.0200238913349067,
+    "median_paired_ratio": 1.0130051992164033,
+    "fresh_min_max_us": [
+      13333.965,
+      21560.522
+    ],
+    "reuse_min_max_us": [
+      13073.001,
+      23491.414
+    ],
+    "checksum": "13107.200000030152",
+    "fuel": "786432",
+    "all_checksum_fuel_equal": true
+  }
+}

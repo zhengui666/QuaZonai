@@ -81,7 +81,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
     let initial_state = NativeObservedSpotStartV1 {
         schema_version: SchemaV1,
         snapshot_evidence_ref: "CONTROLLED_ORIGINAL_NATIVE_PUBLICATION".into(),
-        source_native_version: "0.63.0".into(),
+        source_native_version: "0.67.0".into(),
         available_ns: count(snapshot.ts_init.get() + 1),
         open_orders_evidence_ref: "CONTROLLED_SAME_RUN_CANONICAL_OPEN_ORDER_COUNT".into(),
         open_orders_account_id: snapshot.account_id.clone(),

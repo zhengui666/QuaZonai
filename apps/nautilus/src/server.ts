@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { JsonReader, jsonChunks } from '../../research/src/native-json.ts';
+import { JsonReader, jsonChunks, canonicalJsonDigest } from '../../research/src/native-json.ts';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecutionReceipt as Receipt, NativeExecutionRejection } from '../../../packages/contracts/src/nautilus.ts';
 
@@ -42,13 +42,8 @@ function positiveLimit(value: number | undefined, fallback: number, code: string
   return limit;
 }
 
-function canonical(value: Json): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key]!)}`).join(',')}}`;
-}
 export function executionId(request: Omit<Request, 'requestId'>): string {
-  return createHash('sha256').update(canonical(request)).digest('hex');
+  return canonicalJsonDigest(request);
 }
 function fail(message: string, statusCode = 400): never { throw Object.assign(new Error(message), { statusCode }); }
 function rejectAdmission(requestId: string, error: NativeExecutionRejection['error'], statusCode: number): never {
@@ -110,7 +105,7 @@ export async function createNautilusWorker(options: WorkerOptions) {
     // Preserve existing single-binary receipt identity when no companion is configured.
     if (options.tickBinary === undefined) return standard;
     const tick = await digestFile(tickBinary);
-    return `sha256:${createHash('sha256').update(canonical({ standard, tick })).digest('hex')}`;
+    return `sha256:${canonicalJsonDigest({ standard, tick })}`;
   }
   const implementationDigest = await implementationIdentity();
   const root = resolve(options.dataDir);

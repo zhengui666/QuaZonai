@@ -1,13 +1,15 @@
 //! Controlled second-frequency, irregular synthetic source/target fixture.
 #![allow(dead_code)]
-use contracts::{research::DataPartition, science::*, DbCounter, Id, SchemaV1};
+#[path = "venue_fees.rs"]
+mod venue_fees;
+use contracts::{DbCounter, Id, SchemaV1, research::DataPartition, science::*};
 use nautilus_model::{
     data::{Bar, BarType},
     identifiers::{InstrumentId, Symbol},
     instruments::{CurrencyPair, Equity, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use std::str::FromStr;
 
 use super::execution_models;
@@ -80,8 +82,6 @@ pub fn market_fixture(
                 .price_precision(2)
                 .price_increment(Price::from("0.01"))
                 .lot_size(Quantity::from("1"))
-                .maker_fee(rust_decimal::Decimal::ZERO)
-                .taker_fee(rust_decimal::Decimal::from_str("0.001").unwrap())
                 .margin_init(rust_decimal::Decimal::ONE)
                 .margin_maint(rust_decimal::Decimal::ONE)
                 .ts_event(0_u64.into())
@@ -100,8 +100,6 @@ pub fn market_fixture(
                     .size_precision(3)
                     .price_increment(Price::from("0.01"))
                     .size_increment(Quantity::from("0.001"))
-                    .maker_fee(rust_decimal::Decimal::ZERO)
-                    .taker_fee(rust_decimal::Decimal::from_str("0.001").unwrap())
                     .margin_init(rust_decimal::Decimal::ONE)
                     .margin_maint(rust_decimal::Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -145,6 +143,17 @@ pub fn market_fixture(
         })
         .collect::<Vec<_>>();
     catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    venue_fees::write(
+        root.path(),
+        "SIM",
+        quote,
+        event(39) + availability_delay_ns.max(SECOND) + 60 * SECOND,
+        vec![NativeFeeRateV1 {
+            instrument_id: id.to_string(),
+            maker: "0".parse().unwrap(),
+            taker: "0.001".parse().unwrap(),
+        }],
+    );
     let feature_schema = vec![
         FeatureDefinitionV1 {
             feature_key: "independent_measurement".into(),
@@ -269,5 +278,9 @@ pub fn module(prefix: &str, setter: &str, body: &str) -> Vec<u8> {
 }
 
 pub fn feature_policy() -> Vec<u8> {
-    module("(global $value (mut f64) (f64.const 0))", "local.get 0 i32.eqz if local.get 2 i32.eqz if local.get 1 global.set $value else f64.const 0.05 global.set $value end end", "global.get $value")
+    module(
+        "(global $value (mut f64) (f64.const 0))",
+        "local.get 0 i32.eqz if local.get 2 i32.eqz if local.get 1 global.set $value else f64.const 0.05 global.set $value end end",
+        "global.get $value",
+    )
 }

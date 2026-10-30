@@ -1,10 +1,12 @@
 //! Independent second-revision synthetic Parquet construction, never REAL data.
 //! Regenerate original rows at a later protocol interval; never shift a computed report.
 //! Callers supply their existing explicit execution-model fixtures.
+#[path = "venue_fees.rs"]
+mod venue_fees;
 use contracts::{
+    DbCounter, SchemaV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
-    DbCounter, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},
@@ -12,7 +14,7 @@ use nautilus_model::{
     instruments::{CurrencyPair, Equity, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -66,8 +68,6 @@ pub fn market_direction_with_size(
                     .price_precision(5)
                     .price_increment(Price::from("0.00001"))
                     .lot_size(Quantity::from("1"))
-                    .maker_fee(Decimal::ZERO)
-                    .taker_fee(Decimal::from_str(fee).unwrap())
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -86,8 +86,6 @@ pub fn market_direction_with_size(
                     .size_precision(size_precision)
                     .price_increment(Price::from("0.00001"))
                     .size_increment(Quantity::from(size_increment))
-                    .maker_fee(Decimal::ZERO)
-                    .taker_fee(Decimal::from_str(fee).unwrap())
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -128,6 +126,13 @@ pub fn market_direction_with_size(
         });
     }
     let end = count(offset + (u64::from(rows_per_asset) + 1) * INTERVAL_NS);
+    venue_fees::write(
+        directory.path(),
+        "SIM",
+        usd,
+        end.get() + INTERVAL_NS,
+        rates.clone(),
+    );
     let selection = NativeBarSelectionV1 {
         schema_version: SchemaV1,
         bar_types: types,
