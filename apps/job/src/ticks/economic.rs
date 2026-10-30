@@ -1375,13 +1375,14 @@ struct SpotQuoteRow {
 
 struct SpotQuotes(BTreeMap<String, Vec<(u64, Option<Decimal>)>>);
 impl SpotQuotes {
-    fn open(path: &Path, assets: &[Asset]) -> Result<Self> {
+    fn open(path: &Path, assets: &[Asset], start: u64, end: u64) -> Result<Self> {
         let ids: BTreeSet<String> = assets
             .iter()
             .filter(|a| matches!(a.instrument, InstrumentAny::CurrencyPair(_)))
             .map(|a| a.instrument.id().to_string())
             .collect();
         let mut rows: BTreeMap<String, Vec<(u64, Option<Decimal>)>> = BTreeMap::new();
+        let mut last_seen = BTreeMap::<String, u64>::new();
         for line in BufReader::new(File::open(path)?).lines() {
             let row: SpotQuoteRow = serde_json::from_str(&line?)?;
             ensure!(
@@ -1389,11 +1390,17 @@ impl SpotQuotes {
                 "ECONOMIC_SPOT_QUOTE_INSTRUMENT_INVALID"
             );
             let at = row.received_ns.get();
-            let series = rows.entry(row.instrument_id).or_default();
             ensure!(
-                series.last().is_none_or(|(prev, _)| *prev <= at),
+                last_seen
+                    .get(&row.instrument_id)
+                    .is_none_or(|prev| *prev <= at),
                 "ECONOMIC_SPOT_QUOTE_ORDER_INVALID"
             );
+            last_seen.insert(row.instrument_id.clone(), at);
+            if at >= end {
+                continue;
+            }
+            let series = rows.entry(row.instrument_id).or_default();
             let price = match (row.bid.as_ref(), row.ask.as_ref()) {
                 (Some(bid), Some(ask)) => {
                     let bid = decimal(bid)?;
@@ -1407,13 +1414,20 @@ impl SpotQuotes {
                     *value = None;
                     continue;
                 }
+                if (*prev < start && at < start) || (*prev >= start && *prev / DAY == at / DAY) {
+                    *prev = at;
+                    *value = price;
+                    continue;
+                }
             }
             series.push((at, price));
         }
         Ok(Self(rows))
     }
+    // Day-end lookups need only each day's last quote and the last pre-start quote.
     // None means no prior quote; Some(None) means the newest quote is stale or invalid.
     fn price(&self, asset: &Asset, now: u64, age: u64) -> Option<Option<Decimal>> {
+        debug_assert_eq!(now % DAY, DAY - 1);
         let rows = self.0.get(&asset.instrument.id().to_string())?;
         let i = rows.partition_point(|(at, _)| *at <= now).checked_sub(1)?;
         let (at, price) = rows[i];
@@ -1871,7 +1885,14 @@ pub fn replay_with_funding(
     let spot_quotes = request
         .spot_valuation_source
         .as_ref()
-        .map(|name| SpotQuotes::open(&funding_root.join(name), &assets))
+        .map(|name| {
+            SpotQuotes::open(
+                &funding_root.join(name),
+                &assets,
+                request.research.input.event_start_ns.get(),
+                request.research.input.event_end_ns.get(),
+            )
+        })
         .transpose()?;
     let mut seed = s.random_seed.get();
     let mut cash: Option<NativeLedger> = None;

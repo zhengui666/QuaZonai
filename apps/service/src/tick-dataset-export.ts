@@ -186,12 +186,14 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       || [...cacheCoverage.contextFiles].some(([name, identity]) => fullCacheCoverage.contextFiles.get(name) !== identity)) throw new Error('tick_context_source_view_mismatch');
     const sources = Array.isArray(metadata.economic_sources) ? metadata.economic_sources : [];
     if (sources.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) {
+      const instruments = new Set(full.input.instrument_ids);
       const primaryLines = createInterface({ input: createReadStream(join(primary, 'spot-valuation.jsonl')), crlfDelay: Infinity });
       const fullLines = createInterface({ input: createReadStream(join(independent, 'spot-valuation.jsonl')), crlfDelay: Infinity });
       const expected = primaryLines[Symbol.asyncIterator]();
       try {
         for await (const line of fullLines) {
           const quote = object(parseOriginalJson(line), 'tick_spot_valuation_row');
+          if (typeof quote.instrument_id !== 'string' || !instruments.has(quote.instrument_id)) throw new Error('tick_spot_valuation_instrument_invalid');
           const received = cacheCounter(quote.received_ns);
           if (received >= BigInt(full.input.event_end_ns)) throw new Error('tick_spot_valuation_window_invalid');
           if (received < BigInt(research.input.event_end_ns)) {

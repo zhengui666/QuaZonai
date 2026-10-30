@@ -1017,12 +1017,14 @@ pub fn concatenate(
 
 #[derive(Deserialize)]
 struct SpotQuoteClock {
+    instrument_id: String,
     received_ns: DbCounter,
 }
 
 fn prepare_spot_views(
     source: &Path,
     output: &Path,
+    instruments: &BTreeSet<&str>,
     primary_end: u64,
     full_end: u64,
     limit: u64,
@@ -1048,6 +1050,9 @@ fn prepare_spot_views(
             break;
         }
         let clock: SpotQuoteClock = serde_json::from_slice(&line)?;
+        if !instruments.contains(clock.instrument_id.as_str()) {
+            continue;
+        }
         let size = u64::try_from(line.len())?;
         if clock.received_ns.get() < full_end {
             full_bytes = full_bytes
@@ -1160,6 +1165,11 @@ pub fn prepare_views(
         Some(prepare_spot_views(
             &cache_path(&source, "spot-valuation.jsonl")?,
             &output,
+            &input
+                .assets
+                .iter()
+                .map(|asset| asset.instrument_id.as_str())
+                .collect(),
             request.validation_end_ns.get(),
             request.input.event_end_ns.get(),
             maximum_output_bytes,
@@ -1247,6 +1257,42 @@ pub fn prepare_views(
 #[cfg(test)]
 mod concatenate_tests {
     use super::*;
+
+    #[test]
+    fn spot_views_keep_only_selected_instruments_at_each_time_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.jsonl");
+        let early = "{\"instrument_id\":\"BTC.SIM\",\"received_ns\":\"1\"}\n";
+        let excluded = "{\"instrument_id\":\"ETH.SIM\",\"received_ns\":\"2\"}\n";
+        let heldout = "{\"instrument_id\":\"BTC.SIM\",\"received_ns\":\"10\"}\n";
+        let beyond = "{\"instrument_id\":\"BTC.SIM\",\"received_ns\":\"20\"}\n";
+        fs::write(&source, format!("{early}{excluded}{heldout}{beyond}")).unwrap();
+        let output = temp.path().join("prepared");
+        for view in ["research/catalog", "independent/catalog"] {
+            fs::create_dir_all(output.join(view)).unwrap();
+        }
+        let sizes = prepare_spot_views(
+            &source,
+            &output,
+            &BTreeSet::from(["BTC.SIM"]),
+            10,
+            20,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(output.join("research/catalog/spot-valuation.jsonl")).unwrap(),
+            early
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("independent/catalog/spot-valuation.jsonl")).unwrap(),
+            format!("{early}{heldout}")
+        );
+        assert_eq!(
+            sizes,
+            (early.len() as u64, (early.len() + heldout.len()) as u64)
+        );
+    }
 
     #[test]
     fn concatenate_preserves_both_frame_layouts_and_rejects_partial_units() {

@@ -8,7 +8,7 @@ use nautilus_model::{
     types::{Price, Quantity},
 };
 use serde_json::json;
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 
 const SECOND: u64 = 1_000_000_000;
 const BRIDGE: &str = "USDT0-USDC-SPOT.HYPERLIQUID";
@@ -444,7 +444,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
     request.scenario.maximum_mark_age_ns = counter(HOUR).unwrap();
     let cache =
         cohort_cache::load(&prepared.join("independent/catalog"), &request.research).unwrap();
-    let at = HOUR + 2 * SECOND + 1;
+    let at = DAY - 1;
     let mut assets: Vec<_> = definitions()
         .into_iter()
         .map(|instrument| {
@@ -535,42 +535,71 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
     assert!(reason.contains(&format!("at_ns={at}:maximum_age_ns={HOUR}:state=STALE")));
     assert!(previous.is_none());
     let path = directory.path().join("spot-valuation.jsonl");
-    std::fs::write(&path, format!("{}\n{}\n{}\n{}\n{}\n",
+    let mut input = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+    for clock in 1..=20_000 {
+        writeln!(input, "{}", json!({"instrument_id": SPOT, "received_ns": clock.to_string(), "bid": "100", "ask": "102"})).unwrap();
+    }
+    for row in [
         json!({"instrument_id": SPOT, "received_ns": (at - 1).to_string(), "bid": "110", "ask": "112"}),
-        json!({"instrument_id": SPOT, "received_ns": (at + 1).to_string(), "bid": "120", "ask": "122"}),
-        json!({"instrument_id": SPOT, "received_ns": (at + 1).to_string(), "bid": "120", "ask": "122"}),
-        json!({"instrument_id": SPOT, "received_ns": (at + 2).to_string(), "bid": null, "ask": "122"}),
-        json!({"instrument_id": SPOT, "received_ns": (at + 3).to_string(), "bid": "123", "ask": "122"})
-    )).unwrap();
-    let quotes = SpotQuotes::open(&path, &assets).unwrap();
+        json!({"instrument_id": SPOT, "received_ns": (DAY + 1).to_string(), "bid": "120", "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (DAY + 1).to_string(), "bid": "120", "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (2 * DAY + 1).to_string(), "bid": null, "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (3 * DAY + 1).to_string(), "bid": "123", "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (4 * DAY + 1).to_string(), "bid": "130", "ask": "132"}),
+        json!({"instrument_id": SPOT, "received_ns": (7 * DAY).to_string(), "bid": "150", "ask": "152"}),
+    ] {
+        writeln!(input, "{row}").unwrap();
+    }
+    input.flush().unwrap();
+    drop(input);
+    let quotes = SpotQuotes::open(&path, &assets, 0, 7 * DAY).unwrap();
     let a = assets
         .iter()
         .find(|a| a.instrument.id().to_string() == SPOT)
         .unwrap();
+    assert_eq!(
+        quotes.0[SPOT].len(),
+        5,
+        "dense same-day history retains one row per day"
+    );
     assert_eq!(quotes.price(a, at, HOUR), Some(Some(Decimal::from(111))));
     assert_eq!(
-        quotes.price(a, at + 1, HOUR),
+        quotes.price(a, 2 * DAY - 1, DAY),
         Some(None),
-        "duplicate timestamps stay unknown"
+        "duplicate latest timestamps stay unknown"
     );
     assert_eq!(
-        quotes.price(a, at + 2, HOUR),
+        quotes.price(a, 3 * DAY - 1, DAY),
         Some(None),
         "missing bid stays unknown"
     );
     assert_eq!(
-        quotes.price(a, at + 3, HOUR),
+        quotes.price(a, 4 * DAY - 1, DAY),
         Some(None),
         "crossed quote stays unknown"
     );
     assert_eq!(
-        quotes.price(a, at + HOUR + 4, HOUR),
+        quotes.price(a, 6 * DAY - 1, HOUR),
         Some(None),
-        "stale newest quote is not reused"
+        "stale quote is not reused"
     );
+    let future = SpotQuotes(BTreeMap::from([(
+        SPOT.into(),
+        vec![(DAY + 1, Some(Decimal::ONE))],
+    )]));
     assert!(
-        quotes.price(a, at - 2, HOUR).is_none(),
+        future.price(a, DAY - 1, HOUR).is_none(),
         "future quote cannot be used"
+    );
+    let late_start = SpotQuotes::open(&path, &assets, 5 * DAY, 7 * DAY).unwrap();
+    assert_eq!(
+        late_start.0[SPOT].len(),
+        1,
+        "all pre-start history is reduced to its latest quote"
+    );
+    assert_eq!(
+        late_start.price(a, 6 * DAY - 1, 3 * DAY),
+        Some(Some(Decimal::from(131)))
     );
     let before = cash
         .as_ref()
