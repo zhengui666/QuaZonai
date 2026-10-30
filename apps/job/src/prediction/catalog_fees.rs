@@ -1,7 +1,7 @@
 //! Frozen venue policy is independent of request fee hints and native instruments.
 //! The native model owns commission arithmetic and the engine books its Money.
 use crate::catalog::NativeMarketData;
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use contracts::{
     catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE},
     portfolio::NativeModelRefV1,

@@ -7,7 +7,7 @@ use nautilus_model::{
     instruments::{CurrencyPair, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},

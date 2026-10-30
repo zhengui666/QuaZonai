@@ -169,14 +169,14 @@ pub(crate) struct PreparationMode<'a> {
     pub modules: Option<&'a mut crate::signals::SignalModuleCache>,
 }
 
-pub(crate) fn prepare_mode(
+pub(crate) fn prepare_mode<Bytes: AsRef<[u8]>>(
     market: &crate::catalog::NativeMarketData,
     selection: &NativeBarSelectionV1,
     mandate: &MandateContentV1,
     settings: &NativeSimulationSettingsV1,
     assets: &[AllocationAssetV1],
     models: &[NativePortfolioAlphaV1],
-    mut read: impl FnMut(Id) -> Result<Vec<u8>>,
+    mut read: impl FnMut(Id) -> Result<Bytes>,
     mut mode: PreparationMode<'_>,
 ) -> Result<Prepared> {
     ensure!(models.len() >= 2, "PORTFOLIO_MEMBERS");
@@ -265,7 +265,7 @@ pub(crate) fn prepare_mode(
         let module = read(member.model_artifact_id)?;
         let calibration: Option<NativeFrozenCalibrationV1> = member
             .calibration_artifact_id
-            .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(&bytes)?)))
+            .map(|id| read(id).and_then(|bytes| Ok(serde_json::from_slice(bytes.as_ref())?)))
             .transpose()?;
         let request = NativeForecastRequestV1 {
             schema_version: SchemaV1,
@@ -273,9 +273,14 @@ pub(crate) fn prepare_mode(
             parameters: member.parameters.clone(),
         };
         let (consumed_fuel, points) = if let Some(cache) = mode.modules.as_deref_mut() {
-            crate::forecast::forecast_latest_market_cached(market, &request, &module, cache)?
+            crate::forecast::forecast_latest_market_cached(
+                market,
+                &request,
+                module.as_ref(),
+                cache,
+            )?
         } else {
-            crate::forecast::forecast_latest_market(market, &request, &module)?
+            crate::forecast::forecast_latest_market(market, &request, module.as_ref())?
         };
         remaining_fuel.push(
             member
@@ -391,21 +396,6 @@ pub(crate) fn prepare_mode(
         consumed_fuel: consumed.map(count).transpose()?,
         remaining_fuel,
     })
-}
-
-pub(crate) fn allocation_input(
-    mandate: &MandateContentV1,
-    assets: Vec<AllocationAssetV1>,
-    cash: contracts::DecimalValue,
-    prepared: &Prepared,
-) -> AllocationInputV1 {
-    allocation_input_owned(
-        mandate,
-        assets,
-        cash,
-        prepared.forecasts.clone(),
-        prepared.returns.clone(),
-    )
 }
 
 pub(crate) fn allocation_input_owned(

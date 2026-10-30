@@ -3,11 +3,11 @@
 #[path = "../../../../tests/support/execution_models.rs"]
 mod models;
 use contracts::{
-    DbCounter, Id, SchemaV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
     spot_cash::*,
     spot_fees::*,
+    DbCounter, Id, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},

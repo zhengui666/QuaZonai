@@ -3,7 +3,7 @@
 mod models;
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod support;
-use contracts::{SchemaV1, catalogs::*, research::DataOrigin, science::*};
+use contracts::{catalogs::*, research::DataOrigin, science::*, SchemaV1};
 
 fn source() -> FrozenMakerTakerFeesV1 {
     FrozenMakerTakerFeesV1 {

@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #[path = "venue_fees.rs"]
 mod venue_fees;
-use contracts::{DbCounter, Id, SchemaV1, research::DataPartition, science::*};
+use contracts::{research::DataPartition, science::*, DbCounter, Id, SchemaV1};
 use nautilus_model::{
     data::{Bar, BarType},
     identifiers::{InstrumentId, Symbol},

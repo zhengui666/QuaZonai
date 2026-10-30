@@ -4,9 +4,9 @@ mod models;
 #[path = "../../../tests/support/catalog_metadata.rs"]
 mod support;
 
-use contracts::{SchemaV1, science::*};
+use contracts::{science::*, SchemaV1};
 use domain::catalogs::{instrument_version_at, instrument_versions};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn versions() -> Vec<Value> {
     let mut original = support::metadata()
@@ -175,15 +175,13 @@ fn metadata_fees_and_slippage_share_one_chain_without_promoting_evidence() {
     domain::catalogs::metadata(&late_original, support::instant(600)).unwrap();
     domain::catalogs::execution_fees(&late_original, &settings).unwrap();
     let ids = vec!["EUR/USD.SIM".into()];
-    assert!(
-        domain::prediction::target_window(
-            &late_original.universe.instrument_definitions,
-            &ids,
-            69_000_000_000,
-            100_000_000_000
-        )
-        .is_err()
-    );
+    assert!(domain::prediction::target_window(
+        &late_original.universe.instrument_definitions,
+        &ids,
+        69_000_000_000,
+        100_000_000_000
+    )
+    .is_err());
     domain::prediction::target_window(
         &late_original.universe.instrument_definitions,
         &ids,

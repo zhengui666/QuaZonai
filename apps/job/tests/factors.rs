@@ -706,14 +706,15 @@ fn price_volume_factors_retain_native_row_and_clock_checks() {
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     for invalid_clock in [false, true] {
         let prices = tempfile::tempdir().unwrap();
-        let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
-            prices.path().to_str().unwrap(),
-            None,
-            Some(16),
-            None,
-            None,
-        )
-        .unwrap();
+        let catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                prices.path().to_str().unwrap(),
+                None,
+                Some(16),
+                None,
+                None,
+            )
+            .unwrap();
         for series in &market.series {
             let mut bars = series.bars.clone();
             if invalid_clock {
@@ -744,14 +745,15 @@ fn price_volume_factors_reject_undefined_native_values() {
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     for undefined_volume in [false, true] {
         let prices = tempfile::tempdir().unwrap();
-        let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
-            prices.path().to_str().unwrap(),
-            None,
-            Some(16),
-            None,
-            None,
-        )
-        .unwrap();
+        let catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                prices.path().to_str().unwrap(),
+                None,
+                Some(16),
+                None,
+                None,
+            )
+            .unwrap();
         for series in &market.series {
             let mut bars = series.bars.clone();
             for bar in &mut bars {

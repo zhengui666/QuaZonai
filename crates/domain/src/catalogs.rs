@@ -1,5 +1,5 @@
 //! Structural provenance checks; an ordered timestamp is not proof of historical availability.
-use crate::{DomainError, control::text, research::invalid};
+use crate::{control::text, research::invalid, DomainError};
 use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
 use std::collections::{BTreeMap, BTreeSet};

@@ -1,5 +1,5 @@
 //! Explicit controlled native model parameters, never production defaults.
-use contracts::{DbCounter, SchemaV1, portfolio::*};
+use contracts::{portfolio::*, DbCounter, SchemaV1};
 
 pub fn fill() -> NativeModelRefV1 {
     NativeModelRefV1::NautilusDefaultFill {

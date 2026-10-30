@@ -1,6 +1,6 @@
 //! Explicitly synthetic Polymarket fixtures. Native types and engines remain authoritative.
 #![allow(dead_code)]
-use contracts::{SchemaV1, portfolio::*, science::*};
+use contracts::{portfolio::*, science::*, SchemaV1};
 use nautilus_model::{
     data::{Bar, BarType, InstrumentClose},
     enums::{AssetClass, InstrumentCloseType},

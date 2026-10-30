@@ -1,0 +1,98 @@
+{
+  "short_metered": {
+    "pairs": 30,
+    "fresh_median_us": 1528.2730000000001,
+    "cached_median_us": 716.928,
+    "ratio_of_medians": 2.1316966278343155,
+    "median_paired_ratio": 2.0653999454377003,
+    "fresh_min_max_us": [
+      1182.516,
+      5698.645
+    ],
+    "cached_min_max_us": [
+      608.953,
+      1742.798
+    ],
+    "module_requests_per_arm": 128,
+    "observed_cached_reuse_per_arm": 120,
+    "fresh_compilations_per_arm": 128,
+    "cached_compilations_per_arm": 8,
+    "fresh_instances_per_arm": 256,
+    "predictions_per_arm": 4096,
+    "checksum": "53657.59999999619",
+    "fuel": "53248",
+    "all_recorded_checksums_and_fuel_equal": true
+  },
+  "long_metered": {
+    "pairs": 30,
+    "fresh_median_us": 15402.045,
+    "cached_median_us": 15163.57,
+    "ratio_of_medians": 1.015726837413617,
+    "median_paired_ratio": 0.9964515731295336,
+    "fresh_min_max_us": [
+      13720.282,
+      18287.786
+    ],
+    "cached_min_max_us": [
+      13812.197,
+      19388.261
+    ],
+    "module_requests_per_arm": 16,
+    "observed_cached_reuse_per_arm": 8,
+    "fresh_compilations_per_arm": 16,
+    "cached_compilations_per_arm": 8,
+    "fresh_instances_per_arm": 32,
+    "predictions_per_arm": 131072,
+    "checksum": "269103923.1994536",
+    "fuel": "1703936",
+    "all_recorded_checksums_and_fuel_equal": true
+  },
+  "saturated_metered": {
+    "pairs": 30,
+    "fresh_median_us": 2606.7715,
+    "cached_median_us": 2235.126,
+    "ratio_of_medians": 1.1662749661540333,
+    "median_paired_ratio": 1.176828499641342,
+    "fresh_min_max_us": [
+      2403.268,
+      6944.204
+    ],
+    "cached_min_max_us": [
+      2033.495,
+      3383.947
+    ],
+    "module_requests_per_arm": 256,
+    "observed_cached_reuse_per_arm": 96,
+    "fresh_compilations_per_arm": 256,
+    "cached_compilations_per_arm": 160,
+    "fresh_instances_per_arm": 512,
+    "predictions_per_arm": 8192,
+    "checksum": "336691.1999999923",
+    "fuel": "106496",
+    "all_recorded_checksums_and_fuel_equal": true
+  },
+  "short_unmetered": {
+    "pairs": 30,
+    "fresh_median_us": 1323.348,
+    "cached_median_us": 685.6565,
+    "ratio_of_medians": 1.9300451465128674,
+    "median_paired_ratio": 2.0158596545699625,
+    "fresh_min_max_us": [
+      1171.961,
+      3549.761
+    ],
+    "cached_min_max_us": [
+      572.931,
+      940.23
+    ],
+    "module_requests_per_arm": 128,
+    "observed_cached_reuse_per_arm": 120,
+    "fresh_compilations_per_arm": 128,
+    "cached_compilations_per_arm": 8,
+    "fresh_instances_per_arm": 256,
+    "predictions_per_arm": 4096,
+    "checksum": "53657.59999999619",
+    "fuel": "unmetered",
+    "all_recorded_checksums_and_fuel_equal": true
+  }
+}

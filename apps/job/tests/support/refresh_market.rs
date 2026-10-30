@@ -4,9 +4,9 @@
 #[path = "venue_fees.rs"]
 mod venue_fees;
 use contracts::{
-    DbCounter, SchemaV1,
     portfolio::{AllocationTargetV1, NativeModelRefV1},
     science::*,
+    DbCounter, SchemaV1,
 };
 use nautilus_model::{
     data::{Bar, BarType},

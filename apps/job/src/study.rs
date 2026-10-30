@@ -113,9 +113,10 @@ fn evaluate_mode(
             &request.assets,
             &models,
             |id| {
+                // The task already froze these bytes; preparation only reads them.
                 objects
                     .get(&id)
-                    .cloned()
+                    .map(Vec::as_slice)
                     .ok_or_else(|| anyhow::anyhow!("STUDY_MODEL_MISSING"))
             },
             crate::portfolio::PreparationMode {
@@ -196,6 +197,10 @@ fn evaluate_mode(
                 .collect(),
         });
     }
+    // No further forecasts consume code or artifacts; release both before the
+    // native replay allocates its own market and account state.
+    drop(modules);
+    drop(objects);
     let mut selection = request.source_selection.clone();
     selection.event_start_ns = request.evaluation_start_ns;
     let mut replay = NativeSimulationRequestV1 {

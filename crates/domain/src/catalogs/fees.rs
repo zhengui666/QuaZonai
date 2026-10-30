@@ -1,5 +1,5 @@
 use super::bad;
-use crate::{DomainError, control::text};
+use crate::{control::text, DomainError};
 use contracts::{
     catalogs::FrozenMakerTakerFeesV1, research::DataOrigin, science::NativeBarSelectionV1,
 };

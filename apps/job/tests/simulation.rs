@@ -339,6 +339,67 @@ fn frozen_native_fees_change_the_same_shared_capital_simulation() {
 }
 
 #[test]
+fn delayed_native_fill_preserves_the_expired_fee_source_error() {
+    use contracts::catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE};
+
+    // Native end() settles the command two minutes after the final real BAR.
+    // Both source windows cover catalog selection; only the actual fill clock
+    // distinguishes an accepted source from its exclusive expiration boundary.
+    let arrival = instant(5);
+    for expires_at in [count(arrival.get() + 1), arrival] {
+        let (directory, mut request) = market("0.001", 3);
+        request.target_points.truncate(1);
+        request.target_points[0].asof_ns = instant(3);
+        request.target_points[0].valid_until_ns = instant(7);
+        request.settings.latency_model = market::execution_models::latency(2 * market::INTERVAL_NS);
+        let source_path = directory.path().join(MAKER_TAKER_FEES_FILE);
+        let mut source: FrozenMakerTakerFeesV1 =
+            serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+        source.valid_until_ns = expires_at;
+        assert!(source.valid_until_ns > request.selection.decision_cutoff_ns);
+        std::fs::write(source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+
+        let output = native::command(
+            &[
+                "simulate".as_ref(),
+                "--catalog".as_ref(),
+                directory.path().as_os_str(),
+            ],
+            &request,
+        );
+        if expires_at > arrival {
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: NativeSimulationResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+            let fills = result.canonical_result["fills"].as_array().unwrap();
+            assert_eq!(fills.len(), 2);
+            for fill in fills {
+                assert_eq!(
+                    fill["event"]["Filled"]["ts_event"],
+                    arrival.get().to_string()
+                );
+            }
+        } else {
+            assert!(!output.status.success());
+            assert!(
+                output.stdout.is_empty(),
+                "an expired source cannot publish a result"
+            );
+            let error = String::from_utf8(output.stderr).unwrap();
+            assert!(error.contains("NATIVE_TARGET_REPLAY_FAILED"), "{error}");
+            assert!(
+                error.contains("MAKER_TAKER_FEE_FILL_OUTSIDE_SOURCE_WINDOW"),
+                "{error}"
+            );
+            assert!(!error.contains("NATIVE_ORDERS_NOT_SETTLED"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn frozen_fill_and_latency_models_reach_the_actual_native_venue() {
     use contracts::portfolio::NativeModelRefV1;
     let (directory, request) = market("0", 20);

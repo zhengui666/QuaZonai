@@ -194,7 +194,12 @@ impl Writer {
                 let query = CatalogQuery::new(NautilusDataType::from_data(&items[0]))
                     .with_identifiers(ids)
                     .with_range(start, end);
-                let mut session = job::catalog::file_batch_session(&mut self.catalog, query, 4096)?;
+                let mut session = job::catalog::file_batch_session(
+                    &self.catalog,
+                    query,
+                    None,
+                    items.len().saturating_add(1).min(4096),
+                )?;
                 let mut observed = 0;
                 while let Some(batch) = session.next_batch()? {
                     for index in 0..batch.len() {
@@ -254,9 +259,10 @@ impl Writer {
     pub(super) fn verify_trade_count(&mut self, count: u64) -> Result<()> {
         let mut actual = 0_u64;
         let mut session = job::catalog::file_batch_session(
-            &mut self.catalog,
+            &self.catalog,
             CatalogQuery::new(NautilusDataType::TradeTick),
-            4096,
+            None,
+            count.saturating_add(1).min(4096) as usize,
         )?;
         while let Some(batch) = session.next_batch()? {
             let DataBatch::Trade(batch) = batch else {

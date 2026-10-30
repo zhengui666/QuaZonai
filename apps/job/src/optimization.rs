@@ -466,14 +466,13 @@ pub fn allocate(input: &AllocationInputV1) -> Result<AllocationResultV1> {
             // The exact published decimal result was just fully checked. Keep
             // boundary validation at consumers, without repeating it here.
             return Ok(result);
-        } else {
-            result.solver_status = AllocationStatus::Failed;
-            result.reason_code = Some("POST_SOLVE_CONSTRAINT_REJECTED".into());
-            result.targets = None;
-            result.cash_weight = None;
-            result.cvar_risk_budget_witness = None;
-            result.numerical_output = None;
         }
+        result.solver_status = AllocationStatus::Failed;
+        result.reason_code = Some("POST_SOLVE_CONSTRAINT_REJECTED".into());
+        result.targets = None;
+        result.cash_weight = None;
+        result.cvar_risk_budget_witness = None;
+        result.numerical_output = None;
     }
     domain::portfolio::allocation_result(input, &result)?;
     Ok(result)

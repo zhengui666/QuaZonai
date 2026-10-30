@@ -1,0 +1,22 @@
+{
+  "base_commit": "25abfeb4e33c3cf3c7516c5c3f91c8caebb83839",
+  "source_sha256": "2ded7e18ad0dc34a3f367a9b7888b9ff056ce89f955f81551b0bc69712311f4f",
+  "harness_sha256": "4008bba769ff2b014bb1bc382e176603dc3f249ef79c357dd51923230c69b814",
+  "lock_sha256": "62ef80da3b98a9e45f8bb4b30271daf902a5b1351078bed27894927ed661f624",
+  "binary_sha256": "8ae0fb04b179cb05d532976514e0800e77c15f1d835663a98bdd068ac144eeb9",
+  "runner_sha256": "0097f42058edcaeabdb48ba90f09eaf05520983c877aa204e1bf23977bc99905",
+  "build_script_sha256": "a35e560eed1b03775a976a5934ebe54fa8b750a3613d835dfd47b090f3553174",
+  "source_has_uncommitted_changes": false,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "kernel": "6.18.55",
+  "machine": "x86_64",
+  "affinity_cpu": 0,
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "cgroup_cpu_max": "400000 100000",
+  "profile": "standalone release, all dependencies optimized, production source included directly",
+  "warmup_pairs_per_case": 5,
+  "measured_pairs_per_case": 30,
+  "untimed_validation": "every prediction bit and every remaining fuel value checked against uncached arm; each prediction also matches analytic reset-state model output",
+  "dependency_versions_missing_from_project_lock": [],
+  "measurement_scope": "stateful synthetic Wasmi cache kernel; excludes catalog, covariance, simulation, orchestration and I/O"
+}

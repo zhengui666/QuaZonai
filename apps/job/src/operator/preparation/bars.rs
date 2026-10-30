@@ -200,12 +200,17 @@ pub(super) fn write_catalog(
     bars: &[Bar],
 ) -> Result<()> {
     let cutoff = bars.last().context("SOURCE_EMPTY")?.ts_init;
-    let mut native = super::native(root)?;
+    let native = super::native(root)?;
     native.write_instruments(instruments.to_vec())?;
     native.write_to_parquet(bars, None, None, None)?;
     let query = CatalogQuery::new(NautilusDataType::Bar)
         .with_identifiers(Some(vec![bars[0].bar_type.to_string()]));
-    let mut session = crate::catalog::file_batch_session(&mut native, query, 4096)?;
+    let mut session = crate::catalog::file_batch_session(
+        &native,
+        query,
+        None,
+        bars.len().saturating_add(1).min(4096),
+    )?;
     let mut observed = 0;
     while let Some(batch) = session.next_batch()? {
         let DataBatch::Bar(batch) = batch else {

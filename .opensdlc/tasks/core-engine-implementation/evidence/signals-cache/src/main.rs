@@ -1,6 +1,6 @@
 //! Synthetic kernel measurement; no market or end-to-end performance claim.
 use anyhow::{ensure, Result};
-#[path = "../../../../../../../apps/job/src/signals.rs"]
+#[path = "../../../../../../apps/job/src/signals.rs"]
 mod signals;
 use signals::{SignalModule, SignalModuleCache};
 use std::{
@@ -35,19 +35,30 @@ fn run(case: &Case, modules: &[Vec<u8>], cached: bool) -> Result<Sample> {
     let mut calls = 0;
     for _ in 0..case.cutoffs {
         for (i, bytes) in modules.iter().enumerate() {
-            let module = if cached {
-                cache.get_or_compile(black_box(bytes), case.metered)?
+            let (fresh, retained) = if cached {
+                (
+                    None,
+                    Some(cache.get_or_compile(black_box(bytes), case.metered)?),
+                )
             } else {
-                Rc::new(SignalModule::new(black_box(bytes), case.metered)?)
+                (
+                    Some(SignalModule::new(black_box(bytes), case.metered)?),
+                    None,
+                )
             };
             calls += 1;
-            if previous[i]
-                .upgrade()
-                .is_some_and(|prior| Rc::ptr_eq(&prior, &module))
-            {
-                reused += 1;
-            }
-            previous[i] = Rc::downgrade(&module);
+            let module = if let Some(module) = retained.as_ref() {
+                if previous[i]
+                    .upgrade()
+                    .is_some_and(|prior| Rc::ptr_eq(&prior, module))
+                {
+                    reused += 1;
+                }
+                previous[i] = Rc::downgrade(module);
+                module.as_ref()
+            } else {
+                fresh.as_ref().unwrap()
+            };
             for _ in 0..case.assets {
                 let mut model = module.instantiate(case.predictions, remaining[i])?;
                 for _ in 0..case.predictions {

@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import sys
 directory = Path(sys.argv[1])
-repo = directory.parents[5]
+repo = directory.parents[4]
 paths = {
     "source_sha256": repo / "apps/job/src/signals.rs",
     "harness_sha256": directory / "src/main.rs",
@@ -23,4 +23,4 @@ paths = {
     for key, path in paths.items()
 }, indent=2) + "\n")
 PY
-"$CARGO" build --release --locked --offline --manifest-path "$directory/Cargo.toml" -j 2 > "$directory/build.log" 2>&1
+"$CARGO" build --release --locked --offline --manifest-path "$directory/Cargo.toml" -j 1 > "$directory/build.log" 2>&1

@@ -1,6 +1,6 @@
 //! Thin prediction-market adaptation. Nautilus owns every fill, position and cash movement.
 use crate::catalog::NativeMarketData;
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use bigdecimal::BigDecimal;
 use contracts::science::{NativeBarSelectionV1, NativeSimulationSettingsV1};
 use nautilus_common::clock::Clock;
@@ -290,7 +290,7 @@ pub(crate) fn catalog_closes(
         .chain(expected.keys())
         .copied()
         .collect::<BTreeSet<_>>();
-    let mut catalog = ParquetDataCatalog::from_uri(
+    let catalog = ParquetDataCatalog::from_uri(
         root.to_str()
             .ok_or_else(|| anyhow::anyhow!("CATALOG_PATH_ENCODING"))?,
         None,
@@ -306,7 +306,7 @@ pub(crate) fn catalog_closes(
             None,
             Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
         );
-    let mut session = crate::catalog::file_batch_session(&mut catalog, query, ids.len() + 1)?;
+    let mut session = crate::catalog::file_batch_session(&catalog, query, None, ids.len() + 1)?;
     let mut seen = BTreeSet::new();
     let mut verified_closes = Vec::new();
     while let Some(batch) = session.next_batch()? {

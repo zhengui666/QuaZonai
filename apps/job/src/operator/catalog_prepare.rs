@@ -113,7 +113,7 @@ fn originals(
             "DUPLICATE_SETTLEMENT"
         );
     }
-    let mut catalog = native(root)?;
+    let catalog = native(root)?;
     let instruments = catalog.query_instruments_filtered(
         Some(&ids.iter().cloned().collect::<Vec<_>>()),
         None,
@@ -175,7 +175,12 @@ fn originals(
                 None,
                 Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
             );
-        let mut session = crate::catalog::file_batch_session(&mut catalog, query, 4096)?;
+        let mut session = crate::catalog::file_batch_session(
+            &catalog,
+            query,
+            None,
+            payouts.len().saturating_add(1).min(4096),
+        )?;
         let mut seen = BTreeSet::new();
         while let Some(batch) = session.next_batch()? {
             let DataBatch::InstrumentClose(batch) = batch else {

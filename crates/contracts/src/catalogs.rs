@@ -1,8 +1,8 @@
 //! Runtime-owned immutable native catalog metadata, never client assertions of evidence.
 use crate::{
-    DbCounter, SchemaV1,
     research::{DataOrigin, DataPartition, PitStatus},
     runtime::RuntimeDataKind,
+    DbCounter, SchemaV1,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -159,8 +159,8 @@ pub struct RecordedFeatureInputsV1 {
     pub fragments: Vec<RecordedFeatureFragmentV1>,
 }
 
-pub(crate) fn recorded_feature_bytes_schema()
--> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+pub(crate) fn recorded_feature_bytes_schema(
+) -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     crate::scalars::positive_db_counter_schema()
 }
 

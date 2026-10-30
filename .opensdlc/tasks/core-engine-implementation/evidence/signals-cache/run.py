@@ -19,7 +19,7 @@ parser.add_argument("--rustc", default="rustc")
 parser.add_argument("--build-identity", type=Path, required=True)
 args = parser.parse_args()
 directory = Path(__file__).resolve().parent
-repo = directory.parents[5]
+repo = directory.parents[4]
 source = repo / "apps/job/src/signals.rs"
 inputs = {
     "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
@@ -55,6 +55,10 @@ for case in dict.fromkeys(row["case"] for row in rows):
         "cached_min_max_us": [min(cached), max(cached)],
         "module_requests_per_arm": int(selected[0]["module_calls"]),
         "observed_cached_reuse_per_arm": int(selected[0]["reused_modules"]),
+        "fresh_compilations_per_arm": int(selected[0]["module_calls"]),
+        "cached_compilations_per_arm": int(selected[0]["module_calls"]) - int(selected[0]["reused_modules"]),
+        "fresh_instances_per_arm": int(selected[0]["models"]) * int(selected[0]["cutoffs"]) * int(selected[0]["assets"]),
+        "predictions_per_arm": int(selected[0]["models"]) * int(selected[0]["cutoffs"]) * int(selected[0]["assets"]) * int(selected[0]["predictions_per_instance"]),
         "checksum": selected[0]["checksum"], "fuel": selected[0]["fuel"],
         "all_recorded_checksums_and_fuel_equal": len({(row["checksum"], row["fuel"]) for row in selected}) == 1,
     }
@@ -67,9 +71,12 @@ metadata = {
     "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
     **inputs,
     "binary_sha256": hashlib.sha256(args.binary.read_bytes()).hexdigest(),
+    "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    "build_script_sha256": hashlib.sha256((directory / "build.sh").read_bytes()).hexdigest(),
     "source_has_uncommitted_changes": bool(subprocess.check_output(["git", "diff", "--", str(source)], cwd=repo)),
     "rustc": subprocess.check_output([args.rustc, "--version"], text=True).strip(),
-    "kernel": platform.release(), "affinity_cpu": cpu,
+    "kernel": platform.release(), "machine": platform.machine(), "affinity_cpu": cpu,
+    "cpu_model": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines() if line.startswith("model name")), "unavailable"),
     "cgroup_cpu_max": Path("/sys/fs/cgroup/cpu.max").read_text().strip(),
     "profile": "standalone release, all dependencies optimized, production source included directly",
     "warmup_pairs_per_case": 5, "measured_pairs_per_case": 30,

@@ -1,7 +1,7 @@
 //! Regression fixtures use the stock LiveNode queues, native wall clock and
 //! Sandbox matcher. No fabricated order events, account edits or matching rules.
 use super::*;
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 
 async fn wait_for(state: &Rc<RefCell<State>>, ready: impl Fn() -> bool) -> Result<()> {
     let end = tokio::time::Instant::now() + Duration::from_secs(5);

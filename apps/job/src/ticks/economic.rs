@@ -1537,11 +1537,7 @@ fn value(
                 }
                 return Ok(None);
             };
-            let pnl = position.try_calculate_pnl(
-                position.avg_px_open,
-                price,
-                position.quantity,
-            )?;
+            let pnl = position.try_calculate_pnl(position.avg_px_open, price, position.quantity)?;
             ensure!(
                 pnl.currency == Currency::USDC() || pnl.currency == Currency::USD(),
                 "ECONOMIC_PERP_SETTLEMENT_UNSUPPORTED"

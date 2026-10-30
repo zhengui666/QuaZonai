@@ -3,12 +3,12 @@
 #![allow(dead_code)]
 use chrono::{DateTime, Utc};
 use contracts::{
-    DbCounter, Id, SchemaV1,
     catalogs::*,
     execution::{NativeDataQualityReportV1, NativeDatasetQualityV1},
     research::{DataOrigin, DataPartition, PitStatus},
     runtime::RuntimeDataKind,
     science::NativeBarSelectionV1,
+    DbCounter, Id, SchemaV1,
 };
 
 pub fn instant(seconds: i64) -> DateTime<Utc> {

@@ -1,10 +1,10 @@
 //! Controlled venue policy, independently written before constructing requests.
 //! These exact fixture rates are not provider/account commission evidence.
 use contracts::{
-    DbCounter, SchemaV1,
     catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE},
     research::DataOrigin,
     science::NativeFeeRateV1,
+    DbCounter, SchemaV1,
 };
 use nautilus_model::types::Currency;
 use std::path::Path;

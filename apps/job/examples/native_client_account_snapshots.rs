@@ -2,7 +2,7 @@
 //! No data client, strategy, venue network, credentials or real account is used.
 use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use contracts::Id;
 use job::native_node_observer::NativeNodeObserver;
 use nautilus_common::{

@@ -1,5 +1,5 @@
 use super::*;
-use contracts::{DbCounter, SchemaV1, research::DataOrigin, science::NativeFeeRateV1};
+use contracts::{research::DataOrigin, science::NativeFeeRateV1, DbCounter, SchemaV1};
 use nautilus_common::clock::VirtualClock;
 use nautilus_model::{
     enums::{LiquiditySide, OrderSide, OrderType},
@@ -150,11 +150,9 @@ fn actual_fill_clock_and_source_identity_are_enforced() {
     }
     set_time(&clock, 20);
     let other = InstrumentAny::CurrencyPair(audusd_sim());
-    assert!(
-        model
-            .get_commission(&order, Quantity::from("2"), Price::from("0.40000"), &other)
-            .is_err()
-    );
+    assert!(model
+        .get_commission(&order, Quantity::from("2"), Price::from("0.40000"), &other)
+        .is_err());
 }
 
 #[test]

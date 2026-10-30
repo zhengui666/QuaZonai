@@ -1,6 +1,8 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
 pub mod currencies;
+mod file_batches;
+pub use file_batches::{file_batch_session, FileBatchSession};
 
 use anyhow::{ensure, Result};
 use contracts::{
@@ -8,18 +10,14 @@ use contracts::{
     science::NativeBarSelectionV1,
     DbCounter, SchemaV1,
 };
-use nautilus_core::{Params, UnixNanos};
+use nautilus_core::UnixNanos;
 use nautilus_model::{
     data::{Bar, BarType, DataBatch, NautilusDataType},
     enums::{BarAggregation, PriceType},
     instruments::{Instrument, InstrumentAny},
 };
 use nautilus_persistence::{
-    backend::parquet::catalog::{ParquetDataCatalog, QUERY_OPTIMIZE_FILE_LOADING},
-    catalog::{
-        session::DataBatchQueryResult,
-        traits::{CatalogQuery, CatalogReader},
-    },
+    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
 };
 use std::{
     collections::BTreeMap,
@@ -271,26 +269,6 @@ pub(crate) fn open_catalog(root: &Path) -> Result<ParquetDataCatalog> {
     Ok(catalog)
 }
 
-/// Read native typed batches while preserving each file's historical schema metadata.
-/// Timestamp-aligned chunks can exceed `chunk_size` for equal-time records: this is
-/// a streaming target, not a hard memory bound. Callers still enforce their row
-/// contract, and the scientific process retains its external resource limits.
-pub fn file_batch_session(
-    catalog: &mut ParquetDataCatalog,
-    query: CatalogQuery,
-    chunk_size: usize,
-) -> Result<DataBatchQueryResult> {
-    let query = query.with_params(Some(Params::new(
-        [(
-            QUERY_OPTIMIZE_FILE_LOADING.to_owned(),
-            serde_json::json!(false),
-        )]
-        .into(),
-    )));
-    catalog.reset_session();
-    catalog.query_batch_session(&query, Some(chunk_size.max(1)))
-}
-
 /// Load executable market data with original instrument definitions.
 pub fn load_catalog(root: &Path, selection: &NativeBarSelectionV1) -> Result<NativeMarketData> {
     load_catalog_mode(root, selection, false)
@@ -310,7 +288,7 @@ fn load_catalog_mode(
     allow_empty_series: bool,
 ) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
-    let mut catalog = open_catalog(root)?;
+    let catalog = open_catalog(root)?;
     let ids = types
         .iter()
         .map(|kind| kind.instrument_id().to_string())
@@ -320,34 +298,31 @@ fn load_catalog_mode(
         None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
-    let bars = read_bars(&mut catalog, selection)?;
+    let bars = read_bars(&catalog, selection)?;
     let mut market = validate_native_mode(instruments, bars, selection, allow_empty_series)?;
     market.execution_fees = crate::prediction::catalog_fees::load(root, selection)?;
     market.fee_selection = Some(selection.clone());
     Ok(market)
 }
 
-fn read_bars(
-    catalog: &mut ParquetDataCatalog,
-    selection: &NativeBarSelectionV1,
-) -> Result<Vec<Bar>> {
-    // The upstream query filters ts_init through the actual availability cutoff.
-    // Also push the half-open event interval into that same native query before
-    // applying the decoded-row cap. This preserves in-range late arrivals while
-    // excluding unrelated newer rows; callers cannot supply a SQL expression.
-    let event_interval = format!(
-        "ts_event >= {} AND ts_event < {}",
-        selection.event_start_ns.get(),
-        selection.event_end_ns.get()
-    );
+fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> Result<Vec<Bar>> {
+    // Filter availability and the half-open event interval in Arrow before native
+    // decoding. Same-timestamp records cannot enlarge a decoded batch beyond its
+    // fixed size; the first excess selected row is rejected before retention.
     let query = CatalogQuery::new(NautilusDataType::Bar)
         .with_identifiers(Some(selection.bar_types.clone()))
         .with_range(
             Some(UnixNanos::from(selection.event_start_ns.get())),
             Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
-        )
-        .with_where_clause(Some(event_interval));
-    let mut session = file_batch_session(catalog, query, 4096)?;
+        );
+    let mut session = file_batch_session(
+        catalog,
+        query,
+        Some(selection.event_start_ns.get()..selection.event_end_ns.get()),
+        (selection.maximum_rows as usize)
+            .saturating_add(1)
+            .min(4096),
+    )?;
     let mut bars = Vec::new();
     while let Some(batch) = session.next_batch()? {
         let DataBatch::Bar(batch) = batch else {
@@ -363,6 +338,11 @@ fn read_bars(
             bars.push(*bar);
         }
     }
+    // File discovery groups series by path. Stable ordering only after the row
+    // budget has passed preserves each file's FIFO for equal availability.
+    if !bars.is_sorted_by_key(|bar| bar.ts_init) {
+        bars.sort_by_key(|bar| bar.ts_init);
+    }
     Ok(bars)
 }
 
@@ -373,7 +353,7 @@ pub(crate) fn load_price_bars(
     selection: &NativeBarSelectionV1,
 ) -> Result<Vec<(BarType, Vec<Bar>)>> {
     let types = selected_types(selection)?;
-    let mut catalog = open_catalog(root)?;
+    let catalog = open_catalog(root)?;
     let mut series = types
         .into_iter()
         .map(|kind| (kind, Vec::<Bar>::new()))
@@ -383,7 +363,7 @@ pub(crate) fn load_price_bars(
         .enumerate()
         .map(|(index, (kind, _))| (kind.to_string(), index))
         .collect::<BTreeMap<_, _>>();
-    for bar in read_bars(&mut catalog, selection)? {
+    for bar in read_bars(&catalog, selection)? {
         let index = indices
             .get(&bar.bar_type.to_string())
             .ok_or_else(|| anyhow::anyhow!("CATALOG_UNREQUESTED_BAR_TYPE"))?;

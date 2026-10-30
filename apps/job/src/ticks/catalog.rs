@@ -333,7 +333,7 @@ pub(crate) fn load(
         );
     }
     ensure!(!selected.is_empty(), "TICK_INSTRUMENTS_EMPTY");
-    let mut catalog =
+    let catalog =
         crate::catalog::open_catalog(root).context("TICK_NATIVE_FORMAT_OR_CATALOG_INCOMPATIBLE")?;
     // These definitions describe the native representation only. Filtering by
     // historical cutoff would incorrectly reject visibly late current metadata;
@@ -366,19 +366,20 @@ pub(crate) fn load(
             "TICK_INSTRUMENT_DEFINITION_MISSING: {name}"
         );
     }
-    let event_interval = format!(
-        "ts_event >= {} AND ts_event < {}",
-        request.input.event_start_ns.get(),
-        request.input.event_end_ns.get()
-    );
     // This initial policy requires exact event-time proxy clocks. Availability
     // bounds would hide contradictory in-window rows before validation, so use
     // the explicit event filter and validate every selected row's clocks below.
     let query = CatalogQuery::new(NautilusDataType::TradeTick)
-        .with_identifiers(Some(request.input.instrument_ids.clone()))
-        .with_where_clause(Some(event_interval));
-    let mut session = crate::catalog::file_batch_session(&mut catalog, query, 4096)
-        .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
+        .with_identifiers(Some(request.input.instrument_ids.clone()));
+    let mut session = crate::catalog::file_batch_session(
+        &catalog,
+        query,
+        Some(request.input.event_start_ns.get()..request.input.event_end_ns.get()),
+        (request.input.maximum_rows.context("TICK_RESOURCE_LIMIT")? as usize)
+            .saturating_add(1)
+            .min(4096),
+    )
+    .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
     let mut identities = BTreeMap::new();
     let mut rows = 0_usize;
     while let Some(batch) = session

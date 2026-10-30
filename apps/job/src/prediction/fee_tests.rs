@@ -178,16 +178,14 @@ fn zero_quantity_or_price_and_unknown_liquidity_fail_closed() {
     for (qty, px) in [("0.000000", "0.4000"), ("2.000000", "0.0000")] {
         assert!(commission(instrument, qty, px, OrderSide::Buy, LiquiditySide::Taker).is_err());
     }
-    assert!(
-        commission(
-            instrument,
-            "10.000000",
-            "0.4000",
-            OrderSide::Buy,
-            LiquiditySide::NoLiquiditySide
-        )
-        .is_err()
-    );
+    assert!(commission(
+        instrument,
+        "10.000000",
+        "0.4000",
+        OrderSide::Buy,
+        LiquiditySide::NoLiquiditySide
+    )
+    .is_err());
 }
 
 #[test]
@@ -228,27 +226,23 @@ fn missing_invalid_or_changed_frozen_fee_evidence_is_never_zero_fee() {
     let mut payload = serde_json::to_value(original).unwrap();
     payload["BinaryOption"]["currency"] = "USD".into();
     let instrument: InstrumentAny = serde_json::from_value(payload).unwrap();
-    assert!(
-        commission(
-            &instrument,
-            "10.000000",
-            "0.4000",
-            OrderSide::Buy,
-            LiquiditySide::Taker
-        )
-        .is_err()
-    );
+    assert!(commission(
+        &instrument,
+        "10.000000",
+        "0.4000",
+        OrderSide::Buy,
+        LiquiditySide::Taker
+    )
+    .is_err());
     let ordinary = InstrumentAny::CurrencyPair(nautilus_model::instruments::stubs::audusd_sim());
-    assert!(
-        commission(
-            &ordinary,
-            "10.000000",
-            "0.4000",
-            OrderSide::Buy,
-            LiquiditySide::Taker
-        )
-        .is_err()
-    );
+    assert!(commission(
+        &ordinary,
+        "10.000000",
+        "0.4000",
+        OrderSide::Buy,
+        LiquiditySide::Taker
+    )
+    .is_err());
 }
 
 #[test]
@@ -285,32 +279,28 @@ fn only_native_reduce_only_expiration_orders_have_zero_redemption_fee() {
             reduce,
             id,
         );
-        assert!(
-            SettlementAwarePolymarketFee
-                .get_commission(
-                    &ordinary,
-                    Quantity::from("0.000480"),
-                    Price::from("0.4000"),
-                    instrument
-                )
-                .unwrap_err()
-                .to_string()
-                .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND")
-        );
+        assert!(SettlementAwarePolymarketFee
+            .get_commission(
+                &ordinary,
+                Quantity::from("0.000480"),
+                Price::from("0.4000"),
+                instrument
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"));
     }
 }
 
 #[test]
 fn whole_order_collateral_floor_remains_one() {
     let instrument = &fixture::instruments("0.05", 18 * fixture::STEP)[0];
-    assert!(
-        order_notional(
-            instrument,
-            fixture::STEP,
-            Decimal::from_str("0.999999").unwrap()
-        )
-        .is_err()
-    );
+    assert!(order_notional(
+        instrument,
+        fixture::STEP,
+        Decimal::from_str("0.999999").unwrap()
+    )
+    .is_err());
     assert!(order_notional(instrument, fixture::STEP, Decimal::ONE).is_ok());
 }
 

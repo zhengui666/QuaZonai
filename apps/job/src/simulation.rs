@@ -2156,15 +2156,11 @@ fn run_with_strategy_and_spot(
                     .map_err(anyhow::Error::msg)?]
                 })
                 .default_leverage(native_decimal(&settings.leverage)?)
-                .fee_model(
-                    if domain::prediction::uses_native_fee(&settings.fee_model)
-                        || recorded_fees.is_some()
-                    {
-                        fill_fees.wrap(fee)
-                    } else {
-                        fee
-                    },
-                )
+                // Every fee model can fail at the actual fill, including a
+                // delayed fill after a frozen maker/taker policy has expired.
+                // Preserve that original cause before native shutdown or the
+                // generic unsettled-order checks can obscure it.
+                .fee_model(fill_fees.wrap(fee))
                 .fill_model(fill_model)
                 .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
                     DurationNanos::new(latency.base_latency_ns.get()),
