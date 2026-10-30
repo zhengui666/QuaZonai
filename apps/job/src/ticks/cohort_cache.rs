@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -1015,6 +1015,72 @@ pub fn concatenate(
     Ok(result)
 }
 
+#[derive(Deserialize)]
+struct SpotQuoteClock {
+    received_ns: DbCounter,
+}
+
+fn prepare_spot_views(
+    source: &Path,
+    output: &Path,
+    primary_end: u64,
+    full_end: u64,
+    limit: u64,
+) -> Result<(u64, u64)> {
+    let mut primary = BufWriter::new(
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join("research/catalog/spot-valuation.jsonl"))?,
+    );
+    let mut full = BufWriter::new(
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join("independent/catalog/spot-valuation.jsonl"))?,
+    );
+    let mut input = BufReader::new(File::open(source)?);
+    let mut line = Vec::new();
+    let (mut primary_bytes, mut full_bytes) = (0_u64, 0_u64);
+    loop {
+        line.clear();
+        if input.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+        let clock: SpotQuoteClock = serde_json::from_slice(&line)?;
+        let size = u64::try_from(line.len())?;
+        if clock.received_ns.get() < full_end {
+            full_bytes = full_bytes
+                .checked_add(size)
+                .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
+            if clock.received_ns.get() < primary_end {
+                primary_bytes = primary_bytes
+                    .checked_add(size)
+                    .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
+                ensure!(
+                    primary_bytes
+                        .checked_add(full_bytes)
+                        .is_some_and(|size| size <= limit),
+                    "TICK_PREPARATION_OUTPUT_LIMIT"
+                );
+                primary.write_all(&line)?;
+            }
+            ensure!(
+                primary_bytes
+                    .checked_add(full_bytes)
+                    .is_some_and(|size| size <= limit),
+                "TICK_PREPARATION_OUTPUT_LIMIT"
+            );
+            full.write_all(&line)?;
+        }
+    }
+    primary.flush()?;
+    full.flush()?;
+    primary.get_ref().sync_all()?;
+    full.get_ref().sync_all()?;
+    Ok((primary_bytes, full_bytes))
+}
+
 pub fn prepare_views(
     source: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
@@ -1084,6 +1150,23 @@ pub fn prepare_views(
             .map(|file| file.cohort_count.get())
             .sum(),
     )?;
+    let spot_sizes = if economic_sources
+        .iter()
+        .any(|(name, _)| name == "spot-valuation.jsonl")
+    {
+        for view in ["research/catalog", "independent/catalog"] {
+            fs::create_dir_all(output.join(view))?;
+        }
+        Some(prepare_spot_views(
+            &cache_path(&source, "spot-valuation.jsonl")?,
+            &output,
+            request.validation_end_ns.get(),
+            request.input.event_end_ns.get(),
+            maximum_output_bytes,
+        )?)
+    } else {
+        None
+    };
     let logical_bytes = full
         .files
         .iter()
@@ -1091,9 +1174,16 @@ pub fn prepare_views(
         .sum::<u64>()
         .checked_mul(2)
         .and_then(|bytes| {
-            economic_sources.iter().try_fold(bytes, |total, (_, size)| {
-                total.checked_add(size.checked_mul(2)?)
-            })
+            economic_sources
+                .iter()
+                .try_fold(bytes, |total, (name, size)| {
+                    if name == "spot-valuation.jsonl" {
+                        let (primary, full) = spot_sizes?;
+                        total.checked_add(primary.checked_add(full)?)
+                    } else {
+                        total.checked_add(size.checked_mul(2)?)
+                    }
+                })
         })
         .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
     let mut research_request = request.clone();
@@ -1104,9 +1194,13 @@ pub fn prepare_views(
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
         "maximum_output_bytes":maximum_output_bytes.to_string(),"output_bytes":"0"});
     if !economic_sources.is_empty() {
-        metadata["economic_sources"] = json!(economic_sources
+        metadata["economic_sources"] =
+            json!(economic_sources
             .iter()
-            .map(|(path, bytes)| json!({"path":path,"bytes":bytes.to_string()}))
+            .map(|(path, bytes)| if path == "spot-valuation.jsonl" {
+                let (primary, full) = spot_sizes.unwrap();
+                json!({"path":path,"bytes":full.to_string(),"research_bytes":primary.to_string()})
+            } else { json!({"path":path,"bytes":bytes.to_string()}) })
             .collect::<Vec<_>>());
     }
     let views_bytes =
@@ -1139,7 +1233,9 @@ pub fn prepare_views(
         }
         publish(&root.join(MANIFEST_FILE), manifest)?;
         for (name, _) in &economic_sources {
-            fs::hard_link(cache_path(&source, name)?, root.join(name))?;
+            if name != "spot-valuation.jsonl" {
+                fs::hard_link(cache_path(&source, name)?, root.join(name))?;
+            }
         }
     }
     load(&output.join("research/catalog"), &research_request)?;

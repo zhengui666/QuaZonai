@@ -1693,12 +1693,25 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         .unwrap(),
     )
     .unwrap();
-    let spot_quotes = format!(
+    let primary_quote = format!(
         "{}\n",
         json!({
             "instrument_id": BRIDGE, "received_ns": (DAY - 1).to_string(), "bid": "0.99", "ask": "1.01"
         })
     );
+    let heldout_quote = format!(
+        "{}\n",
+        json!({
+            "instrument_id": BRIDGE, "received_ns": (3 * DAY).to_string(), "bid": "0.98", "ask": "1.02"
+        })
+    );
+    let after_end = format!(
+        "{}\n",
+        json!({
+            "instrument_id": BRIDGE, "received_ns": (4 * DAY).to_string(), "bid": "0.97", "ask": "1.03"
+        })
+    );
+    let spot_quotes = format!("{primary_quote}{heldout_quote}{after_end}");
     std::fs::write(catalog.join("spot-valuation.jsonl"), &spot_quotes).unwrap();
     let prepared = directory.path().join("prepared");
     let metadata =
@@ -1708,14 +1721,16 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         .unwrap()
         .iter()
         .any(|file| file["path"] == "spot-valuation.jsonl"
-            && file["bytes"] == spot_quotes.len().to_string()));
-    for view in ["research", "independent"] {
-        assert_eq!(
-            std::fs::read_to_string(prepared.join(view).join("catalog/spot-valuation.jsonl"))
-                .unwrap(),
-            spot_quotes
-        );
-    }
+            && file["research_bytes"] == primary_quote.len().to_string()
+            && file["bytes"] == (primary_quote.len() + heldout_quote.len()).to_string()));
+    assert_eq!(
+        std::fs::read_to_string(prepared.join("research/catalog/spot-valuation.jsonl")).unwrap(),
+        primary_quote
+    );
+    assert_eq!(
+        std::fs::read_to_string(prepared.join("independent/catalog/spot-valuation.jsonl")).unwrap(),
+        format!("{primary_quote}{heldout_quote}")
+    );
     // Consume the official clipped request paired with the primary cache, not a mismatched full-window request.
     request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
     assert_eq!(request.research.input.event_end_ns.get(), 3 * DAY);
