@@ -15,4 +15,4 @@ evidence/** linguist-generated
 artifacts/** linguist-generated
 
 # Preserve the byte hashes of original paired benchmark observations.
-.opensdlc/tasks/core-engine-implementation/evidence/study-build-cache/results.csv -text
+.opensdlc/tasks/core-engine-implementation/evidence/study-build-cache/results.csv -text whitespace=cr-at-eol
