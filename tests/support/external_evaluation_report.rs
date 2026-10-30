@@ -53,7 +53,7 @@ fn simulation(request: &NativeSimulationRequestV1, row_count: u64) -> NativeSimu
         spot_cash_report: None,
         recorded_fee_replay: None,
         schema_version: SchemaV1,
-        native_version: "0.63.0".into(),
+        native_version: "0.67.0".into(),
         iterations: count(row_count),
         events: DbCounter::ZERO,
         orders: DbCounter::ZERO,
@@ -212,7 +212,7 @@ pub fn report(
         feature_artifact_ids: feature_artifact_ids.clone(),
         instrument_id: request.instrument_id.clone(),
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.63.0".into()),
+            ("nautilus-backtest".into(), "0.67.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
         ]),

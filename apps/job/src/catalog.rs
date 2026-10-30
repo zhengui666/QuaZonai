@@ -1,6 +1,8 @@
 //! Read an already-authorized, immutable native catalog mounted into this job.
 //! Native time ordering is necessary, not sufficient, evidence of historical availability.
 pub mod currencies;
+mod file_batches;
+pub use file_batches::{file_batch_session, FileBatchSession};
 
 use anyhow::{ensure, Result};
 use contracts::{
@@ -10,11 +12,13 @@ use contracts::{
 };
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::{Bar, BarType, Data},
+    data::{Bar, BarType, DataBatch, NautilusDataType},
     enums::{BarAggregation, PriceType},
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
+};
 use std::{
     collections::BTreeMap,
     io::{Read, Seek, SeekFrom},
@@ -49,6 +53,8 @@ impl NativeBarSeries {
 pub struct NativeMarketData {
     pub series: Vec<NativeBarSeries>,
     pub rows: usize,
+    pub execution_fees: Option<contracts::catalogs::FrozenMakerTakerFeesV1>,
+    pub fee_selection: Option<NativeBarSelectionV1>,
 }
 
 /// Select original baseline plus updates without copying earlier or future versions.
@@ -127,7 +133,7 @@ pub fn measure_catalog(
 pub fn quality_report(datasets: Vec<NativeDatasetQualityV1>) -> Result<NativeDataQualityReportV1> {
     Ok(NativeDataQualityReportV1 {
         schema_version: SchemaV1,
-        native_version: "nautilus-persistence/0.63.0".into(),
+        native_version: "nautilus-persistence/0.67.0".into(),
         checked_at: chrono::DateTime::from_timestamp_micros(chrono::Utc::now().timestamp_micros())
             .ok_or_else(|| anyhow::anyhow!("NATIVE_CLOCK"))?,
         datasets,
@@ -282,54 +288,60 @@ fn load_catalog_mode(
     allow_empty_series: bool,
 ) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
-    let mut catalog = open_catalog(root)?;
+    let catalog = open_catalog(root)?;
     let ids = types
         .iter()
         .map(|kind| kind.instrument_id().to_string())
         .collect::<Vec<_>>();
-    let instruments = catalog.instruments(
+    let instruments = catalog.query_instruments_filtered(
         Some(&ids),
         None,
         Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
     )?;
-    let bars = read_bars(&mut catalog, selection)?;
-    validate_native_mode(instruments, bars, selection, allow_empty_series)
+    let bars = read_bars(&catalog, selection)?;
+    let mut market = validate_native_mode(instruments, bars, selection, allow_empty_series)?;
+    market.execution_fees = crate::prediction::catalog_fees::load(root, selection)?;
+    market.fee_selection = Some(selection.clone());
+    Ok(market)
 }
 
-fn read_bars(
-    catalog: &mut ParquetDataCatalog,
-    selection: &NativeBarSelectionV1,
-) -> Result<Vec<Bar>> {
-    // The upstream query filters ts_init through the actual availability cutoff.
-    // Also push the half-open event interval into that same native query before
-    // applying the decoded-row cap. This preserves in-range late arrivals while
-    // excluding unrelated newer rows; callers cannot supply a SQL expression.
-    let event_interval = format!(
-        "ts_event >= {} AND ts_event < {}",
-        selection.event_start_ns.get(),
-        selection.event_end_ns.get()
-    );
-    // Native decoding is bounded instead of first materializing an arbitrary Vec.
-    // The query engine itself still runs under external job memory/CPU limits.
-    // File-scoped decoding preserves each historical encoding's schema metadata.
-    let query = catalog.query::<Bar>(
-        Some(selection.bar_types.clone()),
-        Some(UnixNanos::from(selection.event_start_ns.get())),
-        Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
-        Some(&event_interval),
-        None,
-        false,
+fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> Result<Vec<Bar>> {
+    // Filter availability and the half-open event interval in Arrow before native
+    // decoding. Same-timestamp records cannot enlarge a decoded batch beyond its
+    // fixed size; the first excess selected row is rejected before retention.
+    let query = CatalogQuery::new(NautilusDataType::Bar)
+        .with_identifiers(Some(selection.bar_types.clone()))
+        .with_range(
+            Some(UnixNanos::from(selection.event_start_ns.get())),
+            Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
+        );
+    let mut session = file_batch_session(
+        catalog,
+        query,
+        Some(selection.event_start_ns.get()..selection.event_end_ns.get()),
+        (selection.maximum_rows as usize)
+            .saturating_add(1)
+            .min(4096),
     )?;
     let mut bars = Vec::new();
-    for item in query {
-        ensure!(
-            bars.len() < selection.maximum_rows as usize,
-            "CATALOG_ROW_LIMIT"
-        );
-        let Data::Bar(bar) = item? else {
+    while let Some(batch) = session.next_batch()? {
+        let DataBatch::Bar(batch) = batch else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
         };
-        bars.push(bar);
+        for bar in batch.as_ref() {
+            // Observe the first excess row without retaining it. Do not use the
+            // collected native query API and only then apply this contract.
+            ensure!(
+                bars.len() < selection.maximum_rows as usize,
+                "CATALOG_ROW_LIMIT"
+            );
+            bars.push(*bar);
+        }
+    }
+    // File discovery groups series by path. Stable ordering only after the row
+    // budget has passed preserves each file's FIFO for equal availability.
+    if !bars.is_sorted_by_key(|bar| bar.ts_init) {
+        bars.sort_by_key(|bar| bar.ts_init);
     }
     Ok(bars)
 }
@@ -341,7 +353,7 @@ pub(crate) fn load_price_bars(
     selection: &NativeBarSelectionV1,
 ) -> Result<Vec<(BarType, Vec<Bar>)>> {
     let types = selected_types(selection)?;
-    let mut catalog = open_catalog(root)?;
+    let catalog = open_catalog(root)?;
     let mut series = types
         .into_iter()
         .map(|kind| (kind, Vec::<Bar>::new()))
@@ -351,7 +363,7 @@ pub(crate) fn load_price_bars(
         .enumerate()
         .map(|(index, (kind, _))| (kind.to_string(), index))
         .collect::<BTreeMap<_, _>>();
-    for bar in read_bars(&mut catalog, selection)? {
+    for bar in read_bars(&catalog, selection)? {
         let index = indices
             .get(&bar.bar_type.to_string())
             .ok_or_else(|| anyhow::anyhow!("CATALOG_UNREQUESTED_BAR_TYPE"))?;
@@ -511,5 +523,10 @@ fn validate_native_mode(
         rows > 0 && (allow_empty_series || series.iter().all(|series| !series.bars.is_empty())),
         "CATALOG_EMPTY_SELECTION"
     );
-    Ok(NativeMarketData { series, rows })
+    Ok(NativeMarketData {
+        series,
+        rows,
+        execution_fees: None,
+        fee_selection: None,
+    })
 }

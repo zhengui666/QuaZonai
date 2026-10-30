@@ -46,6 +46,8 @@ async fn native_lifecycle(case: StopCase) {
         starting_balances: vec![Money::from("100 USDC")],
         base_currency: Some(Currency::USDC()),
         account_type: AccountType::Cash,
+        // Preserve this original binary fixture's zero-fee scenario explicitly.
+        fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero())),
         liquidity_consumption: true,
         ..Default::default()
     };

@@ -804,6 +804,17 @@ impl NativeLedger {
         summary.nominal_settlement_usdc = self.adjustments.state.borrow().nominal_settlement_usdc;
         summary
     }
+    #[cfg(test)]
+    pub fn orders(&self) -> Vec<OrderAny> {
+        self.engine
+            .kernel()
+            .cache
+            .borrow()
+            .orders_refs(None, None, None, None, None)
+            .into_iter()
+            .map(|order| order.cloned())
+            .collect()
+    }
     fn check(&self) -> Result<()> {
         if let Some(error) = self.state.borrow().failure.as_deref() {
             anyhow::bail!("{error}");
@@ -845,8 +856,11 @@ fn bar_type(id: InstrumentId) -> BarType {
 mod tests {
     use super::*;
     use nautilus_model::{
+        enums::OrderStatus,
+        events::OrderEventAny,
         identifiers::Symbol,
         instruments::{CryptoPerpetual, CurrencyPair},
+        orders::Order,
     };
 
     fn spot() -> InstrumentAny {
@@ -933,15 +947,40 @@ mod tests {
         native
             .step(3_000_000_000, &instrument, 100.0, 10.0, None)
             .unwrap();
+        // 0.67 refreshes same-price BAR liquidity. Its four equal OHLC legs
+        // leave 0.5 / 4 BTC at the close when on_bar submits the IOC. The
+        // preceding 10-BTC BAR must not provide stale execution liquidity.
+        let submitted = Decimal::new(5, 1);
+        let filled = submitted / Decimal::from(4);
+        let price = Decimal::from(100);
+        let commission = filled * price * Decimal::from(100) / Decimal::from(10_000);
+        let orders = native.orders();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].quantity().as_decimal(), submitted);
+        assert_eq!(orders[0].filled_qty().as_decimal(), filled);
+        assert_eq!(orders[0].status(), OrderStatus::Canceled);
+        let fills = orders[0]
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                OrderEventAny::Filled(fill) => Some(fill),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].last_qty.as_decimal(), filled);
+        assert_eq!(fills[0].last_px.as_decimal(), price);
+        assert_eq!(fills[0].commission.unwrap().currency, Currency::USDC());
+        assert_eq!(fills[0].commission.unwrap().as_decimal(), commission);
         assert_eq!(
             native.balance(Currency::BTC()).unwrap().as_decimal(),
-            Decimal::new(5, 1)
+            filled
         );
         assert_eq!(
             native.balance(Currency::USDC()).unwrap().as_decimal(),
-            Decimal::new(9495, 1)
+            Decimal::from(1000) - filled * price - commission
         );
-        assert_eq!(native.summary().commissions["USDC"], Decimal::new(5, 1));
+        assert_eq!(native.summary().commissions["USDC"], commission);
         native
             .step(
                 4_000_000_000,

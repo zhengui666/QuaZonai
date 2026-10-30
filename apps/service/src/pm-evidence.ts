@@ -1,15 +1,15 @@
-import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord';
 import type { ConversationId, DocumentReader, JsonObject, TaskRuntime } from '@earendil-works/pi-durable';
 import type { EvidenceRef } from '../../../packages/contracts/src/pm.ts';
 import { NativeEvidencePart, readNativeEvidenceParts, retainNativeEvidence } from '../../research/plugins/native-evidence.ts';
+import { createBufferedJsonHash } from '../../research/src/native-json.ts';
 import type { PmScienceCheckpoint } from './pm-science.ts';
 import { object, Problem } from './facts.ts';
 
 /** Same canonical JSON SHA-256 as business digest, without duplicating a whole
  * native tape into an intermediate string or parsed object. */
 export function pmArtifactDigest(value: JsonObject): string {
-  const hash = createHash('sha256');
+  const hash = createBufferedJsonHash();
   function visit(item: JsonObject[string] | undefined): void {
     if (item === null || typeof item !== 'object') { hash.update(JSON.stringify(item) ?? 'null'); return; }
     if (Array.isArray(item)) {
@@ -21,7 +21,7 @@ export function pmArtifactDigest(value: JsonObject): string {
     }
     hash.update('}');
   }
-  visit(value); return hash.digest('hex');
+  visit(value); return hash.digest();
 }
 
 type Runtime<I, S, R, H extends object> = TaskRuntime<I, S, R, H>;

@@ -96,19 +96,16 @@ fn evaluate_mode(
     let mut frames = Vec::new();
     let mut points = Vec::new();
     let mut consumed = Some(0_u64);
+    let mut modules = crate::signals::SignalModuleCache::default();
     let ttl = u64::from(request.mandate.rebalance_schedule.target_ttl_seconds) * 1_000_000_000;
-    // ponytail: bounded prefix recomputation; stream/cache frames if this measured cost limits throughput.
+    // Prefix execution preserves fresh model state at each cutoff. Only compiled
+    // code is reused; the selected rows and explicit remaining fuel stay causal.
     for cutoff in cutoffs {
         let mut selection = request.source_selection.clone();
         selection.event_end_ns = cutoff;
         selection.decision_cutoff_ns = cutoff;
         let market = crate::catalog::load_catalog(catalog, &selection)?;
-        let prepare = if initial.is_some() {
-            crate::portfolio::prepare_observed_spot
-        } else {
-            crate::portfolio::prepare
-        };
-        let prepared = prepare(
+        let prepared = crate::portfolio::prepare_mode(
             &market,
             &selection,
             &request.mandate,
@@ -116,10 +113,15 @@ fn evaluate_mode(
             &request.assets,
             &models,
             |id| {
+                // The task already froze these bytes; preparation only reads them.
                 objects
                     .get(&id)
-                    .cloned()
+                    .map(Vec::as_slice)
                     .ok_or_else(|| anyhow::anyhow!("STUDY_MODEL_MISSING"))
+            },
+            crate::portfolio::PreparationMode {
+                observed_spot: initial.is_some(),
+                modules: Some(&mut modules),
             },
         )?;
         // Carry each model's unspent explicit budget across cutoffs. Do not
@@ -154,16 +156,23 @@ fn evaluate_mode(
             &source_assets,
             &prepared.slippage,
         )?;
-        let input = crate::portfolio::allocation_input(
+        let crate::portfolio::Prepared {
+            forecasts,
+            returns,
+            slippage,
+            ..
+        } = prepared;
+        let input = crate::portfolio::allocation_input_owned(
             &request.mandate,
             assets,
             "1".parse().unwrap(),
-            &prepared,
+            forecasts,
+            returns,
         );
         frames.push(crate::simulation::StudyInput {
             cutoff_ns: cutoff,
             input,
-            slippage: prepared.slippage,
+            slippage,
             bar_notionals,
             liquidity_maximum_age: request
                 .rolling_liquidity
@@ -188,6 +197,10 @@ fn evaluate_mode(
                 .collect(),
         });
     }
+    // No further forecasts consume code or artifacts; release both before the
+    // native replay allocates its own market and account state.
+    drop(modules);
+    drop(objects);
     let mut selection = request.source_selection.clone();
     selection.event_start_ns = request.evaluation_start_ns;
     let mut replay = NativeSimulationRequestV1 {

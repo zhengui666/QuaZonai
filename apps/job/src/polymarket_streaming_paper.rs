@@ -18,12 +18,13 @@ use nautilus_backtest::{
 use nautilus_common::{
     component::component_state, enums::ComponentState, logging::logger::LoggerConfig,
 };
+use nautilus_core::DurationNanos;
 use nautilus_execution::models::{
     fill::{DefaultFillModel, FillModelHandle},
     latency::{LatencyModelHandle, StaticLatencyModel},
 };
 use nautilus_model::{
-    data::{BarType, Data},
+    data::{BarType, Data, DataBatch},
     enums::{AccountType, BookType, OmsType},
     identifiers::{AccountId, ClientId, InstrumentId, StrategyId, TraderId, Venue},
     instruments::{Instrument, InstrumentAny},
@@ -181,10 +182,11 @@ impl PolymarketStreamingPaper {
                 })
                 .collect(),
             rows: 0,
+            execution_fees: None,
+            fee_selection: None,
         };
         // Existing native/account/currency and original fee-schedule predicates.
         crate::simulation::execution_market(&metadata, settings)?;
-        crate::prediction::validate_market(&metadata, settings)?;
         crate::prediction::target_window(
             &instruments,
             target.asof_ns.get(),
@@ -222,6 +224,7 @@ impl PolymarketStreamingPaper {
                 .build()?,
             shutdown_on_error: true,
             bypass_logging: true,
+            run_analysis: false,
             ..Default::default()
         };
         let data_config = config.data_engine.get_or_insert_default();
@@ -230,9 +233,10 @@ impl PolymarketStreamingPaper {
         data_config.time_bars_timestamp_on_close = true;
         data_config.validate_data_sequence = true;
         let mut engine = BacktestEngine::new(config)?;
-        let fee_model = crate::prediction::fee_model(settings);
         let fill_fees = crate::prediction::FillFeeObserver::default();
         let built = (|| -> Result<Rc<RefCell<ReplayStatus>>> {
+            let fee_model =
+                crate::prediction::fee_model(settings, &metadata, engine.kernel().clock.clone())?;
             engine.add_venue(
                 SimulatedVenueConfig::builder()
                     .venue(Venue::from("POLYMARKET"))
@@ -240,14 +244,14 @@ impl PolymarketStreamingPaper {
                     .account_type(AccountType::Cash)
                     .book_type(BookType::L1_MBP)
                     .base_currency(Currency::from_str(&settings.base_currency)?)
-                    .starting_balances(vec![Money::from_str(&format!(
+                    .starting_balances(vec![Money::from_str_exact(&format!(
                         "{} {}",
                         settings.starting_capital.as_decimal().to_plain_string(),
                         settings.base_currency
                     ))
                     .map_err(anyhow::Error::msg)?])
                     .default_leverage(rust_decimal::Decimal::ONE)
-                    .fee_model(fill_fees.wrap(fee_model.clone()))
+                    .fee_model(fill_fees.wrap(fee_model))
                     .fill_model(FillModelHandle::new(DefaultFillModel::new(
                         fill.prob_fill_on_limit
                             .as_decimal()
@@ -260,10 +264,10 @@ impl PolymarketStreamingPaper {
                         Some(fill.random_seed.get()),
                     )?))
                     .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
-                        latency.base_latency_ns.get().into(),
-                        latency.insert_latency_ns.get().into(),
-                        latency.update_latency_ns.get().into(),
-                        latency.cancel_latency_ns.get().into(),
+                        DurationNanos::new(latency.base_latency_ns.get()),
+                        DurationNanos::new(latency.insert_latency_ns.get()),
+                        DurationNanos::new(latency.update_latency_ns.get()),
+                        DurationNanos::new(latency.cancel_latency_ns.get()),
                     )))
                     // Match against actual quotes. Internal bars only schedule targets.
                     .bar_execution(false)
@@ -371,26 +375,29 @@ impl PolymarketStreamingPaper {
         // but only original quotes may supply this quote-only execution book.
         let quotes = batch
             .into_iter()
-            .filter(|event| matches!(event, Data::Quote(_)))
+            .filter_map(|event| match event {
+                Data::Quote(quote) => Some(quote),
+                _ => None,
+            })
             .collect::<Vec<_>>();
         if quotes.is_empty() {
             return Ok(());
         }
-        let covered_through = quotes
-            .iter()
-            .map(tick_identity)
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .map(|(_, _, at)| at)
-            .max();
+        let covered_through = quotes.iter().map(|quote| quote.ts_init.as_u64()).max();
         self.engine.clear_data();
-        // One homogeneous item per official add_data call preserves captured
-        // tie order (official iterator appends streams FIFO on equal timestamps).
-        for event in quotes {
-            self.engine.add_data(vec![event], None, true, true)?;
-        }
+        // One complete timestamp remains one run. Stable native typed storage
+        // preserves captured quote order without a stream per quote.
+        self.engine
+            .add_data_batch(DataBatch::Quote(quotes.into()), None, true, true)?;
         self.native_started = true;
-        let native_result = self.engine.run(None, None, None, true);
+        // Carry the last boundary forward so native gap timers and queued
+        // arrivals run before later quotes, as in the official streaming node.
+        let native_result = self.engine.run(
+            self.quote_covered_through.map(Into::into),
+            covered_through.map(Into::into),
+            None,
+            true,
+        );
         self.replay.borrow_mut().check_callback_error()?;
         self.fill_fees.check()?;
         native_result?;
@@ -456,8 +463,7 @@ impl PolymarketStreamingPaper {
         let canonical = if self.native_started {
             self.engine
                 .get_canonical_result()
-                .and_then(|value| value.to_bytes())
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(Into::into))
+                .map(|value| value.as_value().clone())
                 .ok()
         } else {
             None
@@ -518,7 +524,7 @@ impl PolymarketStreamingPaper {
         let mut report = json!({
             "schema_version": 1,
             "mode": "PUBLIC_DATA_DRIVEN_NATIVE_PAPER_SIMULATION",
-            "native_version": "0.63.0",
+            "native_version": "0.67.0",
             "native_account_id": "POLYMARKET-001",
             "native_trader_id": result.trader_id,
             "native_session_id": result.instance_id,

@@ -6,7 +6,7 @@ use nautilus_model::{
     instruments::CurrencyPair,
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 const START: u64 = 86_400_000;
 fn bundle() -> FrozenSpotCandleSourceV1 {
     let instrument = InstrumentAny::CurrencyPair(
@@ -29,7 +29,7 @@ fn bundle() -> FrozenSpotCandleSourceV1 {
         capture_id: Id::new(),
         method: SpotCashSourceMethodV1::HyperliquidPublicRestCandleSnapshot,
         network: SpotCashSourceNetworkV1::Mainnet,
-        native_version: "0.63.0".into(),
+        native_version: "0.67.0".into(),
         historical_availability: SpotCashHistoricalAvailabilityV1::Unverified,
         instrument_definition: serde_json::to_value(instrument).unwrap(),
         instrument_request_started_ns: count(1).unwrap(),

@@ -1,0 +1,12 @@
+warning: associated function `new` is never used
+   --> src/../../../../../../apps/job/src/signals.rs:164:12
+    |
+163 | impl WasmSignal {
+    | --------------- associated function in this implementation
+164 |     pub fn new(
+    |            ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `qz-signals-cache-bench` (bin "qz-signals-cache-bench") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 0.02s

@@ -13,7 +13,7 @@ test('portfolio projection retains exact nullable account facts without changing
       { partition: 'HELDOUT', metric: { secret: 'FINAL_OWNER_ONLY' } }],
     components: [{ index: 0, weight: '0.2500000000000000001', summary: { schema_version: 1, consumed_fuel: null,
       request: { repeated: true }, partitions: [{ partition: 'VALIDATION', metric, assets: [{ raw: 'OWNER_ARRAY' }] }] } }],
-    portfolio: { partition: 'VALIDATION', evidenceMode: 'HISTORICAL_REASSESSMENT', native_version: '0.63.0',
+    portfolio: { partition: 'VALIDATION', evidenceMode: 'HISTORICAL_REASSESSMENT', native_version: '0.67.0',
       statistics: [{ native_key: 'Calendar Geometric Daily Return', value: null, reason_code: 'NATIVE_STATISTIC_UNAVAILABLE' },
         { native_key: 'Calendar Observed Return Days', value: 61, reason_code: null }],
       summary: { balance: '3000.000001', snapshots: ['OWNER_ARRAY'] }, orders: count, returns_status: 'UNAVAILABLE',

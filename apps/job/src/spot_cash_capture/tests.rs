@@ -5,8 +5,9 @@ use contracts::{
     SchemaV1,
 };
 use nautilus_backtest::config::{BacktestEngineConfig, SimulatedVenueConfig};
-use nautilus_common::{clock::TestClock, logging::logger::LoggerConfig};
+use nautilus_common::{clock::VirtualClock, logging::logger::LoggerConfig};
 use nautilus_core::{UnixNanos, UUID4};
+use nautilus_execution::models::fee::{FeeModelHandle, MakerTakerFeeModel};
 use nautilus_model::{
     data::{BarType, Data},
     enums::{BookType, OmsType},
@@ -64,8 +65,6 @@ fn market() -> (NativeMarketData, Vec<ClosedBarSourceRow>) {
             .size_precision(2)
             .price_increment(Price::from("0.01"))
             .size_increment(Quantity::from("0.01"))
-            .maker_fee(Decimal::ZERO)
-            .taker_fee(Decimal::ZERO)
             .margin_init(Decimal::ONE)
             .margin_maint(Decimal::ONE)
             .ts_event(0_u64.into())
@@ -110,6 +109,8 @@ fn market() -> (NativeMarketData, Vec<ClosedBarSourceRow>) {
                 bars,
             }],
             rows: 2,
+            execution_fees: None,
+            fee_selection: None,
         },
         rows,
     )
@@ -288,7 +289,7 @@ fn bounded_capture_and_snapshot_event_identity_fail_closed() {
 
 #[test]
 fn native_msgbus_callback_order_is_retained_and_drop_unsubscribes() {
-    let clock = Rc::new(RefCell::new(TestClock::new()));
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
     clock
         .borrow_mut()
         .advance_time(UnixNanos::from(native_portfolio::FIRST_TIME), true);
@@ -317,7 +318,7 @@ fn native_msgbus_callback_order_is_retained_and_drop_unsubscribes() {
 
 #[test]
 fn native_callback_failure_survives_the_callback_boundary() {
-    let clock = Rc::new(RefCell::new(TestClock::new()));
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
     clock
         .borrow_mut()
         .advance_time(UnixNanos::from(native_portfolio::FIRST_TIME), true);
@@ -357,6 +358,7 @@ fn fresh_official_backtest_records_real_run_identity_without_claiming_no_flows()
                 .account_type(AccountType::Cash)
                 .book_type(BookType::L1_MBP)
                 .starting_balances(vec![Money::from("1000 USD")])
+                .fee_model(FeeModelHandle::new(MakerTakerFeeModel::zero()))
                 .allow_cash_borrowing(false)
                 .default_leverage(Decimal::ONE)
                 .bar_execution(true)
@@ -430,7 +432,7 @@ fn numeric_equality_does_not_allow_native_precision_rewrites() {
 #[test]
 fn bus_switch_is_detected_and_drop_cleans_the_original_without_replacing_current_bus() {
     let bus_a = msgbus::get_message_bus();
-    let clock = Rc::new(RefCell::new(TestClock::new()));
+    let clock = Rc::new(RefCell::new(VirtualClock::new()));
     clock
         .borrow_mut()
         .advance_time(UnixNanos::from(native_portfolio::FIRST_TIME), true);
@@ -459,7 +461,7 @@ fn attaching_to_a_bus_owned_by_another_engine_is_rejected() {
     let state = state(10);
     let original = msgbus::get_message_bus();
     msgbus::set_message_bus(Rc::new(RefCell::new(MessageBus::default())));
-    let result = Capture::attach(state, Rc::new(RefCell::new(TestClock::new())));
+    let result = Capture::attach(state, Rc::new(RefCell::new(VirtualClock::new())));
     assert!(result.is_err());
     msgbus::set_message_bus(original);
 }
@@ -467,7 +469,7 @@ fn attaching_to_a_bus_owned_by_another_engine_is_rejected() {
 #[test]
 fn cleanup_cannot_panic_or_record_more_when_the_current_other_bus_is_borrowed() {
     let bus_a = msgbus::get_message_bus();
-    let capture = Capture::attach(state(10), Rc::new(RefCell::new(TestClock::new()))).unwrap();
+    let capture = Capture::attach(state(10), Rc::new(RefCell::new(VirtualClock::new()))).unwrap();
     let retained = capture.state.clone();
     let bus_b = Rc::new(RefCell::new(MessageBus::default()));
     msgbus::set_message_bus(bus_b.clone());
@@ -504,8 +506,6 @@ fn actual_engine_instrument_definition_must_equal_the_frozen_native_definition()
                     .price_precision(2)
                     .price_increment(Price::from("0.01"))
                     .lot_size(Quantity::from("1"))
-                    .maker_fee(Decimal::ZERO)
-                    .taker_fee(Decimal::ZERO)
                     .margin_init(Decimal::ONE)
                     .margin_maint(Decimal::ONE)
                     .ts_event(0_u64.into())
@@ -534,6 +534,7 @@ fn actual_engine_instrument_definition_must_equal_the_frozen_native_definition()
                     .account_type(AccountType::Cash)
                     .book_type(BookType::L1_MBP)
                     .starting_balances(vec![Money::from("1000 USD")])
+                    .fee_model(FeeModelHandle::new(MakerTakerFeeModel::zero()))
                     .build()
                     .unwrap(),
             )

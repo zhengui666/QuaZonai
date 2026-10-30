@@ -5,13 +5,15 @@ use nautilus_backtest::{
     engine::BacktestEngine,
 };
 use nautilus_common::logging::logger::LoggerConfig;
+use nautilus_execution::models::fee::{FeeModelHandle, MakerTakerFeeModel};
 use nautilus_model::{
     data::{Bar, BarType, Data},
     enums::{AccountType, BookType, OmsType},
     instruments::{stubs::audusd_sim, Instrument, InstrumentAny},
     types::{Money, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+use rust_decimal::Decimal;
 use std::str::FromStr;
 
 #[test]
@@ -47,12 +49,7 @@ fn upstream_catalog_and_engine_preserve_an_original_equal_time_observation_batch
     catalog.write_to_parquet(&bars, None, None, None).unwrap();
     let readback = catalog
         .query::<Bar>(Some(vec![kind.to_string()]), None, None, None, None, true)
-        .unwrap()
-        .map(|value| match value.unwrap() {
-            Data::Bar(bar) => bar,
-            _ => panic!("wrong native record type"),
-        })
-        .collect::<Vec<_>>();
+        .unwrap();
     assert_eq!(readback, bars);
     assert!(readback.iter().all(|bar| bar.ts_init.as_u64() == received));
     let mut engine = BacktestEngine::new(BacktestEngineConfig {
@@ -73,6 +70,11 @@ fn upstream_catalog_and_engine_preserve_an_original_equal_time_observation_batch
                 .account_type(AccountType::Cash)
                 .book_type(BookType::L1_MBP)
                 .starting_balances(vec![Money::from("1000 USD")])
+                // Preserve the original audusd_sim instrument's maker/taker rates.
+                .fee_model(FeeModelHandle::new(MakerTakerFeeModel::new(
+                    Decimal::new(2, 5),
+                    Decimal::new(2, 5),
+                )))
                 .bar_execution(true)
                 .build()
                 .unwrap(),

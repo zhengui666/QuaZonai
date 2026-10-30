@@ -1,0 +1,2228 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 2aa7df89..dd81e83e 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -125,6 +125,8 @@ jobs:
+           npm ci --prefix apps/service --no-audit --no-fund
+           npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
+       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --target wasm32-unknown-unknown
++      - name: Check native formatting before compiling the scientific stack
++        run: cargo fmt --all -- --check
+       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+         with:
+           prefix-key: quazonai-science-v2
+diff --git a/.opensdlc/architecture.md b/.opensdlc/architecture.md
+index bc7ff89a..cf4797e0 100644
+--- a/.opensdlc/architecture.md
++++ b/.opensdlc/architecture.md
+@@ -96,7 +96,7 @@ Provider 与模型来自实际配置的官方目录，无静默模型回退。
+ 
+ 保留原数据目录、Instrument 定义、Universe 历史、来源、许可、质量、可得时间和研究版本。`event_at`、`available_at`、`decision_at` 不可互换；PIT 要求 `available_at <= decision_at`。抓取成功、当前成分或重述后的数值不冒充历史可得。
+ 
+-[公开行情准备](../runtimes/data/hyperliquid.md)按声明式文件/字段映射导入来源中全部市场的 BAR、逐笔、盘口快照与资金费率观测；下载和转换不按交易所或币种分支。合约与历史标识解析复用官方适配器，不用标识补造合约参数。币种原生属性随目录保留，通用读入/分区准备恢复它们。可选官方高精度格式保留十位小数，既有目录及默认科学构建不变；新格式消费者必须使用同一精度构建。原始文件与许可留在操作边界；当前参数、事件时间代理、快照盘口和本地读回不建立历史覆盖、PIT 或永续资金费结算能力。缺失映射或拒绝行产生不完整报告和失败退出；可确定标识但历史定义缺失则单独计数。科学入口保留 BAR 合同，并支持显式 TradeTick 单因子探索。
++[公开行情准备](../runtimes/data/hyperliquid.md)按声明式文件/字段映射导入来源中全部市场的 BAR、逐笔、盘口快照与资金费率观测；下载和转换不按交易所或币种分支。合约与历史标识解析复用官方适配器，不用标识补造合约参数。币种原生属性随目录保留，通用读入/分区准备恢复它们。可选官方高精度格式保留十位小数，目录由固定的当前 Nautilus 版本准备，默认与高精度格式的消费者分别使用匹配构建。原始文件与许可留在操作边界；当前参数、事件时间代理、快照盘口和本地读回不建立历史覆盖、PIT 或永续资金费结算能力。缺失映射或拒绝行产生不完整报告和失败退出；可确定标识但历史定义缺失则单独计数。科学入口保留 BAR 合同，并支持显式 TradeTick 单因子探索。
+ 
+ 全历史逐笔探索可显式选择 `EVENT_TIME_COHORT_CACHE_V1` 派生表示，复用原生数值转换和精确同时间归约，不冒充原生 TradeTick 目录。固定 32 字节帧保存派生统计标记和笔数；原七特征 ABI 不变，流式评价保留跨文件状态、标签和全局 fuel，并以在线 pooled covariance 汇总。主研究与独立视图只读各自声明的字节范围，导出配置绑定来源发布器持有的不可变副本；同源别名在新发布副本内部共享文件。标签同时支持旧 `FIXED_TRADE_COHORTS` 与显式 `FIXED_EVENT_TIME` 纳秒期限：使用同品种首个事件时间达到 `t+horizon_ns` 的完整成交组，实际跨度可能更长；第二单调 reader 保持标签内存常量，不向特征泄露未来。该路径不提供固定决策时钟、延迟模拟、微观结构执行、tick 组合或科学资格。
+ 
+@@ -122,6 +122,10 @@ Rust 仅保留必要计算与原生引擎接口。Wasm 使用有限燃料、内
+ 
+ 回测权益来自 Nautilus 的同一个共享资金账户。不能加总单 Alpha 曲线、拼接独立本金的验证折曲线或重复扣费。图表是原生权益的显示投影，不生成第二份权威净值。官方 0.67.0 不支持的合约定义原位更新仍明确拒绝，保留原始规格历史和稳定窗口能力。
+ 
++原生栈固定为 Nautilus Rust 0.67.0 与 Rust 1.99.1。普通 maker/taker 费率来自独立冻结的 venue 费用来源，目录准备、前缀身份和实际成交时钟共同绑定其币种、资产及有效期；请求费率不能代替来源。Paper 使用实际安装的官方费用策略，Polymarket、逐笔费用和现货场景保留各自来源。Money 的精确存储与费用模型的舍入规则分别验证，不自行重写原生费用公式。
++
++不可变本机目录使用官方文件选择、固定 Parquet RecordBatch 和官方 typed decoder，在保留超量行前失败；同时间戳不扩大解码批次。回放保留 typed batches、同时间来源顺序和唯一共享账户，缓存仅复用编译后的 Wasm 代码，每次执行仍新建状态并保留原燃料预算。
++
+ `catalog_ensemble_request` 通过[原生目录组合入口](../apps/job/src/catalog_ensemble.rs)扫描原目录全部已观测市场；成员共用因果特征流，正分数按原政策动态分配同一账户资金，不预选市场或均分固定市场预算。原来源费用归档逐时段流式读入，跨时段待成交订单继续绑定其原 BAR 的数量和费用池。Validation 与最终评价分别从原分界启动全新账户，分界前仅预热模型；最终每日收益原序列只投影给所有者。
+ 
+ 此入口的成交方向／费用特征来自原始逐笔记录，缺失值保留掩码。缺少原盘口、接收时钟及历史交易规则时，显式使用长仓、1 倍保证金的 pUSD 代理场景，并输出延迟、BAR 成交及费用适用性假设；它不建立真实盘口套利或交易所现金账户资格。独立评价的暴露规则保持不变，目录场景的容量和可交付目标在没有原生支持时保持不可用。
+diff --git a/.opensdlc/tasks/core-engine-implementation/verification.md b/.opensdlc/tasks/core-engine-implementation/verification.md
+index fbfea44a..8ea65816 100644
+--- a/.opensdlc/tasks/core-engine-implementation/verification.md
++++ b/.opensdlc/tasks/core-engine-implementation/verification.md
+@@ -118,10 +118,10 @@ Observed precedent from [PR 265](https://github.com/zhengui666/QuaZonai/pull/265
+ 
+ Use PR conversation comments, submitted reviews and inline threads together; validate the bot identity, full commit association, completed state and actual no-findings result. A connector wrapper that only returns PR-triggered workflow runs or the first page cannot prove all checks are complete. Fetch applicable run/job details and follow pagination if needed. Commit-status aggregation alone can omit check-run results.
+ 
+-## Available GitHub access: read-only investigation
++## GitHub access observations
+ 
+ The installed GitHub connector successfully identified `zhengui666`, searched remote branches and fetched PR 265 metadata/comments/reviews. It is the demonstrated read path for this session. These reads did not test write permissions.
+ 
+ Local `gh` is version 2.46.0. `gh auth status` reported an invalid `GH_TOKEN`; actual `gh api` requests failed with `Forbidden` under the session network proxy. That combination does not independently distinguish token validity from proxy denial. `git ls-remote origin refs/heads/dev` failed because no noninteractive HTTPS username could be obtained. Local `origin/main` still points at the older report baseline and there was no fetched `origin/dev` ref when inspected; do not infer remote dev from that stale local ref.
+ 
+-No credentials were exposed, login/configuration changed, push attempted, PR review requested, or external message sent by this verification worker. CLI access failure does not mean the GitHub connector is unavailable. Publication, final review requests and merge should use an authorized working capability and record their actual results.
++No credentials were exposed, login/configuration changed, push attempted, PR review requested, or external message sent by this verification worker. CLI access failure does not mean the GitHub connector is unavailable. The parent coordinator subsequently verified normal Git fetch and push, published the implementation branch, and created draft PR #267 through the installed connector. Earlier CLI failures above describe this reviewer process only; they are not a current publication blocker.
+diff --git a/.opensdlc/tasks/core-engine-performance/evidence/nautilus-latest.json b/.opensdlc/tasks/core-engine-performance/evidence/nautilus-latest.json
+index 9fe33687..ce41d349 100644
+--- a/.opensdlc/tasks/core-engine-performance/evidence/nautilus-latest.json
++++ b/.opensdlc/tasks/core-engine-performance/evidence/nautilus-latest.json
+@@ -145,5 +145,49 @@
+       "nautilus_trader-2.0.0rc8.tar.gz"
+     ]
+   },
+-  "scope": "registry and official source research only; QuaZonai dependency files have not been changed; no upgraded engine benchmark or build claimed"
++  "scope": "registry and official source research only; QuaZonai dependency files have not been changed; no upgraded engine benchmark or build claimed",
++  "fee_money_source_review_2026_10_30": {
++    "scope": "Official 0.67.0 package source inspection and implementation oracle corrections, distinct from historical 0.63 performance observations. Exact Money storage does not change MakerTaker commission rounding. A later lib run confirmed the 0.0008 USD serde assertion passed before the ordinary FromStr assertion failed; final corrected tests and actual CLI precision acceptance require execution on the delivered head.",
++    "official_sources": [
++      "https://static.crates.io/crates/nautilus-model/nautilus-model-0.67.0.crate",
++      "https://static.crates.io/crates/nautilus-execution/nautilus-execution-0.67.0.crate",
++      "https://static.crates.io/crates/nautilus-polymarket/nautilus-polymarket-0.67.0.crate"
++    ],
++    "maker_taker": {
++      "path": "nautilus-execution/src/models/fee.rs MakerTakerFeeModel::get_commission -> nautilus-model/src/fees.rs calculate_maker_taker_commission -> types/money.rs Money::from_decimal -> types/fixed.rs bankers_round",
++      "policy": "Official per-fill currency-precision half-even rounding; no public MakerTaker option selecting from_decimal_exact/native. Source rates are independent frozen venue policy; actual commission arithmetic stays upstream.",
++      "independent_usd_oracles": [
++        {
++          "unrounded": "0.0008",
++          "actual": "0.00"
++        },
++        {
++          "unrounded": "0.005",
++          "actual": "0.00"
++        },
++        {
++          "unrounded": "0.015",
++          "actual": "0.02"
++        },
++        {
++          "unrounded": "0.025",
++          "actual": "0.02"
++        },
++        {
++          "unrounded": "-0.015",
++          "actual": "-0.02"
++        }
++      ]
++    },
++    "exact_money": {
++      "path": "nautilus-model/src/types/money.rs Money::from_decimal_exact/from_str_exact/as_decimal; Display/Serialize use to_decimal_string; Deserialize calls from_str_exact; ordinary FromStr calls parse(exact=false)",
++      "policy": "Exact construction, explicit exact parsing, Display and serde preserve representable fractional digits below currency precision. Ordinary Money::from_str rounds to currency precision, so parsing the display of exact 0.0008 USD through that trait yields 0.00 USD. Exact roundtrip/accumulation, the ordinary parser's rounding, and commission construction are separate acceptance cases.",
++      "qz_input_boundary": "The six contract-required exact initial-capital/observed-balance inputs use the public Money::from_str_exact API and propagate unrepresentable-value errors. Canonical result Value stays original; account observer projects native as_decimal directly into DecimalValue. The official fee models retain their own rounding policies."
++    },
++    "polymarket": {
++      "path": "nautilus-polymarket/src/models.rs PolymarketFeeModel::get_commission",
++      "policy": "Fee-equivalent quantity*rate*price*(1-price); taker ToZero at 5 decimal places; maker negative fee-equivalent*rebate_rate rounded half-even at 5 places; then Money::from_decimal in original quote currency.",
++      "independent_oracle": "Original fixture rate 0.05, price 0.4: each quantity 0.0005 yields zero taker commission; combined quantity 0.001 yields 0.00001. Original source schedule is unchanged; fixture quantities isolate the new rounding boundaries."
++    }
++  }
+ }
+diff --git a/.opensdlc/tasks/core-engine-performance/report.md b/.opensdlc/tasks/core-engine-performance/report.md
+index 2b7118a9..47d9eb4f 100644
+--- a/.opensdlc/tasks/core-engine-performance/report.md
++++ b/.opensdlc/tasks/core-engine-performance/report.md
+@@ -2,7 +2,10 @@
+ 
+ 基线提交：`d7da6bff197bcbf272ba998ae0a15b2c1b25071c`。调研日期：2026-10-29。交付范围：代码审计、局部可复现实验、官方资料调研与实施设计；未修改生产计算逻辑。
+ 
+-**本次修订：将升级 Nautilus Rust 全家桶至 0.67.0、Rust 至 1.99.1 列为必做前置工作。按用户要求直接切换新版，不做旧版兼容、双版本运行或回退机制。** 当前源码仍为0.63.0；本文是待实施方案，不代表依赖已经升级。此前局部测量保留原版本标签，不能充当0.67.0性能结果。
++**本次修订：将升级 Nautilus Rust 全家桶至 0.67.0、Rust 至 1.99.1 列为必做前置工作。按用户要求直接切换新版，不做旧版兼容、双版本运行或回退机制。** 调研交付时基线源码为0.63.0；本文保留当时的设计和历史证据，后续实际实施状态见实施任务。此前局部测量保留原版本标签，不能充当0.67.0性能结果。
++
++
++实施基线已迁移至2026-10-30的远程dev；本文源码定位链接固定指向原审计提交，已退役控制面不恢复。当前实施范围与验证见[实施任务](../core-engine-implementation/task.md)。
+ 
+ ## 1. 结论与优先顺序
+ 
+@@ -19,7 +22,7 @@
+ 
+ ## 2. 当前计算栈、规模和 RT 定义
+ 
+-项目的核心计算是 Rust，不是 Python/pandas 热循环。版本来自 [job/Cargo.toml](../../../apps/job/Cargo.toml) 与 [Cargo.lock](../../../Cargo.lock)：Nautilus 0.63.0、Clarabel 0.11.1、Wasmi 2.0.0、ndarray 0.17.1、ndarray-stats 0.7.0、nalgebra 0.35.0、linregress 0.5.4；公开 Arrow 历史合同使用 56.2.0，依赖树同时存在 59.3.0。双版本本身只能证明依赖/构建成本，不能直接认定运行时发生跨版本复制。
++项目的核心计算是 Rust，不是 Python/pandas 热循环。版本来自 [job/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/Cargo.toml) 与 [Cargo.lock](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/Cargo.lock)：Nautilus 0.63.0、Clarabel 0.11.1、Wasmi 2.0.0、ndarray 0.17.1、ndarray-stats 0.7.0、nalgebra 0.35.0、linregress 0.5.4；公开 Arrow 历史合同使用 56.2.0，依赖树同时存在 59.3.0。双版本本身只能证明依赖/构建成本，不能直接认定运行时发生跨版本复制。
+ 
+ | 范围 | 当前/核实状态 | 本方案目标 |
+ | --- | --- | --- |
+@@ -31,7 +34,7 @@
+ 
+ 记号：A 为资产数，T 为单资产观察数，N≈A×T 为 BAR 总数，M 为模型数，K 为 Study 截止点数，F 为目录 Parquet 文件数，H 为 Runtime 已保存历史记录量。
+ 
+-现有限制必须进入实验设计：[portfolio.rs](../../../crates/contracts/src/portfolio.rs) L6–9 限制 A≤256、单资产收益观察≤100,000、收益值总数≤1,000,000；[study.rs](../../../apps/job/src/study.rs) L94–97 还限制所有 frame 累计收益值≤1,000,000。不能拿 A=256、T=100,000、K=256 的非法组合宣称该系统会分配数十 GB。N、M、燃料、输出大小还有独立上限，压测应先通过原准入。
++现有限制必须进入实验设计：[portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio.rs) L6–9 限制 A≤256、单资产收益观察≤100,000、收益值总数≤1,000,000；[study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L94–97 还限制所有 frame 累计收益值≤1,000,000。不能拿 A=256、T=100,000、K=256 的非法组合宣称该系统会分配数十 GB。N、M、燃料、输出大小还有独立上限，压测应先通过原准入。
+ 
+ RT 至少拆成三种指标：
+ 
+@@ -66,23 +69,23 @@ flowchart TD
+ 
+ | 编号 | 定位与机制 | 成本性质/触发条件 | 证据与优先级 |
+ | --- | --- | --- | --- |
+-| P01 | [managed.rs](../../../apps/job/src/managed.rs) L80–127：`to_writer`→`LimitedFile::write`→`File.write`，没有缓冲 | 大 JSON 的字段、标点、数字产生大量小写调用 | 源码+局部实测；第一批 |
+-| P02 | [simulation.rs](../../../apps/job/src/simulation.rs) L203：完整 `NativeTargetPointV1` 在横截面完整和到期检查之前 clone | 下一个目标存在时每 BAR 复制 A 个 targets 及字符串/Decimal；最坏 O(N×A) | 源码+结构微基准；第一批 |
+-| P03 | [simulation.rs](../../../apps/job/src/simulation.rs) L208–220：每 BAR 扫 `latest.values()`，完整时再求 max | 横截面验证最坏 O(N×A)，短路时更少 | 源码+结构微基准；第二批 |
+-| P04 | [portfolio.rs](../../../apps/job/src/portfolio.rs) L200–220：生成全部 forecast points 后，对每资产 `rev().find()` | 每模型构造 O(A×T) DTO；资产分块布局下查找约 T×A×(A−1)/2+A 次 | 源码+结构微基准；第一批 |
+-| P05 | [study.rs](../../../apps/job/src/study.rs) L75–102、[portfolio.rs](../../../apps/job/src/portfolio.rs) L110：每 cutoff 重跑 `prepare`，rolling liquidity 又 load | K 次全前缀读取/验证/预测；rolling 分支每 cutoff 额外一次同选择读取 | 源码确认；第一、二批分拆 |
+-| P06 | [forecast.rs](../../../apps/job/src/forecast.rs) L67、[signals.rs](../../../apps/job/src/signals.rs) L34–70：每次 `forecast_market` 新建 Engine/编译 Module | Study 中相同模型被编译 K 次；模块字节与校准对象也重复 clone/解析 | 源码确认；第一批；只复用编译代码 |
+-| P07 | [optimization.rs](../../../apps/job/src/optimization.rs) L128–146、440、451；[domain/portfolio.rs](../../../crates/domain/src/portfolio.rs) L705 | solver 前算协方差，结果校验在有关风险约束下再算；成功路径同结果连校验两次 | 源码确认；第二批，需保留失败结果转换 |
+-| P08 | [portfolio.rs](../../../apps/job/src/portfolio.rs) L308–328；[study.rs](../../../apps/job/src/study.rs) L126–135 | `Prepared` 中收益/预测 clone 到 input；每 frame 保留历史前缀 | 源码确认；先 move，再考虑有版本的共享存储 |
+-| P09 | [catalog.rs](../../../apps/job/src/catalog.rs) L244–260、334–337 | 每次 load 扫所有挂载 Parquet footer；每 BAR 生成 bar_type 字符串查索引 | 源码确认；重复 load 放大，小文件目录尤其敏感 |
+-| P10 | [simulation.rs](../../../apps/job/src/simulation.rs) L766、791、815、864–866 | 旧Vec<Data>接入、分析与JSON往返 | 0.67.0已重核：优先typed batch；保留as_value/run_analysis优化，避免把旧sort=false建议套给新typed接口 |
+-| P11 | [validation.rs](../../../apps/job/src/validation.rs) L159–184 | 简单双变量 OLS 使用 formula builder/full statistics，再只消费参数/预测 | 源码+官方 API；较低优先，先测校准占比 |
+-| P12 | [worker.rs](../../../apps/server/src/worker.rs) L660、779；[lifecycle.rs](../../../crates/store/src/lifecycle.rs) L1022 起 | 运行状态探测频繁访问持锁事务，同状态重复 UPDATE | 源码确认；控制面第二批 |
+-| P13 | [journal.rs](../../../apps/runtime/src/journal.rs) L181–183 | 每次容量检查 SUM 四张历史表，成本随 H 增长 | 原 SQL 局部实测；控制面第二批 |
+-| P14 | [lifecycle/native.rs](../../../crates/store/src/lifecycle/native.rs) 的结果发布路径 | 持项目相关锁验证结果、读取输入、持久化制品；其他同项目事务受阻 | 源码确认；需现场锁等待与 fsync 分解 |
+-| P15 | [supervisor.rs](../../../apps/runtime/src/supervisor.rs) L131–177、274–292 | 串行清理和等待整批 drive 完成延迟下一轮；create/bind 后下一轮才 start | 源码确认；短任务/清理高峰尾延迟候选 |
+-| P16 | [http.rs](../../../apps/runtime/src/http.rs) L176–203、[worker.rs](../../../apps/server/src/worker.rs) L727–757 | 通用4槽HTTP限制耦合上传与控制请求；上传暂时503可能结束当前driver | 源码确认；突发上传/取消竞争候选 |
+-| P17 | [materialize.rs](../../../apps/runtime/src/materialize.rs) L266–273、374–410，journal 的 BLOB 读写 | 全对象 Vec 驻留、多段复制和跨job重复上传 | 源码确认；先计bytes与Worker/Gateway峰值RSS |
++| P01 | [managed.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/managed.rs) L80–127：`to_writer`→`LimitedFile::write`→`File.write`，没有缓冲 | 大 JSON 的字段、标点、数字产生大量小写调用 | 源码+局部实测；第一批 |
++| P02 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L203：完整 `NativeTargetPointV1` 在横截面完整和到期检查之前 clone | 下一个目标存在时每 BAR 复制 A 个 targets 及字符串/Decimal；最坏 O(N×A) | 源码+结构微基准；第一批 |
++| P03 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L208–220：每 BAR 扫 `latest.values()`，完整时再求 max | 横截面验证最坏 O(N×A)，短路时更少 | 源码+结构微基准；第二批 |
++| P04 | [portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L200–220：生成全部 forecast points 后，对每资产 `rev().find()` | 每模型构造 O(A×T) DTO；资产分块布局下查找约 T×A×(A−1)/2+A 次 | 源码+结构微基准；第一批 |
++| P05 | [study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L75–102、[portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L110：每 cutoff 重跑 `prepare`，rolling liquidity 又 load | K 次全前缀读取/验证/预测；rolling 分支每 cutoff 额外一次同选择读取 | 源码确认；第一、二批分拆 |
++| P06 | [forecast.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/forecast.rs) L67、[signals.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/signals.rs) L34–70：每次 `forecast_market` 新建 Engine/编译 Module | Study 中相同模型被编译 K 次；模块字节与校准对象也重复 clone/解析 | 源码确认；第一批；只复用编译代码 |
++| P07 | [optimization.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/optimization.rs) L128–146、440、451；[domain/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio.rs) L705 | solver 前算协方差，结果校验在有关风险约束下再算；成功路径同结果连校验两次 | 源码确认；第二批，需保留失败结果转换 |
++| P08 | [portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L308–328；[study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L126–135 | `Prepared` 中收益/预测 clone 到 input；每 frame 保留历史前缀 | 源码确认；先 move，再考虑有版本的共享存储 |
++| P09 | [catalog.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/catalog.rs) L244–260、334–337 | 每次 load 扫所有挂载 Parquet footer；每 BAR 生成 bar_type 字符串查索引 | 源码确认；重复 load 放大，小文件目录尤其敏感 |
++| P10 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L766、791、815、864–866 | 旧Vec<Data>接入、分析与JSON往返 | 0.67.0已重核：优先typed batch；保留as_value/run_analysis优化，避免把旧sort=false建议套给新typed接口 |
++| P11 | [validation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/validation.rs) L159–184 | 简单双变量 OLS 使用 formula builder/full statistics，再只消费参数/预测 | 源码+官方 API；较低优先，先测校准占比 |
++| P12 | [worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L660、779；[lifecycle.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle.rs) L1022 起 | 运行状态探测频繁访问持锁事务，同状态重复 UPDATE | 源码确认；控制面第二批 |
++| P13 | [journal.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/journal.rs) L181–183 | 每次容量检查 SUM 四张历史表，成本随 H 增长 | 原 SQL 局部实测；控制面第二批 |
++| P14 | [lifecycle/native.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle/native.rs) 的结果发布路径 | 持项目相关锁验证结果、读取输入、持久化制品；其他同项目事务受阻 | 源码确认；需现场锁等待与 fsync 分解 |
++| P15 | [supervisor.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/supervisor.rs) L131–177、274–292 | 串行清理和等待整批 drive 完成延迟下一轮；create/bind 后下一轮才 start | 源码确认；短任务/清理高峰尾延迟候选 |
++| P16 | [http.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/http.rs) L176–203、[worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L727–757 | 通用4槽HTTP限制耦合上传与控制请求；上传暂时503可能结束当前driver | 源码确认；突发上传/取消竞争候选 |
++| P17 | [materialize.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/materialize.rs) L266–273、374–410，journal 的 BLOB 读写 | 全对象 Vec 驻留、多段复制和跨job重复上传 | 源码确认；先计bytes与Worker/Gateway峰值RSS |
+ 
+ ## 4. 数据、预测和 Study：先减少重复工作
+ 
+@@ -113,7 +116,7 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都
+ 
+ 缓存必须惰性编译、限制条目/内存、按原模型消费顺序触发失败。最多256个模型，每个Wasm原始字节可达2 MiB，编译IR/Engine还有额外开销；一次保留所有模块可能反而OOM。为缓存设任务内预算，记录命中/驱逐、IR估计与进程RSS，在实际不可估计IR大小时使用保守条目上限和进程内存余量。只有全部工作集容纳且无驱逐时，编译次数才可由K×M降到M；受限缓存按命中率评估，不承诺这个下界总能达到。
+ 
+-不能把“有状态 Wasm 只跑新增 BAR”当成本版本的透明优化：[forecast.rs](../../../apps/job/src/forecast.rs) L58–59 和 [signals.rs](../../../apps/job/src/signals.rs) L17–18 明确要求隔离执行状态。相同输出并不足以证明相同燃料、失败次序和独立评估语义。[Wasmi 2.0 官方说明](https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/)支持把编译代码和实例状态分开，但这不授权跨 fold 共享 globals/memory。
++不能把“有状态 Wasm 只跑新增 BAR”当成本版本的透明优化：[forecast.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/forecast.rs) L58–59 和 [signals.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/signals.rs) L17–18 明确要求隔离执行状态。相同输出并不足以证明相同燃料、失败次序和独立评估语义。[Wasmi 2.0 官方说明](https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/)支持把编译代码和实例状态分开，但这不授权跨 fold 共享 globals/memory。
+ 
+ 若未来需要真正 O(K×T)→O(T) 的模型增量执行，另立新的模型 ABI/研究合同：明确纯函数或状态转移、重放检查点、fuel 归属、失败恢复、切换 cutoff 和独立评估规则。当前建议先不走这条高风险路线。
+ 
+@@ -123,7 +126,7 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都
+ 
+ `allocation_input` 优先改为消费 `Prepared` 或分解字段 move，去掉完整收益矩阵和 forecasts 的临时深拷贝。保留 frame 结果的现有 wire schema，不用更改外部合同来做这个局部优化。
+ 
+-若测得 frame 总存储成为瓶颈，再设计 v2 的单一收益列块+frame 区间引用、manifest digest 和 reader；Arrow 的只读 slice 可服务任务内部。现有 [portfolio_history.rs](../../../crates/contracts/src/portfolio_history.rs) 是固定单 batch 的目标权重合同，不是任意收益历史容器，不能直接改变它的含义。Parquet 压缩解码也不是零拷贝；Arrow 对读入后的列块共享和 mmap 有帮助，但不等于从磁盘到整个引擎零拷贝。[Arrow IPC 官方 reader 文档](https://docs.rs/arrow-ipc/latest/arrow_ipc/reader/struct.FileReader.html)
++若测得 frame 总存储成为瓶颈，再设计 v2 的单一收益列块+frame 区间引用、manifest digest 和 reader；Arrow 的只读 slice 可服务任务内部。现有 [portfolio_history.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio_history.rs) 是固定单 batch 的目标权重合同，不是任意收益历史容器，不能直接改变它的含义。Parquet 压缩解码也不是零拷贝；Arrow 对读入后的列块共享和 mmap 有帮助，但不等于从磁盘到整个引擎零拷贝。[Arrow IPC 官方 reader 文档](https://docs.rs/arrow-ipc/latest/arrow_ipc/reader/struct.FileReader.html)
+ 
+ ## 5. 回测热循环与结果分析
+ 
+@@ -141,18 +144,18 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都
+ 
+ | 改动面 | 必须修改的位置/动作 |
+ | --- | --- |
+-| Rust依赖 | [apps/job/Cargo.toml](../../../apps/job/Cargo.toml) 的backtest、analysis、common、core、execution、portfolio、persistence、indicators、polymarket、data、model、trading全部`=0.67.0`，含dev model；[apps/runtime/Cargo.toml](../../../apps/runtime/Cargo.toml)的生产model和dev persistence一并更新；重建Cargo.lock，检查整条依赖链无残留0.63/0.66混用 |
+-| 工具链 | [rust-toolchain.toml](../../../rust-toolchain.toml)、[workspace rust-version](../../../Cargo.toml)、CI的RUSTUP_TOOLCHAIN、[容器action](../../../.github/actions/container/action.yml)、[应用Dockerfile](../../../deploy/docker/Dockerfile)统一1.99.1；安装同版wasm32 target；更新实际官方基础镜像digest |
+-| 镜像assembler | [build-native-image.mjs](../../../runtimes/native/build-native-image.mjs) L66–69/92/136的编译器、sysroot、目标和报告固定值；[native-job.Dockerfile](../../../runtimes/native/native-job.Dockerfile)的native-stack与[Runtime engine.rs](../../../apps/runtime/src/engine.rs)的NATIVE_STACK/engine_versions必须一致，否则新镜像被拒绝 |
+-| 编译结果核验 | [managed.rs](../../../apps/job/src/managed.rs) L227、[domain output.rs](../../../crates/domain/src/execution/output.rs) L129和[部署smoke](../../../deploy/docker/smoke.py)中的rustc要求同步更新；否则新Wasm编译会被旧版本检查拒绝 |
+-| 引擎/指标身份 | [contracts/portfolio.rs](../../../crates/contracts/src/portfolio.rs) 的NAUTILUS_EXECUTION_VERSION，job的catalog/forecast/validation/forward/simulation输出，以及domain对应验证器、fixtures统一0.67.0；不能只改报告字符串而继续跑旧库 |
++| Rust依赖 | [apps/job/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/Cargo.toml) 的backtest、analysis、common、core、execution、portfolio、persistence、indicators、polymarket、data、model、trading全部`=0.67.0`，含dev model；[apps/runtime/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/Cargo.toml)的生产model和dev persistence一并更新；重建Cargo.lock，检查整条依赖链无残留0.63/0.66混用 |
++| 工具链 | [rust-toolchain.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/rust-toolchain.toml)、[workspace rust-version](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/Cargo.toml)、CI的RUSTUP_TOOLCHAIN、[容器action](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/.github/actions/container/action.yml)、[应用Dockerfile](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/deploy/docker/Dockerfile)统一1.99.1；安装同版wasm32 target；更新实际官方基础镜像digest |
++| 镜像assembler | [build-native-image.mjs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/runtimes/native/build-native-image.mjs) L66–69/92/136的编译器、sysroot、目标和报告固定值；[native-job.Dockerfile](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/runtimes/native/native-job.Dockerfile)的native-stack与[Runtime engine.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/engine.rs)的NATIVE_STACK/engine_versions必须一致，否则新镜像被拒绝 |
++| 编译结果核验 | [managed.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/managed.rs) L227、[domain output.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/execution/output.rs) L129和[部署smoke](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/deploy/docker/smoke.py)中的rustc要求同步更新；否则新Wasm编译会被旧版本检查拒绝 |
++| 引擎/指标身份 | [contracts/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio.rs) 的NAUTILUS_EXECUTION_VERSION，job的catalog/forecast/validation/forward/simulation输出，以及domain对应验证器、fixtures统一0.67.0；不能只改报告字符串而继续跑旧库 |
+ | 发布材料 | 更新native目录文档、架构中的能力边界、构建receipt、SBOM/许可证与镜像登记；如wire schema变化，从contracts重新生成，不手改生成文件 |
+ 
+ 旧artifact和源数据只保留为历史文件，不重标版本、不作为新版任务输入兼容。新版只接受新版登记的目录、费用来源、MODEL编译产物和质量报告；需要的数据由新官方工具从授权原始来源重新准备，不实现旧catalog reader或旧报告转换层。
+ 
+ ### 5.3 目录API迁移：避免升级后先全量加载再限流
+ 
+-0.67.0的 `nautilus_persistence::backend::catalog` 已移至 `backend::parquet::catalog`，`CatalogPathPrefix`等类型按新公开路径导入。修改范围不止 [catalog.rs](../../../apps/job/src/catalog.rs)，还包括prediction、catalog-prepare、polymarket-history、history适配及测试。
++0.67.0的 `nautilus_persistence::backend::catalog` 已移至 `backend::parquet::catalog`，`CatalogPathPrefix`等类型按新公开路径导入。修改范围不止 [catalog.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/catalog.rs)，还包括prediction、catalog-prepare、polymarket-history、history适配及测试。
+ 
+ **性能关键变化：普通 `ParquetDataCatalog::query<T>` 现在返回 `Result<Vec<T>>`。** 旧代码的`query.take(maximum_rows+1)`不能机械改成`query.into_iter().take(...)`，因为这时全量解码已经发生；`query_record_batches`同样返回Vec，不是自动有界流。
+ 
+@@ -162,6 +165,8 @@ BAR/InstrumentClose热路径改为原生 `CatalogReader::query_batch_session(&Ca
+ 
+ 时间戳对齐会使batch超过名义chunk_size；原生merge可能同时保留各源一页，DataFusion排序也可能缓存。不能宣称内存严格等于一个chunk。必须覆盖同timestamp大批量、跨文件相同timestamp、超限行和排序spill；配置可用的原生资源预算并保留job cgroup限制。超限应失败，不截断后伪造完整回测。
+ 
++**实施验证修订（2026-10-30）：** 原生timestamp-aligned session会在返回前扩展完整同时间戳组，不能保证超限早停。最终适配使用官方文件选择、Parquet固定RecordBatch和官方typed decoder，在合并/保留前检查预算；查询批大小不超过`min(maximum_rows+1,4096)`。文件metadata、event/PIT过滤和稳定排序仍保留，详见实施任务的同时间戳坏页回归。
++
+ ### 5.4 Typed DataBatch：替代当前逐项 Data Vec 接入
+ 
+ 建议的新通道：`原生typed查询session → QZ时点/数量校验 → DataBatch / BatchView → BacktestEngine::add_data_batch → 同一原生engine回放`。让BAR尽量保持typed storage，减少`Vec<Bar>→Vec<Data>`包装与中间复制。可先完成有界读取和typed整批接入，再按5.5验证完整streaming。
+@@ -184,21 +189,25 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同
+ 
+ ### 5.6 费用、Money、结算：必须随升级重做的语义适配
+ 
+-0.67已移除instrument的maker/taker费率字段。现有 [simulation.rs](../../../apps/job/src/simulation.rs) L487–491、[domain/catalogs.rs](../../../crates/domain/src/catalogs.rs) L150–220和测试对这些字段的依赖必须删除并改为**独立冻结费用来源→venue FeeModel**验证。
++0.67已移除instrument的maker/taker费率字段。现有 [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L487–491、[domain/catalogs.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/catalogs.rs) L150–220和测试对这些字段的依赖必须删除并改为**独立冻结费用来源→venue FeeModel**验证。
+ 
+ 普通资产使用新版公开 `MakerTakerFeeModel::new(maker_rate, taker_rate)` 和 `set_override(instrument_id, MakerTakerFeeRates)`表达资产特定费率。保留当前QZ费用来源、币种、资产映射和冻结版本校验；不能只删instrument比较后接受请求中的任意费率。Polymarket原生价格相关费用及结算免交易佣金仍分开，不能被普通maker/taker表替代。按新API重建schema/fixture和费用来源登记，旧fee schema不继续支持。[官方execution 0.67.0发布包](https://static.crates.io/crates/nautilus-execution/nautilus-execution-0.67.0.crate)
+ 
+-新Money保留更细小数、佣金可累加到币种精度以下；因此新结果不要求和0.63旧舍入值逐字节一致。用独立十进制现金/费用oracle验收0.67语义，明确交付显示何时按币种取整，核对JSON/Arrow/DecimalValue边界。不能靠提前舍入让新引擎看起来与旧报告相同。
++需要区分**Money可表达的精度**和**所选原生费用模型实际采用的舍入**。0.67的`Money::from_decimal_exact`、`Money::from_str_exact`、Display与serde能保留原生范围内币种精度以下的小数；serde反序列化明确调用精确解析器。**普通`Money::from_str`仍按币种精度舍入**，不能与上述精确入口混用。官方`MakerTakerFeeModel`调用`calculate_maker_taker_commission → Money::from_decimal`，也逐fill按币种精度作half-even舍入，公开模型没有改用精确构造的选项。USD手续费计算值0.0008的实际佣金因此是0.00，不能承诺将这些已舍弃的小数累加回来，也不能自写佣金公式替换官方模型。
+ 
+-需要保持原生精度的适配使用`Money::from_decimal_exact`等精确入口并处理超范围/不可表示错误；`Money::new`和`Money::from_decimal`仍按币种精度舍入，不能作为精确值往返的通用入口。计算精度和展示精度分别验收。
++只有输入本来要求精确Money且没有另行费用舍入政策的适配，才使用公开精确入口并处理超范围/不可表示错误。QZ初始资本和原始observed余额的合同要求保留精确值，因此simulation、Paper、ensemble和observed估值入口改用`Money::from_str_exact`；`Money::new`、`Money::from_decimal`与普通`Money::from_str`不能作为精确值往返的通用入口。验收分别检查0.0008 USD的serde/精确文本往返与累加、普通FromStr得到0.00的差异、正式CLI请求到native初始snapshot再到QZ DecimalValue投影的保真，以及原生MakerTaker正负half-even临界值与逐fill舍入。新结果不要求与0.63逐字节相同，也不能提前舍入伪装一致。
++
++官方Polymarket 0.67模型的taker费先按`quantity × rate × price × (1-price)`计算，再向零截断到5位；maker rebate仍按5位half-even舍入，最后进入原币种Money。保持原始`fee_schedule`与独立规划上界检查，使用固定费率/价格的手算临界值检验；旧版因taker上舍入触发的微小fill错误案例不能机械保留为新版应当失败。两次各0.0005份、价格0.4、费率0.05的taker佣金各为0，而一次0.001份为0.00001；结算免佣金不得影响普通减仓。源码依据及2026-10-30复核说明见[版本与费用语义证据](evidence/nautilus-latest.json)。
+ 
+ 同时按新公开API核查到期排队成交、费用和redeem顺序、`LatencyModel`参数/Result、订阅字段列表化、枚举和Params构造变化；不增加旧签名shim。**动态instrument原位定义更新仍不是已获得能力**：0.67对同ID冲突定义仍拒绝。因此保留QZ动态定义窗口的明确不支持行为，不能为了升级验收删除历史定义变化或重建撮合器拼接净值。
+ 
++0.67的EMA改为SMA种子，首次可用观察与warmup掩码保持原逻辑，但启动特征值确实改变。旧线性价格fixture的EMA差值因此退化为常量，已用可辨识非线性fixture保留原严格独立OLS/QP断言，并另测真实forecast/Wasm首个可用值及原常量反例；见[EMA迁移证据](../core-engine-implementation/evidence/ema-seed-migration.md)。旧模型与校准需按新版重新生成／评估，不保留旧seed算法或冒称跨版本数值等价。
++
+ ### 5.7 新版仍可做的结果分析消冗余
+ 
+ 0.67的`CanonicalBacktestResult::as_value()`仍公开，用直接Value克隆消除现有JSON encode/decode往返。`run_analysis=false`仍可避免结束日志用途分析，正式结果与QZ日收益指标仍需完整计算并验证；不能以关闭正式统计换速度。`get_canonical_result()`仍内部调用`get_result()`，暂时接受这部分公开API边界内的重复工作，不复制上游算法。
+ 
+-以上均需在0.67上重新计时；上一稿0.63的局部收益不外推。本次只检查官方发布包及接口，尚未编译完整升级后的QuaZonai或运行新版OCI。
++以上均需在0.67上重新计时；上一稿0.63的局部收益不外推。2026-10-29的调研只检查官方发布包及接口；后续完整构建、原生执行与OCI验证状态在实施任务中独立登记。
+ 
+ ### 5.8 一次切换的发布与失败处理
+ 
+@@ -228,7 +237,7 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同
+ 
+ ### 6.1 先消除相同风险输入的重算
+ 
+-`sample_covariance` 当前把 `Vec<Vec<f64>>` flatten 成新 Array2，经 `ndarray-stats` 计算，再拆回 `Vec<Vec<f64>>`；solver 又建 nalgebra 矩阵进行 Cholesky。复杂度 O(A²T) 的协方差可能在带风险约束的结果验证中重复执行。[covariance.rs](../../../crates/domain/src/portfolio/covariance.rs) L36–47。
++`sample_covariance` 当前把 `Vec<Vec<f64>>` flatten 成新 Array2，经 `ndarray-stats` 计算，再拆回 `Vec<Vec<f64>>`；solver 又建 nalgebra 矩阵进行 Cholesky。复杂度 O(A²T) 的协方差可能在带风险约束的结果验证中重复执行。[covariance.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio/covariance.rs) L36–47。
+ 
+ 在单次可信计算内使用不可变 `PreparedRisk`：输入指纹、资产顺序、观察区间、ddof、连续收益数组、协方差及按需 Cholesky。solver 和本地后置验证共享同一已经验证的估计结果。避免把“结果自称已经验证”从不可信 wire 上传入 domain。Gateway/Store 对新输入与正式结果的独立验证必须保留；跨信任边界的验证不是冗余。
+ 
+@@ -238,7 +247,7 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同
+ 
+ ### 6.2 增量协方差是数值方案，不是简单缓存
+ 
+-这是一项**独立注册估计器的研究方案**：当前 [domain/portfolio.rs](../../../crates/domain/src/portfolio.rs) L496–519 会核对冻结的upstream class/version和ddof，原模型身份指向 `ndarray-stats::CorrelationExt::cov`。自行在线计算不能继续冒用这个身份，即使数学公式相同；须提供新模型身份/合同与独立验证，不重标历史试验。单纯在既有官方估计器内部合法启用等价后端也需记录构建身份与数值差异。
++这是一项**独立注册估计器的研究方案**：当前 [domain/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio.rs) L496–519 会核对冻结的upstream class/version和ddof，原模型身份指向 `ndarray-stats::CorrelationExt::cov`。自行在线计算不能继续冒用这个身份，即使数学公式相同；须提供新模型身份/合同与独立验证，不重标历史试验。单纯在既有官方估计器内部合法启用等价后端也需记录构建身份与数值差异。
+ 
+ 新方案可对前缀共同窗口采用稳定的在线/分块合并均值与中心二阶矩，避免每 cutoff 重扫全部历史。每次按登记的ddof归一化；迟到数据、修订、窗口成员改变则重建。不得用相减两个巨大累计平方和的方式处理小方差序列，以免严重消减误差。
+ 
+@@ -267,7 +276,7 @@ OLS 只需要系数/预测时，先评估同一个 linregress 官方库的 build
+ 
+ 给输出流添加有界 `BufWriter`（PoC 起点 64 KiB，后续扫描 8/64/256 KiB），保持 `LimitedFile` 的总配额和实际写入计数。成功顺序必须是：序列化完成→显式 flush/取回底层流且检查错误→检查非空/字节数→原文件权限冻结与 `sync_all`→记入 output index。错误路径不能发布 index；不依赖 Drop 隐式 flush，因为它无法报告 flush 错误。
+ 
+-也检查 [report.rs](../../../apps/job/src/report.rs) 的 pretty JSON File writer。不要把 `stdout().lock()` 与无缓冲 File 混为同一种问题。缓冲不能通过整份大 JSON `to_vec` 换取失控峰值内存，也不能取消 fsync。
++也检查 [report.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/report.rs) 的 pretty JSON File writer。不要把 `stdout().lock()` 与无缓冲 File 混为同一种问题。缓冲不能通过整份大 JSON `to_vec` 换取失控峰值内存，也不能取消 fsync。
+ 
+ [Rust BufWriter 官方文档](https://doc.rust-lang.org/std/io/struct.BufWriter.html)明确其适用于频繁小写，并要求显式处理 flush 错误。本次实测见第 9 节。
+ 
+@@ -281,7 +290,7 @@ Worker 运行中每轮涉及 `settle_unsubmitted`、`prepare_runtime_probe`、`n
+ 
+ ### 7.3 发布锁外预处理，锁内采纳
+ 
+-Worker 的输出下载与初步 `output_shape` 校验目前已经在锁外（[worker.rs](../../../apps/server/src/worker.rs) L845–857），不把它们再次“移到锁外”计作收益。真正需要缩短的是 Store [native.rs](../../../crates/store/src/lifecycle/native.rs) L469–731 内的锁持有区间，包括 L586 的原参数读取、L629 的 `output_bindings` 和 L656 的 publish/fsync。
++Worker 的输出下载与初步 `output_shape` 校验目前已经在锁外（[worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L845–857），不把它们再次“移到锁外”计作收益。真正需要缩短的是 Store [native.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle/native.rs) L469–731 内的锁持有区间，包括 L586 的原参数读取、L629 的 `output_bindings` 和 L656 的 publish/fsync。
+ 
+ 先读出冻结输入引用和 fence，在锁外完成这些可与不可变输入绑定的预检查和制品暂存。最后进入短事务，重新校验 active attempt、epoch、取消/期限、输入身份及政策仍有效，原子采纳结果/账本/回执。锁外通过不构成发布授权。
+ 
+@@ -467,6 +476,6 @@ PostgreSQL 侧结合 [pg_stat_statements](https://www.postgresql.org/docs/18/pgs
+ 
+ 在同一个0.67版本内，只消除复制/索引/缓冲的改动要求逐字节、逐值或严格canonical等价。跨0.63→0.67升级按5.9的新原生语义和独立oracle验收，不做旧兼容。涉及浮点归约/线性代数后端的改动按登记政策设容差，同时检查业务通过/失败，不只看平均误差。结果一致也不代表策略样本外效果通过。
+ 
+-可复用的现有入口包括 [simulation tests](../../../apps/job/tests/simulation.rs)、[signals benchmark](../../../apps/job/examples/benchmark_signals.rs)、[job tests](../../../apps/job/tests)、[runtime tests](../../../apps/runtime/tests)、[Store native worker tests](../../../crates/store/tests/native_worker.rs)、[Native Runtime CI](../../../.github/workflows/native-runtime.yml)。该 benchmark 现有仅5轮，不能原样充当稳定生产基线。科学核心变更需要重新构建实际镜像，执行真实输入/执行/取消/恢复，不能用旧二进制或编译成功代替验收。
++可复用的现有入口包括 [simulation tests](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/tests/simulation.rs)、[signals benchmark](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/examples/benchmark_signals.rs)、[job tests](https://github.com/zhengui666/QuaZonai/tree/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/tests)、[runtime tests](https://github.com/zhengui666/QuaZonai/tree/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/tests)、[Store native worker tests](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/tests/native_worker.rs)、[Native Runtime CI](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/.github/workflows/native-runtime.yml)。该 benchmark 现有仅5轮，不能原样充当稳定生产基线。科学核心变更需要重新构建实际镜像，执行真实输入/执行/取消/恢复，不能用旧二进制或编译成功代替验收。
+ 
+-本轮交付终点是经过复核的新版升级与优化方案及研究证据。尚未修改生产依赖，也未宣称完成升级、合并、部署或生产RT达标。下一项实施为U0/U1：将全项目工具链与原生依赖切到已核实的最新版本，再按U2完成新数据/费用/回放适配，建立新版性能基线并逐项优化。
++本文件记录方案交付阶段的设计及证据。2026-10-30起已在独立实施任务中执行U0/U1/U2和可验证的无损优化；构建、测试、性能测量、最终审查和合并状态以实施任务及PR实际回执为准，不能从这份历史方案推断生产RT或部署已达标。
+diff --git a/Makefile b/Makefile
+index 8ea9e0c9..243588bc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -37,7 +37,7 @@ check-web:
+ check-science:
+ 	$(CARGO) fmt --all -- --check
+ 	$(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p contracts -p domain --lib --tests
+-	QZ_PM_EXPORT_FIXTURE_DIR="$(QZ_PM_NATIVE_FIXTURE_DIR)" QZ_PM_OBSERVED_FIXTURE_DIR="$(QZ_PM_OBSERVED_FIXTURE_DIR)" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" $(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test factors --test catalog_factor_scan --test catalog_prefix --test science_cli --test live_progress --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test native_paper_target --test source_tools --test catalog_prepare --test polymarket_v2_source --test polymarket_execution_preflight --test ensemble_fit --test ensemble_refresh --test capital_curve --test spot_cash_runtime --test observed_spot --test study -- --test-threads=1
++	QZ_PM_EXPORT_FIXTURE_DIR="$(QZ_PM_NATIVE_FIXTURE_DIR)" QZ_PM_OBSERVED_FIXTURE_DIR="$(QZ_PM_OBSERVED_FIXTURE_DIR)" QZ_PM_FORWARD_FIXTURE_DIR="$(QZ_PM_FORWARD_FIXTURE_DIR)" $(CARGO) test --locked $(CARGO_PROFILE_FLAG) -p job --features $(SCIENCE_FEATURES) --lib --test catalog --test factors --test catalog_factor_scan --test catalog_prefix --test science_cli --test live_progress --test simulation --test allocation --test validation --test sealed --test native_sandbox_observer --test native_paper_target --test source_tools --test catalog_prepare --test polymarket_v2_source --test polymarket_execution_preflight --test ensemble_fit --test ensemble_refresh --test capital_curve --test spot_cash_runtime --test observed_spot --test study -- --test-threads=1
+ 
+ # Must use the matching built kernel. The service's integrated native test owns
+ # the real idea -> trials -> shared-account backtest -> portfolio -> receipt flow.
+diff --git a/apps/job/src/catalog_ensemble.rs b/apps/job/src/catalog_ensemble.rs
+index cb99aa01..276a023c 100644
+--- a/apps/job/src/catalog_ensemble.rs
++++ b/apps/job/src/catalog_ensemble.rs
+@@ -614,7 +614,7 @@ pub fn replay(
+                         .account_type(AccountType::Margin)
+                         .book_type(BookType::L1_MBP)
+                         .base_currency(Currency::from_str("pUSD")?)
+-                        .starting_balances(vec![Money::from_str(&format!(
++                        .starting_balances(vec![Money::from_str_exact(&format!(
+                             "{} pUSD",
+                             settings.starting_capital.as_decimal().to_plain_string()
+                         ))
+diff --git a/apps/job/src/observed_spot.rs b/apps/job/src/observed_spot.rs
+index 991120c1..14262edd 100644
+--- a/apps/job/src/observed_spot.rs
++++ b/apps/job/src/observed_spot.rs
+@@ -34,7 +34,6 @@ fn value_with_closed_rows_at(
+     asof: contracts::DbCounter,
+ ) -> Result<NativeObservedSpotValuationResultV1> {
+     use nautilus_model::types::Money;
+-    use std::str::FromStr;
+     let initial = &request.initial_state;
+     let mut available = initial.available_ns.max(initial.open_orders_available_ns);
+     let balances = domain::observed_spot::starting_balances(initial, &request.settings, available)?;
+@@ -58,7 +57,7 @@ fn value_with_closed_rows_at(
+     let mut total = contracts::DecimalValue::zero();
+     let mut legs = Vec::new();
+     for balance in balances {
+-        let native = Money::from_str(&format!(
++        let native = Money::from_str_exact(&format!(
+             "{} {}",
+             balance.amount.as_decimal().to_plain_string(),
+             balance.currency
+diff --git a/apps/job/src/operator/catalog_prepare.rs b/apps/job/src/operator/catalog_prepare.rs
+index 7d5d89cd..26f853e1 100644
+--- a/apps/job/src/operator/catalog_prepare.rs
++++ b/apps/job/src/operator/catalog_prepare.rs
+@@ -55,6 +55,9 @@ struct Arguments {
+     /// Explicit NativeDatasetSelectionV1, including original complete settlement groups if present.
+     #[arg(long)]
+     selection: PathBuf,
++    /// Independent frozen maker/taker venue policy; never inferred from request fee hints.
++    #[arg(long)]
++    fee_source: Option<PathBuf>,
+     /// New directory, containing catalog/ and a final catalog-metadata.json.
+     #[arg(long)]
+     output: PathBuf,
+@@ -231,7 +234,21 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
+             .clone(),
+     )?;
+     let sealed = partition == DataPartition::Sealed;
+-    let (observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
++    let (mut observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
++    if let Some(path) = &args.fee_source {
++        let source = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
++        ensure!(
++            observed
++                .execution_fees
++                .as_ref()
++                .is_none_or(|original| *original == source),
++            "CONFLICTING_EXECUTION_FEE_SOURCES"
++        );
++        observed.execution_fees = Some(source);
++    }
++    if let Some(source) = &observed.execution_fees {
++        crate::prediction::catalog_fees::validate_source_market(source, &observed)?;
++    }
+     let (instruments, closes) = originals(&args.catalog, &observed, &selected)?;
+     let definitions = serde_json::to_value(&instruments)?;
+     let universe = object
+@@ -262,14 +279,18 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
+         "quality".into(),
+         serde_json::to_value(quality_report(vec![measured.clone()])?)?,
+     );
+-    let execution_fees = serde_json::to_value(&observed.execution_fees)?;
+-    ensure!(
+-        object
+-            .get("execution_fees")
+-            .is_none_or(|declared| *declared == execution_fees),
+-        "DECLARED_EXECUTION_FEES_DIFFER_FROM_SOURCE"
++    if let Some(declared) = object.get("execution_fees") {
++        let declared: Option<contracts::catalogs::FrozenMakerTakerFeesV1> =
++            serde_json::from_value(declared.clone())?;
++        ensure!(
++            declared == observed.execution_fees,
++            "DECLARED_EXECUTION_FEES_DIFFER_FROM_SOURCE"
++        );
++    }
++    object.insert(
++        "execution_fees".into(),
++        serde_json::to_value(&observed.execution_fees)?,
+     );
+-    object.insert("execution_fees".into(), execution_fees);
+     let metadata: RuntimeCatalogMetadataV1 = serde_json::from_value(declaration)?;
+     ensure!(
+         metadata.provider_kind == "NAUTILUS_CATALOG"
+@@ -384,6 +405,13 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
+             && readback_closes == closes,
+         "CATALOG_ORIGINALS_READBACK_MISMATCH"
+     );
++    if let Some(path) = &args.fee_source {
++        let original = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
++        ensure!(
++            Some(&original) == observed.execution_fees.as_ref(),
++            "PREPARATION_FEE_SOURCE_CHANGED"
++        );
++    }
+     let bytes = serde_json::to_vec_pretty(&metadata)?;
+     let partial = output.join("catalog-metadata.json.partial");
+     let mut file = OpenOptions::new()
+diff --git a/apps/job/src/operator/history/capture.rs b/apps/job/src/operator/history/capture.rs
+index 8d1c17ca..13f5daa4 100644
+--- a/apps/job/src/operator/history/capture.rs
++++ b/apps/job/src/operator/history/capture.rs
+@@ -685,10 +685,19 @@ mod tests {
+     fn fixture(root: &Path, failure: &str) -> Arguments {
+         let start = START * 1_000_000_000;
+         let mut market = serde_json::json!({"id":"fixture", "conditionId":"condition", "slug":"fixture-window",
++            "version":"v1",
+             "question":"Synthetic test only", "outcomes":"[\"Up\",\"Down\"]", "clobTokenIds":"[\"123\",\"456\"]",
+             "startDate":"2026-07-29T20:30:00Z", "endDate":"2026-07-29T20:41:00Z", "active":true,
+             "closed":false,"acceptingOrders":true,"orderPriceMinTickSize":0.01,"orderMinSize":5,
+             "feeSchedule":{"rate":0.07,"exponent":1,"takerOnly":true,"rebateRate":0.2}});
++        // This controlled capture declares its original CTF market protocol;
++        // the production parser must reject absent or unsupported versions.
++        if failure == "protocol_missing" {
++            market.as_object_mut().unwrap().remove("version");
++        }
++        if failure == "protocol_v2" {
++            market["version"] = serde_json::json!("v2");
++        }
+         if failure == "fees" {
+             market.as_object_mut().unwrap().remove("feeSchedule");
+         }
+@@ -967,6 +976,13 @@ mod tests {
+         let root = tempfile::tempdir().unwrap();
+         let args = fixture(root.path(), "");
+         let archive = prepare(&args).unwrap();
++        assert_eq!(archive.source_metadata["market"]["version"], "v1");
++        for instrument in &archive.instruments {
++            assert_eq!(
++                serde_json::to_value(instrument).unwrap()["BinaryOption"]["info"]["market_version"],
++                "v1"
++            );
++        }
+         assert_eq!(archive.trades.len(), 1);
+         assert_eq!(archive.bars.len(), 1); // empty seconds and the untraded sibling stay empty
+         assert_eq!(
+@@ -1055,6 +1071,8 @@ mod tests {
+     #[test]
+     fn rejects_missing_or_contradictory_capture_evidence() {
+         for failure in [
++            "protocol_missing",
++            "protocol_v2",
+             "fees",
+             "date",
+             "metadata",
+@@ -1072,6 +1090,17 @@ mod tests {
+             let args = fixture(root.path(), failure);
+             let error = prepare(&args).expect_err(failure).to_string();
+             match failure {
++                "protocol_missing" | "protocol_v2" => {
++                    let protocol = if failure == "protocol_missing" {
++                        "missing"
++                    } else {
++                        "v2"
++                    };
++                    assert_eq!(
++                        error,
++                        format!("Unsupported Polymarket market protocol {protocol}; only v1 CTF markets are supported")
++                    );
++                }
+                 "same_transaction"
+                 | "mixed_missing_transaction"
+                 | "mixed_missing_transaction_reversed" => {
+diff --git a/apps/job/src/operator/preparation/polymarket_forward.rs b/apps/job/src/operator/preparation/polymarket_forward.rs
+index 52a41204..aac4d156 100644
+--- a/apps/job/src/operator/preparation/polymarket_forward.rs
++++ b/apps/job/src/operator/preparation/polymarket_forward.rs
+@@ -711,6 +711,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
+     let selection_path = args.output.join("selection.json");
+     write_new(&selection_path, &serde_json::to_vec(&selected)?)?;
+     let prepared = super::prepare(&super::Arguments {
++        fee_source: None,
+         catalog: native_root,
+         declaration: declaration_path,
+         selection: selection_path,
+diff --git a/apps/job/src/operator/preparation/polymarket_forward_tests.rs b/apps/job/src/operator/preparation/polymarket_forward_tests.rs
+index 9bf59d72..27a989e8 100644
+--- a/apps/job/src/operator/preparation/polymarket_forward_tests.rs
++++ b/apps/job/src/operator/preparation/polymarket_forward_tests.rs
+@@ -521,6 +521,7 @@ fn actual_native_catalog_preparation_preserves_warmup_and_source_bytes() {
+     write_new(&selected, &serde_json::to_vec(&selection).unwrap()).unwrap();
+     let prepared = root.join("warmup");
+     let metadata = super::super::prepare(&super::super::Arguments {
++        fee_source: None,
+         catalog: native,
+         declaration: declared,
+         selection: selected.clone(),
+diff --git a/apps/job/src/paper_node.rs b/apps/job/src/paper_node.rs
+index cf4aa03b..c72c85cf 100644
+--- a/apps/job/src/paper_node.rs
++++ b/apps/job/src/paper_node.rs
+@@ -701,7 +701,7 @@ impl PaperNode {
+                 oms_type: OmsType::Netting,
+                 account_type: AccountType::Margin,
+                 base_currency: Some(currency),
+-                starting_balances: vec![Money::from_str(&format!(
++                starting_balances: vec![Money::from_str_exact(&format!(
+                     "{} {}",
+                     settings.starting_capital.as_decimal().to_plain_string(),
+                     settings.base_currency
+diff --git a/apps/job/src/polymarket_streaming_paper.rs b/apps/job/src/polymarket_streaming_paper.rs
+index 771097d5..61d55641 100644
+--- a/apps/job/src/polymarket_streaming_paper.rs
++++ b/apps/job/src/polymarket_streaming_paper.rs
+@@ -244,7 +244,7 @@ impl PolymarketStreamingPaper {
+                     .account_type(AccountType::Cash)
+                     .book_type(BookType::L1_MBP)
+                     .base_currency(Currency::from_str(&settings.base_currency)?)
+-                    .starting_balances(vec![Money::from_str(&format!(
++                    .starting_balances(vec![Money::from_str_exact(&format!(
+                         "{} {}",
+                         settings.starting_capital.as_decimal().to_plain_string(),
+                         settings.base_currency
+diff --git a/apps/job/src/prediction.rs b/apps/job/src/prediction.rs
+index 45286ca6..91cfbfe8 100644
+--- a/apps/job/src/prediction.rs
++++ b/apps/job/src/prediction.rs
+@@ -206,12 +206,6 @@ pub(crate) fn validate_market(
+     market: &NativeMarketData,
+     settings: &NativeSimulationSettingsV1,
+ ) -> Result<()> {
+-    if matches!(
+-        settings.fee_model,
+-        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
+-    ) {
+-        catalog_fees::validate_market(market, settings)?;
+-    }
+     let selected = domain::prediction::uses_native_fee(&settings.fee_model);
+     for series in &market.series {
+         match &series.instrument {
+@@ -248,6 +242,12 @@ pub(crate) fn validate_market(
+             _ => ensure!(!selected, "POLYMARKET_FEE_REQUIRES_BINARY_OPTION"),
+         }
+     }
++    if matches!(
++        settings.fee_model,
++        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
++    ) {
++        catalog_fees::validate_market(market, settings)?;
++    }
+     Ok(())
+ }
+ 
+diff --git a/apps/job/src/prediction/catalog_fees.rs b/apps/job/src/prediction/catalog_fees.rs
+index 8930185c..f08b4fc7 100644
+--- a/apps/job/src/prediction/catalog_fees.rs
++++ b/apps/job/src/prediction/catalog_fees.rs
+@@ -31,11 +31,38 @@ pub(crate) fn load(
+     root: &Path,
+     selection: &NativeBarSelectionV1,
+ ) -> Result<Option<FrozenMakerTakerFeesV1>> {
+-    let file = match std::fs::File::open(root.join(MAKER_TAKER_FEES_FILE)) {
++    match load_file(&root.join(MAKER_TAKER_FEES_FILE), selection) {
++        Ok(source) => Ok(Some(source)),
++        Err(error)
++            if error
++                .downcast_ref::<std::io::Error>()
++                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
++        {
++            Ok(None)
++        }
++        Err(error) => Err(error),
++    }
++}
++
++/// Read an explicit independent operator input without changing its original file.
++pub(crate) fn load_file(
++    path: &Path,
++    selection: &NativeBarSelectionV1,
++) -> Result<FrozenMakerTakerFeesV1> {
++    let mut options = std::fs::OpenOptions::new();
++    options.read(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.custom_flags(
++            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
++        );
++    }
++    let file = match options.open(path) {
+         Ok(file) => file,
+-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+         Err(error) => return Err(error.into()),
+     };
++    ensure!(file.metadata()?.is_file(), "MAKER_TAKER_FEE_SOURCE_INVALID");
+     let mut bytes = Vec::new();
+     file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes)?;
+     ensure!(
+@@ -44,7 +71,35 @@ pub(crate) fn load(
+     );
+     let source = serde_json::from_slice(&bytes).context("MAKER_TAKER_FEE_SOURCE_INVALID")?;
+     domain::catalogs::maker_taker_fee_selection(&source, selection)?;
+-    Ok(Some(source))
++    Ok(source)
++}
++
++pub(crate) fn validate_source_market(
++    source: &FrozenMakerTakerFeesV1,
++    market: &NativeMarketData,
++) -> Result<()> {
++    // Verify native identifiers and exact Decimal representability before
++    // publishing a policy the official model could not install later.
++    native_model(source)?;
++    let rates: BTreeSet<_> = source
++        .rates
++        .iter()
++        .map(|rate| rate.instrument_id.as_str())
++        .collect();
++    for series in &market.series {
++        let instrument = &series.instrument;
++        ensure!(
++            matches!(
++                instrument,
++                InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_)
++            ) && instrument.venue().as_str() == source.venue
++                && instrument.quote_currency().code.as_str() == source.currency
++                && instrument.quote_currency().precision == source.currency_precision
++                && rates.contains(instrument.id().to_string().as_str()),
++            "MAKER_TAKER_FEE_SOURCE_MARKET_MISMATCH"
++        );
++    }
++    Ok(())
+ }
+ 
+ pub(crate) fn write(root: &Path, source: &FrozenMakerTakerFeesV1) -> Result<()> {
+@@ -129,6 +184,9 @@ pub(crate) fn validate_market(
+ }
+ 
+ /// Rates come only from the validated frozen source; no implicit zero default.
++/// Nautilus 0.67's official commission path uses Money::from_decimal, rounding
++/// each fill to currency precision with half-even ties. Its exact Money storage
++/// APIs do not change that fee-model policy; no alternate rounding is installed.
+ pub(crate) fn native_model(source: &FrozenMakerTakerFeesV1) -> Result<MakerTakerFeeModel> {
+     domain::catalogs::maker_taker_fee_source(source)?;
+     let exact = |value: &contracts::DecimalValue| {
+diff --git a/apps/job/src/prediction/catalog_fees/tests.rs b/apps/job/src/prediction/catalog_fees/tests.rs
+index 41cffbd6..341b3351 100644
+--- a/apps/job/src/prediction/catalog_fees/tests.rs
++++ b/apps/job/src/prediction/catalog_fees/tests.rs
+@@ -43,7 +43,7 @@ fn order(instrument: &InstrumentAny, side: LiquiditySide) -> OrderAny {
+     let mut order = OrderTestBuilder::new(OrderType::Market)
+         .instrument_id(instrument.id())
+         .side(OrderSide::Buy)
+-        .quantity(Quantity::from("2"))
++        .quantity(Quantity::from("1000"))
+         .build();
+     order.set_liquidity_side(side);
+     order
+@@ -79,20 +79,26 @@ fn set_time(clock: &Rc<RefCell<dyn Clock>>, value: u64) {
+ }
+ 
+ #[test]
+-fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
++fn official_override_uses_currency_rounding_including_signed_half_even_ties() {
+     let (model, _) = model();
+     let instrument = InstrumentAny::CurrencyPair(gbpusd_sim());
+-    // Independently fixed oracle: two units at 0.4 => 0.8 notional;
+-    // 0.001 charges 0.0008 USD, -0.0002 rebates 0.00016 USD.
+-    for (side, expected) in [
+-        (LiquiditySide::Taker, "0.0008"),
+-        (LiquiditySide::Maker, "-0.00016"),
++    // Independently fixed decimal oracle. Native MakerTaker uses Money::from_decimal,
++    // which rounds each fill to USD's two decimals, including half-even ties.
++    for (side, quantity, price, expected) in [
++        (LiquiditySide::Taker, "2", "0.40000", "0.00"), // 0.0008
++        (LiquiditySide::Maker, "2", "0.40000", "0.00"), // -0.00016
++        (LiquiditySide::Taker, "5", "1.00000", "0.00"), // 0.005 -> even 0.00
++        (LiquiditySide::Taker, "15", "1.00000", "0.02"), // 0.015 -> even 0.02
++        (LiquiditySide::Taker, "25", "1.00000", "0.02"), // 0.025 -> even 0.02
++        (LiquiditySide::Maker, "25", "1.00000", "0.00"), // -0.005 -> even 0.00
++        (LiquiditySide::Maker, "75", "1.00000", "-0.02"), // -0.015 -> even -0.02
++        (LiquiditySide::Maker, "125", "1.00000", "-0.02"), // -0.025 -> even -0.02
+     ] {
+         let commission = model
+             .get_commission(
+                 &order(&instrument, side),
+-                Quantity::from("2"),
+-                Price::from("0.40000"),
++                Quantity::from(quantity),
++                Price::from(price),
+                 &instrument,
+             )
+             .unwrap();
+@@ -100,6 +106,7 @@ fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
+             commission.as_decimal(),
+             Decimal::from_str_exact(expected).unwrap()
+         );
++        assert_eq!(commission.currency, instrument.quote_currency());
+         let encoded = serde_json::to_vec(&commission).unwrap();
+         assert_eq!(
+             serde_json::from_slice::<Money>(&encoded).unwrap(),
+@@ -109,24 +116,72 @@ fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
+             Money::from_str(&commission.to_string()).unwrap(),
+             commission
+         );
+-        assert_eq!(
+-            (commission + commission).as_decimal(),
+-            Decimal::from_str_exact(expected).unwrap() * Decimal::from(2)
+-        );
+     }
+-    let explicit_zero = InstrumentAny::CurrencyPair(audusd_sim());
++    let zero = InstrumentAny::CurrencyPair(audusd_sim());
+     assert_eq!(
+         model
+             .get_commission(
+-                &order(&explicit_zero, LiquiditySide::Taker),
+-                Quantity::from("2"),
+-                Price::from("0.40000"),
+-                &explicit_zero
++                &order(&zero, LiquiditySide::Taker),
++                Quantity::from("100"),
++                Price::from("1.00000"),
++                &zero
+             )
+             .unwrap()
+             .as_decimal(),
+         Decimal::ZERO
+     );
++    let order = order(&instrument, LiquiditySide::Taker);
++    let half = model
++        .get_commission(
++            &order,
++            Quantity::from("5"),
++            Price::from("1.00000"),
++            &instrument,
++        )
++        .unwrap();
++    let combined = model
++        .get_commission(
++            &order,
++            Quantity::from("10"),
++            Price::from("1.00000"),
++            &instrument,
++        )
++        .unwrap();
++    assert_eq!((half + half).as_decimal(), Decimal::ZERO);
++    assert_eq!(
++        combined.as_decimal(),
++        Decimal::from_str_exact("0.01").unwrap()
++    );
++}
++
++#[test]
++fn exact_money_serde_and_exact_parser_preserve_digits_while_standard_from_str_rounds() {
++    let currency = nautilus_model::types::Currency::USD();
++    for (value, doubled) in [("0.0008", "0.0016"), ("-0.00016", "-0.00032")] {
++        let amount = Decimal::from_str_exact(value).unwrap();
++        let exact = Money::from_decimal_exact(amount, currency).unwrap();
++        assert_eq!(exact.as_decimal(), amount);
++        assert_eq!(exact.to_string(), format!("{value} USD"));
++        assert_eq!(
++            serde_json::from_slice::<Money>(&serde_json::to_vec(&exact).unwrap()).unwrap(),
++            exact
++        );
++        assert_eq!(Money::from_str_exact(&exact.to_string()).unwrap(), exact);
++        // Upstream serde deliberately calls the exact parser. The ordinary
++        // FromStr trait is a different API and still rounds to USD cents.
++        assert_eq!(
++            Money::from_str(&exact.to_string()).unwrap().as_decimal(),
++            Decimal::ZERO
++        );
++        assert_eq!(
++            (exact + exact).as_decimal(),
++            Decimal::from_str_exact(doubled).unwrap()
++        );
++        assert_eq!(
++            Money::from_decimal(amount, currency).unwrap().as_decimal(),
++            Decimal::ZERO
++        );
++    }
+ }
+ 
+ #[test]
+diff --git a/apps/job/src/prediction/fee_tests.rs b/apps/job/src/prediction/fee_tests.rs
+index 77b87843..91f2079a 100644
+--- a/apps/job/src/prediction/fee_tests.rs
++++ b/apps/job/src/prediction/fee_tests.rs
+@@ -70,49 +70,50 @@ fn buy_and_sell_sub_collateral_fills_preserve_original_official_money() {
+ }
+ 
+ #[test]
+-fn five_decimal_rounding_is_checked_per_fill_against_exact_frozen_bound() {
++fn native_taker_truncation_and_maker_rounding_match_independent_decimal_boundaries() {
+     let instrument = &fixture::instruments("0.05", 18 * fixture::STEP)[0];
+-    for (quantity, accepted) in [
+-        ("0.000400", true),
+-        ("0.000480", false),
+-        ("0.000499", false),
+-        ("0.000500", true),
++    // Original source info remains rate=0.05, rebateRate=0.2, exponent=1.
++    // At p=0.4 the exact taker amount is quantity * 0.012. Nautilus 0.67
++    // truncates taker commissions to five places; maker rebates use half-even.
++    for (liquidity, quantity, expected) in [
++        (LiquiditySide::Taker, "0.000400", "0"),
++        (LiquiditySide::Taker, "0.000480", "0"),
++        (LiquiditySide::Taker, "0.000833", "0"),
++        (LiquiditySide::Taker, "0.000834", "0.00001"),
++        (LiquiditySide::Taker, "0.001666", "0.00001"),
++        (LiquiditySide::Taker, "0.001667", "0.00002"),
++        (LiquiditySide::Maker, "0.002083", "0"),
++        (LiquiditySide::Maker, "0.002084", "-0.00001"),
++        (LiquiditySide::Maker, "0.006250", "-0.00002"),
+     ] {
+         let order = order(
+             instrument,
+             OrderSide::Buy,
+-            LiquiditySide::Taker,
++            liquidity,
+             false,
+             "rounding-fill",
+         );
+         let qty = Quantity::from(quantity);
+         let px = Price::from("0.4000");
+-        let oracle = PolymarketFeeModel
++        let official = PolymarketFeeModel
+             .get_commission(&order, qty, px, instrument)
+             .unwrap();
+-        let actual = SettlementAwarePolymarketFee.get_commission(&order, qty, px, instrument);
+-        if accepted {
+-            assert_eq!(actual.unwrap(), oracle, "quantity={quantity}");
+-        } else {
+-            assert_eq!(oracle.as_decimal(), Decimal::from_str("0.00001").unwrap());
+-            assert!(
+-                actual
+-                    .unwrap_err()
+-                    .to_string()
+-                    .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"),
+-                "quantity={quantity}"
+-            );
+-        }
++        let actual = SettlementAwarePolymarketFee
++            .get_commission(&order, qty, px, instrument)
++            .unwrap();
++        assert_eq!(actual, official, "quantity={quantity}");
++        assert_eq!(
++            actual.as_decimal(),
++            Decimal::from_str(expected).unwrap(),
++            "quantity={quantity}"
++        );
++        let bound = BigDecimal::from_str(quantity).unwrap()
++            * BigDecimal::from_str("0.4").unwrap()
++            * domain::prediction::planning_fee(&native_payload(instrument).unwrap())
++                .unwrap()
++                .as_decimal();
++        assert!(BigDecimal::from_str(&actual.as_decimal().to_string()).unwrap() <= bound);
+     }
+-    let bound = bigdecimal::BigDecimal::from_str("0.000480").unwrap()
+-        * bigdecimal::BigDecimal::from_str("0.4").unwrap()
+-        * domain::prediction::planning_fee(&native_payload(instrument).unwrap())
+-            .unwrap()
+-            .as_decimal();
+-    assert_eq!(
+-        bound,
+-        bigdecimal::BigDecimal::from_str("0.00000960096").unwrap()
+-    );
+ }
+ 
+ #[test]
+@@ -128,7 +129,7 @@ fn two_small_native_fills_are_not_combined_before_rounding_or_oracle_comparison(
+     let px = Price::from("0.4000");
+     let mut total = Decimal::ZERO;
+     for _ in 0..2 {
+-        let qty = Quantity::from("0.000250");
++        let qty = Quantity::from("0.000500");
+         let oracle = PolymarketFeeModel
+             .get_commission(&order, qty, px, instrument)
+             .unwrap();
+@@ -139,12 +140,12 @@ fn two_small_native_fills_are_not_combined_before_rounding_or_oracle_comparison(
+         total += actual.as_decimal();
+     }
+     assert_eq!(total, Decimal::ZERO);
+-    assert!(
++    assert_eq!(
+         PolymarketFeeModel
+-            .get_commission(&order, Quantity::from("0.000500"), px, instrument)
++            .get_commission(&order, Quantity::from("0.001000"), px, instrument)
+             .unwrap()
+-            .as_decimal()
+-            > total
++            .as_decimal(),
++        Decimal::from_str("0.00001").unwrap()
+     );
+ }
+ 
+@@ -279,16 +280,26 @@ fn only_native_reduce_only_expiration_orders_have_zero_redemption_fee() {
+             reduce,
+             id,
+         );
+-        assert!(SettlementAwarePolymarketFee
++        let charged = SettlementAwarePolymarketFee
+             .get_commission(
+                 &ordinary,
+-                Quantity::from("0.000480"),
++                Quantity::from("2.000000"),
+                 Price::from("0.4000"),
+-                instrument
++                instrument,
+             )
+-            .unwrap_err()
+-            .to_string()
+-            .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"));
++            .unwrap();
++        assert_eq!(charged.as_decimal(), Decimal::from_str("0.024").unwrap());
++        assert_eq!(
++            charged,
++            PolymarketFeeModel
++                .get_commission(
++                    &ordinary,
++                    Quantity::from("2.000000"),
++                    Price::from("0.4000"),
++                    instrument
++                )
++                .unwrap()
++        );
+     }
+ }
+ 
+@@ -387,10 +398,10 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
+     let same_run = observer.clone();
+     let observed = observer.wrap(FeeModelHandle::new(SettlementAwarePolymarketFee));
+     let handle_clone = observed.clone();
+-    let first = order(
++    let mut first = order(
+         &instruments[0],
+         OrderSide::Buy,
+-        LiquiditySide::Taker,
++        LiquiditySide::NoLiquiditySide,
+         false,
+         "first-fill",
+     );
+@@ -403,10 +414,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
+             None,
+         )
+         .unwrap_err();
+-    assert_eq!(
+-        error.to_string(),
+-        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+-    );
++    assert_eq!(error.to_string(), "Liquidity side not set");
+     let later = order(
+         &instruments[1],
+         OrderSide::Buy,
+@@ -424,6 +432,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
+         )
+         .unwrap_err();
+     assert_eq!(error.to_string(), "POLYMARKET_FILL_QUANTITY_PRICE_RANGE");
++    first.set_liquidity_side(LiquiditySide::Taker);
+     let qty = Quantity::from("2.000000");
+     let px = Price::from("0.4000");
+     assert_eq!(
+@@ -435,7 +444,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
+             .unwrap()
+     );
+     let failure = same_run.failure().unwrap();
+-    assert_eq!(failure.reason, "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
++    assert_eq!(failure.reason, "Liquidity side not set");
+     assert_eq!(failure.client_order_id, first.client_order_id());
+     assert_eq!(failure.instrument_id, instruments[0].id());
+     assert_eq!(failure.quantity, Quantity::from("0.000480"));
+@@ -474,12 +483,9 @@ fn unobserved_capital_estimates_cannot_pollute_the_venue_fill_observer() {
+     let qty = Quantity::from("2.000000");
+     let px = Price::from("0.4000");
+     let estimate = adapter
+-        .get_commission(&order, Quantity::from("0.000480"), px, instrument)
++        .get_commission(&order, Quantity::from("0.000000"), px, instrument)
+         .unwrap_err();
+-    assert_eq!(
+-        estimate.to_string(),
+-        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+-    );
++    assert_eq!(estimate.to_string(), "POLYMARKET_FILL_QUANTITY_PRICE_RANGE");
+     assert!(observer.check().is_ok());
+     assert_eq!(
+         venue.get_commission(&order, qty, px, instrument).unwrap(),
+diff --git a/apps/job/src/simulation.rs b/apps/job/src/simulation.rs
+index d9063e2d..65c395fb 100644
+--- a/apps/job/src/simulation.rs
++++ b/apps/job/src/simulation.rs
+@@ -1566,13 +1566,15 @@ pub(crate) fn execution_market(
+     settings: &NativeSimulationSettingsV1,
+ ) -> Result<Currency> {
+     domain::portfolio::simulation_settings(settings)?;
++    let currency = execution_market_terms(data, settings)?;
+     // Historical replay always authenticates its independently frozen catalog
+-    // fee source before sharing the instrument/account predicates with Paper.
++    // fee source. Unsupported instrument/account terms retain their specific
++    // error instead of being obscured by a secondary source mismatch.
+     crate::prediction::validate_market(data, settings)?;
+-    execution_market_terms(data, settings)
++    Ok(currency)
+ }
+ 
+-/// Source-independent native terms; each caller validates its own fee owner first.
++/// Source-independent native terms; callers must also validate their fee owner.
+ fn execution_market_terms(
+     data: &NativeMarketData,
+     settings: &NativeSimulationSettingsV1,
+@@ -1592,6 +1594,17 @@ fn execution_market_terms(
+     let venue = data.series[0].instrument.venue();
+     for series in &data.series {
+         let instrument = &series.instrument;
++        if matches!(instrument, InstrumentAny::BinaryOption(_)) {
++            ensure!(
++                domain::prediction::uses_native_fee(&settings.fee_model),
++                "POLYMARKET_NATIVE_FEE_MODEL_REQUIRED"
++            );
++        } else {
++            ensure!(
++                !domain::prediction::uses_native_fee(&settings.fee_model),
++                "POLYMARKET_FEE_REQUIRES_BINARY_OPTION"
++            );
++        }
+         ensure!(
+             matches!(
+                 instrument,
+@@ -2139,7 +2152,7 @@ fn run_with_strategy_and_spot(
+                     balances
+                         .iter()
+                         .map(|balance| {
+-                            Money::from_str(&format!(
++                            Money::from_str_exact(&format!(
+                                 "{} {}",
+                                 balance.amount.as_decimal().to_plain_string(),
+                                 balance.currency
+@@ -2148,7 +2161,7 @@ fn run_with_strategy_and_spot(
+                         })
+                         .collect::<Result<Vec<_>>>()?
+                 } else {
+-                    vec![Money::from_str(&format!(
++                    vec![Money::from_str_exact(&format!(
+                         "{} {}",
+                         settings.starting_capital.as_decimal().to_plain_string(),
+                         settings.base_currency
+diff --git a/apps/job/src/ticks/economic.rs b/apps/job/src/ticks/economic.rs
+index 1d917776..d64c7d92 100644
+--- a/apps/job/src/ticks/economic.rs
++++ b/apps/job/src/ticks/economic.rs
+@@ -2246,7 +2246,7 @@ pub fn replay_with_funding(
+         methods: BTreeMap::from([
+             ("funding_source".into(), format!("Public rate catalog revision {}; source window [{}..{}), {} rows; independent immutable catalog may differ from retained price catalog; source file {}", funding_manifest.source_revision, funding_manifest.start_ns.get(), funding_manifest.end_ns.get(), funding_manifest.rows, request.funding_source)),
+             ("native".into(),format!("Official nautilus-backtest/model/portfolio; core {}",nautilus_core::consts::NAUTILUS_VERSION_CORE)),
+-            ("execution".into(),"Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation; native bar liquidity can fill less, and unchanged quantized marks do not imply a refreshed observed book. Ties use deterministic native ordering, not original queue evidence.".into()),
++            ("execution".into(),"Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence.".into()),
+             ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
+             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
+             ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture observed oracle; context source {}, maximum age {}ns, EVENT_TIME_PROXY_UNVERIFIED; perpetual NAV/capital PnL uses context mark under the same clock/age, without changing trade execution or feature prices; native funding disabled. Only acknowledged adjustments enter reported funding total.", context.source_revision, age) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
+diff --git a/apps/job/src/ticks/economic/native.rs b/apps/job/src/ticks/economic/native.rs
+index 042ada6c..74cbb50e 100644
+--- a/apps/job/src/ticks/economic/native.rs
++++ b/apps/job/src/ticks/economic/native.rs
+@@ -804,6 +804,17 @@ impl NativeLedger {
+         summary.nominal_settlement_usdc = self.adjustments.state.borrow().nominal_settlement_usdc;
+         summary
+     }
++    #[cfg(test)]
++    pub fn orders(&self) -> Vec<OrderAny> {
++        self.engine
++            .kernel()
++            .cache
++            .borrow()
++            .orders_refs(None, None, None, None, None)
++            .into_iter()
++            .map(|order| order.cloned())
++            .collect()
++    }
+     fn check(&self) -> Result<()> {
+         if let Some(error) = self.state.borrow().failure.as_deref() {
+             anyhow::bail!("{error}");
+@@ -845,8 +856,11 @@ fn bar_type(id: InstrumentId) -> BarType {
+ mod tests {
+     use super::*;
+     use nautilus_model::{
++        enums::OrderStatus,
++        events::OrderEventAny,
+         identifiers::Symbol,
+         instruments::{CryptoPerpetual, CurrencyPair},
++        orders::Order,
+     };
+ 
+     fn spot() -> InstrumentAny {
+@@ -933,15 +947,40 @@ mod tests {
+         native
+             .step(3_000_000_000, &instrument, 100.0, 10.0, None)
+             .unwrap();
++        // 0.67 refreshes same-price BAR liquidity. Its four equal OHLC legs
++        // leave 0.5 / 4 BTC at the close when on_bar submits the IOC. The
++        // preceding 10-BTC BAR must not provide stale execution liquidity.
++        let submitted = Decimal::new(5, 1);
++        let filled = submitted / Decimal::from(4);
++        let price = Decimal::from(100);
++        let commission = filled * price * Decimal::from(100) / Decimal::from(10_000);
++        let orders = native.orders();
++        assert_eq!(orders.len(), 1);
++        assert_eq!(orders[0].quantity().as_decimal(), submitted);
++        assert_eq!(orders[0].filled_qty().as_decimal(), filled);
++        assert_eq!(orders[0].status(), OrderStatus::Canceled);
++        let fills = orders[0]
++            .events()
++            .into_iter()
++            .filter_map(|event| match event {
++                OrderEventAny::Filled(fill) => Some(fill),
++                _ => None,
++            })
++            .collect::<Vec<_>>();
++        assert_eq!(fills.len(), 1);
++        assert_eq!(fills[0].last_qty.as_decimal(), filled);
++        assert_eq!(fills[0].last_px.as_decimal(), price);
++        assert_eq!(fills[0].commission.unwrap().currency, Currency::USDC());
++        assert_eq!(fills[0].commission.unwrap().as_decimal(), commission);
+         assert_eq!(
+             native.balance(Currency::BTC()).unwrap().as_decimal(),
+-            Decimal::new(5, 1)
++            filled
+         );
+         assert_eq!(
+             native.balance(Currency::USDC()).unwrap().as_decimal(),
+-            Decimal::new(9495, 1)
++            Decimal::from(1000) - filled * price - commission
+         );
+-        assert_eq!(native.summary().commissions["USDC"], Decimal::new(5, 1));
++        assert_eq!(native.summary().commissions["USDC"], commission);
+         native
+             .step(
+                 4_000_000_000,
+diff --git a/apps/job/src/ticks/economic/replay_tests.rs b/apps/job/src/ticks/economic/replay_tests.rs
+index dd4ba3c6..ca2dc889 100644
+--- a/apps/job/src/ticks/economic/replay_tests.rs
++++ b/apps/job/src/ticks/economic/replay_tests.rs
+@@ -2,9 +2,10 @@
+ use super::*;
+ use nautilus_model::{
+     data::TradeTick,
+-    enums::{AggressorSide, CurrencyType},
++    enums::{AggressorSide, CurrencyType, OrderSide, OrderStatus},
+     identifiers::{InstrumentId, Symbol, TradeId},
+     instruments::{CryptoPerpetual, CurrencyPair},
++    orders::Order,
+     types::{Price, Quantity},
+ };
+ use serde_json::json;
+@@ -659,6 +660,94 @@ fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
+     (assets, request)
+ }
+ 
++#[test]
++fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
++    let directory = tempfile::tempdir().unwrap();
++    let (mut assets, mut request) = small_assets(directory.path());
++    request.scenario.maximum_mark_age_ns = counter(SECOND).unwrap();
++    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
++    let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
++    let i = assets
++        .iter()
++        .position(|a| a.instrument.id().to_string() == SPOT)
++        .unwrap();
++    let instrument = assets[i].instrument.clone();
++    cash.step(SECOND, &instrument, 100.0, 10.0, None).unwrap();
++    let mut small = SmallCapital::new(assets.len());
++    let mut seed = 0;
++    small_new_entries(
++        &mut small,
++        &[i],
++        &mut assets,
++        &cash,
++        &margin,
++        &BTreeSet::from([BRIDGE.into()]),
++        2 * SECOND,
++        request.small_capital_policy.as_ref().unwrap(),
++        &request.scenario,
++        &mut seed,
++        &mut None,
++    )
++    .unwrap();
++    let target = assets[i].pending.take().unwrap().2;
++    assert_eq!(target, Decimal::new(3, 1));
++    // Preserve the original 0.2 cohort capacity: the strategy caps its order to
++    // 0.2, then the refreshed native closing leg fills just 0.2 / 4 = 0.05.
++    cash.step(4 * SECOND, &instrument, 100.0, 0.2, Some(target))
++        .unwrap();
++    let filled = Decimal::new(2, 1) / Decimal::from(4);
++    let orders = cash.orders();
++    assert_eq!(orders.len(), 1);
++    assert_eq!(orders[0].quantity().as_decimal(), Decimal::new(2, 1));
++    assert_eq!(orders[0].filled_qty().as_decimal(), filled);
++    assert_eq!(orders[0].status(), OrderStatus::Canceled);
++    assert_eq!(small_quantity(&assets[i], &cash, &margin), filled);
++    small
++        .reconcile(
++            i,
++            4 * SECOND,
++            filled,
++            true,
++            &mut assets,
++            &request.scenario,
++            &mut seed,
++        )
++        .unwrap();
++    assert_eq!(small.positions_opened, 1);
++    small
++        .expire(100 * SECOND, &mut assets, &request.scenario, &mut seed)
++        .unwrap();
++    assert_eq!(assets[i].pending.take().unwrap().2, Decimal::ZERO);
++    // The real 5-USDC holding is below this fixture's 10-USDC order minimum.
++    // It remains visible after an exit attempt; no enlarged production volume
++    // or balance repair is used to close it.
++    cash.step(100 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
++        .unwrap();
++    let remaining = small_quantity(&assets[i], &cash, &margin);
++    small
++        .reconcile(
++            i,
++            100 * SECOND,
++            remaining,
++            true,
++            &mut assets,
++            &request.scenario,
++            &mut seed,
++        )
++        .unwrap();
++    assert_eq!(remaining, filled);
++    assert_eq!(cash.summary().submitted, 1);
++    assert_eq!(cash.summary().fills, 1);
++    assert_eq!(cash.summary().skipped_minimum, 1);
++    assert_eq!(small.positions_closed, 0);
++    assert_eq!(
++        decimal(&small.report(&assets).unwrap().remaining_positions[0].quantity).unwrap(),
++        filled
++    );
++    cash.finish().unwrap();
++    margin.finish().unwrap();
++}
++
+ #[test]
+ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasing_dust() {
+     let directory = tempfile::tempdir().unwrap();
+@@ -692,10 +781,17 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
+     .unwrap();
+     let target = assets[i].pending.take().unwrap().2;
+     assert_eq!(target, Decimal::new(3, 1));
+-    cash.step(4 * SECOND, &instrument, 100.0, 0.2, Some(target))
++    // Native 0.67 exposes the final OHLC quarter to this on_bar IOC: 0.8 / 4
++    // fills 0.2 of the 0.3 order. Preserve the residual 0.1 dust/exit scenario.
++    cash.step(4 * SECOND, &instrument, 100.0, 0.8, Some(target))
+         .unwrap();
+     let quantity = small_quantity(&assets[i], &cash, &margin);
+     assert_eq!(quantity, Decimal::new(2, 1));
++    let entry = cash.orders();
++    assert_eq!(entry.len(), 1);
++    assert_eq!(entry[0].quantity().as_decimal(), target);
++    assert_eq!(entry[0].filled_qty().as_decimal(), quantity);
++    assert_eq!(entry[0].status(), OrderStatus::Canceled);
+     small
+         .reconcile(
+             i,
+@@ -747,8 +843,16 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
+     assert_eq!(pending.0, 62 * SECOND); // Exact deadline from entry decision, not next event100s.
+     assert_eq!(pending.1, 63 * SECOND + 1);
+     assert_eq!(pending.2, Decimal::ZERO);
+-    cash.step(100 * SECOND, &instrument, 100.0, 0.1, Some(Decimal::ZERO))
++    cash.step(100 * SECOND, &instrument, 100.0, 0.4, Some(Decimal::ZERO))
++        .unwrap();
++    let orders = cash.orders();
++    let exit = orders
++        .iter()
++        .find(|order| order.order_side() == OrderSide::Sell)
+         .unwrap();
++    assert_eq!(exit.quantity().as_decimal(), Decimal::new(2, 1));
++    assert_eq!(exit.filled_qty().as_decimal(), Decimal::new(1, 1));
++    assert_eq!(exit.status(), OrderStatus::Canceled);
+     small
+         .reconcile(
+             i,
+diff --git a/apps/job/tests/archive_candle_ingest.rs b/apps/job/tests/archive_candle_ingest.rs
+index 7a92bbcc..bcb58eba 100644
+--- a/apps/job/tests/archive_candle_ingest.rs
++++ b/apps/job/tests/archive_candle_ingest.rs
+@@ -9,7 +9,6 @@ use nautilus_model::{
+     types::{Currency, Price, Quantity},
+ };
+ use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+-use rust_decimal::Decimal;
+ use serde_json::{json, Value};
+ use sha2::{Digest, Sha256};
+ use std::{
+diff --git a/apps/job/tests/ensemble_fit.rs b/apps/job/tests/ensemble_fit.rs
+index a90175bd..6ac3f6fe 100644
+--- a/apps/job/tests/ensemble_fit.rs
++++ b/apps/job/tests/ensemble_fit.rs
+@@ -5,9 +5,54 @@ mod market;
+ mod native;
+ use contracts::{ensemble_fit::*, factors::*, science::*, SchemaV1};
+ use market::{count, INTERVAL_NS};
++use nautilus_model::types::Price;
++use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
++
++/// A declared synthetic quadratic price path, on the original five-decimal grid.
++/// With the native SMA seed, a linear price path has a constant fast/slow EMA
++/// spread, so it cannot identify the slope in the independent scalar OLS oracle.
++fn nonlinear_market() -> (tempfile::TempDir, NativeSimulationRequestV1) {
++    let (original, simulation) = market::market("0", 100);
++    let data = job::catalog::load_catalog(original.path(), &simulation.selection).unwrap();
++    let directory = tempfile::tempdir().unwrap();
++    let catalog = ParquetDataCatalog::from_uri(
++        directory.path().to_str().unwrap(),
++        None,
++        Some(16),
++        None,
++        None,
++    )
++    .unwrap();
++    let price =
++        |ticks: u64| Price::from(format!("{}.{:05}", ticks / 100_000, ticks % 100_000).as_str());
++    for mut series in data.series {
++        assert!(series.instrument_updates.is_empty());
++        let base = match series.bar_type.instrument_id().to_string().as_str() {
++            "EUR/USD.SIM" => 100_000,
++            "GBP/USD.SIM" => 200_000,
++            other => panic!("unexpected fixture instrument: {other}"),
++        };
++        catalog.write_instruments(vec![series.instrument]).unwrap();
++        for bar in &mut series.bars {
++            let n = bar.ts_event.as_u64() / INTERVAL_NS;
++            let close = base + 100 * n + n * n;
++            bar.open = price(close);
++            bar.high = price(close + 20);
++            bar.low = price(close - 20);
++            bar.close = price(close);
++        }
++        catalog
++            .write_to_parquet(&series.bars, None, None, None)
++            .unwrap();
++    }
++    // Preserve the original separately declared fixture venue-fee source.
++    let fees = contracts::catalogs::MAKER_TAKER_FEES_FILE;
++    std::fs::copy(original.path().join(fees), directory.path().join(fees)).unwrap();
++    (directory, simulation)
++}
+ 
+ fn fixture() -> (tempfile::TempDir, NativeEnsembleFitRequestV1, Vec<Vec<u8>>) {
+-    let (catalog, simulation) = market::market("0", 100);
++    let (catalog, simulation) = nonlinear_market();
+     let source = NativeFactorEvaluationRequestV1 {
+         schema_version: SchemaV1,
+         forecast: market::forecast_request(&simulation),
+@@ -106,18 +151,39 @@ fn original_panels_fit_fold_local_ols_and_match_independent_scalar_qp() {
+                             && p.observation.label_available_ns.unwrap() < fold.train_end_ns
+                     })
+                     .collect();
++                let scores: Vec<_> = points
++                    .iter()
++                    .map(|p| p.observation.forecast.unwrap())
++                    .collect();
++                let mean = scores.iter().sum::<f64>() / scores.len() as f64;
++                let centered_ss = scores.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
++                assert!(
++                    centered_ss > 1e-9,
++                    "controlled nonlinear fixture must identify both OLS coefficients: {centered_ss:.17e}"
++                );
+                 let (a, b) = scalar_ols(
+-                    &points
+-                        .iter()
+-                        .map(|p| p.observation.forecast.unwrap())
+-                        .collect::<Vec<_>>(),
++                    &scores,
+                     &points
+                         .iter()
+                         .map(|p| p.observation.label_return.unwrap())
+                         .collect::<Vec<_>>(),
+                 );
+-                assert!((a - c.intercept).abs() < 1e-10);
+-                assert!((b - c.slope).abs() < 1e-8);
++                assert!(
++                    (a - c.intercept).abs() < 1e-10,
++                    "fold={} member={m} instrument={} n={} oracle_intercept={a:.17e} native_intercept={:.17e} oracle_slope={b:.17e} native_slope={:.17e} score_min={:.17e} score_max={:.17e} centered_ss={centered_ss:.17e}",
++                    fold.train_end_ns.get(),
++                    c.instrument_id,
++                    scores.len(),
++                    c.intercept,
++                    c.slope,
++                    scores.iter().copied().fold(f64::INFINITY, f64::min),
++                    scores.iter().copied().fold(f64::NEG_INFINITY, f64::max),
++                );
++                assert!(
++                    (b - c.slope).abs() < 1e-8,
++                    "oracle_slope={b:.17e} native_slope={:.17e}",
++                    c.slope
++                );
+                 assert!(c.last_label_available_ns < fold.train_end_ns);
+             }
+         }
+@@ -180,6 +246,95 @@ fn original_panels_fit_fold_local_ols_and_match_independent_scalar_qp() {
+     assert_eq!(total, bigdecimal::BigDecimal::from(1));
+     assert_eq!(fit.oof_observations.get(), labels.len() as u64);
+ }
++
++#[test]
++fn native_sma_seed_preserves_warmup_and_exposes_the_linear_spread_counterexample() {
++    let (catalog, simulation) = market::market("0", 30);
++    let request = market::forecast_request(&simulation);
++    let fast =
++        job::forecast::forecast_factor(catalog.path(), &request, &market::module("local.get 2"))
++            .unwrap();
++    let slow =
++        job::forecast::forecast_factor(catalog.path(), &request, &market::module("local.get 3"))
++            .unwrap();
++    let spread = job::forecast::forecast_factor(
++        catalog.path(),
++        &request,
++        &market::module("local.get 2 local.get 3 f64.sub"),
++    )
++    .unwrap();
++    assert_eq!(fast.native_versions["nautilus-indicators"], "0.67.0");
++    for (instrument, base) in [("EUR/USD.SIM", 1.0), ("GBP/USD.SIM", 2.0)] {
++        for report in [&fast, &slow, &spread] {
++            let points: Vec<_> = report
++                .points
++                .iter()
++                .filter(|p| p.instrument_id == instrument)
++                .collect();
++            assert_eq!(points.len(), 30);
++            for point in &points[..2] {
++                assert_eq!(point.forecast, None);
++                assert_eq!(
++                    point.forecast_reason,
++                    Some(ForecastMissingReason::IndicatorWarmup)
++                );
++                assert_eq!(point.label_return, None);
++            }
++            assert!(points[2..].iter().all(|p| p.forecast.is_some()));
++            assert_eq!(points[2].ordinal, 2);
++            assert_eq!(points[2].event_ns, count(3 * INTERVAL_NS));
++            assert_eq!(points[2].available_ns, count(3 * INTERVAL_NS + 1));
++            assert_eq!(
++                points[2].label_available_ns,
++                Some(count(5 * INTERVAL_NS + 1))
++            );
++        }
++        let values = |report: &NativeForecastResultV1| -> Vec<f64> {
++            report
++                .points
++                .iter()
++                .filter(|p| p.instrument_id == instrument)
++                .filter_map(|p| p.forecast)
++                .collect()
++        };
++        let fast_values = values(&fast);
++        let slow_values = values(&slow);
++        let spread_values = values(&spread);
++        // Exact decimal path p_n = base + n/1000. SMA_2 at n=2 is
++        // base+.0015; its next EMA is base+.0025. SMA_3 at n=3 is
++        // base+.002. Thereafter their lags are exactly .0005 and .001.
++        for (index, ((fast, slow), spread)) in fast_values
++            .iter()
++            .zip(&slow_values)
++            .zip(&spread_values)
++            .enumerate()
++        {
++            let n = (index + 3) as f64;
++            assert!((fast - (base + n / 1000.0 - 0.0005)).abs() < 1e-14);
++            assert!((slow - (base + n / 1000.0 - 0.001)).abs() < 1e-14);
++            assert!((spread - 0.0005).abs() < 1e-14);
++        }
++        // Contrast the independently derived old first-value seed at n=3.
++        // These differences are semantic, far above binary rounding noise.
++        let old_fast = base + 23.0 / 9000.0;
++        let old_slow = base + 9.0 / 4000.0;
++        assert!((fast_values[0] - old_fast).abs() > 5e-5);
++        assert!((slow_values[0] - old_slow).abs() > 2e-4);
++        let mean = spread_values.iter().sum::<f64>() / spread_values.len() as f64;
++        let centered_ss = spread_values
++            .iter()
++            .map(|x| (x - mean).powi(2))
++            .sum::<f64>();
++        assert!(centered_ss < 1e-26);
++    }
++    // Exact constants keep the existing explicit rejection; near constants
++    // are numerical evidence, not an independently identifiable slope oracle.
++    let error =
++        job::validation::ScoreCalibration::fit(&[0.0005; 4], &[0.0020, 0.0019, 0.0018, 0.0017])
++            .err()
++            .expect("exact constant predictor must not fit");
++    assert!(error.to_string().contains("CALIBRATION_CONSTANT_SCORE"));
++}
+ #[test]
+ fn heldout_and_selection_labels_cannot_change_fit_and_future_application_is_frozen() {
+     let (catalog, request, modules) = fixture();
+diff --git a/apps/job/tests/native_instrument_updates.rs b/apps/job/tests/native_instrument_updates.rs
+index 9c3c7aa0..f2a79ab2 100644
+--- a/apps/job/tests/native_instrument_updates.rs
++++ b/apps/job/tests/native_instrument_updates.rs
+@@ -295,6 +295,7 @@ fn upstream_engine_preserves_partial_order_cash_position_and_original_settlement
+ 
+ #[test]
+ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
++    use contracts::catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE};
+     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+ 
+     // Include a transition at selection-start and one after event-end: late
+@@ -302,8 +303,19 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+     for (minute, start) in [(1, 1), (5, 0), (22, 0)] {
+         let received = minute * market::INTERVAL_NS;
+         let (root, mut request) = market::market("0", 20);
++        // Declare this synthetic source's complete receive-time window before
++        // replay. Instrument definition changes do not supply or change fees.
++        let fee_path = root.path().join(MAKER_TAKER_FEES_FILE);
++        let mut fee_source: FrozenMakerTakerFeesV1 =
++            serde_json::from_slice(&std::fs::read(&fee_path).unwrap()).unwrap();
++        assert_eq!(fee_source.origin, contracts::research::DataOrigin::Fixture);
++        fee_source.source_version = "definition-transition-window-v1".into();
++        fee_source.valid_until_ns = market::count(24 * market::INTERVAL_NS);
++        let frozen_fee_bytes = serde_json::to_vec(&fee_source).unwrap();
++        std::fs::write(&fee_path, &frozen_fee_bytes).unwrap();
+         request.selection.event_start_ns = market::count(start * market::INTERVAL_NS);
+         request.selection.decision_cutoff_ns = market::instant(23);
++        domain::catalogs::maker_taker_fee_selection(&fee_source, &request.selection).unwrap();
+         let catalog =
+             ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
+                 .unwrap();
+@@ -315,6 +327,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+         let update: InstrumentAny = serde_json::from_value(definition).unwrap();
+         catalog.write_instruments(vec![update.clone()]).unwrap();
+         let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
++        assert_eq!(data.execution_fees.as_ref(), Some(&fee_source));
+         let series = data
+             .series
+             .iter()
+@@ -359,6 +372,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+             String::from_utf8(output.stderr).unwrap().trim(),
+             "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED\nSIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
+         );
++        assert_eq!(std::fs::read(&fee_path).unwrap(), frozen_fee_bytes);
+     }
+ }
+ 
+diff --git a/apps/job/tests/native_sandbox_observer.rs b/apps/job/tests/native_sandbox_observer.rs
+index cde36f26..ac130be3 100644
+--- a/apps/job/tests/native_sandbox_observer.rs
++++ b/apps/job/tests/native_sandbox_observer.rs
+@@ -308,8 +308,9 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
+         let oracle = fill.last_qty.as_decimal()
+             * fill.last_px.as_decimal()
+             * rust_decimal::Decimal::new(4, 4);
+-        assert_eq!(fill.commission.as_decimal(), oracle);
+-        assert_eq!(fill.commission.currency, Currency::USDT());
++        let commission = fill.commission.expect("native fill commission required");
++        assert_eq!(commission.as_decimal(), oracle);
++        assert_eq!(commission.currency, Currency::USDT());
+     }
+     assert!(
+         !accounts.borrow().is_empty(),
+diff --git a/apps/job/tests/observed_spot.rs b/apps/job/tests/observed_spot.rs
+index 65b03106..7f56335f 100644
+--- a/apps/job/tests/observed_spot.rs
++++ b/apps/job/tests/observed_spot.rs
+@@ -102,6 +102,43 @@ fn completed(leg: &NativeObservedSpotSimulationLegV1) -> &NativeSimulationResult
+     leg.result.as_ref().unwrap()
+ }
+ 
++#[test]
++fn cli_preserves_sub_currency_capital_through_original_snapshot_and_wire_projection() {
++    let (root, mut request) = spot::source_fixture();
++    request.settings.starting_capital = money("1000.00000008");
++    for point in &mut request.target_points {
++        point.cash_weight = money("1");
++        for target in &mut point.targets {
++            target.weight = money("0");
++        }
++    }
++    let revision = Id::new().to_string();
++    let output = native::command(&[
++        "simulate".as_ref(), "--catalog".as_ref(), root.path().as_os_str(),
++        "--dataset-revision-id".as_ref(), revision.as_ref(),
++    ], &request);
++    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
++    let result: NativeSimulationResultV1 = serde_json::from_slice(&output.stdout).unwrap();
++    assert_eq!(result.orders.get(), 0);
++    let original = result.spot_cash_report.as_ref().unwrap().observations.iter()
++        .find_map(|observation| match &observation.record {
++            NativeSpotCashObservationKindV1::Snapshot { native, .. } => Some(native),
++            _ => None,
++        }).unwrap();
++    // This is the actual original engine event retained by spot capture, with
++    // its real UUID. The normalized canonical event is deliberately separate.
++    let native: PortfolioSnapshot = serde_json::from_value(original.clone()).unwrap();
++    let projected = job::account_observer::project_snapshot(&native).unwrap();
++    let balance = projected.balances.iter().find(|balance| balance.total.currency == "USDC").unwrap();
++    assert_eq!(balance.total.amount, request.settings.starting_capital);
++    assert_eq!(balance.free.amount, request.settings.starting_capital);
++    let equity = projected.total_equity.iter().find(|money| money.currency == "USDC").unwrap();
++    assert_eq!(equity.amount, request.settings.starting_capital);
++    assert_eq!(projected.event_id, native.event_id.to_string());
++    assert_eq!(serde_json::to_value(&balance.total).unwrap()["amount"], "1000.00000008");
++    assert_eq!(serde_json::to_value(equity).unwrap()["amount"], "1000.00000008");
++}
++
+ #[test]
+ fn matched_hold_keeps_original_inventory_and_rebalance_pays_real_exit_fee() {
+     let (root, request, _) = fixture(20, false);
+diff --git a/apps/job/tests/polymarket_partial_fill.rs b/apps/job/tests/polymarket_partial_fill.rs
+index 898ff42d..c9234e0b 100644
+--- a/apps/job/tests/polymarket_partial_fill.rs
++++ b/apps/job/tests/polymarket_partial_fill.rs
+@@ -187,6 +187,18 @@ fn audit_fills(result: &Value, instruments: &[InstrumentAny]) {
+             assert_eq!(fill["last_px"], ["1.0000", "0.0000"][index], "{context}");
+         } else {
+             assert_eq!(actual, official_fee(fill, instrument), "{context}");
++            let payload = serde_json::to_value(instrument).unwrap();
++            let bound = bigdecimal::BigDecimal::from_str(fill["last_qty"].as_str().unwrap())
++                .unwrap()
++                * bigdecimal::BigDecimal::from_str(fill["last_px"].as_str().unwrap()).unwrap()
++                * domain::prediction::planning_fee(&payload["BinaryOption"])
++                    .unwrap()
++                    .as_decimal();
++            assert!(
++                bigdecimal::BigDecimal::from_str(&actual.as_decimal().to_string()).unwrap()
++                    <= bound,
++                "{context}; frozen bound={bound}"
++            );
+         }
+     }
+ }
+@@ -253,61 +265,35 @@ fn native_replay_accepts_sub_one_partial_fills_and_preserves_each_official_money
+ }
+ 
+ #[test]
+-fn native_replay_over_bound_partial_fee_cannot_publish_successful_performance() {
++fn native_replay_tiny_partial_fills_use_original_schedule_and_current_taker_truncation() {
++    // Keep the original source volume, rate and price which exposed the older
++    // nearest-rounding failure. 0.67 truncates this 0.00000576 fee to zero.
+     let (root, request) = fixture("0.001920");
+-    let error = job::simulation::simulate(root.path(), &request).unwrap_err();
+-    assert_eq!(error.to_string(), "NATIVE_TARGET_REPLAY_FAILED");
+-    assert_eq!(
+-        format!("{error:#}"),
+-        "NATIVE_TARGET_REPLAY_FAILED: POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+-    );
+-    audit_fee_failure(&error);
+-}
+-
+-fn audit_fee_failure(error: &anyhow::Error) {
+-    let failure = error
+-        .downcast_ref::<job::simulation::FillFeeFailure>()
+-        .unwrap();
+-    assert_eq!(failure.reason, "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
+-    assert_eq!(failure.quantity, Quantity::from("0.000480"));
+-    assert_eq!(failure.price, Price::from("0.4000"));
+-    assert!(IDS
+-        .iter()
+-        .any(|id| *id == failure.instrument_id.to_string()));
+-    assert!(!failure.client_order_id.as_str().is_empty());
+-    let instrument = polymarket::instruments("0.05", 18 * STEP)
+-        .into_iter()
+-        .find(|instrument| instrument.id() == failure.instrument_id)
+-        .unwrap();
+-    let mut order = OrderTestBuilder::new(OrderType::Market)
+-        .instrument_id(failure.instrument_id)
+-        .side(OrderSide::Buy)
+-        .quantity(failure.quantity)
+-        .build();
+-    if let OrderAny::Market(ref mut value) = order {
+-        value.set_liquidity_side(LiquiditySide::Taker);
+-    }
+-    let native = PolymarketFeeModel
+-        .get_commission(&order, failure.quantity, failure.price, &instrument)
+-        .unwrap();
+-    assert_eq!(
+-        native.as_decimal(),
+-        rust_decimal::Decimal::from_str("0.00001").unwrap()
+-    );
+-    let payload = serde_json::to_value(instrument).unwrap();
+-    let bound = bigdecimal::BigDecimal::from_str(&failure.quantity.as_decimal().to_string())
+-        .unwrap()
+-        * bigdecimal::BigDecimal::from_str(&failure.price.as_decimal().to_string()).unwrap()
+-        * domain::prediction::planning_fee(&payload["BinaryOption"])
++    let result = job::simulation::simulate(root.path(), &request).unwrap();
++    let canonical = &result.canonical_result;
++    audit_fills(canonical, &polymarket::instruments("0.05", 18 * STEP));
++    for id in IDS {
++        let core = canonical["orders"]
++            .as_array()
+             .unwrap()
+-            .as_decimal();
+-    assert_eq!(
+-        bound,
+-        bigdecimal::BigDecimal::from_str("0.00000960096").unwrap()
+-    );
+-    eprintln!(
+-        "native fee failure={error:#}; inputs={failure:?}; official_money={native}; bound={bound}"
+-    );
++            .iter()
++            .map(order_core)
++            .find(|core| {
++                core["instrument_id"] == id
++                    && core["side"] == "BUY"
++                    && core["is_reduce_only"] == false
++            })
++            .unwrap();
++        let fills = order_fills(canonical, core);
++        let first = &fills[0]["event"]["Filled"];
++        assert_eq!(first["last_qty"], "0.000480");
++        assert_eq!(first["last_px"], "0.4000");
++        let actual = Money::from_str(first["commission"].as_str().unwrap()).unwrap();
++        assert_eq!(actual.as_decimal(), rust_decimal::Decimal::ZERO);
++    }
++    for key in ["orders.open", "orders.inflight", "positions.open"] {
++        assert_eq!(result.summary[key], "0");
++    }
+ }
+ 
+ #[test]
+@@ -434,44 +420,31 @@ mod streaming {
+     }
+ 
+     #[test]
+-    fn actual_quote_rounding_violation_cannot_return_available_performance() {
++    fn actual_tiny_quote_fills_use_current_taker_truncation_without_fabricated_fee_errors() {
+         let mut session = session();
+-        let mut failure = None;
+         for half_second in 2..=20 {
+-            if let Err(error) = session.push(quote(half_second * SECOND / 2, "0.000480")) {
+-                failure = Some(error);
+-                break;
+-            }
++            session
++                .push(quote(half_second * SECOND / 2, "0.000480"))
++                .unwrap();
+         }
+-        let failure = failure.expect("the real quote fill must expose its fee failure");
+-        assert_eq!(
+-            format!("{failure:#}"),
+-            "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
+-        );
+-        audit_fee_failure(&failure);
+-        assert_fee_unavailable(&session.finish().unwrap());
+-    }
+-
+-    fn assert_fee_unavailable(report: &Value) {
+-        assert_eq!(report["performance_status"], "UNAVAILABLE", "{report}");
++        let report = session.finish().unwrap();
++        assert_eq!(report["performance_status"], "NATIVE_SIMULATION_AVAILABLE");
++        assert!(report["native_fill_fee_failure"].is_null());
++        let canonical = &report["canonical_result"];
++        audit_fills(canonical, &polymarket::instruments("0.05", 60 * SECOND));
++        let first = &canonical["fills"][0]["event"]["Filled"];
++        assert_eq!(first["last_qty"], "0.000480");
++        assert_eq!(first["last_px"], "0.4000");
+         assert_eq!(
+-            report["reason_code"], "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND",
+-            "{report}"
+-        );
+-        let failure = &report["native_fill_fee_failure"];
+-        assert_eq!(failure["reason"], report["reason_code"]);
+-        assert_eq!(failure["last_qty"], "0.000480");
+-        assert_eq!(failure["last_px"], "0.4000");
+-        assert_eq!(failure["instrument_id"], IDS[0]);
+-        assert!(!failure["client_order_id"].as_str().unwrap().is_empty());
+-        eprintln!(
+-            "stream fee failure: status={}, reason={}, native_inputs={failure}",
+-            report["performance_status"], report["reason_code"]
++            Money::from_str(first["commission"].as_str().unwrap())
++                .unwrap()
++                .as_decimal(),
++            rust_decimal::Decimal::ZERO
+         );
+     }
+ 
+     #[test]
+-    fn latency_deferred_fee_failure_only_at_native_end_is_unavailable() {
++    fn latency_deferred_tiny_fill_beyond_actual_source_still_has_unavailable_performance() {
+         let mut session = session();
+         for half_second in 2..=4 {
+             session
+@@ -479,13 +452,30 @@ mod streaming {
+                 .unwrap();
+         }
+         let report = session.finish().unwrap();
+-        // All three source batches completed; only end() advances the deferred arrival.
++        // All three source batches completed; only native end() advances the
++        // deferred arrival. Its zero fee is valid, but source coverage is not.
+         assert_eq!(report["completed_timestamp_batches"], 3);
+         assert_eq!(
+             report["native_ended_at_ns"],
+             (2 * SECOND + LATENCY).to_string()
+         );
+-        assert_fee_unavailable(&report);
++        assert_eq!(report["performance_status"], "UNAVAILABLE");
++        assert_eq!(
++            report["reason_code"],
++            "PAPER_STREAM_NATIVE_EXECUTION_BEYOND_SOURCE"
++        );
++        assert!(report["native_fill_fee_failure"].is_null());
++        let canonical = &report["canonical_result"];
++        audit_fills(canonical, &polymarket::instruments("0.05", 60 * SECOND));
++        let first = &canonical["fills"][0]["event"]["Filled"];
++        assert_eq!(first["ts_event"], (2 * SECOND + LATENCY).to_string());
++        assert_eq!(first["last_qty"], "0.000480");
++        assert_eq!(
++            Money::from_str(first["commission"].as_str().unwrap())
++                .unwrap()
++                .as_decimal(),
++            rust_decimal::Decimal::ZERO
++        );
+     }
+ 
+     #[test]
+diff --git a/apps/job/tests/simulation.rs b/apps/job/tests/simulation.rs
+index c159ec1e..d925597e 100644
+--- a/apps/job/tests/simulation.rs
++++ b/apps/job/tests/simulation.rs
+@@ -29,6 +29,18 @@ fn simulate(
+     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+ }
+ 
++/// Declare the original synthetic policy window for a wider calendar fixture.
++/// Rates and source identity stay in the catalog-owned record, outside requests.
++fn fixture_fee_window(root: &Path, valid_until: contracts::DbCounter) {
++    let path = root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE);
++    let mut source: contracts::catalogs::FrozenMakerTakerFeesV1 =
++        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++    assert_eq!(source.origin, contracts::research::DataOrigin::Fixture);
++    source.valid_until_ns = valid_until;
++    domain::catalogs::maker_taker_fee_source(&source).unwrap();
++    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
++}
++
+ #[test]
+ fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
+     use contracts::evidence::{Comparator, Decision, MetricRequirementV1};
+@@ -181,6 +193,35 @@ fn assumptions_bind_frozen_venue_fees_and_original_native_instrument_terms() {
+     assert!(domain::portfolio::simulation_settings(&invalid).is_err());
+ }
+ 
++#[test]
++fn cli_preserves_sub_currency_starting_capital_in_canonical_snapshot() {
++    let (directory, mut request) = market("0", 20);
++    request.settings.starting_capital = "1000000.0008".parse().unwrap();
++    for point in &mut request.target_points {
++        point.cash_weight = "1".parse().unwrap();
++        for target in &mut point.targets {
++            target.weight = "0".parse().unwrap();
++        }
++    }
++    let result = simulate(directory.path(), &request).unwrap();
++    assert_eq!(result.orders.get(), 0);
++    assert_eq!(
++        result.canonical_result["accounts"][0]["Margin"]["base"]["balances_starting"]["USD"],
++        "1000000.0008 USD"
++    );
++    let initial = result.canonical_result["portfolio_snapshots"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .min_by_key(|row| row["ts_event"].as_str().unwrap().parse::<u64>().unwrap())
++        .unwrap();
++    // Canonical snapshots normalize UUID identities; their original Money
++    // strings remain exact. Do not deserialize this document as a raw event.
++    assert_eq!(initial["balances"][0]["total"], "1000000.0008 USD");
++    assert_eq!(initial["balances"][0]["free"], "1000000.0008 USD");
++    assert_eq!(initial["total_equity"][0], "1000000.0008 USD");
++}
++
+ #[test]
+ fn two_assets_rebalance_inside_one_native_account_with_real_positions() {
+     // Daily account returns require snapshots across UTC dates, not 20 minutes.
+@@ -702,6 +743,7 @@ fn calendar_daily_return_statistics_retain_real_flat_account_days() {
+     request.selection.event_start_ns = count(start);
+     request.selection.event_end_ns = count(end);
+     request.selection.decision_cutoff_ns = count(end);
++    fixture_fee_window(directory.path(), count(end + DAY));
+     request.settings.snapshot_interval_ms = 86_400_000;
+     request.target_points.truncate(1);
+     request.target_points[0].cash_weight = "1".parse().unwrap();
+@@ -768,6 +810,7 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
+     request.selection.event_start_ns = count(start);
+     request.selection.event_end_ns = count(end);
+     request.selection.decision_cutoff_ns = count(end);
++    fixture_fee_window(directory.path(), count(end + DAY));
+     request.settings.snapshot_interval_ms = 86_400_000;
+     for point in &mut request.target_points {
+         point.asof_ns = count(point.asof_ns.get() + DAY);
+@@ -874,6 +917,17 @@ fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_order
+         }
+         catalog.write_to_parquet(&bars, None, None, None).unwrap();
+     }
++    // The delayed-source fixture independently retains the original venue's
++    // rates and declares their validity through both tested receive cutoffs.
++    let mut fee_source = original.execution_fees.as_ref().unwrap().clone();
++    fee_source.valid_until_ns = instant(14);
++    std::fs::write(
++        directory
++            .path()
++            .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
++        serde_json::to_vec(&fee_source).unwrap(),
++    )
++    .unwrap();
+     for point in &mut request.target_points {
+         point.asof_ns = count(point.asof_ns.get() + delay);
+         point.valid_until_ns = instant(13);
+diff --git a/runtimes/data/binance-vision.md b/runtimes/data/binance-vision.md
+index c01b355f..a98c5c74 100644
+--- a/runtimes/data/binance-vision.md
++++ b/runtimes/data/binance-vision.md
+@@ -8,7 +8,7 @@ the existing `catalog-prepare` executable. Existing Coinbase/Polymarket frozen
+ descriptors and `qz.public_acquisition/1` remain unchanged. An installation must
+ use a completed release containing this plugin before these capabilities are
+ available. See the [source-plugin guide](source-plugins.md) and
+-[installed source command](../../deploy/docker/README.md#installed-free-source-tools).
++[installed source command](../../deploy/docker/README.md#source-preparation).
+ 
+ ## Scope and source identity
+ 
+diff --git a/runtimes/data/hf-dataset.md b/runtimes/data/hf-dataset.md
+index 377bea9c..88b3104e 100644
+--- a/runtimes/data/hf-dataset.md
++++ b/runtimes/data/hf-dataset.md
+@@ -77,7 +77,7 @@ external writes that ignore those locks. For installed execution, use the
+ matching application image's explicit Python entrypoint in a disposable offline
+ container. Mount the cache writable for locks, the original plan read-only and a
+ separate request-output parent writable, at their literal recorded paths. See the
+-[installed boundary](../../deploy/docker/README.md#scientific-images-and-source-tools)
++[installed boundary](../../deploy/docker/README.md#source-preparation)
+ and [v2 examples](polymarket-v2.md#installed-disposable-containers). No deployment
+ change or retired `manage.sh source` command is required.
+ 
+diff --git a/runtimes/data/polymarket-v2.md b/runtimes/data/polymarket-v2.md
+index f38afdc1..94e99bf0 100644
+--- a/runtimes/data/polymarket-v2.md
++++ b/runtimes/data/polymarket-v2.md
+@@ -255,7 +255,7 @@ not the scientific compiler image. The image includes Python modules, the Node
+ exporter and native `source-tools` dispatch shims; no host Node/Rust build is
+ needed. Use explicit same-path input/output mounts. Network is allowed only for
+ planning/download; never pass provider credentials or the service environment.
+-See the [installed source-tool boundary](../../deploy/docker/README.md#scientific-images-and-source-tools).
++See the [installed source-tool boundary](../../deploy/docker/README.md#source-preparation).
+ 
+ For example, with existing owner-managed directories and a new output:
+ 
+diff --git a/runtimes/data/source-plugins.md b/runtimes/data/source-plugins.md
+index 6b54cb5a..281df7c7 100644
+--- a/runtimes/data/source-plugins.md
++++ b/runtimes/data/source-plugins.md
+@@ -101,7 +101,7 @@ permission, or point-in-time attestation.
+ 
+ For an installation whose completed release includes the source tools, the
+ installed source command uses the application image's matching operator payload;
+-consult the [installed guide](../../deploy/docker/README.md#scientific-images-and-source-tools)
++consult the [installed guide](../../deploy/docker/README.md#source-preparation)
+ and invoke the matching application image's Python entrypoint in a disposable
+ container, with literal read-only inputs and separate writable outputs. Do not
+ use the retired manager `source` command. Check that release's help/inventory. No source checkout or
+@@ -277,6 +277,18 @@ declaration. Missing original fees, definitions from the future, or insufficient
+ evidence remain native failures. Original event/receipt clocks and numerical
+ values are retained, and Sealed metadata follows native redaction.
+ 
++Ordinary maker/taker backtests on Nautilus 0.67 require an independent frozen
++venue fee policy, because instrument definitions no longer contain those rates.
++Pass `--fee-source /absolute/original-venue-fees.json` to `prepare` to bind that
++original input to the new catalog and `catalog-metadata.json.execution_fees`.
++The wrapper also binds both published copies and the receipt to the original
++file. Existing catalog fee files are preserved automatically. Omitting this input
++permits data-only preparation; ordinary maker/taker execution still rejects a
++missing source, including when the request declares zero fees. See the
++[source contract and preparation steps](../../.opensdlc/tasks/core-engine-implementation/fee-source.md).
++Polymarket native/recorded fees and the dedicated spot-cash policy retain their
++existing source paths.
++
+ A preserved archive with `SYNTHETIC` provenance cannot use an `origin=REAL`
+ declaration: preparation rejects that contradiction before native execution or
+ output creation. Other origin values and PIT declarations remain subject to the
+diff --git a/runtimes/data/source_plugins.py b/runtimes/data/source_plugins.py
+index 0f248738..5f173239 100644
+--- a/runtimes/data/source_plugins.py
++++ b/runtimes/data/source_plugins.py
+@@ -4,6 +4,7 @@
+ import argparse
+ import csv
+ from dataclasses import dataclass, replace
++from decimal import Decimal, InvalidOperation
+ from functools import partial
+ import hashlib
+ import http.client
+@@ -28,6 +29,8 @@ import snapshot
+ MAX_REPORT_BYTES = None
+ MAX_EVIDENCE_BYTES = None
+ ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "sii-order-filled", "joseph-books")
++MAKER_TAKER_FEES_FILE = "frozen-maker-taker-fees.json"
++MAX_FEE_SOURCE_BYTES = 16 * 1024 * 1024
+ 
+ 
+ @dataclass(frozen=True)
+@@ -533,6 +536,30 @@ def prepare_options(parser):
+                         help="explicit original catalog declaration; native measurement supplies quality/row_count")
+     parser.add_argument("--selection", type=Path, required=True,
+                         help="explicit original NativeDatasetSelectionV1; no inferred event or receipt bounds")
++    parser.add_argument("--fee-source", type=Path,
++                        help="independent frozen maker/taker venue policy; native preparation checks identity and window; never inferred from request rates")
++
++
++def fee_source_binding(value):
++    """Compare original exact rates across native decimal spelling normalization.
++
++    Rust validates the complete source contract. This is publication binding only,
++    with no fee calculation or claim that a source declaration proves applicability.
++    """
++    try:
++        if not isinstance(value, dict) or not isinstance(value.get("rates"), list):
++            raise ValueError()
++        rates = []
++        for rate in value["rates"]:
++            if not isinstance(rate, dict) or any(not isinstance(rate.get(k), str) for k in ("maker", "taker")):
++                raise ValueError()
++            exact = {k: Decimal(rate[k]) for k in ("maker", "taker")}
++            if not all(rate.is_finite() for rate in exact.values()):
++                raise ValueError()
++            rates.append(rate | exact)
++        return value | {"rates": rates}
++    except (ValueError, InvalidOperation):
++        raise ValueError("invalid frozen fee source binding") from None
+ 
+ 
+ def file_record(path, limit):
+@@ -677,6 +704,18 @@ def prepare_source(plugin_id, args, *, source_preset=None):
+     paths = {"import_report": (snapshot.safe_local(source, "import-report.json"), MAX_REPORT_BYTES),
+              "source_evidence": (snapshot.safe_local(source, "source-evidence.json"), MAX_EVIDENCE_BYTES),
+              "declaration": (declaration, MAX_REPORT_BYTES), "selection": (selection, MAX_REPORT_BYTES)}
++    fee_source = getattr(args, "fee_source", None)
++    if fee_source is not None:
++        fee_source = local_path(fee_source)
++        paths["fee_source"] = (fee_source, MAX_FEE_SOURCE_BYTES)
++    original_fee_path = source / "catalog" / MAKER_TAKER_FEES_FILE
++    if original_fee_path.exists():
++        original_fee_path = snapshot.safe_local(source / "catalog", MAKER_TAKER_FEES_FILE)
++        paths["catalog_fee_source"] = (original_fee_path, MAX_FEE_SOURCE_BYTES)
++    fee_input_key = "fee_source" if fee_source is not None else (
++        "catalog_fee_source" if "catalog_fee_source" in paths else None)
++    expected_fee_source = (fee_source_binding(providers.read_json(acquire.local_bytes(*paths[fee_input_key])))
++                           if fee_input_key else None)
+     no_checksums = plugin_id == "hf-dataset"
+     record = plain_file_record if no_checksums else file_record
+     original_bytes = ({name: acquire.local_bytes(path, limit) for name, (path, limit) in paths.items()}
+@@ -701,19 +740,31 @@ def prepare_source(plugin_id, args, *, source_preset=None):
+     validate_native(plugin_id, report, evidence, declaration=declared)
+     if not unchanged():
+         raise ValueError("catalog preparation inputs changed during input checks")
+-    output = run_native(args, ["--catalog", str(source / "catalog"),
+-                               "--declaration", str(declaration), "--selection", str(selection)])
++    native_argv = ["--catalog", str(source / "catalog"),
++                   "--declaration", str(declaration), "--selection", str(selection)]
++    if fee_source is not None:
++        native_argv += ["--fee-source", str(fee_source)]
++    output = run_native(args, native_argv)
+     if not unchanged():
+         raise ValueError("catalog preparation inputs changed during native execution; artifacts retained")
+     catalog = published_catalog(output)
+     metadata_file = snapshot.safe_local(output, "catalog-metadata.json")
+     try:
+         body = acquire.local_bytes(metadata_file, MAX_REPORT_BYTES)
+-        published_identity = catalog_identity(providers.read_json(body))
++        published_metadata = providers.read_json(body)
++        published_identity = catalog_identity(published_metadata)
+     except (OSError, ValueError):
+         raise ValueError("catalog preparation final metadata is missing, invalid or too large; artifacts retained") from None
+     if published_identity != identity:
+         raise ValueError("catalog preparation published identity differs from the explicit declaration")
++    if expected_fee_source is not None:
++        published_fee = providers.read_json(acquire.local_bytes(
++            snapshot.safe_local(catalog, MAKER_TAKER_FEES_FILE), MAX_FEE_SOURCE_BYTES))
++        if (fee_source_binding(published_metadata.get("execution_fees")) != expected_fee_source
++                or fee_source_binding(published_fee) != expected_fee_source):
++            raise ValueError("prepared fee source differs from the original independent input; artifacts retained")
++    elif published_metadata.get("execution_fees") is not None or (catalog / MAKER_TAKER_FEES_FILE).exists():
++        raise ValueError("prepared fee source has no original independent input; artifacts retained")
+     result = {"schema": "qz.source_preparation/1", "plugin": plugin_id, "status": "CATALOG_PREPARED",
+               "output": str(output), "catalog_root": str(catalog), "metadata_file": str(metadata_file),
+               "metadata_bytes": len(body),
+@@ -723,6 +774,8 @@ def prepare_source(plugin_id, args, *, source_preset=None):
+               "admission": dict(acquire.ADMISSION),
+               "unperformed_steps": ["runtime_configuration", "source_registration", "source_grant_registration",
+                                     "dataset_registration", "frozen_input_set", "fresh_DATA_VALIDATE"]}
++    if fee_input_key:
++        result["source_artifacts"]["fee_source"] = originals[fee_input_key]
+     if preset_request is not None:
+         metadata = evidence["source_metadata"]
+         definitions = sorted(evidence["instruments"], key=lambda item: item["BinaryOption"]["id"])
+diff --git a/runtimes/data/test_source_plugins.py b/runtimes/data/test_source_plugins.py
+index 3a5b92fb..9cf3dfd4 100644
+--- a/runtimes/data/test_source_plugins.py
++++ b/runtimes/data/test_source_plugins.py
+@@ -487,15 +487,20 @@ class CatalogPreparationTest(unittest.TestCase):
+ 
+     def runner(self, change=None, returncode=0):
+         def run(argv, **kwargs):
+-            self.assertEqual(argv, [str(self.binary), "--catalog", str(self.source / "catalog"),
+-                                   "--declaration", str(self.declaration), "--selection", str(self.selection),
+-                                   "--output", str(self.output)])
++            expected = [str(self.binary), "--catalog", str(self.source / "catalog"),
++                        "--declaration", str(self.declaration), "--selection", str(self.selection)]
++            if getattr(self.args, "fee_source", None) is not None:
++                expected += ["--fee-source", str(self.args.fee_source)]
++            self.assertEqual(argv, expected + ["--output", str(self.output)])
+             self.assertIs(kwargs["shell"], False)
+             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+             self.assertNotIn("timeout", kwargs)
+             (self.output / "catalog").mkdir(parents=True)
+             (self.output / "catalog/fixture.parquet").write_bytes(b"PAR1prepared-fixturePAR1")
+             (self.output / "catalog-metadata.json").write_bytes(self.body)
++            if self.metadata.get("execution_fees") is not None:
++                (self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE).write_text(
++                    json.dumps(self.metadata["execution_fees"]))
+             if change:
+                 change()
+             return SimpleNamespace(returncode=returncode)
+@@ -506,6 +511,78 @@ class CatalogPreparationTest(unittest.TestCase):
+                 "--declaration", str(self.declaration), "--selection", str(self.selection),
+                 "--output", str(self.output), "--native-bin", str(self.binary)]
+ 
++    def independent_fee_source(self):
++        value = {"schema_version": 1, "source_reference": "controlled fee-source fixture only",
++                 "source_version": "fixture-v1", "origin": "FIXTURE", "venue": "SIM",
++                 "currency": "USD", "currency_precision": 2, "available_at_ns": "0",
++                 "valid_from_ns": "0", "valid_until_ns": "200000000",
++                 "rates": [{"instrument_id": "EUR/USD.SIM", "maker": "0.0000", "taker": "0.0010"}]}
++        self.args.fee_source = self.root / "independent fee policy; literal.json"
++        self.args.fee_source.write_text(json.dumps(value, indent=4))
++        # The native contract normalizes decimal spellings while retaining values.
++        self.metadata["execution_fees"] = value | {"rates": [value["rates"][0] | {"maker": "0", "taker": "0.001"}]}
++        self.body = json.dumps(self.metadata).encode()
++        return value
++
++    def test_independent_fee_file_is_forwarded_bound_and_never_written_into_original_catalog(self):
++        self.independent_fee_source()
++        original = self.source_bytes()
++        fees = self.args.fee_source.read_bytes()
++        with patch.object(plugins.subprocess, "run", side_effect=self.runner()):
++            result = plugins.prepare_source("coinbase-candles", self.args)
++        self.assertEqual(result["source_artifacts"]["fee_source"], {
++            "path": str(self.args.fee_source), "bytes": len(fees), "sha256": hashlib.sha256(fees).hexdigest()})
++        self.assertEqual(self.source_bytes(), original)
++        self.assertEqual(self.args.fee_source.read_bytes(), fees)
++        self.assertEqual(json.loads((self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE).read_bytes()),
++                         self.metadata["execution_fees"])
++
++    def test_prepare_cli_accepts_literal_independent_fee_path(self):
++        self.independent_fee_source()
++        with patch.object(plugins.subprocess, "run", side_effect=self.runner()), \
++                contextlib.redirect_stdout(io.StringIO()) as stdout:
++            self.assertEqual(plugins.main(self.argv() + ["--fee-source", str(self.args.fee_source)]), 0)
++        result = json.loads(stdout.getvalue())
++        self.assertEqual(result["source_artifacts"]["fee_source"]["path"], str(self.args.fee_source))
++
++    def test_existing_native_fee_source_is_bound_without_an_explicit_file_flag(self):
++        self.independent_fee_source()
++        original_fee = self.source / "catalog" / plugins.MAKER_TAKER_FEES_FILE
++        original_fee.write_bytes(self.args.fee_source.read_bytes())
++        del self.args.fee_source
++        original = self.source_bytes()
++        with patch.object(plugins.subprocess, "run", side_effect=self.runner()):
++            result = plugins.prepare_source("coinbase-candles", self.args)
++        self.assertEqual(result["source_artifacts"]["fee_source"]["path"], str(original_fee))
++        self.assertEqual(self.source_bytes(), original)
++
++    def test_native_output_cannot_invent_a_missing_independent_fee_source(self):
++        self.independent_fee_source()
++        del self.args.fee_source
++        with patch.object(plugins.subprocess, "run", side_effect=self.runner()), \
++                self.assertRaisesRegex(ValueError, "no original independent input"):
++            plugins.prepare_source("coinbase-candles", self.args)
++
++    def test_fee_input_mutation_and_published_rate_substitution_are_rejected(self):
++        self.independent_fee_source()
++        for mode in ("input", "metadata", "catalog"):
++            self.output = self.root / ("changed-fee-" + mode)
++            self.args.output = self.output
++            original = self.args.fee_source.read_bytes()
++            def change():
++                path = (self.args.fee_source if mode == "input" else
++                        self.output / "catalog-metadata.json" if mode == "metadata" else
++                        self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE)
++                value = json.loads(path.read_bytes())
++                fee = value["execution_fees"] if mode == "metadata" else value
++                fee["rates"][0]["taker"] = "0.002"
++                path.write_text(json.dumps(value))
++            with self.subTest(mode=mode), patch.object(plugins.subprocess, "run", side_effect=self.runner(change)), \
++                    self.assertRaisesRegex(ValueError, "changed|differs"):
++                plugins.prepare_source("coinbase-candles", self.args)
++            self.assertTrue((self.output / "catalog-metadata.json").exists())
++            self.args.fee_source.write_bytes(original)
++
+     def test_handoff_uses_exact_original_metadata_bytes_and_only_identity_hints(self):
+         original = self.source_bytes()
+         inputs = (self.declaration.read_bytes(), self.selection.read_bytes())

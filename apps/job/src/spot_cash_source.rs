@@ -101,7 +101,7 @@ fn source_rows(
     BTreeMap<FrozenSpotCandleRowV1, ClosedBarSourceRow>,
 )> {
     ensure!(
-        bundle.native_version == "0.63.0" && !bundle.responses.is_empty(),
+        bundle.native_version == "0.67.0" && !bundle.responses.is_empty(),
         "SPOT_SOURCE_VERSION_OR_RESPONSES"
     );
     let instrument: InstrumentAny = serde_json::from_value(bundle.instrument_definition.clone())?;

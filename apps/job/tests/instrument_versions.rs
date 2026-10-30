@@ -4,7 +4,7 @@ mod market;
 
 use contracts::{portfolio::NativeModelRefV1, science::NativePortfolioBuildResultV1};
 use nautilus_model::instruments::InstrumentAny;
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
 #[test]
 fn planning_uses_the_tick_known_at_decision_even_after_the_last_observed_bar() {
@@ -31,7 +31,9 @@ fn planning_uses_the_tick_known_at_decision_even_after_the_last_observed_bar() {
     let catalog =
         ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
             .unwrap();
-    let originals = catalog.instruments(None, None, None).unwrap();
+    let originals = catalog
+        .query_instruments_filtered(None, None, None)
+        .unwrap();
     let cutoff = request.selection.decision_cutoff_ns.get();
     let mut updates: Vec<InstrumentAny> = Vec::new();
     for original in originals {

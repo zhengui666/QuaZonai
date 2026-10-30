@@ -12,7 +12,7 @@ import type { StrategyPartition, ThresholdPolicy } from '../src/strategy.ts';
 
 async function readCatalogPrefix(binary: NativeTarget, catalog: string, selection: JsonObject, directory: string, context: Context): Promise<JsonObject> {
   const prefix = await executeNative(binary, 'catalog-prefix-digest', selection, ['--catalog', catalog], directory, context);
-  if (prefix.schema_version !== 1 || prefix.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V1' || canonical(prefix.selection!) !== canonical(selection)
+  if (prefix.schema_version !== 1 || prefix.method !== 'NAUTILUS_SELECTED_PREFIX_SHA256_V2' || canonical(prefix.selection!) !== canonical(selection)
     || typeof prefix.content_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(prefix.content_sha256)) throw new Error('native_catalog_prefix_evidence_invalid');
   return prefix;
 }

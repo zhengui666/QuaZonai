@@ -19,10 +19,10 @@ const request = { schema_version: 1, event_start_ns: '0', evaluation_start_ns: '
   members: [{ weight: '0.5' }, { weight: '0.5' }], gross_exposure: '0.9', target_ttl_ns: '5',
   settings: { schema_version: 1, base_currency: 'pUSD', starting_capital: '3000', account_kind: 'MARGIN', leverage: '1',
     exposure_tolerance: '0.000001', snapshot_interval_ms: 1000, fee_rates: [],
-    fee_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.63.0', parameters: {} },
-    fill_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.63.0',
+    fee_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_FEES', native_version: '0.67.0', parameters: {} },
+    fill_model: { schema_version: 1, adapter_kind: 'POLYMARKET_V2_RECORDED_LIQUIDITY', native_version: '0.67.0',
       parameters: { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '1' } },
-    latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.63.0',
+    latency_model: { schema_version: 1, adapter_kind: 'NAUTILUS_STATIC_LATENCY', upstream_class: 'nautilus_execution::models::latency::StaticLatencyModel', upstream_version: '0.67.0',
       parameters: { base_latency_ns: '1', insert_latency_ns: '0', update_latency_ns: '0', cancel_latency_ns: '0' } } } };
 const specification = researchSpecification({ version: 1, name: 'Catalog ensemble protocol', question: 'Protocol only, no profitability claim', rationale: 'Original complete ensemble',
   evaluation: { metric: 'Sharpe Ratio (252 days)', direction: 'maximize', scheme: 'registered-partitions' },

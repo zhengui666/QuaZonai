@@ -11,6 +11,7 @@ use nautilus_common::{
     msgbus::{self, TypedHandler},
 };
 use nautilus_core::UnixNanos;
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_live::node::{LiveNode, LiveNodeHandle, NodeRunMode, NodeState};
 use nautilus_model::{
     data::{Data, QuoteTick},
@@ -113,6 +114,11 @@ fn node() -> LiveNode {
                 starting_balances: vec![Money::from("10000 USDT")],
                 base_currency: Some(Currency::USDT()),
                 account_type: AccountType::Margin,
+                // Original crypto_perpetual_ethusdt fixture: 0.0002 / 0.0004.
+                fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::new(
+                    rust_decimal::Decimal::new(2, 4),
+                    rust_decimal::Decimal::new(4, 4),
+                ))),
                 ..Default::default()
             }),
         )
@@ -298,6 +304,14 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
         2,
         "original Sandbox must fill both fixture orders"
     );
+    for fill in fills.borrow().iter() {
+        let oracle = fill.last_qty.as_decimal()
+            * fill.last_px.as_decimal()
+            * rust_decimal::Decimal::new(4, 4);
+        let commission = fill.commission.expect("native fill commission required");
+        assert_eq!(commission.as_decimal(), oracle);
+        assert_eq!(commission.currency, Currency::USDT());
+    }
     assert!(
         !accounts.borrow().is_empty(),
         "original Sandbox must generate its account state"

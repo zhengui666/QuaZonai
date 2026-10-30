@@ -5,9 +5,27 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createNautilusWorker, executionId } from '../src/server.ts';
 import type { NativeExecutionRequest, NativeExecutionReceipt } from '../../../packages/contracts/src/nautilus.ts';
+
+test('request hashing preserves original canonical identities across buffered Unicode and attachment boundaries', () => {
+  const request: Omit<NativeExecutionRequest, 'requestId'> = {
+    schemaVersion: 1, invocationId: '11111111-1111-4111-8111-111111111111',
+    implementationDigest: `sha256:${'a'.repeat(64)}`, command: 'allocate',
+    input: { z: [null, true, false, -0, 1e-10, '饭饭🐋', '\ud800'], a: {
+      '10': '1790000000000000001', '2': '0.000000000000000001', escape: '"\\\n',
+    } }, args: ['--model', '@file:model'], files: { model: 'Zml4dHVyZQ==' },
+  };
+  // Frozen from the original whole-string canonical encoder, not the new writer.
+  assert.equal(executionId(request), '5225f6bb7e658b183cc4fde48e96087178c4e306b8a1659a6eeb4baa31fe69c8');
+  const large = { ...request, input: ['x'.repeat(65_535) + '🐋', ...Array.from({ length: 10_000 }, (_, index) => index)],
+    files: { model: Buffer.alloc(100_000, 7).toString('base64') } };
+  // This fixture's nested values have no object-key ordering ambiguity.
+  const original = `{${Object.keys(large).sort().map(key => `${JSON.stringify(key)}:${JSON.stringify(large[key as keyof typeof large])}`).join(',')}}`;
+  assert.equal(executionId(large), createHash('sha256').update(original).digest('hex'));
+  assert.equal(executionId({ ...large, files: { ...large.files }, input: [...large.input] }), executionId(large));
+});
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-worker-'));

@@ -15,7 +15,8 @@ use nautilus_common::{
     actor::DataActor, enums::Environment, live::get_data_event_sender,
     logging::logger::LoggerConfig, messages::DataEvent,
 };
-use nautilus_core::UnixNanos;
+use nautilus_core::{DurationNanos, UnixNanos};
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_live::node::{LiveNode, NodeRunMode};
 use nautilus_model::{
     data::{Data, QuoteTick},
@@ -252,7 +253,7 @@ impl DataActor for FixtureStrategy {
         self.subscribe_quotes(InstrumentId::from(INSTRUMENT), None, None);
         self.clock().set_timer_ns(
             "controlled-owner-commands",
-            10_000_000,
+            DurationNanos::new(10_000_000),
             None,
             None,
             None,
@@ -379,6 +380,8 @@ async fn cash_sandbox_fences_cancels_and_reduces_only_needed_quantity() {
         starting_balances: vec![Money::from("100 USDC")],
         base_currency: Some(Currency::USDC()),
         account_type: AccountType::Cash,
+        // Original BinaryOption fixture defaulted both fee rates to zero.
+        fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel::zero())),
         ..Default::default()
     };
     let mut node = LiveNode::builder(TraderId::from("QZEXIT-001"), Environment::Sandbox)

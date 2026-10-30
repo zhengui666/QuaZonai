@@ -4,8 +4,11 @@
 mod acquisition;
 
 use anyhow::{ensure, Context, Result};
-use nautilus_model::types::{Price, Quantity};
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_model::{
+    data::NautilusDataType,
+    types::{Price, Quantity},
+};
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -49,6 +52,16 @@ fn main() -> Result<()> {
     ensure!(conversion["admission"]["research_qualified"] == false);
     let selection = acquisition::selection();
     let declaration = acquisition::declaration();
+    let fee_path = root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE);
+    let original_fees = fs::read(&fee_path)?;
+    let source_fees: contracts::catalogs::FrozenMakerTakerFeesV1 =
+        serde_json::from_slice(&original_fees)?;
+    ensure!(source_fees.origin == contracts::research::DataOrigin::Fixture);
+    ensure!(
+        source_fees.rates.len() == 1
+            && source_fees.rates[0].maker.as_decimal().to_plain_string() == "0.004"
+            && source_fees.rates[0].taker.as_decimal().to_plain_string() == "0.006"
+    );
     acquisition::write_json(&root.join("selection.json"), &selection);
     acquisition::write_json(&root.join("declaration.json"), &declaration);
     let prepared = root.join("prepared");
@@ -59,6 +72,8 @@ fn main() -> Result<()> {
         .arg(root.join("declaration.json"))
         .arg("--selection")
         .arg(root.join("selection.json"))
+        .arg("--fee-source")
+        .arg(&fee_path)
         .arg("--output")
         .arg(&prepared)
         .output()?;
@@ -66,6 +81,12 @@ fn main() -> Result<()> {
     let bytes = fs::read(prepared.join("catalog-metadata.json"))?;
     let metadata: Value = serde_json::from_slice(&bytes)?;
     ensure!(metadata == serde_json::from_slice::<Value>(&result.stdout)?);
+    ensure!(metadata["execution_fees"] == serde_json::to_value(&source_fees)?);
+    ensure!(fs::read(&fee_path)? == original_fees);
+    ensure!(!imported
+        .join("catalog")
+        .join(contracts::catalogs::MAKER_TAKER_FEES_FILE)
+        .exists());
     ensure!(
         metadata["row_count"] == "3"
             && metadata["origin"] == "FIXTURE"
@@ -77,6 +98,7 @@ fn main() -> Result<()> {
     )?;
     let data = job::catalog::load_catalog(&prepared.join("catalog"), &selected.selection)?;
     ensure!(data.rows == 3 && data.series.len() == 1);
+    ensure!(data.execution_fees.as_ref() == Some(&source_fees));
     ensure!(
         serde_json::to_value(&data.series[0].instrument)?
             == serde_json::to_value(&source.instrument)?
@@ -110,14 +132,15 @@ fn main() -> Result<()> {
         None,
         None,
     )?;
-    let files = catalog.get_file_list_from_data_cls("bars")?;
+    let data_type = NautilusDataType::Bar.into();
+    let files = catalog.get_file_list_from_data_cls(&data_type)?;
     ensure!(
         files.len() == 1,
         "exactly one native BAR partition required"
     );
     let bar_type = data.series[0].bar_type.to_string();
     ensure!(
-        files == catalog.query_files("bars", Some(vec![bar_type.clone()]), None, None)?,
+        files == catalog.query_files(&data_type, Some(vec![bar_type.clone()]), None, None)?,
         "native BAR partition must belong to the verified series"
     );
     let relative_path = &files[0];

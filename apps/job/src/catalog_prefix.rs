@@ -39,8 +39,12 @@ pub fn digest(
         }
         // Include domain separation/version so an unrelated SHA256 document
         // cannot be mistaken for this scientific content-identity protocol.
-        let method = "NAUTILUS_SELECTED_PREFIX_SHA256_V1";
-        let mut combined = serde_json::json!({"method":method,"series":contents});
+        let method = "NAUTILUS_SELECTED_PREFIX_SHA256_V2";
+        let mut combined = serde_json::json!({
+            "method":method,
+            "series":contents,
+            "execution_fees":market.execution_fees,
+        });
         combined.sort_all_objects();
         Ok(NativeCatalogPrefixResultV1 {
             schema_version: SchemaV1,

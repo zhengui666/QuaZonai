@@ -1,0 +1,32 @@
+{
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "profile": "release",
+  "all_features": true,
+  "locked": true,
+  "CARGO_PROFILE_RELEASE_DEBUG": "0",
+  "CARGO_INCREMENTAL": "0",
+  "candidate_initial_build_jobs": 1,
+  "subsequent_build_jobs": 2,
+  "target_directory": "/workspace/QuaZonai/target",
+  "candidate_job_origin": "/tmp/qz-core-acceptance-20261030/bin/job",
+  "candidate_example_build_log": "candidate-final-build.log",
+  "baseline_library_build_log": "baseline-build.log",
+  "baseline_forced_source_mtime": true,
+  "rejected_stale_baseline_build_log": "baseline-rejected-stale-build.log",
+  "cache_proof_direct_inclusion": true,
+  "build_commands": {
+    "candidate": "cargo build --locked -p job --release --all-features --example qz_core_pair",
+    "baseline": "cargo build --locked -p job --release --all-features --bin job --example qz_core_pair",
+    "configuration_proof": "cargo build --locked -p job --release --all-features --example qz_cache_proof"
+  },
+  "binaries_sha256": {
+    "baseline-job": "cdd26ea7abe0e7c858d2ed6d06a44951d33b3684421e3d0f5e27f9a63aa78af8",
+    "candidate-job": "e91934b6ee93819cd0c205a78e9f4d5f2d4b77daf59e7fef517534c7691901cd",
+    "baseline-build": "52f174d05392238cebc34e70970049879dc588c1859eb9431a7c34027678de69",
+    "candidate-build": "9ac663a84bd0cf2a6400bfc5c47743f730c643f2cd27f8c04f22517d019138d0"
+  },
+  "cache_proof_binaries_sha256": {
+    "baseline": "397122f41390a88f7c738fb43d49e0dac22a859a13f2af02d1ab920b6b1e2f52",
+    "candidate": "623461be6c213d6c4cfcc6d2617dc8601f50df360f7e7baff8ad2bd9693e6258"
+  }
+}

@@ -40,7 +40,7 @@ function frozenCycle(target?: RemoteNativeTarget) {
   const record = { mandate: { id: 'original-mandate', allowedUniverseRef: 'original-universe', capitalSource: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, ownerBoundaries: [] },
     definition: { id: 'original-definition' }, policy: { id: 'original-policy', validDomain: { jointAllocationMethod: pmAllocationMethod() } }, gaps: {}, artifacts: {
       [cycle.id]: { maximumTrials: 2, research: { input: { data } }, configured: { data, revision: { id: 'original-dataset', availableThroughNs: '300' }, strategy: {} },
-        nativeSource: { request, catalogPrefix: { method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V1', content_sha256: 'a'.repeat(64), selection: (request.forecast as JsonObject).selection },
+        nativeSource: { request, catalogPrefix: { method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V2', content_sha256: 'a'.repeat(64), selection: (request.forecast as JsonObject).selection },
           fit: { members: [{ factor_version_id: 'protocol-only', weight: '1' }], forecast_contract: { parameters: {} } }, simulationRequest: { settings: { base_currency: 'USD' } } } } },
   } as unknown as PmRecord;
   return { record, cycle };

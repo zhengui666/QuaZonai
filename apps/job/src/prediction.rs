@@ -3,17 +3,20 @@ use crate::catalog::NativeMarketData;
 use anyhow::{ensure, Result};
 use bigdecimal::BigDecimal;
 use contracts::science::{NativeBarSelectionV1, NativeSimulationSettingsV1};
+use nautilus_common::clock::Clock;
 use nautilus_core::UnixNanos;
-use nautilus_execution::models::fee::{FeeModel, FeeModelHandle, MakerTakerFeeModel};
+use nautilus_execution::models::fee::{FeeModel, FeeModelHandle};
 use nautilus_model::{
-    data::{Data, InstrumentClose},
+    data::{DataBatch, InstrumentClose, NautilusDataType},
     enums::InstrumentCloseType,
     identifiers::{ClientOrderId, InstrumentId},
     instruments::{Instrument, InstrumentAny},
     orders::{Order, OrderAny},
     types::{Money, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::ParquetDataCatalog, catalog::traits::CatalogQuery,
+};
 use nautilus_polymarket::models::PolymarketFeeModel;
 use rust_decimal::Decimal;
 use std::{
@@ -25,6 +28,7 @@ use std::{
     str::FromStr,
 };
 
+pub(crate) mod catalog_fees;
 #[cfg(test)]
 mod fee_tests;
 
@@ -178,11 +182,15 @@ pub(crate) fn is_native_settlement_order(id: &str) -> bool {
     id.starts_with("EXPIRATION-POLYMARKET-")
 }
 
-pub(crate) fn fee_model(settings: &NativeSimulationSettingsV1) -> FeeModelHandle {
+pub(crate) fn fee_model(
+    settings: &NativeSimulationSettingsV1,
+    market: &NativeMarketData,
+    clock: Rc<RefCell<dyn Clock>>,
+) -> Result<FeeModelHandle> {
     if domain::prediction::uses_native_fee(&settings.fee_model) {
-        FeeModelHandle::new(SettlementAwarePolymarketFee)
+        Ok(FeeModelHandle::new(SettlementAwarePolymarketFee))
     } else {
-        FeeModelHandle::new(MakerTakerFeeModel)
+        catalog_fees::fee_model(market, settings, clock)
     }
 }
 
@@ -234,6 +242,12 @@ pub(crate) fn validate_market(
             _ => ensure!(!selected, "POLYMARKET_FEE_REQUIRES_BINARY_OPTION"),
         }
     }
+    if matches!(
+        settings.fee_model,
+        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
+    ) {
+        catalog_fees::validate_market(market, settings)?;
+    }
     Ok(())
 }
 
@@ -276,7 +290,7 @@ pub(crate) fn catalog_closes(
         .chain(expected.keys())
         .copied()
         .collect::<BTreeSet<_>>();
-    let mut catalog = ParquetDataCatalog::from_uri(
+    let catalog = ParquetDataCatalog::from_uri(
         root.to_str()
             .ok_or_else(|| anyhow::anyhow!("CATALOG_PATH_ENCODING"))?,
         None,
@@ -286,48 +300,53 @@ pub(crate) fn catalog_closes(
     )?;
     // All already-available closes for these identities must be registered. Only
     // their later selection for replay uses the requested half-open holding window.
-    let query = catalog.query::<InstrumentClose>(
-        Some(ids.iter().map(ToString::to_string).collect()),
-        None,
-        Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
-        None,
-        None,
-        true,
-    )?;
+    let query = CatalogQuery::new(NautilusDataType::InstrumentClose)
+        .with_identifiers(Some(ids.iter().map(ToString::to_string).collect()))
+        .with_range(
+            None,
+            Some(UnixNanos::from(selection.decision_cutoff_ns.get())),
+        );
+    let mut session = crate::catalog::file_batch_session(&catalog, query, None, ids.len() + 1)?;
     let mut seen = BTreeSet::new();
     let mut verified_closes = Vec::new();
-    for record in query.take(ids.len() + 1) {
-        let Data::InstrumentClose(close) = record? else {
+    while let Some(batch) = session.next_batch()? {
+        let DataBatch::InstrumentClose(batch) = batch else {
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
         };
-        let original = expected
-            .get(&close.instrument_id)
-            .ok_or_else(|| anyhow::anyhow!("POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"))?;
-        let price: contracts::DecimalValue = close
-            .close_price
-            .to_string()
-            .parse()
-            .map_err(anyhow::Error::msg)?;
-        ensure!(
-            close.close_type == InstrumentCloseType::ContractExpired
-                && close.ts_init >= close.ts_event
-                && close.ts_event.as_u64() == original.ts_event.get()
-                && close.ts_init.as_u64() == original.ts_init.get()
-                && price == original.close_price,
-            "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
-        );
-        ensure!(
-            seen.insert(close.instrument_id),
-            "DUPLICATE_POLYMARKET_SETTLEMENT"
-        );
-        if let Some(binary) = binaries.get(&close.instrument_id) {
+        for close in batch.as_ref() {
             ensure!(
-                close.ts_event >= binary.activation_ns
-                    && close.close_price.precision == binary.price_precision,
-                "POLYMARKET_CLOSE_CONTRACT_INVALID"
+                verified_closes.len() < ids.len(),
+                "DUPLICATE_POLYMARKET_SETTLEMENT"
             );
+            let original = expected
+                .get(&close.instrument_id)
+                .ok_or_else(|| anyhow::anyhow!("POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"))?;
+            let price: contracts::DecimalValue = close
+                .close_price
+                .to_string()
+                .parse()
+                .map_err(anyhow::Error::msg)?;
+            ensure!(
+                close.close_type == InstrumentCloseType::ContractExpired
+                    && close.ts_init >= close.ts_event
+                    && close.ts_event.as_u64() == original.ts_event.get()
+                    && close.ts_init.as_u64() == original.ts_init.get()
+                    && price == original.close_price,
+                "POLYMARKET_SETTLEMENT_SOURCE_MISMATCH"
+            );
+            ensure!(
+                seen.insert(close.instrument_id),
+                "DUPLICATE_POLYMARKET_SETTLEMENT"
+            );
+            if let Some(binary) = binaries.get(&close.instrument_id) {
+                ensure!(
+                    close.ts_event >= binary.activation_ns
+                        && close.close_price.precision == binary.price_precision,
+                    "POLYMARKET_CLOSE_CONTRACT_INVALID"
+                );
+            }
+            verified_closes.push(*close);
         }
-        verified_closes.push(close);
     }
     ensure!(
         seen.len() == expected.len(),

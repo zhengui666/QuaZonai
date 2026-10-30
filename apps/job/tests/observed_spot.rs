@@ -81,7 +81,7 @@ fn projected_initial_state(produced: &NativeSimulationResultV1) -> NativeObserve
     let initial_state = NativeObservedSpotStartV1 {
         schema_version: SchemaV1,
         snapshot_evidence_ref: "CONTROLLED_ORIGINAL_NATIVE_PUBLICATION".into(),
-        source_native_version: "0.63.0".into(),
+        source_native_version: "0.67.0".into(),
         available_ns: count(snapshot.ts_init.get() + 1),
         open_orders_evidence_ref: "CONTROLLED_SAME_RUN_CANONICAL_OPEN_ORDER_COUNT".into(),
         open_orders_account_id: snapshot.account_id.clone(),
@@ -100,6 +100,73 @@ fn completed(leg: &NativeObservedSpotSimulationLegV1) -> &NativeSimulationResult
         leg.reason
     );
     leg.result.as_ref().unwrap()
+}
+
+#[test]
+fn cli_preserves_sub_currency_capital_through_original_snapshot_and_wire_projection() {
+    let (root, mut request) = spot::source_fixture();
+    request.settings.starting_capital = money("1000.00000008");
+    for point in &mut request.target_points {
+        point.cash_weight = money("1");
+        for target in &mut point.targets {
+            target.weight = money("0");
+        }
+    }
+    let revision = Id::new().to_string();
+    let output = native::command(
+        &[
+            "simulate".as_ref(),
+            "--catalog".as_ref(),
+            root.path().as_os_str(),
+            "--dataset-revision-id".as_ref(),
+            revision.as_ref(),
+        ],
+        &request,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: NativeSimulationResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.orders.get(), 0);
+    let original = result
+        .spot_cash_report
+        .as_ref()
+        .unwrap()
+        .observations
+        .iter()
+        .find_map(|observation| match &observation.record {
+            NativeSpotCashObservationKindV1::Snapshot { native, .. } => Some(native),
+            _ => None,
+        })
+        .unwrap();
+    // This is the actual original engine event retained by spot capture, with
+    // its real UUID. The normalized canonical event is deliberately separate.
+    let native: PortfolioSnapshot = serde_json::from_value(original.clone()).unwrap();
+    let projected = job::account_observer::project_snapshot(&native).unwrap();
+    let balance = projected
+        .balances
+        .iter()
+        .find(|balance| balance.total.currency == "USDC")
+        .unwrap();
+    assert_eq!(balance.total.amount, request.settings.starting_capital);
+    assert_eq!(balance.free.amount, request.settings.starting_capital);
+    let equity = projected
+        .total_equity
+        .iter()
+        .find(|money| money.currency == "USDC")
+        .unwrap();
+    assert_eq!(equity.amount, request.settings.starting_capital);
+    assert_eq!(projected.event_id, native.event_id.to_string());
+    assert_eq!(
+        serde_json::to_value(&balance.total).unwrap()["amount"],
+        "1000.00000008"
+    );
+    assert_eq!(
+        serde_json::to_value(equity).unwrap()["amount"],
+        "1000.00000008"
+    );
 }
 
 #[test]

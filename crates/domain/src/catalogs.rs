@@ -4,6 +4,9 @@ use chrono::{DateTime, Utc};
 use contracts::{catalogs::*, research::PitStatus, runtime::RuntimeDataKind};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod fees;
+pub use fees::{maker_taker_fee_selection, maker_taker_fee_source};
+
 // The existing wire limit bounds definition records, not just distinct identities.
 
 fn bad(field: &str) -> DomainError {
@@ -130,7 +133,7 @@ pub fn instrument_version_at<'a>(
     Err(bad("instrument_definition.from_future"))
 }
 
-/// Match the supported single-base-currency venue to Nautilus 0.63.0 add_instrument.
+/// Match the supported single-base-currency venue to Nautilus 0.67.0 add_instrument.
 pub fn execution_account(
     class: &str,
     account: contracts::science::NativeAccountKind,
@@ -146,7 +149,8 @@ pub fn execution_account(
     }
 }
 
-/// Bind declared execution fees to this catalog's original instrument definitions.
+/// Bind execution fees to the independent frozen venue policy, or the original
+/// Polymarket fee schedule carried by its native instrument definition.
 pub fn execution_fees(
     metadata: &RuntimeCatalogMetadataV1,
     settings: &contracts::science::NativeSimulationSettingsV1,
@@ -162,12 +166,35 @@ pub fn execution_fees(
     if ids.len() != settings.fee_rates.len() {
         return Err(bad("execution_fees"));
     }
+    let ids: BTreeSet<_> = ids.iter().collect();
+    let source_rates = if matches!(
+        settings.fee_model,
+        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
+    ) {
+        let source = metadata
+            .execution_fees
+            .as_ref()
+            .ok_or_else(|| bad("execution_fees.source_missing"))?;
+        maker_taker_fee_selection(source, &metadata.quality.datasets[0].selection)?;
+        if source.currency != settings.base_currency {
+            return Err(bad("execution_fees.currency"));
+        }
+        Some(
+            source
+                .rates
+                .iter()
+                .map(|rate| (rate.instrument_id.as_str(), rate))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    } else {
+        None
+    };
     let definitions = instrument_versions(&metadata.universe.instrument_definitions)?;
     for rate in &settings.fee_rates {
         let versions = definitions
             .get(rate.instrument_id.as_str())
             .ok_or_else(|| bad("execution_fees.identity"))?;
-        // Currency, account class and all fee fields are invariant across this chain.
+        // Contract currency and account class are invariant across this chain.
         let (class, value) = instrument_definition(versions[0])?;
         execution_account(class, settings.account_kind)?;
         let currency = match class {
@@ -196,12 +223,19 @@ pub fn execution_fees(
                         "polymarket_binary_instrument",
                     ));
                 }
-                (
-                    serde_json::from_value(value["maker_fee"].clone())
-                        .map_err(|_| bad("execution_fees.maker"))?,
-                    serde_json::from_value(value["taker_fee"].clone())
-                        .map_err(|_| bad("execution_fees.taker"))?,
-                )
+                if !matches!(
+                    settings.fee_model,
+                    contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
+                ) {
+                    return Err(DomainError::CapabilityUnavailable(
+                        "catalog_maker_taker_fee_model",
+                    ));
+                }
+                let original = source_rates
+                    .as_ref()
+                    .and_then(|rates| rates.get(rate.instrument_id.as_str()))
+                    .ok_or_else(|| bad("execution_fees.identity"))?;
+                (original.maker.clone(), original.taker.clone())
             };
         if fill.prob_slippage.is_positive() {
             let tick: contracts::DecimalValue =
@@ -286,7 +320,7 @@ pub fn metadata(
         || value.available_through > observed_at + chrono::Duration::seconds(5)
         || value.row_count.get() == 0
         || value.data_kind != RuntimeDataKind::Bar
-        || value.quality.native_version != "nautilus-persistence/0.63.0"
+        || value.quality.native_version != "nautilus-persistence/0.67.0"
         || value.quality.datasets.len() != 1
         || value.quality.checked_at > observed_at + chrono::Duration::seconds(5)
         || value.quality.checked_at < value.available_through
@@ -296,6 +330,9 @@ pub fn metadata(
         return Err(bad("snapshot"));
     }
     let quality = &value.quality.datasets[0];
+    if let Some(source) = &value.execution_fees {
+        maker_taker_fee_selection(source, &quality.selection)?;
+    }
     let definitions = instrument_versions(&value.universe.instrument_definitions)?;
     if value.partition == contracts::research::DataPartition::Sealed
         && quality.last_bar_notionals.is_some()

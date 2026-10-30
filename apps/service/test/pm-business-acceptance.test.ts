@@ -433,7 +433,7 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       assert.equal(recoveredEvidence.statusCode, 200, recoveredEvidence.body);
       assert.equal(recoveredEvidence.json().payload.outcome, 'HISTORICAL_REPORT_RESTORED');
       assert.equal(recoveredEvidence.json().payload.restoredDecisionId, original.id);
-      assert.equal(recoveredEvidence.json().payload.prefixVerification.method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V1');
+      assert.equal(recoveredEvidence.json().payload.prefixVerification.method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V2');
       assert.deepEqual(recoveredRecord.comparisons[original.comparisonRef], originalComparison);
       assert.deepEqual(recoveredRecord.derivedTrials, originalAttempts); assert.deepEqual(recoveredRecord.budgetMovements, originalMovements);
       assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, originalExposures);

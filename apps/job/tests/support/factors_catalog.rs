@@ -6,7 +6,7 @@ use nautilus_model::{
     data::Bar,
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
 /// Dense CurrencyPair plus sparse Equity; no simulation is run or target returned.
 /// late_labels preserves original event clocks while delaying original availability.
@@ -16,15 +16,22 @@ pub fn mixed_catalog(
 ) -> (tempfile::TempDir, NativeFactorEvaluationRequestV1) {
     let (fx_root, fx_request) = market("0", 36);
     let (eq_root, eq_request) = equity_market("0", 36);
-    let fx = load_catalog(fx_root.path(), &fx_request.selection)
-        .unwrap()
-        .series
-        .remove(0);
-    let equity = load_catalog(eq_root.path(), &eq_request.selection)
-        .unwrap()
-        .series
-        .remove(0);
+    let mut fx_data = load_catalog(fx_root.path(), &fx_request.selection).unwrap();
+    let mut equity_data = load_catalog(eq_root.path(), &eq_request.selection).unwrap();
+    let fx = fx_data.series.remove(0);
+    let equity = equity_data.series.remove(0);
+    // Compose the two original fixture policies independently of any request.
+    let mut fees = fx_data.execution_fees.unwrap();
+    fees.source_reference = "fixture://mixed-catalog/venue-fees".into();
+    fees.rates.truncate(1);
+    fees.rates
+        .push(equity_data.execution_fees.unwrap().rates.remove(0));
     let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+        serde_json::to_vec(&fees).unwrap(),
+    )
+    .unwrap();
     let catalog =
         ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
             .unwrap();

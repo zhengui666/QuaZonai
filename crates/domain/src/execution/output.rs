@@ -88,7 +88,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
         .timestamp_nanos_opt()
         .and_then(|value| u64::try_from(value).ok())
         .ok_or_else(|| bad("native_output.checked_at"))?;
-    if value.native_version != "nautilus-persistence/0.63.0"
+    if value.native_version != "nautilus-persistence/0.67.0"
         || value.datasets.is_empty()
         || !value
             .checked_at
@@ -137,7 +137,7 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
 }
 fn compilation(value: &NativeModelCompilationV1) -> Result<(), DomainError> {
     text(&value.rustc_version, 1, 512, false)?;
-    if !value.rustc_version.starts_with("rustc 1.98.1 ")
+    if !value.rustc_version.starts_with("rustc 1.99.1 ")
         || value.target != "wasm32-unknown-unknown"
         || ![
             "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64",

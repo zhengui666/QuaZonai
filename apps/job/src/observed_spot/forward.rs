@@ -418,8 +418,20 @@ pub fn build(
             allocated += asset.current_weight.as_decimal();
         }
         let cash = decimal(BigDecimal::from(1) - allocated)?;
-        let mut input =
-            crate::portfolio::allocation_input(&request.mandate, assets, cash, &prepared);
+        let crate::portfolio::Prepared {
+            forecasts,
+            returns,
+            slippage,
+            consumed_fuel,
+            ..
+        } = prepared;
+        let mut input = crate::portfolio::allocation_input_owned(
+            &request.mandate,
+            assets,
+            cash,
+            forecasts,
+            returns,
+        );
         input.capital_assumption = valuation.total.clone();
         let allocation = crate::allocate(&input)?;
         domain::portfolio::allocation_result(&input, &allocation)?;
@@ -506,10 +518,10 @@ pub fn build(
             build: NativePortfolioBuildResultV1 {
                 schema_version: SchemaV1,
                 bar_notionals,
-                slippage_references: prepared.slippage,
+                slippage_references: slippage,
                 input,
                 allocation,
-                consumed_fuel: prepared.consumed_fuel,
+                consumed_fuel,
             },
             modeled_comparison,
             rounded_modeled_comparison,

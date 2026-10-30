@@ -1,0 +1,21 @@
+{
+  "test": "apps/service/test/pm-forward-http.test.ts",
+  "mode": "PAPER",
+  "pid": 74177,
+  "node": "v22.19.0",
+  "scope": "Already-running controlled localhost test only; no heap, locals, environment or payload capture",
+  "method": [
+    "SIGUSR1 opens inspector on loopback",
+    "Profiler.enable",
+    "Profiler.setSamplingInterval interval=1000 us",
+    "Profiler.start",
+    "wait 15000 ms",
+    "Profiler.stop",
+    "Profiler.disable",
+    "disconnect"
+  ],
+  "profileSavedAtUtc": "2026-10-30T03:47:16.581312+00:00",
+  "approximateCaptureStartUtc": "2026-10-30T03:47:00.349156+00:00",
+  "timestampCaveat": "start approximated from saved file mtime minus measured profile duration; original monotonic start/end retained in cpuprofile",
+  "sharing": "Shared host; no claim of before/after or whole-test ratio"
+}

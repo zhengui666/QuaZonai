@@ -1,0 +1,242 @@
+TAP version 13
+# Subtest: request hashing preserves original canonical identities across buffered Unicode and attachment boundaries
+ok 1 - request hashing preserves original canonical identities across buffered Unicode and attachment boundaries
+  ---
+  duration_ms: 15.154069
+  type: 'test'
+  ...
+# Subtest: remote worker retains actual execution, attachments and original receipt across retries and restart
+ok 2 - remote worker retains actual execution, attachments and original receipt across retries and restart
+  ---
+  duration_ms: 234.49568
+  type: 'test'
+  ...
+# Subtest: worker rejects arbitrary commands and unregistered paths; failures remain failed receipts
+ok 3 - worker rejects arbitrary commands and unregistered paths; failures remain failed receipts
+  ---
+  duration_ms: 184.610696
+  type: 'test'
+  ...
+# Subtest: cancellation joins the native process and never reexecutes the same request
+ok 4 - cancellation joins the native process and never reexecutes the same request
+  ---
+  duration_ms: 159.589911
+  type: 'test'
+  ...
+# Subtest: a persisted uncertain run is readable but is neither repeated nor falsely cancelled
+ok 5 - a persisted uncertain run is readable but is neither repeated nor falsely cancelled
+  ---
+  duration_ms: 41.911338
+  type: 'test'
+  ...
+# Subtest: disconnect stops the actual child and independent invocations do not reuse prior input results
+ok 6 - disconnect stops the actual child and independent invocations do not reuse prior input results
+  ---
+  duration_ms: 268.431449
+  type: 'test'
+  ...
+# Subtest: running receipt exposes original snapshot previews without waiting for or repeating execution
+ok 7 - running receipt exposes original snapshot previews without waiting for or repeating execution
+  ---
+  duration_ms: 68.913367
+  type: 'test'
+  ...
+# Subtest: small native evidence retains its original inline representation
+ok 8 - small native evidence retains its original inline representation
+  ---
+  duration_ms: 1.115879
+  type: 'test'
+  ...
+# Subtest: complete compressed native evidence retains its original-child association and reads back losslessly
+ok 9 - complete compressed native evidence retains its original-child association and reads back losslessly
+  ---
+  duration_ms: 409.604037
+  type: 'test'
+  ...
+# Subtest: a failed native evidence part save cannot publish a completed representation
+ok 10 - a failed native evidence part save cannot publish a completed representation
+  ---
+  duration_ms: 13.872998
+  type: 'test'
+  ...
+# Subtest: a late serialization failure in the compressed stream cannot publish a completed representation
+ok 11 - a late serialization failure in the compressed stream cannot publish a completed representation
+  ---
+  duration_ms: 49.520891
+  type: 'test'
+  ...
+# Subtest: streamed native JSON matches standard JSON spelling and complete parsed values
+ok 12 - streamed native JSON matches standard JSON spelling and complete parsed values
+  ---
+  duration_ms: 12.694999
+  type: 'test'
+  ...
+# Subtest: streamed native JSON preserves standard missing object values and sparse array nulls
+ok 13 - streamed native JSON preserves standard missing object values and sparse array nulls
+  ---
+  duration_ms: 0.423633
+  type: 'test'
+  ...
+# Subtest: iterative native JSON keeps original chunk boundaries and standard bytes for large nested evidence
+ok 14 - iterative native JSON keeps original chunk boundaries and standard bytes for large nested evidence
+  ---
+  duration_ms: 2426.959769
+  type: 'test'
+  ...
+# Subtest: iterative native JSON preserves legacy handling outside the plain JSON type
+ok 15 - iterative native JSON preserves legacy handling outside the plain JSON type
+  ---
+  duration_ms: 0.461929
+  type: 'test'
+  ...
+# Subtest: chunk pulls preserve one-token lookahead, getter order and early consumer cancellation
+ok 16 - chunk pulls preserve one-token lookahead, getter order and early consumer cancellation
+  ---
+  duration_ms: 0.30626
+  type: 'test'
+  ...
+# Subtest: late BigInt and getter failures retain the original prefix and error without a completed JSON value
+ok 17 - late BigInt and getter failures retain the original prefix and error without a completed JSON value
+  ---
+  duration_ms: 0.621213
+  type: 'test'
+  ...
+# Subtest: cycles remain errors and shared references do not become cycles
+ok 18 - cycles remain errors and shared references do not become cycles
+  ---
+  duration_ms: 2890.545722
+  type: 'test'
+  ...
+# Subtest: finite dynamic getters can revisit an ancestor with the original reads and bytes
+ok 19 - finite dynamic getters can revisit an ancestor with the original reads and bytes
+  ---
+  duration_ms: 10.579821
+  type: 'test'
+  ...
+# Subtest: consumer pauses can change an ancestor getter or array before its next traversal step
+ok 20 - consumer pauses can change an ancestor getter or array before its next traversal step
+  ---
+  duration_ms: 0.594904
+  type: 'test'
+  ...
+# Subtest: ancestor traversal keeps late getter failures and stops reading when the consumer closes
+ok 21 - ancestor traversal keeps late getter failures and stops reading when the consumer closes
+  ---
+  duration_ms: 0.495718
+  type: 'test'
+  ...
+# Subtest: array mutations observed during traversal keep the original stopping condition
+ok 22 - array mutations observed during traversal keep the original stopping condition
+  ---
+  duration_ms: 0.253963
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content ""
+ok 23 - streamed native JSON refuses incomplete or trailing content ""
+  ---
+  duration_ms: 0.222717
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content "{\\"a\\":"
+ok 24 - streamed native JSON refuses incomplete or trailing content "{\\"a\\":"
+  ---
+  duration_ms: 0.212832
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content "{\\"a\\":1}junk"
+ok 25 - streamed native JSON refuses incomplete or trailing content "{\\"a\\":1}junk"
+  ---
+  duration_ms: 0.304617
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content "{} {}"
+ok 26 - streamed native JSON refuses incomplete or trailing content "{} {}"
+  ---
+  duration_ms: 0.188688
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content "1e"
+ok 27 - streamed native JSON refuses incomplete or trailing content "1e"
+  ---
+  duration_ms: 0.139745
+  type: 'test'
+  ...
+# Subtest: streamed native JSON refuses incomplete or trailing content "{\\"a\\":\\"unterminated"
+ok 28 - streamed native JSON refuses incomplete or trailing content "{\\"a\\":\\"unterminated"
+  ---
+  duration_ms: 0.084184
+  type: 'test'
+  ...
+# (node:84379) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: remote science uploads original artifacts, keeps shared catalog paths and gives every invocation its own receipt
+ok 29 - remote science uploads original artifacts, keeps shared catalog paths and gives every invocation its own receipt
+  ---
+  duration_ms: 334.837699
+  type: 'test'
+  ...
+# Subtest: lost POST response reconciles the original receipt without submitting another operation
+ok 30 - lost POST response reconciles the original receipt without submitting another operation
+  ---
+  duration_ms: 19.588644
+  type: 'test'
+  ...
+# Subtest: remote cancellation requires a terminal receipt and does not turn unknown worker state into confirmed cancellation
+ok 31 - remote cancellation requires a terminal receipt and does not turn unknown worker state into confirmed cancellation
+  ---
+  duration_ms: 38.154715
+  type: 'test'
+  ...
+# Subtest: admitted instance survives environment changes and production refuses missing or local task bindings
+ok 32 - admitted instance survives environment changes and production refuses missing or local task bindings
+  ---
+  duration_ms: 0.49722
+  type: 'test'
+  ...
+# Subtest: bounded cancellation retains its unknown original remote receipt after Durable abort and reopen
+ok 33 - bounded cancellation retains its unknown original remote receipt after Durable abort and reopen
+  ---
+  duration_ms: 120.823193
+  type: 'test'
+  ...
+# (node:84386) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: streamed PM artifact digest preserves canonical JSON identity
+ok 34 - streamed PM artifact digest preserves canonical JSON identity
+  ---
+  duration_ms: 1.689221
+  type: 'test'
+  ...
+# Subtest: buffered PM digest keeps original bytes for large nested tapes and complete Unicode tokens
+ok 35 - buffered PM digest keeps original bytes for large nested tapes and complete Unicode tokens
+  ---
+  duration_ms: 385.401321
+  type: 'test'
+  ...
+# Subtest: buffered PM digest retains legacy sparse, missing and non-JSON value handling
+ok 36 - buffered PM digest retains legacy sparse, missing and non-JSON value handling
+  ---
+  duration_ms: 0.491963
+  type: 'test'
+  ...
+# Subtest: buffered PM digest propagates original late getter and BigInt errors and refuses cycles
+ok 37 - buffered PM digest propagates original late getter and BigInt errors and refuses cycles
+  ---
+  duration_ms: 12.803117
+  type: 'test'
+  ...
+# Subtest: original PM evidence and scientific checkpoint survive official task restart in separate compressed namespaces
+ok 38 - original PM evidence and scientific checkpoint survive official task restart in separate compressed namespaces
+  ---
+  duration_ms: 1208.316122
+  type: 'test'
+  ...
+1..38
+# tests 38
+# suites 0
+# pass 38
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5547.420904

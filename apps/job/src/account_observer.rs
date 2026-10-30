@@ -1,4 +1,4 @@
-//! Q-owned read-only adapter over official Nautilus 0.63.0 public types.
+//! Q-owned read-only adapter over official Nautilus 0.67.0 public types.
 //! Run on the native event thread; send through a bounded queue to a separate
 //! transport consumer. The consumer retries the exact envelope until receipted.
 use anyhow::{anyhow, bail, Result};

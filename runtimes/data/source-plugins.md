@@ -101,7 +101,7 @@ permission, or point-in-time attestation.
 
 For an installation whose completed release includes the source tools, the
 installed source command uses the application image's matching operator payload;
-consult the [installed guide](../../deploy/docker/README.md#scientific-images-and-source-tools)
+consult the [installed guide](../../deploy/docker/README.md#source-preparation)
 and invoke the matching application image's Python entrypoint in a disposable
 container, with literal read-only inputs and separate writable outputs. Do not
 use the retired manager `source` command. Check that release's help/inventory. No source checkout or
@@ -276,6 +276,18 @@ copying, and native readback. Do not supply derived `row_count` or `quality` in 
 declaration. Missing original fees, definitions from the future, or insufficient
 evidence remain native failures. Original event/receipt clocks and numerical
 values are retained, and Sealed metadata follows native redaction.
+
+Ordinary maker/taker backtests on Nautilus 0.67 require an independent frozen
+venue fee policy, because instrument definitions no longer contain those rates.
+Pass `--fee-source /absolute/original-venue-fees.json` to `prepare` to bind that
+original input to the new catalog and `catalog-metadata.json.execution_fees`.
+The wrapper also binds both published copies and the receipt to the original
+file. Existing catalog fee files are preserved automatically. Omitting this input
+permits data-only preparation; ordinary maker/taker execution still rejects a
+missing source, including when the request declares zero fees. See the
+[source contract and preparation steps](../../.opensdlc/tasks/core-engine-implementation/fee-source.md).
+Polymarket native/recorded fees and the dedicated spot-cash policy retain their
+existing source paths.
 
 A preserved archive with `SYNTHETIC` provenance cannot use an `origin=REAL`
 declaration: preparation rejects that contradiction before native execution or

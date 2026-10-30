@@ -43,7 +43,7 @@ fn plan() -> ForwardSourcePlan {
 fn schema() -> Vec<FeatureDefinitionV1> {
     vec![FeatureDefinitionV1 {
         feature_key: "original_bid".into(),
-        source_ref: format!("nautilus-polymarket/0.63.0/quote/{ID}"),
+        source_ref: format!("nautilus-polymarket/0.67.0/quote/{ID}"),
         source_key: "bid_price".into(),
         availability: FeatureAvailabilityV1::Observed,
         max_age_ns: Some(count(STEP).unwrap()),
@@ -64,7 +64,7 @@ fn records() -> Vec<SourceRecord> {
     push(
         "start",
         STEP / 2,
-        json!({"purpose":"CURRENT_POLYMARKET_FORWARD_SOURCE","execution_clients_registered":0,"forward_plan":p,"native_version":"0.63.0","selected_instruments":[ID],"native_session_id":UUID4::new().to_string()}),
+        json!({"purpose":"CURRENT_POLYMARKET_FORWARD_SOURCE","execution_clients_registered":0,"forward_plan":p,"native_version":"0.67.0","selected_instruments":[ID],"native_session_id":UUID4::new().to_string()}),
     );
     push(
         "instrument",
@@ -521,6 +521,7 @@ fn actual_native_catalog_preparation_preserves_warmup_and_source_bytes() {
     write_new(&selected, &serde_json::to_vec(&selection).unwrap()).unwrap();
     let prepared = root.join("warmup");
     let metadata = super::super::prepare(&super::super::Arguments {
+        fee_source: None,
         catalog: native,
         declaration: declared,
         selection: selected.clone(),

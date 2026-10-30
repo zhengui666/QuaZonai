@@ -67,7 +67,7 @@ class HfBridgeTest(unittest.TestCase):
 
     def artifacts(self):
         reference = f"{snapshot.HUB}/datasets/example/history/tree/{COMMIT}"
-        report = {"schema_version": 1, "native_version": "0.63.0", "instruments": 1, "instrument_versions": 1,
+        report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1, "instrument_versions": 1,
                   "bars": 2, "trades": 2, "quotes": 0, "deltas": 0, "closes": 0,
                   "catalog_relative_path": "catalog", "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
                   "registered_in_quazonai": False, "limitations": ["Offline native output fixture"],

@@ -265,10 +265,10 @@ fn snapshot(
     // Clear has no price or size; its metadata must match the snapshot encoding.
     clear.order.price = Price::zero(encoding.price_precision);
     clear.order.size = Quantity::zero(encoding.size_precision);
-    let mut data = vec![Data::Delta(clear)];
+    let mut data = vec![Data::BookDelta(clear)];
     for (levels, side) in sides.iter().zip([OrderSide::Buy, OrderSide::Sell]) {
         for (p, q) in levels {
-            data.push(Data::Delta(OrderBookDelta::new(
+            data.push(Data::BookDelta(OrderBookDelta::new(
                 id,
                 BookAction::Add,
                 BookOrder::new(side, *p, *q, 0),
@@ -279,7 +279,7 @@ fn snapshot(
             )));
         }
     }
-    let Some(Data::Delta(last)) = data.last_mut() else {
+    let Some(Data::BookDelta(last)) = data.last_mut() else {
         unreachable!()
     };
     last.flags |= RecordFlag::F_LAST as u8;
@@ -433,9 +433,9 @@ struct Bucket {
 
 pub(super) fn with_bar_precision(mut bar: Bar, precision: (u8, u8)) -> Bar {
     for price in [&mut bar.open, &mut bar.high, &mut bar.low, &mut bar.close] {
-        *price = Price::from_raw(price.raw, precision.0);
+        *price = Price::from_raw(price.raw(), precision.0);
     }
-    bar.volume = Quantity::from_raw(bar.volume.raw, precision.1);
+    bar.volume = Quantity::from_raw(bar.volume.raw(), precision.1);
     bar
 }
 
@@ -507,8 +507,8 @@ impl Aggregation {
             .checked_mul(interval)
             .context("BAR_TIMESTAMP_RANGE")?;
         // Use one exact encoding while building; publish each interval at its maximum observed precision.
-        let price = Price::from_raw(trade.price.raw, FIXED_PRECISION);
-        let size = Quantity::from_raw(trade.size.raw, FIXED_PRECISION);
+        let price = Price::from_raw(trade.price.raw(), FIXED_PRECISION);
+        let size = Quantity::from_raw(trade.size.raw(), FIXED_PRECISION);
         let bucket = self.buckets.entry(trade.instrument_id).or_insert(Bucket {
             builder: BarBuilder::new(
                 BarType::new(
@@ -859,9 +859,9 @@ mod tests {
         .unwrap();
         assert_eq!(report.one_sided_books, 1);
         assert_eq!(data.len(), 2);
-        assert!(matches!(&data[0], Data::Delta(d) if d.action == BookAction::Clear));
+        assert!(matches!(&data[0], Data::BookDelta(d) if d.action == BookAction::Clear));
         assert!(
-            matches!(&data[1], Data::Delta(d) if d.order.side == Some(OrderSide::Sell) && d.flags & RecordFlag::F_LAST as u8 != 0)
+            matches!(&data[1], Data::BookDelta(d) if d.order.side == Some(OrderSide::Sell) && d.flags & RecordFlag::F_LAST as u8 != 0)
         );
         let root = tempfile::tempdir().unwrap();
         let mut sink = super::super::writer::Writer::new(&root.path().join("output"), &[]).unwrap();

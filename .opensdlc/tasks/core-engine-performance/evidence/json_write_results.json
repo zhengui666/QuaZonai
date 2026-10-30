@@ -1,0 +1,81 @@
+{
+  "warning": "isolated synthetic serialization+write+sync probe; optimized rustc consumer linked repository debug cached serde_json; shared host including Cargo compilation; not end-to-end production benchmark",
+  "rows": 10000,
+  "buffer_bytes": 65536,
+  "runs": [
+    {
+      "mode": "unbuffered",
+      "bytes": "1309098",
+      "calls": "360001",
+      "write_sync_ms": "76.307",
+      "repeat": 0
+    },
+    {
+      "mode": "buffered",
+      "bytes": "1309098",
+      "calls": "20",
+      "write_sync_ms": "14.752",
+      "repeat": 0
+    },
+    {
+      "mode": "buffered",
+      "bytes": "1309098",
+      "calls": "20",
+      "write_sync_ms": "13.799",
+      "repeat": 1
+    },
+    {
+      "mode": "unbuffered",
+      "bytes": "1309098",
+      "calls": "360001",
+      "write_sync_ms": "87.870",
+      "repeat": 1
+    },
+    {
+      "mode": "unbuffered",
+      "bytes": "1309098",
+      "calls": "360001",
+      "write_sync_ms": "80.325",
+      "repeat": 2
+    },
+    {
+      "mode": "buffered",
+      "bytes": "1309098",
+      "calls": "20",
+      "write_sync_ms": "13.503",
+      "repeat": 2
+    },
+    {
+      "mode": "buffered",
+      "bytes": "1309098",
+      "calls": "20",
+      "write_sync_ms": "13.268",
+      "repeat": 3
+    },
+    {
+      "mode": "unbuffered",
+      "bytes": "1309098",
+      "calls": "360001",
+      "write_sync_ms": "82.933",
+      "repeat": 3
+    },
+    {
+      "mode": "unbuffered",
+      "bytes": "1309098",
+      "calls": "360001",
+      "write_sync_ms": "81.085",
+      "repeat": 4
+    },
+    {
+      "mode": "buffered",
+      "bytes": "1309098",
+      "calls": "20",
+      "write_sync_ms": "13.071",
+      "repeat": 4
+    }
+  ],
+  "medians_ms": {
+    "unbuffered": 81.085,
+    "buffered": 13.503
+  }
+}

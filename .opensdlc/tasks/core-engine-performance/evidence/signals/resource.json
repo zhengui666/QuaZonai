@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "wall_seconds": 1.2271500990000277,
+  "cpu_user_seconds": 1.226647,
+  "cpu_system_seconds": 0.0,
+  "peak_rss_kib": 9344,
+  "stderr": "",
+  "affinity_cpu": 0
+}

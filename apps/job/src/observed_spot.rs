@@ -34,7 +34,6 @@ fn value_with_closed_rows_at(
     asof: contracts::DbCounter,
 ) -> Result<NativeObservedSpotValuationResultV1> {
     use nautilus_model::types::Money;
-    use std::str::FromStr;
     let initial = &request.initial_state;
     let mut available = initial.available_ns.max(initial.open_orders_available_ns);
     let balances = domain::observed_spot::starting_balances(initial, &request.settings, available)?;
@@ -58,7 +57,7 @@ fn value_with_closed_rows_at(
     let mut total = contracts::DecimalValue::zero();
     let mut legs = Vec::new();
     for balance in balances {
-        let native = Money::from_str(&format!(
+        let native = Money::from_str_exact(&format!(
             "{} {}",
             balance.amount.as_decimal().to_plain_string(),
             balance.currency

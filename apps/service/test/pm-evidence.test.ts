@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import { awaitWithContext } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -11,10 +11,63 @@ import { pmArtifactDigest, pmScienceCheckpoint, readPmArtifact, retainPmArtifact
 import { context, setup } from './support.ts';
 import { pmTargetPayload } from '../src/pm-target.ts';
 
+// The original token-at-a-time implementation is an independent identity oracle.
+function originalArtifactDigest(value: JsonObject): string {
+  const hash = createHash('sha256');
+  function visit(item: JsonObject[string] | undefined): void {
+    if (item === null || typeof item !== 'object') { hash.update(JSON.stringify(item) ?? 'null'); return; }
+    if (Array.isArray(item)) {
+      hash.update('['); item.forEach((entry, index) => { if (index) hash.update(','); visit(entry); }); hash.update(']'); return;
+    }
+    hash.update('{'); let first = true;
+    for (const key of Object.keys(item).filter(key => item[key] !== undefined).sort()) {
+      if (!first) hash.update(','); first = false; hash.update(JSON.stringify(key)); hash.update(':'); visit(item[key]);
+    }
+    hash.update('}');
+  }
+  visit(value); return hash.digest('hex');
+}
+
 test('streamed PM artifact digest preserves canonical JSON identity', () => {
   const values: JsonObject[] = [{ z: '0.000000000000000001', a: ['原值', null, { b: 2, a: -0 }] },
     { c: '\n\\"', a: { '\u0000': 'x', '\uFFFF': 'y' }, b: [false, 1e-20, 1e21] }];
   for (const value of values) assert.equal(pmArtifactDigest(value), digest(value));
+});
+
+test('buffered PM digest keeps original bytes for large nested tapes and complete Unicode tokens', () => {
+  const shared = { amount: '3000.000000000000000001', clock: '1791849600000000001', text: '原生🐋\ud800' };
+  const value: JsonObject = { schema_version: 1, '2': 'two', '10': 'ten',
+    rows: Array.from({ length: 10_000 }, (_, index) => ({ index, original: { snapshot: { balances: [shared, shared],
+      events: [{ exact: '0.000000000000000001', side: index % 2 ? 'BUY' : 'SELL' }] } } })),
+    boundary: 'x'.repeat(65_529) + '🐋', largeToken: '中文🐋'.repeat(32_768), nonfinite: [NaN, Infinity, -Infinity] };
+  assert.equal(pmArtifactDigest(value), originalArtifactDigest(value));
+  assert.equal(pmArtifactDigest(value), digest(value));
+});
+
+test('buffered PM digest retains legacy sparse, missing and non-JSON value handling', () => {
+  const sparse = new Array(4); sparse[2] = undefined; sparse[3] = 7;
+  const value = { omitted: undefined, sparse, symbol: Symbol('value'), function: () => 1,
+    nested: { nonfinite: NaN, date: new Date(0) } } as unknown as JsonObject;
+  assert.equal(pmArtifactDigest(value), originalArtifactDigest(value));
+});
+
+test('buffered PM digest propagates original late getter and BigInt errors and refuses cycles', () => {
+  const failure = new Error('original-late-hash-getter-failure');
+  const fixtures = [
+    () => ({ a: 'x'.repeat(128 * 1024), z: 1n }),
+    () => { let calls = 0; return { a: 'x'.repeat(128 * 1024), get z() { if (++calls === 2) throw failure; return true; } }; },
+  ];
+  for (const fixture of fixtures) {
+    let originalError: unknown;
+    try { originalArtifactDigest(fixture() as unknown as JsonObject); } catch (error) { originalError = error; }
+    assert.ok(originalError instanceof Error);
+    assert.throws(() => pmArtifactDigest(fixture() as unknown as JsonObject), error => {
+      assert.ok(error instanceof Error); assert.equal(error.constructor, originalError.constructor);
+      assert.equal(error.message, originalError.message); return true;
+    });
+  }
+  const circular: JsonObject = {}; circular.self = circular;
+  assert.throws(() => pmArtifactDigest(circular), RangeError);
 });
 
 test('original PM evidence and scientific checkpoint survive official task restart in separate compressed namespaces', { timeout: 30_000 }, async () => {

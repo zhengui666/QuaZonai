@@ -685,10 +685,19 @@ mod tests {
     fn fixture(root: &Path, failure: &str) -> Arguments {
         let start = START * 1_000_000_000;
         let mut market = serde_json::json!({"id":"fixture", "conditionId":"condition", "slug":"fixture-window",
+            "version":"v1",
             "question":"Synthetic test only", "outcomes":"[\"Up\",\"Down\"]", "clobTokenIds":"[\"123\",\"456\"]",
             "startDate":"2026-07-29T20:30:00Z", "endDate":"2026-07-29T20:41:00Z", "active":true,
             "closed":false,"acceptingOrders":true,"orderPriceMinTickSize":0.01,"orderMinSize":5,
             "feeSchedule":{"rate":0.07,"exponent":1,"takerOnly":true,"rebateRate":0.2}});
+        // This controlled capture declares its original CTF market protocol;
+        // the production parser must reject absent or unsupported versions.
+        if failure == "protocol_missing" {
+            market.as_object_mut().unwrap().remove("version");
+        }
+        if failure == "protocol_v2" {
+            market["version"] = serde_json::json!("v2");
+        }
         if failure == "fees" {
             market.as_object_mut().unwrap().remove("feeSchedule");
         }
@@ -937,15 +946,18 @@ mod tests {
         let report = super::super::super::import(archive, &args.output).unwrap();
         assert_eq!(report.instruments, 2);
         assert_eq!(report.instrument_versions, 3);
-        let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let mut actual = catalog.instruments(None, None, None).unwrap();
+        let catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let mut actual = catalog
+            .query_instruments_filtered(None, None, None)
+            .unwrap();
         actual.sort_by_key(|i| (i.id(), i.ts_init()));
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
@@ -964,6 +976,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let args = fixture(root.path(), "");
         let archive = prepare(&args).unwrap();
+        assert_eq!(archive.source_metadata["market"]["version"], "v1");
+        for instrument in &archive.instruments {
+            assert_eq!(
+                serde_json::to_value(instrument).unwrap()["BinaryOption"]["info"]["market_version"],
+                "v1"
+            );
+        }
         assert_eq!(archive.trades.len(), 1);
         assert_eq!(archive.bars.len(), 1); // empty seconds and the untraded sibling stay empty
         assert_eq!(
@@ -983,19 +1002,21 @@ mod tests {
         assert_eq!(report.bars, 1);
         assert_eq!(report.closes, 2);
         assert!(!report.registered_in_quazonai);
-        let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-            args.output.join("catalog").to_str().unwrap(),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut catalog =
+            nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                args.output.join("catalog").to_str().unwrap(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         let bars = catalog
             .query::<Bar>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(bars.len(), 1);
     }
 
@@ -1028,19 +1049,21 @@ mod tests {
                 .map(nautilus_model::data::Data::Trade)
                 .collect::<Vec<_>>();
             super::super::super::import(archive, &args.output).unwrap();
-            let mut catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
-                args.output.join("catalog").to_str().unwrap(),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+            let mut catalog =
+                nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
+                    args.output.join("catalog").to_str().unwrap(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
             let trades = catalog
                 .query::<TradeTick>(None, None, None, None, None, true)
                 .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
+                .into_iter()
+                .map(nautilus_model::data::Data::from)
+                .collect::<Vec<_>>();
             assert_eq!(trades, expected);
         }
     }
@@ -1048,6 +1071,8 @@ mod tests {
     #[test]
     fn rejects_missing_or_contradictory_capture_evidence() {
         for failure in [
+            "protocol_missing",
+            "protocol_v2",
             "fees",
             "date",
             "metadata",
@@ -1065,6 +1090,17 @@ mod tests {
             let args = fixture(root.path(), failure);
             let error = prepare(&args).expect_err(failure).to_string();
             match failure {
+                "protocol_missing" | "protocol_v2" => {
+                    let protocol = if failure == "protocol_missing" {
+                        "missing"
+                    } else {
+                        "v2"
+                    };
+                    assert_eq!(
+                        error,
+                        format!("Unsupported Polymarket market protocol {protocol}; only v1 CTF markets are supported")
+                    );
+                }
                 "same_transaction"
                 | "mixed_missing_transaction"
                 | "mixed_missing_transaction_reversed" => {

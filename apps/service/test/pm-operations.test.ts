@@ -351,7 +351,7 @@ function flatSnapshot(original: JsonObject, sequence: string, orders?: number): 
   const money = (amount: string) => ({ amount, currency: 'USD' });
   snapshot.controlRevision = '3';
   snapshot.nativeObservation = { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.63.0' },
+    native_trader_id: 'CONTROLLED-TRADER', native_session_id: 'CONTROLLED-SESSION', native_account_id: 'CONTROLLED-ACCOUNT', native_version: '0.67.0' },
     sequence, dropped_events: '0', observed_at_ns: snapshot.nativeClockNs!, connection: 'CONNECTED',
     snapshot: { account_id: 'CONTROLLED-ACCOUNT', account_type: 'CASH', base_currency: null,
       balances: [{ total: money('1000.000000000000000001'), locked: money('0'), free: money('1000.000000000000000001') }],

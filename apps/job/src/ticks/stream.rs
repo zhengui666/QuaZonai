@@ -669,7 +669,7 @@ pub(super) fn evaluate(
     let regime_partitions = groups.map(|groups| groups.finish(request)).transpose()?;
     let mut result = NativeTradeTickFactorEvaluationResultV1 {
         schema_version: SchemaV1, request: request.clone(),
-        native_versions: BTreeMap::from([("nautilus-model".into(), "0.63.0".into()), ("nautilus-persistence".into(), "0.63.0".into()), ("nautilus-indicators".into(), "0.63.0".into()), ("wasmi".into(), "2.0.0".into())]),
+        native_versions: BTreeMap::from([("nautilus-model".into(), "0.67.0".into()), ("nautilus-persistence".into(), "0.67.0".into()), ("nautilus-indicators".into(), "0.67.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
             ("input".into(), format!("{}: derived complete-event cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
             ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), if request.input.is_flow_cache() { FLOW_FEATURE_SCHEMA } else { FEATURE_SCHEMA }.into()),

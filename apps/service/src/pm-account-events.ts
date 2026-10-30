@@ -60,7 +60,7 @@ export function projectAccountEvents(capture: CapturedAccount, prior: readonly A
   const nativeEvent = counter(native.ts_event, 'events_native_asof'), nativePublished = counter(native.ts_init, 'events_native_published');
   const nativeHeartbeat = counter(original.observed_at_ns, 'events_native_heartbeat');
   const mode = object(capture.artifact.observation).mode;
-  if (original.schema_version !== 1 || binding.schema_version !== 1 || binding.native_version !== '0.63.0'
+  if (original.schema_version !== 1 || binding.schema_version !== 1 || binding.native_version !== '0.67.0'
     || binding.environment !== (mode === 'paper' ? 'PAPER' : mode === 'live' ? 'LIVE' : null)
     || nativeEvent !== capture.basis.observedAtNs || snapshot.nativeClockNs !== nativeEvent
     || BigInt(nativeEvent) > BigInt(nativePublished) || BigInt(nativePublished) > BigInt(nativeHeartbeat) || BigInt(nativeHeartbeat) > BigInt(receivedAtNs)) refuse('native_clock_or_version_invalid');

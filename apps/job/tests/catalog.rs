@@ -1,12 +1,14 @@
 //! Actual native Parquet catalog round trips. Synthetic fixtures are never delivery evidence.
 use contracts::{science::NativeBarSelectionV1, DbCounter, SchemaV1};
-use job::catalog::{load_catalog, validate_native};
+use job::catalog::{file_batch_session, load_catalog, validate_native};
 use nautilus_model::{
-    data::{Bar, BarType},
+    data::{Bar, BarType, DataBatch, NautilusDataType},
     instruments::{stubs::audusd_sim, Instrument, InstrumentAny},
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
+};
 use std::str::FromStr;
 
 fn fixture() -> (InstrumentAny, Vec<Bar>, NativeBarSelectionV1) {
@@ -376,13 +378,16 @@ fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
         None,
     )
     .unwrap();
-    assert_eq!(format!("{:?}", catalog.compression), "SNAPPY");
+    assert!(matches!(
+        catalog.compression,
+        parquet::basic::Compression::ZSTD(_)
+    ));
     catalog.write_instruments(vec![instrument]).unwrap();
     let path = directory
         .path()
         .join(catalog.write_to_parquet(&bars, None, None, None).unwrap());
     let native_directory = catalog.make_path(
-        <nautilus_model::data::Bar as nautilus_persistence::backend::catalog::CatalogPathPrefix>::path_prefix(),
+        <nautilus_model::data::Bar as nautilus_persistence::backend::parquet::catalog::CatalogPathPrefix>::path_prefix(),
         Some(&bars[0].bar_type.to_string()),
     ).unwrap();
     let files = catalog.list_parquet_files(&native_directory).unwrap();
@@ -447,6 +452,176 @@ fn malformed_native_parquet_is_rejected_without_rewriting_the_input() {
     std::fs::write(path, original).unwrap();
     let recovered = load_catalog(directory.path(), &selection).unwrap();
     assert_eq!(recovered.series[0].bars, bars);
+}
+
+#[test]
+fn typed_file_queries_resolve_absolute_relative_and_file_uri_catalog_roots_once() {
+    let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let directory = tempfile::tempdir_in(&cwd).unwrap();
+    let (instrument, bars, selection) = fixture();
+    let absolute = directory.path().canonicalize().unwrap();
+    let original =
+        ParquetDataCatalog::from_uri(absolute.to_str().unwrap(), None, Some(2), None, None)
+            .unwrap();
+    original.write_instruments(vec![instrument]).unwrap();
+    original.write_to_parquet(&bars, None, None, None).unwrap();
+    let relative = absolute.strip_prefix(&cwd).unwrap();
+    for root in [
+        absolute.to_str().unwrap().to_owned(),
+        relative.to_str().unwrap().to_owned(),
+        format!("file://{}", absolute.display()),
+    ] {
+        let catalog = ParquetDataCatalog::from_uri(&root, None, Some(2), None, None).unwrap();
+        let query = CatalogQuery::new(NautilusDataType::Bar)
+            .with_identifiers(Some(selection.bar_types.clone()));
+        let mut session = file_batch_session(&catalog, query, None, 2).unwrap();
+        let mut readback = Vec::new();
+        while let Some(batch) = session.next_batch().unwrap() {
+            let DataBatch::Bar(batch) = batch else {
+                panic!("native BAR batch required")
+            };
+            readback.extend_from_slice(batch.as_ref());
+        }
+        assert_eq!(readback, bars, "{root}");
+    }
+}
+
+#[test]
+fn typed_catalog_session_bounds_equal_time_batches_and_rejects_the_first_excess_row() {
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, mut bars, mut selection) = fixture();
+    for bar in &mut bars {
+        bar.ts_init = 280_000_000_000_u64.into();
+    }
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(2),
+        None,
+        Some(1),
+    )
+    .unwrap();
+    catalog.write_instruments(vec![instrument]).unwrap();
+    catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    let query = CatalogQuery::new(NautilusDataType::Bar)
+        .with_identifiers(Some(selection.bar_types.clone()));
+    let mut session = file_batch_session(&catalog, query, None, 2).unwrap();
+    let mut readback = Vec::new();
+    while let Some(batch) = session.next_batch().unwrap() {
+        let DataBatch::Bar(batch) = batch else {
+            panic!("native BAR batch required")
+        };
+        assert!(
+            batch.len() <= 2,
+            "equal-time records must not enlarge a batch"
+        );
+        readback.extend_from_slice(batch.as_ref());
+    }
+    assert_eq!(readback, bars);
+    assert_eq!(
+        load_catalog(directory.path(), &selection).unwrap().series[0].bars,
+        bars
+    );
+    selection.maximum_rows = 3;
+    assert_eq!(
+        load_catalog(directory.path(), &selection)
+            .err()
+            .unwrap()
+            .to_string(),
+        "CATALOG_ROW_LIMIT"
+    );
+}
+
+#[test]
+fn oversized_equal_time_cohort_stops_before_a_later_corrupt_row_group() {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, original, mut selection) = fixture();
+    let bars = (1..=20_000_u64)
+        .map(|event| {
+            let mut bar = original[0];
+            bar.ts_event = event.into();
+            bar.ts_init = 30_000_u64.into();
+            bar
+        })
+        .collect::<Vec<_>>();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        Some(4096),
+    )
+    .unwrap();
+    catalog.write_instruments(vec![instrument]).unwrap();
+    let path = directory
+        .path()
+        .join(catalog.write_to_parquet(&bars, None, None, None).unwrap());
+    let file = SerializedFileReader::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let (offset, length) = file.metadata().row_group(1).column(0).byte_range();
+    drop(file);
+    let mut corrupted = std::fs::read(&path).unwrap();
+    corrupted[offset as usize..(offset + length) as usize].fill(0xff);
+    std::fs::write(&path, &corrupted).unwrap();
+
+    // A timestamp-aligned native session would read the entire 20,000-row
+    // cohort and hit the corruption before its caller could apply this cap.
+    selection.maximum_rows = 3;
+    assert_eq!(
+        load_catalog(directory.path(), &selection)
+            .err()
+            .unwrap()
+            .to_string(),
+        "CATALOG_ROW_LIMIT"
+    );
+    selection.maximum_rows = 20_000;
+    assert_ne!(
+        load_catalog(directory.path(), &selection)
+            .err()
+            .unwrap()
+            .to_string(),
+        "CATALOG_ROW_LIMIT",
+        "the later corrupt group must fail if the budget permits reading it"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), corrupted);
+}
+
+#[test]
+fn decoded_row_limit_is_checked_across_native_batch_boundaries() {
+    let directory = tempfile::tempdir().unwrap();
+    let (instrument, original, mut selection) = fixture();
+    let bars = (1..=4097_u64)
+        .map(|timestamp| {
+            let mut bar = original[0];
+            bar.ts_event = timestamp.into();
+            bar.ts_init = (timestamp + 1).into();
+            bar
+        })
+        .collect::<Vec<_>>();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(4096),
+        None,
+        None,
+    )
+    .unwrap();
+    catalog.write_instruments(vec![instrument]).unwrap();
+    catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    selection.maximum_rows = 4096;
+    assert_eq!(
+        load_catalog(directory.path(), &selection)
+            .err()
+            .unwrap()
+            .to_string(),
+        "CATALOG_ROW_LIMIT"
+    );
+    selection.maximum_rows = 4097;
+    assert_eq!(
+        load_catalog(directory.path(), &selection).unwrap().series[0].bars,
+        bars
+    );
 }
 
 #[test]

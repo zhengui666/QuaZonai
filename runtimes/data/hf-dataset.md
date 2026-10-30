@@ -77,7 +77,7 @@ external writes that ignore those locks. For installed execution, use the
 matching application image's explicit Python entrypoint in a disposable offline
 container. Mount the cache writable for locks, the original plan read-only and a
 separate request-output parent writable, at their literal recorded paths. See the
-[installed boundary](../../deploy/docker/README.md#scientific-images-and-source-tools)
+[installed boundary](../../deploy/docker/README.md#source-preparation)
 and [v2 examples](polymarket-v2.md#installed-disposable-containers). No deployment
 change or retired `manage.sh source` command is required.
 
@@ -328,7 +328,7 @@ and native catalog readback cases, including the older snapshot path. Run the
 single library target when the pinned compiler/dependencies are already cached:
 
 ```sh
-cargo +1.98.1 test --offline --locked -p job --features polymarket-history \
+cargo +1.99.1 test --offline --locked -p job --features polymarket-history \
   --lib operator::polymarket_history::archive::tests -- --nocapture
 ```
 

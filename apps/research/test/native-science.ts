@@ -69,7 +69,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.deepEqual(study.trials.map((trial) => trial.status), ['COMPUTED', 'COMPUTED']);
     for (const trial of study.trials) {
       const result = trial.result as JsonObject;
-      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.63.0');
+      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.67.0');
       const validation = (result.partitions as JsonObject[])[1]!;
       assert.equal((validation.assets as JsonObject[]).length, 2);
       assert.equal(((validation.metric as JsonObject).pearson_ic as JsonObject).status, 'AVAILABLE');

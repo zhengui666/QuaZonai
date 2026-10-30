@@ -16,10 +16,62 @@ fn preview(model: &mut RecordedLiquidityModel, order: &OrderAny) -> Result<Order
         .get_orderbook_for_fill_simulation(
             &market().series[0].instrument,
             order,
-            Price::from("0.4999"),
-            Price::from("0.5001"),
+            Some(Price::from("0.4999")),
+            Some(Price::from("0.5001")),
         )?
         .context("test requires positive recorded liquidity")
+}
+
+#[test]
+fn missing_opposite_quotes_fail_closed_without_consuming_the_recorded_pool() {
+    let instrument = &market().series[0].instrument;
+    for (side, bid, ask) in [
+        (OrderSide::Buy, Some(Price::from("0.4999")), None),
+        (OrderSide::Sell, None, Some(Price::from("0.5001"))),
+        (OrderSide::Buy, None, None),
+        (OrderSide::Sell, None, None),
+    ] {
+        let (fees, _) = model();
+        let mut fill = RecordedLiquidityModel::new(fees.clone(), DefaultFillModel::default());
+        let order = ioc(side, "1.000000");
+        let error = fill
+            .get_orderbook_for_fill_simulation(instrument, &order, bid, ask)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("RECORDED_LIQUIDITY_PRICE_UNAVAILABLE"));
+        assert_eq!(fill.observer().check().unwrap_err().to_string(), error);
+        assert!(fees.report().fills.is_empty());
+        assert_eq!(
+            preview(&mut fill, &ioc(OrderSide::Buy, "100.000000"))
+                .unwrap()
+                .best_ask_size(),
+            Some(Quantity::from("10.000000"))
+        );
+    }
+}
+
+#[test]
+fn missing_same_side_quotes_preserve_available_opposite_side_liquidity() {
+    let instrument = &market().series[0].instrument;
+    for (side, bid, ask) in [
+        (OrderSide::Buy, None, Some(Price::from("0.5001"))),
+        (OrderSide::Sell, Some(Price::from("0.4999")), None),
+    ] {
+        let (fees, _) = model();
+        let mut fill = RecordedLiquidityModel::new(fees.clone(), DefaultFillModel::default());
+        let order = ioc(side, "1.000000");
+        let actual = fill
+            .get_orderbook_for_fill_simulation(instrument, &order, bid, ask)
+            .unwrap()
+            .expect("available recorded liquidity must not select standard fills");
+        let expected = preview(&mut fill, &order).unwrap();
+        assert_eq!(actual.best_bid_price(), expected.best_bid_price());
+        assert_eq!(actual.best_ask_price(), expected.best_ask_price());
+        assert_eq!(actual.best_bid_size(), expected.best_bid_size());
+        assert_eq!(actual.best_ask_size(), expected.best_ask_size());
+        assert!(fees.report().fills.is_empty());
+        fill.observer().check().unwrap();
+    }
 }
 
 #[test]
@@ -105,7 +157,7 @@ fn seeded_official_probability_sequence_is_preserved_without_pre_slipping_books(
 fn recorded_settings(request: &mut contracts::science::NativeSimulationRequestV1) {
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_LIQUIDITY",
-        "native_version":"0.63.0",
+        "native_version":"0.67.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
@@ -126,6 +178,7 @@ fn native_oversized_ioc_is_partial_with_one_adverse_tick_and_exact_native_accoun
             request.target_points[0].clone(),
             nautilus_model::identifiers::StrategyId::from("RECORDED-001"),
             nautilus_model::identifiers::ClientId::from("RECORDED-TEST"),
+            None,
         )
         .err()
         .unwrap();
@@ -182,7 +235,7 @@ fn native_oversized_ioc_is_partial_with_one_adverse_tick_and_exact_native_accoun
     request.settings.fill_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL",
         "upstream_class":"nautilus_execution::models::fill::DefaultFillModel",
-        "upstream_version":"0.63.0",
+        "upstream_version":"0.67.0",
         "parameters":{"prob_fill_on_limit":"1","prob_slippage":"1","random_seed":"17"}
     }))
     .unwrap();
@@ -312,7 +365,7 @@ fn native_swallowed_liquidity_callback_is_observed_without_default_fallback() {
 
 #[test]
 fn native_partial_reduction_cancels_the_remainder_without_assuming_a_full_exit() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
     let path = directory.path().join(RECORDED_FEES_FILE);
@@ -368,7 +421,7 @@ fn native_partial_ioc_cancellation_resumes_the_due_consecutive_bar_target() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.63.0",
+        "upstream_version":"0.67.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"60000000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -388,7 +441,7 @@ fn native_ioc_fills_at_declared_positive_latency_not_the_next_bar() {
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.63.0",
+        "upstream_version":"0.67.0",
         "parameters":{"base_latency_ns":"0","insert_latency_ns":"1000000","update_latency_ns":"0","cancel_latency_ns":"0"}
     })).unwrap();
     let result = crate::simulation::simulate(directory.path(), &request).unwrap();
@@ -402,7 +455,7 @@ fn native_ioc_fills_at_declared_positive_latency_not_the_next_bar() {
 
 #[test]
 fn native_ioc_sparse_bars_do_not_settle_on_an_unmatched_daily_snapshot() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
     let gap = 2 * 86_400_000_000_000;
@@ -520,7 +573,7 @@ fn recorded_fees_reject_receive_event_clock_divergence_before_execution() {
 #[test]
 fn native_every_instrument_receives_its_final_bar_before_recorded_shutdown() {
     use nautilus_model::{data::BarType, identifiers::Symbol, instruments::InstrumentAny};
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, mut data, mut request) = native_scenario();
     recorded_settings(&mut request);
     let id = InstrumentId::from("456.POLYMARKET");
@@ -616,13 +669,13 @@ fn cross_market_scenario() -> (
     contracts::science::NativeSimulationRequestV1,
 ) {
     use nautilus_model::{identifiers::Symbol, instruments::InstrumentAny};
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (original, data, mut request) = native_scenario();
     recorded_settings(&mut request);
     request.settings.latency_model = serde_json::from_value(serde_json::json!({
         "schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY",
         "upstream_class":"nautilus_execution::models::latency::StaticLatencyModel",
-        "upstream_version":"0.63.0","parameters":{
+        "upstream_version":"0.67.0","parameters":{
             "base_latency_ns":"1000000","insert_latency_ns":"0",
             "update_latency_ns":"0","cancel_latency_ns":"0"
         }
@@ -976,6 +1029,7 @@ fn native_cross_market_invalid_scope_missing_observation_sum_and_expiry_fail() {
             request.target_points[0].clone(),
             nautilus_model::identifiers::StrategyId::from("SCOPE-001"),
             nautilus_model::identifiers::ClientId::from("SCOPE-TEST"),
+            None,
         )
         .err()
         .unwrap();

@@ -585,7 +585,7 @@ fn simulation() -> (NativeTaskParametersV1, NativeSimulationResultV1) {
         spot_cash_report: None,
         recorded_fee_replay: None,
         schema_version: SchemaV1,
-        native_version: "0.63.0".into(),
+        native_version: "0.67.0".into(),
         iterations: count(100),
         events: count(0),
         orders: count(0),
@@ -995,7 +995,7 @@ fn independent_target_policy_report_binds_refs_folds_clocks_weights_and_native_a
     let result = NativeExperimentEvaluationResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.63.0".into()),
+            ("nautilus-backtest".into(), "0.67.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
         ]),
