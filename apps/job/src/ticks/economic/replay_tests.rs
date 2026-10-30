@@ -521,6 +521,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
         Decimal::ZERO,
         false,
         &mut None,
+        None,
     )
     .unwrap();
     assert!(days[0].equity_usdt.is_none());
@@ -533,6 +534,83 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
     )));
     assert!(reason.contains(&format!("at_ns={at}:maximum_age_ns={HOUR}:state=STALE")));
     assert!(previous.is_none());
+    let path = directory.path().join("spot-valuation.jsonl");
+    std::fs::write(&path, format!("{}\n{}\n{}\n{}\n{}\n",
+        json!({"instrument_id": SPOT, "received_ns": (at - 1).to_string(), "bid": "110", "ask": "112"}),
+        json!({"instrument_id": SPOT, "received_ns": (at + 1).to_string(), "bid": "120", "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (at + 1).to_string(), "bid": "120", "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (at + 2).to_string(), "bid": null, "ask": "122"}),
+        json!({"instrument_id": SPOT, "received_ns": (at + 3).to_string(), "bid": "123", "ask": "122"})
+    )).unwrap();
+    let quotes = SpotQuotes::open(&path, &assets).unwrap();
+    let a = assets
+        .iter()
+        .find(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    assert_eq!(quotes.price(a, at, HOUR), Some(Some(Decimal::from(111))));
+    assert_eq!(
+        quotes.price(a, at + 1, HOUR),
+        Some(None),
+        "duplicate timestamps stay unknown"
+    );
+    assert_eq!(
+        quotes.price(a, at + 2, HOUR),
+        Some(None),
+        "missing bid stays unknown"
+    );
+    assert_eq!(
+        quotes.price(a, at + 3, HOUR),
+        Some(None),
+        "crossed quote stays unknown"
+    );
+    assert_eq!(
+        quotes.price(a, at + HOUR + 4, HOUR),
+        Some(None),
+        "stale newest quote is not reused"
+    );
+    assert!(
+        quotes.price(a, at - 2, HOUR).is_none(),
+        "future quote cannot be used"
+    );
+    let before = cash
+        .as_ref()
+        .unwrap()
+        .balance(Currency::BTC())
+        .unwrap()
+        .as_decimal();
+    let mut quote_days = Vec::new();
+    let mut quote_previous = Some(Decimal::from(2000));
+    append_day(
+        &mut quote_days,
+        0,
+        at,
+        &mut quote_previous,
+        &cash,
+        &margin,
+        &assets,
+        &fx_ids,
+        &request.scenario,
+        Decimal::ZERO,
+        Decimal::from(2000),
+        Decimal::ZERO,
+        false,
+        &mut None,
+        Some(&quotes),
+    )
+    .unwrap();
+    assert!(quote_days[0].equity_usdt.is_some());
+    assert_eq!(
+        before,
+        cash.as_ref()
+            .unwrap()
+            .balance(Currency::BTC())
+            .unwrap()
+            .as_decimal()
+    );
+    assert!(
+        fx(Currency::BTC(), &assets, &fx_ids, at, HOUR).is_none(),
+        "trading valuation does not use day-end quotes"
+    );
     let zero_cash = Some(build(&assets, false, Decimal::from(1000), &request.scenario).unwrap());
     append_day(
         &mut days,
@@ -549,6 +627,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
         Decimal::ZERO,
         false,
         &mut None,
+        None,
     )
     .unwrap();
     assert!(days[1].equity_usdt.is_some());
@@ -573,6 +652,7 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
         Decimal::ZERO,
         false,
         &mut None,
+        None,
     )
     .unwrap();
     assert!(days[2].equity_usdt.is_some());
@@ -1684,6 +1764,27 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         serde_json::to_value(&request).unwrap()
     );
     assert!(quote_result.methods["execution"].contains("not observed quotes or book depth"));
+    std::fs::write(prepared.join("research/catalog/spot-valuation.jsonl"), format!("{}\n", json!({
+        "instrument_id": BRIDGE, "received_ns": (DAY - 1).to_string(), "bid": "0.99", "ask": "1.01"
+    }))).unwrap();
+    request.spot_valuation_source = Some("spot-valuation.jsonl".into());
+    let valued = replay(
+        &prepared.join("research/catalog"),
+        &request,
+        &crate::ticks::tests::model(7),
+    )
+    .unwrap();
+    assert_eq!(valued.native_fills, quote_result.native_fills);
+    assert_eq!(valued.native_rejections, quote_result.native_rejections);
+    assert_eq!(
+        serde_json::to_value(&valued.fees_by_currency).unwrap(),
+        serde_json::to_value(&quote_result.fees_by_currency).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&valued.small_capital_diagnostics).unwrap(),
+        serde_json::to_value(&quote_result.small_capital_diagnostics).unwrap()
+    );
+    assert!(valued.methods["spot_valuation"].contains("do not change trading"));
 }
 
 #[test]

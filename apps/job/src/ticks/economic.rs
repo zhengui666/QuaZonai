@@ -123,6 +123,13 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
             .is_none_or(|name| name == "context-prices.manifest.json"),
         "ECONOMIC_CONTEXT_PATH_INVALID"
     );
+    ensure!(
+        request
+            .spot_valuation_source
+            .as_deref()
+            .is_none_or(|name| name == "spot-valuation.jsonl"),
+        "ECONOMIC_SPOT_VALUATION_PATH_INVALID"
+    );
     if let Some(policy) = &request.small_capital_policy {
         ensure!(
             decimal(&policy.maximum_entry_notional_usdc)? > Decimal::ZERO
@@ -1357,12 +1364,89 @@ fn mark(asset: &Asset, now: u64, age: u64) -> Option<Decimal> {
         .filter(|(at, _)| now.checked_sub(*at).is_some_and(|v| v <= age))
         .map(|(_, p)| p)
 }
-fn stable_fx(
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpotQuoteRow {
+    instrument_id: String,
+    received_ns: DbCounter,
+    bid: Option<DecimalValue>,
+    ask: Option<DecimalValue>,
+}
+
+struct SpotQuotes(BTreeMap<String, Vec<(u64, Option<Decimal>)>>);
+impl SpotQuotes {
+    fn open(path: &Path, assets: &[Asset]) -> Result<Self> {
+        let ids: BTreeSet<String> = assets
+            .iter()
+            .filter(|a| matches!(a.instrument, InstrumentAny::CurrencyPair(_)))
+            .map(|a| a.instrument.id().to_string())
+            .collect();
+        let mut rows: BTreeMap<String, Vec<(u64, Option<Decimal>)>> = BTreeMap::new();
+        for line in BufReader::new(File::open(path)?).lines() {
+            let row: SpotQuoteRow = serde_json::from_str(&line?)?;
+            ensure!(
+                ids.contains(&row.instrument_id),
+                "ECONOMIC_SPOT_QUOTE_INSTRUMENT_INVALID"
+            );
+            let at = row.received_ns.get();
+            let series = rows.entry(row.instrument_id).or_default();
+            ensure!(
+                series.last().is_none_or(|(prev, _)| *prev <= at),
+                "ECONOMIC_SPOT_QUOTE_ORDER_INVALID"
+            );
+            let price = match (row.bid.as_ref(), row.ask.as_ref()) {
+                (Some(bid), Some(ask)) => {
+                    let bid = decimal(bid)?;
+                    let ask = decimal(ask)?;
+                    (bid > Decimal::ZERO && ask >= bid).then_some((bid + ask) / Decimal::TWO)
+                }
+                _ => None,
+            };
+            if let Some((prev, value)) = series.last_mut() {
+                if *prev == at {
+                    *value = None;
+                    continue;
+                }
+            }
+            series.push((at, price));
+        }
+        Ok(Self(rows))
+    }
+    // None means no prior quote; Some(None) means the newest quote is stale or invalid.
+    fn price(&self, asset: &Asset, now: u64, age: u64) -> Option<Option<Decimal>> {
+        let rows = self.0.get(&asset.instrument.id().to_string())?;
+        let i = rows.partition_point(|(at, _)| *at <= now).checked_sub(1)?;
+        let (at, price) = rows[i];
+        Some(if now - at <= age { price } else { None })
+    }
+}
+fn valuation_mark(
+    asset: &Asset,
+    now: u64,
+    age: u64,
+    quotes: Option<&SpotQuotes>,
+) -> Option<Decimal> {
+    quotes
+        .and_then(|q| q.price(asset, now, age))
+        .unwrap_or_else(|| mark(asset, now, age))
+}
+
+fn fx(
     currency: Currency,
     assets: &[Asset],
     fx_ids: &BTreeSet<String>,
     now: u64,
     age: u64,
+) -> Option<Decimal> {
+    valuation_fx(currency, assets, fx_ids, now, age, None)
+}
+fn stable_valuation_fx(
+    currency: Currency,
+    assets: &[Asset],
+    fx_ids: &BTreeSet<String>,
+    now: u64,
+    age: u64,
+    quotes: Option<&SpotQuotes>,
 ) -> Option<Decimal> {
     if currency == Currency::USDC() {
         return Some(Decimal::ONE);
@@ -1374,16 +1458,17 @@ fn stable_fx(
                 && a.instrument.base_currency() == Some(currency)
                 && a.instrument.quote_currency() == Currency::USDC()
         })
-        .and_then(|a| mark(a, now, age))
+        .and_then(|a| valuation_mark(a, now, age, quotes))
 }
-fn fx(
+fn valuation_fx(
     currency: Currency,
     assets: &[Asset],
     fx_ids: &BTreeSet<String>,
     now: u64,
     age: u64,
+    quotes: Option<&SpotQuotes>,
 ) -> Option<Decimal> {
-    if let Some(rate) = stable_fx(currency, assets, fx_ids, now, age) {
+    if let Some(rate) = stable_valuation_fx(currency, assets, fx_ids, now, age, quotes) {
         return Some(rate);
     }
     assets
@@ -1394,8 +1479,15 @@ fn fx(
         })
         .find_map(|a| {
             Some(
-                mark(a, now, age)?
-                    * stable_fx(a.instrument.quote_currency(), assets, fx_ids, now, age)?,
+                valuation_mark(a, now, age, quotes)?
+                    * stable_valuation_fx(
+                        a.instrument.quote_currency(),
+                        assets,
+                        fx_ids,
+                        now,
+                        age,
+                        quotes,
+                    )?,
             )
         })
 }
@@ -1474,18 +1566,38 @@ fn value(
     contexts: &mut Option<ContextPrices>,
     reason: Option<&mut String>,
 ) -> Result<Option<Decimal>> {
+    valuation_value(
+        ledger, assets, fx_ids, now, age, margin, contexts, reason, None,
+    )
+}
+
+fn valuation_value(
+    ledger: &NativeLedger,
+    assets: &[Asset],
+    fx_ids: &BTreeSet<String>,
+    now: u64,
+    age: u64,
+    margin: bool,
+    contexts: &mut Option<ContextPrices>,
+    reason: Option<&mut String>,
+    quotes: Option<&SpotQuotes>,
+) -> Result<Option<Decimal>> {
     let mut total = Decimal::ZERO;
     for balance in ledger.balances() {
         let amount = balance.as_decimal();
         if amount.is_zero() {
             continue;
         }
-        let Some(rate) = fx(balance.currency, assets, fx_ids, now, age) else {
+        let Some(rate) = valuation_fx(balance.currency, assets, fx_ids, now, age, quotes) else {
             if let Some(reason) = reason.filter(|reason| reason.is_empty()) {
                 *reason = format!(
                     "BALANCE_FX_UNAVAILABLE:ledger={}:amount={amount}:{}",
                     if margin { "MARGIN" } else { "CASH" },
-                    missing_fx_reason(balance.currency, assets, fx_ids, now, age)
+                    if quotes.is_some() {
+                        format!("currency={}:source=SPOT_QUOTE_OR_COHORT_FX:at_ns={now}:maximum_age_ns={age}:state=UNAVAILABLE", balance.currency)
+                    } else {
+                        missing_fx_reason(balance.currency, assets, fx_ids, now, age)
+                    }
                 );
             }
             return Ok(None);
@@ -1740,6 +1852,11 @@ pub fn replay_with_funding(
         .as_ref()
         .map(|_| ContextPrices::open(funding_root, &request.research))
         .transpose()?;
+    let spot_quotes = request
+        .spot_valuation_source
+        .as_ref()
+        .map(|name| SpotQuotes::open(&funding_root.join(name), &assets))
+        .transpose()?;
     let mut seed = s.random_seed.get();
     let mut cash: Option<NativeLedger> = None;
     let mut margin: Option<NativeLedger> = None;
@@ -1809,6 +1926,7 @@ pub fn replay_with_funding(
                 reserve_usdc,
                 funding_unknown.is_some(),
                 &mut contexts,
+                spot_quotes.as_ref(),
             )?;
             day_end = day_end
                 .checked_add(DAY)
@@ -2161,6 +2279,7 @@ pub fn replay_with_funding(
             reserve_usdc,
             funding_unknown.is_some(),
             &mut contexts,
+            spot_quotes.as_ref(),
         )?;
         day_end = day_end
             .checked_add(DAY)
@@ -2244,7 +2363,7 @@ pub fn replay_with_funding(
     })?;
     let margin_summary = margin.as_ref().map(|l| l.summary()).unwrap_or_default();
     let cash_summary = cash.as_ref().map(|l| l.summary()).unwrap_or_default();
-    Ok(NativeTickEconomicResultV1 {
+    let mut result = NativeTickEconomicResultV1 {
         schema_version: SchemaV1, request: request.clone(),
         small_capital_diagnostics: small.as_ref().map(|p| p.report(&assets)).transpose()?, model: if request.scenario.execution_model.is_some() { "SEGREGATED_SYNTHETIC_QUOTE_IOC_V1" } else { "SEGREGATED_COHORT_MARK_ESTIMATE_V1" }.into(),
         methods: BTreeMap::from([
@@ -2276,7 +2395,14 @@ pub fn replay_with_funding(
         skipped_cash:counter(cash_summary.skipped_cash+margin_summary.skipped_cash)?,skipped_minimum:counter(cash_summary.skipped_minimum+margin_summary.skipped_minimum)?,
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
-    })
+    };
+    if request.spot_valuation_source.is_some() {
+        result.methods.insert("spot_valuation".into(), "Daily valuation uses the midpoint of the latest nonfuture provider-received spot quote when present; missing prior quotes use cohort marks, and stale, invalid or ambiguous quotes remain unavailable. Quotes do not change trading, margin or fees, and do not prove executable liquidity. Provider receive time is not local receipt time.".into());
+        result
+            .limitations
+            .push("SPOT_QUOTE_SNAPSHOT_STALENESS_AND_PROVIDER_RECEIPT_TIME_UNVERIFIED".into());
+    }
+    Ok(result)
 }
 
 fn build(
@@ -2320,6 +2446,7 @@ fn append_day(
     reserve_usdc: Decimal,
     funding_unknown: bool,
     contexts: &mut Option<ContextPrices>,
+    quotes: Option<&SpotQuotes>,
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     let usdt0 = Currency::from_str("USDT0")?;
@@ -2329,7 +2456,7 @@ fn append_day(
         None
     } else if let (Some(c), Some(m)) = (cash, margin) {
         match (
-            value(
+            valuation_value(
                 c,
                 assets,
                 fx_ids,
@@ -2338,8 +2465,9 @@ fn append_day(
                 false,
                 contexts,
                 Some(&mut reason),
+                quotes,
             )?,
-            value(
+            valuation_value(
                 m,
                 assets,
                 fx_ids,
@@ -2348,8 +2476,9 @@ fn append_day(
                 true,
                 contexts,
                 Some(&mut reason),
+                quotes,
             )?,
-            fx(usdt0, assets, fx_ids, at, age),
+            valuation_fx(usdt0, assets, fx_ids, at, age, quotes),
         ) {
             (Some(c), Some(m), Some(fx)) => {
                 Some(((c + m + reserve_usdc) / fx + remaining) / decimal(&s.usdt0_per_usdt)?)
@@ -2358,7 +2487,11 @@ fn append_day(
                 if reason.is_empty() {
                     reason = format!(
                         "REPORTING_FX_UNAVAILABLE:{}",
-                        missing_fx_reason(usdt0, assets, fx_ids, at, age)
+                        if quotes.is_some() {
+                            format!("currency={usdt0}:source=SPOT_QUOTE_OR_COHORT_FX:at_ns={at}:maximum_age_ns={age}:state=UNAVAILABLE")
+                        } else {
+                            missing_fx_reason(usdt0, assets, fx_ids, at, age)
+                        }
                     );
                 }
                 None
@@ -2367,11 +2500,15 @@ fn append_day(
     } else if converted.is_zero() {
         Some(decimal(&s.initial_usdt)?)
     } else {
-        let rate = fx(usdt0, assets, fx_ids, at, age);
+        let rate = valuation_fx(usdt0, assets, fx_ids, at, age, quotes);
         if rate.is_none() {
             reason = format!(
                 "REPORTING_FX_UNAVAILABLE:{}",
-                missing_fx_reason(usdt0, assets, fx_ids, at, age)
+                if quotes.is_some() {
+                    format!("currency={usdt0}:source=SPOT_QUOTE_OR_COHORT_FX:at_ns={at}:maximum_age_ns={age}:state=UNAVAILABLE")
+                } else {
+                    missing_fx_reason(usdt0, assets, fx_ids, at, age)
+                }
             );
         }
         rate.map(|price| (remaining + converted / price) / decimal(&s.usdt0_per_usdt).unwrap())
