@@ -13,7 +13,7 @@ export type NativeTickEconomicScenario = {
 };
 export type NativeTickEconomicRequest = {
   schema_version: 1; research: NativeTickFactorRequest; scenario: NativeTickEconomicScenario;
-  fx_instrument_ids: string[]; funding_source: string; context_source?: string;
+  fx_instrument_ids: string[]; funding_source: string; context_source?: string; spot_valuation_source?: string;
   small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string };
 };
 
@@ -31,7 +31,7 @@ function fields(value: Record<string, unknown>, names: readonly string[]) {
 /** Exact native wire values; no floating-point conversion or inferred costs/capital. */
 export function validateNativeTickEconomicRequest(value: unknown): NativeTickEconomicRequest {
   const request = object(value);
-  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source', 'context_source', 'small_capital_policy']);
+  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source', 'context_source', 'spot_valuation_source', 'small_capital_policy']);
   if (request.schema_version !== 1) throw new Error('tick_economic_schema_version_unsupported');
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
@@ -60,6 +60,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   if (!Array.isArray(request.fx_instrument_ids) || !request.fx_instrument_ids.length || request.fx_instrument_ids.some(id => typeof id !== 'string' || !id || id.length > 200 || /[\s\u0000-\u001f\u007f]/.test(id)) || new Set(request.fx_instrument_ids).size !== request.fx_instrument_ids.length) throw new Error('tick_economic_fx_instrument_ids_invalid');
   if (typeof request.funding_source !== 'string' || !request.funding_source.endsWith('.jsonl') || /[/\\\u0000-\u001f\u007f]/.test(request.funding_source)) throw new Error('tick_economic_funding_source_invalid');
   if (request.context_source !== undefined && request.context_source !== 'context-prices.manifest.json') throw new Error('tick_economic_context_source_invalid');
+  if (request.spot_valuation_source !== undefined && request.spot_valuation_source !== 'spot-valuation.jsonl') throw new Error('tick_economic_spot_valuation_source_invalid');
   let policy: NativeTickEconomicRequest['small_capital_policy'];
   if (request.small_capital_policy !== undefined) {
     const value = object(request.small_capital_policy);
@@ -73,6 +74,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   return { schema_version: 1, research, scenario: normalized,
     fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,
     ...(request.context_source === undefined ? {} : { context_source: request.context_source }),
+    ...(request.spot_valuation_source === undefined ? {} : { spot_valuation_source: request.spot_valuation_source }),
     ...(policy === undefined ? {} : { small_capital_policy: policy }) };
 }
 

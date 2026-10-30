@@ -201,6 +201,13 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
         .is_empty());
+    let quotes = dir.path().join("spot-valuation.jsonl");
+    std::fs::write(&quotes, "{}\n").unwrap();
+    assert!(
+        funding_sources(dir.path(), &request.research).is_err(),
+        "quotes need the funding pair for economic export"
+    );
+    std::fs::remove_file(&quotes).unwrap();
     std::fs::write(dir.path().join("funding-rates.jsonl"), "").unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());
     let mut manifest = json!({"source_revision":request.research.input.source_revision,"start_ns":"0","end_ns":request.research.input.event_end_ns,"instruments":[],"rows":0,"missing_instruments":[]});
@@ -212,6 +219,17 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
             .len(),
         2
     );
+    std::fs::write(&quotes, "{}\n").unwrap();
+    assert!(funding_sources(dir.path(), &request.research)
+        .unwrap()
+        .contains(&("spot-valuation.jsonl".into(), 3)));
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(&quotes).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("funding-rates.jsonl"), &quotes).unwrap();
+        assert!(funding_sources(dir.path(), &request.research).is_err());
+        std::fs::remove_file(&quotes).unwrap();
+    }
     manifest["end_ns"] = json!("1");
     std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());

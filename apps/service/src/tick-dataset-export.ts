@@ -1,4 +1,5 @@
-import { constants } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatasetConfig } from './config.ts';
@@ -123,6 +124,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       const extras = metadata.economic_sources;
       if (!Array.isArray(extras)) throw new Error('tick_economic_source_manifest_invalid');
       const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
+      if (extras.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) names.add('spot-valuation.jsonl');
       const contextSizes = new Map<string, bigint>();
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'context-prices.manifest.json')) {
         const path = join(directory, 'context-prices.manifest.json'); await observe(path);
@@ -152,7 +154,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');
         const path = join(directory, row.path); await observe(path);
         const state = await lstat(path, { bigint: true });
-        if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.bytes)
+        if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.path === 'spot-valuation.jsonl' && directory === primary ? row.research_bytes ?? row.bytes : row.bytes)
           || contextSizes.has(row.path) && state.size !== contextSizes.get(row.path)) throw new Error('tick_economic_source_size_mismatch');
         if (row.path === 'context-prices.manifest.json' || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
         files.add(path);
@@ -182,6 +184,26 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     if (cacheCoverage.source !== fullCacheCoverage.source) throw new Error('tick_cache_source_view_mismatch');
     if (cacheCoverage.contextFiles.size !== fullCacheCoverage.contextFiles.size
       || [...cacheCoverage.contextFiles].some(([name, identity]) => fullCacheCoverage.contextFiles.get(name) !== identity)) throw new Error('tick_context_source_view_mismatch');
+    const sources = Array.isArray(metadata.economic_sources) ? metadata.economic_sources : [];
+    if (sources.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) {
+      const instruments = new Set(full.input.instrument_ids);
+      const primaryLines = createInterface({ input: createReadStream(join(primary, 'spot-valuation.jsonl')), crlfDelay: Infinity });
+      const fullLines = createInterface({ input: createReadStream(join(independent, 'spot-valuation.jsonl')), crlfDelay: Infinity });
+      const expected = primaryLines[Symbol.asyncIterator]();
+      try {
+        for await (const line of fullLines) {
+          const quote = object(parseOriginalJson(line), 'tick_spot_valuation_row');
+          if (typeof quote.instrument_id !== 'string' || !instruments.has(quote.instrument_id)) throw new Error('tick_spot_valuation_instrument_invalid');
+          const received = cacheCounter(quote.received_ns);
+          if (received >= BigInt(full.input.event_end_ns)) throw new Error('tick_spot_valuation_window_invalid');
+          if (received < BigInt(research.input.event_end_ns)) {
+            const row = await expected.next();
+            if (row.done || row.value !== line) throw new Error('tick_spot_valuation_view_mismatch');
+          }
+        }
+        if (!(await expected.next()).done) throw new Error('tick_spot_valuation_view_mismatch');
+      } finally { primaryLines.close(); fullLines.close(); }
+    }
     for (const [id, view] of cacheCoverage.assets) {
       const original = fullCacheCoverage.assets.get(id)!;
       if (view.inode !== original.inode || view.bytes !== original.bytes || view.begin !== original.begin || view.end > original.end) throw new Error('tick_cache_source_view_mismatch');
