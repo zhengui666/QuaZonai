@@ -206,12 +206,6 @@ pub(crate) fn validate_market(
     market: &NativeMarketData,
     settings: &NativeSimulationSettingsV1,
 ) -> Result<()> {
-    if matches!(
-        settings.fee_model,
-        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
-    ) {
-        catalog_fees::validate_market(market, settings)?;
-    }
     let selected = domain::prediction::uses_native_fee(&settings.fee_model);
     for series in &market.series {
         match &series.instrument {
@@ -247,6 +241,12 @@ pub(crate) fn validate_market(
             }
             _ => ensure!(!selected, "POLYMARKET_FEE_REQUIRES_BINARY_OPTION"),
         }
+    }
+    if matches!(
+        settings.fee_model,
+        contracts::portfolio::NativeModelRefV1::NautilusMakerTaker { .. }
+    ) {
+        catalog_fees::validate_market(market, settings)?;
     }
     Ok(())
 }

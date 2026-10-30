@@ -55,8 +55,10 @@ pub fn write_acquisition(directory: &Path) -> Acquisition {
             .unwrap(),
     );
     let definitions = directory.join("instruments.json");
-    // This separate fee-policy fixture is retained with the source inputs. A
-    // candle-only import does not silently claim it as execution fee evidence.
+    // This independently declared fixture retains the original 0.004/0.006
+    // policy outside instrument definitions and requests. Candle-only import
+    // does not attach it; execution fixtures explicitly pass this file through
+    // catalog-prepare --fee-source into a new prepared catalog.
     venue_fees::write(
         directory,
         "COINBASE",

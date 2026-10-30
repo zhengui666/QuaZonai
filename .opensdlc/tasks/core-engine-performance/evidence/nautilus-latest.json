@@ -145,5 +145,49 @@
       "nautilus_trader-2.0.0rc8.tar.gz"
     ]
   },
-  "scope": "registry and official source research only; QuaZonai dependency files have not been changed; no upgraded engine benchmark or build claimed"
+  "scope": "registry and official source research only; QuaZonai dependency files have not been changed; no upgraded engine benchmark or build claimed",
+  "fee_money_source_review_2026_10_30": {
+    "scope": "Official 0.67.0 package source inspection and implementation oracle corrections, distinct from historical 0.63 performance observations. Exact Money storage does not change MakerTaker commission rounding. A later lib run confirmed the 0.0008 USD serde assertion passed before the ordinary FromStr assertion failed; final corrected tests and actual CLI precision acceptance require execution on the delivered head.",
+    "official_sources": [
+      "https://static.crates.io/crates/nautilus-model/nautilus-model-0.67.0.crate",
+      "https://static.crates.io/crates/nautilus-execution/nautilus-execution-0.67.0.crate",
+      "https://static.crates.io/crates/nautilus-polymarket/nautilus-polymarket-0.67.0.crate"
+    ],
+    "maker_taker": {
+      "path": "nautilus-execution/src/models/fee.rs MakerTakerFeeModel::get_commission -> nautilus-model/src/fees.rs calculate_maker_taker_commission -> types/money.rs Money::from_decimal -> types/fixed.rs bankers_round",
+      "policy": "Official per-fill currency-precision half-even rounding; no public MakerTaker option selecting from_decimal_exact/native. Source rates are independent frozen venue policy; actual commission arithmetic stays upstream.",
+      "independent_usd_oracles": [
+        {
+          "unrounded": "0.0008",
+          "actual": "0.00"
+        },
+        {
+          "unrounded": "0.005",
+          "actual": "0.00"
+        },
+        {
+          "unrounded": "0.015",
+          "actual": "0.02"
+        },
+        {
+          "unrounded": "0.025",
+          "actual": "0.02"
+        },
+        {
+          "unrounded": "-0.015",
+          "actual": "-0.02"
+        }
+      ]
+    },
+    "exact_money": {
+      "path": "nautilus-model/src/types/money.rs Money::from_decimal_exact/from_str_exact/as_decimal; Display/Serialize use to_decimal_string; Deserialize calls from_str_exact; ordinary FromStr calls parse(exact=false)",
+      "policy": "Exact construction, explicit exact parsing, Display and serde preserve representable fractional digits below currency precision. Ordinary Money::from_str rounds to currency precision, so parsing the display of exact 0.0008 USD through that trait yields 0.00 USD. Exact roundtrip/accumulation, the ordinary parser's rounding, and commission construction are separate acceptance cases.",
+      "qz_input_boundary": "The six contract-required exact initial-capital/observed-balance inputs use the public Money::from_str_exact API and propagate unrepresentable-value errors. Canonical result Value stays original; account observer projects native as_decimal directly into DecimalValue. The official fee models retain their own rounding policies."
+    },
+    "polymarket": {
+      "path": "nautilus-polymarket/src/models.rs PolymarketFeeModel::get_commission",
+      "policy": "Fee-equivalent quantity*rate*price*(1-price); taker ToZero at 5 decimal places; maker negative fee-equivalent*rebate_rate rounded half-even at 5 places; then Money::from_decimal in original quote currency.",
+      "independent_oracle": "Original fixture rate 0.05, price 0.4: each quantity 0.0005 yields zero taker commission; combined quantity 0.001 yields 0.00001. Original source schedule is unchanged; fixture quantities isolate the new rounding boundaries."
+    }
+  }
 }

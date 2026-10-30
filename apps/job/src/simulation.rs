@@ -1566,13 +1566,15 @@ pub(crate) fn execution_market(
     settings: &NativeSimulationSettingsV1,
 ) -> Result<Currency> {
     domain::portfolio::simulation_settings(settings)?;
+    let currency = execution_market_terms(data, settings)?;
     // Historical replay always authenticates its independently frozen catalog
-    // fee source before sharing the instrument/account predicates with Paper.
+    // fee source. Unsupported instrument/account terms retain their specific
+    // error instead of being obscured by a secondary source mismatch.
     crate::prediction::validate_market(data, settings)?;
-    execution_market_terms(data, settings)
+    Ok(currency)
 }
 
-/// Source-independent native terms; each caller validates its own fee owner first.
+/// Source-independent native terms; callers must also validate their fee owner.
 fn execution_market_terms(
     data: &NativeMarketData,
     settings: &NativeSimulationSettingsV1,
@@ -1592,6 +1594,17 @@ fn execution_market_terms(
     let venue = data.series[0].instrument.venue();
     for series in &data.series {
         let instrument = &series.instrument;
+        if matches!(instrument, InstrumentAny::BinaryOption(_)) {
+            ensure!(
+                domain::prediction::uses_native_fee(&settings.fee_model),
+                "POLYMARKET_NATIVE_FEE_MODEL_REQUIRED"
+            );
+        } else {
+            ensure!(
+                !domain::prediction::uses_native_fee(&settings.fee_model),
+                "POLYMARKET_FEE_REQUIRES_BINARY_OPTION"
+            );
+        }
         ensure!(
             matches!(
                 instrument,
@@ -2139,7 +2152,7 @@ fn run_with_strategy_and_spot(
                     balances
                         .iter()
                         .map(|balance| {
-                            Money::from_str(&format!(
+                            Money::from_str_exact(&format!(
                                 "{} {}",
                                 balance.amount.as_decimal().to_plain_string(),
                                 balance.currency
@@ -2148,7 +2161,7 @@ fn run_with_strategy_and_spot(
                         })
                         .collect::<Result<Vec<_>>>()?
                 } else {
-                    vec![Money::from_str(&format!(
+                    vec![Money::from_str_exact(&format!(
                         "{} {}",
                         settings.starting_capital.as_decimal().to_plain_string(),
                         settings.base_currency

@@ -52,6 +52,16 @@ fn main() -> Result<()> {
     ensure!(conversion["admission"]["research_qualified"] == false);
     let selection = acquisition::selection();
     let declaration = acquisition::declaration();
+    let fee_path = root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE);
+    let original_fees = fs::read(&fee_path)?;
+    let source_fees: contracts::catalogs::FrozenMakerTakerFeesV1 =
+        serde_json::from_slice(&original_fees)?;
+    ensure!(source_fees.origin == contracts::research::DataOrigin::Fixture);
+    ensure!(
+        source_fees.rates.len() == 1
+            && source_fees.rates[0].maker.as_decimal().to_plain_string() == "0.004"
+            && source_fees.rates[0].taker.as_decimal().to_plain_string() == "0.006"
+    );
     acquisition::write_json(&root.join("selection.json"), &selection);
     acquisition::write_json(&root.join("declaration.json"), &declaration);
     let prepared = root.join("prepared");
@@ -62,6 +72,8 @@ fn main() -> Result<()> {
         .arg(root.join("declaration.json"))
         .arg("--selection")
         .arg(root.join("selection.json"))
+        .arg("--fee-source")
+        .arg(&fee_path)
         .arg("--output")
         .arg(&prepared)
         .output()?;
@@ -69,6 +81,12 @@ fn main() -> Result<()> {
     let bytes = fs::read(prepared.join("catalog-metadata.json"))?;
     let metadata: Value = serde_json::from_slice(&bytes)?;
     ensure!(metadata == serde_json::from_slice::<Value>(&result.stdout)?);
+    ensure!(metadata["execution_fees"] == serde_json::to_value(&source_fees)?);
+    ensure!(fs::read(&fee_path)? == original_fees);
+    ensure!(!imported
+        .join("catalog")
+        .join(contracts::catalogs::MAKER_TAKER_FEES_FILE)
+        .exists());
     ensure!(
         metadata["row_count"] == "3"
             && metadata["origin"] == "FIXTURE"
@@ -80,6 +98,7 @@ fn main() -> Result<()> {
     )?;
     let data = job::catalog::load_catalog(&prepared.join("catalog"), &selected.selection)?;
     ensure!(data.rows == 3 && data.series.len() == 1);
+    ensure!(data.execution_fees.as_ref() == Some(&source_fees));
     ensure!(
         serde_json::to_value(&data.series[0].instrument)?
             == serde_json::to_value(&source.instrument)?

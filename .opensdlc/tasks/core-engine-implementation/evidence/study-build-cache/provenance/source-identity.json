@@ -1,0 +1,17 @@
+{
+  "head": "bb9b23556abe14e93ec78a7e5a5d62c651c27ef1",
+  "head_tree": "628e852bb015861fd4b4532cfed5517050c3c43b",
+  "candidate_patch_sha256": "296bff8bd7c1c5918f54d538cb223a9dcb05c44b18a82cd985af1493405bfae5",
+  "candidate_tracked_hashes_sha256": "f6538d02e3bb4b090968966e66e4e344ef2ce81a3c4dcf4049c23350e28d947f",
+  "baseline_delta_sha256": "58141a1a9b3bf2df6aadacee11abf565f08783b5d1fdee44d8db2a9e0224a769",
+  "example_sha256": "b801b425a80df198f292022db8a98455ef5cb5f347bd7521d17927c1d59ce136",
+  "candidate_job_sha256": "e91934b6ee93819cd0c205a78e9f4d5f2d4b77daf59e7fef517534c7691901cd",
+  "candidate_job_from": "/tmp/qz-core-acceptance-20261030/bin/job",
+  "binary_source_attestation": "coordinator built all-features candidate from this tracked production tree before freezing; verify source hashes against final commit",
+  "candidate_signal_sha256": "2ded7e18ad0dc34a3f367a9b7888b9ff056ce89f955f81551b0bc69712311f4f",
+  "baseline_signal_sha256": "dfad36fac4259b76f7de9735d01adfb6e69efbcd947ea6f869a4ebb34adc29d5",
+  "baseline_change": "SignalModuleCache::default max_entries and max_source_bytes are zero; compile/execute path, dependencies, fresh Store/fuel/trap behavior unchanged",
+  "initial_example_sha256": "18d5e0776deb933ee8f7d4d88fc1d1963aa123ce896c351e42b56a39cc62e264",
+  "linear_example_sha256": "8ffe7e9529dac518b05ead6f310370e862ab82897c3db2ec7f5dd40d958fb01f",
+  "cache_proof_example_sha256": "4131d1ca9650e4404484fe58d0d5b3b9d7339923548a2d3a2386392f125fd5b1"
+}

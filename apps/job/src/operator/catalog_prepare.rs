@@ -55,6 +55,9 @@ struct Arguments {
     /// Explicit NativeDatasetSelectionV1, including original complete settlement groups if present.
     #[arg(long)]
     selection: PathBuf,
+    /// Independent frozen maker/taker venue policy; never inferred from request fee hints.
+    #[arg(long)]
+    fee_source: Option<PathBuf>,
     /// New directory, containing catalog/ and a final catalog-metadata.json.
     #[arg(long)]
     output: PathBuf,
@@ -231,7 +234,21 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             .clone(),
     )?;
     let sealed = partition == DataPartition::Sealed;
-    let (observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
+    let (mut observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
+    if let Some(path) = &args.fee_source {
+        let source = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        ensure!(
+            observed
+                .execution_fees
+                .as_ref()
+                .is_none_or(|original| *original == source),
+            "CONFLICTING_EXECUTION_FEE_SOURCES"
+        );
+        observed.execution_fees = Some(source);
+    }
+    if let Some(source) = &observed.execution_fees {
+        crate::prediction::catalog_fees::validate_source_market(source, &observed)?;
+    }
     let (instruments, closes) = originals(&args.catalog, &observed, &selected)?;
     let definitions = serde_json::to_value(&instruments)?;
     let universe = object
@@ -262,14 +279,18 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
         "quality".into(),
         serde_json::to_value(quality_report(vec![measured.clone()])?)?,
     );
-    let execution_fees = serde_json::to_value(&observed.execution_fees)?;
-    ensure!(
-        object
-            .get("execution_fees")
-            .is_none_or(|declared| *declared == execution_fees),
-        "DECLARED_EXECUTION_FEES_DIFFER_FROM_SOURCE"
+    if let Some(declared) = object.get("execution_fees") {
+        let declared: Option<contracts::catalogs::FrozenMakerTakerFeesV1> =
+            serde_json::from_value(declared.clone())?;
+        ensure!(
+            declared == observed.execution_fees,
+            "DECLARED_EXECUTION_FEES_DIFFER_FROM_SOURCE"
+        );
+    }
+    object.insert(
+        "execution_fees".into(),
+        serde_json::to_value(&observed.execution_fees)?,
     );
-    object.insert("execution_fees".into(), execution_fees);
     let metadata: RuntimeCatalogMetadataV1 = serde_json::from_value(declaration)?;
     ensure!(
         metadata.provider_kind == "NAUTILUS_CATALOG"
@@ -384,6 +405,13 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             && readback_closes == closes,
         "CATALOG_ORIGINALS_READBACK_MISMATCH"
     );
+    if let Some(path) = &args.fee_source {
+        let original = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        ensure!(
+            Some(&original) == observed.execution_fees.as_ref(),
+            "PREPARATION_FEE_SOURCE_CHANGED"
+        );
+    }
     let bytes = serde_json::to_vec_pretty(&metadata)?;
     let partial = output.join("catalog-metadata.json.partial");
     let mut file = OpenOptions::new()

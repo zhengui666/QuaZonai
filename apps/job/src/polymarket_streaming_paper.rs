@@ -244,7 +244,7 @@ impl PolymarketStreamingPaper {
                     .account_type(AccountType::Cash)
                     .book_type(BookType::L1_MBP)
                     .base_currency(Currency::from_str(&settings.base_currency)?)
-                    .starting_balances(vec![Money::from_str(&format!(
+                    .starting_balances(vec![Money::from_str_exact(&format!(
                         "{} {}",
                         settings.starting_capital.as_decimal().to_plain_string(),
                         settings.base_currency

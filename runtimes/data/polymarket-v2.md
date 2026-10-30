@@ -255,7 +255,7 @@ not the scientific compiler image. The image includes Python modules, the Node
 exporter and native `source-tools` dispatch shims; no host Node/Rust build is
 needed. Use explicit same-path input/output mounts. Network is allowed only for
 planning/download; never pass provider credentials or the service environment.
-See the [installed source-tool boundary](../../deploy/docker/README.md#scientific-images-and-source-tools).
+See the [installed source-tool boundary](../../deploy/docker/README.md#source-preparation).
 
 For example, with existing owner-managed directories and a new output:
 

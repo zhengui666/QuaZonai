@@ -295,6 +295,7 @@ fn upstream_engine_preserves_partial_order_cash_position_and_original_settlement
 
 #[test]
 fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
+    use contracts::catalogs::{FrozenMakerTakerFeesV1, MAKER_TAKER_FEES_FILE};
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     // Include a transition at selection-start and one after event-end: late
@@ -302,8 +303,19 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
     for (minute, start) in [(1, 1), (5, 0), (22, 0)] {
         let received = minute * market::INTERVAL_NS;
         let (root, mut request) = market::market("0", 20);
+        // Declare this synthetic source's complete receive-time window before
+        // replay. Instrument definition changes do not supply or change fees.
+        let fee_path = root.path().join(MAKER_TAKER_FEES_FILE);
+        let mut fee_source: FrozenMakerTakerFeesV1 =
+            serde_json::from_slice(&std::fs::read(&fee_path).unwrap()).unwrap();
+        assert_eq!(fee_source.origin, contracts::research::DataOrigin::Fixture);
+        fee_source.source_version = "definition-transition-window-v1".into();
+        fee_source.valid_until_ns = market::count(24 * market::INTERVAL_NS);
+        let frozen_fee_bytes = serde_json::to_vec(&fee_source).unwrap();
+        std::fs::write(&fee_path, &frozen_fee_bytes).unwrap();
         request.selection.event_start_ns = market::count(start * market::INTERVAL_NS);
         request.selection.decision_cutoff_ns = market::instant(23);
+        domain::catalogs::maker_taker_fee_selection(&fee_source, &request.selection).unwrap();
         let catalog =
             ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, Some(16), None, None)
                 .unwrap();
@@ -315,6 +327,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
         let update: InstrumentAny = serde_json::from_value(definition).unwrap();
         catalog.write_instruments(vec![update.clone()]).unwrap();
         let data = job::catalog::load_catalog(root.path(), &request.selection).unwrap();
+        assert_eq!(data.execution_fees.as_ref(), Some(&fee_source));
         let series = data
             .series
             .iter()
@@ -359,6 +372,7 @@ fn quazonai_rejects_definition_transitions_but_preserves_catalog_history() {
             String::from_utf8(output.stderr).unwrap().trim(),
             "QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED\nSIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED"
         );
+        assert_eq!(std::fs::read(&fee_path).unwrap(), frozen_fee_bytes);
     }
 }
 

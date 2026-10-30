@@ -5,9 +5,54 @@ mod market;
 mod native;
 use contracts::{ensemble_fit::*, factors::*, science::*, SchemaV1};
 use market::{count, INTERVAL_NS};
+use nautilus_model::types::Price;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+
+/// A declared synthetic quadratic price path, on the original five-decimal grid.
+/// With the native SMA seed, a linear price path has a constant fast/slow EMA
+/// spread, so it cannot identify the slope in the independent scalar OLS oracle.
+fn nonlinear_market() -> (tempfile::TempDir, NativeSimulationRequestV1) {
+    let (original, simulation) = market::market("0", 100);
+    let data = job::catalog::load_catalog(original.path(), &simulation.selection).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = ParquetDataCatalog::from_uri(
+        directory.path().to_str().unwrap(),
+        None,
+        Some(16),
+        None,
+        None,
+    )
+    .unwrap();
+    let price =
+        |ticks: u64| Price::from(format!("{}.{:05}", ticks / 100_000, ticks % 100_000).as_str());
+    for mut series in data.series {
+        assert!(series.instrument_updates.is_empty());
+        let base = match series.bar_type.instrument_id().to_string().as_str() {
+            "EUR/USD.SIM" => 100_000,
+            "GBP/USD.SIM" => 200_000,
+            other => panic!("unexpected fixture instrument: {other}"),
+        };
+        catalog.write_instruments(vec![series.instrument]).unwrap();
+        for bar in &mut series.bars {
+            let n = bar.ts_event.as_u64() / INTERVAL_NS;
+            let close = base + 100 * n + n * n;
+            bar.open = price(close);
+            bar.high = price(close + 20);
+            bar.low = price(close - 20);
+            bar.close = price(close);
+        }
+        catalog
+            .write_to_parquet(&series.bars, None, None, None)
+            .unwrap();
+    }
+    // Preserve the original separately declared fixture venue-fee source.
+    let fees = contracts::catalogs::MAKER_TAKER_FEES_FILE;
+    std::fs::copy(original.path().join(fees), directory.path().join(fees)).unwrap();
+    (directory, simulation)
+}
 
 fn fixture() -> (tempfile::TempDir, NativeEnsembleFitRequestV1, Vec<Vec<u8>>) {
-    let (catalog, simulation) = market::market("0", 100);
+    let (catalog, simulation) = nonlinear_market();
     let source = NativeFactorEvaluationRequestV1 {
         schema_version: SchemaV1,
         forecast: market::forecast_request(&simulation),
@@ -106,18 +151,39 @@ fn original_panels_fit_fold_local_ols_and_match_independent_scalar_qp() {
                             && p.observation.label_available_ns.unwrap() < fold.train_end_ns
                     })
                     .collect();
+                let scores: Vec<_> = points
+                    .iter()
+                    .map(|p| p.observation.forecast.unwrap())
+                    .collect();
+                let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+                let centered_ss = scores.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
+                assert!(
+                    centered_ss > 1e-9,
+                    "controlled nonlinear fixture must identify both OLS coefficients: {centered_ss:.17e}"
+                );
                 let (a, b) = scalar_ols(
-                    &points
-                        .iter()
-                        .map(|p| p.observation.forecast.unwrap())
-                        .collect::<Vec<_>>(),
+                    &scores,
                     &points
                         .iter()
                         .map(|p| p.observation.label_return.unwrap())
                         .collect::<Vec<_>>(),
                 );
-                assert!((a - c.intercept).abs() < 1e-10);
-                assert!((b - c.slope).abs() < 1e-8);
+                assert!(
+                    (a - c.intercept).abs() < 1e-10,
+                    "fold={} member={m} instrument={} n={} oracle_intercept={a:.17e} native_intercept={:.17e} oracle_slope={b:.17e} native_slope={:.17e} score_min={:.17e} score_max={:.17e} centered_ss={centered_ss:.17e}",
+                    fold.train_end_ns.get(),
+                    c.instrument_id,
+                    scores.len(),
+                    c.intercept,
+                    c.slope,
+                    scores.iter().copied().fold(f64::INFINITY, f64::min),
+                    scores.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                );
+                assert!(
+                    (b - c.slope).abs() < 1e-8,
+                    "oracle_slope={b:.17e} native_slope={:.17e}",
+                    c.slope
+                );
                 assert!(c.last_label_available_ns < fold.train_end_ns);
             }
         }
@@ -179,6 +245,95 @@ fn original_panels_fit_fold_local_ols_and_match_independent_scalar_qp() {
     let total: bigdecimal::BigDecimal = fit.members.iter().map(|m| m.weight.as_decimal()).sum();
     assert_eq!(total, bigdecimal::BigDecimal::from(1));
     assert_eq!(fit.oof_observations.get(), labels.len() as u64);
+}
+
+#[test]
+fn native_sma_seed_preserves_warmup_and_exposes_the_linear_spread_counterexample() {
+    let (catalog, simulation) = market::market("0", 30);
+    let request = market::forecast_request(&simulation);
+    let fast =
+        job::forecast::forecast_factor(catalog.path(), &request, &market::module("local.get 2"))
+            .unwrap();
+    let slow =
+        job::forecast::forecast_factor(catalog.path(), &request, &market::module("local.get 3"))
+            .unwrap();
+    let spread = job::forecast::forecast_factor(
+        catalog.path(),
+        &request,
+        &market::module("local.get 2 local.get 3 f64.sub"),
+    )
+    .unwrap();
+    assert_eq!(fast.native_versions["nautilus-indicators"], "0.67.0");
+    for (instrument, base) in [("EUR/USD.SIM", 1.0), ("GBP/USD.SIM", 2.0)] {
+        for report in [&fast, &slow, &spread] {
+            let points: Vec<_> = report
+                .points
+                .iter()
+                .filter(|p| p.instrument_id == instrument)
+                .collect();
+            assert_eq!(points.len(), 30);
+            for point in &points[..2] {
+                assert_eq!(point.forecast, None);
+                assert_eq!(
+                    point.forecast_reason,
+                    Some(ForecastMissingReason::IndicatorWarmup)
+                );
+                assert_eq!(point.label_return, None);
+            }
+            assert!(points[2..].iter().all(|p| p.forecast.is_some()));
+            assert_eq!(points[2].ordinal, 2);
+            assert_eq!(points[2].event_ns, count(3 * INTERVAL_NS));
+            assert_eq!(points[2].available_ns, count(3 * INTERVAL_NS + 1));
+            assert_eq!(
+                points[2].label_available_ns,
+                Some(count(5 * INTERVAL_NS + 1))
+            );
+        }
+        let values = |report: &NativeForecastResultV1| -> Vec<f64> {
+            report
+                .points
+                .iter()
+                .filter(|p| p.instrument_id == instrument)
+                .filter_map(|p| p.forecast)
+                .collect()
+        };
+        let fast_values = values(&fast);
+        let slow_values = values(&slow);
+        let spread_values = values(&spread);
+        // Exact decimal path p_n = base + n/1000. SMA_2 at n=2 is
+        // base+.0015; its next EMA is base+.0025. SMA_3 at n=3 is
+        // base+.002. Thereafter their lags are exactly .0005 and .001.
+        for (index, ((fast, slow), spread)) in fast_values
+            .iter()
+            .zip(&slow_values)
+            .zip(&spread_values)
+            .enumerate()
+        {
+            let n = (index + 3) as f64;
+            assert!((fast - (base + n / 1000.0 - 0.0005)).abs() < 1e-14);
+            assert!((slow - (base + n / 1000.0 - 0.001)).abs() < 1e-14);
+            assert!((spread - 0.0005).abs() < 1e-14);
+        }
+        // Contrast the independently derived old first-value seed at n=3.
+        // These differences are semantic, far above binary rounding noise.
+        let old_fast = base + 23.0 / 9000.0;
+        let old_slow = base + 9.0 / 4000.0;
+        assert!((fast_values[0] - old_fast).abs() > 5e-5);
+        assert!((slow_values[0] - old_slow).abs() > 2e-4);
+        let mean = spread_values.iter().sum::<f64>() / spread_values.len() as f64;
+        let centered_ss = spread_values
+            .iter()
+            .map(|x| (x - mean).powi(2))
+            .sum::<f64>();
+        assert!(centered_ss < 1e-26);
+    }
+    // Exact constants keep the existing explicit rejection; near constants
+    // are numerical evidence, not an independently identifiable slope oracle.
+    let error =
+        job::validation::ScoreCalibration::fit(&[0.0005; 4], &[0.0020, 0.0019, 0.0018, 0.0017])
+            .err()
+            .expect("exact constant predictor must not fit");
+    assert!(error.to_string().contains("CALIBRATION_CONSTANT_SCORE"));
 }
 #[test]
 fn heldout_and_selection_labels_cannot_change_fit_and_future_application_is_frozen() {

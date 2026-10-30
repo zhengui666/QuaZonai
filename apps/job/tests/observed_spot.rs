@@ -103,6 +103,73 @@ fn completed(leg: &NativeObservedSpotSimulationLegV1) -> &NativeSimulationResult
 }
 
 #[test]
+fn cli_preserves_sub_currency_capital_through_original_snapshot_and_wire_projection() {
+    let (root, mut request) = spot::source_fixture();
+    request.settings.starting_capital = money("1000.00000008");
+    for point in &mut request.target_points {
+        point.cash_weight = money("1");
+        for target in &mut point.targets {
+            target.weight = money("0");
+        }
+    }
+    let revision = Id::new().to_string();
+    let output = native::command(
+        &[
+            "simulate".as_ref(),
+            "--catalog".as_ref(),
+            root.path().as_os_str(),
+            "--dataset-revision-id".as_ref(),
+            revision.as_ref(),
+        ],
+        &request,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: NativeSimulationResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.orders.get(), 0);
+    let original = result
+        .spot_cash_report
+        .as_ref()
+        .unwrap()
+        .observations
+        .iter()
+        .find_map(|observation| match &observation.record {
+            NativeSpotCashObservationKindV1::Snapshot { native, .. } => Some(native),
+            _ => None,
+        })
+        .unwrap();
+    // This is the actual original engine event retained by spot capture, with
+    // its real UUID. The normalized canonical event is deliberately separate.
+    let native: PortfolioSnapshot = serde_json::from_value(original.clone()).unwrap();
+    let projected = job::account_observer::project_snapshot(&native).unwrap();
+    let balance = projected
+        .balances
+        .iter()
+        .find(|balance| balance.total.currency == "USDC")
+        .unwrap();
+    assert_eq!(balance.total.amount, request.settings.starting_capital);
+    assert_eq!(balance.free.amount, request.settings.starting_capital);
+    let equity = projected
+        .total_equity
+        .iter()
+        .find(|money| money.currency == "USDC")
+        .unwrap();
+    assert_eq!(equity.amount, request.settings.starting_capital);
+    assert_eq!(projected.event_id, native.event_id.to_string());
+    assert_eq!(
+        serde_json::to_value(&balance.total).unwrap()["amount"],
+        "1000.00000008"
+    );
+    assert_eq!(
+        serde_json::to_value(equity).unwrap()["amount"],
+        "1000.00000008"
+    );
+}
+
+#[test]
 fn matched_hold_keeps_original_inventory_and_rebalance_pays_real_exit_fee() {
     let (root, request, _) = fixture(20, false);
     let result = job::observed_spot::compare(root.path(), &request).unwrap();

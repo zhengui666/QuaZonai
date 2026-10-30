@@ -701,7 +701,7 @@ impl PaperNode {
                 oms_type: OmsType::Netting,
                 account_type: AccountType::Margin,
                 base_currency: Some(currency),
-                starting_balances: vec![Money::from_str(&format!(
+                starting_balances: vec![Money::from_str_exact(&format!(
                     "{} {}",
                     settings.starting_capital.as_decimal().to_plain_string(),
                     settings.base_currency

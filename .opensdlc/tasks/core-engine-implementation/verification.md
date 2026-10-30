@@ -118,10 +118,10 @@ Observed precedent from [PR 265](https://github.com/zhengui666/QuaZonai/pull/265
 
 Use PR conversation comments, submitted reviews and inline threads together; validate the bot identity, full commit association, completed state and actual no-findings result. A connector wrapper that only returns PR-triggered workflow runs or the first page cannot prove all checks are complete. Fetch applicable run/job details and follow pagination if needed. Commit-status aggregation alone can omit check-run results.
 
-## Available GitHub access: read-only investigation
+## GitHub access observations
 
 The installed GitHub connector successfully identified `zhengui666`, searched remote branches and fetched PR 265 metadata/comments/reviews. It is the demonstrated read path for this session. These reads did not test write permissions.
 
 Local `gh` is version 2.46.0. `gh auth status` reported an invalid `GH_TOKEN`; actual `gh api` requests failed with `Forbidden` under the session network proxy. That combination does not independently distinguish token validity from proxy denial. `git ls-remote origin refs/heads/dev` failed because no noninteractive HTTPS username could be obtained. Local `origin/main` still points at the older report baseline and there was no fetched `origin/dev` ref when inspected; do not infer remote dev from that stale local ref.
 
-No credentials were exposed, login/configuration changed, push attempted, PR review requested, or external message sent by this verification worker. CLI access failure does not mean the GitHub connector is unavailable. Publication, final review requests and merge should use an authorized working capability and record their actual results.
+No credentials were exposed, login/configuration changed, push attempted, PR review requested, or external message sent by this verification worker. CLI access failure does not mean the GitHub connector is unavailable. The parent coordinator subsequently verified normal Git fetch and push, published the implementation branch, and created draft PR #267 through the installed connector. Earlier CLI failures above describe this reviewer process only; they are not a current publication blocker.

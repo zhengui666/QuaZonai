@@ -31,11 +31,38 @@ pub(crate) fn load(
     root: &Path,
     selection: &NativeBarSelectionV1,
 ) -> Result<Option<FrozenMakerTakerFeesV1>> {
-    let file = match std::fs::File::open(root.join(MAKER_TAKER_FEES_FILE)) {
+    match load_file(&root.join(MAKER_TAKER_FEES_FILE), selection) {
+        Ok(source) => Ok(Some(source)),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Read an explicit independent operator input without changing its original file.
+pub(crate) fn load_file(
+    path: &Path,
+    selection: &NativeBarSelectionV1,
+) -> Result<FrozenMakerTakerFeesV1> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+        );
+    }
+    let file = match options.open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
+    ensure!(file.metadata()?.is_file(), "MAKER_TAKER_FEE_SOURCE_INVALID");
     let mut bytes = Vec::new();
     file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes)?;
     ensure!(
@@ -44,7 +71,35 @@ pub(crate) fn load(
     );
     let source = serde_json::from_slice(&bytes).context("MAKER_TAKER_FEE_SOURCE_INVALID")?;
     domain::catalogs::maker_taker_fee_selection(&source, selection)?;
-    Ok(Some(source))
+    Ok(source)
+}
+
+pub(crate) fn validate_source_market(
+    source: &FrozenMakerTakerFeesV1,
+    market: &NativeMarketData,
+) -> Result<()> {
+    // Verify native identifiers and exact Decimal representability before
+    // publishing a policy the official model could not install later.
+    native_model(source)?;
+    let rates: BTreeSet<_> = source
+        .rates
+        .iter()
+        .map(|rate| rate.instrument_id.as_str())
+        .collect();
+    for series in &market.series {
+        let instrument = &series.instrument;
+        ensure!(
+            matches!(
+                instrument,
+                InstrumentAny::CurrencyPair(_) | InstrumentAny::Equity(_)
+            ) && instrument.venue().as_str() == source.venue
+                && instrument.quote_currency().code.as_str() == source.currency
+                && instrument.quote_currency().precision == source.currency_precision
+                && rates.contains(instrument.id().to_string().as_str()),
+            "MAKER_TAKER_FEE_SOURCE_MARKET_MISMATCH"
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn write(root: &Path, source: &FrozenMakerTakerFeesV1) -> Result<()> {
@@ -129,6 +184,9 @@ pub(crate) fn validate_market(
 }
 
 /// Rates come only from the validated frozen source; no implicit zero default.
+/// Nautilus 0.67's official commission path uses Money::from_decimal, rounding
+/// each fill to currency precision with half-even ties. Its exact Money storage
+/// APIs do not change that fee-model policy; no alternate rounding is installed.
 pub(crate) fn native_model(source: &FrozenMakerTakerFeesV1) -> Result<MakerTakerFeeModel> {
     domain::catalogs::maker_taker_fee_source(source)?;
     let exact = |value: &contracts::DecimalValue| {

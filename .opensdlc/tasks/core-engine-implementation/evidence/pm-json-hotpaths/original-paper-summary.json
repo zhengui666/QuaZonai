@@ -1,0 +1,736 @@
+{
+  "pid": 74177,
+  "node": "v22.19.0",
+  "scope": "controlled pm-forward-http PAPER; CPU samples only; no locals, heap, environment or payloads collected",
+  "samplingIntervalUs": 1000,
+  "profileDurationMs": 16232.156,
+  "samples": 13359,
+  "warning": "Single window on shared host; not a runtime comparison or whole-test attribution. Inclusive frames deduplicate recursion per sample; categories still overlap.",
+  "self": [
+    {
+      "frame": [
+        "fragments",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        41,
+        20
+      ],
+      "sampleMs": 4542.485,
+      "percentOfWindow": 27.98
+    },
+    {
+      "frame": [
+        "(garbage collector)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 3221.495,
+      "percentOfWindow": 19.85
+    },
+    {
+      "frame": [
+        "(idle)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 1704.099,
+      "percentOfWindow": 10.5
+    },
+    {
+      "frame": [
+        "visit",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        13,
+        17
+      ],
+      "sampleMs": 1671.383,
+      "percentOfWindow": 10.3
+    },
+    {
+      "frame": [
+        "update",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 1639.987,
+      "percentOfWindow": 10.1
+    },
+    {
+      "frame": [
+        "createChildLogger",
+        "file:///workspace/QuaZonai/apps/service/node_modules/fastify/lib/logger-factory.js",
+        22,
+        28
+      ],
+      "sampleMs": 1230.726,
+      "percentOfWindow": 7.58
+    },
+    {
+      "frame": [
+        "write",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/tokenizer.js",
+        271,
+        10
+      ],
+      "sampleMs": 275.604,
+      "percentOfWindow": 1.7
+    },
+    {
+      "frame": [
+        "toString",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/utils/bufferedString.js",
+        41,
+        13
+      ],
+      "sampleMs": 272.418,
+      "percentOfWindow": 1.68
+    },
+    {
+      "frame": [
+        "update",
+        "node:internal/crypto/hash",
+        132,
+        40
+      ],
+      "sampleMs": 259.241,
+      "percentOfWindow": 1.6
+    },
+    {
+      "frame": [
+        "jsonChunks",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        62,
+        28
+      ],
+      "sampleMs": 216.099,
+      "percentOfWindow": 1.33
+    },
+    {
+      "frame": [
+        "",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 131.738,
+      "percentOfWindow": 0.81
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        16,
+        38
+      ],
+      "sampleMs": 127.639,
+      "percentOfWindow": 0.79
+    },
+    {
+      "frame": [
+        "setProperty",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/tokenparser.js",
+        41,
+        21
+      ],
+      "sampleMs": 112.043,
+      "percentOfWindow": 0.69
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        19,
+        48
+      ],
+      "sampleMs": 78.136,
+      "percentOfWindow": 0.48
+    },
+    {
+      "frame": [
+        "write",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 67.117,
+      "percentOfWindow": 0.41
+    },
+    {
+      "frame": [
+        "structuredClone",
+        "node:internal/worker/js_transferable",
+        112,
+        25
+      ],
+      "sampleMs": 64.043,
+      "percentOfWindow": 0.39
+    },
+    {
+      "frame": [
+        "write",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/jsonparser.js",
+        76,
+        10
+      ],
+      "sampleMs": 53.959,
+      "percentOfWindow": 0.33
+    },
+    {
+      "frame": [
+        "write",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/tokenparser.js",
+        268,
+        10
+      ],
+      "sampleMs": 52.58,
+      "percentOfWindow": 0.32
+    },
+    {
+      "frame": [
+        "decode",
+        "node:internal/encoding",
+        440,
+        11
+      ],
+      "sampleMs": 51.029,
+      "percentOfWindow": 0.31
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/research/plugins/native-evidence.ts",
+        21,
+        47
+      ],
+      "sampleMs": 42.42,
+      "percentOfWindow": 0.26
+    },
+    {
+      "frame": [
+        "decodeUTF8",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 35.054,
+      "percentOfWindow": 0.22
+    },
+    {
+      "frame": [
+        "parseJsonPayload",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/lib/response.js",
+        187,
+        42
+      ],
+      "sampleMs": 26.635,
+      "percentOfWindow": 0.16
+    },
+    {
+      "frame": [
+        "decode",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 23.982,
+      "percentOfWindow": 0.15
+    },
+    {
+      "frame": [
+        "encodeJson",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/storage.js",
+        7,
+        20
+      ],
+      "sampleMs": 19.619,
+      "percentOfWindow": 0.12
+    },
+    {
+      "frame": [
+        "spawn",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 16.006,
+      "percentOfWindow": 0.1
+    },
+    {
+      "frame": [
+        "(program)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 15.907,
+      "percentOfWindow": 0.1
+    },
+    {
+      "frame": [
+        "",
+        "node:internal/validators",
+        407,
+        42
+      ],
+      "sampleMs": 13.093,
+      "percentOfWindow": 0.08
+    },
+    {
+      "frame": [
+        "appendBuf",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/utils/bufferedString.js",
+        26,
+        14
+      ],
+      "sampleMs": 12.868,
+      "percentOfWindow": 0.08
+    },
+    {
+      "frame": [
+        "push",
+        "file:///workspace/QuaZonai/apps/research/node_modules/@streamparser/json/dist/mjs/tokenparser.js",
+        179,
+        9
+      ],
+      "sampleMs": 11.974,
+      "percentOfWindow": 0.07
+    },
+    {
+      "frame": [
+        "access",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 9.816,
+      "percentOfWindow": 0.06
+    }
+  ],
+  "inclusive": [
+    {
+      "frame": [
+        "(root)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 16231.125,
+      "percentOfWindow": 99.99
+    },
+    {
+      "frame": [
+        "processTicksAndRejections",
+        "node:internal/process/task_queues",
+        72,
+        35
+      ],
+      "sampleMs": 4936.823,
+      "percentOfWindow": 30.41
+    },
+    {
+      "frame": [
+        "Readable.read",
+        "node:internal/streams/readable",
+        647,
+        35
+      ],
+      "sampleMs": 4852.351,
+      "percentOfWindow": 29.89
+    },
+    {
+      "frame": [
+        "flow",
+        "node:internal/streams/readable",
+        1280,
+        14
+      ],
+      "sampleMs": 4849.035,
+      "percentOfWindow": 29.87
+    },
+    {
+      "frame": [
+        "resume_",
+        "node:internal/streams/readable",
+        1254,
+        17
+      ],
+      "sampleMs": 4849.035,
+      "percentOfWindow": 29.87
+    },
+    {
+      "frame": [
+        "jsonChunks",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        62,
+        28
+      ],
+      "sampleMs": 4758.584,
+      "percentOfWindow": 29.32
+    },
+    {
+      "frame": [
+        "readable._read",
+        "node:internal/streams/from",
+        52,
+        28
+      ],
+      "sampleMs": 4694.414,
+      "percentOfWindow": 28.92
+    },
+    {
+      "frame": [
+        "nextSyncWithSyncValues",
+        "node:internal/streams/from",
+        93,
+        34
+      ],
+      "sampleMs": 4691.093,
+      "percentOfWindow": 28.9
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/research/plugins/native-evidence.ts",
+        21,
+        47
+      ],
+      "sampleMs": 4690.003,
+      "percentOfWindow": 28.89
+    },
+    {
+      "frame": [
+        "fragments",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        41,
+        20
+      ],
+      "sampleMs": 4542.485,
+      "percentOfWindow": 27.98
+    },
+    {
+      "frame": [
+        "computePmDecision",
+        "file:///workspace/QuaZonai/apps/service/src/pm-native.ts",
+        36,
+        40
+      ],
+      "sampleMs": 3791.921,
+      "percentOfWindow": 23.36
+    },
+    {
+      "frame": [
+        "evidence",
+        "file:///workspace/QuaZonai/apps/service/src/pm-native.ts",
+        78,
+        20
+      ],
+      "sampleMs": 3790.816,
+      "percentOfWindow": 23.35
+    },
+    {
+      "frame": [
+        "pmArtifactDigest",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        11,
+        33
+      ],
+      "sampleMs": 3789.681,
+      "percentOfWindow": 23.35
+    },
+    {
+      "frame": [
+        "visit",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        13,
+        17
+      ],
+      "sampleMs": 3788.588,
+      "percentOfWindow": 23.34
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        16,
+        38
+      ],
+      "sampleMs": 3768.906,
+      "percentOfWindow": 23.22
+    },
+    {
+      "frame": [
+        "(garbage collector)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 3221.495,
+      "percentOfWindow": 19.85
+    },
+    {
+      "frame": [
+        "update",
+        "node:internal/crypto/hash",
+        132,
+        40
+      ],
+      "sampleMs": 1903.564,
+      "percentOfWindow": 11.73
+    },
+    {
+      "frame": [
+        "(idle)",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 1704.099,
+      "percentOfWindow": 10.5
+    },
+    {
+      "frame": [
+        "update",
+        "",
+        0,
+        0
+      ],
+      "sampleMs": 1639.987,
+      "percentOfWindow": 10.1
+    },
+    {
+      "frame": [
+        "Chain.<computed>",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        172,
+        38
+      ],
+      "sampleMs": 1256.597,
+      "percentOfWindow": 7.74
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        88,
+        24
+      ],
+      "sampleMs": 1255.446,
+      "percentOfWindow": 7.73
+    },
+    {
+      "frame": [
+        "doInject",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        59,
+        19
+      ],
+      "sampleMs": 1255.446,
+      "percentOfWindow": 7.73
+    },
+    {
+      "frame": [
+        "makeRequest",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        45,
+        22
+      ],
+      "sampleMs": 1238.239,
+      "percentOfWindow": 7.63
+    },
+    {
+      "frame": [
+        "lookup",
+        "file:///workspace/QuaZonai/apps/service/node_modules/find-my-way/index.js",
+        575,
+        43
+      ],
+      "sampleMs": 1237.147,
+      "percentOfWindow": 7.62
+    },
+    {
+      "frame": [
+        "preRouting",
+        "file:///workspace/QuaZonai/apps/service/node_modules/fastify/fastify.js",
+        769,
+        32
+      ],
+      "sampleMs": 1237.147,
+      "percentOfWindow": 7.62
+    },
+    {
+      "frame": [
+        "",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        56,
+        30
+      ],
+      "sampleMs": 1237.147,
+      "percentOfWindow": 7.62
+    },
+    {
+      "frame": [
+        "supportStream1",
+        "file:///workspace/QuaZonai/apps/service/node_modules/light-my-request/index.js",
+        20,
+        25
+      ],
+      "sampleMs": 1237.147,
+      "percentOfWindow": 7.62
+    },
+    {
+      "frame": [
+        "routeHandler",
+        "file:///workspace/QuaZonai/apps/service/node_modules/fastify/lib/route.js",
+        447,
+        25
+      ],
+      "sampleMs": 1233.469,
+      "percentOfWindow": 7.6
+    },
+    {
+      "frame": [
+        "callHandler",
+        "file:///workspace/QuaZonai/apps/service/node_modules/find-my-way/index.js",
+        603,
+        53
+      ],
+      "sampleMs": 1233.469,
+      "percentOfWindow": 7.6
+    },
+    {
+      "frame": [
+        "createChildLogger",
+        "file:///workspace/QuaZonai/apps/service/node_modules/fastify/lib/logger-factory.js",
+        22,
+        28
+      ],
+      "sampleMs": 1230.726,
+      "percentOfWindow": 7.58
+    }
+  ],
+  "sampledCanonicalDigestFrames": [],
+  "callerPaths": [
+    [
+      [
+        "jsonChunks",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        62,
+        28
+      ],
+      [
+        "",
+        "file:///workspace/QuaZonai/apps/research/plugins/native-evidence.ts",
+        21,
+        47
+      ],
+      [
+        "nextSyncWithSyncValues",
+        "node:internal/streams/from",
+        93,
+        34
+      ],
+      [
+        "readable._read",
+        "node:internal/streams/from",
+        52,
+        28
+      ],
+      [
+        "Readable.read",
+        "node:internal/streams/readable",
+        647,
+        35
+      ],
+      [
+        "flow",
+        "node:internal/streams/readable",
+        1280,
+        14
+      ],
+      [
+        "resume_",
+        "node:internal/streams/readable",
+        1254,
+        17
+      ],
+      [
+        "processTicksAndRejections",
+        "node:internal/process/task_queues",
+        72,
+        35
+      ],
+      [
+        "(root)",
+        "",
+        0,
+        0
+      ]
+    ],
+    [
+      [
+        "jsonChunks",
+        "file:///workspace/QuaZonai/apps/research/src/native-json.ts",
+        62,
+        28
+      ],
+      [
+        "retainNativeEvidence",
+        "file:///workspace/QuaZonai/apps/research/plugins/native-evidence.ts",
+        17,
+        43
+      ],
+      [
+        "save",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        28,
+        47
+      ],
+      [
+        "write",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        69,
+        16
+      ],
+      [
+        "retained",
+        "file:///workspace/QuaZonai/apps/service/src/pm-science.ts",
+        306,
+        26
+      ],
+      [
+        "(root)",
+        "",
+        0,
+        0
+      ]
+    ],
+    [
+      [
+        "pmArtifactDigest",
+        "file:///workspace/QuaZonai/apps/service/src/pm-evidence.ts",
+        11,
+        33
+      ],
+      [
+        "evidence",
+        "file:///workspace/QuaZonai/apps/service/src/pm-native.ts",
+        78,
+        20
+      ],
+      [
+        "computePmDecision",
+        "file:///workspace/QuaZonai/apps/service/src/pm-native.ts",
+        36,
+        40
+      ],
+      [
+        "(root)",
+        "",
+        0,
+        0
+      ]
+    ]
+  ]
+}

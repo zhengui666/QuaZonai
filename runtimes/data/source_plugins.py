@@ -4,6 +4,7 @@
 import argparse
 import csv
 from dataclasses import dataclass, replace
+from decimal import Decimal, InvalidOperation
 from functools import partial
 import hashlib
 import http.client
@@ -28,6 +29,8 @@ import snapshot
 MAX_REPORT_BYTES = None
 MAX_EVIDENCE_BYTES = None
 ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "sii-order-filled", "joseph-books")
+MAKER_TAKER_FEES_FILE = "frozen-maker-taker-fees.json"
+MAX_FEE_SOURCE_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -533,6 +536,30 @@ def prepare_options(parser):
                         help="explicit original catalog declaration; native measurement supplies quality/row_count")
     parser.add_argument("--selection", type=Path, required=True,
                         help="explicit original NativeDatasetSelectionV1; no inferred event or receipt bounds")
+    parser.add_argument("--fee-source", type=Path,
+                        help="independent frozen maker/taker venue policy; native preparation checks identity and window; never inferred from request rates")
+
+
+def fee_source_binding(value):
+    """Compare original exact rates across native decimal spelling normalization.
+
+    Rust validates the complete source contract. This is publication binding only,
+    with no fee calculation or claim that a source declaration proves applicability.
+    """
+    try:
+        if not isinstance(value, dict) or not isinstance(value.get("rates"), list):
+            raise ValueError()
+        rates = []
+        for rate in value["rates"]:
+            if not isinstance(rate, dict) or any(not isinstance(rate.get(k), str) for k in ("maker", "taker")):
+                raise ValueError()
+            exact = {k: Decimal(rate[k]) for k in ("maker", "taker")}
+            if not all(rate.is_finite() for rate in exact.values()):
+                raise ValueError()
+            rates.append(rate | exact)
+        return value | {"rates": rates}
+    except (ValueError, InvalidOperation):
+        raise ValueError("invalid frozen fee source binding") from None
 
 
 def file_record(path, limit):
@@ -677,6 +704,18 @@ def prepare_source(plugin_id, args, *, source_preset=None):
     paths = {"import_report": (snapshot.safe_local(source, "import-report.json"), MAX_REPORT_BYTES),
              "source_evidence": (snapshot.safe_local(source, "source-evidence.json"), MAX_EVIDENCE_BYTES),
              "declaration": (declaration, MAX_REPORT_BYTES), "selection": (selection, MAX_REPORT_BYTES)}
+    fee_source = getattr(args, "fee_source", None)
+    if fee_source is not None:
+        fee_source = local_path(fee_source)
+        paths["fee_source"] = (fee_source, MAX_FEE_SOURCE_BYTES)
+    original_fee_path = source / "catalog" / MAKER_TAKER_FEES_FILE
+    if original_fee_path.exists():
+        original_fee_path = snapshot.safe_local(source / "catalog", MAKER_TAKER_FEES_FILE)
+        paths["catalog_fee_source"] = (original_fee_path, MAX_FEE_SOURCE_BYTES)
+    fee_input_key = "fee_source" if fee_source is not None else (
+        "catalog_fee_source" if "catalog_fee_source" in paths else None)
+    expected_fee_source = (fee_source_binding(providers.read_json(acquire.local_bytes(*paths[fee_input_key])))
+                           if fee_input_key else None)
     no_checksums = plugin_id == "hf-dataset"
     record = plain_file_record if no_checksums else file_record
     original_bytes = ({name: acquire.local_bytes(path, limit) for name, (path, limit) in paths.items()}
@@ -701,19 +740,31 @@ def prepare_source(plugin_id, args, *, source_preset=None):
     validate_native(plugin_id, report, evidence, declaration=declared)
     if not unchanged():
         raise ValueError("catalog preparation inputs changed during input checks")
-    output = run_native(args, ["--catalog", str(source / "catalog"),
-                               "--declaration", str(declaration), "--selection", str(selection)])
+    native_argv = ["--catalog", str(source / "catalog"),
+                   "--declaration", str(declaration), "--selection", str(selection)]
+    if fee_source is not None:
+        native_argv += ["--fee-source", str(fee_source)]
+    output = run_native(args, native_argv)
     if not unchanged():
         raise ValueError("catalog preparation inputs changed during native execution; artifacts retained")
     catalog = published_catalog(output)
     metadata_file = snapshot.safe_local(output, "catalog-metadata.json")
     try:
         body = acquire.local_bytes(metadata_file, MAX_REPORT_BYTES)
-        published_identity = catalog_identity(providers.read_json(body))
+        published_metadata = providers.read_json(body)
+        published_identity = catalog_identity(published_metadata)
     except (OSError, ValueError):
         raise ValueError("catalog preparation final metadata is missing, invalid or too large; artifacts retained") from None
     if published_identity != identity:
         raise ValueError("catalog preparation published identity differs from the explicit declaration")
+    if expected_fee_source is not None:
+        published_fee = providers.read_json(acquire.local_bytes(
+            snapshot.safe_local(catalog, MAKER_TAKER_FEES_FILE), MAX_FEE_SOURCE_BYTES))
+        if (fee_source_binding(published_metadata.get("execution_fees")) != expected_fee_source
+                or fee_source_binding(published_fee) != expected_fee_source):
+            raise ValueError("prepared fee source differs from the original independent input; artifacts retained")
+    elif published_metadata.get("execution_fees") is not None or (catalog / MAKER_TAKER_FEES_FILE).exists():
+        raise ValueError("prepared fee source has no original independent input; artifacts retained")
     result = {"schema": "qz.source_preparation/1", "plugin": plugin_id, "status": "CATALOG_PREPARED",
               "output": str(output), "catalog_root": str(catalog), "metadata_file": str(metadata_file),
               "metadata_bytes": len(body),
@@ -723,6 +774,8 @@ def prepare_source(plugin_id, args, *, source_preset=None):
               "admission": dict(acquire.ADMISSION),
               "unperformed_steps": ["runtime_configuration", "source_registration", "source_grant_registration",
                                     "dataset_registration", "frozen_input_set", "fresh_DATA_VALIDATE"]}
+    if fee_input_key:
+        result["source_artifacts"]["fee_source"] = originals[fee_input_key]
     if preset_request is not None:
         metadata = evidence["source_metadata"]
         definitions = sorted(evidence["instruments"], key=lambda item: item["BinaryOption"]["id"])

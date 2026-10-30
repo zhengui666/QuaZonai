@@ -521,6 +521,7 @@ fn actual_native_catalog_preparation_preserves_warmup_and_source_bytes() {
     write_new(&selected, &serde_json::to_vec(&selection).unwrap()).unwrap();
     let prepared = root.join("warmup");
     let metadata = super::super::prepare(&super::super::Arguments {
+        fee_source: None,
         catalog: native,
         declaration: declared,
         selection: selected.clone(),

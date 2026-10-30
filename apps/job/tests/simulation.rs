@@ -29,6 +29,18 @@ fn simulate(
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
 }
 
+/// Declare the original synthetic policy window for a wider calendar fixture.
+/// Rates and source identity stay in the catalog-owned record, outside requests.
+fn fixture_fee_window(root: &Path, valid_until: contracts::DbCounter) {
+    let path = root.join(contracts::catalogs::MAKER_TAKER_FEES_FILE);
+    let mut source: contracts::catalogs::FrozenMakerTakerFeesV1 =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(source.origin, contracts::research::DataOrigin::Fixture);
+    source.valid_until_ns = valid_until;
+    domain::catalogs::maker_taker_fee_source(&source).unwrap();
+    std::fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+}
+
 #[test]
 fn portfolio_metrics_preserve_native_values_missingness_and_frozen_gate() {
     use contracts::evidence::{Comparator, Decision, MetricRequirementV1};
@@ -179,6 +191,35 @@ fn assumptions_bind_frozen_venue_fees_and_original_native_instrument_terms() {
     invalid.account_kind = contracts::science::NativeAccountKind::Cash;
     invalid.leverage = "2".parse().unwrap();
     assert!(domain::portfolio::simulation_settings(&invalid).is_err());
+}
+
+#[test]
+fn cli_preserves_sub_currency_starting_capital_in_canonical_snapshot() {
+    let (directory, mut request) = market("0", 20);
+    request.settings.starting_capital = "1000000.0008".parse().unwrap();
+    for point in &mut request.target_points {
+        point.cash_weight = "1".parse().unwrap();
+        for target in &mut point.targets {
+            target.weight = "0".parse().unwrap();
+        }
+    }
+    let result = simulate(directory.path(), &request).unwrap();
+    assert_eq!(result.orders.get(), 0);
+    assert_eq!(
+        result.canonical_result["accounts"][0]["Margin"]["base"]["balances_starting"]["USD"],
+        "1000000.0008 USD"
+    );
+    let initial = result.canonical_result["portfolio_snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .min_by_key(|row| row["ts_event"].as_str().unwrap().parse::<u64>().unwrap())
+        .unwrap();
+    // Canonical snapshots normalize UUID identities; their original Money
+    // strings remain exact. Do not deserialize this document as a raw event.
+    assert_eq!(initial["balances"][0]["total"], "1000000.0008 USD");
+    assert_eq!(initial["balances"][0]["free"], "1000000.0008 USD");
+    assert_eq!(initial["total_equity"][0], "1000000.0008 USD");
 }
 
 #[test]
@@ -702,6 +743,7 @@ fn calendar_daily_return_statistics_retain_real_flat_account_days() {
     request.selection.event_start_ns = count(start);
     request.selection.event_end_ns = count(end);
     request.selection.decision_cutoff_ns = count(end);
+    fixture_fee_window(directory.path(), count(end + DAY));
     request.settings.snapshot_interval_ms = 86_400_000;
     request.target_points.truncate(1);
     request.target_points[0].cash_weight = "1".parse().unwrap();
@@ -768,6 +810,7 @@ fn calendar_daily_return_statistics_match_the_original_native_account_series() {
     request.selection.event_start_ns = count(start);
     request.selection.event_end_ns = count(end);
     request.selection.decision_cutoff_ns = count(end);
+    fixture_fee_window(directory.path(), count(end + DAY));
     request.settings.snapshot_interval_ms = 86_400_000;
     for point in &mut request.target_points {
         point.asof_ns = count(point.asof_ns.get() + DAY);
@@ -874,6 +917,17 @@ fn scoped_replay_consumes_late_receipts_after_event_end_and_settles_native_order
         }
         catalog.write_to_parquet(&bars, None, None, None).unwrap();
     }
+    // The delayed-source fixture independently retains the original venue's
+    // rates and declares their validity through both tested receive cutoffs.
+    let mut fee_source = original.execution_fees.as_ref().unwrap().clone();
+    fee_source.valid_until_ns = instant(14);
+    std::fs::write(
+        directory
+            .path()
+            .join(contracts::catalogs::MAKER_TAKER_FEES_FILE),
+        serde_json::to_vec(&fee_source).unwrap(),
+    )
+    .unwrap();
     for point in &mut request.target_points {
         point.asof_ns = count(point.asof_ns.get() + delay);
         point.valid_until_ns = instant(13);

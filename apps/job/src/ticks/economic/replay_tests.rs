@@ -2,9 +2,10 @@
 use super::*;
 use nautilus_model::{
     data::TradeTick,
-    enums::{AggressorSide, CurrencyType},
+    enums::{AggressorSide, CurrencyType, OrderSide, OrderStatus},
     identifiers::{InstrumentId, Symbol, TradeId},
     instruments::{CryptoPerpetual, CurrencyPair},
+    orders::Order,
     types::{Price, Quantity},
 };
 use serde_json::json;
@@ -660,6 +661,94 @@ fn small_assets(directory: &Path) -> (Vec<Asset>, NativeTickEconomicRequestV1) {
 }
 
 #[test]
+fn small_policy_preserves_current_bar_underfill_as_visible_subminimum_dust() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut assets, mut request) = small_assets(directory.path());
+    request.scenario.maximum_mark_age_ns = counter(SECOND).unwrap();
+    let mut cash = build(&assets, false, Decimal::from(1000), &request.scenario).unwrap();
+    let mut margin = build(&assets, true, Decimal::from(1000), &request.scenario).unwrap();
+    let i = assets
+        .iter()
+        .position(|a| a.instrument.id().to_string() == SPOT)
+        .unwrap();
+    let instrument = assets[i].instrument.clone();
+    cash.step(SECOND, &instrument, 100.0, 10.0, None).unwrap();
+    let mut small = SmallCapital::new(assets.len());
+    let mut seed = 0;
+    small_new_entries(
+        &mut small,
+        &[i],
+        &mut assets,
+        &cash,
+        &margin,
+        &BTreeSet::from([BRIDGE.into()]),
+        2 * SECOND,
+        request.small_capital_policy.as_ref().unwrap(),
+        &request.scenario,
+        &mut seed,
+        &mut None,
+    )
+    .unwrap();
+    let target = assets[i].pending.take().unwrap().2;
+    assert_eq!(target, Decimal::new(3, 1));
+    // Preserve the original 0.2 cohort capacity: the strategy caps its order to
+    // 0.2, then the refreshed native closing leg fills just 0.2 / 4 = 0.05.
+    cash.step(4 * SECOND, &instrument, 100.0, 0.2, Some(target))
+        .unwrap();
+    let filled = Decimal::new(2, 1) / Decimal::from(4);
+    let orders = cash.orders();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].quantity().as_decimal(), Decimal::new(2, 1));
+    assert_eq!(orders[0].filled_qty().as_decimal(), filled);
+    assert_eq!(orders[0].status(), OrderStatus::Canceled);
+    assert_eq!(small_quantity(&assets[i], &cash, &margin), filled);
+    small
+        .reconcile(
+            i,
+            4 * SECOND,
+            filled,
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert_eq!(small.positions_opened, 1);
+    small
+        .expire(100 * SECOND, &mut assets, &request.scenario, &mut seed)
+        .unwrap();
+    assert_eq!(assets[i].pending.take().unwrap().2, Decimal::ZERO);
+    // The real 5-USDC holding is below this fixture's 10-USDC order minimum.
+    // It remains visible after an exit attempt; no enlarged production volume
+    // or balance repair is used to close it.
+    cash.step(100 * SECOND, &instrument, 100.0, 10.0, Some(Decimal::ZERO))
+        .unwrap();
+    let remaining = small_quantity(&assets[i], &cash, &margin);
+    small
+        .reconcile(
+            i,
+            100 * SECOND,
+            remaining,
+            true,
+            &mut assets,
+            &request.scenario,
+            &mut seed,
+        )
+        .unwrap();
+    assert_eq!(remaining, filled);
+    assert_eq!(cash.summary().submitted, 1);
+    assert_eq!(cash.summary().fills, 1);
+    assert_eq!(cash.summary().skipped_minimum, 1);
+    assert_eq!(small.positions_closed, 0);
+    assert_eq!(
+        decimal(&small.report(&assets).unwrap().remaining_positions[0].quantity).unwrap(),
+        filled
+    );
+    cash.finish().unwrap();
+    margin.finish().unwrap();
+}
+
+#[test]
 fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasing_dust() {
     let directory = tempfile::tempdir().unwrap();
     let (mut assets, mut request) = small_assets(directory.path());
@@ -692,10 +781,17 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
     .unwrap();
     let target = assets[i].pending.take().unwrap().2;
     assert_eq!(target, Decimal::new(3, 1));
-    cash.step(4 * SECOND, &instrument, 100.0, 0.2, Some(target))
+    // Native 0.67 exposes the final OHLC quarter to this on_bar IOC: 0.8 / 4
+    // fills 0.2 of the 0.3 order. Preserve the residual 0.1 dust/exit scenario.
+    cash.step(4 * SECOND, &instrument, 100.0, 0.8, Some(target))
         .unwrap();
     let quantity = small_quantity(&assets[i], &cash, &margin);
     assert_eq!(quantity, Decimal::new(2, 1));
+    let entry = cash.orders();
+    assert_eq!(entry.len(), 1);
+    assert_eq!(entry[0].quantity().as_decimal(), target);
+    assert_eq!(entry[0].filled_qty().as_decimal(), quantity);
+    assert_eq!(entry[0].status(), OrderStatus::Canceled);
     small
         .reconcile(
             i,
@@ -747,8 +843,16 @@ fn small_policy_uses_real_partial_fills_and_retries_stale_nav_exit_without_erasi
     assert_eq!(pending.0, 62 * SECOND); // Exact deadline from entry decision, not next event100s.
     assert_eq!(pending.1, 63 * SECOND + 1);
     assert_eq!(pending.2, Decimal::ZERO);
-    cash.step(100 * SECOND, &instrument, 100.0, 0.1, Some(Decimal::ZERO))
+    cash.step(100 * SECOND, &instrument, 100.0, 0.4, Some(Decimal::ZERO))
         .unwrap();
+    let orders = cash.orders();
+    let exit = orders
+        .iter()
+        .find(|order| order.order_side() == OrderSide::Sell)
+        .unwrap();
+    assert_eq!(exit.quantity().as_decimal(), Decimal::new(2, 1));
+    assert_eq!(exit.filled_qty().as_decimal(), Decimal::new(1, 1));
+    assert_eq!(exit.status(), OrderStatus::Canceled);
     small
         .reconcile(
             i,

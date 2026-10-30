@@ -9,7 +9,6 @@ use nautilus_model::{
     types::{Currency, Price, Quantity},
 };
 use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
-use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{

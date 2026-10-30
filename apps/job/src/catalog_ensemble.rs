@@ -614,7 +614,7 @@ pub fn replay(
                         .account_type(AccountType::Margin)
                         .book_type(BookType::L1_MBP)
                         .base_currency(Currency::from_str("pUSD")?)
-                        .starting_balances(vec![Money::from_str(&format!(
+                        .starting_balances(vec![Money::from_str_exact(&format!(
                             "{} pUSD",
                             settings.starting_capital.as_decimal().to_plain_string()
                         ))

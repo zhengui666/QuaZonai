@@ -125,6 +125,8 @@ jobs:
           npm ci --prefix apps/service --no-audit --no-fund
           npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --target wasm32-unknown-unknown
+      - name: Check native formatting before compiling the scientific stack
+        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           prefix-key: quazonai-science-v2

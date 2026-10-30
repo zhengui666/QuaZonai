@@ -2,7 +2,10 @@
 
 基线提交：`d7da6bff197bcbf272ba998ae0a15b2c1b25071c`。调研日期：2026-10-29。交付范围：代码审计、局部可复现实验、官方资料调研与实施设计；未修改生产计算逻辑。
 
-**本次修订：将升级 Nautilus Rust 全家桶至 0.67.0、Rust 至 1.99.1 列为必做前置工作。按用户要求直接切换新版，不做旧版兼容、双版本运行或回退机制。** 当前源码仍为0.63.0；本文是待实施方案，不代表依赖已经升级。此前局部测量保留原版本标签，不能充当0.67.0性能结果。
+**本次修订：将升级 Nautilus Rust 全家桶至 0.67.0、Rust 至 1.99.1 列为必做前置工作。按用户要求直接切换新版，不做旧版兼容、双版本运行或回退机制。** 调研交付时基线源码为0.63.0；本文保留当时的设计和历史证据，后续实际实施状态见实施任务。此前局部测量保留原版本标签，不能充当0.67.0性能结果。
+
+
+实施基线已迁移至2026-10-30的远程dev；本文源码定位链接固定指向原审计提交，已退役控制面不恢复。当前实施范围与验证见[实施任务](../core-engine-implementation/task.md)。
 
 ## 1. 结论与优先顺序
 
@@ -19,7 +22,7 @@
 
 ## 2. 当前计算栈、规模和 RT 定义
 
-项目的核心计算是 Rust，不是 Python/pandas 热循环。版本来自 [job/Cargo.toml](../../../apps/job/Cargo.toml) 与 [Cargo.lock](../../../Cargo.lock)：Nautilus 0.63.0、Clarabel 0.11.1、Wasmi 2.0.0、ndarray 0.17.1、ndarray-stats 0.7.0、nalgebra 0.35.0、linregress 0.5.4；公开 Arrow 历史合同使用 56.2.0，依赖树同时存在 59.3.0。双版本本身只能证明依赖/构建成本，不能直接认定运行时发生跨版本复制。
+项目的核心计算是 Rust，不是 Python/pandas 热循环。版本来自 [job/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/Cargo.toml) 与 [Cargo.lock](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/Cargo.lock)：Nautilus 0.63.0、Clarabel 0.11.1、Wasmi 2.0.0、ndarray 0.17.1、ndarray-stats 0.7.0、nalgebra 0.35.0、linregress 0.5.4；公开 Arrow 历史合同使用 56.2.0，依赖树同时存在 59.3.0。双版本本身只能证明依赖/构建成本，不能直接认定运行时发生跨版本复制。
 
 | 范围 | 当前/核实状态 | 本方案目标 |
 | --- | --- | --- |
@@ -31,7 +34,7 @@
 
 记号：A 为资产数，T 为单资产观察数，N≈A×T 为 BAR 总数，M 为模型数，K 为 Study 截止点数，F 为目录 Parquet 文件数，H 为 Runtime 已保存历史记录量。
 
-现有限制必须进入实验设计：[portfolio.rs](../../../crates/contracts/src/portfolio.rs) L6–9 限制 A≤256、单资产收益观察≤100,000、收益值总数≤1,000,000；[study.rs](../../../apps/job/src/study.rs) L94–97 还限制所有 frame 累计收益值≤1,000,000。不能拿 A=256、T=100,000、K=256 的非法组合宣称该系统会分配数十 GB。N、M、燃料、输出大小还有独立上限，压测应先通过原准入。
+现有限制必须进入实验设计：[portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio.rs) L6–9 限制 A≤256、单资产收益观察≤100,000、收益值总数≤1,000,000；[study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L94–97 还限制所有 frame 累计收益值≤1,000,000。不能拿 A=256、T=100,000、K=256 的非法组合宣称该系统会分配数十 GB。N、M、燃料、输出大小还有独立上限，压测应先通过原准入。
 
 RT 至少拆成三种指标：
 
@@ -66,23 +69,23 @@ flowchart TD
 
 | 编号 | 定位与机制 | 成本性质/触发条件 | 证据与优先级 |
 | --- | --- | --- | --- |
-| P01 | [managed.rs](../../../apps/job/src/managed.rs) L80–127：`to_writer`→`LimitedFile::write`→`File.write`，没有缓冲 | 大 JSON 的字段、标点、数字产生大量小写调用 | 源码+局部实测；第一批 |
-| P02 | [simulation.rs](../../../apps/job/src/simulation.rs) L203：完整 `NativeTargetPointV1` 在横截面完整和到期检查之前 clone | 下一个目标存在时每 BAR 复制 A 个 targets 及字符串/Decimal；最坏 O(N×A) | 源码+结构微基准；第一批 |
-| P03 | [simulation.rs](../../../apps/job/src/simulation.rs) L208–220：每 BAR 扫 `latest.values()`，完整时再求 max | 横截面验证最坏 O(N×A)，短路时更少 | 源码+结构微基准；第二批 |
-| P04 | [portfolio.rs](../../../apps/job/src/portfolio.rs) L200–220：生成全部 forecast points 后，对每资产 `rev().find()` | 每模型构造 O(A×T) DTO；资产分块布局下查找约 T×A×(A−1)/2+A 次 | 源码+结构微基准；第一批 |
-| P05 | [study.rs](../../../apps/job/src/study.rs) L75–102、[portfolio.rs](../../../apps/job/src/portfolio.rs) L110：每 cutoff 重跑 `prepare`，rolling liquidity 又 load | K 次全前缀读取/验证/预测；rolling 分支每 cutoff 额外一次同选择读取 | 源码确认；第一、二批分拆 |
-| P06 | [forecast.rs](../../../apps/job/src/forecast.rs) L67、[signals.rs](../../../apps/job/src/signals.rs) L34–70：每次 `forecast_market` 新建 Engine/编译 Module | Study 中相同模型被编译 K 次；模块字节与校准对象也重复 clone/解析 | 源码确认；第一批；只复用编译代码 |
-| P07 | [optimization.rs](../../../apps/job/src/optimization.rs) L128–146、440、451；[domain/portfolio.rs](../../../crates/domain/src/portfolio.rs) L705 | solver 前算协方差，结果校验在有关风险约束下再算；成功路径同结果连校验两次 | 源码确认；第二批，需保留失败结果转换 |
-| P08 | [portfolio.rs](../../../apps/job/src/portfolio.rs) L308–328；[study.rs](../../../apps/job/src/study.rs) L126–135 | `Prepared` 中收益/预测 clone 到 input；每 frame 保留历史前缀 | 源码确认；先 move，再考虑有版本的共享存储 |
-| P09 | [catalog.rs](../../../apps/job/src/catalog.rs) L244–260、334–337 | 每次 load 扫所有挂载 Parquet footer；每 BAR 生成 bar_type 字符串查索引 | 源码确认；重复 load 放大，小文件目录尤其敏感 |
-| P10 | [simulation.rs](../../../apps/job/src/simulation.rs) L766、791、815、864–866 | 旧Vec<Data>接入、分析与JSON往返 | 0.67.0已重核：优先typed batch；保留as_value/run_analysis优化，避免把旧sort=false建议套给新typed接口 |
-| P11 | [validation.rs](../../../apps/job/src/validation.rs) L159–184 | 简单双变量 OLS 使用 formula builder/full statistics，再只消费参数/预测 | 源码+官方 API；较低优先，先测校准占比 |
-| P12 | [worker.rs](../../../apps/server/src/worker.rs) L660、779；[lifecycle.rs](../../../crates/store/src/lifecycle.rs) L1022 起 | 运行状态探测频繁访问持锁事务，同状态重复 UPDATE | 源码确认；控制面第二批 |
-| P13 | [journal.rs](../../../apps/runtime/src/journal.rs) L181–183 | 每次容量检查 SUM 四张历史表，成本随 H 增长 | 原 SQL 局部实测；控制面第二批 |
-| P14 | [lifecycle/native.rs](../../../crates/store/src/lifecycle/native.rs) 的结果发布路径 | 持项目相关锁验证结果、读取输入、持久化制品；其他同项目事务受阻 | 源码确认；需现场锁等待与 fsync 分解 |
-| P15 | [supervisor.rs](../../../apps/runtime/src/supervisor.rs) L131–177、274–292 | 串行清理和等待整批 drive 完成延迟下一轮；create/bind 后下一轮才 start | 源码确认；短任务/清理高峰尾延迟候选 |
-| P16 | [http.rs](../../../apps/runtime/src/http.rs) L176–203、[worker.rs](../../../apps/server/src/worker.rs) L727–757 | 通用4槽HTTP限制耦合上传与控制请求；上传暂时503可能结束当前driver | 源码确认；突发上传/取消竞争候选 |
-| P17 | [materialize.rs](../../../apps/runtime/src/materialize.rs) L266–273、374–410，journal 的 BLOB 读写 | 全对象 Vec 驻留、多段复制和跨job重复上传 | 源码确认；先计bytes与Worker/Gateway峰值RSS |
+| P01 | [managed.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/managed.rs) L80–127：`to_writer`→`LimitedFile::write`→`File.write`，没有缓冲 | 大 JSON 的字段、标点、数字产生大量小写调用 | 源码+局部实测；第一批 |
+| P02 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L203：完整 `NativeTargetPointV1` 在横截面完整和到期检查之前 clone | 下一个目标存在时每 BAR 复制 A 个 targets 及字符串/Decimal；最坏 O(N×A) | 源码+结构微基准；第一批 |
+| P03 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L208–220：每 BAR 扫 `latest.values()`，完整时再求 max | 横截面验证最坏 O(N×A)，短路时更少 | 源码+结构微基准；第二批 |
+| P04 | [portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L200–220：生成全部 forecast points 后，对每资产 `rev().find()` | 每模型构造 O(A×T) DTO；资产分块布局下查找约 T×A×(A−1)/2+A 次 | 源码+结构微基准；第一批 |
+| P05 | [study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L75–102、[portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L110：每 cutoff 重跑 `prepare`，rolling liquidity 又 load | K 次全前缀读取/验证/预测；rolling 分支每 cutoff 额外一次同选择读取 | 源码确认；第一、二批分拆 |
+| P06 | [forecast.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/forecast.rs) L67、[signals.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/signals.rs) L34–70：每次 `forecast_market` 新建 Engine/编译 Module | Study 中相同模型被编译 K 次；模块字节与校准对象也重复 clone/解析 | 源码确认；第一批；只复用编译代码 |
+| P07 | [optimization.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/optimization.rs) L128–146、440、451；[domain/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio.rs) L705 | solver 前算协方差，结果校验在有关风险约束下再算；成功路径同结果连校验两次 | 源码确认；第二批，需保留失败结果转换 |
+| P08 | [portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/portfolio.rs) L308–328；[study.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/study.rs) L126–135 | `Prepared` 中收益/预测 clone 到 input；每 frame 保留历史前缀 | 源码确认；先 move，再考虑有版本的共享存储 |
+| P09 | [catalog.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/catalog.rs) L244–260、334–337 | 每次 load 扫所有挂载 Parquet footer；每 BAR 生成 bar_type 字符串查索引 | 源码确认；重复 load 放大，小文件目录尤其敏感 |
+| P10 | [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L766、791、815、864–866 | 旧Vec<Data>接入、分析与JSON往返 | 0.67.0已重核：优先typed batch；保留as_value/run_analysis优化，避免把旧sort=false建议套给新typed接口 |
+| P11 | [validation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/validation.rs) L159–184 | 简单双变量 OLS 使用 formula builder/full statistics，再只消费参数/预测 | 源码+官方 API；较低优先，先测校准占比 |
+| P12 | [worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L660、779；[lifecycle.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle.rs) L1022 起 | 运行状态探测频繁访问持锁事务，同状态重复 UPDATE | 源码确认；控制面第二批 |
+| P13 | [journal.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/journal.rs) L181–183 | 每次容量检查 SUM 四张历史表，成本随 H 增长 | 原 SQL 局部实测；控制面第二批 |
+| P14 | [lifecycle/native.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle/native.rs) 的结果发布路径 | 持项目相关锁验证结果、读取输入、持久化制品；其他同项目事务受阻 | 源码确认；需现场锁等待与 fsync 分解 |
+| P15 | [supervisor.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/supervisor.rs) L131–177、274–292 | 串行清理和等待整批 drive 完成延迟下一轮；create/bind 后下一轮才 start | 源码确认；短任务/清理高峰尾延迟候选 |
+| P16 | [http.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/http.rs) L176–203、[worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L727–757 | 通用4槽HTTP限制耦合上传与控制请求；上传暂时503可能结束当前driver | 源码确认；突发上传/取消竞争候选 |
+| P17 | [materialize.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/materialize.rs) L266–273、374–410，journal 的 BLOB 读写 | 全对象 Vec 驻留、多段复制和跨job重复上传 | 源码确认；先计bytes与Worker/Gateway峰值RSS |
 
 ## 4. 数据、预测和 Study：先减少重复工作
 
@@ -113,7 +116,7 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都�
 
 缓存必须惰性编译、限制条目/内存、按原模型消费顺序触发失败。最多256个模型，每个Wasm原始字节可达2 MiB，编译IR/Engine还有额外开销；一次保留所有模块可能反而OOM。为缓存设任务内预算，记录命中/驱逐、IR估计与进程RSS，在实际不可估计IR大小时使用保守条目上限和进程内存余量。只有全部工作集容纳且无驱逐时，编译次数才可由K×M降到M；受限缓存按命中率评估，不承诺这个下界总能达到。
 
-不能把“有状态 Wasm 只跑新增 BAR”当成本版本的透明优化：[forecast.rs](../../../apps/job/src/forecast.rs) L58–59 和 [signals.rs](../../../apps/job/src/signals.rs) L17–18 明确要求隔离执行状态。相同输出并不足以证明相同燃料、失败次序和独立评估语义。[Wasmi 2.0 官方说明](https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/)支持把编译代码和实例状态分开，但这不授权跨 fold 共享 globals/memory。
+不能把“有状态 Wasm 只跑新增 BAR”当成本版本的透明优化：[forecast.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/forecast.rs) L58–59 和 [signals.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/signals.rs) L17–18 明确要求隔离执行状态。相同输出并不足以证明相同燃料、失败次序和独立评估语义。[Wasmi 2.0 官方说明](https://wasmi-labs.github.io/blog/posts/wasmi-v2.0/)支持把编译代码和实例状态分开，但这不授权跨 fold 共享 globals/memory。
 
 若未来需要真正 O(K×T)→O(T) 的模型增量执行，另立新的模型 ABI/研究合同：明确纯函数或状态转移、重放检查点、fuel 归属、失败恢复、切换 cutoff 和独立评估规则。当前建议先不走这条高风险路线。
 
@@ -123,7 +126,7 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都�
 
 `allocation_input` 优先改为消费 `Prepared` 或分解字段 move，去掉完整收益矩阵和 forecasts 的临时深拷贝。保留 frame 结果的现有 wire schema，不用更改外部合同来做这个局部优化。
 
-若测得 frame 总存储成为瓶颈，再设计 v2 的单一收益列块+frame 区间引用、manifest digest 和 reader；Arrow 的只读 slice 可服务任务内部。现有 [portfolio_history.rs](../../../crates/contracts/src/portfolio_history.rs) 是固定单 batch 的目标权重合同，不是任意收益历史容器，不能直接改变它的含义。Parquet 压缩解码也不是零拷贝；Arrow 对读入后的列块共享和 mmap 有帮助，但不等于从磁盘到整个引擎零拷贝。[Arrow IPC 官方 reader 文档](https://docs.rs/arrow-ipc/latest/arrow_ipc/reader/struct.FileReader.html)
+若测得 frame 总存储成为瓶颈，再设计 v2 的单一收益列块+frame 区间引用、manifest digest 和 reader；Arrow 的只读 slice 可服务任务内部。现有 [portfolio_history.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio_history.rs) 是固定单 batch 的目标权重合同，不是任意收益历史容器，不能直接改变它的含义。Parquet 压缩解码也不是零拷贝；Arrow 对读入后的列块共享和 mmap 有帮助，但不等于从磁盘到整个引擎零拷贝。[Arrow IPC 官方 reader 文档](https://docs.rs/arrow-ipc/latest/arrow_ipc/reader/struct.FileReader.html)
 
 ## 5. 回测热循环与结果分析
 
@@ -141,18 +144,18 @@ Study 已在 L16–29 缓存 artifact 原始字节，不能误称每 cutoff 都�
 
 | 改动面 | 必须修改的位置/动作 |
 | --- | --- |
-| Rust依赖 | [apps/job/Cargo.toml](../../../apps/job/Cargo.toml) 的backtest、analysis、common、core、execution、portfolio、persistence、indicators、polymarket、data、model、trading全部`=0.67.0`，含dev model；[apps/runtime/Cargo.toml](../../../apps/runtime/Cargo.toml)的生产model和dev persistence一并更新；重建Cargo.lock，检查整条依赖链无残留0.63/0.66混用 |
-| 工具链 | [rust-toolchain.toml](../../../rust-toolchain.toml)、[workspace rust-version](../../../Cargo.toml)、CI的RUSTUP_TOOLCHAIN、[容器action](../../../.github/actions/container/action.yml)、[应用Dockerfile](../../../deploy/docker/Dockerfile)统一1.99.1；安装同版wasm32 target；更新实际官方基础镜像digest |
-| 镜像assembler | [build-native-image.mjs](../../../runtimes/native/build-native-image.mjs) L66–69/92/136的编译器、sysroot、目标和报告固定值；[native-job.Dockerfile](../../../runtimes/native/native-job.Dockerfile)的native-stack与[Runtime engine.rs](../../../apps/runtime/src/engine.rs)的NATIVE_STACK/engine_versions必须一致，否则新镜像被拒绝 |
-| 编译结果核验 | [managed.rs](../../../apps/job/src/managed.rs) L227、[domain output.rs](../../../crates/domain/src/execution/output.rs) L129和[部署smoke](../../../deploy/docker/smoke.py)中的rustc要求同步更新；否则新Wasm编译会被旧版本检查拒绝 |
-| 引擎/指标身份 | [contracts/portfolio.rs](../../../crates/contracts/src/portfolio.rs) 的NAUTILUS_EXECUTION_VERSION，job的catalog/forecast/validation/forward/simulation输出，以及domain对应验证器、fixtures统一0.67.0；不能只改报告字符串而继续跑旧库 |
+| Rust依赖 | [apps/job/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/Cargo.toml) 的backtest、analysis、common、core、execution、portfolio、persistence、indicators、polymarket、data、model、trading全部`=0.67.0`，含dev model；[apps/runtime/Cargo.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/Cargo.toml)的生产model和dev persistence一并更新；重建Cargo.lock，检查整条依赖链无残留0.63/0.66混用 |
+| 工具链 | [rust-toolchain.toml](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/rust-toolchain.toml)、[workspace rust-version](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/Cargo.toml)、CI的RUSTUP_TOOLCHAIN、[容器action](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/.github/actions/container/action.yml)、[应用Dockerfile](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/deploy/docker/Dockerfile)统一1.99.1；安装同版wasm32 target；更新实际官方基础镜像digest |
+| 镜像assembler | [build-native-image.mjs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/runtimes/native/build-native-image.mjs) L66–69/92/136的编译器、sysroot、目标和报告固定值；[native-job.Dockerfile](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/runtimes/native/native-job.Dockerfile)的native-stack与[Runtime engine.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/src/engine.rs)的NATIVE_STACK/engine_versions必须一致，否则新镜像被拒绝 |
+| 编译结果核验 | [managed.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/managed.rs) L227、[domain output.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/execution/output.rs) L129和[部署smoke](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/deploy/docker/smoke.py)中的rustc要求同步更新；否则新Wasm编译会被旧版本检查拒绝 |
+| 引擎/指标身份 | [contracts/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/contracts/src/portfolio.rs) 的NAUTILUS_EXECUTION_VERSION，job的catalog/forecast/validation/forward/simulation输出，以及domain对应验证器、fixtures统一0.67.0；不能只改报告字符串而继续跑旧库 |
 | 发布材料 | 更新native目录文档、架构中的能力边界、构建receipt、SBOM/许可证与镜像登记；如wire schema变化，从contracts重新生成，不手改生成文件 |
 
 旧artifact和源数据只保留为历史文件，不重标版本、不作为新版任务输入兼容。新版只接受新版登记的目录、费用来源、MODEL编译产物和质量报告；需要的数据由新官方工具从授权原始来源重新准备，不实现旧catalog reader或旧报告转换层。
 
 ### 5.3 目录API迁移：避免升级后先全量加载再限流
 
-0.67.0的 `nautilus_persistence::backend::catalog` 已移至 `backend::parquet::catalog`，`CatalogPathPrefix`等类型按新公开路径导入。修改范围不止 [catalog.rs](../../../apps/job/src/catalog.rs)，还包括prediction、catalog-prepare、polymarket-history、history适配及测试。
+0.67.0的 `nautilus_persistence::backend::catalog` 已移至 `backend::parquet::catalog`，`CatalogPathPrefix`等类型按新公开路径导入。修改范围不止 [catalog.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/catalog.rs)，还包括prediction、catalog-prepare、polymarket-history、history适配及测试。
 
 **性能关键变化：普通 `ParquetDataCatalog::query<T>` 现在返回 `Result<Vec<T>>`。** 旧代码的`query.take(maximum_rows+1)`不能机械改成`query.into_iter().take(...)`，因为这时全量解码已经发生；`query_record_batches`同样返回Vec，不是自动有界流。
 
@@ -161,6 +164,8 @@ BAR/InstrumentClose热路径改为原生 `CatalogReader::query_batch_session(&Ca
 适配层负责：用受信selection构造identifier、`ts_init`起止和`ts_event >= start AND ts_event < end`谓词；按batch累积行数/字节并拒绝超限；逐记录保留完整时间、价格/精度、身份与非修订校验；不向调用者开放任意where SQL。`CatalogAsOf::Latest`不替代PIT，事件区间和可得截止点仍必须显式限制。
 
 时间戳对齐会使batch超过名义chunk_size；原生merge可能同时保留各源一页，DataFusion排序也可能缓存。不能宣称内存严格等于一个chunk。必须覆盖同timestamp大批量、跨文件相同timestamp、超限行和排序spill；配置可用的原生资源预算并保留job cgroup限制。超限应失败，不截断后伪造完整回测。
+
+**实施验证修订（2026-10-30）：** 原生timestamp-aligned session会在返回前扩展完整同时间戳组，不能保证超限早停。最终适配使用官方文件选择、Parquet固定RecordBatch和官方typed decoder，在合并/保留前检查预算；查询批大小不超过`min(maximum_rows+1,4096)`。文件metadata、event/PIT过滤和稳定排序仍保留，详见实施任务的同时间戳坏页回归。
 
 ### 5.4 Typed DataBatch：替代当前逐项 Data Vec 接入
 
@@ -184,21 +189,25 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同�
 
 ### 5.6 费用、Money、结算：必须随升级重做的语义适配
 
-0.67已移除instrument的maker/taker费率字段。现有 [simulation.rs](../../../apps/job/src/simulation.rs) L487–491、[domain/catalogs.rs](../../../crates/domain/src/catalogs.rs) L150–220和测试对这些字段的依赖必须删除并改为**独立冻结费用来源→venue FeeModel**验证。
+0.67已移除instrument的maker/taker费率字段。现有 [simulation.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/simulation.rs) L487–491、[domain/catalogs.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/catalogs.rs) L150–220和测试对这些字段的依赖必须删除并改为**独立冻结费用来源→venue FeeModel**验证。
 
 普通资产使用新版公开 `MakerTakerFeeModel::new(maker_rate, taker_rate)` 和 `set_override(instrument_id, MakerTakerFeeRates)`表达资产特定费率。保留当前QZ费用来源、币种、资产映射和冻结版本校验；不能只删instrument比较后接受请求中的任意费率。Polymarket原生价格相关费用及结算免交易佣金仍分开，不能被普通maker/taker表替代。按新API重建schema/fixture和费用来源登记，旧fee schema不继续支持。[官方execution 0.67.0发布包](https://static.crates.io/crates/nautilus-execution/nautilus-execution-0.67.0.crate)
 
-新Money保留更细小数、佣金可累加到币种精度以下；因此新结果不要求和0.63旧舍入值逐字节一致。用独立十进制现金/费用oracle验收0.67语义，明确交付显示何时按币种取整，核对JSON/Arrow/DecimalValue边界。不能靠提前舍入让新引擎看起来与旧报告相同。
+需要区分**Money可表达的精度**和**所选原生费用模型实际采用的舍入**。0.67的`Money::from_decimal_exact`、`Money::from_str_exact`、Display与serde能保留原生范围内币种精度以下的小数；serde反序列化明确调用精确解析器。**普通`Money::from_str`仍按币种精度舍入**，不能与上述精确入口混用。官方`MakerTakerFeeModel`调用`calculate_maker_taker_commission → Money::from_decimal`，也逐fill按币种精度作half-even舍入，公开模型没有改用精确构造的选项。USD手续费计算值0.0008的实际佣金因此是0.00，不能承诺将这些已舍弃的小数累加回来，也不能自写佣金公式替换官方模型。
 
-需要保持原生精度的适配使用`Money::from_decimal_exact`等精确入口并处理超范围/不可表示错误；`Money::new`和`Money::from_decimal`仍按币种精度舍入，不能作为精确值往返的通用入口。计算精度和展示精度分别验收。
+只有输入本来要求精确Money且没有另行费用舍入政策的适配，才使用公开精确入口并处理超范围/不可表示错误。QZ初始资本和原始observed余额的合同要求保留精确值，因此simulation、Paper、ensemble和observed估值入口改用`Money::from_str_exact`；`Money::new`、`Money::from_decimal`与普通`Money::from_str`不能作为精确值往返的通用入口。验收分别检查0.0008 USD的serde/精确文本往返与累加、普通FromStr得到0.00的差异、正式CLI请求到native初始snapshot再到QZ DecimalValue投影的保真，以及原生MakerTaker正负half-even临界值与逐fill舍入。新结果不要求与0.63逐字节相同，也不能提前舍入伪装一致。
+
+官方Polymarket 0.67模型的taker费先按`quantity × rate × price × (1-price)`计算，再向零截断到5位；maker rebate仍按5位half-even舍入，最后进入原币种Money。保持原始`fee_schedule`与独立规划上界检查，使用固定费率/价格的手算临界值检验；旧版因taker上舍入触发的微小fill错误案例不能机械保留为新版应当失败。两次各0.0005份、价格0.4、费率0.05的taker佣金各为0，而一次0.001份为0.00001；结算免佣金不得影响普通减仓。源码依据及2026-10-30复核说明见[版本与费用语义证据](evidence/nautilus-latest.json)。
 
 同时按新公开API核查到期排队成交、费用和redeem顺序、`LatencyModel`参数/Result、订阅字段列表化、枚举和Params构造变化；不增加旧签名shim。**动态instrument原位定义更新仍不是已获得能力**：0.67对同ID冲突定义仍拒绝。因此保留QZ动态定义窗口的明确不支持行为，不能为了升级验收删除历史定义变化或重建撮合器拼接净值。
+
+0.67的EMA改为SMA种子，首次可用观察与warmup掩码保持原逻辑，但启动特征值确实改变。旧线性价格fixture的EMA差值因此退化为常量，已用可辨识非线性fixture保留原严格独立OLS/QP断言，并另测真实forecast/Wasm首个可用值及原常量反例；见[EMA迁移证据](../core-engine-implementation/evidence/ema-seed-migration.md)。旧模型与校准需按新版重新生成／评估，不保留旧seed算法或冒称跨版本数值等价。
 
 ### 5.7 新版仍可做的结果分析消冗余
 
 0.67的`CanonicalBacktestResult::as_value()`仍公开，用直接Value克隆消除现有JSON encode/decode往返。`run_analysis=false`仍可避免结束日志用途分析，正式结果与QZ日收益指标仍需完整计算并验证；不能以关闭正式统计换速度。`get_canonical_result()`仍内部调用`get_result()`，暂时接受这部分公开API边界内的重复工作，不复制上游算法。
 
-以上均需在0.67上重新计时；上一稿0.63的局部收益不外推。本次只检查官方发布包及接口，尚未编译完整升级后的QuaZonai或运行新版OCI。
+以上均需在0.67上重新计时；上一稿0.63的局部收益不外推。2026-10-29的调研只检查官方发布包及接口；后续完整构建、原生执行与OCI验证状态在实施任务中独立登记。
 
 ### 5.8 一次切换的发布与失败处理
 
@@ -228,7 +237,7 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同�
 
 ### 6.1 先消除相同风险输入的重算
 
-`sample_covariance` 当前把 `Vec<Vec<f64>>` flatten 成新 Array2，经 `ndarray-stats` 计算，再拆回 `Vec<Vec<f64>>`；solver 又建 nalgebra 矩阵进行 Cholesky。复杂度 O(A²T) 的协方差可能在带风险约束的结果验证中重复执行。[covariance.rs](../../../crates/domain/src/portfolio/covariance.rs) L36–47。
+`sample_covariance` 当前把 `Vec<Vec<f64>>` flatten 成新 Array2，经 `ndarray-stats` 计算，再拆回 `Vec<Vec<f64>>`；solver 又建 nalgebra 矩阵进行 Cholesky。复杂度 O(A²T) 的协方差可能在带风险约束的结果验证中重复执行。[covariance.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio/covariance.rs) L36–47。
 
 在单次可信计算内使用不可变 `PreparedRisk`：输入指纹、资产顺序、观察区间、ddof、连续收益数组、协方差及按需 Cholesky。solver 和本地后置验证共享同一已经验证的估计结果。避免把“结果自称已经验证”从不可信 wire 上传入 domain。Gateway/Store 对新输入与正式结果的独立验证必须保留；跨信任边界的验证不是冗余。
 
@@ -238,7 +247,7 @@ chunk扫描建议2k/10k/50k作为实验点，不是上线固定最佳值；同�
 
 ### 6.2 增量协方差是数值方案，不是简单缓存
 
-这是一项**独立注册估计器的研究方案**：当前 [domain/portfolio.rs](../../../crates/domain/src/portfolio.rs) L496–519 会核对冻结的upstream class/version和ddof，原模型身份指向 `ndarray-stats::CorrelationExt::cov`。自行在线计算不能继续冒用这个身份，即使数学公式相同；须提供新模型身份/合同与独立验证，不重标历史试验。单纯在既有官方估计器内部合法启用等价后端也需记录构建身份与数值差异。
+这是一项**独立注册估计器的研究方案**：当前 [domain/portfolio.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/domain/src/portfolio.rs) L496–519 会核对冻结的upstream class/version和ddof，原模型身份指向 `ndarray-stats::CorrelationExt::cov`。自行在线计算不能继续冒用这个身份，即使数学公式相同；须提供新模型身份/合同与独立验证，不重标历史试验。单纯在既有官方估计器内部合法启用等价后端也需记录构建身份与数值差异。
 
 新方案可对前缀共同窗口采用稳定的在线/分块合并均值与中心二阶矩，避免每 cutoff 重扫全部历史。每次按登记的ddof归一化；迟到数据、修订、窗口成员改变则重建。不得用相减两个巨大累计平方和的方式处理小方差序列，以免严重消减误差。
 
@@ -267,7 +276,7 @@ OLS 只需要系数/预测时，先评估同一个 linregress 官方库的 build
 
 给输出流添加有界 `BufWriter`（PoC 起点 64 KiB，后续扫描 8/64/256 KiB），保持 `LimitedFile` 的总配额和实际写入计数。成功顺序必须是：序列化完成→显式 flush/取回底层流且检查错误→检查非空/字节数→原文件权限冻结与 `sync_all`→记入 output index。错误路径不能发布 index；不依赖 Drop 隐式 flush，因为它无法报告 flush 错误。
 
-也检查 [report.rs](../../../apps/job/src/report.rs) 的 pretty JSON File writer。不要把 `stdout().lock()` 与无缓冲 File 混为同一种问题。缓冲不能通过整份大 JSON `to_vec` 换取失控峰值内存，也不能取消 fsync。
+也检查 [report.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/src/report.rs) 的 pretty JSON File writer。不要把 `stdout().lock()` 与无缓冲 File 混为同一种问题。缓冲不能通过整份大 JSON `to_vec` 换取失控峰值内存，也不能取消 fsync。
 
 [Rust BufWriter 官方文档](https://doc.rust-lang.org/std/io/struct.BufWriter.html)明确其适用于频繁小写，并要求显式处理 flush 错误。本次实测见第 9 节。
 
@@ -281,7 +290,7 @@ Worker 运行中每轮涉及 `settle_unsubmitted`、`prepare_runtime_probe`、`n
 
 ### 7.3 发布锁外预处理，锁内采纳
 
-Worker 的输出下载与初步 `output_shape` 校验目前已经在锁外（[worker.rs](../../../apps/server/src/worker.rs) L845–857），不把它们再次“移到锁外”计作收益。真正需要缩短的是 Store [native.rs](../../../crates/store/src/lifecycle/native.rs) L469–731 内的锁持有区间，包括 L586 的原参数读取、L629 的 `output_bindings` 和 L656 的 publish/fsync。
+Worker 的输出下载与初步 `output_shape` 校验目前已经在锁外（[worker.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/server/src/worker.rs) L845–857），不把它们再次“移到锁外”计作收益。真正需要缩短的是 Store [native.rs](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/src/lifecycle/native.rs) L469–731 内的锁持有区间，包括 L586 的原参数读取、L629 的 `output_bindings` 和 L656 的 publish/fsync。
 
 先读出冻结输入引用和 fence，在锁外完成这些可与不可变输入绑定的预检查和制品暂存。最后进入短事务，重新校验 active attempt、epoch、取消/期限、输入身份及政策仍有效，原子采纳结果/账本/回执。锁外通过不构成发布授权。
 
@@ -390,6 +399,17 @@ SQLite只存metadata、payload移至不可变文件属于后续迁移方案，�
 
 这比结构投影更贴近实际模块，但仍不包含目录、组合、Study、OCI和采纳。不能将短序列3倍外推Study。原始60对样本、source SHA-256、lockfile与环境记录均随报告交付。
 
+### 9.5 0.67实施后的实际Study／Build同版本对照
+
+新增[完整测量证据](../core-engine-implementation/evidence/study-build-cache/README.md)：两臂均为Nautilus0.67.0、Rust1.99.1、release/all-features，冻结同一候选源码与输入；临时baseline只将任务内Wasmi缓存预算设0。实际Study CLI包含目录、预测、优化、原生回放与完整输出；Build调用既有Rust业务入口，不包含HTTP。16模型均有不同源码哈希，5对预热后每case交替测30对，所有完整stdout、fuel、分配和原生资金结果逐字节相同。
+
+| 实际业务负载 | 无缓存中位RT | 缓存中位RT | 验证与解释 |
+| --- | ---: | ---: | --- |
+| 2资产×64 BAR/资产×16模型×16 Study决策 | 78.238 ms | 73.509 ms | 16帧全部OPTIMAL、32原生订单、2持仓、16目标已消费；候选28/30对更快，观察到约6.05%降低 |
+| 2资产×4,096 BAR/资产×16模型×4 Study决策 | 298.998 ms | 297.123 ms | 4帧全部OPTIMAL、8原生订单、4目标已消费；配对区间跨1，不认定稳定整体收益 |
+
+两种单次Build均为16个不同模型、没有编译复用，仍观察到14.023→13.234 ms、40.837→40.074 ms的波动，其配对区间跨1且有顺序敏感性；保留这一对照，不将全部Study差异强归因于命中缓存。四case峰值RSS中位数变化均小于1%，不构成编译IR内存上界。候选与baseline二进制、源码、构建及缓存身份计数已核对，拒绝了共享Cargo target误用旧产物和提前失败的退化fixture；这些样本不进入性能统计。该结果仅覆盖受控小资产业务负载，不宣称生产p95、冷盘、HTTP或大规模协方差改善；[独立缓存内核证据](../core-engine-implementation/evidence/signals-cache/README.md)与端到端证据分开解释。
+
 ## 10. 从定位到可靠生产结论的测量设计
 
 本节的新执行基线统一为Nautilus0.67.0+Rust1.99.1；A/B两臂使用相同新版本、同一冻结输入与相同编译profile，只改变待验证优化。升级必选，不因某项优化未获收益而选择旧引擎。
@@ -467,6 +487,6 @@ PostgreSQL 侧结合 [pg_stat_statements](https://www.postgresql.org/docs/18/pgs
 
 在同一个0.67版本内，只消除复制/索引/缓冲的改动要求逐字节、逐值或严格canonical等价。跨0.63→0.67升级按5.9的新原生语义和独立oracle验收，不做旧兼容。涉及浮点归约/线性代数后端的改动按登记政策设容差，同时检查业务通过/失败，不只看平均误差。结果一致也不代表策略样本外效果通过。
 
-可复用的现有入口包括 [simulation tests](../../../apps/job/tests/simulation.rs)、[signals benchmark](../../../apps/job/examples/benchmark_signals.rs)、[job tests](../../../apps/job/tests)、[runtime tests](../../../apps/runtime/tests)、[Store native worker tests](../../../crates/store/tests/native_worker.rs)、[Native Runtime CI](../../../.github/workflows/native-runtime.yml)。该 benchmark 现有仅5轮，不能原样充当稳定生产基线。科学核心变更需要重新构建实际镜像，执行真实输入/执行/取消/恢复，不能用旧二进制或编译成功代替验收。
+可复用的现有入口包括 [simulation tests](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/tests/simulation.rs)、[signals benchmark](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/examples/benchmark_signals.rs)、[job tests](https://github.com/zhengui666/QuaZonai/tree/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/job/tests)、[runtime tests](https://github.com/zhengui666/QuaZonai/tree/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/apps/runtime/tests)、[Store native worker tests](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/crates/store/tests/native_worker.rs)、[Native Runtime CI](https://github.com/zhengui666/QuaZonai/blob/d7da6bff197bcbf272ba998ae0a15b2c1b25071c/.github/workflows/native-runtime.yml)。该 benchmark 现有仅5轮，不能原样充当稳定生产基线。科学核心变更需要重新构建实际镜像，执行真实输入/执行/取消/恢复，不能用旧二进制或编译成功代替验收。
 
-本轮交付终点是经过复核的新版升级与优化方案及研究证据。尚未修改生产依赖，也未宣称完成升级、合并、部署或生产RT达标。下一项实施为U0/U1：将全项目工具链与原生依赖切到已核实的最新版本，再按U2完成新数据/费用/回放适配，建立新版性能基线并逐项优化。
+本文件记录方案交付阶段的设计及证据。2026-10-30起已在独立实施任务中执行U0/U1/U2和可验证的无损优化；构建、测试、性能测量、最终审查和合并状态以实施任务及PR实际回执为准，不能从这份历史方案推断生产RT或部署已达标。

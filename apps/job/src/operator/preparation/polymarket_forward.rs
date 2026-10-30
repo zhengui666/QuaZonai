@@ -711,6 +711,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
     let selection_path = args.output.join("selection.json");
     write_new(&selection_path, &serde_json::to_vec(&selected)?)?;
     let prepared = super::prepare(&super::Arguments {
+        fee_source: None,
         catalog: native_root,
         declaration: declaration_path,
         selection: selection_path,

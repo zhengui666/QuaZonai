@@ -308,8 +308,9 @@ async fn native_sandbox_lifecycle_fills_and_portfolio_events_reach_retained_stre
         let oracle = fill.last_qty.as_decimal()
             * fill.last_px.as_decimal()
             * rust_decimal::Decimal::new(4, 4);
-        assert_eq!(fill.commission.as_decimal(), oracle);
-        assert_eq!(fill.commission.currency, Currency::USDT());
+        let commission = fill.commission.expect("native fill commission required");
+        assert_eq!(commission.as_decimal(), oracle);
+        assert_eq!(commission.currency, Currency::USDT());
     }
     assert!(
         !accounts.borrow().is_empty(),

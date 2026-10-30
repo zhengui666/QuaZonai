@@ -43,7 +43,7 @@ fn order(instrument: &InstrumentAny, side: LiquiditySide) -> OrderAny {
     let mut order = OrderTestBuilder::new(OrderType::Market)
         .instrument_id(instrument.id())
         .side(OrderSide::Buy)
-        .quantity(Quantity::from("2"))
+        .quantity(Quantity::from("1000"))
         .build();
     order.set_liquidity_side(side);
     order
@@ -79,20 +79,26 @@ fn set_time(clock: &Rc<RefCell<dyn Clock>>, value: u64) {
 }
 
 #[test]
-fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
+fn official_override_uses_currency_rounding_including_signed_half_even_ties() {
     let (model, _) = model();
     let instrument = InstrumentAny::CurrencyPair(gbpusd_sim());
-    // Independently fixed oracle: two units at 0.4 => 0.8 notional;
-    // 0.001 charges 0.0008 USD, -0.0002 rebates 0.00016 USD.
-    for (side, expected) in [
-        (LiquiditySide::Taker, "0.0008"),
-        (LiquiditySide::Maker, "-0.00016"),
+    // Independently fixed decimal oracle. Native MakerTaker uses Money::from_decimal,
+    // which rounds each fill to USD's two decimals, including half-even ties.
+    for (side, quantity, price, expected) in [
+        (LiquiditySide::Taker, "2", "0.40000", "0.00"), // 0.0008
+        (LiquiditySide::Maker, "2", "0.40000", "0.00"), // -0.00016
+        (LiquiditySide::Taker, "5", "1.00000", "0.00"), // 0.005 -> even 0.00
+        (LiquiditySide::Taker, "15", "1.00000", "0.02"), // 0.015 -> even 0.02
+        (LiquiditySide::Taker, "25", "1.00000", "0.02"), // 0.025 -> even 0.02
+        (LiquiditySide::Maker, "25", "1.00000", "0.00"), // -0.005 -> even 0.00
+        (LiquiditySide::Maker, "75", "1.00000", "-0.02"), // -0.015 -> even -0.02
+        (LiquiditySide::Maker, "125", "1.00000", "-0.02"), // -0.025 -> even -0.02
     ] {
         let commission = model
             .get_commission(
                 &order(&instrument, side),
-                Quantity::from("2"),
-                Price::from("0.40000"),
+                Quantity::from(quantity),
+                Price::from(price),
                 &instrument,
             )
             .unwrap();
@@ -100,6 +106,7 @@ fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
             commission.as_decimal(),
             Decimal::from_str_exact(expected).unwrap()
         );
+        assert_eq!(commission.currency, instrument.quote_currency());
         let encoded = serde_json::to_vec(&commission).unwrap();
         assert_eq!(
             serde_json::from_slice::<Money>(&encoded).unwrap(),
@@ -109,24 +116,72 @@ fn official_override_preserves_sub_currency_precision_and_signed_rebates() {
             Money::from_str(&commission.to_string()).unwrap(),
             commission
         );
-        assert_eq!(
-            (commission + commission).as_decimal(),
-            Decimal::from_str_exact(expected).unwrap() * Decimal::from(2)
-        );
     }
-    let explicit_zero = InstrumentAny::CurrencyPair(audusd_sim());
+    let zero = InstrumentAny::CurrencyPair(audusd_sim());
     assert_eq!(
         model
             .get_commission(
-                &order(&explicit_zero, LiquiditySide::Taker),
-                Quantity::from("2"),
-                Price::from("0.40000"),
-                &explicit_zero
+                &order(&zero, LiquiditySide::Taker),
+                Quantity::from("100"),
+                Price::from("1.00000"),
+                &zero
             )
             .unwrap()
             .as_decimal(),
         Decimal::ZERO
     );
+    let order = order(&instrument, LiquiditySide::Taker);
+    let half = model
+        .get_commission(
+            &order,
+            Quantity::from("5"),
+            Price::from("1.00000"),
+            &instrument,
+        )
+        .unwrap();
+    let combined = model
+        .get_commission(
+            &order,
+            Quantity::from("10"),
+            Price::from("1.00000"),
+            &instrument,
+        )
+        .unwrap();
+    assert_eq!((half + half).as_decimal(), Decimal::ZERO);
+    assert_eq!(
+        combined.as_decimal(),
+        Decimal::from_str_exact("0.01").unwrap()
+    );
+}
+
+#[test]
+fn exact_money_serde_and_exact_parser_preserve_digits_while_standard_from_str_rounds() {
+    let currency = nautilus_model::types::Currency::USD();
+    for (value, doubled) in [("0.0008", "0.0016"), ("-0.00016", "-0.00032")] {
+        let amount = Decimal::from_str_exact(value).unwrap();
+        let exact = Money::from_decimal_exact(amount, currency).unwrap();
+        assert_eq!(exact.as_decimal(), amount);
+        assert_eq!(exact.to_string(), format!("{value} USD"));
+        assert_eq!(
+            serde_json::from_slice::<Money>(&serde_json::to_vec(&exact).unwrap()).unwrap(),
+            exact
+        );
+        assert_eq!(Money::from_str_exact(&exact.to_string()).unwrap(), exact);
+        // Upstream serde deliberately calls the exact parser. The ordinary
+        // FromStr trait is a different API and still rounds to USD cents.
+        assert_eq!(
+            Money::from_str(&exact.to_string()).unwrap().as_decimal(),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            (exact + exact).as_decimal(),
+            Decimal::from_str_exact(doubled).unwrap()
+        );
+        assert_eq!(
+            Money::from_decimal(amount, currency).unwrap().as_decimal(),
+            Decimal::ZERO
+        );
+    }
 }
 
 #[test]
