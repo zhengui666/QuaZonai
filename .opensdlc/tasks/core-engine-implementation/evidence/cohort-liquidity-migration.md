@@ -41,3 +41,27 @@ The existing exit-retry scenario supplies explicit fixture capacities 0.8 and 0.
 ## Verification status
 
 Formatting and `git diff --check` passed. The coordinated release run in `/tmp/qz-final-native-tests2.log` reports **325 job library tests passed, 0 failed**, including `ticks::economic::native::tests::native_cash_buy_moves_inventory_caps_participation_and_deducts_fee_once` and both `ticks::economic::replay_tests::small_policy_*` regressions. No extra Cargo build was started by this implementer for these cases. That invocation also contained separate integration-test failures; the library result is not a claim that the entire command or final-Head acceptance passed. The coordinator tracks their resolution and full delivery validation separately. These controlled software checks are not historical liquidity or profitable-capacity evidence.
+
+## Polymarket resting remainder and original close
+
+Expanded integration validation also found a separate 0.67 improvement in the
+same official matching engine: `slipped_price` only returns a remaining L1 fill
+price when `is_price_tradable` accepts its positive value and original instrument
+bounds. See the matching engine around lines 5777–5814 and 5871–5879, plus
+[the official fill model](https://docs.rs/crate/nautilus-execution/0.67.0/source/src/models/fill.rs)
+around lines 274–278.
+
+The retained GTC regression has an original maximum of 0.99, a 0.01 tick and an
+eight-share BAR. The first ordinary fill remains two shares at 0.99. The next
+slipped price of 1.00 is outside the original bound, so the remaining order does
+not receive that fill and is canceled at the configured expiration. The original
+settlement receipt later redeems only actual holdings at 1/0, with zero settlement
+commission. This is a price-bound protection, not a guarantee that every resting
+L1 remainder is capped by original BAR volume. Separate positive, aligned BAR
+prices below/above the original bounds retain the exact catalog rejection.
+
+Explicit early closes also mark native expiration processing complete. In 0.67,
+that check precedes the market-status check: a later order is rejected as
+`Contract {id} has expired`, even before the unchanged configured expiry. The
+regression retains the original close, receipt clock and instrument expiry;
+the native reason does not invent a new expiry or authorize another order.

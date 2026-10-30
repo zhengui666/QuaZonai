@@ -239,16 +239,22 @@ fn early_original_close_redeems_both_positions_at_receipt_without_changing_expir
 }
 
 #[test]
-fn market_order_after_original_close_receipt_before_expiry_has_native_closed_reason() {
+fn market_order_after_original_close_receipt_before_expiry_has_native_expired_reason() {
     let (root, mut request) = early_close(9 * STEP);
     let mut after_close = request.target_points[0].clone();
     after_close.asof_ns = market::count(10 * STEP + 1);
+    assert!(after_close.asof_ns.get() < 18 * STEP);
     request.target_points.push(after_close);
     let error = job::simulation::simulate(root.path(), &request).unwrap_err();
     let chain = format!("{error:#}");
     assert_eq!(error.to_string(), "NATIVE_TARGET_REPLAY_FAILED");
+    // 0.67 checks the already-processed original close before market status.
+    // Its native "expired" reason does not move the instrument's configured expiry.
     assert!(
-        chain.contains("NATIVE_ORDER_REJECTED") && chain.contains("CLOSED"),
+        IDS.iter().any(|id| chain
+            == format!(
+                "NATIVE_TARGET_REPLAY_FAILED: NATIVE_ORDER_REJECTED: Contract {id} has expired"
+            )),
         "{chain}"
     );
 }
@@ -397,8 +403,11 @@ fn equal_close_event_with_distinct_bar_receipt_is_not_receipt_ambiguity() {
     assert_eq!(result.summary["positions.open"], "0");
 }
 
-#[test]
-fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() {
+fn bounded_bar_catalog(
+    first_volume: &str,
+    first_price: &str,
+    price_increment: &str,
+) -> (tempfile::TempDir, NativeSimulationRequestV1) {
     use nautilus_model::{
         data::{Bar, BarType},
         instruments::InstrumentAny,
@@ -406,78 +415,169 @@ fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() 
     };
     use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
-    for (volume, reject_remainder) in [("1000000.000000", false), ("8.000000", true)] {
-        let (_unused, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
-        let root = tempfile::tempdir().unwrap();
-        let catalog =
-            ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
-                .unwrap();
-        for (index, instrument) in prediction::instruments("0", 18 * STEP)
-            .into_iter()
-            .enumerate()
-        {
-            let mut value = serde_json::to_value(instrument).unwrap();
-            value["BinaryOption"]["price_increment"] = "0.0100".into();
-            value["BinaryOption"]["min_price"] = "0.0100".into();
-            value["BinaryOption"]["max_price"] = "0.9900".into();
-            let instrument: InstrumentAny = serde_json::from_value(value).unwrap();
-            catalog.write_instruments(vec![instrument]).unwrap();
-            let kind: BarType = request.selection.bar_types[index].parse().unwrap();
-            let price = Price::from(if index == 0 { "0.9900" } else { "0.5000" });
-            let volume = Quantity::from(if index == 0 { volume } else { "1000000.000000" });
-            let bars = (1..=17_u64)
-                .map(|minute| {
-                    Bar::new_checked(
-                        kind,
-                        price,
-                        price,
-                        price,
-                        price,
-                        volume,
-                        (minute * STEP).into(),
-                        (minute * STEP + 1).into(),
-                    )
-                    .unwrap()
-                })
-                .collect::<Vec<_>>();
-            catalog.write_to_parquet(&bars, None, None, None).unwrap();
-        }
-        prediction::settle(root.path(), 18 * STEP, 19 * STEP, ["1.0000", "0.0000"]);
-        let result = job::simulation::simulate(root.path(), &request);
-        if reject_remainder {
-            // Eight shares become four two-share native BAR ticks. The first
-            // partial fill costs 1.98 pUSD; the larger remaining buy is natively
-            // extrapolated from .9900 to 1.0000, exceeding the original maximum.
-            match result {
-                Ok(result) => panic!(
-                    "native out-of-bounds ordinary fill was accepted: {}",
-                    result.canonical_result["fills"]
-                ),
-                Err(error) => assert!(
-                    error.to_string().contains("NATIVE_TARGET_REPLAY_FAILED"),
-                    "{error:#}"
-                ),
-            }
+    let (_unused, request) = simulation("0", Some(["1.0000", "0.0000"]), 0);
+    let root = tempfile::tempdir().unwrap();
+    let catalog =
+        ParquetDataCatalog::from_uri(root.path().to_str().unwrap(), None, None, None, None)
+            .unwrap();
+    for (index, instrument) in prediction::instruments("0", 18 * STEP)
+        .into_iter()
+        .enumerate()
+    {
+        let mut value = serde_json::to_value(instrument).unwrap();
+        value["BinaryOption"]["price_increment"] = price_increment.into();
+        value["BinaryOption"]["min_price"] = "0.0100".into();
+        value["BinaryOption"]["max_price"] = "0.9900".into();
+        let instrument: InstrumentAny = serde_json::from_value(value).unwrap();
+        catalog.write_instruments(vec![instrument]).unwrap();
+        let kind: BarType = request.selection.bar_types[index].parse().unwrap();
+        let price = Price::from(if index == 0 { first_price } else { "0.5000" });
+        let volume = Quantity::from(if index == 0 {
+            first_volume
         } else {
-            let result = result.unwrap();
-            assert_eq!(result.summary["positions.open"], "0");
-            let closes = result.canonical_result["fills"]
+            "1000000.000000"
+        });
+        let bars = (1..=17_u64)
+            .map(|minute| {
+                Bar::new_checked(
+                    kind,
+                    price,
+                    price,
+                    price,
+                    price,
+                    volume,
+                    (minute * STEP).into(),
+                    (minute * STEP + 1).into(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        catalog.write_to_parquet(&bars, None, None, None).unwrap();
+    }
+    prediction::settle(root.path(), 18 * STEP, 19 * STEP, ["1.0000", "0.0000"]);
+    (root, request)
+}
+
+#[test]
+fn native_bar_remainder_cannot_trade_above_original_bounds_but_redemption_can() {
+    use nautilus_model::types::{Money, Price, Quantity};
+    use rust_decimal::Decimal;
+
+    for (volume, partial) in [("1000000.000000", false), ("8.000000", true)] {
+        let (root, request) = bounded_bar_catalog(volume, "0.9900", "0.0100");
+        let result = job::simulation::simulate(root.path(), &request).unwrap();
+        for key in ["positions.open", "orders.open", "orders.inflight"] {
+            assert_eq!(result.summary[key], "0");
+        }
+        let fills = result.canonical_result["fills"].as_array().unwrap();
+        let orders = result.canonical_result["orders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|order| {
+                order
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .find_map(|payload| payload.get("core"))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(orders.len(), 4);
+        assert_eq!(fills.len(), 4);
+        for (index, (id, payout)) in IDS.iter().zip(["1.0000", "0.0000"]).enumerate() {
+            let buy = orders
+                .iter()
+                .find(|core| core["instrument_id"] == *id && core["side"] == "BUY")
+                .unwrap();
+            assert_eq!(buy["is_reduce_only"], false);
+            assert_eq!(buy["time_in_force"], "GTC");
+            let buys = fills
+                .iter()
+                .filter(|row| row["client_order_id"] == buy["client_order_id"])
+                .collect::<Vec<_>>();
+            assert_eq!(buys.len(), 1, "{buy}; {buys:?}");
+            let fill = &buys[0]["event"]["Filled"];
+            let price = Price::from(fill["last_px"].as_str().unwrap());
+            let quantity = Quantity::from(fill["last_qty"].as_str().unwrap());
+            let requested = Quantity::from(buy["quantity"].as_str().unwrap());
+            assert_eq!(fill["instrument_id"], *id);
+            assert_eq!(
+                fill["last_px"],
+                if index == 0 { "0.9900" } else { "0.5000" }
+            );
+            assert!(price >= Price::from("0.0100") && price <= Price::from("0.9900"));
+            assert_eq!(fill["ts_event"], (3 * STEP + 1).to_string());
+            if partial && index == 0 {
+                // Eight shares supply a two-share native BAR leg. 0.67's
+                // slipped_price refuses the remaining buy at 1.0000 because
+                // it exceeds max_price; this is a partial GTC, not an IOC fill.
+                assert_eq!(quantity, Quantity::from("2.000000"));
+                assert!(quantity < requested);
+                assert_eq!(buy["status"], "CANCELED");
+                assert_eq!(
+                    Quantity::from(buy["leaves_qty"].as_str().unwrap()),
+                    requested - quantity
+                );
+                let cancellations = buy["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|event| event.get("Canceled"))
+                    .collect::<Vec<_>>();
+                assert_eq!(cancellations.len(), 1);
+                assert_eq!(cancellations[0]["ts_event"], (18 * STEP).to_string());
+            } else {
+                assert_eq!(quantity, requested);
+                assert_eq!(buy["status"], "FILLED");
+            }
+            if index == 1 {
+                assert_eq!(quantity, Quantity::from("400.000000"));
+            }
+
+            let close = orders
+                .iter()
+                .find(|core| core["instrument_id"] == *id && core["side"] == "SELL")
+                .unwrap();
+            assert_eq!(close["is_reduce_only"], true);
+            assert!(close["tags"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|value| &value["event"]["Filled"])
-                .filter(|fill| fill["order_side"] == "SELL")
+                .any(|tag| tag == "EXPIRATION_POLYMARKET_CLOSE"));
+            let redemptions = fills
+                .iter()
+                .filter(|row| row["client_order_id"] == close["client_order_id"])
                 .collect::<Vec<_>>();
-            assert_eq!(closes.len(), 2);
-            for (id, payout) in IDS.iter().zip(["1.0000", "0.0000"]) {
-                let close = closes
-                    .iter()
-                    .find(|fill| fill["instrument_id"] == *id)
-                    .unwrap();
-                assert_eq!(close["last_px"], payout);
-                assert_eq!(close["ts_event"], (19 * STEP).to_string());
-            }
+            assert_eq!(redemptions.len(), 1);
+            let redemption = &redemptions[0]["event"]["Filled"];
+            assert_eq!(redemption["instrument_id"], *id);
+            assert_eq!(
+                Quantity::from(redemption["last_qty"].as_str().unwrap()),
+                quantity
+            );
+            assert_eq!(redemption["last_px"], payout);
+            assert_eq!(redemption["ts_event"], (19 * STEP).to_string());
+            let commission: Money = redemption["commission"].as_str().unwrap().parse().unwrap();
+            assert_eq!(commission.as_decimal(), Decimal::ZERO);
+            assert_eq!(commission.currency.to_string(), "pUSD");
         }
+        if partial {
+            // Two shares cost 1.98 and redeem for 2; the sibling costs 200 and
+            // redeems for zero. No unfilled remainder becomes cash or exposure.
+            assert!((pnl(&result) + 199.98).abs() < 0.000001);
+        }
+    }
+}
+
+#[test]
+fn original_trading_bars_outside_either_bound_do_not_become_redemptions() {
+    // The lower violation must be positive and on its declared grid: native
+    // sentinel/normalization validation runs before the original min/max check.
+    for (price, increment) in [("0.0050", "0.0010"), ("1.0000", "0.0100")] {
+        let (root, request) = bounded_bar_catalog("1000000.000000", price, increment);
+        let error = job::simulation::simulate(root.path(), &request).unwrap_err();
+        assert_eq!(error.to_string(), "CATALOG_PRICE_OUTSIDE_INSTRUMENT_BOUNDS");
     }
 }
 

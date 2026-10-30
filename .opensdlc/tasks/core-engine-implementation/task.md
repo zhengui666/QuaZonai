@@ -20,7 +20,7 @@ version compatibility or rollback paths. Preserve original user data and receipt
 ## Implementation
 
 Upgrade all native dependencies/toolchains and runtime identities; migrate catalog
-reading to native typed sessions with original PIT/limits; replace removed instrument
+reading to bounded native typed batches with original PIT/limits; replace removed instrument
 fee fields with independently frozen venue fee sources; retain actual installed Paper
 fee policies; add typed backtest inputs and remove duplicate result conversions.
 
@@ -43,6 +43,21 @@ all original versions and measurements.
 
 Local evidence recorded before final publication:
 
+- Complete contracts/domain validation: 226 passed across 30 test binaries,
+  zero failed/ignored.
+- Polymarket 0.67's direct official order contract and format preflight: 35 passed
+  in each precision build, including quote-denominated LIMIT BUY support and
+  unchanged quantity/price/expiry/instruction semantics. See the updated
+  [contract task](../polymarket-execution-contract/task.md).
+- Optional history/catalog/instrument scope: 79 passed; native ticks: 62 passed;
+  currency registration: one passed. The real HTTP/Durable native tick, cohort
+  cache and flow-cache cases passed 3/3 with distinct standard/high-precision
+  binaries and no skipped cases.
+- Every retained Job integration target was executed across the routine,
+  optional and expanded migration runs. Corrected native Polymarket replay and
+  retained forward CLI targets passed 18+3 tests in each precision build. The
+  signals suite's intentionally ignored child fixture is exercised by its
+  passing parent process-cancellation test; it is not a skipped business flow.
 - Rust 1.99.1 release library suite: 325 passed, zero failed/ignored.
 - Default and high-precision catalog regressions: 17 passed each, including the
   oversized same-timestamp cohort stopping before a later corrupt row group.
