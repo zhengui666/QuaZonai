@@ -1693,9 +1693,29 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         .unwrap(),
     )
     .unwrap();
+    let spot_quotes = format!(
+        "{}\n",
+        json!({
+            "instrument_id": BRIDGE, "received_ns": (DAY - 1).to_string(), "bid": "0.99", "ask": "1.01"
+        })
+    );
+    std::fs::write(catalog.join("spot-valuation.jsonl"), &spot_quotes).unwrap();
     let prepared = directory.path().join("prepared");
     let metadata =
         cohort_cache::prepare_views(&catalog, &request.research, &prepared, 1_000_000).unwrap();
+    assert!(metadata["economic_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["path"] == "spot-valuation.jsonl"
+            && file["bytes"] == spot_quotes.len().to_string()));
+    for view in ["research", "independent"] {
+        assert_eq!(
+            std::fs::read_to_string(prepared.join(view).join("catalog/spot-valuation.jsonl"))
+                .unwrap(),
+            spot_quotes
+        );
+    }
     // Consume the official clipped request paired with the primary cache, not a mismatched full-window request.
     request.research = serde_json::from_value(metadata["research_request"].clone()).unwrap();
     assert_eq!(request.research.input.event_end_ns.get(), 3 * DAY);
@@ -1764,9 +1784,6 @@ fn small_opt_in_replay_funds_quote_then_waits_for_fresh_signal_and_exits_at_real
         serde_json::to_value(&request).unwrap()
     );
     assert!(quote_result.methods["execution"].contains("not observed quotes or book depth"));
-    std::fs::write(prepared.join("research/catalog/spot-valuation.jsonl"), format!("{}\n", json!({
-        "instrument_id": BRIDGE, "received_ns": (DAY - 1).to_string(), "bid": "0.99", "ask": "1.01"
-    }))).unwrap();
     request.spot_valuation_source = Some("spot-valuation.jsonl".into());
     let valued = replay(
         &prepared.join("research/catalog"),

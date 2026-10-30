@@ -123,6 +123,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       const extras = metadata.economic_sources;
       if (!Array.isArray(extras)) throw new Error('tick_economic_source_manifest_invalid');
       const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
+      if (extras.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) names.add('spot-valuation.jsonl');
       const contextSizes = new Map<string, bigint>();
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'context-prices.manifest.json')) {
         const path = join(directory, 'context-prices.manifest.json'); await observe(path);
@@ -154,7 +155,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         const state = await lstat(path, { bigint: true });
         if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.bytes)
           || contextSizes.has(row.path) && state.size !== contextSizes.get(row.path)) throw new Error('tick_economic_source_size_mismatch');
-        if (row.path === 'context-prices.manifest.json' || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
+        if (row.path === 'spot-valuation.jsonl' || row.path === 'context-prices.manifest.json' || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
         files.add(path);
       }
       if (names.size) throw new Error('tick_economic_source_manifest_invalid');

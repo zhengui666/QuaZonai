@@ -111,6 +111,36 @@ test('explicit funding sidecars survive owned publication while unrelated files 
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
+test('spot valuation sidecar survives owned publication and remains identical across views', async () => {
+  for (const failure of [null, 'size', 'view'] as const) {
+    const f = await preparedCache(undefined, true);
+    try {
+      const rates = '';
+      const funding = JSON.stringify({ source_revision: f.request.input.source_revision, start_ns: '0', end_ns: '80',
+        instruments: ['BTCUSDT.SIM'], rows: 0, missing_instruments: [] });
+      const quotes = '{"instrument_id":"BTCUSDT.SIM","received_ns":"10","bid":"10","ask":"11"}\n';
+      const sources = new Map([['funding-rates.jsonl', rates], ['funding-rates.manifest.json', funding], ['spot-valuation.jsonl', quotes]]);
+      for (const [name, bytes] of sources) {
+        const path = join(f.directory, name); await writeFile(path, bytes);
+        for (const part of ['research', 'independent']) await link(path, join(f.prepared, part, 'catalog', name));
+      }
+      if (failure === 'view') { const path = join(f.prepared, 'research/catalog/spot-valuation.jsonl'); await rm(path); await writeFile(path, quotes); }
+      const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8'));
+      metadata.economic_sources = [...sources].map(([path, bytes]) => ({ path, bytes: String(Buffer.byteLength(bytes) + (failure === 'size' && path === 'spot-valuation.jsonl' ? 1 : 0)) }));
+      await writeFile(f.options.prepared, JSON.stringify(metadata));
+      if (failure) await assert.rejects(exportDataset(f.options), failure === 'size' ? /economic_source_size_mismatch/ : /context_source_view_mismatch/);
+      else {
+        const result = await exportDataset(f.options); const primary = String(result.data.catalog);
+        const independent = String((result.data.sealed as Record<string, unknown>).catalog);
+        assert.equal(await readFile(join(primary, 'spot-valuation.jsonl'), 'utf8'), quotes);
+        assert.equal((await stat(join(primary, 'spot-valuation.jsonl'))).ino, (await stat(join(independent, 'spot-valuation.jsonl'))).ino);
+        await writeFile(join(f.directory, 'spot-valuation.jsonl'), 'changed producer');
+        assert.equal(await readFile(join(primary, 'spot-valuation.jsonl'), 'utf8'), quotes);
+      }
+    } finally { await rm(f.directory, { recursive: true, force: true }); }
+  }
+});
+
 test('40-byte signed-flow views preserve positive, negative and balanced-zero marks in owned publication', async () => {
   const f = await preparedCache({ kind: 'FIXED_EVENT_TIME', horizon_ns: '10' }, true);
   try {

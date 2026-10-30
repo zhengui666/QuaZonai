@@ -1671,14 +1671,19 @@ fn definitions(root: &Path) -> Result<Vec<InstrumentAny>> {
     )
 }
 
-/// Preserve the optional original funding sidecars through native preparation.
-/// Decoding remains the economic runner's job; preparation does not qualify rates.
+/// Preserve optional economic sidecars through native preparation.
+/// Decoding remains the economic runner's job; preparation does not qualify observations.
 pub(crate) fn funding_sources(
     root: &Path,
     request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<Vec<(String, u64)>> {
     let names = ["funding-rates.jsonl", "funding-rates.manifest.json"];
     if names.iter().all(|name| !root.join(name).exists()) {
+        ensure!(
+            std::fs::symlink_metadata(root.join("spot-valuation.jsonl"))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "ECONOMIC_FUNDING_SOURCE_REQUIRED"
+        );
         return Ok(Vec::new());
     }
     let mut files = Vec::new();
@@ -1713,6 +1718,17 @@ pub(crate) fn funding_sources(
                 .into_iter()
                 .map(|file| (file.path, file.bytes.get())),
         );
+    }
+    match std::fs::symlink_metadata(root.join("spot-valuation.jsonl")) {
+        Ok(state) => {
+            ensure!(
+                state.is_file() && !state.file_type().is_symlink(),
+                "ECONOMIC_SPOT_QUOTE_REGULAR_SOURCE_REQUIRED"
+            );
+            files.push(("spot-valuation.jsonl".into(), state.len()));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(files)
 }
