@@ -767,20 +767,109 @@ fn price_volume_factors_reject_undefined_native_values() {
                     bar.close = absent;
                 }
             }
-            catalog.write_to_parquet(&bars, None, None, None).unwrap();
-        }
-        let result = evaluate_factor(prices.path(), &request, &module(VOLUME_SCORE));
-        assert!(
-            result.is_err(),
-            "undefined native values must not produce factor metrics"
-        );
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            if undefined_volume {
-                "CATALOG_VOLUME_UNDEFINED"
+            let error = catalog
+                .write_to_parquet(&bars, None, None, None)
+                .unwrap_err();
+            let sentinel = if undefined_volume {
+                "QUANTITY_UNDEF"
             } else {
-                "CATALOG_PRICE_UNDEFINED"
-            }
+                "PRICE_UNDEF"
+            };
+            assert!(error.to_string().contains(sentinel), "{error:#}");
+            catalog
+                .write_to_parquet(&series.bars, None, None, None)
+                .unwrap();
+        }
+        let wasm = module(VOLUME_SCORE);
+        let valid = evaluate_factor(prices.path(), &request, &wasm).unwrap();
+        assert_eq!(valid.points.len(), market.rows);
+
+        // An external Parquet source can still contain NULL despite BAR's
+        // required fields. Bypass only the native writer in this bad fixture,
+        // keeping the original file identity, clocks, metadata and other data.
+        let field = if undefined_volume { "volume" } else { "open" };
+        let expected = write_null_bar_field(&catalog, &market.series[0].bars, field);
+        assert_eq!(
+            evaluate_factor(prices.path(), &request, &wasm)
+                .unwrap_err()
+                .to_string(),
+            expected,
+            "the factor pipeline must preserve the native missing-field error"
         );
     }
+}
+
+/// Deliberately malformed test input through public Arrow/Parquet APIs. NULL
+/// avoids a precision-dependent raw sentinel encoding in standard/high builds.
+fn write_null_bar_field(
+    catalog: &nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog,
+    bars: &[nautilus_model::data::Bar],
+    field: &str,
+) -> String {
+    use arrow_native::{Decimal128Array, RecordBatch};
+    use nautilus_model::data::{Bar, NautilusDataType};
+    use nautilus_serialization::arrow::{
+        DecodeFromRecordBatch, FIXED_DECIMAL_PRECISION, FIXED_DECIMAL_SCALE,
+    };
+    use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
+    use std::{fs::File, sync::Arc};
+
+    let paths = catalog
+        .query_files(
+            &NautilusDataType::Bar.into(),
+            Some(vec![bars[0].bar_type.to_string()]),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(paths.len(), 1);
+    let path = catalog.reconstruct_full_uri(&paths[0]);
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
+    let mut schema = builder.schema().as_ref().clone();
+    let mut batches = builder.with_batch_size(bars.len()).build().unwrap();
+    let batch = batches.next().unwrap().unwrap();
+    assert!(batches.next().is_none());
+    assert_eq!(
+        Bar::decode_batch(schema.metadata(), batch.clone()).unwrap(),
+        bars
+    );
+    drop(batches);
+    let column = schema.index_of(field).unwrap();
+    let mut fields = schema.fields.to_vec();
+    fields[column] = Arc::new(fields[column].as_ref().clone().with_nullable(true));
+    schema.fields = fields.into();
+    let mut columns = batch.columns().to_vec();
+    columns[column] = Arc::new(
+        Decimal128Array::new_null(batch.num_rows())
+            .with_precision_and_scale(FIXED_DECIMAL_PRECISION, FIXED_DECIMAL_SCALE)
+            .unwrap(),
+    );
+    let malformed = RecordBatch::try_new(Arc::new(schema), columns).unwrap();
+    let mut writer =
+        ArrowWriter::try_new(File::create(&path).unwrap(), malformed.schema(), None).unwrap();
+    writer.write(&malformed).unwrap();
+    writer.close().unwrap();
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path).unwrap()).unwrap();
+    let metadata = builder.schema().metadata().clone();
+    assert_eq!(&metadata, malformed.schema().metadata());
+    let mut batches = builder.with_batch_size(bars.len()).build().unwrap();
+    let persisted = batches.next().unwrap().unwrap();
+    assert_eq!(persisted.num_rows(), bars.len());
+    assert_eq!(persisted.schema().fields(), malformed.schema().fields());
+    assert_eq!(persisted.columns(), malformed.columns());
+    assert!(batches.next().is_none());
+    let error = Bar::decode_batch(&metadata, persisted)
+        .unwrap_err()
+        .to_string();
+    let kind = if field == "volume" {
+        "quantity"
+    } else {
+        "price"
+    };
+    assert_eq!(
+        error,
+        format!("Error parsing `{field}`: row 0: required {kind} is null")
+    );
+    error
 }
