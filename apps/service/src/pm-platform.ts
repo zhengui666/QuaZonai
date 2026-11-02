@@ -341,6 +341,8 @@ export function createPmPlatform(config: ServiceConfig) {
               current.state = 'WAITING_EVIDENCE'; decision.action = 'NEEDS_EVIDENCE'; decision.reasonCodes.push('independent_review_not_passed');
               current.reasonCodes = [...decision.reasonCodes];
               gap(record, 'independent_review', 'independent_review_not_passed', 'COLLECT_AUTHORIZED_DATA', decision.id);
+              // Durable document assignment copies values; persist the gated decision.
+              record.decisions[decision.id] = decision;
               return { status: 'terminal', outcome: { status: 'completed', result: null } };
             }
             current.state = 'EVALUATING';

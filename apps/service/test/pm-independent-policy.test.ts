@@ -12,6 +12,7 @@ import { object } from '../src/facts.ts';
 import { pmRecord, pmState } from '../src/pm-facts.ts';
 import { evaluatePmQualification } from '../src/pm-qualification.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
+import { preserveLegacyPmAdmission } from './legacy-pm-admission.ts';
 
 const directory = process.env.QZ_PM_NATIVE_FIXTURE_DIR;
 const binary = process.env.QZ_JOB_BINARY;
@@ -43,6 +44,8 @@ test('PM independent recovery keeps its admitted policy after a legitimate concu
     dataset.data = { ...object(source.data), sealed: object(source.heldoutData) };
     dataset.strategy = object(source.policy) as unknown as NonNullable<typeof dataset.strategy>;
     state.options.config.jobBinary = wrapper; state.options.extensions = [research, factors, fittedEnsemble]; await state.restart();
+    // Retained pre-review policy/recovery regression, not new qualification.
+    preserveLegacyPmAdmission(state.service);
     let hypothesisId = ''; const members = source.members as JsonObject[];
     state.faux.setResponses([
       call('strategy_intake', { name: 'Original causal ensemble', archetype: 'PREDICTIVE_ALPHA',

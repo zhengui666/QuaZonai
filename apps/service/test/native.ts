@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import './capital-native.ts';
 import './pm-science-native.ts';
 import './pm-independent-policy.test.ts';
+import './pm-review-consumer.test.ts';
 import './pm-method.test.ts';
 import './pm-account-native.test.ts';
 import './pm-account-http.test.ts';
