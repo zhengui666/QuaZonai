@@ -328,6 +328,7 @@ fn evaluate_series(
             end_ns,
             metric: crate::factors::metric(points.iter().filter(|p| p.partition == partition))?,
             assets,
+            diagnostics: None,
         })
     })
     .collect::<Result<Vec<_>>>()?;

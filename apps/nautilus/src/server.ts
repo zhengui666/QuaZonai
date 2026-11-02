@@ -13,7 +13,7 @@ import type { NativeJson as Json, NativeExecutionRequest as Request, NativeExecu
 type Active = { promise: Promise<Receipt>; cancel: () => void; observers: number; progressPath?: string };
 
 // No runtime, broker, order, installation or arbitrary shell command is exposed.
-export const commands = ['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
+export const commands = ['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble',
   'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble',
   'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot',
   'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog'] as const;

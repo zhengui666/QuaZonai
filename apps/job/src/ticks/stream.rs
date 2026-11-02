@@ -663,6 +663,7 @@ pub(super) fn evaluate(
                 end_ns,
                 metric: pooled[index].finish()?,
                 assets,
+                diagnostics: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;

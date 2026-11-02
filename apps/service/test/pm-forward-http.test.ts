@@ -19,6 +19,7 @@ import { paperReceiver } from './pm-paper-receiver.ts';
 import { pmRecord, pmState } from '../src/pm-facts.ts';
 import { observedSpotFixture } from './pm-observed-fixture.ts';
 import { context, fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
+import { preserveLegacyPmAdmission } from './legacy-pm-admission.ts';
 
 const available = !!process.env.QZ_PM_OBSERVED_FIXTURE_DIR && !!process.env.QZ_JOB_BINARY;
 const child = process.env.QZ_PM_FORWARD_HTTP_CHILD === '1';
@@ -118,6 +119,9 @@ else test('actual learned ACCOUNT method survives independent evaluation and ori
     }
     state.options.config.jobBinary = binary; state.options.config.connections = [f.connection]; state.options.extensions = [research, factors, fittedEnsemble];
     await state.restart();
+    // Retain the original pre-review forward/recovery protocol. Synthetic
+    // archival history does not establish the new Review qualification chain.
+    preserveLegacyPmAdmission(state.service);
     const original = object(f.application.observations[f.connection.id]);
     const archival: ObservationFact = { input: { requestId: 'original-archival-source', portfolioId: 'original-archival-source', mode: 'paper', connectionId: f.connection.id },
       connection: f.connection, taskId: 0, target: {}, snapshot: json(original.snapshot), snapshotReceivedAtNs: String(original.snapshotReceivedAtNs),

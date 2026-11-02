@@ -116,7 +116,10 @@ test('selected catalog ensemble replays one original shared account without copy
     state.faux.setResponses([
       fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'TEST_ONLY shared-account service protocol, no science', members }), { stopReason: 'toolUse' }),
       async () => {
-        const page = await state.service.research.list(); const original = await state.service.research.view(page.items[0]!.id);
+        const page = await state.service.research.list();
+        // Preserve the legacy replay contract using a pre-upgrade frozen study fixture.
+        await state.service.research.harness.commit(async tx => { delete (await tx.doc(Study, page.items[0]!.id)).input!.policy.reviewPolicies; }, context);
+        const original = await state.service.research.view(page.items[0]!.id);
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: original.research!.trials[0]!.taskId, reason: 'Original protocol selection' }), { stopReason: 'toolUse' });
       },
     ]);

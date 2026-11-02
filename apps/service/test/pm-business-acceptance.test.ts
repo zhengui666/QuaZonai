@@ -17,6 +17,7 @@ import { evaluatePmIndependent } from '../src/pm-science.ts';
 import { pmAllocationMethod } from '../src/pm-method.ts';
 import { publishDatasetRevision } from '../src/dataset-revision-publish.ts';
 import { fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
+import { preserveLegacyPmAdmission } from './legacy-pm-admission.ts';
 
 // Real HTTP + official SQLite/Durable. The research provider and job executable
 // from support.ts are explicitly protocol fixtures, not investment evidence.
@@ -291,6 +292,8 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       process.env.QZ_JOB_BINARY = nativeWrapper; state.options.config.jobBinary = nativeWrapper;
       state.options.extensions = [research, factors, fittedEnsemble];
       await state.restart();
+      // Retained pre-review native PM evidence/recovery, not new qualification.
+      preserveLegacyPmAdmission(state.service);
       scriptNativeResearch(state, source);
       const admitted = await start(state, { ...mandateInput(state, 'pm-native-supported-path'),
         goal: 'Research predictive alpha from causal bar features and compare complete daily net account outcomes with cash.',
@@ -529,7 +532,9 @@ test('PM native source: a disjoint automatic data revision refits original panel
         await writeFile(`${manifestPath}.next`, JSON.stringify({ ...body, contentDigest: createHash('sha256').update(canonical(body)).digest('hex') }));
         await rename(`${manifestPath}.next`, manifestPath);
       }
-      await publish(0); await state.restart(); scriptNativeResearch(state, sources[0]);
+      await publish(0); await state.restart();
+      // Both original revisions belong to this pre-review lifecycle fixture.
+      preserveLegacyPmAdmission(state.service); scriptNativeResearch(state, sources[0]);
       const admitted = await start(state, { ...mandateInput(state, 'native-two-revision-lifecycle'),
         goal: 'Continuously research causal predictive alpha when new bar data arrives; compare matched daily net account outcomes with cash.',
         funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, businessPreference: 'NET_RETURN', maxTrials: 32 });

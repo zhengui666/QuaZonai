@@ -184,6 +184,10 @@ pub fn scan_factor_catalog_with_scope(
     let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some())?;
     let mut remaining = request.parameters.total_fuel.map(|fuel| fuel.get());
     let mut pairs: [MetricPairs; 3] = Default::default();
+    // Review adds bounded original points only; larger scans retain their original
+    // streaming IC and explicitly omit rank/bootstrap evidence, never sample it.
+    let mut diagnostic_points: [Option<Vec<NativeFactorPointV1>>; 3] =
+        [None, Some(Vec::new()), Some(Vec::new())];
     let mut identities = HashSet::new();
     let (mut observed, mut warmup_only, mut observations) = (0, 0, 0);
     let mut template = None;
@@ -260,12 +264,20 @@ pub fn scan_factor_catalog_with_scope(
                 NativeFactorPartitionV1::Validation => 1,
                 NativeFactorPartitionV1::Heldout => 2,
             };
-            pairs[slot].push(&NativeFactorPointV1 {
+            let point = NativeFactorPointV1 {
                 observation,
                 partition,
                 label_event_ns,
                 exclusion_reason,
-            });
+            };
+            pairs[slot].push(&point);
+            if let Some(points) = &mut diagnostic_points[slot] {
+                if points.len() < crate::review_science::MAX_POINTS {
+                    points.push(point);
+                } else {
+                    diagnostic_points[slot] = None;
+                }
+            }
         }
         warmup_only += usize::from(predictions == 0);
         remaining = model.remaining_fuel();
@@ -282,7 +294,8 @@ pub fn scan_factor_catalog_with_scope(
     ]
     .into_iter()
     .zip(pairs)
-    .map(|(partition, pairs)| {
+    .zip(diagnostic_points)
+    .map(|((partition, pairs), diagnostic_points)| {
         let (start_ns, end_ns) = partition_bounds(&template, partition);
         Ok(NativeFactorPartitionReportV1 {
             partition,
@@ -290,6 +303,16 @@ pub fn scan_factor_catalog_with_scope(
             end_ns,
             metric: pairs.finish()?,
             assets: Vec::new(),
+            diagnostics: diagnostic_points
+                .map(|points| {
+                    crate::review_science::factor_diagnostics(
+                        &points,
+                        partition,
+                        request.parameters.label_horizon_observations as usize,
+                        contracts::review_science::NativeReviewFactorScopeV1::PooledTimeSeries,
+                    )
+                })
+                .transpose()?,
         })
     })
     .collect::<Result<Vec<_>>>()?;

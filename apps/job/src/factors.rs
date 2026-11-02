@@ -182,6 +182,16 @@ pub fn evaluate_factor(
             end_ns,
             metric: metric(selected())?,
             assets,
+            diagnostics: if partition == NativeFactorPartitionV1::Train {
+                None
+            } else {
+                Some(crate::review_science::factor_diagnostics(
+                    &points,
+                    partition,
+                    horizon.max(1),
+                    contracts::review_science::NativeReviewFactorScopeV1::PooledTimeSeries,
+                )?)
+            },
         })
     })
     .collect::<Result<Vec<_>>>()?;

@@ -15,7 +15,11 @@ import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest
 import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
+const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
+/** Scoped checkpoint/budget adapter for a fixed review computation; other science is unchanged. */
+export function withNativeExecutionInterceptor<T>(interceptor: NativeInterceptor, operation: () => Promise<T>): Promise<T> { return nativeInterceptor.run(interceptor, operation); }
 const instanceCredentials = new Map<string, string>();
 const progressTracking = new AsyncLocalStorage<(snapshots: NativeJson[]) => Promise<void>>();
 /** Observes original account snapshots; never changes invocation or cancellation identity. */
@@ -287,6 +291,12 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
 
 /** Shared transport for the research and service scientific entry points. */
 export async function executeNativeValue(target: NativeTarget, command: string, input: NativeJson, args: string[], directory: string, context: Context): Promise<NativeJson> {
+  const interceptor = nativeInterceptor.getStore();
+  const execute = () => executeNativeUnwrapped(target, command, input, args, directory, context);
+  return interceptor ? interceptor(command, input, execute) : execute();
+}
+
+async function executeNativeUnwrapped(target: NativeTarget, command: string, input: NativeJson, args: string[], directory: string, context: Context): Promise<NativeJson> {
   if (!nativeCommands.has(command)) throw new Error('native_command_unsupported');
   if (typeof target !== 'string') {
     try { return await executeRemote(target, command, input, args, context); }

@@ -9,12 +9,48 @@ use ndarray::{Array1, Array2};
 use std::collections::BTreeSet;
 
 const METHOD: &str = "TEMPORAL_OOF_OLS_SIMPLEX_V1";
+const REVIEW_METHOD: &str = "TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1";
 const DECIMAL_PLACES: u32 = 12;
 fn count(n: usize) -> Result<DbCounter> {
     Ok(DbCounter::new(n.try_into()?).map_err(anyhow::Error::msg)?)
 }
 fn nonempty(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 512
+}
+
+fn review_prior(
+    prior: &NativeEnsembleReviewPriorV1,
+    ids: &[&str],
+    cutoff: DbCounter,
+) -> Result<Vec<f64>> {
+    ensure!(
+        prior.members.len() == ids.len(),
+        "ENSEMBLE_REVIEW_PRIOR_MEMBERS"
+    );
+    let mut reports = BTreeSet::new();
+    let mut values = Vec::new();
+    for (member, id) in prior.members.iter().zip(ids) {
+        ensure!(
+            member.factor_version_id == *id
+                && nonempty(&member.source_report_id)
+                && reports.insert(&member.source_report_id)
+                && !member.source_evidence_refs.is_empty()
+                && member.source_evidence_refs.len() <= 256
+                && member
+                    .source_evidence_refs
+                    .iter()
+                    .all(|value| nonempty(value))
+                && member.decision == "PASS"
+                && member.source_end_ns < cutoff
+                && member.quality_coefficient.is_finite()
+                && member.quality_coefficient > 0.0
+                && member.quality_coefficient <= 1.0,
+            "ENSEMBLE_REVIEW_PRIOR_BINDING"
+        );
+        values.push(member.quality_coefficient);
+    }
+    let sum: f64 = values.iter().sum();
+    Ok(values.into_iter().map(|value| value / sum).collect())
 }
 
 #[derive(Clone)]
@@ -89,6 +125,21 @@ pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResu
         (2..=64).contains(&n) && (1..=32).contains(&request.folds.len()),
         "ENSEMBLE_FIT_LIMIT"
     );
+    let prior = request
+        .review_prior
+        .as_ref()
+        .map(|prior| {
+            review_prior(
+                prior,
+                &request
+                    .members
+                    .iter()
+                    .map(|m| m.factor_version_id.as_str())
+                    .collect::<Vec<_>>(),
+                request.fit_end_ns,
+            )
+        })
+        .transpose()?;
     let first = &request.members[0].report;
     domain::execution::forecast_request(&first.request.forecast)?;
     let selected_bars = crate::catalog::bar_types(&first.request.forecast.selection.bar_types)?;
@@ -245,8 +296,25 @@ pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResu
     ensure!(oof_y.len() >= 3, "ENSEMBLE_OOF_SAMPLE_LIMIT");
     let x = Array2::from_shape_vec((oof_y.len(), n), oof_x)?;
     let y = Array1::from(oof_y);
-    let p_dense = x.t().dot(&x) * (2.0 / y.len() as f64);
-    let q = x.t().dot(&y) * (-2.0 / y.len() as f64);
+    let mut p_dense = x.t().dot(&x) * (2.0 / y.len() as f64);
+    let mut q = x.t().dot(&y) * (-2.0 / y.len() as f64);
+    // Fixed dimensionally compatible penalty: mean diagonal of the TRAIN OOF Gram.
+    // No Validation/Sealed outcomes or caller-selected tuning parameter enter this scale.
+    let prior_lambda = prior
+        .as_ref()
+        .map(|values| {
+            let lambda = (0..n).map(|i| p_dense[[i, i]]).sum::<f64>() / (2.0 * n as f64);
+            ensure!(
+                lambda.is_finite() && lambda > 0.0,
+                "ENSEMBLE_REVIEW_PRIOR_ZERO_SCALE"
+            );
+            for i in 0..n {
+                p_dense[[i, i]] += 2.0 * lambda;
+                q[i] -= 2.0 * lambda * values[i];
+            }
+            Ok::<_, anyhow::Error>(lambda)
+        })
+        .transpose()?;
     ensure!(
         p_dense.iter().chain(q.iter()).all(|v| v.is_finite()),
         "ENSEMBLE_OBJECTIVE_NONFINITE"
@@ -356,7 +424,14 @@ pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResu
         .collect::<Result<Vec<_>>>()?;
     Ok(NativeEnsembleFitResultV1 {
         schema_version: SchemaV1,
-        method: METHOD.into(),
+        method: if prior.is_some() {
+            REVIEW_METHOD
+        } else {
+            METHOD
+        }
+        .into(),
+        review_prior: request.review_prior.clone(),
+        review_prior_lambda: prior_lambda,
         solver_version: "clarabel-0.11.1".into(),
         calibration_version: "linregress-0.5.4".into(),
         weight_decimal_places: DECIMAL_PLACES,
@@ -376,7 +451,12 @@ pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResu
 pub fn apply(request: &NativeEnsembleApplyRequestV1) -> Result<NativeEnsembleApplyResultV1> {
     let fit = &request.fit;
     ensure!(
-        fit.method == METHOD
+        ((fit.method == METHOD && fit.review_prior.is_none() && fit.review_prior_lambda.is_none())
+            || (fit.method == REVIEW_METHOD
+                && fit.review_prior.is_some()
+                && fit
+                    .review_prior_lambda
+                    .is_some_and(|value| value.is_finite() && value > 0.0)))
             && fit.solver_version == "clarabel-0.11.1"
             && fit.calibration_version == "linregress-0.5.4"
             && fit.weight_decimal_places == DECIMAL_PLACES,
@@ -386,6 +466,16 @@ pub fn apply(request: &NativeEnsembleApplyRequestV1) -> Result<NativeEnsembleApp
         (2..=64).contains(&fit.members.len()) && fit.members.len() == request.members.len(),
         "ENSEMBLE_APPLY_MEMBER_LIMIT"
     );
+    if let Some(prior) = &fit.review_prior {
+        review_prior(
+            prior,
+            &fit.members
+                .iter()
+                .map(|member| member.factor_version_id.as_str())
+                .collect::<Vec<_>>(),
+            fit.fit_end_ns,
+        )?;
+    }
     let mut sum = BigDecimal::from(0);
     let mut ids = BTreeSet::new();
     let mut weights = Vec::new();
@@ -553,6 +643,7 @@ pub fn freeze(request: &NativeEnsembleFreezeRequestV1) -> Result<NativeEnsembleF
     let verified = fit(&NativeEnsembleFitRequestV1 {
         schema_version: SchemaV1,
         fit_end_ns: request.fit.fit_end_ns,
+        review_prior: request.fit.review_prior.clone(),
         folds: request
             .fit
             .folds

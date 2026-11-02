@@ -9,6 +9,7 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import type { ResearchInput } from '../src/documents.ts';
+import { Study } from '../src/documents.ts';
 import { evaluateTrial, trialFeedback } from '../src/trials.ts';
 import { CampaignResearchDoc, fact } from '../src/pm-campaign.ts';
 import type { ResearchCampaignBinding } from '../src/pm-campaign.ts';
@@ -45,7 +46,11 @@ async function fixture(maximumTrials: number, frontier = false, sealed = false) 
   const duringCompute = new Promise<void>(resolve => { enteredCompute = resolve; });
   const science = defineExtension({ name: 'test.pm.science', tools: [defineTool({ name: 'pm_trial', description: 'Test-only ledger evidence, never market data',
     parameters: Type.Object({ hypothesisId: Type.String(), value: Type.Number(), fail: Type.Boolean() }), replay: 'safe', executionMode: 'sequential',
-    async execute(args, api, ctx) { return trialFeedback(api, ctx, async () => { const result = await evaluateTrial(api, ctx, { hypothesisId: args.hypothesisId, hypothesis: 'Protocol fixture', model: '(module)', purpose: 'FEASIBILITY' }, async () => {
+    async execute(args, api, ctx) {
+      // These PM ledger/selection regressions reconstruct the pre-review frozen
+      // campaign. New admission and reviewer execution are covered separately.
+      await api.commit(async tx => { const original = await tx.doc(Study, api.conversationId); if (!original.trials.length) delete original.input!.policy.reviewPolicies; }, ctx);
+      return trialFeedback(api, ctx, async () => { const result = await evaluateTrial(api, ctx, { hypothesisId: args.hypothesisId, hypothesis: 'Protocol fixture', model: '(module)', purpose: 'FEASIBILITY' }, async () => {
       computed++; if (args.fail) throw new Error('protocol_compute_failed');
       if (computePaused) { enteredCompute(); await awaitWithContext(new Promise<void>(() => {}), ctx); }
       return { partitions: [{ partition: 'VALIDATION', start_ns: '10', end_ns: '20', metric: { pearson_ic: { status: 'AVAILABLE', value: args.value }, counts: { observations: '10', included: '10' } } }] };

@@ -7,6 +7,15 @@ export class ApiError extends Error {
 }
 
 const errors: Record<string, string> = {
+  review_allocation_members_required: '请选择至少两个不同的已通过评审组合',
+  review_allocation_constraints_required: '请完整填写配权约束、当前权重、换手和科学预算',
+  review_allocation_portfolio_not_approved: '来源组合缺少当前版本的通过评审，请刷新并补齐证据',
+  review_allocation_common_account_basis_required: '来源组合须使用相同币种、数据集与原始本金',
+  review_allocation_catalog_ensemble_unsupported: '当前多组合配置不支持此来源组合的原始目录执行方式',
+  review_allocation_native_daily_returns_required: '缺少完整的原生账户逐日净收益，无法估计组合相关与风险',
+  review_allocation_native_returns_incomplete: '来源账户净收益记录不完整或时间未对齐',
+  review_allocation_scientific_budget_exhausted: '科学调用预算已用尽，请查看原执行记录与报告',
+  review_model_not_configured: '尚未配置独立审阅模型，请先完成模型设置',
   instance_settings_invalid: '实例配置格式不正确，请检查后重试',
   instance_settings_revision_conflict: '配置已在其他页面更新，请载入最新配置后重新编辑',
   instance_settings_save_failed: '配置未能保存，请核对重试',

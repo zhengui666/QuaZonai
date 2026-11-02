@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
@@ -42,7 +43,7 @@ for (const spot of [false, true]) test(`native fitted ${spot ? 'spot restart bri
     transcript => tool('strategy_portfolio_finalize', { trialId: last(transcript, 'strategy_ensemble_evaluate').trialId!, reason: 'Protocol-only independent replay with the frozen native fit' }),
   ]);
   try {
-    const receipt = await host.start('fitted-original', input);
+    const receipt = await startLegacyResearch(host, 'fitted-original', input);
     if (spot) {
       const deadline = Date.now() + 10_000;
       while (!(await readFile(log, 'utf8').catch(() => '')).includes('"command":"simulate"')) { assert.ok(Date.now() < deadline, 'original replay reached native boundary'); await delay(15); }
@@ -73,7 +74,7 @@ for (const spot of [false, true]) test(`native fitted ${spot ? 'spot restart bri
     }
     assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('RAW_TRAIN_PANEL_NOT_MODEL_VISIBLE'), false);
     const count = calls.length; await host.close(); host = await openResearch(options);
-    assert.deepEqual(await host.start('fitted-original', input), receipt); assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, count);
+    assert.deepEqual(await startLegacyResearch(host, 'fitted-original', input), receipt); assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, count);
   } finally { await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }
 });
 

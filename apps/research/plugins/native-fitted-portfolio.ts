@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import type { ReviewedFactorSources } from '../../../packages/contracts/src/reviewed-factors.ts';
+import { scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
+import type { ReviewReport } from '../../../packages/contracts/src/review.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -17,7 +21,58 @@ async function readCatalogPrefix(binary: NativeTarget, catalog: string, selectio
   return prefix;
 }
 
-export type FittedMember = { factorVersionId: string; model: string; sourceTrialId: number };
+export type FittedMember = { factorVersionId: string; model: string; sourceTrialId: number; sourceFactorId?: string };
+export type FittedReviewPriorBinding = { prior: JsonObject | null; reason: string | null };
+/** Only callers holding the original Durable ledger and Study may resolve quality priors.
+ * Current Validation reviews are deliberately unusable for this TRAIN-only fit. */
+export function fittedReviewPrior(members: FittedMember[], records: Record<string, JsonObject>, trials: readonly JsonObject[],
+  conversationId: number | string, fitEndNs: string): FittedReviewPriorBinding {
+  const unavailable = (reason: string): FittedReviewPriorBinding => ({ prior: null, reason });
+  const resolved: JsonObject[] = [];
+  for (const member of members) {
+    if (member.factorVersionId !== `factor:${conversationId}:${member.sourceTrialId}`) return unavailable('review_factor_version_mismatch');
+    const trial = trials.find(trial => trial.taskId === member.sourceTrialId);
+    const recordsForTrial = Object.values(records).filter(record => record.trialId === member.sourceTrialId && record.status === 'COMPLETED');
+    if (!trial || recordsForTrial.length !== 1) return unavailable('historical_pass_review_missing');
+    const record = recordsForTrial[0]!;
+    const report = record.report as unknown as ReviewReport;
+    if (!report || report.target?.kind !== 'FACTOR' || report.target.id !== `research:${conversationId}:trial:${member.sourceTrialId}`
+      || report.target.version !== record.version || report.policyId !== record.policyId
+      || !report.target.sourceEvidenceRefs.includes(`research:${conversationId}:trial:${member.sourceTrialId}:validation`)) return unavailable('review_source_binding_invalid');
+    const result = object(trial.result, 'review_original_result');
+    const request = object(result.request, 'review_original_request');
+    const end = request.validation_end_ns;
+    if (typeof end !== 'string' || !/^\d+$/.test(end) || BigInt(end) >= BigInt(fitEndNs)) return unavailable('review_evidence_not_before_training_cutoff');
+    const scored = scoreReview(report);
+    if (report.decision !== 'PASS' || scored.decision !== 'PASS' || scored.qualityCoefficient !== report.qualityCoefficient) return unavailable('historical_pass_review_missing');
+    resolved.push({ factor_version_id: member.factorVersionId, source_report_id: report.id,
+      source_evidence_refs: report.target.sourceEvidenceRefs, source_end_ns: end, decision: 'PASS', quality_coefficient: scored.qualityCoefficient });
+  }
+  return { prior: { members: resolved }, reason: null };
+}
+/** Resolve only the service-authorized envelope frozen in the original Study input.
+ * The tool accepts IDs, never a model, quality coefficient, or replacement report. */
+export function admittedReviewedMembers(value: unknown, factorIds: readonly string[], fitEndNs: string): { members: FittedMember[]; binding: FittedReviewPriorBinding } {
+  const frozen = value as ReviewedFactorSources | undefined;
+  if (!frozen || frozen.schemaVersion !== 1 || frozen.fitEndNs !== fitEndNs || !Array.isArray(frozen.members)
+    || factorIds.length < 2 || factorIds.length > 64 || new Set(factorIds).size !== factorIds.length) throw new Error('admitted_reviewed_factors_required');
+  const priors: JsonObject[] = [];
+  const members = factorIds.map(id => {
+    const source = frozen.members.find(member => member.factorId === id);
+    if (!source || frozen.members.filter(member => member.factorId === id).length !== 1) throw new Error('reviewed_factor_not_admitted');
+    if (source.factorVersionId !== `factor:${source.sourceResearchId}:${source.sourceTrialId}`
+      || createHash('sha256').update(compileWasm(source.modelSource)).digest('hex') !== source.modelSha256
+      || !/^\d+$/.test(source.sourceEndNs) || BigInt(source.sourceEndNs) >= BigInt(fitEndNs)) throw new Error('reviewed_factor_frozen_binding_invalid');
+    const report = JSON.parse(JSON.stringify(source.report)) as ReviewReport;
+    const repeated = scoreReview(report);
+    if (report.target.id !== `research:${source.sourceResearchId}:trial:${source.sourceTrialId}` || report.target.kind !== 'FACTOR'
+      || report.decision !== 'PASS' || repeated.decision !== 'PASS' || repeated.qualityCoefficient !== report.qualityCoefficient) throw new Error('reviewed_factor_frozen_report_invalid');
+    priors.push({ factor_version_id: source.factorVersionId, source_report_id: report.id,
+      source_evidence_refs: report.target.sourceEvidenceRefs, source_end_ns: source.sourceEndNs, decision: 'PASS', quality_coefficient: repeated.qualityCoefficient });
+    return { factorVersionId: source.factorVersionId, model: source.modelSource, sourceTrialId: source.sourceTrialId, sourceFactorId: source.factorId };
+  });
+  return { members, binding: { prior: { members: priors }, reason: null } };
+}
 /** Frozen technical protocol; all folds remain strictly inside registered TRAIN. */
 export function expandingTrainingFolds(request: JsonObject): JsonObject[] {
   const selection = object(object(request.forecast, 'forecast').selection, 'selection');
@@ -27,7 +82,7 @@ export function expandingTrainingFolds(request: JsonObject): JsonObject[] {
   return [1n, 2n, 3n].map(index => ({ train_end_ns: (start + span * index / 4n).toString(),
     validation_start_ns: (start + span * index / 4n).toString(), validation_end_ns: (start + span * (index + 1n) / 4n).toString() }));
 }
-export async function fitNativeEnsemble(input: { data: JsonObject; members: FittedMember[]; binary: NativeTarget; evidenceIdentity: string }, context: Context) {
+export async function fitNativeEnsemble(input: { data: JsonObject; members: FittedMember[]; binary: NativeTarget; evidenceIdentity: string; reviewPriorBinding?: FittedReviewPriorBinding }, context: Context) {
   if (input.data.catalog_ensemble_request !== undefined || input.data.catalog_scan_request !== undefined) throw new Error('ensemble_full_prediction_panel_required');
   if (typeof input.data.catalog !== 'string') throw new Error('catalog_required');
   if (input.members.length < 2) throw new Error('ensemble_two_registered_factors_required');
@@ -44,11 +99,16 @@ export async function fitNativeEnsemble(input: { data: JsonObject; members: Fitt
       reports.push({ factor_version_id: member.factorVersionId, source_evidence_ref: `${input.evidenceIdentity}:panel:${index}`, report });
     }
     if (canonical(await readCatalogPrefix(input.binary, input.data.catalog, prefixSelection, directory, context)) !== canonical(catalogPrefix)) throw new Error('catalog_prefix_changed_during_fit');
-    const fitRequest = { schema_version: 1, fit_end_ns: request.train_end_ns!, folds: expandingTrainingFolds(request), members: reports };
+    const prior = input.reviewPriorBinding ?? { prior: null, reason: 'historical_pass_review_missing' };
+    const fitRequest = { schema_version: 1, fit_end_ns: request.train_end_ns!, folds: expandingTrainingFolds(request), members: reports,
+      ...(prior.prior ? { review_prior: prior.prior } : {}) };
     const fit = await executeNative(input.binary, 'fit-ensemble', fitRequest, [], directory, context);
+    if (canonical(fit.review_prior ?? null) !== canonical(prior.prior)) throw new Error('ensemble_review_prior_result_mismatch');
+    if (prior.prior && (fit.method !== 'TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1' || typeof fit.review_prior_lambda !== 'number' || !Number.isFinite(fit.review_prior_lambda) || fit.review_prior_lambda <= 0)) throw new Error('ensemble_review_prior_method_mismatch');
     if (!Array.isArray(fit.members) || fit.members.length !== input.members.length || fit.fit_end_ns !== request.train_end_ns) throw new Error('ensemble_fit_result_mismatch');
     return { summary: { schema_version: 1, kind: 'ENSEMBLE_FIT', request, method: fit.method ?? null, fit_end_ns: fit.fit_end_ns,
       members: fit.members.map(value => { const member = object(value, 'fitted_member'); return { factorVersionId: member.factor_version_id!, weight: member.weight! }; }),
+      reviewPrior: { status: prior.prior ? 'APPLIED' : 'UNAVAILABLE', reason: prior.reason, source: prior.prior, lambda: fit.review_prior_lambda ?? null },
       qualification: 'TRAINING_ONLY_NOT_SELECTION' }, evidence: { fitRequest, fit, catalogPrefix, members: input.members.map(member => ({ ...member })), data: input.data } };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }

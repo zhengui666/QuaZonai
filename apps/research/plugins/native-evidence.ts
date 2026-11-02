@@ -48,10 +48,13 @@ export async function readNativeEvidence(reader: DocumentReader, conversationId:
 export async function readNativeEvidenceParts(native: JsonObject, load: (index: number) => Promise<string>): Promise<JsonObject> {
   if (native.format !== format) return native;
   const count = native.parts;
+  const offset = native.partOffset ?? 0;
+  if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new Error('native_evidence_part_offset_invalid');
+  const partOffset = offset as number;
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 1) throw new Error('native_evidence_parts_invalid');
   async function* parts(count: number) {
     for (let index = 0; index < count; index++) {
-      const data = await load(index);
+      const data = await load(index + partOffset);
       if (!data) throw new Error('native_evidence_part_missing');
       yield Buffer.from(data, 'base64');
     }

@@ -33,6 +33,8 @@ import { registerMaintenanceRoutes } from './pm-maintenance-routes.ts';
 import { Study } from '../../research/src/documents.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
 import fittedEnsemble from '../../research/plugins/fitted-ensemble.ts';
+import { reviewAllocationExtension, registerReviewAllocationRoutes } from './review-allocation.ts';
+import { registerReviewPolicyRoutes } from './review-policy.ts';
 
 const context = BACKGROUND_CONTEXT;
 export async function createService(options: ServiceOptions) {
@@ -48,7 +50,7 @@ export async function createService(options: ServiceOptions) {
     desired = saved.enabled ?? saved; moduleNames = saved.modules ?? {};
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const pm = createPmPlatform(config);
-  const installed: Extension[] = [science, pm.extension, maintenanceExtension];
+  const installed: Extension[] = [science, pm.extension, maintenanceExtension, reviewAllocationExtension];
   const extensions = new Map<string, ExtensionView>([['qz.science', { name: 'qz.science', version: '1', enabled: true, kind: 'science', state: 'loaded', error: null }]]);
   const requiredExtensions = new Set(['qz.science']);
   function install(extension: Extension, enabled = true, version: string | null = null, kind = 'research') {
@@ -104,6 +106,8 @@ export async function createService(options: ServiceOptions) {
   });
   await app.register(cookie);
   registerAuth(app, research, config);
+  registerReviewAllocationRoutes(app, research, config);
+  registerReviewPolicyRoutes(app, research);
   const maintenance = createMaintenance(research);
   registerMaintenanceRoutes(app, maintenance);
   registerTickEconomicRoutes(app, tickEconomicWorkbench(research, config));
@@ -136,6 +140,7 @@ export async function createService(options: ServiceOptions) {
     return { items, ...(page.next ? { cursor: page.next } : {}) };
   });
   app.get<{ Params: { id: string } }>(`${API}/research/:id`, (request) => detail(Number(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/research/:id/reviews`, async request => (await detail(Number(request.params.id))).reviews ?? []);
   app.get<{ Params: { id: string } }>(`${API}/research/:id/diagnostics`, async request => { await detail(Number(request.params.id)); return research.diagnostics(Number(request.params.id)); });
   app.post<{ Params: { id: string } }>(`${API}/research/:id/resume`, async (request, reply) => {
     const body = object(request.body);
@@ -156,8 +161,10 @@ export async function createService(options: ServiceOptions) {
   app.get<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context));
   app.post<{ Params: { id: string } }>(`${API}/factors/:id/capacity`, request => factorCapacity(research, config, request.params.id, context, researchCapital(request.body)));
   app.get<{ Params: { id: string } }>(`${API}/factors/:id`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view);
+  app.get<{ Params: { id: string } }>(`${API}/factors/:id/review`, async request => (await readFactor(research, request.params.id, (await work.snapshot())?.researchRequests)).view.review ?? null);
   app.get(`${API}/portfolios`, async () => Object.values((await work.snapshot())!.portfolios).map(portfolio).filter(item => !item.deletedAt).map(portfolioView));
   app.get<{ Params: { id: string } }>(`${API}/portfolios/:id`, async (request) => portfolioView(await work.getPortfolio(request.params.id)));
+  app.get<{ Params: { id: string } }>(`${API}/portfolios/:id/review`, async request => (await work.getPortfolio(request.params.id)).view.review ?? null);
   app.post<{ Params: { id: string } }>(`${API}/portfolios/:id/capacity`, async request => {
     const assumptions = researchCapital(request.body);
     return portfolioCapacity(await work.getPortfolio(request.params.id), config, context, assumptions);
