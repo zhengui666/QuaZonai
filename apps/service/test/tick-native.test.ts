@@ -30,7 +30,7 @@ const cases = [
 for (const { representation, legacy } of cases) test(legacy
   ? `HTTP and Durable evaluate actual high-precision ticks (${representation}) with separate BAR kernel and owner-only final evidence`
   : 'Fresh high-precision tick admission completes independent Review as INCONCLUSIVE without consuming held-out data',
-{ skip: !fixture || !standard || !high, timeout: 120_000 }, async () => {
+{ skip: !fixture || !standard || !high, timeout: 120_000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-tick-native-http-'));
   const worker = await createNautilusWorker({ binary: standard!, tickBinary: high!, dataDir: join(directory, 'worker'), catalogRoots: [fixture!, directory] });
   try {
@@ -59,13 +59,21 @@ for (const { representation, legacy } of cases) test(legacy
         ...(!legacy ? [
           ...['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio'].map(kind => fauxAssistantMessage(fauxToolCall(`review_${kind}`, {}), { stopReason: 'toolUse' })),
           async (transcript: { messages: readonly unknown[] }) => {
-            const read = transcript.messages.find(message => {
-              const row = message as { role?: string; toolName?: string };
-              return row.role === 'toolResult' && row.toolName === 'review_context';
-            }) as { content: { type: string; text?: string }[] } | undefined;
-            assert.ok(read, 'The reviewer must cite evidence returned by its real context tool.');
-            const returned = JSON.parse(read.content.filter(item => item.type === 'text').map(item => item.text).join(''));
-            const ref = returned.evidenceRefs[0]; assert.equal(typeof ref, 'string');
+            const returned: Record<string, JsonObject> = {};
+            for (const kind of ['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio']) {
+              const read = transcript.messages.find(message => {
+                const row = message as { role?: string; toolName?: string };
+                return row.role === 'toolResult' && row.toolName === `review_${kind}`;
+              }) as { isError?: boolean; content: { type: string; text?: string }[] } | undefined;
+              assert.ok(read, `The reviewer must receive its real ${kind} tool result.`);
+              const text = read.content.filter(item => item.type === 'text').map(item => item.text).join('');
+              assert.ok(!read.isError, text);
+              const parsed: unknown = JSON.parse(text);
+              assert.ok(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
+              returned[kind] = parsed as JsonObject;
+            }
+            const refs = returned.context!.evidenceRefs; assert.ok(Array.isArray(refs));
+            const ref = refs[0]; assert.ok(typeof ref === 'string');
             return fauxAssistantMessage(fauxToolCall('review_finish', {
               narrative: 'Unverified event-time proxy tick coverage supplies no historical source or BAR-first statistical qualification.', findings: [],
               mechanism: ['mechanism', 'availability', 'direction', 'implementation', 'complexity'].map(criterion => ({ criterion, supported: false, evidenceRefs: [ref] })),
@@ -132,6 +140,11 @@ for (const { representation, legacy } of cases) test(legacy
         if (review.state.status !== 'terminal' || review.state.outcome.status !== 'completed') assert.fail('The original isolated review must complete.');
         const reviewResult = review.state.outcome.result as JsonObject;
         const session = await service.research.harness.snapshot(ReviewSession, reviewResult.reviewerConversationId as ConversationId, BACKGROUND_CONTEXT);
+        if (!session!.finished) {
+          const children = await service.research.harness.commit(tx => tx.scanTasks({ conversationId: reviewResult.reviewerConversationId as ConversationId }, 30), BACKGROUND_CONTEXT);
+          t.diagnostic(JSON.stringify({ reads: session!.reads, calls: session!.calls, modelCalls: faux.state.callCount,
+            tasks: children.items.map(task => ({ kind: task.kind, state: task.state })) }));
+        }
         assert.equal(session!.finished, true); assert.equal(session!.calls, 7);
         assert.deepEqual(session!.reads, ['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio']);
         const reviewContext = session!.evidence!.context as JsonObject;

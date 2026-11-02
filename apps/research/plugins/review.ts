@@ -22,9 +22,11 @@ export const reviewExtension = defineExtension({
         const result = await api.commit(async tx => {
           const session = await tx.doc(ReviewSession, api.conversationId);
           if (!session.binding || session.finished || session.calls >= 12) throw new Error('review_closed');
-          return session.nativeResults.find(row => row.kind === args.kind) ?? { kind: args.kind, status: 'UNSUPPORTED', reason: 'bound_native_analysis_inputs_unavailable' };
+          // Durable document values belong to this transaction's overlay. Serialize
+          // while it is live; never return a proxy for the outer tool to inspect.
+          return JSON.stringify(session.nativeResults.find(row => row.kind === args.kind) ?? { kind: args.kind, status: 'UNSUPPORTED', reason: 'bound_native_analysis_inputs_unavailable' });
         }, context);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        return { content: [{ type: 'text', text: result }] };
       },
     }),
     ...mandatoryReviewReads.map(kind => defineTool({
@@ -36,10 +38,11 @@ export const reviewExtension = defineExtension({
           const review = await tx.doc(ReviewSession, api.conversationId);
           if (!review.binding || !review.evidence) throw new Error('review_binding_required');
           if (review.finished || review.calls >= 12) throw new Error('review_closed');
+          const text = JSON.stringify(review.evidence[kind] ?? { status: 'UNSUPPORTED', reason: `${kind}_evidence_unavailable` });
           if (!review.reads.includes(kind)) review.reads.push(kind);
-          return review.evidence[kind] ?? { status: 'UNSUPPORTED', reason: `${kind}_evidence_unavailable` };
+          return text;
         }, context);
-        return { content: [{ type: 'text', text: JSON.stringify(evidence) }] };
+        return { content: [{ type: 'text', text: evidence }] };
       },
     })),
     defineTool({
