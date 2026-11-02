@@ -36,9 +36,38 @@ import { Exposures } from '../../research/plugins/native-exposure.ts';
 import { CatalogScopes } from '../../research/plugins/native-catalog-scope.ts';
 import { openResearch } from '../../research/src/host.ts';
 import { factorViews } from '../src/factors.ts';
+import { runReviewScience } from '../../research/src/review-science-adapter.ts';
+import { canonicalJsonDigest } from '../../research/src/native-json.ts';
 
 
 const fixtureFeesFile = 'frozen-maker-taker-fees.json';
+
+test('review diagnostics bridge binds synthetic original source through real Rust stdout and TS projection', { timeout: 30_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY, 'QZ_JOB_BINARY must name the existing scientific job');
+  for (const count of [128, 20]) {
+    // Synthetic protocol evidence only: no market history, source qualification,
+    // model review or future profitability is established by these returns.
+    const baseline = Array.from({ length: count }, (_, index) => index % 2 === 0 ? 0.02 : -0.01);
+    const analysis: JsonObject = { kind: 'PORTFOLIO', candidate: { id: 'synthetic-candidate', returns: baseline.map(value => value - 0.003) },
+      baseline: { id: 'synthetic-baseline', returns: baseline }, timestamps_ns: baseline.map((_, index) => String(BigInt(index) * 86_400_000_000_000n)),
+      frequency: 'DAY', block_length: 2 };
+    const source: JsonObject = Object.freeze({ fixture: 'synthetic-original-shared-account-returns', analysis });
+    const frozen = JSON.stringify(source); const evidenceRef = `fixture:original:${count}`;
+    const result = await runReviewScience({ source, analysis, evidenceRef, target: process.env.QZ_JOB_BINARY, context });
+    assert.equal(result.native.source_digest, `sha256:${canonicalJsonDigest(source)}`);
+    assert.equal(result.native.method_version, 'qz.review-science.v1');
+    assert.equal(result.native.scope, 'SHARED_ACCOUNT');
+    assert.equal(result.native.observations, count);
+    const delta = result.metrics.find(metric => metric.key === 'incremental.net_return_delta')!;
+    assert.equal(delta.method, 'qz.review-science.v1'); assert.equal(delta.scope, 'SHARED_ACCOUNT');
+    assert.equal(delta.evidenceRef, evidenceRef); assert.equal(delta.status, 'AVAILABLE');
+    assert.ok(Math.abs(delta.value! + 0.003) < 1e-12);
+    const lower = result.metrics.find(metric => metric.key === 'incremental.net_return_delta_lower')!;
+    if (count === 128) { assert.equal(lower.status, 'AVAILABLE'); assert.ok(lower.value! < -0.0029); }
+    else { assert.equal(lower.status, 'INSUFFICIENT'); assert.equal(lower.value, null); assert.equal(lower.reason, 'BOOTSTRAP_REQUIRES_30_COMPLETE_BLOCKS'); }
+    assert.equal(JSON.stringify(source), frozen, 'the review producer must retain the original source');
+  }
+});
 
 async function prepareFixtureCatalog(directory: string, catalog: string, fixture: JsonObject, prepare: string,
   fees: JsonObject, instrumentIds: string[], count: number, availableNs: bigint) {
@@ -290,8 +319,16 @@ test('two original studies → native target blending → one fee-affected share
             selections: [...selections, { researchId: original.conversationId, trialId: Number(trial.taskId) }] }), { stopReason: 'toolUse' });
         },
       ]);
-      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: 'Late-arrival native control, not historical PIT', model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'late-native-fixture', maxTrials: 1 } });
-      assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); receipts.push(receipt);
+      // Reconstruct an already-frozen pre-review admission. This native fixture
+      // intentionally has no historical PIT/reference cohort; it verifies the
+      // retained science/HTTP path rather than new Review qualification.
+      const source = config.datasets[0]!;
+      const original = { goal: 'Late-arrival native control, not historical PIT', model: { provider: faux.provider.id, modelId: faux.getModel().id },
+        data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+      const frozen = await startLegacyResearch(service.research, `native-idea-${index}`, original);
+      receipts.push(frozen); // The second model response binds this exact study.
+      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: original.goal, model: original.model, datasetId: 'late-native-fixture', maxTrials: 1 } });
+      assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); assert.deepEqual(receipt, frozen);
       await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await service.research.view(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -468,8 +505,16 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: selected!, reason: 'Select original ensemble after read-only recovery; before final exposure.' }), { stopReason: 'toolUse' });
       },
     ]);
-    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: 'Native ensemble isolation control; synthetic data only.',
-      model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+    // Preserve this synthetic retained-science proof as a pre-review immutable
+    // admission; do not invent REAL/PIT or bypass the production Review default.
+    // The service still captures and replays the original simplified owner body.
+    const source = config.datasets[0]!;
+    const original = { goal: 'Native ensemble isolation control; synthetic data only.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
+      data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+    const frozen = await startLegacyResearch(service.research, 'native-ensemble', original);
+    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: original.goal,
+      model: original.model, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+    assert.deepEqual(receipt, frozen);
     await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await service.research.view(receipt.conversationId)).research!;
     assert.equal(facts.trials.length, 1, 'read-only retrieval must not register another candidate');
