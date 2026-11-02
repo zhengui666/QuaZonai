@@ -1,11 +1,14 @@
-import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { ReviewCheck, ReviewMetric, ReviewPolicy, ReviewReport, ReviewTargetKind } from '../../../packages/contracts/src/review.ts';
 import { createReviewPolicy, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import { canonical, Study } from './documents.ts';
+import { reviewTargetVersion } from './review-identity.ts';
 import type { ResearchInput } from './documents.ts';
 import { modelBriefInput, modelFeedback } from './feedback.ts';
+import { factorCohortSelectionEvidence } from './review-factor-account.ts';
+import type { ReviewNativePlan } from './review-native-task.ts';
+import { sourceReviewEvidence } from './review-source.ts';
 import { ReviewLedger, latestTrialReview } from './review-documents.ts';
 import { runIndependentReview } from './review-runtime.ts';
 import type { ResearchRuntime } from './research-runtime.ts';
@@ -17,7 +20,6 @@ import { iterationRequest } from '../plugins/native-wasm.ts';
 import { compileWasm } from '../plugins/native-wasm.ts';
 
 const json = (value: unknown): JsonObject => JSON.parse(JSON.stringify(value)) as JsonObject;
-const hash = (value: JsonObject) => createHash('sha256').update(canonical(value)).digest('hex');
 function object(value: unknown): JsonObject | null { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null; }
 
 /** Call only for an actual new admission. Request replay keeps its original input identity. */
@@ -78,9 +80,10 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
   let causalPrefix = false;
   if (raw && result) {
     try { causalPrefix = canonical(raw) === canonical(iterationRequest(input.data))
-      && Array.isArray(result.partitions) && result.partitions.every(row => ['TRAIN', 'VALIDATION'].includes(String(object(row)?.partition))); }
+      && Array.isArray(result.partitions) && result.partitions.every(row => { const partition = object(row); if (['TRAIN', 'VALIDATION'].includes(String(partition?.partition))) return true; const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).every(value => value === 0 || value === '0') && object(object(partition?.metric)?.pearson_ic)?.value === null && (partition?.diagnostics === undefined || object(partition.diagnostics)?.observations === 0);  }); }
     catch { /* A missing or unsupported original request is not proof of causality. */ }
   }
+  const hasFinalData = Array.isArray(result?.partitions) && result.partitions.some(row => { const partition = object(row); const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).some(value => typeof value === 'string' && /^[0-9]+$/.test(value) ? BigInt(value) > 0n : typeof value === 'number' && value > 0); });
   const sharedAccount = object(result?.portfolio);
   const simulated = sharedAccount?.partition === 'VALIDATION' && object(sharedAccount.provenance)?.account === 'ONE_NATIVE_SHARED_ACCOUNT';
   return [
@@ -88,7 +91,7 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
     implementation,
     check('trial_ledger', trials.some(item => item.status === 'STARTED') ? 'UNKNOWN' : 'PASS', 'complete_original_attempt_ledger_retained'),
     check('reproducibility', result && raw && trial.status === 'COMPUTED' ? 'PASS' : 'UNKNOWN', result && raw ? 'original_native_request_model_and_result_bound' : 'original_native_request_missing'),
-    check('no_leakage', causalPrefix ? 'PASS' : 'UNKNOWN', causalPrefix ? 'original_native_request_clipped_to_validation_prefix_no_heldout_partition' : 'original_causal_prefix_not_verified'),
+    check('no_leakage', hasFinalData ? 'FAIL' : causalPrefix ? 'PASS' : 'UNKNOWN', hasFinalData ? 'heldout_observations_present_in_validation_source' : causalPrefix ? 'original_native_request_clipped_to_validation_prefix_no_heldout_partition' : 'original_causal_prefix_not_verified'),
     check('independent_window', object(input.data.sealed) ? 'PASS' : 'UNKNOWN', object(input.data.sealed) ? 'configured_unread_independent_partition' : 'unread_independent_partition_missing'),
     check('execution_constraints', simulated && !input.specification?.capital ? 'PASS' : 'UNKNOWN', simulated && !input.specification?.capital ? 'native_shared_account_completed_under_frozen_simulation_constraints' : 'registered_execution_and_capacity_evidence_missing'),
   ];
@@ -108,8 +111,7 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
     const previous = latestTrialReview(ledger, trialId);
     if (previous) return { previous: json(previous) as unknown as ReviewReport };
     if (study.trials.some(item => item.status === 'STARTED')) throw new Error('review_pending_trials');
-    const original = json({ data: study.input.data, specification: study.input.specification ?? null, proposal: trial.proposal, result: trial.result, policy, trialLedger: study.trials });
-    const version = hash(original);
+    const version = reviewTargetVersion(study.input, trial, study.trials, policy);
     if (study.reviewSelection && (study.reviewSelection.trialId !== trialId || study.reviewSelection.version !== version)) throw new Error('review_selection_already_frozen');
     study.reviewSelection = { trialId, version };
     const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
@@ -126,23 +128,52 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
   if (!frozen) return null;
   if ('previous' in frozen) return frozen.previous!;
   const sourceContext = validationReviewContext(frozen.input, frozen.trial, frozen.trials);
+  const sourceEvidence = await sourceReviewEvidence(api, context, frozen.input.data);
   const checks = reviewSourceChecks(frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
+  for (const check of sourceEvidence.checks) { const index = checks.findIndex(row => row.id === check.id); if (index >= 0) { if (checks[index]!.status !== 'FAIL' && (check.id !== 'no_leakage' || checks[index]!.status === 'PASS' || check.status !== 'PASS')) checks[index] = check; } else checks.push(check); }
   const independentWindow = checks.find(check => check.id === 'independent_window')!;
   if (object(frozen.input.data.sealed)) {
-    try { await checkExposure(api, context, object(frozen.input.data.sealed)!, true, undefined, undefined, false); independentWindow.status = 'PASS'; independentWindow.reason = 'original_exposure_ledger_confirms_unread_window'; }
-    catch (error) { independentWindow.status = 'UNKNOWN'; independentWindow.reason = error instanceof Error && error.message === 'heldout_already_exposed' ? 'independent_window_already_exposed' : 'independent_window_cannot_be_verified'; }
+    const independentSource = await sourceReviewEvidence(api, context, object(frozen.input.data.sealed)!, 'HELDOUT');
+    const authorized = ['provenance', 'no_leakage'].every(id => independentSource.checks.find(check => check.id === id)?.status === 'PASS');
+    if (!authorized) {
+      independentWindow.status = independentSource.checks.some(check => check.status === 'FAIL') ? 'FAIL' : 'UNKNOWN';
+      independentWindow.reason = 'independent_partition_source_quality_or_authorization_missing';
+      independentWindow.evidenceRefs.push(...independentSource.evidenceRefs);
+    } else {
+      try { await checkExposure(api, context, object(frozen.input.data.sealed)!, true, undefined, undefined, false); independentWindow.status = 'PASS'; independentWindow.reason = 'own_sealed_source_authorized_and_original_exposure_ledger_confirms_unread_window'; independentWindow.evidenceRefs.push(...independentSource.evidenceRefs); }
+      catch (error) { independentWindow.status = 'UNKNOWN'; independentWindow.reason = error instanceof Error && error.message === 'heldout_already_exposed' ? 'independent_window_already_exposed' : 'independent_window_cannot_be_verified'; }
+    }
   }
   const metrics: ReviewMetric[] = nativeFactorReviewMetrics(frozen.trial.result, frozen.evidenceRef);
   const evidence: JsonObject = { context: { ...sourceContext, evidenceRefs: [frozen.evidenceRef] },
-    provenance: { status: 'INCOMPLETE', checks: json({ checks }).checks!, reason: 'historical_provenance_requires_independent_evidence' },
+    provenance: { status: checks.find(check => check.id === 'provenance')?.status === 'PASS' ? 'COMPLETE' : 'INCOMPLETE', source: sourceEvidence.summary, checks: json({ checks }).checks!, reason: checks.find(check => check.id === 'provenance')?.status === 'PASS' ? null : 'historical_provenance_requires_independent_evidence' },
     factor: { status: metrics.length ? 'COMPLETE' : 'INCOMPLETE', reason: metrics.length ? null : 'native_factor_diagnostics_not_available', metrics: JSON.parse(JSON.stringify(metrics)), evidence: sourceContext.candidate! },
     selection: { status: 'INCOMPLETE', reason: 'comparable_net_return_matrix_required_for_dsr_pbo', ledger: sourceContext.ledger! },
     stress: { status: 'INCOMPLETE', reason: 'registered_stress_replays_required' },
     portfolio: { status: 'INCOMPLETE', reason: 'matched_shared_account_ablation_required' } };
-  const sciencePlans = await reviewSelectionPlan(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
+  let factorSelectionPlans: ReviewNativePlan[] = [];
+  if (frozen.kind === 'FACTOR' && typeof object(frozen.trial.proposal)?.model === 'string' && object(frozen.input.policy.strategy)) {
+    try {
+      const reviewedCohort = await factorCohortSelectionEvidence(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
+      factorSelectionPlans = reviewedCohort.plans;
+      evidence.selection = { status: 'INCOMPLETE', reason: factorSelectionPlans.length ? 'native_selection_analysis_pending' : 'reference_cohort_net_return_evidence_missing', cohort: reviewedCohort.cohort };
+      const account = reviewedCohort.selectedAccount;
+      if (account && Array.isArray(account.metrics)) {
+        for (const metric of account.metrics as unknown as ReviewMetric[]) {
+          // Account robustness/coverage cannot overwrite the factor's own predictive diagnostics.
+          if (!metrics.some(original => original.key === metric.key)) metrics.push(metric);
+        }
+        evidence.stress = { status: 'COMPLETE', evidenceRef: `${frozen.evidenceRef}#reference-strategy`, evidence: account.evidence! };
+        evidence.portfolio = { status: 'COMPLETE', evidenceRef: `${frozen.evidenceRef}#reference-strategy`, evidence: account.evidence! };
+        const execution = checks.find(check => check.id === 'execution_constraints')!;
+        if (!frozen.input.specification?.capital) { execution.status = 'PASS'; execution.reason = 'registered_reference_strategy_shared_account_cash_baseline_and_adverse_replay_completed'; execution.evidenceRefs.push(`${frozen.evidenceRef}#reference-strategy`); }
+      } else { evidence.stress = { status: 'INCOMPLETE', reason: 'registered_reference_strategy_replay_failed_or_insufficient' }; }
+    } catch { evidence.stress = { status: 'INCOMPLETE', reason: 'registered_reference_strategy_evidence_unavailable_or_unsupported' }; }
+  }
+  const sciencePlans = frozen.kind === 'FACTOR' ? factorSelectionPlans : await reviewSelectionPlan(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
   const report = await runIndependentReview(api, context, {
     target: { kind: frozen.kind, id: `research:${api.conversationId}:trial:${trialId}`, version: frozen.version,
-      sourceEvidenceRefs: [...new Set([frozen.evidenceRef, ...metrics.map(metric => metric.evidenceRef), ...sciencePlans.map(plan => plan.evidenceRef)])], evaluationStartNs: frozen.evaluationStartNs },
+      sourceEvidenceRefs: [...new Set([frozen.evidenceRef, ...metrics.map(metric => metric.evidenceRef), ...sciencePlans.map(plan => plan.evidenceRef), ...sourceEvidence.evidenceRefs, ...checks.flatMap(check => check.evidenceRefs)])], evaluationStartNs: frozen.evaluationStartNs },
     policy: frozen.policy, model: frozen.input.model, thinkingLevel: frozen.input.thinkingLevel,
     evidence, checks, metrics, sciencePlans, createdAt: frozen.createdAt,
   });

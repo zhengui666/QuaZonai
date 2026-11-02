@@ -18,7 +18,8 @@ if (command === 'catalog-prefix-digest') {
   assert.equal(input.fit_end_ns, '10'); assert.equal(input.members.length, 2);
   for (const member of input.members) { assert.ok(member.report.points.length); assert.match(member.source_evidence_ref, /^native-task:.*:panel:/); }
   for (const fold of input.folds) assert.ok(BigInt(fold.validation_end_ns) <= 10n);
-  console.log(JSON.stringify({ schema_version: 1, method: 'TEST_ONLY_PROTOCOL', fit_end_ns: '10', forecast_contract: input.members[0].report.request.forecast,
+  console.log(JSON.stringify({ schema_version: 1, method: input.review_prior ? 'TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1' : 'TEST_ONLY_PROTOCOL',
+    ...(input.review_prior ? { review_prior: input.review_prior, review_prior_lambda: 0.01 } : {}), fit_end_ns: '10', forecast_contract: input.members[0].report.request.forecast,
     members: input.members.map((member, index) => ({ factor_version_id: member.factor_version_id, source_evidence_ref: member.source_evidence_ref, weight: index === 0 ? '0' : '1', calibrations: [{ instrument_id: 'TEST.SIM', intercept: -100, slope: 1, training_observations: '3' }] })) }));
 } else if (command === 'forecast-factor' || command === 'forecast') {
   const model = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(args[args.indexOf('--model') + 1])));

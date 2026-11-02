@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
-import { fitNativeEnsemble, replayFittedEnsemble, fittedReviewPrior } from './native-fitted-portfolio.ts';
+import { fitNativeEnsemble, replayFittedEnsemble, fittedReviewPrior, admittedReviewedMembers } from './native-fitted-portfolio.ts';
 import type { FittedMember, FittedReviewPriorBinding } from './native-fitted-portfolio.ts';
 import { readNativeEvidence, NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
 import { object } from '../src/trials.ts';
@@ -88,7 +88,13 @@ export async function runFittedEnsemble(api: ResearchRuntime, context: Context, 
         const study = await tx.doc(Study, api.conversationId);
         const ledger = await tx.doc(ReviewLedger, api.conversationId);
         const request = iterationRequest(input.data, true);
-        frozen = { ...input, reviewPriorBinding: fittedReviewPrior(input.members, ledger.records,
+        if (input.members.some(member => member.sourceFactorId !== undefined)) {
+          if (!input.members.every(member => typeof member.sourceFactorId === 'string')) throw new Error('ensemble_mixed_source_authority');
+          const admitted = admittedReviewedMembers(study.input?.policy.reviewedFactorSources,
+            input.members.map(member => member.sourceFactorId!), String(request.train_end_ns));
+          if (canonical(admitted.members) !== canonical(input.members)) throw new Error('ensemble_admitted_source_changed');
+          frozen = { ...input, members: admitted.members, reviewPriorBinding: admitted.binding };
+        } else frozen = { ...input, reviewPriorBinding: fittedReviewPrior(input.members, ledger.records,
           study.trials as unknown as JsonObject[], api.conversationId, String(request.train_end_ns)) };
       }
       child.taskId = await tx.createTask(FittedEnsembleTask, frozen, { ownership: { kind: 'task', taskId: api.taskId } });

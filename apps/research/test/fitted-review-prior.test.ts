@@ -42,3 +42,52 @@ test('missing, wrong-version, and manipulated quality receipts cannot create pri
   (source.records['version-1']!.report as JsonObject).qualityCoefficient = 0.5;
   assert.equal(fittedReviewPrior(source.members, source.records, source.trials, 7, '300').prior, null);
 });
+
+test('sourceFactorIds traverses the real Durable tool and frozen task to the native fit boundary', { timeout: 20_000 }, async () => {
+  const { mkdtemp, writeFile, readFile, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const { createHash } = await import('node:crypto');
+  const { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall } = await import('@earendil-works/pi-ai');
+  const { BACKGROUND_CONTEXT: context } = await import('@earendil-works/chord/context');
+  const { openResearch } = await import('../src/host.ts');
+  const { default: fitted } = await import('../plugins/fitted-ensemble.ts');
+  const { default: research } = await import('../plugins/research.ts');
+  const { startLegacyResearch } = await import('./legacy-study.ts');
+  const { compileWasm } = await import('../plugins/native-wasm.ts');
+  const { readNativeEvidence } = await import('../plugins/native-evidence.ts');
+  const { object } = await import('../src/trials.ts');
+  const directory = await mkdtemp(join(tmpdir(), 'qz-reviewed-flow-')); const log = join(directory, 'calls.jsonl'); const binary = join(directory, 'job');
+  await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('./fitted-protocol.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
+  const old = process.env.QZ_JOB_BINARY; process.env.QZ_JOB_BINARY = binary;
+  const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
+  const source = fixture('5');
+  const model = '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 99))';
+  const members = source.members.map(member => {
+    const report = source.records[`version-${member.sourceTrialId}`]!.report as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport;
+    report.policy.calibration!.endNs = '1'; report.target.evaluationStartNs = '3';
+    return { factorId: `r7.t${member.sourceTrialId}.m0`, factorVersionId: member.factorVersionId, sourceResearchId: 7,
+      sourceTrialId: member.sourceTrialId, modelSource: model, modelSha256: createHash('sha256').update(compileWasm(model)).digest('hex'), sourceEndNs: '5', report };
+  });
+  const data = { catalog: directory, request: { schema_version: 1, train_end_ns: '10', validation_end_ns: '20', forecast: { schema_version: 1,
+    selection: { schema_version: 1, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '30' },
+    parameters: { schema_version: 1, fast_period: 1, slow_period: 2, label_horizon_observations: 1 } } } };
+  const host = await openResearch({ database: join(directory, 'research.sqlite'), models, extensions: [research, fitted] });
+  try {
+    faux.setResponses([fauxAssistantMessage(fauxToolCall('strategy_ensemble_fit', { hypothesis: 'Protocol-only admitted source IDs', sourceFactorIds: members.map(member => member.factorId) }), { stopReason: 'toolUse' }), fauxAssistantMessage('Protocol trace complete.')]);
+    const receipt = await startLegacyResearch(host, 'historical-library-fit', { goal: 'Protocol-only cross-study fit, not scientific evidence', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data,
+      policy: { max_trials: 1, reviewedFactorSources: JSON.parse(JSON.stringify({ schemaVersion: 1, fitEndNs: '10', members })) } });
+    await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
+    const state = await host.state(receipt.conversationId); const result = object(state.research!.trials[0]!.result, 'fit_result');
+    assert.equal(object(result.reviewPrior, 'prior').status, 'APPLIED');
+    const nativeCalls = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const fitCall = nativeCalls.find(call => call.command === 'fit-ensemble');
+    assert.deepEqual(fitCall.input.review_prior.members.map((member: { factor_version_id: string }) => member.factor_version_id), ['factor:7:1', 'factor:7:2']);
+    assert.ok(fitCall.input.review_prior.members.every((member: { source_end_ns: string }) => member.source_end_ns === '5'));
+    const tasks = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.ensemble.fit-replay' }, 10), context);
+    assert.equal(tasks.items.length, 1); const task = tasks.items[0]!;
+    assert.equal(task.state.outcome!.status, 'completed');
+    if (task.state.outcome!.status !== 'completed') return;
+    const evidence = await readNativeEvidence(host.harness, receipt.conversationId, task.id, object((task.state.outcome!.result as JsonObject).native, 'native'), context);
+    assert.deepEqual(object(evidence.fitRequest, 'request').review_prior, fitCall.input.review_prior);
+  } finally { await host.close(); if (old === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = old; await rm(directory, { recursive: true, force: true }); }
+});

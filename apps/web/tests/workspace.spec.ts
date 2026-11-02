@@ -118,14 +118,23 @@ test('multi-portfolio allocation preserves explicit constraints and the original
     return route.fulfill({ json: record, status: 202 });
   });
   await page.route('**/api/v3/review-allocations/new-allocation', route => route.fulfill({ json: record }));
+  const chooseSources = async (label: string) => {
+    const combobox = page.getByLabel(label, { exact: true });
+    await expect(combobox).toHaveAttribute('role', 'combobox');
+    await combobox.click(); await expect(combobox).toHaveAttribute('aria-controls', /.+/);
+    const listboxId = await combobox.getAttribute('aria-controls');
+    const dropdown = page.locator('.ant-select-dropdown').filter({ has: page.locator(`[id="${listboxId}"]`) });
+    await expect(dropdown).toHaveCount(1);
+    await dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click();
+    await dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click();
+    await combobox.press('Escape'); await expect(combobox).toHaveAttribute('aria-expanded', 'false');
+  };
   await page.goto('/#/portfolios'); await page.getByRole('button', { name: '配置多组合资金', exact: true }).click();
   const form = page.locator('.review-allocation-form'); await form.getByLabel('配置名称', { exact: true }).fill('质量风险配置');
-  await form.getByLabel('来源组合（至少两个）', { exact: true }).click();
-  await page.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click(); await page.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click(); await page.keyboard.press('Escape');
+  await chooseSources('来源组合（至少两个）');
   const members = form.locator('.review-allocation-member');
   for (const [index, cap] of ['0.700000000000000001', '0.6'].entries()) { await members.nth(index).getByLabel('单组合权重上限（0–1）', { exact: true }).fill(cap); await members.nth(index).getByLabel('当前资金权重（0–1）', { exact: true }).fill('0'); }
-  await form.getByLabel('簇名称', { exact: true }).fill('共同风险'); await form.getByLabel('簇成员', { exact: true }).click();
-  await page.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click(); await page.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click(); await page.keyboard.press('Escape');
+  await form.getByLabel('簇名称', { exact: true }).fill('共同风险'); await chooseSources('簇成员');
   await form.getByLabel('簇合计上限（0–1）', { exact: true }).fill('1'); await form.getByLabel('最大换手（0–2）', { exact: true }).fill('1'); await form.getByLabel('科学调用预算（1–4096）', { exact: true }).fill('24');
   await form.getByRole('button', { name: '计算资金配置', exact: true }).click(); await expect(form.getByRole('button', { name: '核对原提交', exact: true })).toBeVisible();
   expect(JSON.parse(writes[0]!)).toEqual({ requestId: expect.any(String), name: '质量风险配置', portfolioIds: ['first', 'second'], memberCaps: [{ id: 'first', maximumWeight: '0.700000000000000001' }, { id: 'second', maximumWeight: '0.6' }], currentWeights: [{ id: 'first', weight: '0' }, { id: 'second', weight: '0' }], clusterCaps: [{ id: '共同风险', members: ['first', 'second'], maximumWeight: '1' }], maximumTurnover: '1', maximumScientificCalls: 24 });

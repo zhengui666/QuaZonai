@@ -6,22 +6,28 @@ import { evaluateTrial, object, studyInput, trialFeedback } from '../src/trials.
 import { resolvePortfolioPolicy } from '../src/strategy.ts';
 import { checkExposure } from './native-exposure.ts';
 import { FittedEnsembleTask, runFittedEnsemble } from './fitted-ensemble-task.ts';
+import { admittedReviewedMembers } from './native-fitted-portfolio.ts';
+import { iterationRequest } from './native-wasm.ts';
 import { isTickResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 
 export default defineExtension({ name: 'qz.fitted-ensemble', tasks: [FittedEnsembleTask], tools: [defineTool({
-  name: 'strategy_ensemble_fit', description: 'Fit calibrated nonnegative signal weights from at least two original COMPUTED Wasm factor trials. Native TRAIN-only expanding folds fit calibration and weights; unavailable full prediction panels fail explicitly. No user/model supplied weights. Consumes one ENSEMBLE_FIT attempt, including failure. This fit is not account validation.',
-  parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), sourceTrialIds: Type.Array(Type.Integer(), { minItems: 2 }) }), replay: 'safe', executionMode: 'sequential',
+  name: 'strategy_ensemble_fit', description: 'Fit calibrated nonnegative signal weights from at least two original COMPUTED Wasm factor trials or service-admitted historical factor IDs in policy.reviewedFactorSources. Use exactly one of sourceTrialIds/sourceFactorIds. Native TRAIN-only expanding folds fit calibration and weights; unavailable full prediction panels fail explicitly. No user/model supplied weights. Consumes one ENSEMBLE_FIT attempt, including failure. This fit is not account validation.',
+  parameters: Type.Object({ hypothesis: Type.String(), hypothesisId: Type.Optional(Type.String()), sourceTrialIds: Type.Optional(Type.Array(Type.Integer(), { minItems: 2 })), sourceFactorIds: Type.Optional(Type.Array(Type.String(), { minItems: 2 })) }), replay: 'safe', executionMode: 'sequential',
   async execute(args, api, context) {
     const input = await studyInput(api, context); const study = await api.snapshot(Study, api.conversationId, context);
     if (isTickResearchInput(input.data)) throw new Error('tick_ensemble_unsupported');
-    const sources = args.sourceTrialIds.map(id => {
+    if ((args.sourceTrialIds === undefined) === (args.sourceFactorIds === undefined)) throw new Error('ensemble_exactly_one_source_kind_required');
+    const sources = args.sourceFactorIds
+      ? admittedReviewedMembers(input.policy.reviewedFactorSources, args.sourceFactorIds, String(iterationRequest(input.data, true).train_end_ns)).members
+      : args.sourceTrialIds!.map(id => {
       const trial = study?.trials.find(item => item.taskId === id); const proposal = trial ? object(trial.proposal, 'proposal') : null;
       if (trial?.status !== 'COMPUTED' || typeof proposal?.model !== 'string') throw new Error('ensemble_source_factor_not_computed');
       return { factorVersionId: `factor:${api.conversationId}:${id}`, model: proposal.model, sourceTrialId: id };
     });
-    if (new Set(args.sourceTrialIds).size !== args.sourceTrialIds.length) throw new Error('ensemble_duplicate_source');
+    if (new Set(sources.map(source => source.factorVersionId)).size !== sources.length) throw new Error('ensemble_duplicate_source');
     const proposal = { hypothesis: args.hypothesis, ...(args.hypothesisId ? { hypothesisId: args.hypothesisId } : {}),
-      parentTrialIds: input.campaign ? args.sourceTrialIds.map(id => `${input.campaign!.campaignId}:trial:${id}`) : [], purpose: 'ENSEMBLE_FIT',
+      parentTrialIds: input.campaign && args.sourceTrialIds ? args.sourceTrialIds.map(id => `${input.campaign!.campaignId}:trial:${id}`) : [],
+      ...(args.sourceFactorIds ? { sourceFactorIds: args.sourceFactorIds } : {}), purpose: 'ENSEMBLE_FIT',
       members: sources.map(member => ({ ...member })), request: input.data.request ?? null, method: 'qz-expanding-train-three-fold-v1' };
     return trialFeedback(api, context, () => evaluateTrial(api, context, proposal, async () => {
       await checkExposure(api, context, input.data, false, input.data.sealed ? object(input.data.sealed, 'heldout_data') : undefined);

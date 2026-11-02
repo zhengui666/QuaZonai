@@ -12,6 +12,9 @@ import { canonical, Requests, Study } from './documents.ts';
 import { ReviewLedger } from './review-documents.ts';
 import { freezeReviewPolicies } from './review-workflow.ts';
 import { reviewExtensionWithBudget } from '../plugins/review.ts';
+import { ReviewFactorAccountTask } from './review-factor-account.ts';
+import { bindReviewSourceEvidence, ReviewSourceValidationTask } from './review-source.ts';
+import type { CapturedReviewSource } from './review-source.ts';
 import { ReviewNativeTask } from './review-native-task.ts';
 import { IndependentReviewTask } from './review-runtime.ts';
 import { defineExtension } from '@earendil-works/pi-durable';
@@ -61,7 +64,7 @@ export async function openResearch(options: {
       registry.install(module.default as Extension);
     }
     registry.install(reviewExtensionWithBudget(() => harness));
-    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask] }));
+    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
@@ -117,7 +120,7 @@ export async function openResearch(options: {
     harness.resume();
   } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
 
-  async function start(requestId: string, value: ResearchInput, originalAdmission = false) {
+  async function start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
     const input = researchInput(value);
     const id = await harness.commit(async (tx) => {
@@ -127,6 +130,7 @@ export async function openResearch(options: {
       if (existing) {
         if (existing.recovery) throw new Error('request_id_conflict');
         if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
+        if (sourceEvidence && (!existing.sourceEvidence || canonical(existing.sourceEvidence) !== canonical(JSON.parse(JSON.stringify(sourceEvidence))))) throw new Error('review_source_identity_conflict');
         return existing.conversationId;
       }
       if (isRecoveryRequestId(requestId)) {
@@ -143,13 +147,14 @@ export async function openResearch(options: {
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
       (await tx.doc(Study, created.id)).input = freezeReviewPolicies(input);
+      if (sourceEvidence) await bindReviewSourceEvidence(tx, created.id, input.data, sourceEvidence);
       if (input.campaign) {
         const campaign = await tx.doc(CampaignResearchDoc, created.id);
         campaign.binding = input.campaign;
         // Versioned technical allowance, not a market or scientific threshold.
         campaign.orchestration = { policyVersion: 'qz.research.resources/1', maximumModelTurns: Math.min(Number.MAX_SAFE_INTEGER, Math.max(24, input.campaign.budget.maximumTrials * 12)), generationTaskIds: [] };
       }
-      requests.requests[key] = { input, conversationId: created.id };
+      requests.requests[key] = { input, conversationId: created.id, ...(sourceEvidence ? { sourceEvidence: JSON.parse(JSON.stringify(sourceEvidence)) } : {}) };
       return created.id;
     }, context);
     await rememberTier(id, input);
@@ -268,9 +273,9 @@ export async function openResearch(options: {
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry, withOwnerChange: ownerChange,
-    async start(requestId: string, value: ResearchInput, originalAdmission = false) {
+    async start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
       if (!accepting) throw new Error('research_closing');
-      const admission = start(requestId, value, originalAdmission);
+      const admission = start(requestId, value, originalAdmission, sourceEvidence);
       admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },

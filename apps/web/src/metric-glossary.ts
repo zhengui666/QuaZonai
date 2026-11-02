@@ -10,6 +10,7 @@ const glossary: Record<string, MetricDefinition> = {
   rank_ic_upper: definition('秩信息系数区间上界', '按原分析方法计算的 RankIC 置信区间上界；须与下界、分析范围、区块长度和样本数一起解释。'),
   coverage: definition('因子有效观测覆盖率', '评估分区中有效因子观测占原始观测的比例。仅表示记录覆盖，不证明历史可得时间或样本独立。'),
   independent_blocks: definition('完整时间区块数', '按原分析区块长度划分的完整同步事件区块数。区块长度至少覆盖观测到的标签重叠，计数本身不保证区块彼此独立。'),
+  bootstrap_blocks: definition('重采样时间区块数', '按原分析重采样区块长度划分的完整同步事件区块数量。区块长度至少覆盖观测到的标签重叠；该数量不保证区块彼此独立，也不是独立样本数。'),
   positive_slice_fraction: definition('正向时间切片占比', '原分析声明的时间切片中，方向性统计值大于零的切片比例。不是盈利交易占比或未来获利概率。'),
   quantile_spread: definition('因子分层标签收益差', '最高与最低因子分层对应的未来价格标签收益之差，按原生标签周期保留。没有执行成交和成本，不是可交易的组合净收益。'),
   quantile_monotonicity: definition('因子分层单调性', '原分析分层序号与各层平均未来标签收益的秩相关，反映标签收益是否随因子方向有序变化。不是因果证据或盈利概率。'),

@@ -116,6 +116,14 @@ test('new admission executes an isolated reviewer and persists its gate before a
     assert.equal(stored.length, 1);
     const report = stored[0]!.report as unknown as ReviewReport;
     assert.equal(report.decision, 'INCONCLUSIVE'); assert.equal(report.qualityCoefficient, 0);
+    // Consume the report actually produced by the new-admission workflow, through
+    // the same cross-study admission transaction used by the service. Its version
+    // must verify; its incomplete evidence must still prevent a quality prior.
+    const { freezeReviewedFactors } = await import('../src/reviewed-factor-admission.ts');
+    const importedId = `r${receipt.conversationId}.t${current.research!.trials[0]!.taskId}.m0`;
+    await assert.rejects(state.service.research.harness.commit(tx => freezeReviewedFactors(tx,
+      [importedId, 'r999999.t1.m0'], { request: { train_end_ns: '300', validation_end_ns: '400', forecast: {
+        selection: { event_start_ns: '0', event_end_ns: '500', decision_cutoff_ns: '500' }, parameters: {} } } }), context), /reviewed_factor_pass_report_required/);
     assert.equal(report.target.id, `research:${receipt.conversationId}:trial:${current.research!.trials[0]!.taskId}`);
     const tasks = await state.service.research.harness.commit(tx => tx.scanTasks({ kind: 'qz.review.independent' }, 20), context);
     assert.equal(tasks.items.length, 1);

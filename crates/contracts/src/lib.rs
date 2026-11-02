@@ -53,6 +53,8 @@ use utoipa::OpenApi;
     catalog_prefix::NativeCatalogPrefixResultV1,
     review_science::NativeReviewScienceRequestV1,
     review_science::NativeReviewScienceResultV1,
+    review_science::NativeReviewSourceRequestV1,
+    review_science::NativeReviewSourceResultV1,
     review_allocation::NativeReviewAllocationRequestV1,
     review_allocation::NativeReviewAllocationResultV1,
     evidence::MetricValueV1,

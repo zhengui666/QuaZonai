@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import type { ReviewedFactorSources } from '../../../packages/contracts/src/reviewed-factors.ts';
 import { scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ReviewReport } from '../../../packages/contracts/src/review.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -19,7 +21,7 @@ async function readCatalogPrefix(binary: NativeTarget, catalog: string, selectio
   return prefix;
 }
 
-export type FittedMember = { factorVersionId: string; model: string; sourceTrialId: number };
+export type FittedMember = { factorVersionId: string; model: string; sourceTrialId: number; sourceFactorId?: string };
 export type FittedReviewPriorBinding = { prior: JsonObject | null; reason: string | null };
 /** Only callers holding the original Durable ledger and Study may resolve quality priors.
  * Current Validation reviews are deliberately unusable for this TRAIN-only fit. */
@@ -47,6 +49,29 @@ export function fittedReviewPrior(members: FittedMember[], records: Record<strin
       source_evidence_refs: report.target.sourceEvidenceRefs, source_end_ns: end, decision: 'PASS', quality_coefficient: scored.qualityCoefficient });
   }
   return { prior: { members: resolved }, reason: null };
+}
+/** Resolve only the service-authorized envelope frozen in the original Study input.
+ * The tool accepts IDs, never a model, quality coefficient, or replacement report. */
+export function admittedReviewedMembers(value: unknown, factorIds: readonly string[], fitEndNs: string): { members: FittedMember[]; binding: FittedReviewPriorBinding } {
+  const frozen = value as ReviewedFactorSources | undefined;
+  if (!frozen || frozen.schemaVersion !== 1 || frozen.fitEndNs !== fitEndNs || !Array.isArray(frozen.members)
+    || factorIds.length < 2 || factorIds.length > 64 || new Set(factorIds).size !== factorIds.length) throw new Error('admitted_reviewed_factors_required');
+  const priors: JsonObject[] = [];
+  const members = factorIds.map(id => {
+    const source = frozen.members.find(member => member.factorId === id);
+    if (!source || frozen.members.filter(member => member.factorId === id).length !== 1) throw new Error('reviewed_factor_not_admitted');
+    if (source.factorVersionId !== `factor:${source.sourceResearchId}:${source.sourceTrialId}`
+      || createHash('sha256').update(compileWasm(source.modelSource)).digest('hex') !== source.modelSha256
+      || !/^\d+$/.test(source.sourceEndNs) || BigInt(source.sourceEndNs) >= BigInt(fitEndNs)) throw new Error('reviewed_factor_frozen_binding_invalid');
+    const report = JSON.parse(JSON.stringify(source.report)) as ReviewReport;
+    const repeated = scoreReview(report);
+    if (report.target.id !== `research:${source.sourceResearchId}:trial:${source.sourceTrialId}` || report.target.kind !== 'FACTOR'
+      || report.decision !== 'PASS' || repeated.decision !== 'PASS' || repeated.qualityCoefficient !== report.qualityCoefficient) throw new Error('reviewed_factor_frozen_report_invalid');
+    priors.push({ factor_version_id: source.factorVersionId, source_report_id: report.id,
+      source_evidence_refs: report.target.sourceEvidenceRefs, source_end_ns: source.sourceEndNs, decision: 'PASS', quality_coefficient: repeated.qualityCoefficient });
+    return { factorVersionId: source.factorVersionId, model: source.modelSource, sourceTrialId: source.sourceTrialId, sourceFactorId: source.factorId };
+  });
+  return { members, binding: { prior: { members: priors }, reason: null } };
 }
 /** Frozen technical protocol; all folds remain strictly inside registered TRAIN. */
 export function expandingTrainingFolds(request: JsonObject): JsonObject[] {

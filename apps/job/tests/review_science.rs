@@ -62,6 +62,92 @@ fn dependent_return_replication_does_not_inflate_dsr_confidence() {
 }
 
 #[test]
+fn explicitly_complete_single_trial_uses_the_zero_selection_benchmark() {
+    let returns = (0..180)
+        .map(|i| if i % 3 == 0 { -0.001 } else { 0.02 })
+        .collect();
+    let result = analyze(&request(NativeReviewAnalysisV1::Selection {
+        total_trials: 1,
+        ledger_complete: true,
+        selected_trial_id: "only".into(),
+        trials: vec![series("only", returns)],
+        timestamps_ns: times(180),
+        frequency: "DAY".into(),
+        block_length: 1,
+    }))
+    .unwrap();
+    assert!(
+        result
+            .metrics
+            .iter()
+            .find(|metric| metric.code == "dsr")
+            .unwrap()
+            .value
+            .unwrap()
+            > 0.99
+    );
+    assert!(result
+        .limitations
+        .iter()
+        .any(|line| line.contains("single-trial")));
+    assert!(result
+        .metrics
+        .iter()
+        .find(|metric| metric.code == "pbo")
+        .unwrap()
+        .value
+        .is_none());
+}
+
+#[test]
+fn shared_account_absolute_evidence_uses_original_complete_daily_grid() {
+    let timestamps_ns = (0..180)
+        .map(|i| DbCounter::new(i * 86_400_000_000_000).unwrap())
+        .collect();
+    let result = analyze(&request(NativeReviewAnalysisV1::Portfolio {
+        candidate: series(
+            "joint",
+            (0..180)
+                .map(|i| if i % 3 == 0 { -0.001 } else { 0.02 })
+                .collect(),
+        ),
+        baseline: series("cash", vec![0.0; 180]),
+        timestamps_ns,
+        frequency: "DAY".into(),
+        block_length: 5,
+    }))
+    .unwrap();
+    assert!(
+        result
+            .metrics
+            .iter()
+            .find(|m| m.code == "candidate_net_return_lower")
+            .unwrap()
+            .value
+            .unwrap()
+            > 0.0
+    );
+    assert_eq!(
+        result
+            .metrics
+            .iter()
+            .find(|m| m.code == "return_coverage")
+            .unwrap()
+            .value,
+        Some(1.0)
+    );
+    assert_eq!(
+        result
+            .metrics
+            .iter()
+            .find(|m| m.code == "positive_slice_fraction")
+            .unwrap()
+            .value,
+        Some(1.0)
+    );
+}
+
+#[test]
 fn paired_net_deterioration_is_negative_and_time_mismatch_is_rejected() {
     let baseline: Vec<_> = (0..128)
         .map(|i| if i % 2 == 0 { 0.02 } else { -0.01 })
@@ -295,4 +381,29 @@ fn cli_preserves_original_digest_and_emits_structured_evidence() {
             .abs()
             < 1e-12
     );
+}
+
+#[test]
+fn source_cli_rejects_missing_source_owner_metadata_without_success_output() {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_job"))
+        .arg("review-source")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"schema_version":1,"metadata":{},"observed_at":"2026-11-02T00:00:00Z"}"#)
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("QZ_NATIVE_JOB_FAILED"));
 }

@@ -23,7 +23,7 @@ pub use output::{
     check_experiment_evaluation, check_observed_spot_simulation, check_observed_spot_study,
     check_portfolio_study, equity_curve_query, experiment_summary, freeze_alpha_calibration,
     output_bindings, output_shape, portfolio_equity_curve, portfolio_simulation_metrics,
-    strategy_portfolio_summary,
+    quality as native_quality, strategy_portfolio_summary,
 };
 pub use portfolio::{
     candidate_simulation, observed_spot_build_request, observed_spot_study_cutoffs,

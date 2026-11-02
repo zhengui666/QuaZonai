@@ -16,6 +16,8 @@ export interface DatasetConfig extends DatasetView {
   strategy?: StrategyPolicy;
   /** Trusted source producer atomically publishes immutable catalog revisions here. */
   revisionManifest?: string;
+  /** Explicit source-owner metadata and grant files covered by revisionManifest. */
+  reviewSourceEvidence?: import('../../../packages/contracts/src/review-source.ts').ReviewSourceFiles;
 }
 export type ConnectionConfig = NautilusConnection & { credentialRef?: string };
 type BacktestConfig = RemoteNativeTarget & { token?: string };

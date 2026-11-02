@@ -8,6 +8,11 @@ import type { ConversationId, JsonObject } from '@earendil-works/pi-durable';
 import type { FastifyInstance } from 'fastify';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
+import { prepareReviewSourceEvidence, assertCurrentReviewSource } from './review-source.ts';
+import { trustedSourceChecks, ReviewSourceEvidence, type CapturedReviewSource } from '../../research/src/review-source.ts';
+import { accountReviewMetrics } from './review-account-science.ts';
+import { assessCapacity, capacityPolicy } from './capacity.ts';
+import { runReviewScience } from '../../research/src/review-science-adapter.ts';
 import { researchRuntime } from '../../research/src/research-runtime.ts';
 import { runIndependentReview } from '../../research/src/review-runtime.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
@@ -15,10 +20,10 @@ import { exactWeights, resolveStrategyPolicy, strategyMembers } from '../../rese
 import { checkExposure } from '../../research/plugins/native-exposure.ts';
 import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
-import type { ReviewAllocationStart, ReviewAllocationView, ReviewAllocationPolicy, ReviewAllocationResult, ReviewReport } from '../../../packages/contracts/src/review.ts';
+import type { ReviewAllocationStart, ReviewAllocationView, ReviewAllocationPolicy, ReviewAllocationResult, ReviewReport, ReviewMetric } from '../../../packages/contracts/src/review.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { buildReviewAllocationRequest, createReviewPolicy, scoreReview, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
-import type { ServiceConfig } from './config.ts';
+import type { ServiceConfig, DatasetConfig } from './config.ts';
 import { scienceTarget } from './config.ts';
 import { Application, counter, decimalUnits, json, nowNs, object, portfolio, Problem, text } from './facts.ts';
 import type { PortfolioFact } from './facts.ts';
@@ -27,12 +32,21 @@ import { assertBusinessAdmission } from './pm-maintenance.ts';
 const context = BACKGROUND_CONTEXT;
 interface AllocationFact { original: ReviewAllocationStart; view: ReviewAllocationView; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; native: JsonObject | null }
 export const ReviewAllocations = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-allocations', version: 1, scope: 'session', initial: () => ({ records: {} }) });
-const Stages = defineDoc<{ results: Record<string, JsonObject>; reservedCalls: number }>({ kind: 'qz.review-allocation-stages', version: 1, scope: 'task', initial: () => ({ results: {}, reservedCalls: 0 }) });
+export interface ReviewStageBudget { reservedCalls: number; reservations: Record<string, number> }
+export function reserveReviewStage(state: ReviewStageBudget, key: string, calls: number, maximum: number): void {
+  if (!key || !Number.isSafeInteger(calls) || calls < 0 || !Number.isSafeInteger(maximum) || maximum < 1) throw new Problem('review_allocation_stage_invalid');
+  const previous = state.reservations[key];
+  if (previous !== undefined) { if (previous !== calls) throw new Problem('review_allocation_stage_identity_conflict'); return; }
+  if (state.reservedCalls + calls > maximum) throw new Problem('review_allocation_scientific_budget_exhausted');
+  state.reservations[key] = calls; state.reservedCalls += calls;
+}
+const Stages = defineDoc<{ results: Record<string, JsonObject>; reservedCalls: number; reservations: Record<string, number> }>({ kind: 'qz.review-allocation-stages', version: 1, scope: 'task', initial: () => ({ results: {}, reservedCalls: 0, reservations: {} }) });
 const fact = (value: JsonObject): AllocationFact => value as unknown as AllocationFact;
 export function portfolioReviewVersion(source: PortfolioFact): string {
   return createHash('sha256').update(canonical(json({ input: source.input, evidence: source.evidence, weights: source.weights ?? null, policy: source.policy }))).digest('hex');
 }
 export function approvedReviewPortfolio(source: PortfolioFact): ReviewReport {
+  source = json(source) as unknown as PortfolioFact; // Durable transaction documents are mutable proxies.
   const report = source.view.review;
   if (source.deletedAt || source.view.status !== 'COMPUTED' || !report || report.target.id !== source.view.id || report.target.kind !== 'PORTFOLIO' || report.target.version !== portfolioReviewVersion(source)) throw new Problem('review_allocation_portfolio_not_approved', 422);
   const checked = scoreReview({ id: report.id, target: report.target, policy: report.policy, metrics: report.metrics, checks: report.checks, createdAt: report.createdAt });
@@ -60,20 +74,55 @@ export function allocationReturnPanel(simulation: JsonObject): { times: string[]
   if (new Set(times).size !== times.length || times.some((t, i) => i > 0 && BigInt(t) <= BigInt(times[i - 1]!)) || rows.some(r => typeof r.value !== 'number' || !Number.isFinite(r.value) || r.reason_code != null)) throw new Problem('review_allocation_native_returns_incomplete', 422);
   return { times, returns: rows.map(r => r.value as number) };
 }
-interface AllocationTaskInput { id: string; dataDir: string; binary: NativeTarget; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; maximumScientificCalls: number; model: { provider: string; modelId: string }; reviewPolicy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; independentData?: JsonObject }
+export const ALLOCATION_STRESS_METHOD = 'ONE_MAXIMUM_FIXED_BAR_DELAY_ALWAYS_SLIP_V1';
+/** A registered execution sensitivity; fee sources and rates remain the original inputs. */
+export function allocationStressSettings(settings: JsonObject, selection: JsonObject): JsonObject | null {
+  const fill = object(settings.fill_model); const latency = object(settings.latency_model);
+  if (fill.adapter_kind !== 'NAUTILUS_DEFAULT_FILL' || latency.adapter_kind !== 'NAUTILUS_STATIC_LATENCY' || !Array.isArray(selection.bar_types)) return null;
+  const units: Record<string, bigint> = { MILLISECOND: 1_000_000n, SECOND: 1_000_000_000n, MINUTE: 60_000_000_000n, HOUR: 3_600_000_000_000n, DAY: 86_400_000_000_000n, WEEK: 604_800_000_000_000n };
+  const lengths = selection.bar_types.map(type => {
+    const match = typeof type === 'string' ? /-([1-9]\d*)-([A-Z_]+)-[A-Z_]+-(?:EXTERNAL|INTERNAL)$/.exec(type) : null;
+    return match && units[match[2]!] !== undefined ? BigInt(match[1]!) * units[match[2]!]! : null;
+  });
+  if (!lengths.length || lengths.some(length => length === null)) return null;
+  const delta = lengths.reduce<bigint>((max, length) => length! > max ? length! : max, 0n);
+  const parameters = object(latency.parameters); const base = BigInt(counter(parameters.base_latency_ns, 'base_latency'));
+  if (base + delta > 9223372036854775807n) return null;
+  return { ...structuredClone(settings), fill_model: { ...fill, parameters: { ...object(fill.parameters), prob_slippage: '1' } },
+    latency_model: { ...latency, parameters: { ...parameters, base_latency_ns: String(base + delta) } } };
+}
+export function allocationCapacityCheck(capacity: JsonObject, capital: string, stress: JsonObject | null, reference: string): import('../../../packages/contracts/src/review.ts').ReviewCheck {
+  const coverage = capacity.coverage && object(capacity.coverage);
+  const complete = coverage && typeof coverage.decisionCount === 'number' && coverage.decisionCount > 0 && coverage.decisionCount === coverage.assessedDecisionCount && coverage.requiredObservations === coverage.coveredObservations;
+  const scenario = Array.isArray(capacity.scenarios) ? capacity.scenarios.map(row => object(row)).find(row => typeof row.capital === 'string' && decimalUnits(row.capital) === decimalUnits(capital)) : undefined;
+  const passed = ['ESTIMATED', 'NON_BINDING'].includes(String(capacity.status)) && complete && scenario && ['FEASIBLE', 'NON_BINDING'].includes(String(scenario.status)) && stress?.returns_status === 'OK';
+  const rejected = scenario && ['CONSTRAINED', 'TOO_SMALL'].includes(String(scenario.status));
+  return { id: 'execution_constraints', status: rejected ? 'FAIL' : passed ? 'PASS' : 'UNKNOWN', reason: rejected ? 'joint_capital_exceeds_native_bar_participation_constraints'
+    : passed ? 'native_joint_bar_capacity_and_registered_execution_stress_verified' : 'joint_native_capacity_or_stress_evidence_missing', evidenceRefs: [reference] };
+}
+function allocationCohortKey(sources: PortfolioFact[]): string {
+  const data = object(object(sources[0]!.evidence[0]!.input).data);
+  const request = normalizedRequest(data); const forecast = object(request.forecast);
+  const selection = object(forecast.selection); const parameters = object(forecast.parameters);
+  return createHash('sha256').update(canonical(json({ barTypes: selection.bar_types, validationStart: request.train_end_ns, validationEnd: request.validation_end_ns,
+    horizon: parameters.label_horizon_observations, currency: sources[0]!.view.currency, capital: sources[0]!.view.capital,
+    simulationSettings: { ...object(sources[0]!.policy.simulationSettings), starting_capital: sources[0]!.view.capital } }))).digest('hex');
+}
+interface AllocationComparisonCohort { id: string; totalTrials: number; previous: { id: string; native: JsonObject | null }[] }
+interface AllocationTaskInput { id: string; createdAt: string; dataDir: string; binary: NativeTarget; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; maximumScientificCalls: number; model: { provider: string; modelId: string }; reviewPolicy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; independentData?: JsonObject; independentSource: CapturedReviewSource | null; independentConfigured?: DatasetConfig; sourceGrants: { configured: DatasetConfig; captured: CapturedReviewSource }[]; cohort: AllocationComparisonCohort; stressMethod: typeof ALLOCATION_STRESS_METHOD }
 export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'compute' }, null>({
   name: 'qz.review-allocation', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, ctx) {
     let directory: string | undefined;
     try {
       directory = await mkdtemp(join(task.input.dataDir, 'review-allocation-'));
+      for (const grant of task.input.sourceGrants) await assertCurrentReviewSource(grant.configured, grant.captured);
       const reserve = async (key: string, calls: number, action: () => Promise<JsonObject>): Promise<JsonObject> => {
         const state = await runtime.snapshot(Stages, task.id, ctx);
         if (state?.results[key]) return state.results[key];
         await runtime.commit(async tx => {
           const stages = await tx.doc(Stages, task.id);
-          if (stages.reservedCalls + calls > task.input.maximumScientificCalls) throw new Problem('review_allocation_scientific_budget_exhausted');
-          stages.reservedCalls += calls;
+          reserveReviewStage(stages, key, calls, task.input.maximumScientificCalls);
           const saved = fact((await tx.doc(ReviewAllocations)).records[task.input.id]!);
           saved.view.status = 'RUNNING'; saved.view.consumedScientificCalls = stages.reservedCalls;
           (await tx.doc(ReviewAllocations)).records[task.input.id] = json(saved);
@@ -127,8 +176,50 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
         validateReviewAllocationWeights(allocation, task.input.policy);
         const blend = await reserve('joint-blend', 1, async () => json(await blendTargets(task.input.binary, targetRows, allocation.members.map(m => m.weight), directory!, ctx, true)));
         const joint = await reserve('joint-shared-simulate', 1, () => executeNative(task.input.binary, 'simulate', { schema_version: 1, selection: commonSelection!, settings: settings!, target_points: blend.points! }, ['--catalog', catalog!], directory!, ctx));
+        const sourceRef = `allocation:${task.input.id}:shared-validation`;
+        const cashRows = (blend.points as unknown[]).map(value => {
+          const point = object(value);
+          return { ...point, cash_weight: '1', targets: (point.targets as unknown[]).map(target => ({ ...object(target), weight: '0' })) };
+        });
+        const one = 10n ** 18n; const currentSum = task.input.policy.currentWeights.reduce((sum, weight) => sum + decimalUnits(weight.weight), 0n);
+        if (currentSum < 0n || currentSum > one) throw new Problem('review_allocation_current_weight_sum_invalid');
+        const remainder = one - currentSum;
+        const cashWeight = `${remainder / one}.${(remainder % one).toString().padStart(18, '0')}`;
+        const currentById = new Map(task.input.policy.currentWeights.map(row => [row.id, row.weight]));
+        const baselineBlend = await reserve('incumbent-shared-blend', 1, async () => json(await blendTargets(task.input.binary, [...targetRows, cashRows], [...members.map(member => currentById.get(member.id)!), cashWeight], directory!, ctx, true)));
+        const baseline = await reserve('incumbent-shared-simulate', 1, () => executeNative(task.input.binary, 'simulate', { schema_version: 1, selection: commonSelection!, settings: settings!, target_points: baselineBlend.points! }, ['--catalog', catalog!], directory!, ctx));
+        if (task.input.stressMethod !== ALLOCATION_STRESS_METHOD) throw new Problem('review_allocation_stress_method_unsupported');
+        const stressedSettings = allocationStressSettings(settings!, commonSelection!);
+        const stress = stressedSettings ? await reserve('execution-stress-simulate', 1, () => executeNative(task.input.binary, 'simulate', { schema_version: 1, selection: commonSelection!, settings: stressedSettings, target_points: blend.points! }, ['--catalog', catalog!], directory!, ctx)) : null;
+        const assumptions = task.input.sources.map(source => source.input.capacityPolicy ?? capacityPolicy(source.evidence));
+        const commonAssumptions = assumptions[0] && assumptions.every(value => canonical(json(value ?? null)) === canonical(json(assumptions[0]))) ? assumptions[0] : undefined;
+        const capacity = await reserve('joint-native-capacity', commonAssumptions ? 1 : 0, async () => json(await assessCapacity(task.input.binary, catalog!, { schema_version: 1, selection: commonSelection!, settings: settings!, target_points: blend.points! }, commonAssumptions, directory!, ctx)));
+        const diagnostics = await reserve('joint-account-diagnostics', stress ? 2 : 1, async () => json(await accountReviewMetrics({ candidate: joint, baseline, ...(stress ? { stress } : {}), binary: task.input.binary, evidenceRef: sourceRef, context: ctx })));
+        const currentPanel = allocationReturnPanel(joint);
+        const trials = [{ id: task.input.id, returns: currentPanel.returns }];
+        let ledgerComplete = true;
+        for (const prior of task.input.cohort.previous) {
+          if (!prior.native) { ledgerComplete = false; continue; }
+          try {
+            const original = allocationReturnPanel(prior.native);
+            if (canonical(original.times) !== canonical(currentPanel.times)) { ledgerComplete = false; continue; }
+            trials.push({ id: prior.id, returns: original.returns });
+          } catch { ledgerComplete = false; }
+        }
+        const selectionDiagnostics = await reserve('allocation-selection-diagnostics', 1, async () => json(await runReviewScience({
+          source: json({ scope: task.input.cohort.id, totalTrials: task.input.cohort.totalTrials, trials, timestamps: currentPanel.times }),
+          analysis: { kind: 'SELECTION', total_trials: task.input.cohort.totalTrials, ledger_complete: ledgerComplete, selected_trial_id: task.input.id,
+            trials, timestamps_ns: currentPanel.times, frequency: 'DAY', block_length: 1 }, evidenceRef: sourceRef, target: task.input.binary, context: ctx })));
         let independent: JsonObject | null = null;
-        if (task.input.independentData) {
+        let independentSourceChecks: import('../../../packages/contracts/src/review.ts').ReviewCheck[] = [];
+        if (task.input.independentData && task.input.independentSource) {
+          const captured = task.input.independentSource;
+          if (!task.input.independentConfigured) throw new Problem('review_allocation_independent_source_binding_missing');
+          await assertCurrentReviewSource(task.input.independentConfigured, captured);
+          const validated = await reserve('independent-source-validation', 1, () => executeNative(task.input.binary, 'review-source', { schema_version: 1, metadata: captured.metadata, observed_at: captured.receivedAt }, [], directory!, ctx));
+          independentSourceChecks = trustedSourceChecks(captured, validated, task.input.independentData, nowNs());
+        }
+        if (task.input.independentData && independentSourceChecks.find(check => check.id === 'provenance')?.status === 'PASS' && independentSourceChecks.find(check => check.id === 'no_leakage')?.status === 'PASS') {
           // Reserve the unread window in the original permanent exposure ledger before granting read capability.
           await checkExposure(researchRuntime(runtime), ctx, task.input.independentData, true);
           const independentRows: JsonObject[][] = []; let independentSelection: JsonObject | null = null;
@@ -156,18 +247,36 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
           }
           const combined = await reserve('independent-joint-blend', 1, async () => json(await blendTargets(task.input.binary, independentRows, allocation.members.map(m => m.weight), directory!, ctx, true)));
           const simulation = await reserve('independent-joint-shared-simulate', 1, () => executeNative(task.input.binary, 'simulate', { schema_version: 1, selection: independentSelection!, settings: settings!, target_points: combined.points! }, ['--catalog', independentCatalog], directory!, ctx));
-          independent = { simulation, selection: independentSelection!, qualification: 'ONCE_ONLY_FROZEN_CONFIGURATION_EVIDENCE_NOT_A_RELEASE', source: task.input.independentData };
+          const cash = (combined.points as unknown[]).map(value => { const point = object(value); return { ...point, cash_weight: '1', targets: (point.targets as unknown[]).map(value => ({ ...object(value), weight: '0' })) }; });
+          const cashSimulation = await reserve('independent-cash-baseline', 1, () => executeNative(task.input.binary, 'simulate', { schema_version: 1, selection: independentSelection!, settings: settings!, target_points: cash }, ['--catalog', independentCatalog], directory!, ctx));
+          const diagnostic = await reserve('independent-account-diagnostics', 1, async () => json(await accountReviewMetrics({ candidate: simulation, baseline: cashSimulation, binary: task.input.binary, evidenceRef: `${sourceRef}:independent`, context: ctx })));
+          independent = { simulation, cashSimulation, diagnostic, selection: independentSelection!, qualification: 'ONCE_ONLY_FROZEN_CONFIGURATION_EVIDENCE_NOT_A_RELEASE', source: task.input.independentData };
         }
-        return { allocation, joint, simulations, blend, selection: commonSelection!, policy, independent };
+        return { allocation, joint, simulations, blend, selection: commonSelection!, catalog: catalog!, settings: settings!, policy, independent, baseline, stress, capacity, diagnostics, selectionDiagnostics, independentSourceChecks };
       });
       const sourceRef = `allocation:${task.input.id}:shared-validation`;
       const report = await runIndependentReview(researchRuntime(runtime), ctx, {
-        target: { kind: 'ALLOCATION', id: task.input.id, version: createHash('sha256').update(canonical(json(result))).digest('hex'), sourceEvidenceRefs: [sourceRef], evaluationStartNs: String(result.selection.event_start_ns) },
-        policy: task.input.reviewPolicy, model: task.input.model, createdAt: new Date().toISOString(), metrics: [],
+        target: { kind: 'ALLOCATION', id: task.input.id, version: createHash('sha256').update(canonical(json(result))).digest('hex'), sourceEvidenceRefs: [sourceRef, ...new Set(result.independentSourceChecks.flatMap(check => check.evidenceRefs))], evaluationStartNs: String(result.selection.event_start_ns) },
+        policy: task.input.reviewPolicy, model: task.input.model, createdAt: task.input.createdAt, metrics: [...result.diagnostics.metrics as unknown as ReviewMetric[], ...result.selectionDiagnostics.metrics as unknown as ReviewMetric[]],
         checks: task.input.reviewPolicy.requiredChecks.map(id => {
+          if (task.input.independentData && (id === 'provenance' || id === 'no_leakage')) {
+            return result.independentSourceChecks.find(check => check.id === id) ?? { id, status: 'UNKNOWN', reason: 'fresh_independent_source_owner_pit_and_authorization_missing', evidenceRefs: [sourceRef] };
+          }
+          if (id === 'independent_outcome') {
+            const diagnosticValue = result.independent?.diagnostic;
+            const diagnostic = diagnosticValue !== null && typeof diagnosticValue === 'object' && !Array.isArray(diagnosticValue) ? object(diagnosticValue) : null;
+            const independentMetrics = diagnostic?.metrics as unknown as ReviewMetric[] | undefined;
+            const lower = independentMetrics?.find(metric => metric.key === 'account.net_return_lower');
+            const coverage = independentMetrics?.find(metric => metric.key === 'data.coverage');
+            const floor = task.input.reviewPolicy.metricRules.find(rule => rule.key === 'account.net_return_lower')?.low ?? 0;
+            const available = lower?.status === 'AVAILABLE' && typeof lower.value === 'number' && coverage?.status === 'AVAILABLE' && coverage.value === 1;
+            return { id, status: !available ? 'UNKNOWN' : lower!.value! >= floor ? 'PASS' : 'FAIL', reason: !available ? 'fresh_independent_statistical_evidence_missing'
+              : lower!.value! >= floor ? 'frozen_configuration_passed_predeclared_independent_net_return_floor' : 'frozen_configuration_failed_predeclared_independent_net_return_floor', evidenceRefs: [sourceRef] };
+          }
           const sourceChecks = task.input.sources.map(source => approvedReviewPortfolio(source).checks.find(check => check.id === id));
           const independentAvailable = result.independent !== null && object(result.independent.simulation).returns_status === 'OK';
-          const unresolved = id === 'execution_constraints' || id === 'independent_window' && !independentAvailable;
+          if (id === 'execution_constraints') return allocationCapacityCheck(result.capacity, task.input.sources[0]!.view.capital, result.stress, sourceRef);
+          const unresolved = id === 'independent_window' && !independentAvailable;
           return { id, status: unresolved ? 'UNKNOWN' : id === 'independent_window' ? 'PASS' : sourceChecks.some(check => check?.status === 'FAIL') ? 'FAIL'
             : sourceChecks.every(check => check?.status === 'PASS' && check.evidenceRefs.length > 0) ? 'PASS' : 'UNKNOWN',
             reason: id === 'independent_window' ? independentAvailable ? 'fresh_window_reserved_and_evaluated_once_after_weight_freeze' : 'new_configuration_requires_fresh_independent_window'
@@ -175,13 +284,15 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
               : 'inherited_verified_source_checks_with_original_report_bindings', evidenceRefs: [sourceRef] };
         }),
         evidence: { context: { targetKind: 'ALLOCATION', memberIds: task.input.sources.map(s => s.view.id), sourceRef },
-          provenance: { status: 'COMPLETE', sourceRef }, factor: { status: 'INCOMPLETE', reason: 'see_original_factor_reports' },
-          selection: { status: 'INCOMPLETE', reason: 'allocation_selected_on_validation_returns' }, stress: { status: 'INCOMPLETE', reason: 'independent_stress_evidence_required' },
+          provenance: { status: result.independentSourceChecks.some(check => check.status !== 'PASS') || task.input.independentData && !result.independentSourceChecks.length ? 'INCOMPLETE' : 'COMPLETE', sourceRef, independentSourceChecks: json({ checks: result.independentSourceChecks }).checks! }, factor: { status: 'INCOMPLETE', reason: 'see_original_factor_reports' },
+          selection: { status: 'COMPLETE', evidence: result.selectionDiagnostics.native! }, stress: { status: result.stress ? 'COMPLETE' : 'INCOMPLETE', method: task.input.stressMethod, diagnostics: result.diagnostics.evidence!, capacity: result.capacity },
           portfolio: { status: 'COMPLETE', sourceRef, statistics: result.joint.statistics ?? [], allocation: json(result.allocation) } },
       });
       const weights = { level: 'PORTFOLIO' as const, status: 'PROPOSED' as const, members: result.allocation.members.map(m => ({ id: m.id, weight: m.weight })),
         sourceReportIds: result.allocation.members.map(m => m.source_report_id), candidateId: task.input.id, requiresStudy: true as const, reason: result.independent ? 'independent_test_recorded_review_gate_still_applies' : 'new_configuration_requires_fresh_independent_window' };
       report.weights = [weights];
+      for (const grant of task.input.sourceGrants) await assertCurrentReviewSource(grant.configured, grant.captured);
+      if (task.input.independentSource && task.input.independentConfigured) await assertCurrentReviewSource(task.input.independentConfigured, task.input.independentSource);
       await runtime.commit(async tx => {
         const saved = fact((await tx.doc(ReviewAllocations)).records[task.input.id]!);
         const current = await tx.doc(Application);
@@ -226,13 +337,32 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
     text(input.requestId, 'request_id'); text(input.name, 'name');
     if (!Array.isArray(input.portfolioIds) || input.portfolioIds.length < 2 || input.portfolioIds.length > 64 || new Set(input.portfolioIds).size !== input.portfolioIds.length || input.portfolioIds.some(id => typeof id !== 'string' || !id.trim())) throw new Problem('review_allocation_members_required');
     if (!Number.isSafeInteger(input.maximumScientificCalls) || input.maximumScientificCalls < 1 || input.maximumScientificCalls > 4096 || !Array.isArray(input.memberCaps) || !Array.isArray(input.clusterCaps) || !Array.isArray(input.currentWeights) || typeof input.maximumTurnover !== 'string') throw new Problem('review_allocation_constraints_required');
+    const replay = Object.values((await host.harness.snapshot(ReviewAllocations, context))?.records ?? {}).map(fact).find(record => record.original.requestId === input.requestId);
+    if (replay) { if (canonical(json(replay.original)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return reply.code(202).send(replay.view); }
+    const independentConfigured = input.independentDatasetId === undefined ? undefined : config.datasets.find(dataset => dataset.id === input.independentDatasetId);
+    const independentSource = independentConfigured ? await prepareReviewSourceEvidence(independentConfigured, 'HELDOUT') : null;
     const id = randomUUID(); const createdAt = new Date().toISOString(); const frozenAtNs = nowNs();
     const saved = await host.harness.commit(async tx => {
       const document = await tx.doc(ReviewAllocations);
       const existing = Object.values(document.records).map(fact).find(f => f.original.requestId === input.requestId);
-      if (existing) { if (canonical(json(existing.original)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return existing.view; }
+      if (existing) { if (canonical(json(existing.original)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return json(existing.view) as unknown as ReviewAllocationView; }
       const application = await tx.doc(Application); assertBusinessAdmission(application);
-      const sources = input.portfolioIds.map(id => { const found = application.portfolios[id]; if (!found) throw new Problem('portfolio_not_found', 404); const source = portfolio(found); approvedReviewPortfolio(source); return structuredClone(source); });
+      const sources = input.portfolioIds.map(id => { const found = application.portfolios[id]; if (!found) throw new Problem('portfolio_not_found', 404); const source = portfolio(found); approvedReviewPortfolio(source); return json(source) as unknown as PortfolioFact; });
+      const sourceGrants: { configured: DatasetConfig; captured: CapturedReviewSource }[] = [];
+      for (const source of sources) for (const [index, evidence] of source.evidence.entries()) {
+        const rootId = evidence.researchId ?? (source.evidence.length === 1 && source.view.researchIds.length === 1 ? source.view.researchIds[0] : undefined);
+        if (typeof rootId !== 'number' || !Number.isSafeInteger(rootId)) throw new Problem('review_allocation_source_research_binding_missing');
+        const document = await tx.doc(ReviewSourceEvidence, rootId as ConversationId);
+        if (!document.captured) throw new Problem('review_allocation_source_owner_evidence_missing');
+        const captured = json(document.captured) as unknown as CapturedReviewSource;
+        const configured = config.datasets.find(dataset => dataset.id === captured.datasetId);
+        if (!configured) throw new Problem('review_allocation_current_source_unavailable');
+        await assertCurrentReviewSource(configured, captured);
+        const input = object(object(source.evidence[index]!.input).data);
+        const checks = trustedSourceChecks(captured, document.native ? json(document.native) : null, input, nowNs());
+        if (checks.find(check => check.id === 'provenance')?.status !== 'PASS' || checks.find(check => check.id === 'no_leakage')?.status !== 'PASS') throw new Problem('review_allocation_source_authority_not_verified');
+        if (!sourceGrants.some(grant => grant.captured.metadataDigest === captured.metadataDigest)) sourceGrants.push({ configured: json(configured) as unknown as DatasetConfig, captured });
+      }
       if (sources.some(s => s.policy.kind === 'catalog-ensemble')) throw new Problem('review_allocation_catalog_ensemble_unsupported', 422);
       if (sources.some(s => s.view.currency !== sources[0]!.view.currency || s.view.capital !== sources[0]!.view.capital || s.view.datasetId !== sources[0]!.view.datasetId)) throw new Problem('review_allocation_common_account_basis_required', 422);
       if (!config.defaultModel) throw new Problem('review_model_not_configured', 422);
@@ -241,7 +371,12 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
       if (input.independentDatasetId !== undefined && (!independentDataset || independentDataset.currency !== sources[0]!.view.currency || independentDataset.nativeModality === 'TRADE_TICK')) throw new Problem('review_allocation_independent_dataset_invalid');
       const reviewPolicy = input.reviewPolicy ? validateReviewPolicy(input.reviewPolicy) : createReviewPolicy('ALLOCATION', `review-policy:${id}`, frozenAtNs);
       if (reviewPolicy.targetKind !== 'ALLOCATION') throw new Problem('review_policy_target_mismatch');
-      const taskId = await tx.createTask(ReviewAllocationTask, { id, dataDir: config.dataDir, binary: scienceTarget(config), sources, policy, maximumScientificCalls: input.maximumScientificCalls, model: config.defaultModel, reviewPolicy, ...(independentDataset ? { independentData: json(independentDataset.data.sealed ? object(independentDataset.data.sealed) : independentDataset.data) } : {}) },
+      const cohortId = allocationCohortKey(sources);
+      const previous = Object.values(document.records).map(fact).filter(record => allocationCohortKey(record.sources) === cohortId);
+      if (previous.some(record => ['QUEUED', 'RUNNING'].includes(record.view.status))) throw new Problem('review_allocation_cohort_active', 409);
+      const cohort: AllocationComparisonCohort = { id: cohortId, totalTrials: previous.length + 1, previous: previous.map(record => ({ id: record.view.id,
+        native: record.native?.catalog === object(object(sources[0]!.evidence[0]!.input).data).catalog && record.native?.joint && typeof record.native.joint === 'object' && !Array.isArray(record.native.joint) ? record.native.joint as JsonObject : null })) };
+      const taskId = await tx.createTask(ReviewAllocationTask, { id, createdAt, cohort, independentSource, sourceGrants, stressMethod: ALLOCATION_STRESS_METHOD, dataDir: config.dataDir, binary: scienceTarget(config), sources, policy, maximumScientificCalls: input.maximumScientificCalls, model: config.defaultModel, reviewPolicy, ...(independentDataset ? { independentData: json(independentDataset.data.sealed ? object(independentDataset.data.sealed) : independentDataset.data), independentConfigured: json(independentDataset) as unknown as DatasetConfig } : {}) },
         { conversationId: sources[0]!.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
       const view: ReviewAllocationView = { id, requestId: input.requestId, name: input.name, status: 'QUEUED', portfolioIds: input.portfolioIds, taskId, consumedScientificCalls: 0, weights: null, review: null, error: null, createdAt };
       document.records[id] = json({ original: input, view, sources, policy, native: null } satisfies AllocationFact); return view;

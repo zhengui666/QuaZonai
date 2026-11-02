@@ -30,3 +30,13 @@ test('external allocation results are checked against exact caps and turnover be
   invalid.members[0].weight = '0.56'; invalid.members[1].weight = '0.44';
   assert.throws(() => validateReviewAllocationWeights(invalid, structuredClone(policy) as any), /turnover_violated/);
 });
+test('a crash after reservation replays the original stage without charging its budget twice', async () => {
+  const { reserveReviewStage } = await import('../src/review-allocation.ts');
+  const state = { reservedCalls: 0, reservations: {} };
+  reserveReviewStage(state, 'joint-replay', 1, 1);
+  const restored = JSON.parse(JSON.stringify(state));
+  reserveReviewStage(restored, 'joint-replay', 1, 1);
+  assert.equal(restored.reservedCalls, 1);
+  assert.throws(() => reserveReviewStage(restored, 'another-replay', 1, 1), /budget_exhausted/);
+  assert.throws(() => reserveReviewStage(restored, 'joint-replay', 2, 3), /identity_conflict/);
+});

@@ -14,13 +14,26 @@ import { classifyExecutionError, executionDiagnostic } from '../../research/src/
 import { readCatalogScope } from '../../research/plugins/native-catalog-scope.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, pmState } from './pm-facts.ts';
-import { reviewPortfolio } from './portfolio-review.ts';
+import { reviewPortfolio, reservePortfolioReviewScience } from './portfolio-review.ts';
 import { researchRuntime } from '../../research/src/research-runtime.ts';
+import { checkExposure } from '../../research/plugins/native-exposure.ts';
+import { canonical } from '../../research/src/documents.ts';
+
+/** A new reviewed configuration must use its own frozen unread dataset. */
+export function portfolioIndependentData(input: PortfolioTaskInput): JsonObject | undefined {
+  if (!input.review) return undefined;
+  const data = input.review.independentData;
+  if (!data) throw new Problem('portfolio_independent_dataset_required', 422);
+  if (data.nautilusTarget !== undefined && canonical(data.nautilusTarget) !== canonical(json(input.binary))) throw new Problem('portfolio_independent_target_mismatch', 422);
+  if (input.policy.kind === 'catalog-ensemble' && !data.catalog_scope) throw new Problem('portfolio_independent_catalog_scope_required', 422);
+  return data;
+}
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
   name: 'qz.portfolio', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
+    return withNativeRemoteTracking(runtime.taskId, runtime, context, async () => {
     try {
       const review = await reviewPortfolio(task.input, researchRuntime(runtime), context);
       if (review) {
@@ -38,8 +51,20 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
           return;
         }
       }
+      const independentData = portfolioIndependentData(task.input);
+      if (independentData) {
+        // Grant original data read capability only after reserving the permanent
+        // exposure. Recovery retains this Task identity and never refunds a read.
+        await checkExposure(researchRuntime(runtime), context, independentData, true);
+      }
       let scope: JsonObject | undefined;
       if (task.input.policy.kind === 'catalog-ensemble') {
+        if (independentData) {
+          const reference = object(independentData.catalog_scope, 'independent_catalog_scope');
+          const originalScope = await runtime.getTask(reference.taskId as TaskId<JsonObject>, context);
+          if (!originalScope || object(originalScope.input, 'independent_scope_input').catalog !== independentData.catalog) throw new Problem('portfolio_independent_catalog_scope_mismatch', 422);
+          scope = await readCatalogScope(runtime, reference, context);
+        } else {
         const source = Array.isArray(task.input.evidence) ? task.input.evidence[0] : task.input.evidence;
         const final = object(object(source!.final, 'independent_final').result, 'independent_result');
         let reference = final.catalog_scope;
@@ -48,6 +73,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
           reference = object(object(original?.input, 'portfolio_input').data, 'study_data').catalog_scope;
         }
         scope = await readCatalogScope(runtime, object(reference, 'catalog_scope'), context);
+        }
       }
       let phase = 'FORECASTING'; let lastSnapshotCount = 0;
       const report = async (progress: PortfolioProgress, curve?: EquityPoint[]) => {
@@ -59,11 +85,24 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
           facts.portfolios[task.input.id] = json(fact); return undefined;
         }, context);
       };
-      const result = await withNativeRemoteTracking(runtime.taskId, runtime, context, () => withNativeProgress(async snapshots => {
+      const result = await withNativeProgress(async snapshots => {
         if (phase !== 'SIMULATING' || !snapshots.length || snapshots.length === lastSnapshotCount) return;
         const curve = nativeCurve({ canonical_result: { portfolio_snapshots: snapshots } }, task.input.currency);
         await report({ phase, updatedAt: new Date().toISOString() }, curve); lastSnapshotCount = snapshots.length;
-      }, () => computePortfolio(task.input, context, scope, report)));
+      }, async () => {
+        if (!independentData) return computePortfolio(task.input, context, scope, report);
+        const sources = Array.isArray(task.input.evidence) ? task.input.evidence : [task.input.evidence];
+        const maximumCalls = sources.reduce((sum, source) => {
+          const proposal = object(object(source.selected, 'selected_trial').proposal, 'selected_proposal');
+          const members = Array.isArray(proposal.members) ? proposal.members.length : 1;
+          return sum + members + (members > 1 ? 1 : 0);
+        }, 3);
+        // Original task-keyed reservation/results survive restart. Incomplete
+        // remote effects remain under the existing receipt reconciliation path.
+        const saved = await reservePortfolioReviewScience(task.input, researchRuntime(runtime), context, 'independent', maximumCalls,
+          async () => json(await computePortfolio(task.input, context, scope, report, { partition: 'HELDOUT', data: independentData })));
+        return saved as unknown as Awaited<ReturnType<typeof computePortfolio>>;
+      });
       await runtime.commit(async (tx) => {
         const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
         fact.native = result.native; fact.target = result.target;
@@ -86,6 +125,7 @@ export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' 
         return { status: 'terminal', outcome: { status: 'failed', error: { message: diagnostic, detail: { ...detail } } } };
       }, context);
     }
+    });
   } },
   async abort(task, runtime, context) {
     await runtime.commit(async (tx) => {

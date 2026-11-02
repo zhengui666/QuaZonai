@@ -25,4 +25,8 @@ Controlled fixtures prove software behavior only. No real market dataset is pres
 
 ## Delivery evidence
 
-Implementation and final validation are in progress; PR/CI/review/merge evidence will be recorded after verification.
+PR: [#271](https://github.com/zhengui666/QuaZonai/pull/271), based on remote `dev`. The PR retains exact-head CI, independent review and final merge evidence.
+
+Local validation includes 53 passing native science/source/allocation/fitting tests and regenerated native schemas; real Durable/HTTP protocol tests exercise PASS, INCONCLUSIVE and REJECT, source hash/scope/licensing, original request recovery, causal cross-research priors, scientific budget recovery and persistent multi-candidate selection. The browser regression preserves the original submission after disconnect/reload. Source-owner evidence is attributed to the configured producer; consistency validation does not reconstruct historical receive clocks.
+
+Final applicable CI and explicit clean GitHub Codex review remain merge conditions. Current delivery status must be read from the PR rather than inferred from these local test counts.

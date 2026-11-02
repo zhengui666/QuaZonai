@@ -7,6 +7,21 @@ const METHOD: &str = "qz.review-science.v1";
 pub(crate) const MAX_POINTS: usize = 20_000;
 const BOOTSTRAPS: usize = 512;
 
+pub fn validate_source(
+    request: &NativeReviewSourceRequestV1,
+) -> Result<NativeReviewSourceResultV1> {
+    let metadata: contracts::catalogs::RuntimeCatalogMetadataV1 =
+        serde_json::from_value(request.metadata.clone())?;
+    domain::catalogs::metadata(&metadata, request.observed_at)?;
+    domain::execution::native_quality(&metadata.quality)?;
+    Ok(NativeReviewSourceResultV1 {
+        schema_version: SchemaV1,
+        method_version: "qz.review-source.v1".into(),
+        validated: true,
+        metadata: request.metadata.clone(),
+    })
+}
+
 fn metric(code: &str, value: Option<f64>, reason: &str) -> NativeReviewMetricV1 {
     NativeReviewMetricV1 {
         code: code.into(),
@@ -471,10 +486,10 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
             let sharpes: Vec<_> = trials.iter().filter_map(|s| sharpe(&s.returns)).collect();
             let dsr = if *ledger_complete
                 && *block_length == 1
-                && *total_trials >= 2
+                && *total_trials >= 1
                 && *total_trials as usize == trials.len()
                 && sharpes.len() == trials.len()
-                && trials.len() >= 2
+                && !trials.is_empty()
                 && timestamps_ns.len() / (*block_length as usize) >= 30
             {
                 let s = &trials[selected].returns;
@@ -483,16 +498,24 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 let sd = (s.iter().map(|v| (v - m).powi(2)).sum::<f64>() / s.len() as f64).sqrt();
                 let skew = s.iter().map(|v| ((v - m) / sd).powi(3)).sum::<f64>() / s.len() as f64;
                 let kurt = s.iter().map(|v| ((v - m) / sd).powi(4)).sum::<f64>() / s.len() as f64;
-                let variance = sharpes
-                    .iter()
-                    .map(|v| (v - mean(&sharpes)).powi(2))
-                    .sum::<f64>()
-                    / (sharpes.len() - 1) as f64;
+                let variance = if sharpes.len() == 1 {
+                    0.0
+                } else {
+                    sharpes
+                        .iter()
+                        .map(|v| (v - mean(&sharpes)).powi(2))
+                        .sum::<f64>()
+                        / (sharpes.len() - 1) as f64
+                };
                 let n = *total_trials as f64;
                 let gamma = 0.5772156649015329;
-                let benchmark = variance.sqrt()
-                    * ((1.0 - gamma) * inverse_normal(1.0 - 1.0 / n)
-                        + gamma * inverse_normal(1.0 - 1.0 / (n * std::f64::consts::E)));
+                let benchmark = if *total_trials == 1 {
+                    0.0
+                } else {
+                    variance.sqrt()
+                        * ((1.0 - gamma) * inverse_normal(1.0 - 1.0 / n)
+                            + gamma * inverse_normal(1.0 - 1.0 / (n * std::f64::consts::E)))
+                };
                 let denominator = 1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr * sr;
                 (denominator > 0.0).then(|| {
                     normal_cdf((sr - benchmark) * ((s.len() - 1) as f64 / denominator).sqrt())
@@ -526,6 +549,9 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 },
             ));
             out.limitations.push("DSR uses all recorded attempts as conservative independent-trial count, per-observation unannualized Sharpe and empirical skew/kurtosis. It assumes independent return observations; declared dependence (block_length > 1) is unsupported rather than inflating sample size. Missing/failed return rows are never zero-filled.".into());
+            if *total_trials == 1 {
+                out.limitations.push("Explicit complete single-trial ledger: zero selection-inflation benchmark, the probabilistic Sharpe special case. Missing ledgers never imply a single trial.".into());
+            }
             out.limitations.push("PBO uses 8 contiguous blocks and all 70 symmetric 4/4 splits; it diagnoses the supplied search cohort, not an individual factor or future profitability. CSCV does not replace chronological held-out evaluation.".into());
         }
         NativeReviewAnalysisV1::Portfolio {
@@ -551,7 +577,48 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
                 .map(|(a, b)| a - b)
                 .collect();
             let bounds = interval_mean(&delta, *block_length as usize);
+            let account_bounds = interval_mean(&candidate.returns, *block_length as usize);
+            let positive_slices = if candidate.returns.len() / (*block_length as usize) >= 30 {
+                Some(
+                    (0..4)
+                        .filter(|slice| {
+                            mean(
+                                &candidate.returns[candidate.returns.len() * slice / 4
+                                    ..candidate.returns.len() * (slice + 1) / 4],
+                            ) > 0.0
+                        })
+                        .count() as f64
+                        / 4.0,
+                )
+            } else {
+                None
+            };
+            let daily_complete = frequency == "DAY"
+                && timestamps_ns.len() >= 2
+                && timestamps_ns
+                    .windows(2)
+                    .all(|pair| pair[1].get() - pair[0].get() == 86_400_000_000_000);
             out.metrics = vec![
+                metric(
+                    "candidate_net_return_mean",
+                    (!candidate.returns.is_empty()).then(|| mean(&candidate.returns)),
+                    "EMPTY_RETURNS",
+                ),
+                metric(
+                    "candidate_net_return_lower",
+                    account_bounds.map(|v| v.0),
+                    "BOOTSTRAP_REQUIRES_30_COMPLETE_BLOCKS",
+                ),
+                metric(
+                    "positive_slice_fraction",
+                    positive_slices,
+                    "BOOTSTRAP_REQUIRES_30_COMPLETE_BLOCKS",
+                ),
+                metric(
+                    "return_coverage",
+                    daily_complete.then_some(1.0),
+                    "COMPLETE_NATIVE_DAILY_GRID_REQUIRED",
+                ),
                 metric(
                     "net_return_delta",
                     (!delta.is_empty()).then(|| mean(&delta)),

@@ -4,7 +4,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import type { ObservationView, PortfolioStart, PortfolioView, SettingsView, ObservationStart } from '../../../packages/contracts/src/index.ts';
 import type { ConnectionConfig } from './config.ts';
 
-export type ResearchAdmissions = Record<string, { original: JsonValue; input: JsonObject; dataset?: JsonObject }>;
+export type ResearchAdmissions = Record<string, { original: JsonValue; input: JsonObject; dataset?: JsonObject; sourceEvidence?: JsonObject }>;
 export const Application = defineDoc<{
   passwordHash: string | null;
   modelDeviceId: string | null;
@@ -27,6 +27,7 @@ export interface PortfolioFact {
   evidence: JsonObject[]; weights?: string[]; policy: JsonObject; native: JsonObject | null; target: JsonObject | null;
 }
 export interface ObservationFact {
+  reviewSources?: import('./review-delivery.ts').ReviewDeliverySource[];
   input: ObservationStart; view: ObservationView; connection: ConnectionConfig;
   target: JsonObject; taskId: number; snapshot: JsonObject | null;
   /** First local receipt of this exact native snapshot; never producer event time. */

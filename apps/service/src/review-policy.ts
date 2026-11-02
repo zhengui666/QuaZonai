@@ -8,6 +8,7 @@ import { createReviewPolicy, deriveReviewPolicyFromReference } from '../../../pa
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, json, nowNs, object, Problem, text } from './facts.ts';
+import { ReviewAllocations } from './review-allocation.ts';
 
 const context = BACKGROUND_CONTEXT;
 const Policies = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-policies', version: 1, scope: 'session', initial: () => ({ records: {} }) });
@@ -16,11 +17,14 @@ export function registerReviewPolicyRoutes(app: FastifyInstance, host: ResearchH
   app.get('/api/v3/review-policies', async () => Object.values((await host.harness.snapshot(Policies, context))?.records ?? {}).map(record => record.policy));
   app.post('/api/v3/review-policies', async (request, reply) => {
     const input = object(request.body);
-    if (Object.keys(input).some(key => !['requestId', 'kind', 'researchIds', 'evaluationStartNs'].includes(key))) throw new Problem('review_policy_unknown_input');
+    if (Object.keys(input).some(key => !['requestId', 'kind', 'researchIds', 'allocationIds', 'evaluationStartNs'].includes(key))) throw new Problem('review_policy_unknown_input');
     text(input.requestId, 'request_id');
-    if (input.kind !== 'FACTOR' && input.kind !== 'PORTFOLIO') throw new Problem('review_policy_kind_invalid');
+    if (input.kind !== 'FACTOR' && input.kind !== 'PORTFOLIO' && input.kind !== 'ALLOCATION') throw new Problem('review_policy_kind_invalid');
     const evaluationStartNs = counter(input.evaluationStartNs, 'evaluation_start');
-    if (!Array.isArray(input.researchIds) || input.researchIds.length < 30 || input.researchIds.length > 1000 || new Set(input.researchIds).size !== input.researchIds.length || input.researchIds.some(id => !Number.isSafeInteger(id) || Number(id) < 0)) throw new Problem('review_reference_roots_required');
+    const ids = input.kind === 'ALLOCATION' ? input.allocationIds : input.researchIds;
+    if (!Array.isArray(ids) || ids.length < 30 || ids.length > 1000 || new Set(ids).size !== ids.length
+      || ids.some(id => input.kind === 'ALLOCATION' ? typeof id !== 'string' || !id : !Number.isSafeInteger(id) || Number(id) < 0)
+      || (input.kind === 'ALLOCATION' ? input.researchIds !== undefined : input.allocationIds !== undefined)) throw new Problem('review_reference_roots_required');
     const prior = (await host.harness.snapshot(Policies, context))?.records[String(input.requestId)];
     if (prior) {
       if (canonical(prior.input!) !== canonical(input)) throw new Problem('request_id_conflict', 409);
@@ -28,7 +32,21 @@ export function registerReviewPolicyRoutes(app: FastifyInstance, host: ResearchH
     }
     const records: ReviewReferenceObservation[] = [];
     // Include the original result regardless of the candidate's score/decision. Never retain winners only.
-    for (const researchId of input.researchIds as number[]) {
+    if (input.kind === 'ALLOCATION') {
+      const allocations = await host.harness.snapshot(ReviewAllocations, context);
+      for (const id of ids as string[]) {
+        const saved = allocations?.records[id];
+        if (!saved) throw new Problem('review_allocation_not_found', 404);
+        const view = object(saved.view); const report = view.review as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport;
+        const native = object(saved.native, 'review_reference_native');
+        if (!report || report.target.kind !== 'ALLOCATION' || report.target.id !== id) throw new Problem('review_reference_report_missing', 422);
+        const endNs = counter(object(native.selection).event_end_ns, 'validation_end');
+        const sources = Array.isArray(saved.sources) ? saved.sources.map(source => String(object(object(source).view).id)).sort() : [];
+        if (!sources.length || report.metrics.some(metric => /heldout|sealed|independent/i.test(metric.evidenceRef))) throw new Problem('review_reference_independent_evidence_forbidden', 422);
+        records.push({ rootId: `allocation-sources:${sources.join('|')}`, endNs, evidenceRefs: report.target.sourceEvidenceRefs, metrics: report.metrics });
+      }
+    }
+    for (const researchId of input.kind === 'ALLOCATION' ? [] : ids as number[]) {
       const state = await host.state(researchId);
       if (!state.research?.input || state.research.deletedAt) throw new Problem('research_not_found', 404);
       const candidates = Object.values(state.reviews?.records ?? {}).filter(item => item.report && typeof item.report === 'object' && !Array.isArray(item.report));

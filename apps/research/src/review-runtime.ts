@@ -88,10 +88,11 @@ export const IndependentReviewTask = defineTask<IndependentReviewInput, { phase:
       const report = scoreReview({ id: `review:${task.id}`, target: task.input.target, policy: task.input.policy,
         checks, metrics, createdAt: task.input.createdAt,
         narrative: session?.narrative ?? 'The independent review agent did not complete its required evidence review.',
-        analyses: Object.entries(task.input.evidence).filter(([kind]) => kind !== 'context').map(([kind, value]) => ({
-          kind, status: value && typeof value === 'object' && !Array.isArray(value) && value.status === 'COMPLETE' ? 'COMPLETE' : 'INCOMPLETE',
+        analyses: Object.entries(session?.evidence ?? task.input.evidence).filter(([kind]) => kind !== 'context').map(([kind, value]) => ({
+          kind, status: kind === 'mechanism' && session?.finished && Array.isArray(value) && value.length === 5 ? 'COMPLETE' : value && typeof value === 'object' && !Array.isArray(value) && value.status === 'COMPLETE' ? 'COMPLETE' : 'INCOMPLETE',
           reason: value && typeof value === 'object' && !Array.isArray(value) && typeof value.reason === 'string' ? value.reason : null,
-          evidenceRef: task.input.target.sourceEvidenceRefs[0]!, metrics: [],
+          evidenceRef: value && typeof value === 'object' && !Array.isArray(value) && typeof value.evidenceRef === 'string' ? value.evidenceRef : task.input.target.sourceEvidenceRefs[0]!,
+          metrics: metrics.filter(metric => metric.scope === (kind === 'selection' ? 'SELECTION_COHORT' : kind === 'portfolio' ? 'SHARED_ACCOUNT' : kind === 'factor' ? 'POOLED_TIME_SERIES' : kind === 'mechanism' ? 'MECHANISM' : 'DATA')).map(metric => metric.key),
         })) });
       if (session?.findings.length) report.narrative = `${report.narrative ?? ''}\n\nFindings:\n${session.findings.map(finding => `${finding.severity}: ${finding.detail} [${(finding.evidenceRefs as string[]).join(', ')}]`).join('\n')}`;
       await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: { report: json(report), reviewerConversationId: reviewer! } } }), context);

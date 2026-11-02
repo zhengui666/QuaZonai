@@ -9,6 +9,7 @@ const ns = (value: unknown): value is string => typeof value === 'string' && /^(
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const identifier = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= 512;
 const unique = (values: readonly string[]) => new Set(values).size === values.length;
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const clip = (value: number) => Math.max(0, Math.min(1, value));
 
 /** Cold-start policies emit reports but cannot auto-release without reference evidence. */
@@ -23,7 +24,7 @@ export function createReviewPolicy(kind: ReviewTargetKind, id: string, frozenAtN
     ['mechanism.evidence_fraction', 'MECHANISM', 'HIGHER', 0, 1, 'RATIO'],
   ];
   return validateReviewPolicy({ schemaVersion: 1, id, targetKind: kind, frozenAtNs, calibration: null,
-    requiredChecks: [...REQUIREMENTS], rejectChecks: [...REJECT],
+    requiredChecks: [...REQUIREMENTS, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])], rejectChecks: [...REJECT, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])],
     metricRules: definitions.map(([key, dimension, direction, low, high, unit]) => ({ key, dimension, direction, low, high,
       minimumObservations: dimension === 'MECHANISM' ? 5 : 30, required: true, scope: dimension === 'DATA' ? 'DATA' : dimension === 'MECHANISM' ? 'MECHANISM' : key.startsWith('selection.') ? 'SELECTION_COHORT' : dimension === 'STATISTICS' || dimension === 'ROBUSTNESS' ? kind === 'FACTOR' ? 'POOLED_TIME_SERIES' : 'SHARED_ACCOUNT' : 'SHARED_ACCOUNT', methods: [dimension === 'MECHANISM' ? 'qz.review-mechanism/1' : 'qz.review-science.v1'], unit, frequency: 'REGISTERED' })),
     dimensionWeights: kind === 'FACTOR' ? { DATA: 20, STATISTICS: 25, ROBUSTNESS: 20, EXECUTION: 15, INCREMENTAL: 15, MECHANISM: 5 }
@@ -38,13 +39,14 @@ export function validateReviewPolicy(value: unknown): ReviewPolicy {
   if (p.schemaVersion !== 1 || !identifier(p.id) || !['FACTOR', 'PORTFOLIO', 'ALLOCATION'].includes(p.targetKind) || !ns(p.frozenAtNs)) invalid('review_policy_invalid');
   if (!finite(p.passScore) || !finite(p.observeScore) || !finite(p.dimensionFloor) || p.passScore < 80 || p.passScore > 100 || p.observeScore < 65 || p.observeScore >= p.passScore || p.dimensionFloor < 60 || p.dimensionFloor > 100) invalid('review_policy_threshold_invalid');
   for (const field of ['requiredChecks', 'rejectChecks'] as const) if (!Array.isArray(p[field]) || !p[field].every(identifier) || !unique(p[field])) invalid('review_policy_checks_invalid');
+  if (p.targetKind === 'ALLOCATION' && (!p.requiredChecks.includes('independent_outcome') || !p.rejectChecks.includes('independent_outcome'))) invalid('review_policy_independent_outcome_required');
   if (REQUIREMENTS.some(id => !p.requiredChecks.includes(id)) || REJECT.some(id => !p.rejectChecks.includes(id)) || p.rejectChecks.some(id => !p.requiredChecks.includes(id))) invalid('review_policy_checks_incomplete');
   if (!p.dimensionWeights || DIMENSIONS.some(id => !finite(p.dimensionWeights[id]) || p.dimensionWeights[id] <= 0) || Object.values(p.dimensionWeights).reduce((a, b) => a + b, 0) !== 100) invalid('review_policy_dimension_weights_invalid');
   if (!Array.isArray(p.metricRules) || !p.metricRules.length || p.metricRules.length > 128 || !unique(p.metricRules.map(r => r.key))) invalid('review_policy_metrics_invalid');
   for (const r of p.metricRules) if (!identifier(r.key) || !DIMENSIONS.includes(r.dimension) || !['HIGHER', 'LOWER'].includes(r.direction) || !finite(r.low) || !finite(r.high) || r.low >= r.high || !Number.isSafeInteger(r.minimumObservations) || r.minimumObservations < 1 || typeof r.required !== 'boolean' || !Array.isArray(r.methods) || !r.methods.length || !r.methods.every(identifier) || !identifier(r.scope) || !identifier(r.unit) || !identifier(r.frequency)) invalid('review_policy_metric_invalid');
   if (DIMENSIONS.some(id => !p.metricRules.some(r => r.dimension === id && r.required))) invalid('review_policy_dimension_missing');
   if (p.calibration !== null && (!p.calibration || !Number.isSafeInteger(p.calibration.rootCount) || p.calibration.rootCount < 30 || !ns(p.calibration.endNs) || BigInt(p.calibration.endNs) > BigInt(p.frozenAtNs) || !Array.isArray(p.calibration.evidenceRefs) || !p.calibration.evidenceRefs.length || !p.calibration.evidenceRefs.every(identifier))) invalid('review_policy_calibration_invalid');
-  return structuredClone(p);
+  return clone(p);
 }
 
 /** Pure, replayable gate over trusted tool results. Incomplete evidence never reallocates score weights. */
@@ -88,10 +90,10 @@ export function scoreReview(input: ReviewScoringInput): ReviewReport {
   const decision = failures.length ? 'REJECT' : missing.length || total === null ? 'INCONCLUSIVE' : total < policy.observeScore ? 'REJECT' : total >= policy.passScore && floor ? 'PASS' : 'INCONCLUSIVE';
   const reasons = [...failures, ...missing];
   if (!failures.length && !missing.length && total !== null && decision !== 'PASS') reasons.push(total < policy.observeScore ? 'score_below_reject_threshold' : !floor ? 'required_dimension_below_floor' : 'observation_band');
-  return { schemaVersion: 1, id: input.id, target: structuredClone(target), policyId: policy.id, policy, decision,
+  return { schemaVersion: 1, id: input.id, target: clone(target), policyId: policy.id, policy, decision,
     totalScore: total, dimensions, qualityCoefficient: decision === 'PASS' ? clip((total! - 60) / 40) : 0,
-    reasonCodes: reasons, hardFailures: failures, missingEvidence: missing, metrics: structuredClone(input.metrics), checks: structuredClone(input.checks),
-    analyses: structuredClone(input.analyses ?? []), weights: [], narrative: input.narrative ?? null, createdAt: input.createdAt };
+    reasonCodes: reasons, hardFailures: failures, missingEvidence: missing, metrics: clone(input.metrics), checks: clone(input.checks),
+    analyses: clone(input.analyses ?? []), weights: [], narrative: input.narrative ?? null, createdAt: input.createdAt };
 }
 
 /** Reports and aligned prior data are resolved by the service, never uploaded metric summaries. */

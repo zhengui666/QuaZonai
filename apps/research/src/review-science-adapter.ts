@@ -9,6 +9,8 @@ import { executeNativeValue } from './native-execution.ts';
 
 const METHOD = 'qz.review-science.v1';
 const DEFINITIONS: Record<string, [string, string]> = {
+  candidate_net_return_mean: ['account.net_return_mean', 'RETURN_RATIO'], candidate_net_return_lower: ['account.net_return_lower', 'RETURN_RATIO'],
+  return_coverage: ['data.coverage', 'RATIO'],
   coverage: ['data.coverage', 'RATIO'], rank_ic: ['factor.rank_ic', 'CORRELATION'],
   rank_ic_lower: ['factor.rank_ic_lower', 'CORRELATION'], rank_ic_upper: ['factor.rank_ic_upper', 'CORRELATION'],
   quantile_spread: ['factor.quantile_spread', 'RETURN_RATIO'], quantile_monotonicity: ['factor.quantile_monotonicity', 'RATIO'],
@@ -33,7 +35,7 @@ export function projectReviewScienceMetrics(value: unknown, evidenceRef: string)
     const status: ReviewMetric['status'] = metric.status === 'AVAILABLE' ? 'AVAILABLE' : metric.status === 'INSUFFICIENT_EVIDENCE' ? 'INSUFFICIENT' : metric.status === 'INVALID_INPUT' ? 'INVALID' : metric.status === 'UNSUPPORTED' ? 'UNSUPPORTED' : 'INVALID';
     if (status === 'AVAILABLE' && (typeof metric.value !== 'number' || !Number.isFinite(metric.value)) || status !== 'AVAILABLE' && metric.value !== null) throw new Error('review_native_metric_value_invalid');
     const [key, unit] = definition;
-    return { key, unit, scope: code === 'coverage' ? 'DATA' : String(result.scope), value: status === 'AVAILABLE' ? metric.value as number : null, status, observationCount: Number(result.observations), method: METHOD,
+    return { key, unit, scope: code === 'coverage' || code === 'return_coverage' ? 'DATA' : String(result.scope), value: status === 'AVAILABLE' ? metric.value as number : null, status, observationCount: Number(result.observations), method: METHOD,
       frequency: 'REGISTERED', evidenceRef, ...(status !== 'AVAILABLE' ? { reason: typeof metric.reason === 'string' ? metric.reason : 'native_metric_unavailable' } : {}) };
   });
 }

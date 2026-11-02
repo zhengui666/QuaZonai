@@ -22,8 +22,13 @@ import { factorRequest } from './dataset-export.ts';
 import { nativeResearchInput as parseNativeResearchInput, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
-import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { createReviewPolicy, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import { latestTrialReview, ReviewLedger } from '../../research/src/review-documents.ts';
+import { freezeReviewedFactors } from './reviewed-factor-admission.ts';
+import { assertCurrentReviewSource, prepareReviewSourceEvidence } from './review-source.ts';
+import type { CapturedReviewSource } from '../../research/src/review-source.ts';
+import { ReviewSourceEvidence } from '../../research/src/review-source.ts';
+import { portfolioDeliverySources } from './review-delivery.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
@@ -65,7 +70,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const [facts, native] = await Promise.all([snapshot(), host.harness.snapshot(Requests, context)]);
     for (const [key, request] of Object.entries(facts?.researchRequests ?? {})) {
       // The host repairs its own native admission gap; never resubmit its stopped/final studies.
-      if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput, true);
+      if (!native?.requests[key]) await host.start(key.slice('request:'.length), request.input as NativeResearchInput, true, request.sourceEvidence as unknown as CapturedReviewSource | undefined);
     }
   }
   async function startResearch(value: unknown, retainedNautilusTarget?: RemoteNativeTarget) {
@@ -77,10 +82,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (nativeAdmission?.recovery || !nativeAdmission && !old && isRecoveryRequestId(requestId)) throw new Problem('request_id_conflict', 409);
     if (old) {
       if (canonical(old.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
-      return host.start(requestId, old.input as NativeResearchInput, true);
+      return host.start(requestId, old.input as NativeResearchInput, true, old.sourceEvidence as unknown as CapturedReviewSource | undefined);
     }
     const submission = body as unknown as ResearchStart;
     let input: ResearchInput;
+    let sourceDataset: ServiceConfig['datasets'][number] | undefined;
     let capturedDataset: import('../../../packages/contracts/src/index.ts').RecordedDataset | undefined;
     const captureDataset = (configured: ServiceConfig['datasets'][number]) => {
       const { id, name, assetClass, currency, source, start, end, preparation, inputCoverage } = configured;
@@ -105,6 +111,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const data = object(input.data, 'dataset');
       const registered = config.datasets.find((dataset) => dataset.ready && canonical(scienceDataWithoutBinding(json(dataset.data))) === canonical(scienceDataWithoutBinding(data)));
       if (!registered) throw new Problem('dataset_input_unregistered');
+      sourceDataset = registered;
       input.data = retainedNautilusTarget ? bindScienceData(registered.data, retainedNautilusTarget) : structuredClone(registered.data);
       if (input.specification) {
         const inherited = { ...registered.policy, max_trials: object(input.policy, 'policy').max_trials, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
@@ -114,6 +121,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     } else {
       const publicQueries = publicLiteratureQueries(submission.publicLiteratureQueries);
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
+      sourceDataset = configured;
       capturedDataset = captureDataset(configured);
       if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
       if (submission.serviceTier !== undefined && !['default', 'priority'].includes(submission.serviceTier)) throw new Problem('invalid_service_tier');
@@ -132,8 +140,15 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (input.serviceTier !== undefined && !['default', 'priority'].includes(input.serviceTier)) throw new Problem('invalid_service_tier');
     if (input.serviceTier !== undefined && !selectedModel.serviceTiers.includes(input.serviceTier)) throw new Problem('service_tier_unsupported');
     const policy = object(input.policy, 'policy');
+    if (policy.reviewedFactorSources !== undefined) throw new Problem('reviewed_factor_sources_service_owned');
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
+    const sourceEvidence = sourceDataset ? await prepareReviewSourceEvidence(sourceDataset) : null;
+    if (sourceDataset && sourceEvidence) await assertCurrentReviewSource(sourceDataset, sourceEvidence);
+    if (sourceDataset?.reviewSourceEvidence?.heldoutMetadata && sourceEvidence && validated.data.sealed) {
+      const independent = await prepareReviewSourceEvidence(sourceDataset, 'HELDOUT');
+      if (independent) { await assertCurrentReviewSource(sourceDataset, independent); sourceEvidence.independent = independent; }
+    }
     const registry = host.registry.snapshot();
     const versioned = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value) && 'schema_version' in value && value.schema_version === 1 ? value as Record<string, unknown> : null;
     const tagged = nativeResearchInput(validated.data); const tick = tagged?.modality === 'TRADE_TICK';
@@ -189,14 +204,19 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         else if (validated.data.sealed && !registry.tools().some(item => item.extension.name === 'qz.heldout-wasm' && item.tool.name === 'factor_finalize')) throw new Problem('registered_final_evaluator_required');
       } catch (error) { throw new Problem(error instanceof Error ? error.message : 'native_request_invalid'); }
     }
-    await host.harness.commit(async (tx) => {
+    const admitted = await host.harness.commit(async (tx) => {
       const facts = await tx.doc(Application); const current = facts.researchRequests[`request:${requestId}`];
       if (validated.campaign) assertPmNotDeleted(pmRecord(pmState(await tx.doc(PmDocument)), validated.campaign.mandateRevisionId));
       if (current && canonical(current.original) !== canonical(original)) throw new Problem('request_id_conflict', 409);
       if (!current) assertBusinessAdmission(facts);
-      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}) };
+      if (!current && submission.reviewedFactorIds !== undefined) {
+        const sources = await freezeReviewedFactors(tx, submission.reviewedFactorIds, validated.data, config);
+        if (sources) validated.policy.reviewedFactorSources = json(sources);
+      }
+      facts.researchRequests[`request:${requestId}`] ??= { original, input: json(validated), ...(capturedDataset ? { dataset: json(capturedDataset) } : {}), ...(sourceEvidence ? { sourceEvidence: json(sourceEvidence) } : {}) };
+      return json(facts.researchRequests[`request:${requestId}`]);
     }, context);
-    return host.start(requestId, validated);
+    return host.start(requestId, admitted.input as NativeResearchInput, false, admitted.sourceEvidence as unknown as CapturedReviewSource | undefined);
   }
   async function assertMembersAvailable(tx: Tx, researchIds: number[], input: PortfolioStart) {
     for (const id of researchIds) {
@@ -325,6 +345,9 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         if (study.input.policy.reviewPolicy || study.input.policy.reviewPolicies) {
           const review = latestTrialReview(await tx.doc(ReviewLedger, conversationId), Number(selected.taskId));
           if (!review || review.decision !== 'PASS') throw new Problem('independent_review_not_passed', 422);
+          const captured = (await tx.doc(ReviewSourceEvidence, conversationId)).captured;
+          if (!captured) throw new Problem('review_source_current_authorization_missing', 422);
+          await assertCurrentReviewSource(configured, captured as unknown as CapturedReviewSource);
         }
         const result = object(final.result, 'independent_result');
         if (catalogEnsemble) {
@@ -354,11 +377,21 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const id = randomUUID();
     const sourceInput = object(evidence[0]!.input);
     const sourcePolicy = object(sourceInput.policy);
+    if (input.maximumScientificCalls !== undefined && (!Number.isSafeInteger(input.maximumScientificCalls) || input.maximumScientificCalls < 1 || input.maximumScientificCalls > 4096)) throw new Problem('review_scientific_budget_invalid');
+    const independent = input.independentDatasetId === undefined ? undefined : dataset(text(input.independentDatasetId, 'independent_dataset_id'));
+    if (independent && independent.currency !== configured.currency) throw new Problem('portfolio_independent_currency_mismatch');
+    const independentSource = independent ? await prepareReviewSourceEvidence(independent, 'HELDOUT') : null;
+    const registeredReviewProfile = sourcePolicy.reviewPolicies && typeof sourcePolicy.reviewPolicies === 'object' && !Array.isArray(sourcePolicy.reviewPolicies)
+      ? sourcePolicy.reviewPolicies.PORTFOLIO : sourcePolicy.reviewPolicy && object(sourcePolicy.reviewPolicy).targetKind === 'PORTFOLIO' ? sourcePolicy.reviewPolicy : undefined;
     const review = sourcePolicy.reviewPolicy || sourcePolicy.reviewPolicies ? {
-      policy: createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
+      policy: registeredReviewProfile ? validateReviewPolicy(registeredReviewProfile) : createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
       model: object(sourceInput.model) as { provider: string; modelId: string },
       ...(typeof sourceInput.thinkingLevel === 'string' ? { thinkingLevel: sourceInput.thinkingLevel as import('../../../packages/contracts/src/index.ts').ThinkingLevel } : {}),
       createdAt: new Date().toISOString(),
+      maximumScientificCalls: input.maximumScientificCalls ?? 64,
+      stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' as const,
+      ...(independent ? { independentData: json(independent.data.sealed ? object(independent.data.sealed) : independent.data) } : {}),
+      ...(independentSource ? { independentSource } : {}),
     } : undefined;
     const originalData = object(object(evidence[0]!.input).data);
     const originalResult = object(object(evidence[0]!.final).result);
@@ -400,6 +433,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const selected = await getPortfolio(text(input.portfolioId, 'portfolio_id'));
     if (selected.view.status !== 'COMPUTED' || !selected.target) throw new Problem('portfolio_target_missing', 422);
     if (selected.view.review && selected.view.review.decision !== 'PASS') throw new Problem('portfolio_review_not_passed', 422);
+    const reviewSources = await portfolioDeliverySources(host, config, selected);
     if (!input.automatic?.enabled && BigInt(counter(selected.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired', 422);
     if (input.automatic) validateAutomatic(input.automatic);
     const connection = config.connections.find((connection) => connection.id === input.connectionId && connection.mode === input.mode);
@@ -430,8 +464,8 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const taskOptions = { conversationId: selected.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' as const } };
       const taskId = input.automatic?.enabled
         ? await tx.createTask(AdjustAccount, { id, binary: scienceTarget(config), dataDir: config.dataDir }, { ...taskOptions, background: true })
-        : await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: selected.target!, receiptId, refresh: false }, taskOptions);
-      const fact: ObservationFact = { input: structuredClone(input), connection: structuredClone(connection), target: selected.target!, taskId, snapshot: null,
+        : await tx.createTask(ObserveAccount, { id, connection: structuredClone(connection), target: selected.target!, receiptId, refresh: false, ...(reviewSources.length ? { reviewSources } : {}) }, taskOptions);
+      const fact: ObservationFact = { input: structuredClone(input), connection: structuredClone(connection), target: selected.target!, taskId, snapshot: null, ...(reviewSources.length ? { reviewSources } : {}),
         view: { id, name: selected.view.name, portfolioId: selected.view.id, mode: input.mode, status: 'QUEUED', currency: selected.view.currency,
           equity: null, cash: null, updatedAt: null, positions: [], curve: [], error: null,
           ...(input.automatic ? { automaticPolicy: input.automatic } : {}),

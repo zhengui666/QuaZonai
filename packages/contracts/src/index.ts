@@ -7,6 +7,8 @@ export * from './decision.ts';
 export * from './pm-validation.ts';
 export * from './pm-forward.ts';
 export type * from './review.ts';
+export type * from './review-source.ts';
+export type * from './reviewed-factors.ts';
 export * from './review-scoring.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
@@ -48,8 +50,8 @@ export interface ResearchSpecification {
   capital?: CapitalAssumptions;
 }
 export interface ResearchInput { goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; data: JsonObject; policy: JsonObject }
-export type ResearchStart = { requestId: string; input: ResearchInput } | {
-  requestId: string; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
+export type ResearchStart = { requestId: string; input: ResearchInput; reviewedFactorIds?: string[] } | {
+  requestId: string; reviewedFactorIds?: string[]; goal: string; specification?: ResearchSpecification; publicLiteratureQueries?: string[]; model: ModelRef; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier; datasetId: string; maxTrials: number;
 };
 export interface CriterionView { status: 'computed' | 'met' | 'not_met' | 'insufficient' | 'failed'; metric: string; value: number | null; target: number | null; partition: string; reason: string | null }
 export interface ResearchReceipt { conversationId: number; submissionId: number }
@@ -105,6 +107,8 @@ export interface FactorView extends FactorReference {
 }
 export interface FactorAllocation { factorId: string; weight: string }
 export interface PortfolioStart {
+  independentDatasetId?: string;
+  maximumScientificCalls?: number;
   requestId: string; name: string; researchIds?: number[]; factors?: FactorAllocation[]; datasetId: string; capital: string;
   weights?: { researchId: number; weight: string }[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;
 }
