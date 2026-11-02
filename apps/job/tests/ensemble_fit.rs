@@ -902,7 +902,12 @@ fn review_prior_is_causal_bound_and_changes_the_frozen_fit() {
         serde_json::to_value(&request.review_prior).unwrap()
     );
     assert_ne!(fitted.members[0].weight, legacy.members[0].weight);
-    let prior_weight: f64 = fitted.members[0].weight.to_string().parse().unwrap();
+    let prior_weight: f64 = fitted.members[0]
+        .weight
+        .as_decimal()
+        .to_string()
+        .parse()
+        .unwrap();
     assert!((prior_weight - 0.9).abs() < 1e-8);
     for mutation in 0..6 {
         let mut invalid = request.clone();
