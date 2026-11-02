@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { ReviewReport } from '../../../packages/contracts/src/review.ts';
 import { ReviewReportPanel, reviewFilename, reviewMarkdown, reviewReason } from './review-report';
 import { metricDefinition } from './metric-glossary';
+import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
 
 const report: ReviewReport = {
   schemaVersion: 1, id: 'report-1', target: { kind: 'FACTOR', id: 'factor-1', version: 'frozen-version-2', sourceEvidenceRefs: ['validation-evidence'], evaluationStartNs: '9007199254740995' },
@@ -67,5 +68,26 @@ describe('evidence-bound quantitative review report', () => {
     expect(metricDefinition('selection.dsr').explanation).toContain('不是未来盈利概率');
     expect(metricDefinition('pbo').explanation).toContain('诊断搜索过程');
     expect(metricDefinition('quantile_spread').explanation).toContain('不是可交易的组合净收益');
+  });
+  it('explains a real 100-point rejection against an unfavorable reference cohort and exports absolute floors', () => {
+    const policy = createReviewPolicy('FACTOR', 'bad-reference-policy', '20');
+    policy.calibration = { rootCount: 30, endNs: '10', evidenceRefs: ['frozen-poor-reference-cohort'] };
+    for (const rule of policy.metricRules) {
+      if (rule.key === 'selection.dsr') { rule.low = 0.1; rule.high = 0.2; }
+      else if (rule.minimumTarget) { rule.low = -0.2; rule.high = -0.1; }
+    }
+    const badReferenceReject = scoreReview({ id: 'bad-reference-reject', target: { kind: 'FACTOR', id: 'factor', version: 'frozen', sourceEvidenceRefs: ['native-evidence', 'verified-source'], evaluationStartNs: '100' }, policy, createdAt: '2026-11-02T10:00:00Z',
+      metrics: policy.metricRules.map(rule => ({ key: rule.key, value: rule.high, status: 'AVAILABLE', observationCount: 30, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: 'native-evidence' })),
+      checks: policy.requiredChecks.map(id => ({ id, status: 'PASS', reason: 'checked', evidenceRefs: ['verified-source'] })),
+    });
+    expect(badReferenceReject.totalScore).toBe(100); expect(badReferenceReject.decision).toBe('REJECT');
+    const markup = renderToStaticMarkup(createElement(ReviewReportPanel, { report: badReferenceReject }));
+    expect(markup).toContain('不予放行'); expect(markup).toContain('未达到冻结的绝对准入底线');
+    expect(markup).toContain('≥ 0.95'); expect(markup).toContain('&gt; 0');
+    expect(markup).toContain('高相对得分不能抵消未达底线');
+    const markdown = reviewMarkdown(badReferenceReject);
+    expect(markdown).toContain('总分（0–100）：100'); expect(markdown).toContain('结论：不予放行');
+    expect(markdown).toContain('≥ 0\\.95'); expect(markdown).toContain('&gt; 0');
+    expect(markdown).toContain('未达到冻结的绝对准入底线');
   });
 });

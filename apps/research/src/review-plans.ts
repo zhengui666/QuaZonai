@@ -3,6 +3,8 @@ import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import type { ResearchInput } from './documents.ts';
 import { canonical } from './documents.ts';
 import type { ResearchRuntime } from './research-runtime.ts';
+import { portfolioAccountEvidence } from './review-factor-account.ts';
+import { resolvePortfolioPolicy } from './strategy.ts';
 import type { ReviewNativePlan } from './review-native-task.ts';
 import { readNativeEvidence } from '../plugins/native-evidence.ts';
 import { nativeTargetForData } from './native-execution.ts';
@@ -36,7 +38,7 @@ export async function reviewSelectionPlan(api: ResearchRuntime, context: Context
   const proposal = object(selected.proposal)!;
   const cohort = trials.filter(trial => {
     const candidate = object(trial.proposal);
-    return Array.isArray(candidate?.members) && canonical((candidate?.request ?? null) as never) === canonical((proposal.request ?? null) as never)
+    return trial.status !== 'REJECTED' && candidate?.purpose !== 'TRAINING_FIT' && Array.isArray(candidate?.members) && canonical((candidate?.request ?? null) as never) === canonical((proposal.request ?? null) as never)
       && canonical((candidate?.strategy ?? null) as never) === canonical((proposal.strategy ?? null) as never);
   });
   const rows = await Promise.all(cohort.filter(trial => trial.status === 'COMPUTED').map(async trial => ({ trial, account: await originalValidationAccount(api, context, trial) })));
@@ -49,4 +51,16 @@ export async function reviewSelectionPlan(api: ResearchRuntime, context: Context
     analysis: { kind: 'SELECTION', total_trials: cohort.length, ledger_complete: rows.length === cohort.length && aligned.length === rows.length,
       selected_trial_id: String(selected.taskId), trials: aligned.map(row => ({ id: String(row.trial.taskId), returns: row.account!.returns })),
       timestamps_ns: selectedAccount.timestamps, frequency: 'PORTFOLIO_DAILY', block_length: 1 } }];
+}
+
+/** The review consumes the original joint account and targets, including learned calibration/weights; it never substitutes component IC. */
+export async function portfolioCohortSelectionEvidence(api: ResearchRuntime, context: Context, input: ResearchInput,
+  selected: JsonObject, trials: readonly JsonObject[], evidenceRef: string): Promise<{ plans: ReviewNativePlan[]; selectedAccount: JsonObject | null; cohort: JsonObject }> {
+  const plans = await reviewSelectionPlan(api, context, input, selected, trials, evidenceRef);
+  const source = await originalValidationAccount(api, context, selected);
+  if (!source || !object(source.source.simulationRequest)) return { plans, selectedAccount: null, cohort: { status: 'INCOMPLETE', reason: 'original_shared_account_request_or_receipt_missing' } };
+  const policy = resolvePortfolioPolicy(object(selected.proposal)!, object(input.policy.strategy)!);
+  const account = await portfolioAccountEvidence(api, context, input.data, source.source, policy, `${evidenceRef}#reference-strategy`);
+  return { plans, selectedAccount: account, cohort: { status: plans.length ? 'COMPLETE' : 'INCOMPLETE', reason: plans.length ? null : 'complete_original_portfolio_return_cohort_missing',
+    sourceEvidenceTaskId: object(selected.result)?.evidenceTaskId ?? null, maximumAdditionalScientificCalls: 4 } };
 }

@@ -1,17 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc } from '@earendil-works/pi-durable';
+import type { DocumentReader } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { FastifyInstance } from 'fastify';
 import type { ReviewPolicy, ReviewReferenceObservation } from '../../../packages/contracts/src/review.ts';
-import { createReviewPolicy, deriveReviewPolicyFromReference } from '../../../packages/contracts/src/review-scoring.ts';
+import { createReviewPolicy, deriveReviewPolicyFromReference, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, json, nowNs, object, Problem, text } from './facts.ts';
 import { ReviewAllocations } from './review-allocation.ts';
 
 const context = BACKGROUND_CONTEXT;
-const Policies = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-policies', version: 1, scope: 'session', initial: () => ({ records: {} }) });
+export const ReviewPolicies = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-policies', version: 1, scope: 'session', initial: () => ({ records: {} }) });
+const Policies = ReviewPolicies;
+/** Calibrated anchors must be the immutable output of the retained-reference consumer. */
+export async function resolveRegisteredReviewPolicy(reader: DocumentReader, value: unknown): Promise<ReviewPolicy> {
+  const policy = validateReviewPolicy(value);
+  if (policy.calibration === null) return policy;
+  const registry = await reader.snapshot(Policies, context);
+  const found = Object.values(registry?.records ?? {}).find(record => object(record.policy).id === policy.id);
+  if (!found || canonical(found.policy!) !== canonical(json(policy))) throw new Problem('review_policy_not_registered', 422);
+  return JSON.parse(JSON.stringify(found.policy)) as ReviewPolicy;
+}
 /** Reference metrics are resolved from original Validation reports, never accepted as request fields. */
 export function registerReviewPolicyRoutes(app: FastifyInstance, host: ResearchHost): void {
   app.get('/api/v3/review-policies', async () => Object.values((await host.harness.snapshot(Policies, context))?.records ?? {}).map(record => record.policy));

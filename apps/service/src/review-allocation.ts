@@ -8,6 +8,7 @@ import type { ConversationId, JsonObject } from '@earendil-works/pi-durable';
 import type { FastifyInstance } from 'fastify';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical } from '../../research/src/documents.ts';
+import { resolveRegisteredReviewPolicy } from './review-policy.ts';
 import { prepareReviewSourceEvidence, assertCurrentReviewSource } from './review-source.ts';
 import { trustedSourceChecks, ReviewSourceEvidence, type CapturedReviewSource } from '../../research/src/review-source.ts';
 import { accountReviewMetrics } from './review-account-science.ts';
@@ -18,11 +19,11 @@ import { runIndependentReview } from '../../research/src/review-runtime.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { exactWeights, resolveStrategyPolicy, strategyMembers } from '../../research/src/strategy.ts';
 import { checkExposure } from '../../research/plugins/native-exposure.ts';
-import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
+import { normalizedRequest, iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { blendTargets, executeNative, forecastMembers } from '../../research/plugins/native-portfolio.ts';
 import type { ReviewAllocationStart, ReviewAllocationView, ReviewAllocationPolicy, ReviewAllocationResult, ReviewReport, ReviewMetric } from '../../../packages/contracts/src/review.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { buildReviewAllocationRequest, createReviewPolicy, scoreReview, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { buildReviewAllocationRequest, createReviewPolicy, scoreReview, reviewIndependentOutcomeCheck } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ServiceConfig, DatasetConfig } from './config.ts';
 import { scienceTarget } from './config.ts';
 import { Application, counter, decimalUnits, json, nowNs, object, portfolio, Problem, text } from './facts.ts';
@@ -33,10 +34,14 @@ const context = BACKGROUND_CONTEXT;
 interface AllocationFact { original: ReviewAllocationStart; view: ReviewAllocationView; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; native: JsonObject | null }
 export const ReviewAllocations = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-allocations', version: 1, scope: 'session', initial: () => ({ records: {} }) });
 export interface ReviewStageBudget { reservedCalls: number; reservations: Record<string, number> }
-export function reserveReviewStage(state: ReviewStageBudget, key: string, calls: number, maximum: number): void {
+export function reserveReviewStage(state: ReviewStageBudget, key: string, calls: number, maximum: number, remote = false): void {
   if (!key || !Number.isSafeInteger(calls) || calls < 0 || !Number.isSafeInteger(maximum) || maximum < 1) throw new Problem('review_allocation_stage_invalid');
   const previous = state.reservations[key];
-  if (previous !== undefined) { if (previous !== calls) throw new Problem('review_allocation_stage_identity_conflict'); return; }
+  if (previous !== undefined) {
+    if (previous !== calls) throw new Problem('review_allocation_stage_identity_conflict');
+    if (remote && calls > 0) throw new Problem('review_allocation_remote_stage_result_unknown_reconciliation_required');
+    return;
+  }
   if (state.reservedCalls + calls > maximum) throw new Problem('review_allocation_scientific_budget_exhausted');
   state.reservations[key] = calls; state.reservedCalls += calls;
 }
@@ -50,7 +55,7 @@ export function approvedReviewPortfolio(source: PortfolioFact): ReviewReport {
   const report = source.view.review;
   if (source.deletedAt || source.view.status !== 'COMPUTED' || !report || report.target.id !== source.view.id || report.target.kind !== 'PORTFOLIO' || report.target.version !== portfolioReviewVersion(source)) throw new Problem('review_allocation_portfolio_not_approved', 422);
   const checked = scoreReview({ id: report.id, target: report.target, policy: report.policy, metrics: report.metrics, checks: report.checks, createdAt: report.createdAt });
-  if (checked.decision !== 'PASS' || checked.totalScore !== report.totalScore) throw new Problem('review_allocation_portfolio_not_approved', 422);
+  if (report.decision !== 'PASS' || report.checks.find(check => check.id === 'independent_outcome')?.status !== 'PASS' || checked.decision !== 'PASS' || checked.totalScore !== report.totalScore) throw new Problem('review_allocation_portfolio_not_approved', 422);
   return report;
 }
 /** Native daily returns only. No curve interpolation, arithmetic or missing-day fill in TypeScript. */
@@ -122,7 +127,7 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
         if (state?.results[key]) return state.results[key];
         await runtime.commit(async tx => {
           const stages = await tx.doc(Stages, task.id);
-          reserveReviewStage(stages, key, calls, task.input.maximumScientificCalls);
+          reserveReviewStage(stages, key, calls, task.input.maximumScientificCalls, typeof task.input.binary !== 'string');
           const saved = fact((await tx.doc(ReviewAllocations)).records[task.input.id]!);
           saved.view.status = 'RUNNING'; saved.view.consumedScientificCalls = stages.reservedCalls;
           (await tx.doc(ReviewAllocations)).records[task.input.id] = json(saved);
@@ -147,7 +152,7 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
             const data = object(input.data, 'study_data');
             const proposal = object(object(evidence.selected).proposal);
             const policy = resolveStrategyPolicy(proposal, source.policy);
-            const request = normalizedRequest(data); const originalCatalog = text(data.catalog, 'validation_catalog');
+            const request = iterationRequest(data, true); const originalCatalog = text(data.catalog, 'validation_catalog');
             if (catalog !== null && catalog !== originalCatalog) throw new Problem('review_allocation_validation_catalog_mismatch');
             catalog = originalCatalog;
             const originalSettings = { ...object(policy.simulationSettings), starting_capital: source.view.capital };
@@ -256,7 +261,7 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
       });
       const sourceRef = `allocation:${task.input.id}:shared-validation`;
       const report = await runIndependentReview(researchRuntime(runtime), ctx, {
-        target: { kind: 'ALLOCATION', id: task.input.id, version: createHash('sha256').update(canonical(json(result))).digest('hex'), sourceEvidenceRefs: [sourceRef, ...new Set(result.independentSourceChecks.flatMap(check => check.evidenceRefs))], evaluationStartNs: String(result.selection.event_start_ns) },
+        target: { kind: 'ALLOCATION', id: task.input.id, version: createHash('sha256').update(canonical(json(result))).digest('hex'), sourceEvidenceRefs: [sourceRef, ...(result.independent ? [`${sourceRef}:independent`] : []), ...new Set(result.independentSourceChecks.flatMap(check => check.evidenceRefs))], evaluationStartNs: String(result.selection.event_start_ns) },
         policy: task.input.reviewPolicy, model: task.input.model, createdAt: task.input.createdAt, metrics: [...result.diagnostics.metrics as unknown as ReviewMetric[], ...result.selectionDiagnostics.metrics as unknown as ReviewMetric[]],
         checks: task.input.reviewPolicy.requiredChecks.map(id => {
           if (task.input.independentData && (id === 'provenance' || id === 'no_leakage')) {
@@ -266,12 +271,7 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
             const diagnosticValue = result.independent?.diagnostic;
             const diagnostic = diagnosticValue !== null && typeof diagnosticValue === 'object' && !Array.isArray(diagnosticValue) ? object(diagnosticValue) : null;
             const independentMetrics = diagnostic?.metrics as unknown as ReviewMetric[] | undefined;
-            const lower = independentMetrics?.find(metric => metric.key === 'account.net_return_lower');
-            const coverage = independentMetrics?.find(metric => metric.key === 'data.coverage');
-            const floor = task.input.reviewPolicy.metricRules.find(rule => rule.key === 'account.net_return_lower')?.low ?? 0;
-            const available = lower?.status === 'AVAILABLE' && typeof lower.value === 'number' && coverage?.status === 'AVAILABLE' && coverage.value === 1;
-            return { id, status: !available ? 'UNKNOWN' : lower!.value! >= floor ? 'PASS' : 'FAIL', reason: !available ? 'fresh_independent_statistical_evidence_missing'
-              : lower!.value! >= floor ? 'frozen_configuration_passed_predeclared_independent_net_return_floor' : 'frozen_configuration_failed_predeclared_independent_net_return_floor', evidenceRefs: [sourceRef] };
+            return reviewIndependentOutcomeCheck(task.input.reviewPolicy, independentMetrics ?? [], `${sourceRef}:independent`);
           }
           const sourceChecks = task.input.sources.map(source => approvedReviewPortfolio(source).checks.find(check => check.id === id));
           const independentAvailable = result.independent !== null && object(result.independent.simulation).returns_status === 'OK';
@@ -369,7 +369,7 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
       const policy: ReviewAllocationPolicy = { id: `allocation-policy:${id}`, frozenAtNs, kind: 'PORTFOLIO', observationTimesNs: [], observationEvidenceRefs: [], memberCaps: input.memberCaps, clusterCaps: input.clusterCaps, currentWeights: input.currentWeights, maximumTurnover: input.maximumTurnover };
       const independentDataset = input.independentDatasetId === undefined ? undefined : config.datasets.find(dataset => dataset.id === input.independentDatasetId);
       if (input.independentDatasetId !== undefined && (!independentDataset || independentDataset.currency !== sources[0]!.view.currency || independentDataset.nativeModality === 'TRADE_TICK')) throw new Problem('review_allocation_independent_dataset_invalid');
-      const reviewPolicy = input.reviewPolicy ? validateReviewPolicy(input.reviewPolicy) : createReviewPolicy('ALLOCATION', `review-policy:${id}`, frozenAtNs);
+      const reviewPolicy = input.reviewPolicy ? await resolveRegisteredReviewPolicy(host.harness, input.reviewPolicy) : createReviewPolicy('ALLOCATION', `review-policy:${id}`, frozenAtNs);
       if (reviewPolicy.targetKind !== 'ALLOCATION') throw new Problem('review_policy_target_mismatch');
       const cohortId = allocationCohortKey(sources);
       const previous = Object.values(document.records).map(fact).filter(record => allocationCohortKey(record.sources) === cohortId);

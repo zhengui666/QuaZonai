@@ -12,6 +12,8 @@ export interface ReviewMetric {
 export interface ReviewMetricRule {
   key: string; dimension: ReviewDimensionId; direction: 'HIGHER' | 'LOWER'; low: number; high: number;
   minimumObservations: number; required: boolean; methods: string[]; scope: string; unit: string; frequency: string;
+  /** Absolute admission requirement; reference percentiles may never alter this gate. */
+  minimumTarget?: { value: number; inclusive: boolean };
 }
 export interface ReviewCheck {
   id: string; status: 'PASS' | 'FAIL' | 'UNKNOWN'; reason: string; evidenceRefs: string[];

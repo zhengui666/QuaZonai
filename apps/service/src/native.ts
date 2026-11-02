@@ -26,9 +26,24 @@ export async function nativeJob(binary: NativeTarget, command: string, input: Js
   catch (error) { throw error instanceof ExecutionFailure ? error : new Problem(error instanceof Error ? error.message : 'native_job_failed'); }
 }
 
+/** New independent clocks cannot change the already reviewed forecasting method. */
+export function assertPortfolioIndependentContract(input: PortfolioTaskInput, data: JsonObject): void {
+  const independent = normalizedRequest(data);
+  const { selection: independentSelection, ...independentMethod } = object(independent.forecast, 'independent_forecast');
+  for (const source of Array.isArray(input.evidence) ? input.evidence : [input.evidence]) {
+    const request = object(object(object(source.selected).result).request, 'reviewed_validation_request');
+    const { selection, ...method } = object(request.forecast, 'reviewed_forecast');
+    if (canonical(method) !== canonical(independentMethod)
+      || canonical(object(selection).bar_types!) !== canonical(object(independentSelection).bar_types!)) throw new Problem('portfolio_independent_forecast_contract_changed', 422);
+  }
+  const currency = object(json(input.policy).simulationSettings).base_currency;
+  if (currency !== input.currency || data.currency !== undefined && data.currency !== input.currency) throw new Problem('portfolio_independent_currency_mismatch', 422);
+}
+
 /** Original ensembles → native exact member blending → optional study blending → ONE shared account. */
 export async function computePortfolio(input: PortfolioTaskInput, context: Context, scope?: JsonObject, report?: (progress: PortfolioProgress, curve?: EquityPoint[]) => Promise<void>, options?: { partition: 'VALIDATION' | 'HELDOUT'; data?: JsonObject }) {
   const partition = options?.partition;
+  if (options?.data && partition === 'HELDOUT') assertPortfolioIndependentContract(input, options.data);
   const update = async (phase: string, completed?: number, total?: number, curve?: EquityPoint[]) => report?.({ phase, updatedAt: new Date().toISOString(), ...(completed === undefined ? {} : { completed }), ...(total === undefined ? {} : { total }) }, curve);
   const evidence = Array.isArray(input.evidence) ? input.evidence : [input.evidence];
   const weights = input.weights ?? (evidence.length === 1 ? ['1'] : null);
@@ -73,7 +88,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       const proposal = object(trial.proposal, 'selected_proposal');
       const result = partition === 'VALIDATION' ? object(trial.result, 'validation_result') : object(object(source.final, 'independent_final').result, 'independent_result');
       const request = options?.data ? normalizedRequest(options.data) : structuredClone(object(result.request, partition === 'VALIDATION' ? 'validation_request' : 'independent_request'));
-      const data = options?.data ?? object(studyInput.data, 'study_data');
+      const data = options?.data ?? (partition === 'VALIDATION' ? object(studyInput.data, 'study_data') : {});
       const sourceCatalog = partition === 'VALIDATION' || options?.data ? String(data.catalog) : input.catalog;
       if (!sourceCatalog || originalCatalog && originalCatalog !== sourceCatalog) throw new Problem('portfolio_catalog_mismatch');
       originalCatalog = sourceCatalog;

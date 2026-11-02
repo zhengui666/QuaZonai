@@ -22,13 +22,14 @@ import { factorRequest } from './dataset-export.ts';
 import { nativeResearchInput as parseNativeResearchInput, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
-import { createReviewPolicy, validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import { latestTrialReview, ReviewLedger } from '../../research/src/review-documents.ts';
 import { freezeReviewedFactors } from './reviewed-factor-admission.ts';
 import { assertCurrentReviewSource, prepareReviewSourceEvidence } from './review-source.ts';
 import type { CapturedReviewSource } from '../../research/src/review-source.ts';
 import { ReviewSourceEvidence } from '../../research/src/review-source.ts';
 import { portfolioDeliverySources } from './review-delivery.ts';
+import { resolveRegisteredReviewPolicy } from './review-policy.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
@@ -141,6 +142,11 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (input.serviceTier !== undefined && !selectedModel.serviceTiers.includes(input.serviceTier)) throw new Problem('service_tier_unsupported');
     const policy = object(input.policy, 'policy');
     if (policy.reviewedFactorSources !== undefined) throw new Problem('reviewed_factor_sources_service_owned');
+    if (policy.reviewPolicy !== undefined) policy.reviewPolicy = json(await resolveRegisteredReviewPolicy(host.harness, policy.reviewPolicy));
+    if (policy.reviewPolicies !== undefined) {
+      const profiles = object(policy.reviewPolicies, 'review_policies');
+      for (const kind of ['FACTOR', 'PORTFOLIO']) if (profiles[kind] !== undefined) profiles[kind] = json(await resolveRegisteredReviewPolicy(host.harness, profiles[kind]));
+    }
     if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
     const sourceEvidence = sourceDataset ? await prepareReviewSourceEvidence(sourceDataset) : null;
@@ -384,7 +390,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const registeredReviewProfile = sourcePolicy.reviewPolicies && typeof sourcePolicy.reviewPolicies === 'object' && !Array.isArray(sourcePolicy.reviewPolicies)
       ? sourcePolicy.reviewPolicies.PORTFOLIO : sourcePolicy.reviewPolicy && object(sourcePolicy.reviewPolicy).targetKind === 'PORTFOLIO' ? sourcePolicy.reviewPolicy : undefined;
     const review = sourcePolicy.reviewPolicy || sourcePolicy.reviewPolicies ? {
-      policy: registeredReviewProfile ? validateReviewPolicy(registeredReviewProfile) : createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
+      policy: registeredReviewProfile ? await resolveRegisteredReviewPolicy(host.harness, registeredReviewProfile) : createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
       model: object(sourceInput.model) as { provider: string; modelId: string },
       ...(typeof sourceInput.thinkingLevel === 'string' ? { thinkingLevel: sourceInput.thinkingLevel as import('../../../packages/contracts/src/index.ts').ThinkingLevel } : {}),
       createdAt: new Date().toISOString(),

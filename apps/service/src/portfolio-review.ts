@@ -12,7 +12,7 @@ import { checkExposure } from '../../research/plugins/native-exposure.ts';
 import { normalizedRequest } from '../../research/plugins/native-wasm.ts';
 import { runReviewScience } from '../../research/src/review-science-adapter.ts';
 import type { ResearchRuntime } from '../../research/src/research-runtime.ts';
-import { computePortfolio, nativeJob, type PortfolioTaskInput } from './native.ts';
+import { assertPortfolioIndependentContract, computePortfolio, nativeJob, type PortfolioTaskInput } from './native.ts';
 import { accountReviewMetrics, nativeReviewReturnPanel, adverseReviewRequest } from './review-account-science.ts';
 import { Application, counter, json, object, portfolio, Problem } from './facts.ts';
 
@@ -21,13 +21,17 @@ import { Application, counter, json, object, portfolio, Problem } from './facts.
 export const PortfolioReviewScience = defineDocFamily<{ results: Record<string, JsonObject>; reservations: Record<string, number>; reservedCalls: number }, null>({ kind: 'qz.portfolio-review-science', version: 1, scope: 'session', family: true, initial: () => ({ results: {}, reservations: {}, reservedCalls: 0 }) });
 export async function reservePortfolioReviewScience(input: PortfolioTaskInput, api: ResearchRuntime, context: Context, key: string, calls: number, action: () => Promise<JsonObject>): Promise<JsonObject> {
   const previous = await api.snapshot(PortfolioReviewScience, String(api.taskId), context); if (previous?.results[key]) return previous.results[key]!;
+  let pending = false;
   await api.commit(async tx => {
     const state = await tx.doc(PortfolioReviewScience, String(api.taskId), null);
     state.reservations ??= {};
-    if (state.reservations[key] !== undefined) { if (state.reservations[key] !== calls) throw new Problem('portfolio_review_stage_identity_conflict'); return; }
+    if (state.reservations[key] !== undefined) { if (state.reservations[key] !== calls) throw new Problem('portfolio_review_stage_identity_conflict'); pending = true; return; }
     if (state.reservedCalls + calls > (input.review?.maximumScientificCalls ?? 64)) throw new Problem('portfolio_review_scientific_budget_exhausted');
     state.reservations[key] = calls; state.reservedCalls += calls;
   }, context);
+  // A native process may already have run before its result checkpoint. Never
+  // replace that unresolved invocation with a new execution identity for free.
+  if (pending) throw new Problem('portfolio_review_stage_requires_reconciliation');
   const result = await action();
   await api.commit(async tx => { (await tx.doc(PortfolioReviewScience, String(api.taskId), null)).results[key] = result; }, context);
   return result;
@@ -88,6 +92,7 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
     const capacityCheck = allocationCapacityCheck(object(built.capacity), input.capital, stress, nativeRef);
     setCheck('execution_constraints', capacityCheck.status, capacityCheck.reason);
     if (input.review.independentData) {
+      assertPortfolioIndependentContract(input, input.review.independentData);
       const independent = normalizedRequest(input.review.independentData);
       if (BigInt(counter(independent.validation_end_ns, 'independent_start')) < BigInt(counter(object(simulationRequest.selection).event_end_ns, 'validation_end'))) throw new Problem('portfolio_independent_window_not_later');
       await checkExposure(api, context, input.review.independentData, true, undefined, undefined, false);

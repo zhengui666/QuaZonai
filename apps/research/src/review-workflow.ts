@@ -13,7 +13,7 @@ import { ReviewLedger, latestTrialReview } from './review-documents.ts';
 import { runIndependentReview } from './review-runtime.ts';
 import type { ResearchRuntime } from './research-runtime.ts';
 import { CampaignResearchDoc } from './pm-campaign.ts';
-import { reviewSelectionPlan } from './review-plans.ts';
+import { portfolioCohortSelectionEvidence } from './review-plans.ts';
 import { nativeFactorReviewMetrics } from './review-science-adapter.ts';
 import { checkExposure } from '../plugins/native-exposure.ts';
 import { iterationRequest } from '../plugins/native-wasm.ts';
@@ -79,8 +79,11 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
   const raw = object(result?.request);
   let causalPrefix = false;
   if (raw && result) {
-    try { causalPrefix = canonical(raw) === canonical(iterationRequest(input.data))
-      && Array.isArray(result.partitions) && result.partitions.every(row => { const partition = object(row); if (['TRAIN', 'VALIDATION'].includes(String(partition?.partition))) return true; const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).every(value => value === 0 || value === '0') && object(object(partition?.metric)?.pearson_ic)?.value === null && (partition?.diagnostics === undefined || object(partition.diagnostics)?.observations === 0);  }); }
+    try { const portfolio = Array.isArray(proposal?.members); const account = object(result.portfolio);
+      const validAccount = account?.partition === 'VALIDATION' && object(account.provenance)?.account === 'ONE_NATIVE_SHARED_ACCOUNT';
+      const partitions = result.partitions;
+      causalPrefix = canonical(raw) === canonical(iterationRequest(input.data, portfolio))
+      && (portfolio && validAccount && partitions === undefined || Array.isArray(partitions) && (!portfolio || validAccount) && partitions.every(row => { const partition = object(row); if (['TRAIN', 'VALIDATION'].includes(String(partition?.partition))) return true; const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).every(value => value === 0 || value === '0') && object(object(partition?.metric)?.pearson_ic)?.value === null && (partition?.diagnostics === undefined || object(partition.diagnostics)?.observations === 0);  })); }
     catch { /* A missing or unsupported original request is not proof of causality. */ }
   }
   const hasFinalData = Array.isArray(result?.partitions) && result.partitions.some(row => { const partition = object(row); const counts = object(object(partition?.metric)?.counts); return partition?.partition === 'HELDOUT' && counts !== null && Object.values(counts).some(value => typeof value === 'string' && /^[0-9]+$/.test(value) ? BigInt(value) > 0n : typeof value === 'number' && value > 0); });
@@ -144,19 +147,22 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
       catch (error) { independentWindow.status = 'UNKNOWN'; independentWindow.reason = error instanceof Error && error.message === 'heldout_already_exposed' ? 'independent_window_already_exposed' : 'independent_window_cannot_be_verified'; }
     }
   }
-  const metrics: ReviewMetric[] = nativeFactorReviewMetrics(frozen.trial.result, frozen.evidenceRef);
+  const componentDiagnostics = nativeFactorReviewMetrics(frozen.trial.result, frozen.evidenceRef);
+  const metrics: ReviewMetric[] = frozen.kind === 'FACTOR' ? [...componentDiagnostics] : [];
   const evidence: JsonObject = { context: { ...sourceContext, evidenceRefs: [frozen.evidenceRef] },
     provenance: { status: checks.find(check => check.id === 'provenance')?.status === 'PASS' ? 'COMPLETE' : 'INCOMPLETE', source: sourceEvidence.summary, checks: json({ checks }).checks!, reason: checks.find(check => check.id === 'provenance')?.status === 'PASS' ? null : 'historical_provenance_requires_independent_evidence' },
-    factor: { status: metrics.length ? 'COMPLETE' : 'INCOMPLETE', reason: metrics.length ? null : 'native_factor_diagnostics_not_available', metrics: JSON.parse(JSON.stringify(metrics)), evidence: sourceContext.candidate! },
+    factor: { status: componentDiagnostics.length ? 'COMPLETE' : 'INCOMPLETE', reason: componentDiagnostics.length ? null : 'native_factor_diagnostics_not_available', metrics: JSON.parse(JSON.stringify(componentDiagnostics)), evidence: sourceContext.candidate! },
     selection: { status: 'INCOMPLETE', reason: 'comparable_net_return_matrix_required_for_dsr_pbo', ledger: sourceContext.ledger! },
     stress: { status: 'INCOMPLETE', reason: 'registered_stress_replays_required' },
     portfolio: { status: 'INCOMPLETE', reason: 'matched_shared_account_ablation_required' } };
-  let factorSelectionPlans: ReviewNativePlan[] = [];
-  if (frozen.kind === 'FACTOR' && typeof object(frozen.trial.proposal)?.model === 'string' && object(frozen.input.policy.strategy)) {
+  let selectionPlans: ReviewNativePlan[] = [];
+  if (object(frozen.input.policy.strategy) && (frozen.kind === 'PORTFOLIO' || typeof object(frozen.trial.proposal)?.model === 'string')) {
     try {
-      const reviewedCohort = await factorCohortSelectionEvidence(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
-      factorSelectionPlans = reviewedCohort.plans;
-      evidence.selection = { status: 'INCOMPLETE', reason: factorSelectionPlans.length ? 'native_selection_analysis_pending' : 'reference_cohort_net_return_evidence_missing', cohort: reviewedCohort.cohort };
+      const reviewedCohort = frozen.kind === 'FACTOR'
+        ? await factorCohortSelectionEvidence(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef)
+        : await portfolioCohortSelectionEvidence(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
+      selectionPlans = reviewedCohort.plans;
+      evidence.selection = { status: 'INCOMPLETE', reason: selectionPlans.length ? 'native_selection_analysis_pending' : 'reference_cohort_net_return_evidence_missing', cohort: reviewedCohort.cohort };
       const account = reviewedCohort.selectedAccount;
       if (account && Array.isArray(account.metrics)) {
         for (const metric of account.metrics as unknown as ReviewMetric[]) {
@@ -170,10 +176,10 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
       } else { evidence.stress = { status: 'INCOMPLETE', reason: 'registered_reference_strategy_replay_failed_or_insufficient' }; }
     } catch { evidence.stress = { status: 'INCOMPLETE', reason: 'registered_reference_strategy_evidence_unavailable_or_unsupported' }; }
   }
-  const sciencePlans = frozen.kind === 'FACTOR' ? factorSelectionPlans : await reviewSelectionPlan(api, context, frozen.input, frozen.trial, frozen.trials, frozen.evidenceRef);
+  const sciencePlans = selectionPlans;
   const report = await runIndependentReview(api, context, {
     target: { kind: frozen.kind, id: `research:${api.conversationId}:trial:${trialId}`, version: frozen.version,
-      sourceEvidenceRefs: [...new Set([frozen.evidenceRef, ...metrics.map(metric => metric.evidenceRef), ...sciencePlans.map(plan => plan.evidenceRef), ...sourceEvidence.evidenceRefs, ...checks.flatMap(check => check.evidenceRefs)])], evaluationStartNs: frozen.evaluationStartNs },
+      sourceEvidenceRefs: [...new Set([frozen.evidenceRef, ...metrics.map(metric => metric.evidenceRef), ...componentDiagnostics.map(metric => metric.evidenceRef), ...sciencePlans.map(plan => plan.evidenceRef), ...sourceEvidence.evidenceRefs, ...checks.flatMap(check => check.evidenceRefs)])], evaluationStartNs: frozen.evaluationStartNs },
     policy: frozen.policy, model: frozen.input.model, thinkingLevel: frozen.input.thinkingLevel,
     evidence, checks, metrics, sciencePlans, createdAt: frozen.createdAt,
   });

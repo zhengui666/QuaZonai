@@ -60,3 +60,70 @@ test('pooled time series results cannot satisfy a cross-sectional rule', () => {
   rule.scope = 'CROSS_SECTIONAL'; const report = scoreReview(request);
   assert.equal(report.decision, 'INCONCLUSIVE'); assert.ok(report.missingEvidence.some(r => r.includes('method_or_scope_mismatch')));
 });
+for (const kind of ['FACTOR', 'PORTFOLIO', 'ALLOCATION'] as const) {
+  test(`${kind}: the best member of a losing reference cohort cannot pass absolute admission requirements`, async () => {
+    const { deriveReviewPolicyFromReference } = await import('../../../packages/contracts/src/review-scoring.ts');
+    const request = input(); request.target.kind = kind;
+    request.policy = createReviewPolicy(kind, `policy-${kind}`, '100');
+    request.checks = request.policy.requiredChecks.map(id => ({ id, status: 'PASS', reason: 'fixture verified', evidenceRefs: ['native-1'] }));
+    const records = Array.from({ length: 30 }, (_, index) => ({ rootId: `root-${index}`, endNs: '80', evidenceRefs: [`reference-${index}`], metrics: request.policy.metricRules.map(rule => ({ key: rule.key,
+      value: rule.key === 'selection.dsr' ? 0.5 + index / 1000 : rule.minimumTarget ? -0.3 + index / 1000 : rule.low + (rule.high - rule.low) * (index + 1) / 31,
+      status: 'AVAILABLE' as const, observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: `reference-${index}` })) }));
+    const minimums = request.policy.metricRules.map(rule => rule.minimumTarget);
+    request.policy = deriveReviewPolicyFromReference(request.policy, records, '101');
+    assert.deepEqual(request.policy.metricRules.map(rule => rule.minimumTarget), minimums, 'reference fitting must not alter absolute minimums');
+    request.metrics = request.policy.metricRules.map(rule => ({ key: rule.key, value: rule.high, status: 'AVAILABLE', observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: 'native-1' }));
+    const result = scoreReview(request);
+    assert.equal(result.totalScore, 100, 'relative ranking is deliberately excellent'); assert.equal(result.decision, 'REJECT'); assert.equal(result.qualityCoefficient, 0);
+    for (const key of [kind === 'FACTOR' ? 'factor.rank_ic_lower' : 'account.net_return_lower', 'selection.dsr', 'execution.stressed_net_return', 'incremental.net_return_delta_lower']) assert.ok(result.hardFailures.includes(`${key}:below_absolute_admission_minimum`), key);
+  });
+}
+test('absolute requirements cannot be removed, made optional, relabelled or relaxed', () => {
+  for (const change of [
+    (rule: any) => { delete rule.minimumTarget; },
+    (rule: any) => { rule.minimumTarget.value = -0.01; },
+    (rule: any) => { rule.minimumTarget.inclusive = true; },
+    (rule: any) => { rule.required = false; },
+    (rule: any) => { rule.key = 'factor.other_score'; },
+  ]) {
+    const request = input(); change(request.policy.metricRules.find(rule => rule.key === 'factor.rank_ic_lower'));
+    assert.throws(() => validateReviewPolicy(request.policy), /minimum_target/);
+  }
+  const request = input(); request.policy.metricRules.find(rule => rule.key === 'selection.dsr')!.minimumTarget!.value = 0.94;
+  assert.throws(() => validateReviewPolicy(request.policy), /minimum_target/);
+});
+test('zero signed evidence is rejected, DSR 0.95 is allowed, and missing floor evidence stays inconclusive', () => {
+  for (const key of ['factor.rank_ic_lower', 'execution.stressed_net_return', 'incremental.net_return_delta_lower']) {
+    const request = input(); request.metrics.find(metric => metric.key === key)!.value = 0;
+    assert.equal(scoreReview(request).decision, 'REJECT', key);
+  }
+  const allowed = input(); allowed.metrics.find(metric => metric.key === 'selection.dsr')!.value = 0.95;
+  assert.equal(scoreReview(allowed).decision, 'PASS');
+  const missing = input(); const metric = missing.metrics.find(metric => metric.key === 'factor.rank_ic_lower')!;
+  metric.value = null; metric.status = 'INSUFFICIENT';
+  assert.equal(scoreReview(missing).decision, 'INCONCLUSIVE');
+});
+test('independent outcome enforces its frozen sample and metric contract before testing absolute profitability', async () => {
+  const { reviewIndependentOutcomeCheck } = await import('../../../packages/contracts/src/review-scoring.ts');
+  const policy = createReviewPolicy('ALLOCATION', 'independent-policy', '100');
+  for (const rule of policy.metricRules) if (['account.net_return_lower', 'data.coverage'].includes(rule.key)) rule.minimumObservations = 1000;
+  const metrics = ['account.net_return_lower', 'data.coverage'].map(key => {
+    const rule = policy.metricRules.find(rule => rule.key === key)!;
+    return { key, value: key === 'data.coverage' ? 1 : 0.1, status: 'AVAILABLE' as const, observationCount: 200, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: 'sealed:native' };
+  });
+  assert.equal(reviewIndependentOutcomeCheck(policy, metrics, 'sealed:native').status, 'UNKNOWN', 'an otherwise available interval may have fewer observations than the frozen policy requires');
+  metrics.forEach(metric => { metric.observationCount = 1000; });
+  assert.equal(reviewIndependentOutcomeCheck(policy, metrics, 'sealed:native').status, 'PASS');
+  metrics[0]!.scope = 'POOLED_TIME_SERIES'; assert.equal(reviewIndependentOutcomeCheck(policy, metrics, 'sealed:native').status, 'UNKNOWN');
+  metrics[0]!.scope = 'SHARED_ACCOUNT'; metrics[0]!.value = -0.01;
+  assert.equal(reviewIndependentOutcomeCheck(policy, metrics, 'sealed:native').status, 'FAIL');
+});
+test('a final portfolio outcome remains a veto even when its pre-test policy did not require that result', () => {
+  const request = input(); request.target.kind = 'PORTFOLIO'; request.policy = createReviewPolicy('PORTFOLIO', 'portfolio-policy', '100');
+  request.policy.calibration = { rootCount: 30, endNs: '90', evidenceRefs: ['reference-cohort'] };
+  request.metrics = request.policy.metricRules.map(rule => ({ key: rule.key, value: rule.high, status: 'AVAILABLE', observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: 'native-1' }));
+  assert.equal(scoreReview(request).decision, 'PASS', 'pre-test score can pass without reading the independent outcome');
+  request.checks.push({ id: 'independent_outcome', status: 'FAIL', reason: 'native_independent_return_below_frozen_minimum', evidenceRefs: ['native-1'] });
+  assert.equal(scoreReview(request).decision, 'REJECT');
+  request.checks.at(-1)!.status = 'UNKNOWN'; assert.equal(scoreReview(request).decision, 'INCONCLUSIVE');
+});

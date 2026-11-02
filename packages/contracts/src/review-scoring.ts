@@ -1,9 +1,17 @@
-import type { ReviewAllocationMember, ReviewAllocationPolicy, ReviewAllocationRequest, ReviewDimensionId, ReviewPolicy, ReviewReport, ReviewScoringInput, ReviewTargetKind } from './review.ts';
+import type { ReviewAllocationMember, ReviewAllocationPolicy, ReviewAllocationRequest, ReviewDimensionId, ReviewMetric, ReviewCheck, ReviewPolicy, ReviewReport, ReviewScoringInput, ReviewTargetKind } from './review.ts';
 
 const DIMENSIONS: ReviewDimensionId[] = ['DATA', 'STATISTICS', 'ROBUSTNESS', 'EXECUTION', 'INCREMENTAL', 'MECHANISM'];
 const LABELS = { DATA: '数据与实现', STATISTICS: '样本外统计证据', ROBUSTNESS: '稳健性', EXECUTION: '净成本与容量', INCREMENTAL: '增量与分散性', MECHANISM: '机制与简洁性' };
 const REQUIREMENTS = ['provenance', 'implementation', 'trial_ledger', 'reproducibility', 'no_leakage', 'independent_window', 'execution_constraints'];
 const REJECT = ['provenance', 'implementation', 'reproducibility', 'no_leakage', 'execution_constraints'];
+const MINIMUM_TARGETS: Readonly<Record<string, { value: number; inclusive: boolean }>> = {
+  'factor.rank_ic_lower': { value: 0, inclusive: false },
+  'account.net_return_lower': { value: 0, inclusive: false },
+  'execution.stressed_net_return': { value: 0, inclusive: false },
+  'incremental.net_return_delta_lower': { value: 0, inclusive: false },
+  'selection.dsr': { value: 0.95, inclusive: true },
+};
+const requiredMinimumKeys = (kind: ReviewTargetKind) => [kind === 'FACTOR' ? 'factor.rank_ic_lower' : 'account.net_return_lower', 'execution.stressed_net_return', 'incremental.net_return_delta_lower', 'selection.dsr'];
 const invalid = (message: string): never => { throw new Error(message); };
 const ns = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -25,7 +33,7 @@ export function createReviewPolicy(kind: ReviewTargetKind, id: string, frozenAtN
   ];
   return validateReviewPolicy({ schemaVersion: 1, id, targetKind: kind, frozenAtNs, calibration: null,
     requiredChecks: [...REQUIREMENTS, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])], rejectChecks: [...REJECT, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])],
-    metricRules: definitions.map(([key, dimension, direction, low, high, unit]) => ({ key, dimension, direction, low, high,
+    metricRules: definitions.map(([key, dimension, direction, low, high, unit]) => ({ key, dimension, direction, low, high, ...(MINIMUM_TARGETS[key] ? { minimumTarget: { ...MINIMUM_TARGETS[key] } } : {}),
       minimumObservations: dimension === 'MECHANISM' ? 5 : 30, required: true, scope: dimension === 'DATA' ? 'DATA' : dimension === 'MECHANISM' ? 'MECHANISM' : key.startsWith('selection.') ? 'SELECTION_COHORT' : dimension === 'STATISTICS' || dimension === 'ROBUSTNESS' ? kind === 'FACTOR' ? 'POOLED_TIME_SERIES' : 'SHARED_ACCOUNT' : 'SHARED_ACCOUNT', methods: [dimension === 'MECHANISM' ? 'qz.review-mechanism/1' : 'qz.review-science.v1'], unit, frequency: 'REGISTERED' })),
     dimensionWeights: kind === 'FACTOR' ? { DATA: 20, STATISTICS: 25, ROBUSTNESS: 20, EXECUTION: 15, INCREMENTAL: 15, MECHANISM: 5 }
       : { DATA: 15, STATISTICS: 20, ROBUSTNESS: 15, EXECUTION: 20, INCREMENTAL: 25, MECHANISM: 5 },
@@ -44,6 +52,12 @@ export function validateReviewPolicy(value: unknown): ReviewPolicy {
   if (!p.dimensionWeights || DIMENSIONS.some(id => !finite(p.dimensionWeights[id]) || p.dimensionWeights[id] <= 0) || Object.values(p.dimensionWeights).reduce((a, b) => a + b, 0) !== 100) invalid('review_policy_dimension_weights_invalid');
   if (!Array.isArray(p.metricRules) || !p.metricRules.length || p.metricRules.length > 128 || !unique(p.metricRules.map(r => r.key))) invalid('review_policy_metrics_invalid');
   for (const r of p.metricRules) if (!identifier(r.key) || !DIMENSIONS.includes(r.dimension) || !['HIGHER', 'LOWER'].includes(r.direction) || !finite(r.low) || !finite(r.high) || r.low >= r.high || !Number.isSafeInteger(r.minimumObservations) || r.minimumObservations < 1 || typeof r.required !== 'boolean' || !Array.isArray(r.methods) || !r.methods.length || !r.methods.every(identifier) || !identifier(r.scope) || !identifier(r.unit) || !identifier(r.frequency)) invalid('review_policy_metric_invalid');
+  for (const rule of p.metricRules) if (rule.minimumTarget !== undefined && (!finite(rule.minimumTarget.value) || typeof rule.minimumTarget.inclusive !== 'boolean' || rule.direction !== 'HIGHER')) invalid('review_policy_minimum_target_invalid');
+  for (const key of requiredMinimumKeys(p.targetKind)) {
+    const rule = p.metricRules.find(rule => rule.key === key); const floor = MINIMUM_TARGETS[key]!;
+    if (!rule?.required || !rule.minimumTarget || rule.minimumTarget.value < floor.value
+      || rule.minimumTarget.value === floor.value && !floor.inclusive && rule.minimumTarget.inclusive) invalid('review_policy_minimum_target_required');
+  }
   if (DIMENSIONS.some(id => !p.metricRules.some(r => r.dimension === id && r.required))) invalid('review_policy_dimension_missing');
   if (p.calibration !== null && (!p.calibration || !Number.isSafeInteger(p.calibration.rootCount) || p.calibration.rootCount < 30 || !ns(p.calibration.endNs) || BigInt(p.calibration.endNs) > BigInt(p.frozenAtNs) || !Array.isArray(p.calibration.evidenceRefs) || !p.calibration.evidenceRefs.length || !p.calibration.evidenceRefs.every(identifier))) invalid('review_policy_calibration_invalid');
   return clone(p);
@@ -65,6 +79,13 @@ export function scoreReview(input: ReviewScoringInput): ReviewReport {
     if (check?.status === 'FAIL' && policy.rejectChecks.includes(id) && check.evidenceRefs.length) failures.push(`${id}:${check.reason}`);
     else if (!check || check.status !== 'PASS' || !check.evidenceRefs.length) missing.push(`${id}:${check?.reason ?? 'missing_check'}`);
   }
+  // Final independent evidence is an additional veto when present; a pre-test
+  // portfolio review may omit it, while every downstream consumer requires it.
+  if (!policy.requiredChecks.includes('independent_outcome')) {
+    const outcome = input.checks.find(check => check.id === 'independent_outcome');
+    if (outcome?.status === 'FAIL' && outcome.evidenceRefs.length) failures.push(`independent_outcome:${outcome.reason}`);
+    else if (outcome && (outcome.status !== 'PASS' || !outcome.evidenceRefs.length)) missing.push(`independent_outcome:${outcome.reason}`);
+  }
   const scored = new Map<string, number>();
   for (const rule of policy.metricRules) {
     const m = input.metrics.find(m => m.key === rule.key);
@@ -74,6 +95,9 @@ export function scoreReview(input: ReviewScoringInput): ReviewReport {
     else if (!finite(m.value) || !Number.isSafeInteger(m.observationCount) || m.observationCount < rule.minimumObservations) reason = 'insufficient_or_invalid';
     else if (!identifier(m.evidenceRef) || !target.sourceEvidenceRefs.includes(m.evidenceRef) || !rule.methods.includes(m.method) || m.scope !== rule.scope || m.unit !== rule.unit || m.frequency !== rule.frequency) reason = 'method_or_scope_mismatch';
     if (reason) { if (rule.required) missing.push(`${rule.key}:${reason}`); continue; }
+    if (rule.minimumTarget && (rule.minimumTarget.inclusive ? m!.value! < rule.minimumTarget.value : m!.value! <= rule.minimumTarget.value)) {
+      failures.push(`${rule.key}:below_absolute_admission_minimum`);
+    }
     const ratio = clip((m!.value! - rule.low) / (rule.high - rule.low));
     scored.set(rule.key, 100 * (rule.direction === 'HIGHER' ? ratio : 1 - ratio));
   }
@@ -96,6 +120,26 @@ export function scoreReview(input: ReviewScoringInput): ReviewReport {
     analyses: clone(input.analyses ?? []), weights: [], narrative: input.narrative ?? null, createdAt: input.createdAt };
 }
 
+/** Once-only independent outcome over the same registered native contracts.
+ * Raw independent observations stay in owner-only evidence, outside the Agent context. */
+export function reviewIndependentOutcomeCheck(policy: ReviewPolicy, metrics: readonly ReviewMetric[], evidenceRef: string): ReviewCheck {
+  const frozen = validateReviewPolicy(policy);
+  const lowerRule = frozen.metricRules.find(rule => rule.key === 'account.net_return_lower');
+  const coverageRule = frozen.metricRules.find(rule => rule.key === 'data.coverage');
+  const valid = (key: string, rule: typeof lowerRule) => {
+    const matches = metrics.filter(metric => metric.key === key); const metric = matches[0];
+    return rule && matches.length === 1 && metric?.status === 'AVAILABLE' && finite(metric.value)
+      && Number.isSafeInteger(metric.observationCount) && metric.observationCount >= rule.minimumObservations
+      && metric.evidenceRef === evidenceRef && rule.methods.includes(metric.method) && metric.scope === rule.scope && metric.unit === rule.unit && metric.frequency === rule.frequency ? metric : null;
+  };
+  const lower = valid('account.net_return_lower', lowerRule); const coverage = valid('data.coverage', coverageRule);
+  const floor = lowerRule?.minimumTarget;
+  const available = !!lower && !!coverage && coverage.value === 1 && !!floor;
+  const passes = available && (floor!.inclusive ? lower!.value! >= floor!.value : lower!.value! > floor!.value);
+  return { id: 'independent_outcome', status: !available ? 'UNKNOWN' : passes ? 'PASS' : 'FAIL', reason: !available ? 'fresh_independent_statistical_evidence_missing'
+    : passes ? 'frozen_configuration_passed_predeclared_independent_net_return_floor' : 'frozen_configuration_failed_predeclared_independent_net_return_floor', evidenceRefs: [evidenceRef] };
+}
+
 /** Reports and aligned prior data are resolved by the service, never uploaded metric summaries. */
 export function buildReviewAllocationRequest(members: ReviewAllocationMember[], policy: ReviewAllocationPolicy): ReviewAllocationRequest {
   if (!identifier(policy.id) || !ns(policy.frozenAtNs) || !['FACTOR', 'PORTFOLIO'].includes(policy.kind) || members.length < 2 || members.length > 64 || !unique(members.map(m => m.id))) invalid('review_allocation_policy_invalid');
@@ -103,7 +147,7 @@ export function buildReviewAllocationRequest(members: ReviewAllocationMember[], 
   if (times.length < 30 || !times.every(ns) || times.some((t, i) => i > 0 && BigInt(t) <= BigInt(times[i - 1]!)) || BigInt(times.at(-1)!) >= BigInt(policy.frozenAtNs) || policy.observationEvidenceRefs.length !== members.length || !policy.observationEvidenceRefs.every(identifier)) invalid('review_allocation_observations_invalid');
   const resolved = members.map(m => {
     const repeated = scoreReview({ id: m.report.id, target: m.report.target, policy: m.report.policy, metrics: m.report.metrics, checks: m.report.checks, createdAt: m.report.createdAt });
-    if (repeated.decision !== 'PASS' || repeated.totalScore !== m.report.totalScore || m.report.target.id !== m.id || m.report.target.kind !== policy.kind || m.observations.length !== times.length || !m.observations.every(finite)) invalid('review_allocation_member_not_approved');
+    if (m.report.decision !== 'PASS' || repeated.decision !== 'PASS' || repeated.totalScore !== m.report.totalScore || m.report.target.id !== m.id || m.report.target.kind !== policy.kind || m.observations.length !== times.length || !m.observations.every(finite)) invalid('review_allocation_member_not_approved');
     return { id: m.id, source_report_id: m.report.id, score: repeated.totalScore!, observations: [...m.observations] };
   });
   return { schema_version: 1, kind: policy.kind, members: resolved,

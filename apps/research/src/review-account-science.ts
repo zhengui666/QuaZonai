@@ -33,16 +33,36 @@ export async function replayReviewAccount(input: { data: JsonObject; members: St
   const { sealed: _sealed, ...original } = input.data;
   const data = { ...original, request: iterationRequest(input.data, true) };
   const candidate = await evaluatePortfolio({ data, members: input.members, policy: input.policy, binary: input.binary, partition: 'VALIDATION' }, context);
-  const request = structuredClone(object(candidate.evidence.simulationRequest, 'review_explicit_simulation_required'));
+  return replayStoredReviewAccount({ data: input.data, source: candidate.evidence, binary: input.binary, evidenceRef: input.evidenceRef }, context);
+}
+
+/** Review an already executed shared-account candidate using its exact frozen target sequence and settings. */
+export async function replayStoredReviewAccount(input: { data: JsonObject; source: JsonObject; binary: NativeTarget; evidenceRef: string }, context: Context): Promise<{ metrics: ReviewMetric[]; evidence: JsonObject }> {
+  const candidate = object(input.source.simulation, 'review_original_simulation_required');
+  const request = structuredClone(object(input.source.simulationRequest, 'review_original_simulation_request_required'));
+  const selection = object(request.selection);
+  const original = iterationRequest(input.data, true);
+  const end = counter(original.validation_end_ns, 'review_original_validation_end');
+  if (BigInt(counter(selection.event_end_ns, 'review_original_event_end')) > BigInt(end)
+    || BigInt(counter(selection.event_start_ns, 'review_original_event_start')) < BigInt(counter(original.train_end_ns, 'review_original_train_end'))
+    || BigInt(counter(selection.decision_cutoff_ns, 'review_original_cutoff')) > BigInt(end)) throw new Error('review_original_account_outside_validation');
+  if (input.source.catalog !== undefined && input.source.catalog !== input.data.catalog) throw new Error('review_original_account_catalog_mismatch');
+  if (input.source.request && canonical(input.source.request) !== canonical(original)) throw new Error('review_original_account_request_mismatch');
   const cash = structuredClone(request);
   cash.target_points = (cash.target_points as JsonObject[]).map(point => ({ ...point, cash_weight: '1', targets: (point.targets as JsonObject[]).map(target => ({ ...target, weight: '0' })) }));
   const stressRequest = adverseReviewRequest(request);
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-review-account-'));
   try {
-    const baseline = await executeNative(input.binary, 'simulate', cash, ['--catalog', String(input.data.catalog)], directory, context);
-    const stress = await executeNative(input.binary, 'simulate', stressRequest, ['--catalog', String(input.data.catalog)], directory, context);
-    const compared = await accountReviewMetrics({ candidate: object(candidate.evidence.simulation), baseline, stress, binary: input.binary, evidenceRef: input.evidenceRef, context });
-    return { metrics: compared.metrics, evidence: { ...compared.evidence, candidate: candidate.evidence, baseline, stress, stressRequest, limitations: ['Venue fees remain their original source rates; no unsupported fee multiplier is fabricated.', 'BAR delay/slippage is a registered scenario, not order-book or capacity evidence.'] } };
+    const bridge = object(input.source.datasetBridge ?? {});
+    const extra = object(request.settings).multi_currency_spot_cash != null ? ['--dataset-revision-id', String(bridge.id ?? '')] : [];
+    if (extra.length && !bridge.id) throw new Error('review_original_account_dataset_bridge_missing');
+    const args = ['--catalog', String(input.data.catalog), ...extra];
+    const baseline = await executeNative(input.binary, 'simulate', cash, args, directory, context);
+    const stress = await executeNative(input.binary, 'simulate', stressRequest, args, directory, context);
+    const compared = await accountReviewMetrics({ candidate, baseline, stress, binary: input.binary, evidenceRef: input.evidenceRef, context });
+    return { metrics: compared.metrics, evidence: { ...compared.evidence, candidate: input.source, baseline, stress, stressRequest,
+      limitations: ['The candidate is its original native shared-account result and exact frozen targets; no models, calibrations or member weights are refitted.',
+        'Venue fees remain their original source rates; no unsupported fee multiplier is fabricated.', 'BAR delay/slippage is a registered scenario, not order-book or capacity evidence.'] } };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 

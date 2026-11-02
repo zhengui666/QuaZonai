@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Table } from 'antd';
-import type { ReviewMetric, ReviewReport, ReviewWeights } from '../../../packages/contracts/src/review.ts';
+import type { ReviewMetric, ReviewMetricRule, ReviewReport, ReviewWeights } from '../../../packages/contracts/src/review.ts';
 import { Disclosure } from './disclosure';
 import { Exact, Facts, MetricLabel, Status, Timestamp } from './ui';
 import { metricDefinition } from './metric-glossary';
@@ -61,11 +61,12 @@ export function ReviewReportPanel({ report }: { report?: ReviewReport | null }) 
     </Disclosure>
     <Disclosure title="候选版本与评分政策" className="review-provenance">
       <Facts items={[["评审对象", targets[report.target.kind]], ["对象身份", <code>{report.target.id}</code>], ["候选版本", <code>{report.target.version}</code>], ["报告身份", <code>{report.id}</code>], ["政策身份", <code>{report.policyId}</code>], ["评估开始（ns）", <code>{report.target.evaluationStartNs}</code>], ["报告时间", <Timestamp value={report.createdAt} />], ["放行分数", report.policy.passScore], ["观察分数", report.policy.observeScore], ["关键维度最低分", report.policy.dimensionFloor], ["参考集合根血缘数", report.policy.calibration?.rootCount ?? '未提供']]} />
-      {!!report.policy.metricRules.length && <><h4>冻结计分标尺</h4><Table rowKey="key" size="small" pagination={false} scroll={{ x: 580 }} dataSource={report.policy.metricRules} columns={[
+      {!!report.policy.metricRules.length && <><h4>冻结计分标尺与准入底线</h4><p className="quiet">归一化锚点决定相对得分；指标还须满足独立的准入底线，高相对得分不能抵消未达底线。</p><Table rowKey="key" size="small" pagination={false} scroll={{ x: 700 }} dataSource={report.policy.metricRules} columns={[
         { title: '指标', render: (_cell, row) => <MetricLabel metricKey={row.key} /> },
         { title: '方向', render: (_cell, row) => row.direction === 'HIGHER' ? '越高越好' : '越低越好' },
         { title: '低位锚点', align: 'right', render: (_cell, row) => <Exact value={row.low} unit={row.unit} /> },
         { title: '高位锚点', align: 'right', render: (_cell, row) => <Exact value={row.high} unit={row.unit} /> },
+        { title: '准入底线', align: 'right', render: (_cell, row) => <Exact value={minimumTargetLabel(row)} unit={row.minimumTarget ? row.unit : undefined} /> },
         { title: '最少观测', align: 'right', dataIndex: 'minimumObservations' },
         { title: '要求', render: (_cell, row) => row.required ? '必需' : '补充' },
       ]} /></>}
@@ -80,7 +81,7 @@ function ReviewReasons({ title, values, tone = '' }: { title?: string; values: s
 }
 
 export function reviewReason(reason: string): string {
-  const known: Record<string, string> = { reference_calibration_missing: '缺少冻结的历史参考集合，当前评分不能用于自动放行。', reference_calibration_not_prior: '历史参考集合与本次评估区间重叠，须使用更早的参考集合。', score_below_reject_threshold: '评分低于观察区间，不予放行。', required_dimension_below_floor: '统计、稳健性或可交易性维度未达到最低分。', observation_band: '评分处于观察区间，暂不自动放行。', missing_check: '缺少检查结果', missing: '缺少必需指标', insufficient_or_invalid: '样本不足或指标值无效', method_or_scope_mismatch: '指标方法、单位或频率与冻结政策不一致' };
+  const known: Record<string, string> = { reference_calibration_missing: '缺少冻结的历史参考集合，当前评分不能用于自动放行。', reference_calibration_not_prior: '历史参考集合与本次评估区间重叠，须使用更早的参考集合。', score_below_reject_threshold: '评分低于观察区间，不予放行。', required_dimension_below_floor: '统计、稳健性或可交易性维度未达到最低分。', observation_band: '评分处于观察区间，暂不自动放行。', below_absolute_admission_minimum: '未达到冻结的绝对准入底线，较高的相对得分仍不能放行。', missing_check: '缺少检查结果', missing: '缺少必需指标', insufficient_or_invalid: '样本不足或指标值无效', method_or_scope_mismatch: '指标方法、单位或频率与冻结政策不一致' };
   if (known[reason]) return known[reason]!;
   const index = reason.indexOf(':');
   if (index < 0) return reason;
@@ -102,9 +103,10 @@ export function reviewFilename(report: ReviewReport, extension: 'json' | 'md'): 
 
 // Keep model prose and evidence identities inert in downloaded Markdown as well as React.
 const text = (value: unknown): string => String(value ?? '不可用').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/[\\`*_{}\[\]()#+.!|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
+const minimumTargetLabel = (rule: ReviewMetricRule): string => rule.minimumTarget ? `${rule.minimumTarget.inclusive ? '≥' : '>'} ${rule.minimumTarget.value}` : '未设置';
 export function reviewMarkdown(report: ReviewReport): string {
   const lines = ['# QuaZonai 独立评审报告', '', `对象：${targets[report.target.kind]} ${text(report.target.id)}`, `候选版本：${text(report.target.version)}`, `报告：${text(report.id)}`, `政策：${text(report.policyId)}`, `时间：${text(report.createdAt)}`, '', `结论：${decisions[report.decision]}`, `总分（0–100）：${text(report.totalScore)}`, `质量系数：${text(report.qualityCoefficient)}`, ''];
-  const reasons = (title: string, values: string[]) => { if (values.length) lines.push(`## ${title}`, '', ...values.map(value => `- ${text(value)}`), ''); };
+  const reasons = (title: string, values: string[]) => { if (values.length) lines.push(`## ${title}`, '', ...values.map(value => `- ${text(reviewReason(value))}${reviewReason(value) === value ? '' : `（${text(value)}）`}`), ''); };
   reasons('硬性不通过', report.hardFailures); reasons('待补证据', report.missingEvidence);
   if (report.narrative) lines.push('## 审阅说明', '', text(report.narrative), '');
   lines.push('## 维度评分', '', '| 维度 | 得分（0–100） | 计分权重 | 证据 |', '| --- | ---: | ---: | --- |', ...report.dimensions.map(row => `| ${text(row.label)} | ${text(row.score)} | ${text(row.weight)} | ${row.status === 'COMPLETE' ? '完整' : '不完整'} ${row.reasons.map(text).join(' / ')} |`), '');
@@ -114,5 +116,6 @@ export function reviewMarkdown(report: ReviewReport): string {
   lines.push('## 科学工具与指标证据', '', ...report.analyses.map(analysis => `- ${text(analysis.kind)}：${analysisStates[analysis.status]}；${text(analysis.reason)}；证据 ${text(analysis.evidenceRef)}`), '', '| 指标 | 原始字段 | 数值 | 单位 | 可用性 | 观测数 | 方法 | 频率 | 证据 |', '| --- | --- | ---: | --- | --- | ---: | --- | --- | --- |', ...report.metrics.map(metric => `| ${text(metricDefinition(metric.key).label)} | ${text(metric.key)} | ${text(metric.value)} | ${text(metric.unit)} | ${availability[metric.status]} ${text(metric.reason ?? '')} | ${text(metric.observationCount)} | ${text(metric.method)} | ${text(metric.frequency)} | ${text(metric.evidenceRef)} |`), '');
   reasons('来源证据', report.target.sourceEvidenceRefs); reasons('决策原因', report.reasonCodes);
   lines.push('## 检查记录', '', ...report.checks.map(check => `- ${text(check.id)}：${text(check.status)}；${text(check.reason)}；${check.evidenceRefs.map(text).join(' / ')}`), '', '## 冻结放行条件', '', `通过分数：${text(report.policy.passScore)}；观察分数：${text(report.policy.observeScore)}；关键维度最低分：${text(report.policy.dimensionFloor)}`, `参考集合根血缘数：${text(report.policy.calibration?.rootCount)}`, '');
+  if (report.policy.metricRules.length) lines.push('### 冻结计分标尺与准入底线', '', '归一化锚点决定相对得分；指标还须满足独立的准入底线，高相对得分不能抵消未达底线。', '', '| 指标 | 原始字段 | 方向 | 低位锚点 | 高位锚点 | 准入底线 | 单位 | 最少观测 | 要求 |', '| --- | --- | --- | ---: | ---: | --- | --- | ---: | --- |', ...report.policy.metricRules.map(rule => `| ${text(metricDefinition(rule.key).label)} | ${text(rule.key)} | ${rule.direction === 'HIGHER' ? '越高越好' : '越低越好'} | ${text(rule.low)} | ${text(rule.high)} | ${text(minimumTargetLabel(rule))} | ${text(rule.unit)} | ${text(rule.minimumObservations)} | ${rule.required ? '必需' : '补充'} |`), '');
   return lines.join('\n');
 }

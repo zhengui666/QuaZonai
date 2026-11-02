@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -10,6 +11,7 @@ import { prepareReviewSourceEvidence } from '../src/review-source.ts';
 import { ReviewSourceEvidence } from '../../research/src/review-source.ts';
 import { Application, json } from '../src/facts.ts';
 import type { PortfolioFact } from '../src/facts.ts';
+import { ReviewPolicies } from '../src/review-policy.ts';
 import { ReviewAllocations, portfolioReviewVersion } from '../src/review-allocation.ts';
 import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ReviewPolicy, ReviewMetric } from '../../../packages/contracts/src/review.ts';
@@ -21,8 +23,8 @@ function calibrated(kind: 'PORTFOLIO' | 'ALLOCATION', id: string): ReviewPolicy 
 }
 // Controlled receipts establish the real Durable/HTTP/tool/data flow only. Native scientific
 // estimators and Clarabel are separately checked by the Rust tests, not by this executable.
-for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT'] as const) test(`allocation ${mode}: reserved native recovery, evidence gate and original reviewer identity`, { timeout: 60_000 }, async () => {
-  const state = await setup(); const log = join(state.directory,'allocation-protocol.log');
+for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT', 'REMOTE_RESERVATION_GAP'] as const) test(`allocation ${mode}: reserved native recovery, evidence gate and original reviewer identity`, { timeout: 60_000 }, async () => {
+  const state = await setup(); let remote: ReturnType<typeof createServer> | undefined; const remotePosts: any[] = []; const log = join(state.directory,'allocation-protocol.log');
   try {
     const binary = join(state.directory,'allocation-job'); const fixture = new URL('./review-allocation-job.mjs',import.meta.url).pathname;
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${fixture}' '${log}' "$@"\n`, {mode:0o700});
@@ -54,12 +56,31 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
     await writeFile(join(state.directory,'validation-revision.json'),JSON.stringify({...sourceManifest,contentDigest:digest(canonical(json(sourceManifest)))}));
     dataset.revisionManifest=join(state.directory,'validation-revision.json');dataset.reviewSourceEvidence={metadata:{path:'validation-metadata.json',sha256:digest(JSON.stringify(sourceMetadata))},license:{path:'validation-license.json',sha256:digest(JSON.stringify(sourceLicense))}};
     const captured = await prepareReviewSourceEvidence(dataset); assert.ok(captured);
+    if(mode==='REMOTE_RESERVATION_GAP') {
+      remote=createServer(async(request,response)=>{
+        const send=(body:unknown)=>{response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify(body));};
+        if(request.url==='/v1/capabilities')return send({schemaVersion:1,implementationDigest:`sha256:${'a'.repeat(64)}`,commands:['forecast','simulate']});
+        if(request.method==='DELETE')return send({schemaVersion:1,requestId:request.url!.split('/').at(-1),status:'CANCELLED'});
+        if(request.method==='POST'&&request.url==='/v1/execute'){
+          let body='';for await(const part of request)body+=String(part);const execution=JSON.parse(body);remotePosts.push(execution);
+          if(execution.command==='forecast'){
+            const selection=execution.input.selection;const start=BigInt(selection.event_start_ns),end=BigInt(selection.event_end_ns);
+            return send({schemaVersion:1,requestId:execution.requestId,status:'COMPLETED',result:{points:Array.from({length:Number((end-start)/DAY)},(_,i)=>({instrument_id:'TEST.SIM',ordinal:i,event_ns:String(start+BigInt(i)*DAY),available_ns:String(start+BigInt(i)*DAY),forecast:1}))}});
+          }
+          if(execution.command==='simulate'){await writeFile(log+'.entered','remote POST admitted; response unavailable until restart');return;}
+        }
+        response.writeHead(404);response.end();
+      });
+      await new Promise<void>(resolve=>remote!.listen(0,'127.0.0.1',resolve));const address=remote.address() as import('node:net').AddressInfo;
+      state.options.config.nautilus={backtest:{id:'TEST_ONLY_REMOTE',url:`http://127.0.0.1:${address.port}`}};
+    }
     if(mode==='MISSING_INDEPENDENT_PROOF')delete independentDataset.reviewSourceEvidence;
     if(mode==='FAILED_INDEPENDENT')await writeFile(log+'.negative','controlled negative independent receipt');
     await state.restart();
     await state.service.research.harness.commit(async tx => {
       const conversation = await tx.createConversation({ownership:{kind:'ownerless'}});
       const application = await tx.doc(Application);
+      (await tx.doc(ReviewPolicies)).records['TEST_ONLY_STORED_CALIBRATION_RECEIPT']={policy:json(calibrated('ALLOCATION','allocation-policy'))};
       const sourceDoc=await tx.doc(ReviewSourceEvidence,conversation.id);sourceDoc.captured=json(captured);sourceDoc.native={schema_version:1,method_version:'qz.review-source.v1',validated:true,metadata:json(sourceMetadata)};
       for (const id of ['portfolio-a','portfolio-b']) {
         const fact = {input:{requestId:id,name:id,datasetId:'controlled',capital:'1000',researchIds:[conversation.id],capacityPolicy:{participation:'0.1',maximumAgeSeconds:3600,scenarios:['1000']}},
@@ -67,7 +88,7 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
           view:{id,name:id,researchIds:[conversation.id],datasetId:'controlled',status:'COMPUTED',capital:'1000',currency:'USD',createdAt:'2026-11-02T00:00:00Z',taskId:null,metrics:[],curve:[],targets:[],error:null}} as unknown as PortfolioFact;
         const policy=calibrated('PORTFOLIO',`policy:${id}`);const evidenceRef=`fixture:${id}:validation`;
         const metrics:ReviewMetric[]=policy.metricRules.map(rule=>({key:rule.key,value:rule.high,status:'AVAILABLE',observationCount:100,method:rule.methods[0]!,scope:rule.scope,unit:rule.unit,frequency:rule.frequency,evidenceRef}));
-        fact.view.review=scoreReview({id:`review:${id}`,target:{kind:'PORTFOLIO',id,version:portfolioReviewVersion(fact),sourceEvidenceRefs:[evidenceRef],evaluationStartNs:String(150n*DAY)},policy,metrics,checks:policy.requiredChecks.map(id=>({id,status:'PASS',reason:'TEST_ONLY',evidenceRefs:[evidenceRef]})),createdAt:'2026-11-02T00:00:00Z'});
+        fact.view.review=scoreReview({id:`review:${id}`,target:{kind:'PORTFOLIO',id,version:portfolioReviewVersion(fact),sourceEvidenceRefs:[evidenceRef],evaluationStartNs:String(150n*DAY)},policy,metrics,checks:[...policy.requiredChecks,'independent_outcome'].map(id=>({id,status:'PASS',reason:'TEST_ONLY',evidenceRefs:[evidenceRef]})),createdAt:'2026-11-02T00:00:00Z'});
         application.portfolios[id]=json(fact);
       }
     },context);
@@ -79,10 +100,22 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
     }]);
     await writeFile(log+'.pause','pause first native simulation');
     const body={requestId:'allocation-test',name:'TEST_ONLY',portfolioIds:['portfolio-a','portfolio-b'],memberCaps:[{id:'portfolio-a',maximumWeight:'0.8'},{id:'portfolio-b',maximumWeight:'0.8'}],clusterCaps:[],currentWeights:[{id:'portfolio-a',weight:'0'},{id:'portfolio-b',weight:'0'}],maximumTurnover:'1',maximumScientificCalls:21,reviewPolicy:calibrated('ALLOCATION','allocation-policy'),independentDatasetId:'independent-test-only'};
+    const forged=structuredClone(body);forged.requestId='forged-policy';forged.reviewPolicy.calibration!.rootCount=999;
+    const refused=await state.service.app.inject({method:'POST',url:'/api/v3/review-allocations',headers:state.headers,payload:forged});assert.equal(refused.statusCode,422,refused.body);assert.equal(refused.json().error,'review_policy_not_registered');
     const response=await state.service.app.inject({method:'POST',url:'/api/v3/review-allocations',headers:state.headers,payload:body});assert.equal(response.statusCode,202,response.body);const admitted=response.json();
     let entered=false;for(let n=0;n<200;n++){try{await readFile(log+'.entered');entered=true;break;}catch{await setTimeout(10);}}assert.equal(entered,true,'native operation started');
     await state.restart();
-    const settled=await state.service.research.harness.waitForTask(admitted.taskId as TaskId,context);assert.equal(settled.state.outcome.status,'completed',JSON.stringify(settled.state));
+    const settled=await state.service.research.harness.waitForTask(admitted.taskId as TaskId,context);
+    if(mode==='REMOTE_RESERVATION_GAP'){
+      assert.equal(settled.state.outcome.status,'failed');
+      const read=await state.service.app.inject({url:`/api/v3/review-allocations/${admitted.id}`,headers:state.headers});const failed=read.json();
+      assert.equal(failed.error,'review_allocation_remote_stage_result_unknown_reconciliation_required');assert.equal(failed.consumedScientificCalls,2);
+      assert.equal(remotePosts.filter(row=>row.command==='simulate').length,1,'unknown original admission cannot create a replacement invocation');
+      assert.equal(new Set(remotePosts.map(row=>row.invocationId)).size,2);assert.equal(state.faux.state.callCount,0);
+      assert.ok(remotePosts.filter(row=>row.command==='forecast').every(row=>row.input.selection.event_end_ns===String(300n*DAY)&&row.input.selection.decision_cutoff_ns===String(300n*DAY)));
+      return;
+    }
+    assert.equal(settled.state.outcome.status,'completed',JSON.stringify(settled.state));
     const result=await state.service.app.inject({url:`/api/v3/review-allocations/${admitted.id}`,headers:state.headers});assert.equal(result.statusCode,200,result.body);const view=result.json();
     assert.equal(view.status,'COMPUTED',view.error??'');assert.equal(view.consumedScientificCalls,mode==='MISSING_INDEPENDENT_PROOF'?14:21);assert.equal(view.review.decision,mode==='MISSING_INDEPENDENT_PROOF'?'INCONCLUSIVE':mode==='FAILED_INDEPENDENT'?'REJECT':'PASS',JSON.stringify(view.review.reasonCodes));
     assert.equal(view.weights.candidateId,admitted.id);assert.deepEqual(view.weights.members.map((row:any)=>row.weight),['0.5','0.5']);
@@ -90,8 +123,9 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
     await state.restart();assert.equal((await state.service.research.harness.waitForTask(admitted.taskId as TaskId,context)).state.outcome.status,'completed');assert.equal(state.faux.state.callCount,modelCalls);
     const replay=await state.service.app.inject({method:'POST',url:'/api/v3/review-allocations',headers:state.headers,payload:body});assert.equal(replay.statusCode,202,replay.body);assert.equal(replay.json().id,admitted.id);
     const commands=(await readFile(log,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+    assert.ok(commands.filter(row=>row.command==='forecast'&&BigInt(row.input.selection.event_start_ns)===0n&&BigInt(row.input.selection.event_end_ns)<=350n*DAY).every(row=>row.input.selection.event_end_ns===String(300n*DAY)&&row.input.selection.decision_cutoff_ns===String(300n*DAY)),'Validation native input must end at its own cutoff before any worker read');
     if(mode==='MISSING_INDEPENDENT_PROOF'){assert.equal(commands.some(row=>row.command==='review-source'),false);assert.equal(commands.some(row=>row.command==='simulate'&&BigInt(row.input.selection.event_start_ns)>=400n*DAY),false);}
     if(mode==='FAILED_INDEPENDENT')assert.ok(view.review.hardFailures.some((reason:string)=>reason.startsWith('independent_outcome:')));
     assert.ok(commands.some(row=>row.command==='assess-capacity'));assert.ok(commands.some(row=>row.command==='simulate'&&row.input.settings.fill_model.parameters.prob_slippage==='1'));
-  }finally{await state.cleanup();}
+  }finally{await state.cleanup();if(remote){remote.closeAllConnections();await new Promise<void>(resolve=>remote!.close(()=>resolve()));}}
 });

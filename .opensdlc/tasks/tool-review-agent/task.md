@@ -9,7 +9,7 @@ Upgrade factor, portfolio and allocation review on remote `dev` (base `837beda8`
 ## Implementation
 
 - Native diagnostics: signed rank IC, dependent-sample intervals, quantile diagnostics, selection-bias analysis and paired portfolio comparisons. Unknown evidence remains explicit.
-- Frozen versioned policy: non-compensable integrity checks, six dimensions, 80-point admission, 65-point rejection boundary, 60-point statistical/robustness/execution floors and prior reference calibration.
+- Frozen versioned policy: non-compensable integrity checks, six dimensions, 80-point admission, 65-point rejection boundary, 60-point statistical/robustness/execution floors and retained-reference calibration. Positive raw IC/net-return/stress/incremental lower bounds and DSR >= 0.95 remain mandatory even when relative percentiles give 100 points.
 - Quality-aware nonnegative QP allocations use official Clarabel, fixed diagonal shrinkage, original member/cluster/turnover limits and immutable candidate provenance. No result is deployable without its own shared-account study and independent review.
 - Review artifacts are available through owner-authenticated API and the existing research, factor and portfolio views, with JSON/Markdown export.
 
@@ -27,6 +27,6 @@ Controlled fixtures prove software behavior only. No real market dataset is pres
 
 PR: [#271](https://github.com/zhengui666/QuaZonai/pull/271), based on remote `dev`. The PR retains exact-head CI, independent review and final merge evidence.
 
-Local validation includes 53 passing native science/source/allocation/fitting tests and regenerated native schemas; real Durable/HTTP protocol tests exercise PASS, INCONCLUSIVE and REJECT, source hash/scope/licensing, original request recovery, causal cross-research priors, scientific budget recovery and persistent multi-candidate selection. The browser regression preserves the original submission after disconnect/reload. Source-owner evidence is attributed to the configured producer; consistency validation does not reconstruct historical receive clocks.
+Local validation includes 53 passing native science/source/allocation/fitting tests and regenerated native schemas; real Durable/HTTP protocol tests exercise PASS, INCONCLUSIVE and REJECT, source hash/scope/licensing, original request recovery, causal cross-research priors, scientific budget recovery and persistent multi-candidate selection. The browser regression preserves the original submission after disconnect/reload. Source-owner evidence is attributed to the configured producer; consistency validation does not reconstruct historical receive clocks. Calibrated policies resolve exactly to retained registry records. Incomplete scientific stages preserve their original receipts and fail closed for reconciliation instead of issuing a new invocation under an already consumed reservation.
 
 Final applicable CI and explicit clean GitHub Codex review remain merge conditions. Current delivery status must be read from the PR rather than inferred from these local test counts.

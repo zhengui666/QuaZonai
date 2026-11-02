@@ -37,9 +37,11 @@ async function sourceFixture(root: string, id: string, start: bigint, train: big
 
 // Real official Durable/Faux/child-process data flow. Controlled source-owner and
 // native receipts do not establish Rust estimator accuracy, market PIT or profitability.
-test('sufficient frozen portfolio evidence reaches PASS and reads only its fresh independent window', { timeout: 60_000 }, async () => {
+for (const mode of ['positive', 'negative', 'missing', 'pending'] as const) test(`portfolio independent outcome and durable receipts: ${mode}`, { timeout: 60_000 }, async () => {
   const state = await setup(); const log = join(state.directory, 'portfolio-wire.log');
   try {
+    if (mode === 'negative') await writeFile(log + '.negative', 'negative independent account');
+    if (mode === 'missing') await writeFile(log + '.insufficient', 'missing independent confidence evidence');
     const binary = join(state.directory, 'portfolio-job');
     await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${new URL('./portfolio-review-job.mjs', import.meta.url).pathname}' '${log}' "$@"\n`, { mode: 0o700 });
     const validation = await sourceFixture(join(state.directory, 'validation'), 'validation', 0n, 150n, 300n, 350n);
@@ -68,11 +70,11 @@ test('sufficient frozen portfolio evidence reaches PASS and reads only its fresh
     await state.service.research.harness.commit(async tx => { (await tx.doc(ReviewSourceEvidence, source.conversationId)).native = validationReceipt; }, context);
     const policy = createReviewPolicy('PORTFOLIO', 'TEST_ONLY_POLICY', '100');
     policy.calibration = { rootCount: 30, endNs: '90', evidenceRefs: ['TEST_ONLY_PRIOR_COHORT'] };
-    const taskInput: PortfolioTaskInput = { id: 'reviewed-portfolio', dataDir: state.directory, catalog: '/NEVER_READ_COMPONENT_SEALED', binary, capital: '1000', currency: 'USD', evidence: [{ researchId: source.conversationId, input: json(source.input), selected: source.selected, final: { result: { request: { FORBIDDEN_COMPONENT_HELDOUT: true } } } }], weights: ['1'], policy: strategy as PortfolioTaskInput['policy'], capacityPolicy: { participation: '0.1', maximumAgeSeconds: 3600, scenarios: ['1000'] }, review: { policy, model: state.model, createdAt: '2026-11-02T00:00:00Z', maximumScientificCalls: 14, stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1', independentData: independent.data, independentSource } };
+    const taskInput: PortfolioTaskInput = { id: 'reviewed-portfolio', dataDir: state.directory, catalog: '/NEVER_READ_COMPONENT_SEALED', binary, capital: '1000', currency: 'USD', evidence: [{ researchId: source.conversationId, input: json(source.input), selected: source.selected, final: { result: { request: { FORBIDDEN_COMPONENT_HELDOUT: true } } } }], weights: ['1'], policy: strategy as PortfolioTaskInput['policy'], capacityPolicy: { participation: '0.1', maximumAgeSeconds: 3600, scenarios: ['1000'] }, review: { policy, model: state.model, createdAt: '2026-11-02T00:00:00Z', maximumScientificCalls: 16, stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1', independentData: independent.data, independentSource } };
     const call = (name: string, args: JsonObject = {}) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
     const reference = `research:${source.conversationId}:trial:1:validation`;
     state.faux.setResponses([...['context', 'provenance', 'factor', 'selection', 'stress', 'portfolio'].map(kind => call(`review_${kind}`)), call('review_finish', { narrative: 'Complete controlled protocol evidence.', findings: [], mechanism: ['mechanism', 'availability', 'direction', 'implementation', 'complexity'].map(criterion => ({ criterion, supported: true, evidenceRefs: [reference] })) })]);
-    await writeFile(log + '.pause', 'pause the first validation account replay');
+    if (mode === 'pending') await writeFile(log + '.pause', 'pause unresolved native replay before its result checkpoint');
     const taskId = await state.service.research.harness.commit(async tx => {
       const facts = await tx.doc(Application);
       const taskId = await tx.createTask(BuildPortfolio, taskInput, { conversationId: source.conversationId, ownership: { kind: 'conversation' } });
@@ -80,17 +82,36 @@ test('sufficient frozen portfolio evidence reaches PASS and reads only its fresh
         view: { id: taskInput.id, name: taskInput.id, datasetId: validation.id, researchIds: [source.conversationId], status: 'QUEUED', capital: '1000', currency: 'USD', createdAt: taskInput.review!.createdAt, taskId, metrics: [], curve: [], targets: [], error: null } });
       return taskId;
     }, context);
-    let entered = false;
-    for (let n = 0; n < 300; n++) { try { await readFile(log + '.entered'); entered = true; break; } catch { await setTimeout(10); } }
-    assert.equal(entered, true, 'Validation shared account actually started');
-    await state.restart();
+    if (mode === 'pending') {
+      let entered = false;
+      for (let n = 0; n < 300; n++) { try { await readFile(log + '.entered'); entered = true; break; } catch { await setTimeout(10); } }
+      assert.equal(entered, true, 'Validation shared account actually started');
+      await state.restart();
+    }
     const settled = await state.service.research.harness.waitForTask(taskId, context);
     assert.equal(settled.state.outcome.status, 'completed', JSON.stringify(settled.state));
     const facts = await state.service.research.harness.snapshot(Application, context); const result = portfolio(facts!.portfolios[taskInput.id]);
+    if (mode !== 'positive') {
+      assert.equal(result.view.review?.decision, mode === 'negative' ? 'REJECT' : 'INCONCLUSIVE', JSON.stringify(result.view.review));
+      assert.equal(result.view.status, 'REVIEW_BLOCKED'); assert.equal(result.target, null); assert.deepEqual(result.view.targets, []);
+      const recorded = await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context);
+      if (mode === 'pending') {
+        assert.equal(recorded!.reservedCalls, 4);
+        const wire = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        assert.equal(wire.filter(row => row.command === 'simulate').length, 1, 'unresolved invocation must never be posted again under the same budget');
+        assert.ok(result.view.review!.reasonCodes.some(reason => reason.includes('missing')));
+      } else {
+        assert.ok(result.native?.independentQualification, 'original independent results and cash oracle remain owner-visible');
+        const check = result.view.review!.checks.find(check => check.id === 'independent_outcome');
+        assert.equal(check?.status, mode === 'negative' ? 'FAIL' : 'UNKNOWN');
+        assert.equal(state.faux.state.callCount, 7, 'independent outcome never enters another Agent turn');
+      }
+      return;
+    }
     assert.equal(result.view.review?.decision, 'PASS', JSON.stringify({ reasons: result.view.review?.reasonCodes, analyses: result.view.review?.analyses, stages: await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context) }));
     assert.equal(result.view.status, 'COMPUTED', result.view.error ?? '');
     const stages = await state.service.research.harness.snapshot(PortfolioReviewScience, String(taskId), context);
-    assert.equal(stages!.reservedCalls, 14); assert.equal(Object.keys(stages!.reservations).length, 7);
+    assert.equal(stages!.reservedCalls, 16); assert.equal(Object.keys(stages!.reservations).length, 9);
     assert.ok(stages!.results.independent);
     const exposure = await state.service.research.harness.snapshot(Exposures, context);
     const final = exposure!.windows.filter(window => window.kind === 'FINAL' && window.taskId === taskId);
