@@ -104,7 +104,7 @@ export async function openResearch(options: {
     // Repair a persisted owner-stop intent before submitting any new work.
     for (const id of new Set(Object.values(requests?.requests ?? {}).map(request => request.conversationId))) {
       const campaign = await harness.snapshot(CampaignResearchDoc, id, context);
-      if (campaign?.binding && campaign.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
+      if (campaign?.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
     }
     for (const [key, request] of Object.entries(requests?.requests ?? {})) {
       const requestId = key.slice('request:'.length);
@@ -190,7 +190,10 @@ export async function openResearch(options: {
     await (await conversation(id)).abort(context, { background: true });
     await harness.commit(async tx => {
       const campaign = await tx.doc(CampaignResearchDoc, id);
-      if (!campaign.binding) return;
+      if (!campaign.binding) {
+        if (campaign.closingReason === 'owner_stop') campaign.state = 'CONCLUDED';
+        return;
+      }
       const study = await tx.doc(Study, id);
       for (const trial of study.trials.filter(item => item.status === 'STARTED')) {
         const task = await tx.task(trial.taskId as TaskId);
@@ -347,7 +350,7 @@ export async function openResearch(options: {
           const facts = await tx.doc(Study, study.id);
           facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
           const campaign = await tx.doc(CampaignResearchDoc, study.id);
-          if (campaign.binding && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
+          if ((campaign.binding || campaign.closureTaskId !== null) && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
         }, context);
         await settleOwnerStop(study.id);
         return this.view(id);

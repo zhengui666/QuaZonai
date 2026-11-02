@@ -22,9 +22,15 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'clos
       const selection = await api.commit(async tx => {
         const study = await tx.doc(Study, api.conversationId); const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
         if (study.final) {
-          if (study.final.taskId !== task.id || study.final.status !== 'STARTED' || typeof study.final.trialId !== 'number') return null;
+          if (study.final.taskId !== task.id || typeof study.final.trialId !== 'number') return null;
           const selected = study.final.trialId;
-          return { trialId: selected, proposal: JSON.parse(JSON.stringify(study.trials.find(item => item.taskId === selected)?.proposal ?? null)) as JsonObject | null, independent: true };
+          if (study.final.status === 'STARTED') return { trialId: selected, proposal: JSON.parse(JSON.stringify(study.trials.find(item => item.taskId === selected)?.proposal ?? null)) as JsonObject | null, independent: true };
+          // Selection is persisted before the owned reviewer runs. Resume only this original pending closure, never a stop/refusal or another final owner.
+          if (study.final.status === 'STOPPED' && study.final.scientificClaim === 'SELECTION_ONLY_NOT_INDEPENDENT_QUALIFICATION'
+            && !study.deletedAt && campaign.state === 'CLOSING' && campaign.closureTaskId === task.id
+            && campaign.closingReason === task.input.reason && campaign.closingReason !== 'owner_stop'
+            && study.trials.some(item => item.taskId === selected && item.status === 'COMPUTED')) return { trialId: selected, proposal: null, independent: false };
+          return null;
         }
         const comparison = await compareCampaign(tx, api);
         const selected = comparison ? comparison.recommendationStatus === 'SELECTED'
@@ -49,7 +55,11 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'clos
         if (proposal && typeof proposal === 'object' && !Array.isArray(proposal) && Array.isArray(proposal.members)) await finalizePortfolio(args, api, context);
         else await finalizeFactor(args, api, context);
       }
-      await runtime.commit(async tx => { (await tx.doc(CampaignResearchDoc, api.conversationId)).state = 'CONCLUDED'; return { status: 'terminal', outcome: { status: 'completed', result: { closed: true } } }; }, context);
+      await runtime.commit(async tx => {
+        const campaign = await tx.doc(CampaignResearchDoc, api.conversationId); const final = (await tx.doc(Study, api.conversationId)).final;
+        if (campaign.closureTaskId === task.id && campaign.closingReason !== 'owner_stop' && final?.taskId === task.id) campaign.state = 'CONCLUDED';
+        return { status: 'terminal', outcome: { status: 'completed', result: { closed: true } } };
+      }, context);
     } catch (error) {
       if (runtime.signal.aborted) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -57,7 +67,8 @@ export const ResearchClosureTask = defineTask<{ reason: string }, { phase: 'clos
         const study = await tx.doc(Study, runtime.conversationId);
         study.final ??= { taskId: task.id, trialId: null, comparedTrials: study.trials.map(item => item.taskId!), status: 'STOPPED', reason: 'closure_needs_evidence',
           result: null, error: message, conclusion: 'NEEDS_EVIDENCE' };
-        (await tx.doc(CampaignResearchDoc, runtime.conversationId)).state = 'CONCLUDED';
+        const campaign = await tx.doc(CampaignResearchDoc, runtime.conversationId);
+        if (campaign.closureTaskId === task.id && campaign.closingReason !== 'owner_stop' && study.final.taskId === task.id) campaign.state = 'CONCLUDED';
         return { status: 'terminal', outcome: { status: 'failed', error: { message } } };
       }, context);
     }

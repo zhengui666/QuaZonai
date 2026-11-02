@@ -33,4 +33,6 @@ Retained native PM regressions reconstruct exact pre-review Requests, Study and 
 
 Explicit selected `research_finish` invokes the same owned reviewer after transactional preflight, before publishing its final selection. The original task retains its comparison and version across recovery; invalid selection, Sealed entry, pending trials, authoritative comparison or policy-kind mismatches do not freeze further research. Seven official Durable/provider/tool tests generate reports without uploading them and verify original-request replay; these and 30 affected review/PM regressions pass independently of paid-model quality evaluation.
 
+Selection-only automatic closure resumes its original pending review across restart before becoming `CONCLUDED`. Pending standalone closures also persist and reconcile `owner_stop` before new work. Mid-review close/reopen and stop-intent/abort-gap regressions preserve reviewer identity, ledger timestamps, scientific budgets and final ownership.
+
 Final applicable CI and explicit clean GitHub Codex review remain merge conditions. Current delivery status must be read from the PR rather than inferred from these local test counts.
