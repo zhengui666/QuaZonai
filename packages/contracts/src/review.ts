@@ -14,6 +14,7 @@ export interface ReviewMetricRule {
   minimumObservations: number; required: boolean; methods: string[]; scope: string; unit: string; frequency: string;
   /** Absolute admission requirement; reference percentiles may never alter this gate. */
   minimumTarget?: { value: number; inclusive: boolean };
+  normalization?: 'FIXED_BOUNDS_V1' | 'REFERENCE_P10_P90_V1';
 }
 export interface ReviewCheck {
   id: string; status: 'PASS' | 'FAIL' | 'UNKNOWN'; reason: string; evidenceRefs: string[];

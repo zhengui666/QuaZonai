@@ -52,7 +52,8 @@ test('calibration derives its anchors from distinct earlier roots rather than cu
   const records = Array.from({ length: 30 }, (_, i) => ({ rootId: `root-${i}`, endNs: '80', evidenceRefs: [`reference-${i}`],
     metrics: request.metrics.map(metric => ({ ...metric, value: i / 100, evidenceRef: `reference-${i}` })) }));
   const result = deriveReviewPolicyFromReference(request.policy, records, '101');
-  assert.equal(result.calibration!.rootCount, 30); assert.equal(result.metricRules[0]!.low, 0.02); assert.equal(result.metricRules[0]!.high, 0.26);
+  assert.equal(result.calibration!.rootCount, 30); assert.equal(result.metricRules.find(rule => rule.key === 'factor.rank_ic_lower')!.low, 0.02); assert.equal(result.metricRules.find(rule => rule.key === 'factor.rank_ic_lower')!.high, 0.26);
+  assert.equal(result.metricRules[0]!.low, 0.9); assert.equal(result.metricRules[0]!.high, 1);
   records[29]!.rootId = records[0]!.rootId; assert.throws(() => deriveReviewPolicyFromReference(request.policy, records, '101'), /roots_required/);
 });
 test('pooled time series results cannot satisfy a cross-sectional rule', () => {
@@ -75,7 +76,7 @@ for (const kind of ['FACTOR', 'PORTFOLIO', 'ALLOCATION'] as const) {
     request.metrics = request.policy.metricRules.map(rule => ({ key: rule.key, value: rule.high, status: 'AVAILABLE', observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: 'native-1' }));
     const result = scoreReview(request);
     assert.equal(result.totalScore, 100, 'relative ranking is deliberately excellent'); assert.equal(result.decision, 'REJECT'); assert.equal(result.qualityCoefficient, 0);
-    for (const key of [kind === 'FACTOR' ? 'factor.rank_ic_lower' : 'account.net_return_lower', 'selection.dsr', 'execution.stressed_net_return', 'incremental.net_return_delta_lower']) assert.ok(result.hardFailures.includes(`${key}:below_absolute_admission_minimum`), key);
+    for (const key of [kind === 'FACTOR' ? 'factor.rank_ic_lower' : 'account.net_return_lower', 'execution.stressed_net_return', 'incremental.net_return_delta_lower']) assert.ok(result.hardFailures.includes(`${key}:below_absolute_admission_minimum`), key);
   });
 }
 test('absolute requirements cannot be removed, made optional, relabelled or relaxed', () => {
@@ -126,4 +127,33 @@ test('a final portfolio outcome remains a veto even when its pre-test policy did
   request.checks.push({ id: 'independent_outcome', status: 'FAIL', reason: 'native_independent_return_below_frozen_minimum', evidenceRefs: ['native-1'] });
   assert.equal(scoreReview(request).decision, 'REJECT');
   request.checks.at(-1)!.status = 'UNKNOWN'; assert.equal(scoreReview(request).decision, 'INCONCLUSIVE');
+});
+test('thirty same-profile references with identical bounded metrics register using fixed versioned scales', async () => {
+  const { deriveReviewPolicyFromReference } = await import('../../../packages/contracts/src/review-scoring.ts');
+  const request = input(); request.policy.calibration = null;
+  const dsr = request.policy.metricRules.find(rule => rule.key === 'selection.dsr')!;
+  request.policy.metricRules.push({ ...dsr, key: 'selection.pbo', direction: 'LOWER', low: 0, high: 1, minimumTarget: undefined });
+  const constants: Record<string, number> = { 'data.coverage': 0.985, 'robustness.positive_fraction': 1, 'mechanism.evidence_fraction': 1, 'selection.dsr': 0.99, 'selection.pbo': 0 };
+  const records = Array.from({ length: 30 }, (_, index) => ({ rootId: `root-${index}`, endNs: '80', evidenceRefs: [`reference-${index}`], metrics: request.policy.metricRules.map(rule => ({ key: rule.key,
+    value: constants[rule.key] ?? 0.01 + index / 1000, status: 'AVAILABLE' as const, observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: `reference-${index}` })) }));
+  const policy = deriveReviewPolicyFromReference(request.policy, records, '101');
+  for (const [key, low, high] of [['data.coverage', 0.9, 1], ['robustness.positive_fraction', 0.5, 1], ['mechanism.evidence_fraction', 0, 1], ['selection.dsr', 0.5, 0.99], ['selection.pbo', 0, 1]] as const) {
+    const rule = policy.metricRules.find(rule => rule.key === key)!;
+    assert.equal(rule.low, low, key); assert.equal(rule.high, high, key); assert.equal(rule.normalization, 'FIXED_BOUNDS_V1', key);
+  }
+  assert.equal(policy.calibration!.rootCount, 30);
+  assert.equal(policy.metricRules.find(rule => rule.key === 'factor.rank_ic_lower')!.normalization, 'REFERENCE_P10_P90_V1');
+  assert.deepEqual(policy.metricRules.find(rule => rule.key === 'selection.dsr')!.minimumTarget, { value: 0.95, inclusive: true });
+  records[0]!.metrics.find(metric => metric.key === 'data.coverage')!.status = 'UNAVAILABLE' as any;
+  records[0]!.metrics.find(metric => metric.key === 'data.coverage')!.value = null as any;
+  assert.throws(() => deriveReviewPolicyFromReference(request.policy, records, '101'), /review_reference_metric_insufficient/, 'fixed scales still require 30 qualified original values');
+});
+test('constant predictive or economic reference evidence does not get fabricated percentile anchors', async () => {
+  const { deriveReviewPolicyFromReference } = await import('../../../packages/contracts/src/review-scoring.ts');
+  for (const kind of ['FACTOR', 'PORTFOLIO', 'ALLOCATION'] as const) {
+    const policy = createReviewPolicy(kind, `degenerate-${kind}`, '100');
+    const records = Array.from({ length: 30 }, (_, index) => ({ rootId: `root-${index}`, endNs: '80', evidenceRefs: [`reference-${index}`], metrics: policy.metricRules.map(rule => ({ key: rule.key, value: rule.key === 'factor.rank_ic_lower' || rule.key === 'account.net_return_lower' ? 0.02 : rule.minimumTarget ? 0.96 + index / 1000 : 0.99,
+      status: 'AVAILABLE' as const, observationCount: 100, method: rule.methods[0]!, scope: rule.scope, unit: rule.unit, frequency: rule.frequency, evidenceRef: `reference-${index}` })) }));
+    assert.throws(() => deriveReviewPolicyFromReference(policy, records, '101'), /review_reference_metric_degenerate/, kind);
+  }
 });

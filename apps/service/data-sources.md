@@ -137,8 +137,11 @@ the actual independent selection, not the selection used for fitting weights.
 Source-owner evidence and native schema/quality validation are reported separately
 from independently demonstrated market results.
 
-`POST /api/v3/review-policies` derives frozen q10/q90 anchors from at least 30
-historical reference roots. Supply `requestId`, `kind`, `evaluationStartNs` and
+`POST /api/v3/review-policies` derives efficacy q10/q90 anchors from at least 30
+historical reference roots. Coverage, stability fractions, mechanism fractions and
+probabilities retain versioned fixed scoring ranges; constant valid values on these
+bounded scales do not invalidate calibration. Every metric still requires 30 legal
+source observations. Supply `requestId`, `kind`, `evaluationStartNs` and
 `researchIds`, or `allocationIds` for `ALLOCATION`; evidence is loaded from retained
 Validation reports. Missing or degenerate reference evidence is rejected. Register
 the resulting policies for the corresponding data, frequency and prediction horizon

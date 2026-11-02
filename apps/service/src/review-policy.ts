@@ -71,7 +71,12 @@ export function registerReviewPolicyRoutes(app: FastifyInstance, host: ResearchH
       if (report.metrics.some(metric => /heldout|sealed|independent/i.test(metric.evidenceRef))) throw new Problem('review_reference_independent_evidence_forbidden', 422);
       records.push({ rootId: `research:${researchId}`, endNs, evidenceRefs: report.target.sourceEvidenceRefs, metrics: report.metrics });
     }
-    const policy = deriveReviewPolicyFromReference(createReviewPolicy(input.kind, `review-policy:${randomUUID()}`, nowNs()), records, evaluationStartNs);
+    let policy: ReviewPolicy;
+    try { policy = deriveReviewPolicyFromReference(createReviewPolicy(input.kind, `review-policy:${randomUUID()}`, nowNs()), records, evaluationStartNs); }
+    catch (error) {
+      if (error instanceof Error && /^review_reference_/.test(error.message)) throw new Problem(error.message, 422);
+      throw error;
+    }
     const saved = await host.harness.commit(async tx => {
       const document = await tx.doc(Policies); const old = document.records[String(input.requestId)];
       if (old) { if (canonical(old.input!) !== canonical(input)) throw new Problem('request_id_conflict', 409); return old.policy as unknown as ReviewPolicy; }

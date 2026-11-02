@@ -4,6 +4,14 @@ const DIMENSIONS: ReviewDimensionId[] = ['DATA', 'STATISTICS', 'ROBUSTNESS', 'EX
 const LABELS = { DATA: '数据与实现', STATISTICS: '样本外统计证据', ROBUSTNESS: '稳健性', EXECUTION: '净成本与容量', INCREMENTAL: '增量与分散性', MECHANISM: '机制与简洁性' };
 const REQUIREMENTS = ['provenance', 'implementation', 'trial_ledger', 'reproducibility', 'no_leakage', 'independent_window', 'execution_constraints'];
 const REJECT = ['provenance', 'implementation', 'reproducibility', 'no_leakage', 'execution_constraints'];
+/** Registered bounded scales: their attainable endpoints are independent of the reference population. */
+export const REVIEW_FIXED_SCORE_BOUNDS_V1: Readonly<Record<string, { low: number; high: number }>> = {
+  'data.coverage': { low: 0.9, high: 1 },
+  'robustness.positive_fraction': { low: 0.5, high: 1 },
+  'mechanism.evidence_fraction': { low: 0, high: 1 },
+  'selection.dsr': { low: 0.5, high: 0.99 },
+  'selection.pbo': { low: 0, high: 1 },
+};
 const MINIMUM_TARGETS: Readonly<Record<string, { value: number; inclusive: boolean }>> = {
   'factor.rank_ic_lower': { value: 0, inclusive: false },
   'account.net_return_lower': { value: 0, inclusive: false },
@@ -33,7 +41,7 @@ export function createReviewPolicy(kind: ReviewTargetKind, id: string, frozenAtN
   ];
   return validateReviewPolicy({ schemaVersion: 1, id, targetKind: kind, frozenAtNs, calibration: null,
     requiredChecks: [...REQUIREMENTS, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])], rejectChecks: [...REJECT, ...(kind === 'ALLOCATION' ? ['independent_outcome'] : [])],
-    metricRules: definitions.map(([key, dimension, direction, low, high, unit]) => ({ key, dimension, direction, low, high, ...(MINIMUM_TARGETS[key] ? { minimumTarget: { ...MINIMUM_TARGETS[key] } } : {}),
+    metricRules: definitions.map(([key, dimension, direction, low, high, unit]) => ({ key, dimension, direction, low, high, normalization: REVIEW_FIXED_SCORE_BOUNDS_V1[key] ? 'FIXED_BOUNDS_V1' : 'REFERENCE_P10_P90_V1', ...(MINIMUM_TARGETS[key] ? { minimumTarget: { ...MINIMUM_TARGETS[key] } } : {}),
       minimumObservations: dimension === 'MECHANISM' ? 5 : 30, required: true, scope: dimension === 'DATA' ? 'DATA' : dimension === 'MECHANISM' ? 'MECHANISM' : key.startsWith('selection.') ? 'SELECTION_COHORT' : dimension === 'STATISTICS' || dimension === 'ROBUSTNESS' ? kind === 'FACTOR' ? 'POOLED_TIME_SERIES' : 'SHARED_ACCOUNT' : 'SHARED_ACCOUNT', methods: [dimension === 'MECHANISM' ? 'qz.review-mechanism/1' : 'qz.review-science.v1'], unit, frequency: 'REGISTERED' })),
     dimensionWeights: kind === 'FACTOR' ? { DATA: 20, STATISTICS: 25, ROBUSTNESS: 20, EXECUTION: 15, INCREMENTAL: 15, MECHANISM: 5 }
       : { DATA: 15, STATISTICS: 20, ROBUSTNESS: 15, EXECUTION: 20, INCREMENTAL: 25, MECHANISM: 5 },
@@ -52,6 +60,7 @@ export function validateReviewPolicy(value: unknown): ReviewPolicy {
   if (!p.dimensionWeights || DIMENSIONS.some(id => !finite(p.dimensionWeights[id]) || p.dimensionWeights[id] <= 0) || Object.values(p.dimensionWeights).reduce((a, b) => a + b, 0) !== 100) invalid('review_policy_dimension_weights_invalid');
   if (!Array.isArray(p.metricRules) || !p.metricRules.length || p.metricRules.length > 128 || !unique(p.metricRules.map(r => r.key))) invalid('review_policy_metrics_invalid');
   for (const r of p.metricRules) if (!identifier(r.key) || !DIMENSIONS.includes(r.dimension) || !['HIGHER', 'LOWER'].includes(r.direction) || !finite(r.low) || !finite(r.high) || r.low >= r.high || !Number.isSafeInteger(r.minimumObservations) || r.minimumObservations < 1 || typeof r.required !== 'boolean' || !Array.isArray(r.methods) || !r.methods.length || !r.methods.every(identifier) || !identifier(r.scope) || !identifier(r.unit) || !identifier(r.frequency)) invalid('review_policy_metric_invalid');
+  for (const rule of p.metricRules) if (rule.normalization !== undefined && !['FIXED_BOUNDS_V1', 'REFERENCE_P10_P90_V1'].includes(rule.normalization)) invalid('review_policy_normalization_invalid');
   for (const rule of p.metricRules) if (rule.minimumTarget !== undefined && (!finite(rule.minimumTarget.value) || typeof rule.minimumTarget.inclusive !== 'boolean' || rule.direction !== 'HIGHER')) invalid('review_policy_minimum_target_invalid');
   for (const key of requiredMinimumKeys(p.targetKind)) {
     const rule = p.metricRules.find(rule => rule.key === key); const floor = MINIMUM_TARGETS[key]!;
@@ -168,10 +177,16 @@ export function deriveReviewPolicyFromReference(policy: ReviewPolicy, records: i
       return m?.status === 'AVAILABLE' && finite(m.value) && Number.isSafeInteger(m.observationCount) && m.observationCount >= rule.minimumObservations && rule.methods.includes(m.method) && m.scope === rule.scope && m.unit === rule.unit && m.frequency === rule.frequency && identifier(m.evidenceRef) ? [m.value] : [];
     }).sort((a, b) => a - b);
     if (values.length < 30) invalid('review_reference_metric_insufficient');
-    const low = values[Math.floor((values.length - 1) * 0.1)]!;
-    const high = values[Math.floor((values.length - 1) * 0.9)]!;
-    if (low >= high) invalid('review_reference_metric_degenerate');
-    rule.low = low; rule.high = high;
+    const fixed = REVIEW_FIXED_SCORE_BOUNDS_V1[rule.key];
+    if (fixed) {
+      if (values.some(value => value < 0 || value > 1)) invalid('review_reference_bounded_metric_invalid');
+      rule.low = fixed.low; rule.high = fixed.high; rule.normalization = 'FIXED_BOUNDS_V1';
+    } else {
+      const low = values[Math.floor((values.length - 1) * 0.1)]!;
+      const high = values[Math.floor((values.length - 1) * 0.9)]!;
+      if (low >= high) invalid('review_reference_metric_degenerate');
+      rule.low = low; rule.high = high; rule.normalization = 'REFERENCE_P10_P90_V1';
+    }
   }
   result.calibration = { rootCount: records.length, endNs: records.reduce((latest, r) => BigInt(r.endNs) > BigInt(latest) ? r.endNs : latest, '0'),
     evidenceRefs: [...new Set(records.flatMap(r => r.evidenceRefs))] };
