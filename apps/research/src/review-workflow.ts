@@ -43,7 +43,10 @@ export function freezeReviewPolicies(input: ResearchInput, nowNs = (BigInt(Date.
 
 function policyFor(input: ResearchInput, kind: ReviewTargetKind): ReviewPolicy | null {
   const policy = input.policy.reviewPolicy ?? object(input.policy.reviewPolicies)?.[kind];
-  return policy === undefined ? null : validateReviewPolicy(JSON.parse(JSON.stringify(policy))); 
+  if (policy === undefined) return null;
+  const resolved = validateReviewPolicy(JSON.parse(JSON.stringify(policy)));
+  if (resolved.targetKind !== kind) throw new Error('review_policy_target_mismatch');
+  return resolved;
 }
 
 /** Never expose independent results in the reviewer context, even if malformed input contains both partitions. */
@@ -101,7 +104,7 @@ export function reviewSourceChecks(input: ResearchInput, trial: JsonObject, tria
 }
 
 /** All direct/automatic finalizers share this fence. A failed review never consumes Sealed. */
-export async function ensureTrialReview(api: ResearchRuntime, context: Context, trialId: number): Promise<ReviewReport | null> {
+export async function ensureTrialReview(api: ResearchRuntime, context: Context, trialId: number, options: { deferRefusalConclusion?: boolean } = {}): Promise<ReviewReport | null> {
   const frozen = await api.commit(async tx => {
     const study = await tx.doc(Study, api.conversationId);
     if (!study.input) throw new Error('research_input_missing');
@@ -187,7 +190,7 @@ export async function ensureTrialReview(api: ResearchRuntime, context: Context, 
     const ledger = await tx.doc(ReviewLedger, api.conversationId); const record = ledger.records[frozen.version]!;
     record.report = json(report); record.status = 'COMPLETED';
     const study = await tx.doc(Study, api.conversationId);
-    if (report.decision !== 'PASS' && (!study.final || study.final.status === 'STOPPED' && study.final.trialId === trialId)) {
+    if (!options.deferRefusalConclusion && report.decision !== 'PASS' && (!study.final || study.final.status === 'STOPPED' && study.final.trialId === trialId)) {
       study.final = { taskId: api.taskId, trialId, status: 'STOPPED', reason: 'independent_review_not_passed',
         result: null, reviewReportId: report.id, conclusion: report.decision, comparedTrials: study.trials.map(item => item.taskId!), scientificClaim: 'REVIEW_ONLY_NOT_INDEPENDENT_QUALIFICATION' };
       (await tx.doc(CampaignResearchDoc, api.conversationId)).state = 'CONCLUDED';

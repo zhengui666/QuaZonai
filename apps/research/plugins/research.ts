@@ -1,5 +1,9 @@
 import { Type } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool, hook, section, ToolTask } from '@earendil-works/pi-durable';
+import { defineDoc, defineExtension, defineTool, hook, section, ToolTask } from '@earendil-works/pi-durable';
+import type { JsonObject } from '@earendil-works/pi-durable';
+import { validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { reviewTargetVersion } from '../src/review-identity.ts';
+import { ensureTrialReview } from '../src/review-workflow.ts';
 import { Study } from '../src/documents.ts';
 import { object, studyInput } from '../src/trials.ts';
 import { marketPage, modelBriefInput, modelFeedback } from '../src/feedback.ts';
@@ -10,6 +14,9 @@ import { registerHypothesis } from '../src/pm-ledger.ts';
 import { compareCampaign, freezeSelection } from '../src/pm-comparison.ts';
 import { closeResearch } from '../src/closure.ts';
 import { strategyIntakeTool } from '../src/strategy-intake.ts';
+
+const ExplicitFinish = defineDoc<{ intent: JsonObject | null }>({ kind: 'qz.research-explicit-finish', version: 1, scope: 'task', initial: () => ({ intent: null }) });
+const detached = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export function researchExtension(search?: Parameters<typeof literatureTools>[0]) {
   return defineExtension({
@@ -113,21 +120,66 @@ ${literatureInstructions}`)],
           await closeResearch(api, context, intakeStop ?? 'owner_selection_complete');
           return { content: [{ type: 'text', text: 'Research concluded with the registered deterministic comparison; independent results are owner-only.' }], control: { terminate: true } };
         }
-        await api.commit(async (tx) => {
+        const finish = await api.commit(async (tx): Promise<JsonObject> => {
           const study = await tx.doc(Study, api.conversationId);
+          const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
           if (study.final !== null) {
             if (study.final.taskId !== api.taskId) throw new Error('research_already_final');
-            return;
+            return { review: false };
           }
           const maximum = study.input?.policy.max_trials;
           if (study.input?.specification && args.trialId === undefined && (typeof maximum !== 'number' || study.trials.filter(item => item.status !== 'REJECTED').length < maximum)) throw new Error('research_stop_condition_not_met');
           const selected = study.trials.find((item) => item.taskId === args.trialId);
           if (args.trialId !== undefined && selected?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');
-          if (args.trialId !== undefined && study.input?.data.sealed && current?.binding?.independentConsumer !== 'PM_PORTFOLIO') throw new Error('registered_final_evaluator_required');
-          const frozen = current?.binding && args.trialId !== undefined ? await freezeSelection(tx, api, args.trialId) : null;
+          if (args.trialId !== undefined && study.input?.data.sealed && campaign.binding?.independentConsumer !== 'PM_PORTFOLIO') throw new Error('registered_final_evaluator_required');
+          const modern = args.trialId !== undefined && study.input !== null
+            && (study.input.policy.reviewPolicy !== undefined || study.input.policy.reviewPolicies !== undefined);
+          if (modern) {
+            // Validate the exact selected candidate and authoritative comparison before closing search or reserving review work.
+            if (study.trials.some(item => item.status === 'STARTED')) throw new Error('research_trials_unsettled');
+            const bound = await tx.doc(ExplicitFinish, api.taskId);
+            if (bound.intent) {
+              if (bound.intent.trialId !== args.trialId || bound.intent.reason !== args.reason) throw new Error('research_finish_identity_conflict');
+              return detached(bound.intent);
+            }
+            if (campaign.state !== 'SEARCHING') throw new Error('research_search_closed');
+            const frozen = campaign.binding ? await freezeSelection(tx, api, args.trialId!) : null;
+            const kind = Array.isArray(object(selected!.proposal, 'proposal').members) ? 'PORTFOLIO' : 'FACTOR';
+            const policy = validateReviewPolicy(detached(study.input!.policy.reviewPolicy ?? object(study.input!.policy.reviewPolicies, 'review_policies')[kind]));
+            if (policy.targetKind !== kind) throw new Error('review_policy_target_mismatch');
+            const version = reviewTargetVersion(detached(study.input!) as JsonObject, detached(selected!) as JsonObject, detached(study.trials) as JsonObject[], policy);
+            bound.intent = { review: true, trialId: args.trialId!, reason: args.reason, comparison: frozen, version };
+            campaign.state = 'CLOSING'; campaign.closingReason = 'explicit_selection_review';
+            return detached(bound.intent);
+          }
+          // Already-frozen legacy inputs retain their original finalization semantics.
+          const frozen = campaign.binding && args.trialId !== undefined ? await freezeSelection(tx, api, args.trialId) : null;
           study.final = { taskId: api.taskId, trialId: args.trialId ?? null, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, status: 'STOPPED', result: null, ...(frozen ? { comparison: frozen } : {}) };
-          if (current?.binding) (await tx.doc(CampaignResearchDoc, api.conversationId)).state = 'CONCLUDED';
+          if (campaign.binding) campaign.state = 'CONCLUDED';
+          return { review: false };
         }, context);
+        if (finish.review) {
+          const trialId = finish.trialId as number;
+          const report = await ensureTrialReview(api, context, trialId, { deferRefusalConclusion: true });
+          await api.commit(async tx => {
+            const study = await tx.doc(Study, api.conversationId);
+            if (study.final) {
+              if (study.final.taskId !== api.taskId) throw new Error('research_already_final');
+              return;
+            }
+            const selected = study.trials.find(item => item.taskId === trialId);
+            if (!study.input || selected?.status !== 'COMPUTED' || !report) throw new Error('research_finish_review_missing');
+            const kind = Array.isArray(object(selected.proposal, 'proposal').members) ? 'PORTFOLIO' : 'FACTOR';
+            const policy = validateReviewPolicy(detached(study.input.policy.reviewPolicy ?? object(study.input.policy.reviewPolicies, 'review_policies')[kind]));
+            if (policy.targetKind !== kind) throw new Error('review_policy_target_mismatch');
+            const currentVersion = reviewTargetVersion(detached(study.input) as JsonObject, detached(selected) as JsonObject, detached(study.trials) as JsonObject[], policy);
+            if (currentVersion !== finish.version || report.target.version !== currentVersion
+              || study.reviewSelection && (study.reviewSelection.trialId !== trialId || study.reviewSelection.version !== currentVersion)) throw new Error('research_finish_review_version_conflict');
+            study.final = { taskId: api.taskId, trialId, comparedTrials: study.trials.map(item => item.taskId!), reason: finish.reason!, status: 'STOPPED', result: null,
+              ...(finish.comparison ? { comparison: finish.comparison } : {}), reviewReportId: report.id, reviewDecision: report.decision };
+            (await tx.doc(CampaignResearchDoc, api.conversationId)).state = 'CONCLUDED';
+          }, context);
+        }
         return { content: [{ type: 'text', text: 'Research stopped; original trials and selection are recorded.' }], control: { terminate: true } };
       },
     }),
