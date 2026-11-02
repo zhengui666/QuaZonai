@@ -9,6 +9,12 @@ import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { canonical, Requests, Study } from './documents.ts';
+import { ReviewLedger } from './review-documents.ts';
+import { freezeReviewPolicies } from './review-workflow.ts';
+import { reviewExtensionWithBudget } from '../plugins/review.ts';
+import { ReviewNativeTask } from './review-native-task.ts';
+import { IndependentReviewTask } from './review-runtime.ts';
+import { defineExtension } from '@earendil-works/pi-durable';
 import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
@@ -54,10 +60,12 @@ export async function openResearch(options: {
       const module = await import(pathToFileURL(resolve(path)).href);
       registry.install(module.default as Extension);
     }
+    registry.install(reviewExtensionWithBudget(() => harness));
+    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask] }));
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
-    harness = await Harness.open(storage, { models, registry, settings }, context);
+    harness = await Harness.open(storage, { models, registry, settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => extension.name !== 'qz.review') } }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
@@ -134,7 +142,7 @@ export async function openResearch(options: {
       const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
-      (await tx.doc(Study, created.id)).input = input;
+      (await tx.doc(Study, created.id)).input = freezeReviewPolicies(input);
       if (input.campaign) {
         const campaign = await tx.doc(CampaignResearchDoc, created.id);
         campaign.binding = input.campaign;
@@ -198,6 +206,7 @@ export async function openResearch(options: {
     return { research: await harness.snapshot(Study, id as ConversationId, context),
       campaignResearch: await harness.snapshot(CampaignResearchDoc, id as ConversationId, context),
       literature: await harness.snapshot(LiteratureDoc, id as ConversationId, context),
+      reviews: await harness.snapshot(ReviewLedger, id as ConversationId, context),
       submission: await latestSubmission(id), originalSubmission: await submissionFor(id) };
   }
   async function diagnostics(id: number) {
@@ -313,7 +322,8 @@ export async function openResearch(options: {
       try {
         return { ...watch.value, research: await harness.snapshot(Study, watch.value.conversation.id, context),
           campaignResearch: await harness.snapshot(CampaignResearchDoc, watch.value.conversation.id, context),
-          literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context), submission: await submissionFor(id) };
+          literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context),
+          reviews: await harness.snapshot(ReviewLedger, watch.value.conversation.id, context), submission: await submissionFor(id) };
       } finally { await watch.stop(); }
     },
     async watch(id: number): Promise<ConversationWatch> {

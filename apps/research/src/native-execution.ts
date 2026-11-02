@@ -15,7 +15,7 @@ import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest
 import { ExecutionFailure } from './execution-errors.ts';
 import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['review-science', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 const instanceCredentials = new Map<string, string>();
 const progressTracking = new AsyncLocalStorage<(snapshots: NativeJson[]) => Promise<void>>();
 /** Observes original account snapshots; never changes invocation or cancellation identity. */

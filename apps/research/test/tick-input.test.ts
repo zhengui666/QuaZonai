@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -229,7 +230,7 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
       const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
       return tool('factor_finalize', { trialId, reason: 'Preselect before owner-only final result' });
     }]);
-    const first = await host.start('tick-protocol', input);
+    const first = await startLegacyResearch(host, 'tick-protocol', input);
     await (await host.harness.submission(first.submissionId, context))!.wait(context);
     const original = (await host.state(first.conversationId)).research!;
     assert.equal(original.trials[0]!.status, 'COMPUTED', JSON.stringify(original.trials));
@@ -242,12 +243,12 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     assert.equal(entries.includes('NEVER_RETURN_FINAL'), false);
     assert.equal((original.final!.result as JsonObject).owner_only, 'NEVER_RETURN_FINAL');
     await host.close(); host = await openResearch(options);
-    assert.deepEqual(await host.start('tick-protocol', input), first);
+    assert.deepEqual(await startLegacyResearch(host, 'tick-protocol', input), first);
     assert.deepEqual((await host.state(first.conversationId)).research, original);
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
 
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'A copied BAR path cannot reset tick history', model: legacyModel }), tool('research_finish', { reason: 'Failed attempt remains disclosed' })]);
-    const second = await host.start('copied-bar', { ...input, data: { catalog: copied, request: bar() } });
+    const second = await startLegacyResearch(host, 'copied-bar', { ...input, data: { catalog: copied, request: bar() } });
     await (await host.harness.submission(second.submissionId, context))!.wait(context);
     const rejected = (await host.state(second.conversationId)).research!;
     assert.equal(rejected.trials[0]!.status, 'FAILED');
@@ -255,14 +256,14 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
 
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Original BAR feedback', model: legacyModel }), tool('research_finish', { reason: 'End BAR protocol' })]);
-    const third = await host.start('bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });
+    const third = await startLegacyResearch(host, 'bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });
     await (await host.harness.submission(third.submissionId, context))!.wait(context);
     assert.equal((await host.state(third.conversationId)).research!.trials[0]!.status, 'COMPUTED');
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Tick suffix was already exposed by BAR feedback', model }), async () => {
       const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
       return tool('factor_finalize', { trialId, reason: 'Must fail because BAR validation already exposed the final suffix' });
     }]);
-    const fourth = await host.start('tick-after-bar', { ...input, data: { catalog: copied, ...tagged(tick('B.SIM', '20')), sealed: { catalog: copied, ...tagged(tick('B.SIM')) } } });
+    const fourth = await startLegacyResearch(host, 'tick-after-bar', { ...input, data: { catalog: copied, ...tagged(tick('B.SIM', '20')), sealed: { catalog: copied, ...tagged(tick('B.SIM')) } } });
     await (await host.harness.submission(fourth.submissionId, context))!.wait(context);
     const fourthState = (await host.state(fourth.conversationId)).research!;
     // Prior iterative feedback is permitted for another iterative prefix, but it
@@ -273,7 +274,7 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
 
     const beforeUnsupported = (await readFile(calls, 'utf8')).trim().split('\n').length;
     faux.setResponses([tool('factor_volume', { hypothesis: 'BAR volume is not implicitly cohort quantity', center: 0 }), tool('research_finish', { reason: 'Unsupported factor remains a disclosed attempt' })]);
-    const fifth = await host.start('tick-volume-rejected', { ...input, data: { catalog, ...tagged(tick('C.SIM', '20')) } });
+    const fifth = await startLegacyResearch(host, 'tick-volume-rejected', { ...input, data: { catalog, ...tagged(tick('C.SIM', '20')) } });
     await (await host.harness.submission(fifth.submissionId, context))!.wait(context);
     const fifthState = (await host.state(fifth.conversationId)).research!;
     assert.equal(fifthState.trials[0]!.status, 'FAILED');

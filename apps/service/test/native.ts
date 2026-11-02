@@ -1,3 +1,4 @@
+import { startLegacyResearch } from '../../research/test/legacy-study.ts';
 import assert from 'node:assert/strict';
 import './capital-native.ts';
 import './pm-science-native.ts';
@@ -195,7 +196,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
         fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'First frozen kernel control', model: wat }), { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxToolCall('hold_original_selection', {}), { stopReason: 'toolUse' }),
       ]);
-      const receipt = await host.start('catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
+      const receipt = await startLegacyResearch(host, 'catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.state(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -220,7 +221,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
       },
     ]);
     const original = { goal: 'Full-catalog native control; no market/PIT/model-quality claim', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
-    const receipt = await host.start('catalog-kernel-control', original); id = receipt.conversationId;
+    const receipt = await startLegacyResearch(host, 'catalog-kernel-control', original); id = receipt.conversationId;
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(id)).research!;
     assert.deepEqual(study.input, original); assert.equal(study.trials.length, 1);
@@ -241,7 +242,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     assert.deepEqual(windows.map(window => window.kind), grouped ? ['ITERATION', 'ITERATION', 'FINAL'] : ['ITERATION', 'FINAL']);
     assert.deepEqual(windows[0]!.barTypesRef, windows[1]!.barTypesRef);
     assert.equal(factorViews(id, study)[0]!.combinable, false);
-    assert.deepEqual(await host.start('catalog-kernel-control', original), receipt);
+    assert.deepEqual(await startLegacyResearch(host, 'catalog-kernel-control', original), receipt);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

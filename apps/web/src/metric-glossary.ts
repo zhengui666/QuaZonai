@@ -5,6 +5,25 @@ const nativeMoney = '单位为原生报告币种；接口未提供币种时不�
 const fraction = '按原生小数比例显示，0.01 表示 1%；不在浏览器重新年化。';
 const glossary: Record<string, MetricDefinition> = {
   pearson_ic: definition('皮尔逊信息系数（IC）', '因子分数与对应未来标签的皮尔逊相关系数，无量纲，范围为 −1 至 1。不是收益率；恒定分数、恒定标签或样本不足时不可用。'),
+  rank_ic: definition('有方向秩信息系数（RankIC）', '因子分数与未来标签的秩相关系数，范围为 −1 至 1；保留方向，不取绝对值。横截面与合并时间序列的范围见原分析方法，二者不能互换。'),
+  rank_ic_lower: definition('秩信息系数区间下界', '按原分析方法计算的 RankIC 置信区间下界。区块重采样保留同步事件组及标签重叠；样本不足时不可用，不是未来盈利概率。'),
+  rank_ic_upper: definition('秩信息系数区间上界', '按原分析方法计算的 RankIC 置信区间上界；须与下界、分析范围、区块长度和样本数一起解释。'),
+  coverage: definition('因子有效观测覆盖率', '评估分区中有效因子观测占原始观测的比例。仅表示记录覆盖，不证明历史可得时间或样本独立。'),
+  independent_blocks: definition('完整时间区块数', '按原分析区块长度划分的完整同步事件区块数。区块长度至少覆盖观测到的标签重叠，计数本身不保证区块彼此独立。'),
+  positive_slice_fraction: definition('正向时间切片占比', '原分析声明的时间切片中，方向性统计值大于零的切片比例。不是盈利交易占比或未来获利概率。'),
+  quantile_spread: definition('因子分层标签收益差', '最高与最低因子分层对应的未来价格标签收益之差，按原生标签周期保留。没有执行成交和成本，不是可交易的组合净收益。'),
+  quantile_monotonicity: definition('因子分层单调性', '原分析分层序号与各层平均未来标签收益的秩相关，反映标签收益是否随因子方向有序变化。不是因果证据或盈利概率。'),
+  dsr: definition('偏差校正夏普统计量（DSR）', '结合搜索次数、候选夏普分布及收益偏度和峰度，评估观察到的夏普是否超过选择偏差基准。依赖完整试验信息和统计假设，不是未来盈利概率。'),
+  pbo: definition('回测选择过拟合诊断（PBO）', '对可比较候选收益矩阵执行 CSCV，统计样本内优胜候选在对应样本外表现落后的比例。诊断搜索过程，不是单因子的未来失效概率；不能替代时间向前验证。'),
+  net_return_delta: definition('净收益增量', '候选组合与冻结基线在匹配时点的成本后收益差均值。需要相同币种、区间、费用和共享账户口径，不通过加总成员净值推算。'),
+  net_return_delta_lower: definition('净收益增量区间下界', '候选与基线配对净收益差均值的区块重采样区间下界，保留原收益周期；不重新年化。'),
+  net_return_delta_upper: definition('净收益增量区间上界', '候选与基线配对净收益差均值的区块重采样区间上界，须结合下界和原生样本数解释。'),
+  return_correlation: definition('与基线的收益相关性', '候选与基线对齐净收益序列的皮尔逊相关系数。低相关本身不能证明有净增量或可交易。'),
+  drawdown_reduction: definition('相对基线的回撤改善', '基线最大回撤幅度减候选最大回撤幅度；正值表示候选回撤更小，按原生小数比例保留。'),
+  sharpe_delta: definition('相对基线的夏普增量', '候选与基线同频、未年化净收益夏普之差。不是未来收益预测，不能与不同年化口径直接比较。'),
+  'account.net_return_lower': definition('成本后收益区间下界', '原生共享账户净收益统计的置信区间下界，周期和方法见原始字段；不在浏览器推算费用或重新年化。'),
+  'execution.stressed_net_return': definition('压力情景净收益', '冻结成本、延迟或流动性压力情景下的原生净收益。情景范围和执行映射必须有证据，纯因子标签不能替代。'),
+  'mechanism.evidence_fraction': definition('机制证据完整度', '固定评审清单中有来源支持的机制项目占比。仅反映证据完整度，不能抵消数据泄漏或缺失统计证据。'),
   'counts.observations': definition('总观测', '本分区收到的原始观测数，单位：条。包含后来被排除的观测，不等于独立交易次数。'),
   'counts.included': definition('有效观测', '通过原生对齐和完整性检查、实际用于该分区指标的观测数，单位：条。不据此假定样本彼此独立。'),
   'counts.excluded': definition('排除观测', '未参与该分区指标计算的观测数，单位：条。具体原因见预热、标签与分区计数；缺失数据不补零。'),
@@ -121,6 +140,8 @@ export function metricDefinition(key: string): MetricDefinition {
   const normalized = key.replace(/^(?:TRAIN|VALIDATION|HELDOUT|DISCOVERY|SEALED|FORWARD)\./, '').replace(/^portfolio\./, '');
   if (normalized === 'ic') return glossary.pearson_ic!;
   if (glossary[normalized]) return glossary[normalized]!;
+  const reviewAliases: Record<string, string> = { 'data.coverage': 'coverage', 'factor.rank_ic': 'rank_ic', 'factor.rank_ic_lower': 'rank_ic_lower', 'factor.rank_ic_upper': 'rank_ic_upper', 'selection.dsr': 'dsr', 'selection.pbo': 'pbo', 'robustness.positive_fraction': 'positive_slice_fraction', 'incremental.net_return_delta_lower': 'net_return_delta_lower' };
+  if (reviewAliases[normalized]) return glossary[reviewAliases[normalized]!]!;
   const period = /^(.*?) \((\d+) days\)$/.exec(normalized);
   if (period && annualized[period[1]!]) {
     const [label, explanation] = annualized[period[1]!]!;

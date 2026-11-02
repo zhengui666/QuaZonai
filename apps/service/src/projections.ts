@@ -133,6 +133,8 @@ export async function researchDetail(host: ResearchHost, id: number, readTasks: 
   const admissions = (await host.harness.snapshot(Application, BACKGROUND_CONTEXT))?.researchRequests;
   return {
     ...researchSummary(id, view, admissions, tasks.some(task => task.status !== 'terminal')),
+    reviews: Object.values(view.reviews?.records ?? {}).flatMap(record => record.report && typeof record.report === 'object' && !Array.isArray(record.report)
+      ? [record.report as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport] : []),
     input: study.input as ResearchInput, submission: submissionView(view.submission),
     ...(view.literature ? { literature: view.literature } : {}),
     ...(study.previousStops ? { previousStops: study.previousStops } : {}),

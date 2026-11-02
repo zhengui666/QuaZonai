@@ -1,3 +1,4 @@
+import { requireTrialReview } from '../src/review-workflow.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
 import { canonical, Study } from '../src/documents.ts';
@@ -21,6 +22,8 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
       if (input.campaign?.independentConsumer === 'PM_PORTFOLIO') throw new Error('independent_evaluation_reserved_for_pm');
       if (input.data.catalog_scan_request !== undefined) throw new Error('catalog_factor_only_account_binding_required');
       const data = object(input.data.sealed, 'heldout_data');
+      await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, true);
+      if (!await requireTrialReview(api, context, args.trialId)) return;
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -64,6 +67,8 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
       const input = await studyInput(api, context);
       if (input.campaign?.independentConsumer === 'PM_PORTFOLIO') throw new Error('independent_evaluation_reserved_for_pm');
       const data = object(input.data.sealed, 'heldout_data');
+      await preflightFinalizer(args.trialId, api, context, input.data, input.policy, data, false);
+      if (!await requireTrialReview(api, context, args.trialId)) return;
       const selected = await api.commit(async (tx) => {
         const study = await tx.doc(Study, api.conversationId);
         if (study.final !== null && study.final.taskId !== api.taskId) throw new Error('research_already_final');
@@ -95,4 +100,27 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
         }
       }
       await api.commit(async tx => { const doc = await tx.doc(CampaignResearchDoc, api.conversationId); if (doc.binding) doc.state = 'CONCLUDED'; }, context);
+}
+
+/** Reject an invalid finalizer before it can freeze search or invoke a reviewer. */
+async function preflightFinalizer(trialId: number, api: ResearchRuntime, context: Context, data: import('@earendil-works/pi-durable').JsonObject,
+  policy: import('@earendil-works/pi-durable').JsonObject, heldout: import('@earendil-works/pi-durable').JsonObject, portfolio: boolean) {
+  const study = await api.snapshot(Study, api.conversationId, context);
+  if (study?.final && study.final.taskId !== api.taskId) throw new Error('research_already_final');
+  const trial = study?.trials.find(item => item.taskId === trialId);
+  if (trial?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');
+  const proposal = object(trial.proposal, 'proposal');
+  const result = object(trial.result, 'trial_result');
+  if (portfolio) {
+    if (!Array.isArray(proposal.members)) throw new Error('selected_portfolio_evaluator_unavailable');
+    const registered = data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
+    if (canonical(proposal.request!) !== canonical(data.catalog_ensemble_request ?? data.request!) || canonical(proposal.strategy!) !== canonical(policy.strategy!)
+      || canonical(iterationRequest(heldout, true)) !== canonical(registered!) || canonical(iterationRequest(data, true)) !== canonical(registered!)) throw new Error('heldout_criteria_mismatch');
+    resolvePortfolioPolicy(proposal, object(policy.strategy, 'strategy_policy'));
+  } else {
+    if (typeof proposal.model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
+    const request = iterationRequest(heldout);
+    if (canonical(request) !== canonical(result.request!) || canonical(request) !== canonical(iterationRequest(data))
+      || data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(data))) throw new Error('heldout_criteria_mismatch');
+  }
 }

@@ -27,6 +27,7 @@ export async function evaluateTrial(
       return old.status === 'REJECTED' ? { rejected: true } : old.result == null ? null : JSON.parse(JSON.stringify(old.result)) as JsonObject;
     }
     if (study.final !== null) throw new Error('research_already_final');
+    if (study.reviewSelection) throw new Error('research_search_closed');
     const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
     if (campaign.state !== 'SEARCHING') throw new Error('research_search_closed');
     if (campaign.binding?.intakeRequired && (!campaign.intake || campaign.intake.support !== 'CONDITIONAL')) throw new Error('strategy_intake_evidence_required');

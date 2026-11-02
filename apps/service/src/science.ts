@@ -14,12 +14,30 @@ import { classifyExecutionError, executionDiagnostic } from '../../research/src/
 import { readCatalogScope } from '../../research/plugins/native-catalog-scope.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, pmState } from './pm-facts.ts';
+import { reviewPortfolio } from './portfolio-review.ts';
+import { researchRuntime } from '../../research/src/research-runtime.ts';
 
 const errorCode = (error: unknown) => error instanceof Problem ? error.message : 'operation_failed';
 export const BuildPortfolio = defineTask<PortfolioTaskInput, { phase: 'compute' }, null>({
   name: 'qz.portfolio', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     try {
+      const review = await reviewPortfolio(task.input, researchRuntime(runtime), context);
+      if (review) {
+        await runtime.commit(async tx => {
+          const facts = await tx.doc(Application); const fact = portfolio(facts.portfolios[task.input.id]);
+          fact.view.review = review;
+          if (review.decision !== 'PASS') {
+            fact.view.status = 'REVIEW_BLOCKED'; fact.view.targets = []; fact.target = null;
+            fact.view.progress = { phase: 'REVIEW_BLOCKED', updatedAt: new Date().toISOString() };
+          }
+          facts.portfolios[task.input.id] = json(fact); return undefined;
+        }, context);
+        if (review.decision !== 'PASS') {
+          await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), context);
+          return;
+        }
+      }
       let scope: JsonObject | undefined;
       if (task.input.policy.kind === 'catalog-ensemble') {
         const source = Array.isArray(task.input.evidence) ? task.input.evidence[0] : task.input.evidence;

@@ -22,6 +22,8 @@ import { factorRequest } from './dataset-export.ts';
 import { nativeResearchInput as parseNativeResearchInput, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import { assertNativeRemoteTaskSettled, reconcileNativeRemoteTasks } from '../../research/src/native-remote-receipts.ts';
 import { BuildPortfolio, ObserveAccount } from './science.ts';
+import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { latestTrialReview, ReviewLedger } from '../../research/src/review-documents.ts';
 import { AdjustAccount, unsettledAdjustment } from './automatic.ts';
 import { assertAccountTargetControl } from './account-target-control.ts';
 import { PmDocument, assertPmNotDeleted, pmRecord, pmState } from './pm-facts.ts';
@@ -320,6 +322,10 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         if (canonical(study.input.policy.strategy ?? null) !== canonical(json(configured.strategy))) throw new Problem('strategy_policy_not_admitted_with_research', 422);
         const final = study.final; const selected = study.trials.find((trial) => trial.taskId === final?.trialId);
         if (final?.status !== 'COMPUTED' || selected?.status !== 'COMPUTED' || !final.result) throw new Problem('independent_evidence_missing', 422);
+        if (study.input.policy.reviewPolicy || study.input.policy.reviewPolicies) {
+          const review = latestTrialReview(await tx.doc(ReviewLedger, conversationId), Number(selected.taskId));
+          if (!review || review.decision !== 'PASS') throw new Problem('independent_review_not_passed', 422);
+        }
         const result = object(final.result, 'independent_result');
         if (catalogEnsemble) {
           const account = object(result.portfolio, 'heldout_account');
@@ -346,6 +352,14 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       return records;
     }, context);
     const id = randomUUID();
+    const sourceInput = object(evidence[0]!.input);
+    const sourcePolicy = object(sourceInput.policy);
+    const review = sourcePolicy.reviewPolicy || sourcePolicy.reviewPolicies ? {
+      policy: createReviewPolicy('PORTFOLIO', `review:portfolio:${id}`, nowNs()),
+      model: object(sourceInput.model) as { provider: string; modelId: string },
+      ...(typeof sourceInput.thinkingLevel === 'string' ? { thinkingLevel: sourceInput.thinkingLevel as import('../../../packages/contracts/src/index.ts').ThinkingLevel } : {}),
+      createdAt: new Date().toISOString(),
+    } : undefined;
     const originalData = object(object(evidence[0]!.input).data);
     const originalResult = object(object(evidence[0]!.final).result);
     const originalRequest = object(originalResult.registered_request ?? originalResult.request);
@@ -366,6 +380,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           view: { id, name: input.name, researchIds: [...new Set(researchIds)], ...(input.factors ? { factors: input.factors } : {}), datasetId: input.datasetId, status: 'QUEUED', progress: { phase: 'QUEUED', updatedAt: new Date().toISOString() }, capital, currency: configured.currency,
             createdAt: new Date().toISOString(), taskId: null, metrics: [], curve: [], targets: [], error: null } };
         const taskId = await tx.createTask(BuildPortfolio, { id, evidence, weights, policy: configured.strategy!, capital, currency: configured.currency,
+          ...(review ? { review } : {}),
           dataDir: config.dataDir, catalog: capture, binary: scienceTarget(config), ...(input.capacityPolicy ? { capacityPolicy: input.capacityPolicy } : {}) },
           { conversationId: researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
         fact.view.taskId = taskId; facts.portfolios[id] = json(fact); return fact.view;
@@ -384,6 +399,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     if (old) { if (canonical(json(old.input)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return old.view; }
     const selected = await getPortfolio(text(input.portfolioId, 'portfolio_id'));
     if (selected.view.status !== 'COMPUTED' || !selected.target) throw new Problem('portfolio_target_missing', 422);
+    if (selected.view.review && selected.view.review.decision !== 'PASS') throw new Problem('portfolio_review_not_passed', 422);
     if (!input.automatic?.enabled && BigInt(counter(selected.target.valid_until_ns, 'expiry')) <= BigInt(nowNs())) throw new Problem('target_expired', 422);
     if (input.automatic) validateAutomatic(input.automatic);
     const connection = config.connections.find((connection) => connection.id === input.connectionId && connection.mode === input.mode);

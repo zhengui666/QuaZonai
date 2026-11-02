@@ -73,6 +73,7 @@ fn fixture() -> (tempfile::TempDir, NativeEnsembleFitRequestV1, Vec<Vec<u8>>) {
         })
         .collect();
     let request = NativeEnsembleFitRequestV1 {
+        review_prior: None,
         schema_version: SchemaV1,
         fit_end_ns: source.train_end_ns,
         members,
@@ -584,13 +585,15 @@ fn frozen_native_calibrations_retain_original_training_rows_and_reject_changed_f
             .collect::<Vec<_>>()
     );
     assert!(result.simulation.is_some());
-    assert!(result.frames.iter().all(|frame| frame
-        .input
-        .forecasts
-        .members
-        .iter()
-        .zip(&fit.members)
-        .all(|(a, b)| a.ensemble_weight == b.weight)));
+    assert!(result.frames.iter().all(|frame| {
+        frame
+            .input
+            .forecasts
+            .members
+            .iter()
+            .zip(&fit.members)
+            .all(|(a, b)| a.ensemble_weight == b.weight)
+    }));
     assert!(result.frames[1]
         .input
         .assets
@@ -612,12 +615,11 @@ fn rolling_native_account_accepts_a_single_active_member_without_positive_paddin
     })
     .unwrap();
     assert!(result.simulation.is_some());
-    assert!(result
-        .frames
-        .iter()
-        .all(|frame| !frame.input.forecasts.members[1]
+    assert!(result.frames.iter().all(|frame| {
+        !frame.input.forecasts.members[1]
             .ensemble_weight
-            .is_positive()));
+            .is_positive()
+    }));
     assert_eq!(
         result.frames[0].input.forecasts.members[0].ensemble_weight,
         "1".parse().unwrap()
@@ -651,6 +653,7 @@ fn export_multi_day_native_pm_fixture_when_requested() {
     let catalog_prefix =
         job::catalog_prefix::digest(catalog.path(), &factor_request.forecast.selection).unwrap();
     let fit_request = NativeEnsembleFitRequestV1 {
+        review_prior: None,
         schema_version: SchemaV1,
         fit_end_ns: factor_request.train_end_ns,
         folds: [(1080, 2160), (2160, 3240), (3240, 4320)]
@@ -865,4 +868,60 @@ console.log('Registered TEST threshold policy: actual forecast/apply/native shar
         String::from_utf8_lossy(&output.stderr)
     );
     std::fs::rename(root.join("source.pending.json"), root.join("source.json")).unwrap();
+}
+
+#[test]
+fn review_prior_is_causal_bound_and_changes_the_frozen_fit() {
+    let (_catalog, mut request, _modules) = fixture();
+    // Identical calibrated columns make MSE constant on the simplex: the unique
+    // regularized optimum must equal the normalized quality prior exactly.
+    request.members[1].report = request.members[0].report.clone();
+    let legacy = job::ensemble_fit::fit(&request).unwrap();
+    assert!(legacy.review_prior.is_none());
+    let prior = NativeEnsembleReviewPriorV1 {
+        members: request
+            .members
+            .iter()
+            .enumerate()
+            .map(|(i, member)| NativeEnsembleReviewPriorMemberV1 {
+                factor_version_id: member.factor_version_id.clone(),
+                source_report_id: format!("review-{i}"),
+                source_evidence_refs: vec![format!("historical-validation-{i}")],
+                source_end_ns: count(10 * INTERVAL_NS),
+                quality_coefficient: if i == 0 { 0.9 } else { 0.1 },
+                decision: "PASS".into(),
+            })
+            .collect(),
+    };
+    request.review_prior = Some(prior.clone());
+    let fitted = job::ensemble_fit::fit(&request).unwrap();
+    assert_eq!(fitted.method, "TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1");
+    assert!(fitted.review_prior_lambda.unwrap() > 0.0);
+    assert_eq!(
+        serde_json::to_value(&fitted.review_prior).unwrap(),
+        serde_json::to_value(&request.review_prior).unwrap()
+    );
+    assert_ne!(fitted.members[0].weight, legacy.members[0].weight);
+    let prior_weight: f64 = fitted.members[0].weight.to_string().parse().unwrap();
+    assert!((prior_weight - 0.9).abs() < 1e-8);
+    for mutation in 0..6 {
+        let mut invalid = request.clone();
+        let member = &mut invalid.review_prior.as_mut().unwrap().members[0];
+        match mutation {
+            0 => member.source_end_ns = request.fit_end_ns,
+            1 => member.factor_version_id = "wrong-version".into(),
+            2 => member.quality_coefficient = f64::NAN,
+            3 => member.decision = "REJECT".into(),
+            4 => member.source_evidence_refs.clear(),
+            _ => member.quality_coefficient = 0.0,
+        }
+        assert!(job::ensemble_fit::fit(&invalid).is_err());
+    }
+    let mut legacy_wire = serde_json::to_value(&request).unwrap();
+    legacy_wire.as_object_mut().unwrap().remove("review_prior");
+    let original: NativeEnsembleFitRequestV1 = serde_json::from_value(legacy_wire).unwrap();
+    assert_eq!(
+        serde_json::to_value(job::ensemble_fit::fit(&original).unwrap()).unwrap(),
+        serde_json::to_value(legacy).unwrap()
+    );
 }

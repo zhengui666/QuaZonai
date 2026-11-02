@@ -6,10 +6,13 @@ export type * from './pm-intent.ts';
 export * from './decision.ts';
 export * from './pm-validation.ts';
 export * from './pm-forward.ts';
+export type * from './review.ts';
+export * from './review-scoring.ts';
 /** Source DTOs for the compact TypeScript application; native scientific DTOs remain Rust-owned. */
 import type { ExecutionErrorDetail } from './execution.ts';
 import type { LiteratureView } from './literature.ts';
 import type { RemoteNativeInstance } from './nautilus.ts';
+import type { ReviewReport } from './review.ts';
 export type { LiteratureSource, LiteraturePaper, LiteratureSearchResult, LiteratureSearch, LiteratureNote, LiteratureView } from './literature.ts';
 export type { ExecutionErrorCategory, ExecutionErrorDetail } from './execution.ts';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -73,6 +76,7 @@ export interface DatasetPreparation {
 }
 export interface RecordedDataset { id: string; name: string; assetClass: string; currency: string; source: string; start: string | null; end: string | null; nativeModality?: 'BAR' | 'TRADE_TICK'; preparation?: DatasetPreparation; inputCoverage?: JsonObject }
 export interface ResearchDetail extends ResearchSummary {
+  reviews?: ReviewReport[];
   input: ResearchInput; trialRecords: TrialView[]; tasks: TaskView[];
   literature?: LiteratureView;
   dataset?: RecordedDataset | null; datasetId?: string | null;
@@ -93,6 +97,7 @@ export interface EquityPoint { at: string; value: string | null }
 export interface TargetWeight { instrumentId: string; weight: string }
 export interface FactorReference { researchId: number; trialId: number; memberIndex: number }
 export interface FactorView extends FactorReference {
+  review?: ReviewReport | null;
   id: string; name: string; hypothesis: string; modelSource: string; datasetId: string | null; currency: string | null; market: string[];
   status: string; evidence: 'independent' | 'historical' | 'component_only' | 'validation_only' | 'unavailable';
   metrics: Metric[]; criterion: CriterionView | null; combinable: boolean; reason: string | null; capacity?: CapacityReport; capacityAssumptions?: CapitalAssumptions;
@@ -130,6 +135,7 @@ export interface CapacityReport {
 }
 export interface PortfolioProgress { phase: string; updatedAt: string; completed?: number; total?: number }
 export interface PortfolioView {
+  review?: ReviewReport | null;
   progress?: PortfolioProgress;
   id: string; name: string; researchIds: number[]; datasetId: string; status: string;
   capital: string; currency: string; createdAt: string; taskId: number | null;

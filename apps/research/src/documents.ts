@@ -19,6 +19,7 @@ export const Study = defineDoc<{
   input: ResearchInput | null;
   trials: JsonObject[];
   final: JsonObject | null;
+  reviewSelection?: { trialId: number; version: string };
   deletedAt?: string;
   deletedFactors?: Record<string, string>;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];

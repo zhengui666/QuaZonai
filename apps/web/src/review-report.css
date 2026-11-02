@@ -1,0 +1,42 @@
+.review-report { min-width: 0; }
+.review-heading, .review-exports { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.review-exports { margin-left: auto; }
+.review-outcome { display: flex; align-items: center; gap: 28px; padding: 18px 0 24px; }
+.review-total { min-width: 100px; display: grid; gap: 7px; }
+.review-total > span, .review-decision p { color: var(--secondary); font-size: 12px; }
+.review-total strong { font-size: 32px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.review-decision p { margin-block: 9px 0; }
+.review-report h4 { font-size: 13px; margin-block: 18px 10px; }
+.review-reasons { overflow-wrap: anywhere; }
+.review-reasons ul { padding-left: 20px; margin-block: 8px 14px; }
+.review-reasons li { margin-block: 6px; }
+.review-reasons.failure, .review-reasons.missing { border-left: 2px solid var(--line); padding-left: 14px; margin-bottom: 20px; }
+.review-reasons.failure { border-color: var(--error); }
+.review-reasons.failure h4 { color: var(--error); }
+.review-narrative p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-weights { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 2px; }
+.review-weights .facts { margin-top: 16px; }
+.review-weights code, .review-analysis code, .review-provenance code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.review-analysis { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.review-analysis > span, .review-checks { font-size: 12px; }
+.review-checks { padding-left: 20px; overflow-wrap: anywhere; }
+.review-checks li { margin-block: 14px; }
+.review-checks li > span { margin-left: 12px; }
+.review-checks li > code { display: inline-block; margin-right: 8px; }
+.review-target { font-size: 12px; overflow-wrap: anywhere; }
+.review-allocation-section { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 24px; }
+.review-allocation-section h2 { font-size: 18px; }
+.review-allocation-section > .quiet { margin-block: 14px 20px; }
+.review-allocation-form { max-width: 740px; padding-block: 20px; }
+.review-allocation-member { padding-top: 10px; }
+.review-allocation-member h3, .review-allocation-form > h3 { margin-block: 16px; font-size: 14px; }
+.review-allocation-cluster { border-left: 2px solid var(--line); padding-left: 18px; margin-block: 20px; }
+.review-allocation-limits { margin-top: 28px; }
+.review-allocation-detail { border-top: 1px solid var(--line); padding-top: 24px; margin-top: 24px; }
+.review-allocation-detail .facts { margin-top: 18px; }
+@media (max-width: 600px) {
+  .review-outcome { align-items: flex-start; gap: 18px; }
+  .review-total { min-width: 80px; }
+  .review-total strong { font-size: 26px; }
+  .review-exports .ant-btn { min-height: 36px; }
+}

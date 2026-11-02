@@ -243,6 +243,8 @@ test('legacy portfolio freezes only its selected trial and does not prevent dele
   const firstTrial = defineExtension({ name: 'test.unselected-factor', tools: [defineTool({
     name: 'controlled_unselected_trial', description: 'TEST_ONLY unused original trial', parameters: Type.Object({}), replay: 'safe',
     async execute(_args, api, ctx) {
+      // Reconstruct the first trial of a pre-review selected-factor fixture.
+      await api.commit(async tx => { delete (await tx.doc(Study, api.conversationId)).input!.policy.reviewPolicies; }, ctx);
       const study = (await api.snapshot(Study, api.conversationId, ctx))!;
       await evaluateTrial(api, ctx, { hypothesis: 'Original candidate which is not selected', model: wat }, async () => ({
         request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }],

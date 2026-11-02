@@ -5,13 +5,14 @@ import { createHash } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
-import { fitNativeEnsemble, replayFittedEnsemble } from './native-fitted-portfolio.ts';
-import type { FittedMember } from './native-fitted-portfolio.ts';
+import { fitNativeEnsemble, replayFittedEnsemble, fittedReviewPrior } from './native-fitted-portfolio.ts';
+import type { FittedMember, FittedReviewPriorBinding } from './native-fitted-portfolio.ts';
 import { readNativeEvidence, NativeEvidencePart, retainNativeEvidence } from './native-evidence.ts';
 import { object } from '../src/trials.ts';
 import type { ThresholdPolicy, StrategyPartition } from '../src/strategy.ts';
 import type { ResearchRuntime } from '../src/research-runtime.ts';
 import { classifyExecutionError, executionDiagnostic, ExecutionFailure } from '../src/execution-errors.ts';
+import { ReviewLedger } from '../src/review-documents.ts';
 import { canonical, Study } from '../src/documents.ts';
 import { iterationRequest, normalizedRequest } from './native-wasm.ts';
 
@@ -21,7 +22,7 @@ export const ResearchDatasetBridge = defineDoc<{ artifact: JsonObject | null }>(
   kind: 'qz.ensemble.dataset-bridge', version: 1, scope: 'task', initial: () => ({ artifact: null }),
 });
 
-type Input = { mode: 'FIT'; data: JsonObject; members: FittedMember[]; binary: NativeTarget }
+type Input = { mode: 'FIT'; data: JsonObject; members: FittedMember[]; binary: NativeTarget; reviewPriorBinding?: FittedReviewPriorBinding }
   | { mode: 'REPLAY'; data: JsonObject; fitTaskId: number; policy: ThresholdPolicy; partition: StrategyPartition; binary: NativeTarget };
 export const FittedEnsembleTask = defineTask<Input, { phase: 'compute' }, JsonObject>({
   name: 'qz.ensemble.fit-replay', version: 1, initial: () => ({ phase: 'compute' }),
@@ -81,7 +82,17 @@ const Child = defineDoc<{ taskId: TaskId<JsonObject> | null }>({ kind: 'qz.ensem
 export async function runFittedEnsemble(api: ResearchRuntime, context: Context, input: Input): Promise<JsonObject> {
   const id = await api.commit(async tx => {
     const child = await tx.doc(Child, api.taskId);
-    child.taskId ??= await tx.createTask(FittedEnsembleTask, input, { ownership: { kind: 'task', taskId: api.taskId } });
+    if (child.taskId === null) {
+      let frozen = input;
+      if (input.mode === 'FIT') {
+        const study = await tx.doc(Study, api.conversationId);
+        const ledger = await tx.doc(ReviewLedger, api.conversationId);
+        const request = iterationRequest(input.data, true);
+        frozen = { ...input, reviewPriorBinding: fittedReviewPrior(input.members, ledger.records,
+          study.trials as unknown as JsonObject[], api.conversationId, String(request.train_end_ns)) };
+      }
+      child.taskId = await tx.createTask(FittedEnsembleTask, frozen, { ownership: { kind: 'task', taskId: api.taskId } });
+    }
     return child.taskId;
   }, context);
   const settled = await api.waitForTask(id, context); const outcome = settled.state.outcome;

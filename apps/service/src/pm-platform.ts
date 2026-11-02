@@ -1,3 +1,4 @@
+import { ReviewLedger, latestTrialReview } from '../../research/src/review-documents.ts';
 import { boundScienceTarget, pmScienceData } from './science-binding.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -172,7 +173,8 @@ export function createPmPlatform(config: ServiceConfig) {
     const research = campaign.state !== 'PLANNED' && campaign.runtime.conversationId !== record.conversationId ? await tx.doc(Study, campaign.runtime.conversationId as ConversationId) : null;
     // Freeze the exact observed research revision, never read a later trial in this cycle.
     const registered = state.datasets[record.datasets.at(-1)!]!;
-    record.artifacts[cycleId] = json({ research, campaignId: campaign.id, configured: { ...registered, data: pmScienceData(record, registered.data) }, incumbentDecisionId: record.currentDecisionId,
+    const reviews = research ? await tx.doc(ReviewLedger, campaign.runtime.conversationId as ConversationId) : null;
+    record.artifacts[cycleId] = json({ research, reviews, campaignId: campaign.id, configured: { ...registered, data: pmScienceData(record, registered.data) }, incumbentDecisionId: record.currentDecisionId,
       operatingForward: forward, forwardSeedDecisionId: seed?.id ?? null, operatingSlotAlreadyAdmitted });
     cycle.runtime.taskId = await tx.createTask(ComputeCycle, { mandateId: record.mandate.id, cycleId }, { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });
     record.cycles[cycleId] = cycle; record.latestCycleId = cycleId; record.basisRevision = basisRevision;
@@ -331,6 +333,16 @@ export function createPmPlatform(config: ServiceConfig) {
           revise(current); current.outputDecisionId = decision.id; current.reasonCodes = [...decision.reasonCodes]; record.decisions[decision.id] = decision;
           for (const reason of result.gaps) gap(record, reason.capability, reason.reason, reason.remedy, decision.id);
           if (!isForward && decision.status === 'CURRENT' && result.scienceCompleted && decision.action === 'REBALANCE' && decision.capital) {
+            const researchInput = study?.input ? object(study.input) : null;
+            const researchPolicy = researchInput?.policy ? object(researchInput.policy) : null;
+            const reviewRequired = researchPolicy?.reviewPolicy !== undefined || researchPolicy?.reviewPolicies !== undefined;
+            const review = selected ? latestTrialReview(frozen.reviews as unknown as Parameters<typeof latestTrialReview>[0], selected.taskId as number) : null;
+            if (reviewRequired && review?.decision !== 'PASS') {
+              current.state = 'WAITING_EVIDENCE'; decision.action = 'NEEDS_EVIDENCE'; decision.reasonCodes.push('independent_review_not_passed');
+              current.reasonCodes = [...decision.reasonCodes];
+              gap(record, 'independent_review', 'independent_review_not_passed', 'COLLECT_AUTHORIZED_DATA', decision.id);
+              return { status: 'terminal', outcome: { status: 'completed', result: null } };
+            }
             current.state = 'EVALUATING';
             const taskId = await tx.createTask(IndependentEvaluation, { mandateId: record.mandate.id, cycleId: cycle.id, decisionId: decision.id },
               { conversationId: record.conversationId as ConversationId, ownership: { kind: 'conversation' }, background: true });

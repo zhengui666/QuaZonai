@@ -1,3 +1,4 @@
+import { assertFrozenInput } from '../../research/test/frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
@@ -168,7 +169,7 @@ test('upgrade repairs an original application admission using a legacy recovery-
     assert.equal(replay.statusCode, 202, replay.body); const receipt = replay.json();
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const current = await state.service.research.state(receipt.conversationId);
-    assert.deepEqual(current.research!.input, input); assert.equal(current.research!.trials.length, 1);
+    assertFrozenInput(current.research!.input, input); assert.equal(current.research!.trials.length, 1);
     assert.equal(current.originalSubmission!.requestId, requestId); assert.equal((await state.service.research.list()).items.length, 1);
     const fresh = await state.service.app.inject({ method: 'POST', url: '/api/v3/research', headers: state.headers, payload: { ...original, requestId: 'qz.research.resume:9002:9003' } });
     assert.equal(fresh.statusCode, 409); assert.equal(state.faux.state.callCount, 1);

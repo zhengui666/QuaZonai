@@ -15,6 +15,7 @@ import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, 
 import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
 
 export interface PortfolioTaskInput {
+  review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string };
   id: string; dataDir: string; catalog: string; binary: NativeTarget;
   // Original v1 single-evidence inputs keep their kernel, whole interval and default weight 1.
   capital: string; currency: string; evidence: JsonObject | JsonObject[]; policy: StrategyPolicy; weights?: string[]; capacityPolicy?: NonNullable<ResearchSpecification['capital']>;

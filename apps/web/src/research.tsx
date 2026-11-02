@@ -19,6 +19,7 @@ import { ExecutionFailure, Reason } from './diagnostics';
 import { Literature } from './literature';
 import { publicLiteratureTopics } from './literature-input';
 import { DeleteRecord } from './delete-record';
+import { ReviewReportPanel } from './review-report';
 
 const thinkingLabels: Record<string, string> = { off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
@@ -70,6 +71,7 @@ function StudyDocument({ route, back }: { route: Route; back: string }) {
             <ExecutionFailure error={detail.final.error} detail={detail.final.errorDetail} identity={`研究 #${detail.id}${detail.final.trialId !== null ? ` / 试验 #${detail.final.trialId}` : ''}`} title="独立评估失败" />
             {detail.final.reason && detail.final.reason !== detail.final.error && <details className="reason-disclosure"><summary>研究结论</summary><p>{detail.final.reason}</p></details>}
           </section>}
+          {detail.reviews?.length ? detail.reviews.map(report => <ReviewReportPanel key={report.id} report={report} />) : <ReviewReportPanel />}
           <section className="trial-preview"><div className="section-heading"><h3>试验记录 <span className="heading-count">{records.length}</span></h3>{records.length > 0 && <button className="text-link" onClick={() => selectTab('trials')}>全部试验 <ArrowUpRightIcon size={14} /></button>}</div>{!records.length ? <p className="quiet">尚无试验</p> : <div className="preview-rows">{records.slice(0, 3).map(row => <button key={row.id} className="preview-row" onClick={() => selectTab('trials', row.id)}><code>{row.id}</code><span className="preview-hypothesis">{shortTitle(undefined, row.hypothesis, '未记录假设')}</span>{row.id === detail.final?.trialId && <span className="selected-mark">所选</span>}<Status plain value={row.status} /><CaretRightIcon size={14} /></button>)}</div>}</section>
           {detail.final?.status === 'COMPUTED' && <footer className="consumer-footer"><div className="consumer-label"><ChartLineUpIcon size={19} /><h3>因子与组合</h3><span>可选</span></div><a className="text-link" href={href(`/factors?research=${detail.id}`)}>查看原子因子</a>{nativeSettings.modality !== 'TRADE_TICK' && <Button onClick={() => navigate(`/portfolios/new?research=${detail.id}`)}>创建组合 <ArrowRightIcon size={14} /></Button>}</footer>}
         </div> },
