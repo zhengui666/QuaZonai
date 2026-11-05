@@ -1,10 +1,10 @@
 //! Derived exact-cohort marks, with bounded range reads; never a native TradeTick catalog.
 use super::{Cohort, NativeTradeTickCoverageV1, NativeTradeTickFactorEvaluationRequestV1};
-use anyhow::{ensure, Context, Result};
-use contracts::{ticks::*, DbCounter, SchemaV1};
+use anyhow::{Context, Result, ensure};
+use contracts::{DbCounter, SchemaV1, ticks::*};
 use nautilus_model::{data::TradeTick, identifiers::TradeId};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
@@ -952,11 +952,13 @@ pub fn concatenate(
         result.files.push(record);
     }
     ensure!(result.cohort_count.get() > 0, "TICK_CACHE_EMPTY_SELECTION");
-    source_report["native_files"] = json!(result
-        .files
-        .iter()
-        .map(|file| json!({"path": file.path, "size": file.bytes.get()}))
-        .collect::<Vec<_>>());
+    source_report["native_files"] = json!(
+        result
+            .files
+            .iter()
+            .map(|file| json!({"path": file.path, "size": file.bytes.get()}))
+            .collect::<Vec<_>>()
+    );
     source_report["native_records"] = json!({"cohorts": result.files.iter().map(|file|
         (file.instrument_id.clone(), file.cohort_count.get())).collect::<BTreeMap<_, _>>()});
     source_report["readback_records"] = json!(result.cohort_count.get());
@@ -1153,8 +1155,7 @@ pub fn prepare_views(
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
         "maximum_output_bytes":_maximum_output_bytes.to_string(),"output_bytes":"0"});
     if !economic_sources.is_empty() {
-        metadata["economic_sources"] =
-            json!(economic_sources
+        metadata["economic_sources"] = json!(economic_sources
             .iter()
             .map(|(path, bytes)| if path == "spot-valuation.jsonl" {
                 let (primary, full) = spot_sizes.unwrap();
@@ -1217,14 +1218,8 @@ mod concatenate_tests {
         for view in ["research/catalog", "independent/catalog"] {
             fs::create_dir_all(output.join(view)).unwrap();
         }
-        let sizes = prepare_spot_views(
-            &source,
-            &output,
-            &BTreeSet::from(["BTC.SIM"]),
-            10,
-            20,
-        )
-        .unwrap();
+        let sizes =
+            prepare_spot_views(&source, &output, &BTreeSet::from(["BTC.SIM"]), 10, 20).unwrap();
         assert_eq!(
             fs::read_to_string(output.join("research/catalog/spot-valuation.jsonl")).unwrap(),
             early
@@ -1370,10 +1365,12 @@ mod resource_tests {
                 assert!(builder.buffered_bytes < BUFFERED_BYTES);
             }
         }
-        assert!(builder
-            .outputs
-            .values()
-            .any(|output| fs::metadata(&output.path).unwrap().len() > 0));
+        assert!(
+            builder
+                .outputs
+                .values()
+                .any(|output| fs::metadata(&output.path).unwrap().len() > 0)
+        );
         #[cfg(target_os = "linux")]
         for entry in fs::read_dir("/proc/self/fd").unwrap() {
             if let Ok(path) = fs::read_link(entry.unwrap().path()) {
@@ -1386,9 +1383,11 @@ mod resource_tests {
         let manifest = builder.seal("fixed-source", 0, 260).unwrap();
         assert_eq!(manifest.trade_count.get(), 1200 * (101 + 257));
         assert_eq!(manifest.cohort_count.get(), 1200 * 259);
-        assert!(builder
-            .outputs
-            .values()
-            .all(|output| output.pending.capacity() == 0 && output.expected.capacity() == 0));
+        assert!(
+            builder
+                .outputs
+                .values()
+                .all(|output| output.pending.capacity() == 0 && output.expected.capacity() == 0)
+        );
     }
 }
