@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { PortfolioTaskInput } from '../src/native.ts';
 import { portfolioIndependentData } from '../src/science.ts';
 import { createReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
+import { object } from '../src/facts.ts';
 
 function request() { return { schema_version: 1, train_end_ns: '3', validation_end_ns: '6', forecast: { schema_version: 1, selection: { schema_version: 1, bar_types: ['ASSET.SIM-1-DAY-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '9', decision_cutoff_ns: '9', maximum_rows: 100 }, parameters: { schema_version: 1, fast_period: 2, slow_period: 3, label_horizon_observations: 1 } } }; }
 
@@ -43,6 +44,23 @@ test('fresh windows cannot change reviewed forecast parameters or the BAR horizo
   assert.throws(() => portfolioIndependentData(captured), /portfolio_independent_forecast_contract_changed/);
   original.forecast.parameters.label_horizon_observations = 1; original.forecast.selection.bar_types = ['ASSET.SIM-1-HOUR-LAST-EXTERNAL'];
   assert.throws(() => portfolioIndependentData(captured), /portfolio_independent_forecast_contract_changed/);
+});
+
+test('a frozen independent dataset retains legacy fuel without changing the reviewed scientific method', () => {
+  for (const total_fuel of ['1', '100000000']) {
+    const captured = input();
+    const original = request();
+    captured.review!.independentData = { catalog: '/fresh', request: { ...original,
+      forecast: { ...original.forecast, parameters: { ...original.forecast.parameters, total_fuel } } } };
+    const frozen = structuredClone(captured);
+    assert.equal(portfolioIndependentData(captured), captured.review!.independentData);
+    assert.deepEqual(captured, frozen, 'Validation must retain both the native result and frozen independent fuel history');
+    const changed = structuredClone(captured);
+    const data = changed.review!.independentData!;
+    const parameters = object(object(object(data.request).forecast).parameters);
+    parameters.fast_period = 4;
+    assert.throws(() => portfolioIndependentData(changed), /portfolio_independent_forecast_contract_changed/);
+  }
 });
 
 test('catalog replay requires an independent original scope reference', () => {

@@ -372,7 +372,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
           if (!factor?.combinable) throw new Problem(factor?.reason ?? 'factor_not_found', 422);
         }
         if (study.input.data.sealed) replayCatalog(study.input.data, object(result.registered_request ?? result.request, 'independent_request'));
-        const current = canonical(catalogEnsemble ? object(result.registered_request ?? result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!);
+        const current = canonical(withoutExecutionQuotas(catalogEnsemble ? object(result.registered_request ?? result.request, 'independent_request') : object(object(result.request, 'independent_request').forecast, 'forecast_request').selection!));
         if (selection !== undefined && selection !== current) throw new Problem('strategy_selection_mismatch', 422);
         selection = current;
         records.push(json({ researchId: id, ...(input.factors ? { factorId: input.factors[index]!.factorId } : {}), input: study.input, selected, final }));

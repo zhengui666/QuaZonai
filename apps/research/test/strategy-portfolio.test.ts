@@ -398,6 +398,28 @@ test('exact proposals, half-open target filtering and original sealed catalog ma
   assert.equal(request.forecast.parameters.total_fuel, null);
 });
 
+test('catalog replay binds unmetered native echoes to the original sealed data and rejects changed science', () => {
+  const request: JsonObject = { train_end_ns: '10', validation_end_ns: '20', forecast: {
+    selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' },
+    parameters: { total_fuel: '1', fast_period: 1, slow_period: 2 } } };
+  const data: JsonObject = { catalog: '/original-primary', request: { ...request, forecast: {
+    ...(request.forecast as JsonObject), selection: { ...((request.forecast as JsonObject).selection as JsonObject), event_end_ns: '20', decision_cutoff_ns: '20' } } },
+    sealed: { catalog: '/original-sealed', request } };
+  const original = structuredClone(data);
+  const echoed = structuredClone(request); const forecast = echoed.forecast as JsonObject;
+  delete (forecast.parameters as JsonObject).total_fuel;
+  (forecast.selection as JsonObject).maximum_rows = 0;
+  assert.equal(replayCatalog(data, echoed), '/original-sealed');
+  for (const selection of [{ ...forecast.selection as JsonObject, event_end_ns: '31' },
+    { ...forecast.selection as JsonObject, decision_cutoff_ns: '41' },
+    { ...forecast.selection as JsonObject, bar_types: ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'] }]) {
+    assert.throws(() => replayCatalog(data, { ...echoed, forecast: { ...forecast, selection } }), /strategy_request_binding_mismatch/);
+  }
+  assert.throws(() => replayCatalog(data, { ...echoed, forecast: { ...forecast, parameters: { ...forecast.parameters as JsonObject, fast_period: 3 } } }), /strategy_request_binding_mismatch/);
+  assert.throws(() => replayCatalog({ ...data, sealed: { ...data.sealed as JsonObject, catalog: null } }, echoed), /catalog_required/);
+  assert.deepEqual(data, original, 'matching an execution echo cannot rewrite frozen requests or catalog bindings');
+});
+
 test('owner stop aborts the ensemble child and joins its provider-free native process', { timeout: 10_000 }, async () => {
   const state = await setup(); const pidPath = join(state.directory, 'native.pid'); const script = join(state.directory, 'wait.mjs');
   await writeFile(script, `import {writeFileSync} from 'node:fs'; if (process.env.QZ_TEST_PROVIDER_SECRET) throw new Error('provider_environment_leaked'); writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000);`);

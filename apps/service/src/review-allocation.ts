@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 /** Portfolio-of-portfolios is an optional research consumer, never a delivery authority. */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -160,7 +161,7 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
             const models = strategyMembers(proposal);
             const projected = await reserve(`forecast:${source.view.id}:${index}`, models.length + (models.length > 1 ? 1 : 0), async () => json(await forecastMembers(task.input.binary, originalCatalog, models, request, policy, source.view.currency, directory!, ctx, false, 'VALIDATION')));
             const selection = object(projected.selection);
-            if (commonSelection && canonical(selection) !== canonical(commonSelection)) throw new Problem('review_allocation_validation_interval_mismatch');
+            if (commonSelection && canonical(withoutExecutionQuotas(selection)) !== canonical(withoutExecutionQuotas(commonSelection))) throw new Problem('review_allocation_validation_interval_mismatch');
             commonSelection = selection;
             if (!Array.isArray(projected.points)) throw new Problem('review_allocation_targets_missing');
             rows.push(projected.points.map(v => object(v)));
@@ -237,12 +238,12 @@ export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'co
               const original = normalizedRequest(object(object(evidence.input).data));
               const a = object(original.forecast); const b = object(independentRequest.forecast);
               const originalSelection = object(a.selection); const newSelection = object(b.selection);
-              if (canonical({ ...a, selection: null }) !== canonical({ ...b, selection: null }) || canonical(originalSelection.bar_types!) !== canonical(newSelection.bar_types!)) throw new Problem('review_allocation_independent_forecast_contract_mismatch');
+              if (canonical(withoutExecutionQuotas({ ...a, selection: null })) !== canonical(withoutExecutionQuotas({ ...b, selection: null })) || canonical(originalSelection.bar_types!) !== canonical(newSelection.bar_types!)) throw new Problem('review_allocation_independent_forecast_contract_mismatch');
               const proposal = object(object(evidence.selected).proposal);
               const policy = resolveStrategyPolicy(proposal, source.policy); const models = strategyMembers(proposal);
               const projected = await reserve(`independent-forecast:${source.view.id}:${index}`, models.length + (models.length > 1 ? 1 : 0), async () => json(await forecastMembers(task.input.binary, independentCatalog, models, independentRequest, policy, source.view.currency, directory!, ctx, false, 'HELDOUT')));
               const selection = object(projected.selection);
-              if (independentSelection && canonical(selection) !== canonical(independentSelection)) throw new Problem('review_allocation_independent_alignment_mismatch');
+              if (independentSelection && canonical(withoutExecutionQuotas(selection)) !== canonical(withoutExecutionQuotas(independentSelection))) throw new Problem('review_allocation_independent_alignment_mismatch');
               independentSelection = selection;
               rows.push((projected.points as unknown[]).map(v => object(v)));
             }

@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { readFile } from 'node:fs/promises';
 import { object } from './trials.ts';
@@ -391,7 +392,7 @@ export function replayCatalog(data: JsonObject, request: JsonObject): string {
   for (const binding of sealed ? [sealed, data] : [data]) {
     const expected = normalizedRequest(binding);
     if (ensemble) expected.evaluation_start_ns = binding.validation_end_ns!;
-    if (canonical(expected) === canonical(original)) {
+    if (canonical(withoutExecutionQuotas(expected)) === canonical(withoutExecutionQuotas(original))) {
       if (typeof binding.catalog !== 'string') throw new Error('catalog_required');
       return binding.catalog;
     }

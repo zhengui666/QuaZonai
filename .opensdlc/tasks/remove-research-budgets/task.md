@@ -1,6 +1,6 @@
 # Remove research execution budgets
 
-Issue: [#276](https://github.com/zhengui666/QuaZonai/issues/276).
+Issue: [#276](https://github.com/zhengui666/QuaZonai/issues/276). PR: [#277](https://github.com/zhengui666/QuaZonai/pull/277).
 
 ## Goal
 

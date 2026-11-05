@@ -1,5 +1,5 @@
 import { ReviewLedger, latestTrialReview } from '../../research/src/review-documents.ts';
-import { boundScienceTarget, pmScienceData } from './science-binding.ts';
+import { boundScienceTarget, pmScienceData, withoutExecutionQuotas } from './science-binding.ts';
 import { retainNativeRemoteUncertainty, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineExtension, defineTask } from '@earendil-works/pi-durable';
@@ -7,7 +7,7 @@ import type { ConversationId, JsonObject, TaskId, Tx } from '@earendil-works/pi-
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
 import { validatePmEntity } from '../../../packages/contracts/src/pm-validation.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
-import { canonical, Study } from '../../research/src/documents.ts';
+import { canonical, Requests, Study } from '../../research/src/documents.ts';
 import { CampaignResearchDoc } from '../../research/src/pm-campaign.ts';
 import { readNativeEvidence } from '../../research/plugins/native-evidence.ts';
 import { Exposures } from '../../research/plugins/native-exposure.ts';
@@ -432,12 +432,22 @@ export function createPmPlatform(config: ServiceConfig) {
           definitions: pmMetricDefinitions(), frontierDefinitionIds: pmMetricDefinitions().map(item => item.id), datasetRevisionIds: [...record.datasets], protocolRef: campaign.evaluationProtocolRef };
         try {
           const target = boundScienceTarget(config, configured.data);
-          const receipt = await work.startResearch({ requestId: `pm:${campaign.id}`, input: {
+          const requestId = `pm:${campaign.id}`;
+          const proposed = json({ requestId, input: {
             goal: record.input.goal, model: record.input.model, data: configured.data,
             ...(record.input.thinkingLevel !== undefined ? { thinkingLevel: record.input.thinkingLevel } : {}),
             ...(record.input.serviceTier !== undefined ? { serviceTier: record.input.serviceTier } : {}),
             policy: { ...configured.policy, ...(configured.strategy ? { strategy: configured.strategy } : {}) }, campaign: binding,
-          } }, typeof target === 'string' ? undefined : target);
+          } });
+          const [application, native] = await Promise.all([runtime.snapshot(Application, ctx), runtime.snapshot(Requests, ctx)]);
+          const key = `request:${requestId}`;
+          // A prior release may have admitted this same request before the monitor
+          // persisted its conversation. Replay its complete immutable body; only
+          // genuinely new admissions use the current quota-free construction.
+          const retained = application?.researchRequests[key]?.original
+            ?? (native?.requests[key] ? json({ requestId, input: native.requests[key]!.input }) : null);
+          if (retained && canonical(withoutExecutionQuotas(retained)) !== canonical(withoutExecutionQuotas(proposed))) throw new Problem('request_id_conflict', 409);
+          const receipt = await work.startResearch(retained ?? proposed, typeof target === 'string' ? undefined : target);
           await runtime.commit(async tx => {
             const stored = pmRecord(pmState(await tx.doc(PmDocument)), task.input.mandateId); const current = stored.campaigns[campaign.id]!;
             revise(current); current.runtime.conversationId = receipt.conversationId; current.state = 'SEARCHING';
