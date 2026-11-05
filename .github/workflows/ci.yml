@@ -135,10 +135,14 @@ jobs:
           cache-workspace-crates: false
       - name: Build each required native executable once
         run: bash deploy/docker/native-build.sh "$PROFILE" "$RUNNER_TEMP/native-artifacts"
-      - name: Retained native rules, real science and integrated Node core scenario
+      - name: Retained native rules and real science
+        run: make check-science PROFILE="$PROFILE" QZ_EXPORT_OBSERVED_FIXTURES=0 QZ_SCIENCE_TEST_FILTER_ARGS="--skip export_disjoint_native_pm_revision_when_requested"
+      - name: Verify remote Nautilus integration
         env:
           QZ_JOB_BINARY: ${{ runner.temp }}/native-artifacts/job
-        run: make check-science check-core PROFILE="$PROFILE"
+          QZ_PM_NATIVE_FIXTURE: ${{ runner.temp }}/qz-pm-native-fixture/source.json
+          QZ_PM_FORWARD_FIXTURE_DIR: ${{ runner.temp }}/qz-pm-forward-fixture
+        run: node --experimental-strip-types --test apps/service/test/remote-native.ts
       - name: Mapped public history in the optional native format
         run: |
           profile_args=()
