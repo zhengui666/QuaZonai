@@ -3,6 +3,7 @@ import { addDecimal, compareDecimal } from './pm-validation.ts';
 import { validateNativeTickFactorRequest, type NativeTickFactorRequest } from './tick-input.ts';
 
 export type NativeTickEconomicScenario = {
+  execution_model?: 'SYNTHETIC_QUOTE_IOC_V1';
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
   perp_taker_fee_bps: string; spot_taker_fee_bps: string; extra_cost_bps: string;
@@ -35,7 +36,8 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
     .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
-  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields]);
+  const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model']);
+  if (scenario.execution_model !== undefined && scenario.execution_model !== 'SYNTHETIC_QUOTE_IOC_V1') throw new Error('tick_economic_execution_model_invalid');
   for (const key of decimalFields) {
     const value = scenario[key];
     if (typeof value !== 'string' || value.length > 64 || !/^[+-]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(value)) throw new Error(`tick_economic_${key}_invalid`);

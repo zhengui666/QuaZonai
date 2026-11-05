@@ -7,6 +7,8 @@ use utoipa::ToSchema;
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTickEconomicScenarioV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_model: Option<NativeTickEconomicExecutionModelV1>,
     pub initial_usdt: DecimalValue,
     pub usdt0_per_usdt: DecimalValue,
     pub spot_fraction: DecimalValue,
@@ -24,6 +26,12 @@ pub struct NativeTickEconomicScenarioV1 {
     pub jitter_max_ns: DbCounter,
     pub random_seed: DbCounter,
     pub maximum_mark_age_ns: DbCounter,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum NativeTickEconomicExecutionModelV1 {
+    #[serde(rename = "SYNTHETIC_QUOTE_IOC_V1")]
+    SyntheticQuoteIocV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

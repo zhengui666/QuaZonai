@@ -95,3 +95,11 @@ test('small capital diagnostics are optional on legacy results and strictly vali
   assert.doesNotThrow(() => validateNativeTickEconomicResult({ ...result, small_capital_diagnostics: diagnostics }));
   assert.throws(() => validateNativeTickEconomicResult({ ...result, small_capital_diagnostics: { ...diagnostics, exit_attempts: '-1' } }));
 });
+
+test('synthetic quote IOC is explicitly selected and unknown execution models are rejected', () => {
+  const legacy = economicRequest();
+  assert.equal(Object.hasOwn(validateNativeTickEconomicRequest(legacy).scenario, 'execution_model'), false);
+  const scenario = { ...legacy.scenario, execution_model: 'SYNTHETIC_QUOTE_IOC_V1' };
+  assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario }).scenario.execution_model, 'SYNTHETIC_QUOTE_IOC_V1');
+  assert.throws(() => validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'UNKNOWN' } }), /tick_economic_execution_model_invalid/);
+});
