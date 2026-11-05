@@ -1,3 +1,4 @@
+import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { constants } from 'node:buffer';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -158,7 +159,7 @@ appendFileSync(config.log, JSON.stringify({ command, inputBytes, outputBytes, co
     const child = await host.harness.waitForTask(children.items[0]!.id, context);
     t.diagnostic(JSON.stringify({ trialStatuses: facts.trials.map((trial) => trial.status), trialErrors: facts.trials.map((trial) => trial.error),
       nativeChildStatus: child.state.outcome.status, nativeChildError: 'error' in child.state.outcome ? child.state.outcome.error : null }));
-    assert.deepEqual(facts.input, input);
+    assertFrozenInput(facts.input, input);
     assert.deepEqual(facts.trials.map((trial) => trial.status), ['COMPUTED'], JSON.stringify(facts.trials.map((trial) => ({ status: trial.status, error: trial.error }))));
     assert.equal(child.state.outcome.status, 'completed');
     assert.ok(child.owner);

@@ -19,14 +19,13 @@ catalog preparation occur before registration/freezing, and remain offline.
 python3 -B runtimes/data/source_plugins.py plan hf-dataset \
   --dataset OWNER/DATASET --revision main \
   --manifest partitions.json --market MARKET_ID \
-  --start-date 2026-09-01 --end-date 2026-09-03 \
-  --max-bytes 2147483648
+  --start-date 2026-09-01 --end-date 2026-09-03
 
 python3 -B runtimes/data/source_plugins.py download hf-dataset \
   --dataset OWNER/DATASET --revision main \
   --manifest partitions.json --market MARKET_ID \
   --start-date 2026-09-01 --end-date 2026-09-03 \
-  --max-bytes 2147483648 --cache-dir /data/hf-cache \
+  --cache-dir /data/hf-cache \
   --output /data/research-request-01
 
 python3 -B runtimes/data/source_plugins.py verify hf-dataset \
@@ -77,7 +76,7 @@ external writes that ignore those locks. For installed execution, use the
 matching application image's explicit Python entrypoint in a disposable offline
 container. Mount the cache writable for locks, the original plan read-only and a
 separate request-output parent writable, at their literal recorded paths. See the
-[installed boundary](../../deploy/docker/README.md#scientific-images-and-source-tools)
+[installed boundary](../../deploy/docker/README.md#source-preparation)
 and [v2 examples](polymarket-v2.md#installed-disposable-containers). No deployment
 change or retired `manage.sh source` command is required.
 
@@ -94,7 +93,7 @@ Without a partition index, use explicit file globs:
 ```sh
 python3 -B runtimes/data/source_plugins.py download hf-dataset \
   --dataset OWNER/DATASET --include 'data/2026-09-01.parquet' \
-  --max-bytes 2147483648 --cache-dir /data/hf-cache \
+  --cache-dir /data/hf-cache \
   --output /data/explicit-request-01
 ```
 
@@ -159,11 +158,10 @@ Use a matching consumer release for this additive index capability. A
 provenance inventory is not automatically this selection index, and a date
 label alone is not evidence for actual file contents or market membership.
 
-`--max-bytes` still bounds the total sizes of selected **complete files**,
-including cached files. A narrow date range does not reduce a monthly object's
-budget. The limit is not a cumulative network-transfer or cache-disk quota;
-metadata, repeated transfers, retained rejected partials and other revisions
-are separate costs. It does not enable remote row-group filtering.
+The legacy `--max-bytes` option and saved `max_bytes` fields are accepted and
+ignored. Selected **complete files** retain their original sizes and identities,
+including cached files. A narrow date range still transfers the whole monthly
+object; this does not enable remote row-group filtering.
 
 Supported declared formats are `parquet`, `json`, `jsonl`, `csv`, `zip`, `gzip`
 and `opaque`. Explicit includes infer only the corresponding common extension;
@@ -200,7 +198,7 @@ unchanged download request. Use the matching application image as `APP_IMAGE`
 and explicit owner-managed mounts; download needs network, verify does not:
 
 ```bash
-docker run --rm --init --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/hf,dst=/data/hf --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py download hf-dataset --dataset OWNER/DATASET --revision FIXED_COMMIT --include 'data/2026-09-01.parquet' --max-bytes 2147483648 --cache-dir /data/hf/cache --output /data/hf/request-02
+docker run --rm --init --read-only --user "$(id -u):$(id -g)" --mount type=bind,src=/data/hf,dst=/data/hf --entrypoint /usr/bin/python3 "$APP_IMAGE" -E -s -B /opt/quazonai/operator/source_plugins.py download hf-dataset --dataset OWNER/DATASET --revision FIXED_COMMIT --include 'data/2026-09-01.parquet' --cache-dir /data/hf/cache --output /data/hf/request-02
 ```
 
 ```bash
@@ -310,7 +308,7 @@ python3 -B -m unittest discover -s runtimes/data -p 'test_*.py'
 ```
 
 The new tests cover actual indexed selection, date boundaries, unknown markets,
-byte budgets, overlapping and concurrent cache reuse, interruptions, exact
+ignored legacy byte budgets, overlapping and concurrent cache reuse, interruptions, exact
 Range validation, full-size unpublished partial recovery, ignored ranges,
 truncation, over-sized responses, format rejection, conflicts and symlinks.
 A disposable loopback HTTP server exercises real urllib redirects, interrupted
@@ -328,7 +326,7 @@ and native catalog readback cases, including the older snapshot path. Run the
 single library target when the pinned compiler/dependencies are already cached:
 
 ```sh
-cargo +1.98.1 test --offline --locked -p job --features polymarket-history \
+cargo +1.99.1 test --offline --locked -p job --features polymarket-history \
   --lib operator::polymarket_history::archive::tests -- --nocapture
 ```
 
@@ -365,9 +363,8 @@ filtering or make the 127.2 GB monolithic raw file a small download. Prefer a
 licensed, fixed, source-preserving small raw partition when available. A
 re-encoded row-group extract must retain its actual derived provenance and must
 not be represented as a byte-identical source file or forged HF selection.
-No implicit acquisition or request-manifest byte budget is imposed. `--max-bytes`
-is an optional explicit operator budget, and is never raised automatically to
-make a source pass. File sizes, original request identities and format checks remain
+Acquisition and request manifests have no byte budgets. Legacy `--max-bytes`
+values are ignored. File sizes, original request identities and format checks remain
 mandatory. The `sii-order-filled` decoder also supports the existing explicit
 legacy snapshot path when an original source snapshot already exists.
 

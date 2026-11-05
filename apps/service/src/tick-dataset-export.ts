@@ -1,5 +1,6 @@
 import { constants, createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { withoutExecutionQuotas } from './science-binding.ts';
 import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatasetConfig } from './config.ts';
@@ -31,10 +32,10 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   if ((cache ? metadata.catalog_format !== (flow ? 'QZ_EVENT_TIME_COHORT_FLOW_CACHE_V1' : 'QZ_EVENT_TIME_COHORT_CACHE_V1')
     : !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9'].includes(String(metadata.catalog_format)))
     || (cache ? metadata.representation !== full.input.representation : metadata.representation !== undefined)) throw new Error('tick_prepared_representation_mismatch');
-  if (canonical(full) !== canonical(metadata.request!)) throw new Error('tick_prepared_request_mismatch');
+  if (canonical(withoutExecutionQuotas(full)) !== canonical(withoutExecutionQuotas(metadata.request!))) throw new Error('tick_prepared_request_mismatch');
   const research = validateNativeTickFactorRequest(metadata.research_request);
   const clipped = clipTickRegimeEvaluation(full, full.validation_end_ns);
-  if (canonical(research) !== canonical(clipped) || full.validation_end_ns === full.input.event_end_ns) throw new Error('tick_prepared_partitions_required');
+  if (canonical(withoutExecutionQuotas(research)) !== canonical(withoutExecutionQuotas(clipped)) || full.validation_end_ns === full.input.event_end_ns) throw new Error('tick_prepared_partitions_required');
   if (metadata.research_catalog !== 'research/catalog' || metadata.independent_catalog !== 'independent/catalog') throw new Error('tick_prepared_path_mismatch');
   const root = dirname(metadataPath); const primary = join(root, 'research/catalog'); const independent = join(root, 'independent/catalog');
   const observed = new Map<string, string>();
@@ -214,8 +215,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   if (coverage.source_revision !== full.input.source_revision || coverage.availability !== full.input.availability
     || !Array.isArray(coverage.instrument_ids) || coverage.instrument_ids.some(id => typeof id !== 'string')
     || canonical([...coverage.instrument_ids].sort()) !== canonical([...full.input.instrument_ids].sort())
-    || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
-    || BigInt(coverage.trade_count) > BigInt(cache ? full.input.maximum_source_rows! : full.input.maximum_rows!)) throw new Error('tick_prepared_coverage_mismatch');
+    || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)) throw new Error('tick_prepared_coverage_mismatch');
   if (fullCacheCoverage && (fullCacheCoverage.trades !== BigInt(coverage.trade_count)
     || fullCacheCoverage.cohorts !== cacheCounter(coverage.cohort_count)
     || cacheCoverage!.trades > fullCacheCoverage.trades)) throw new Error('tick_cache_coverage_mismatch');

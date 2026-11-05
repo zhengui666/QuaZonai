@@ -10,10 +10,12 @@ use contracts::{
 };
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::{Data, InstrumentClose},
+    data::{DataBatch, InstrumentClose, NautilusDataType},
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
@@ -53,6 +55,9 @@ struct Arguments {
     /// Explicit NativeDatasetSelectionV1, including original complete settlement groups if present.
     #[arg(long)]
     selection: PathBuf,
+    /// Independent frozen maker/taker venue policy; never inferred from request fee hints.
+    #[arg(long)]
+    fee_source: Option<PathBuf>,
     /// New directory, containing catalog/ and a final catalog-metadata.json.
     #[arg(long)]
     output: PathBuf,
@@ -111,8 +116,8 @@ fn originals(
             "DUPLICATE_SETTLEMENT"
         );
     }
-    let mut catalog = native(root)?;
-    let instruments = catalog.instruments(
+    let catalog = native(root)?;
+    let instruments = catalog.query_instruments_filtered(
         Some(&ids.iter().cloned().collect::<Vec<_>>()),
         None,
         Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
@@ -167,38 +172,44 @@ fn originals(
     }
     let mut closes = Vec::new();
     if !payouts.is_empty() {
-        let query = catalog.query::<InstrumentClose>(
-            Some(payouts.keys().cloned().collect()),
+        let query = CatalogQuery::new(NautilusDataType::InstrumentClose)
+            .with_identifiers(Some(payouts.keys().cloned().collect()))
+            .with_range(
+                None,
+                Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
+            );
+        let mut session = crate::catalog::file_batch_session(
+            &catalog,
+            query,
             None,
-            Some(UnixNanos::from(selected.selection.decision_cutoff_ns.get())),
-            None,
-            None,
-            true,
+            payouts.len().saturating_add(1).min(4096),
         )?;
         let mut seen = BTreeSet::new();
-        for record in query.take(payouts.len() + 1) {
-            let Data::InstrumentClose(close) = record? else {
+        while let Some(batch) = session.next_batch()? {
+            let DataBatch::InstrumentClose(batch) = batch else {
                 anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH")
             };
-            let id = close.instrument_id.to_string();
-            let outcome = payouts.get(&id).context("UNDECLARED_SETTLEMENT")?;
-            ensure!(
-                seen.insert(id.clone())
-                    && close.ts_event.as_u64() == outcome.ts_event.get()
-                    && close.ts_init.as_u64() == outcome.ts_init.get()
-                    && close
-                        .close_price
-                        .as_decimal()
-                        .to_string()
-                        .parse::<contracts::DecimalValue>()
-                        .map_err(anyhow::Error::msg)?
-                        == outcome.close_price
-                    && close.close_type
-                        == nautilus_model::enums::InstrumentCloseType::ContractExpired
-                    && close.close_price.precision == definitions[&id][0].price_precision(),
-                "SETTLEMENT_SOURCE_MISMATCH"
-            );
-            closes.push(close);
+            for &close in batch.as_ref() {
+                let id = close.instrument_id.to_string();
+                let outcome = payouts.get(&id).context("UNDECLARED_SETTLEMENT")?;
+                ensure!(
+                    seen.insert(id.clone())
+                        && close.ts_event.as_u64() == outcome.ts_event.get()
+                        && close.ts_init.as_u64() == outcome.ts_init.get()
+                        && close
+                            .close_price
+                            .as_decimal()
+                            .to_string()
+                            .parse::<contracts::DecimalValue>()
+                            .map_err(anyhow::Error::msg)?
+                            == outcome.close_price
+                        && close.close_type
+                            == nautilus_model::enums::InstrumentCloseType::ContractExpired
+                        && close.close_price.precision == definitions[&id][0].price_precision(),
+                    "SETTLEMENT_SOURCE_MISMATCH"
+                );
+                closes.push(close);
+            }
         }
         ensure!(seen.len() == payouts.len(), "SETTLEMENT_SOURCE_MISMATCH");
     }
@@ -223,7 +234,21 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             .clone(),
     )?;
     let sealed = partition == DataPartition::Sealed;
-    let (observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
+    let (mut observed, mut measured) = measure_catalog(&args.catalog, &selected, !sealed)?;
+    if let Some(path) = &args.fee_source {
+        let source = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        ensure!(
+            observed
+                .execution_fees
+                .as_ref()
+                .is_none_or(|original| *original == source),
+            "CONFLICTING_EXECUTION_FEE_SOURCES"
+        );
+        observed.execution_fees = Some(source);
+    }
+    if let Some(source) = &observed.execution_fees {
+        crate::prediction::catalog_fees::validate_source_market(source, &observed)?;
+    }
     let (instruments, closes) = originals(&args.catalog, &observed, &selected)?;
     let definitions = serde_json::to_value(&instruments)?;
     let universe = object
@@ -253,6 +278,18 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     object.insert(
         "quality".into(),
         serde_json::to_value(quality_report(vec![measured.clone()])?)?,
+    );
+    if let Some(declared) = object.get("execution_fees") {
+        let declared: Option<contracts::catalogs::FrozenMakerTakerFeesV1> =
+            serde_json::from_value(declared.clone())?;
+        ensure!(
+            declared == observed.execution_fees,
+            "DECLARED_EXECUTION_FEES_DIFFER_FROM_SOURCE"
+        );
+    }
+    object.insert(
+        "execution_fees".into(),
+        serde_json::to_value(&observed.execution_fees)?,
     );
     let metadata: RuntimeCatalogMetadataV1 = serde_json::from_value(declaration)?;
     ensure!(
@@ -333,6 +370,9 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     fs::create_dir(&root)?;
     let native = native(&root)?;
     crate::catalog::currencies::write(&root, &instruments)?;
+    if let Some(source) = &observed.execution_fees {
+        crate::prediction::catalog_fees::write(&root, source)?;
+    }
     native.write_instruments(instruments.clone())?;
     for series in &observed.series {
         native.write_to_parquet(&series.bars, None, None, None)?;
@@ -346,6 +386,8 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
     }
     ensure!(
         serde_json::to_value(&quality)? == serde_json::to_value(&measured)?
+            && serde_json::to_value(&readback.execution_fees)?
+                == serde_json::to_value(&observed.execution_fees)?
             && readback
                 .series
                 .iter()
@@ -363,6 +405,13 @@ fn prepare(args: &Arguments) -> Result<RuntimeCatalogMetadataV1> {
             && readback_closes == closes,
         "CATALOG_ORIGINALS_READBACK_MISMATCH"
     );
+    if let Some(path) = &args.fee_source {
+        let original = crate::prediction::catalog_fees::load_file(path, &selected.selection)?;
+        ensure!(
+            Some(&original) == observed.execution_fees.as_ref(),
+            "PREPARATION_FEE_SOURCE_CHANGED"
+        );
+    }
     let bytes = serde_json::to_vec_pretty(&metadata)?;
     let partial = output.join("catalog-metadata.json.partial");
     let mut file = OpenOptions::new()

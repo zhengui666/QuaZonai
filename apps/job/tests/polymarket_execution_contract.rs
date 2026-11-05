@@ -1,4 +1,4 @@
-//! Offline order-shape contracts against the official Nautilus Polymarket 0.63 API.
+//! Offline order-shape contracts against the official Nautilus Polymarket 0.67 API.
 //!
 //! These tests construct native orders in memory and call the two public static
 //! validators. They create no execution client, signer, credential or transport,
@@ -11,12 +11,12 @@
 //! idea-to-live path. Existing Paper sizing and execution remain unchanged.
 //!
 //! Pinned upstream: nautechsystems/nautilus_trader at
-//! a0400251110653b6d8ae6a9b5b89c4543fa85a2d, crates/adapters/polymarket/src/
-//! execution/order_builder.rs. In 0.63, LIMIT quote quantities are unsupported.
+//! d53849b216e20f2c122ca01b4dd0da377638b186, crates/adapters/polymarket/src/
+//! execution/order_builder.rs. LIMIT BUY supports quote quantities; SELL does not.
 
 use std::{cell::RefCell, rc::Rc};
 
-use nautilus_common::{clock::TestClock, factories::OrderFactory};
+use nautilus_common::{clock::VirtualClock, factories::OrderFactory};
 use nautilus_core::{UnixNanos, UUID4};
 use nautilus_model::{
     enums::{OrderSide, OrderType, TimeInForce},
@@ -125,7 +125,10 @@ fn market_sell_accepts_explicit_shares_with_ioc_or_fok() {
 fn market_sell_rejects_quote_amount_without_converting_to_shares() {
     for tif in [TimeInForce::Ioc, TimeInForce::Fok] {
         let order = market(OrderSide::Sell, tif, true, false);
-        assert_denied(validate_market(&order), "quote_quantity=false");
+        assert_eq!(
+            validate_market(&order),
+            Err(OrderDeniedReason::unsupported_quote_quantity())
+        );
     }
 }
 
@@ -195,12 +198,55 @@ fn limit_accepts_shares_for_supported_time_in_force_shapes() {
 }
 
 #[test]
-fn limit_quote_quantity_is_rejected_by_pinned_063_contract() {
-    for side in [OrderSide::Buy, OrderSide::Sell] {
-        let order = limit(side, TimeInForce::Gtc, true, false, false);
+fn limit_buy_accepts_quote_quantity_without_converting_to_shares() {
+    for tif in [
+        TimeInForce::Gtc,
+        TimeInForce::Gtd,
+        TimeInForce::Ioc,
+        TimeInForce::Fok,
+    ] {
+        let order = limit(OrderSide::Buy, tif, true, false, false);
+        assert!(order.is_quote_quantity());
+        assert_eq!(order.quantity(), Quantity::from("10.00"));
+        assert_eq!(order.price(), Some(Price::from("0.50")));
+        validate_limit(&order).expect("explicit quote-denominated LIMIT BUY format");
+    }
+}
+
+#[test]
+fn limit_sell_rejects_quote_quantity_without_converting_to_shares() {
+    for tif in [
+        TimeInForce::Gtc,
+        TimeInForce::Gtd,
+        TimeInForce::Ioc,
+        TimeInForce::Fok,
+    ] {
+        let order = limit(OrderSide::Sell, tif, true, false, false);
+        assert_eq!(
+            validate_limit(&order),
+            Err(OrderDeniedReason::unsupported_quote_quantity())
+        );
+    }
+}
+
+#[test]
+fn limit_below_signing_minimum_is_rejected_without_rounding_the_native_order() {
+    for (side, quote_quantity) in [
+        (OrderSide::Buy, true),
+        (OrderSide::Buy, false),
+        (OrderSide::Sell, false),
+    ] {
+        let order = OrderTestBuilder::new(OrderType::Limit)
+            .instrument_id(InstrumentId::from(SYNTHETIC_INSTRUMENT))
+            .side(side)
+            .quantity(Quantity::from("0.009"))
+            .price(Price::from("0.50"))
+            .time_in_force(TimeInForce::Gtc)
+            .quote_quantity(quote_quantity)
+            .build();
         assert_denied(
             validate_limit(&order),
-            "Quote quantity not supported for limit orders",
+            "truncates to zero at 2 decimal places",
         );
     }
 }
@@ -215,9 +261,13 @@ fn limit_reduce_only_is_rejected_without_removing_the_flag() {
 
 #[test]
 fn limit_post_only_accepts_gtc_and_gtd_shapes() {
-    for side in [OrderSide::Buy, OrderSide::Sell] {
+    for (side, quote_quantity) in [
+        (OrderSide::Buy, true),
+        (OrderSide::Buy, false),
+        (OrderSide::Sell, false),
+    ] {
         for tif in [TimeInForce::Gtc, TimeInForce::Gtd] {
-            let order = limit(side, tif, false, false, true);
+            let order = limit(side, tif, quote_quantity, false, true);
             validate_limit(&order).expect("resting post-only LIMIT format");
         }
     }
@@ -225,12 +275,16 @@ fn limit_post_only_accepts_gtc_and_gtd_shapes() {
 
 #[test]
 fn limit_post_only_rejects_ioc_and_fok_without_changing_instruction() {
-    for side in [OrderSide::Buy, OrderSide::Sell] {
+    for (side, quote_quantity) in [
+        (OrderSide::Buy, true),
+        (OrderSide::Buy, false),
+        (OrderSide::Sell, false),
+    ] {
         for tif in [TimeInForce::Ioc, TimeInForce::Fok] {
-            let order = limit(side, tif, false, false, true);
-            assert_denied(
+            let order = limit(side, tif, quote_quantity, false, true);
+            assert_eq!(
                 validate_limit(&order),
-                "Post-only orders require GTC or GTD",
+                Err(OrderDeniedReason::unsupported_post_only())
             );
         }
     }
@@ -243,7 +297,7 @@ fn paper_factory_argument_shape_is_not_a_live_execution_contract() {
         StrategyId::from("FORMAT-001"),
         None,
         None,
-        Rc::new(RefCell::new(TestClock::new())),
+        Rc::new(RefCell::new(VirtualClock::new())),
         false,
         false,
     );

@@ -8,7 +8,7 @@ import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } 
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
-import { Study } from '../src/documents.ts';
+import { Study, Requests } from '../src/documents.ts';
 import { evaluateTrial, trialFeedback } from '../src/trials.ts';
 import research from '../plugins/research.ts';
 import { Continuation } from '../src/continuation.ts';
@@ -44,7 +44,9 @@ test('official SQLite persists original identity, inputs, native view and submis
     await assert.rejects(host.start('same-request', { ...input(setup_.model), goal: 'changed' }), /request_id_conflict/);
     assert.equal(calls, 1);
     const before = await host.view(receipt.conversationId);
-    assert.deepEqual(before.research!.input, input(setup_.model));
+    assert.deepEqual((await host.harness.snapshot(Requests, context))!.requests['request:same-request']!.input, input(setup_.model));
+    assert.deepEqual({ ...before.research!.input, policy: { max_trials: 3 } }, input(setup_.model));
+    assert.ok(before.research!.input!.policy.reviewPolicies);
     assert.ok(before.docs['pi.usage']);
     await host.close();
     host = await openResearch({ ...setup_, extensions: [plugin] });
@@ -118,23 +120,22 @@ test('native abort joins the running tool; cancelling an observation does not ca
   } finally { await host.close(); await setup_.cleanup(); }
 });
 
-test('explicit zero trial budget records rejection and terminates without running science', async () => {
+test('legacy zero trial allowance does not prevent scientific computation', async () => {
   const setup_ = await setup(); let computations = 0;
   const plugin = defineExtension({ name: 'budget-science', tools: [defineTool({
     name: 'evaluate', description: 'Budget protocol probe', parameters: Type.Object({}), replay: 'safe',
     async execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { hypothesis: 'budget check' }, async () => { computations++; return {}; })); },
   })] });
-  setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('evaluate', {}), { stopReason: 'toolUse' })]);
+  setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('evaluate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Finished protocol probe')]);
   const host = await openResearch({ ...setup_, extensions: [plugin] });
   try {
     const receipt = await host.start('zero-budget', { ...input(setup_.model), policy: { max_trials: 0 } });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.equal(computations, 0);
-    assert.equal(facts.trials[0]!.status, 'REJECTED');
-    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
-    assert.equal(facts.final!.status, 'STOPPED');
-    assert.equal(setup_.faux.state.callCount, 1);
+    assert.equal(computations, 1);
+    assert.equal(facts.trials[0]!.status, 'COMPUTED');
+    assert.equal(facts.final, null);
+    assert.equal(setup_.faux.state.callCount, 2);
   } finally { await host.close(); await setup_.cleanup(); }
 });
 
@@ -170,7 +171,9 @@ test('repeating an unchanged scientific ledger closes technically and preserves 
     assert.equal((await (await host.harness.conversation(receipt.conversationId, context))!.agent(context)).thinkingLevel, 'medium');
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.deepEqual(facts.input, original);
+    assert.deepEqual((await host.harness.snapshot(Requests, context))!.requests['request:uncapped-yields']!.input, original);
+    assert.deepEqual({ ...facts.input, policy: original.policy }, original);
+    assert.ok(facts.input!.policy.reviewPolicies);
     assert.equal(facts.trials.length, 0);
     assert.equal(facts.final!.reason, 'research_no_new_evidence');
     assert.equal(facts.final!.conclusion, 'NEEDS_EVIDENCE');

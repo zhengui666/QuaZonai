@@ -138,7 +138,7 @@ class EvmTest(unittest.TestCase):
                         {"endpoints": ENDPOINTS[:1]},
                         {"blocks": []}, {"chain_id": True},
                         {"addresses": []},
-                        {"topic0": "0x01"}, {"max_bytes": 0}):
+                        {"topic0": "0x01"}):
             network = Network()
             with self.subTest(options=list(options)), self.assertRaises(ValueError):
                 self.acquire(network, **options)
@@ -149,23 +149,22 @@ class EvmTest(unittest.TestCase):
                 evm.select_blocks(*args)
         self.assertFalse(self.output.exists())
 
-    def test_byte_limits_are_enforced_before_publication(self):
+    def test_legacy_byte_limit_is_ignored_but_truncated_responses_fail(self):
         network = Network()
-        budget = 1000
-        with self.assertRaises(ValueError):
-            self.acquire(network, max_bytes=budget)
-        self.assertLessEqual(sum(r.consumed for r in network.responses), budget)
-        self.assertFalse(self.output.exists())
+        result = self.acquire(network, max_bytes=1)
+        self.assertTrue(self.output.exists())
+        self.assertGreater(sum(r.consumed for r in network.responses), 1)
         for declared in (True, False):
-            response = Response(b"x" * 65, declared=declared)
-            with self.subTest(declared=declared):
-                with patch.object(evm.OPENER, "open", return_value=response), self.assertRaises(ValueError):
-                    evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 64)
-                self.assertLessEqual(response.consumed, 64)
+            body = json.dumps(reply("0x89")).encode()
+            response = Response(body, declared=declared)
+            with self.subTest(declared=declared), patch.object(evm.OPENER, "open", return_value=response):
+                value, size = evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 1)
+            self.assertEqual(value, reply("0x89"))
+            self.assertEqual(size, len(body))
         response = Response(json.dumps(reply("0x89")).encode())
         response.headers["Content-Length"] = str(len(response.getvalue()) + 1)
         with patch.object(evm.OPENER, "open", return_value=response), self.assertRaises(ValueError):
-            evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 1000)
+            evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], 1)
 
     def test_corrupt_json_and_rpc_errors_are_rejected(self):
         bodies = [b"{", b'{"jsonrpc":"2.0","id":1,"id":1,"result":"0x89"}',
@@ -185,13 +184,9 @@ class EvmTest(unittest.TestCase):
             outcomes = [evm.urllib.error.URLError("SECRET connection failure"), Response(body)]
             with self.subTest(budget=budget), patch.object(evm.OPENER, "open", side_effect=outcomes) as opened:
                 with patch.object(evm.time, "sleep") as sleep:
-                    if budget == len(body):
-                        value, size = evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], budget)
-                        self.assertEqual(value, reply("0x89"))
-                        self.assertEqual(size, len(body))
-                    else:
-                        with self.assertRaises(ValueError):
-                            evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], budget)
+                    value, size = evm.rpc_call(ENDPOINTS[0], "eth_chainId", [], budget)
+                    self.assertEqual(value, reply("0x89"))
+                    self.assertEqual(size, len(body))
                     sleep.assert_called_once_with(1)
                 self.assertEqual(opened.call_count, 2)
                 self.assertTrue(all(call.kwargs["timeout"] == 30 for call in opened.call_args_list))

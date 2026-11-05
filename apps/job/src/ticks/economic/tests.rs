@@ -230,6 +230,11 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
         assert!(funding_sources(dir.path(), &request.research).is_err());
         std::fs::remove_file(&quotes).unwrap();
     }
+    let mut padded = serde_json::to_vec(&manifest).unwrap();
+    padded.resize(padded.len() + 16 * 1024 * 1024, b' ');
+    std::fs::write(&path, &padded).unwrap();
+    let sources = funding_sources(dir.path(), &request.research).unwrap();
+    assert_eq!(sources[1].1, padded.len() as u64);
     manifest["end_ns"] = json!("1");
     std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     assert!(funding_sources(dir.path(), &request.research).is_err());

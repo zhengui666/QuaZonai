@@ -416,7 +416,7 @@ class BundleTest(unittest.TestCase):
         with patch.object(vision, "local_bytes", side_effect=changed_read), self.assertRaisesRegex(ValueError, "changed"):
             vision.verify(self.output)
 
-    def test_symlink_fifo_and_oversized_local_inputs(self):
+    def test_symlink_fifo_and_complete_local_inputs(self):
         alias = self.root / "alias.zip"
         alias.symlink_to(self.archive)
         with self.assertRaises(ValueError):
@@ -430,8 +430,7 @@ class BundleTest(unittest.TestCase):
             os.mkfifo(fifo)
             with self.assertRaises(ValueError):
                 vision.local_bytes(fifo, 10)
-        with self.assertRaises(ValueError):
-            vision.local_bytes(self.archive, 1)
+        self.assertEqual(vision.local_bytes(self.archive, 1), self.archive.read_bytes())
         self.freeze()
         frozen = self.output / "raw/archive.zip"
         frozen.unlink()

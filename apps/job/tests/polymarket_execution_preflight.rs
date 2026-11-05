@@ -3,7 +3,9 @@ use contracts::execution_preflight::*;
 use job::polymarket_execution_preflight::{parse_and_preflight, preflight, PolymarketPreflight};
 use nautilus_model::{
     enums::{OrderSide, OrderStatus, TimeInForce},
-    orders::Order,
+    events::OrderDeniedReason,
+    orders::{Order, OrderAny},
+    types::{Price, Quantity},
 };
 use serde_json::{json, Value};
 
@@ -37,6 +39,17 @@ fn check(value: &Value) -> PolymarketPreflight {
     parse_and_preflight(&serde_json::to_vec(value).unwrap())
 }
 
+fn validated<'a>(result: &'a PolymarketPreflight, value: &Value) -> &'a OrderAny {
+    let expected: PolymarketExecutionPreflightV1 = serde_json::from_value(value.clone()).unwrap();
+    match &result.report.outcome {
+        PolymarketExecutionPreflightOutcomeV1::FormatValidated { request } => {
+            assert_eq!(**request, expected);
+        }
+        outcome => panic!("expected format validation, received {outcome:?}"),
+    }
+    result.native_order().unwrap()
+}
+
 fn rejected(result: &PolymarketPreflight, stage: ExecutionPreflightFailureStageV1) -> &str {
     assert!(result.native_order().is_none());
     match &result.report.outcome {
@@ -62,7 +75,7 @@ fn accepted_format_preserves_explicit_native_identity_quantity_and_time() {
         result.report.scope,
         ExecutionPreflightScopeV1::OrderFormatOnly
     );
-    assert_eq!(result.report.native_version, "0.63.0");
+    assert_eq!(result.report.native_version, "0.67.0");
     match &result.report.outcome {
         PolymarketExecutionPreflightOutcomeV1::FormatValidated { request: echoed } => {
             assert_eq!(**echoed, request);
@@ -282,23 +295,29 @@ fn zero_and_negative_amounts_are_not_replaced_by_a_default_size() {
 
 #[test]
 fn official_market_denomination_failures_are_reported_without_conversion() {
-    let mut request = market_request();
-    request["quantity"]["unit"] = json!("OUTCOME_SHARES");
-    let result = check(&request);
-    assert!(
-        rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter)
-            .contains("quote_quantity=true")
-    );
-    request["side"] = json!("SELL");
-    let result = check(&request);
-    assert!(result.native_order().is_some());
-    assert!(!result.native_order().unwrap().is_quote_quantity());
-    request["quantity"]["unit"] = json!("PUSD");
-    let result = check(&request);
-    assert!(
-        rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter)
-            .contains("quote_quantity=false")
-    );
+    for (tif, native_tif) in [("IOC", TimeInForce::Ioc), ("FOK", TimeInForce::Fok)] {
+        let mut request = market_request();
+        request["order"]["time_in_force"]["kind"] = json!(tif);
+        request["quantity"]["unit"] = json!("OUTCOME_SHARES");
+        let result = check(&request);
+        assert!(
+            rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter)
+                .contains("quote_quantity=true")
+        );
+        request["side"] = json!("SELL");
+        let result = check(&request);
+        let native = validated(&result, &request);
+        assert!(!native.is_quote_quantity());
+        assert_eq!(native.quantity(), Quantity::from("10.25"));
+        assert_eq!(native.order_side(), OrderSide::Sell);
+        assert_eq!(native.time_in_force(), native_tif);
+        request["quantity"]["unit"] = json!("PUSD");
+        let result = check(&request);
+        assert_eq!(
+            rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter),
+            OrderDeniedReason::unsupported_quote_quantity().to_string()
+        );
+    }
 }
 
 #[test]
@@ -335,45 +354,116 @@ fn reduce_only_is_rejected_instead_of_silently_removed() {
 }
 
 #[test]
-fn limit_quote_amount_is_rejected_by_the_pinned_official_adapter() {
-    let mut request = limit_request();
-    request["quantity"]["unit"] = json!("PUSD");
-    let result = check(&request);
-    assert!(
-        rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter)
-            .contains("Quote quantity not supported")
-    );
+fn limit_sell_quote_amount_is_rejected_without_conversion() {
+    for tif in ["GTC", "GTD", "IOC", "FOK"] {
+        let mut request = limit_request();
+        request["side"] = json!("SELL");
+        request["quantity"]["unit"] = json!("PUSD");
+        request["order"]["time_in_force"] = json!({"kind": tif});
+        if tif == "GTD" {
+            request["order"]["time_in_force"]["expire_time_ns"] = json!("2000000000123456789");
+        }
+        let result = check(&request);
+        assert_eq!(
+            rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter),
+            OrderDeniedReason::unsupported_quote_quantity().to_string()
+        );
+    }
 }
 
 #[test]
-fn limit_explicit_price_and_expiry_reach_native_order_unchanged() {
-    let mut request = limit_request();
-    request["order"]["post_only"] = json!(true);
-    request["order"]["time_in_force"] =
-        json!({"kind":"GTD", "expire_time_ns":"2000000000000000000"});
-    let result = check(&request);
-    let native = result.native_order().unwrap();
-    assert_eq!(native.price().unwrap().as_decimal().to_string(), "0.5");
-    assert_eq!(
-        native.expire_time().unwrap().as_u64(),
-        2_000_000_000_000_000_000
-    );
-    assert!(native.is_post_only());
-    assert_eq!(native.time_in_force(), TimeInForce::Gtd);
+fn supported_limit_denominations_preserve_quantity_price_expiry_tif_and_flags() {
+    // In 0.67 BUY accepts either shares or pUSD; SELL still requires shares.
+    for (side, native_side, unit, quote_quantity) in [
+        ("BUY", OrderSide::Buy, "PUSD", true),
+        ("BUY", OrderSide::Buy, "OUTCOME_SHARES", false),
+        ("SELL", OrderSide::Sell, "OUTCOME_SHARES", false),
+    ] {
+        for (tif, native_tif) in [
+            ("GTC", TimeInForce::Gtc),
+            ("GTD", TimeInForce::Gtd),
+            ("IOC", TimeInForce::Ioc),
+            ("FOK", TimeInForce::Fok),
+        ] {
+            for post_only in [false, true] {
+                if post_only && matches!(native_tif, TimeInForce::Ioc | TimeInForce::Fok) {
+                    continue;
+                }
+                let mut request = limit_request();
+                request["side"] = json!(side);
+                request["quantity"]["unit"] = json!(unit);
+                request["order"]["price"] = json!("0.53");
+                request["order"]["post_only"] = json!(post_only);
+                request["order"]["time_in_force"] = json!({"kind": tif});
+                let expiry =
+                    (native_tif == TimeInForce::Gtd).then_some(2_000_000_000_123_456_789_u64);
+                if let Some(expiry) = expiry {
+                    request["order"]["time_in_force"]["expire_time_ns"] = json!(expiry.to_string());
+                }
+                let result = check(&request);
+                let native = validated(&result, &request);
+                assert_eq!(native.order_side(), native_side);
+                assert_eq!(native.quantity(), Quantity::from("10.25"));
+                assert_eq!(native.is_quote_quantity(), quote_quantity);
+                assert_eq!(native.price(), Some(Price::from("0.53")));
+                assert_eq!(native.expire_time().map(|time| time.as_u64()), expiry);
+                assert_eq!(native.time_in_force(), native_tif);
+                assert_eq!(native.is_post_only(), post_only);
+                assert!(!native.is_reduce_only());
+                assert_eq!(native.status(), OrderStatus::Initialized);
+            }
+        }
+    }
     // No current clock, market tick or GTD safety-window acceptance is claimed.
 }
 
 #[test]
 fn post_only_immediate_limit_reports_official_failure() {
-    for tif in ["IOC", "FOK"] {
+    for (side, unit) in [
+        ("BUY", "PUSD"),
+        ("BUY", "OUTCOME_SHARES"),
+        ("SELL", "OUTCOME_SHARES"),
+    ] {
+        for tif in ["IOC", "FOK"] {
+            let mut request = limit_request();
+            request["side"] = json!(side);
+            request["quantity"]["unit"] = json!(unit);
+            request["order"]["post_only"] = json!(true);
+            request["order"]["time_in_force"]["kind"] = json!(tif);
+            let result = check(&request);
+            assert_eq!(
+                rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter),
+                OrderDeniedReason::unsupported_post_only().to_string()
+            );
+        }
+    }
+}
+
+#[test]
+fn official_limit_signing_minimum_failures_are_reported_without_rounding() {
+    for (side, unit) in [
+        ("BUY", "PUSD"),
+        ("BUY", "OUTCOME_SHARES"),
+        ("SELL", "OUTCOME_SHARES"),
+    ] {
         let mut request = limit_request();
-        request["order"]["post_only"] = json!(true);
-        request["order"]["time_in_force"]["kind"] = json!(tif);
+        request["side"] = json!(side);
+        request["quantity"] = json!({"unit": unit, "amount": "0.009"});
         let result = check(&request);
         assert!(
             rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter)
-                .contains("Post-only")
+                .contains("truncates to zero at 2 decimal places")
         );
+    }
+    for tif in ["IOC", "FOK"] {
+        let mut request = limit_request();
+        request["quantity"]["amount"] = json!("0.01");
+        request["order"]["price"] = json!("0.01");
+        request["order"]["time_in_force"]["kind"] = json!(tif);
+        let result = check(&request);
+        let reason = rejected(&result, ExecutionPreflightFailureStageV1::OfficialAdapter);
+        assert!(reason.contains("BUY maker amount 0.0001 pUSD"), "{reason}");
+        assert!(reason.contains("truncates to zero at 2 decimal places"));
     }
 }
 

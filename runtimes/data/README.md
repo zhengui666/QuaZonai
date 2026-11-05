@@ -42,7 +42,7 @@ Pinned defaults used for verification:
 
 ## Plan and download
 
-Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. No default byte budget is imposed; `--max-bytes` is an optional explicit operator budget. Exact file sizes and content hashes are still verified.
+Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. There is no byte budget; legacy `--max-bytes` values are accepted and ignored. Exact file sizes and content hashes are still verified.
 
 ```sh
 python3 -B runtimes/data/snapshot.py plan \
@@ -76,7 +76,7 @@ python3 -B runtimes/data/snapshot.py download \
 Build the optional operator binary using the repository-pinned Rust toolchain. It is not part of the offline scientific job entrypoint:
 
 ```sh
-rustup run 1.98.1 cargo build --locked -p job \
+rustup run 1.99.1 cargo build --locked -p job \
   --features polymarket-history --bin polymarket-history
 
 target/debug/polymarket-history archive \
@@ -96,7 +96,7 @@ target/debug/polymarket-history archive \
 
 For books, select `--format joseph-books`, omit `--bar-seconds`, and provide the matching native instrument definitions. The selection window is half-open on **minute-end event time**: source `minute_ts + 60`. Each complete book becomes native Clear/Add snapshot deltas; two-sided books also produce quotes with actual top sizes. Empty or one-sided books never generate quotes with invented zero prices. Sequence `0` means unknown, not a verified event sequence. These are snapshots, not continuous replay across missing minutes/days. Do not derive transaction volume or settlement from them.
 
-There is no implicit one-million-record or 256-definition cap in the current archive converter. Explicit scientific selections still require their original `maximum_rows` budget and supported native numeric ranges. Split large work deliberately by non-overlapping time/asset selections into new catalog directories when appropriate. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
+There is no implicit one-million-record or 256-definition cap in the current archive converter. Explicit scientific selections retain their original time/asset scope and supported native numeric ranges; legacy `maximum_rows` values do not cap acquisition. Split large work deliberately by non-overlapping time/asset selections into new catalog directories when appropriate. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
 
 ## Quality, research admission and recovery
 
@@ -127,7 +127,7 @@ python3 -B runtimes/data/evm.py \
   --output /absolute/data/v2-eight-blocks.json
 ```
 
-For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no default byte budget. An explicit `--max-bytes` optionally bounds cumulative response-body and output bytes. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
+For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no byte budget; legacy `--max-bytes` values are ignored. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
 
 The collector binds logs to block hashes, transaction hashes/indices and canonical log indices, checks parent links for adjacent blocks, and requires agreement between providers. The snapshot preserves each original response, endpoint and actual retrieval time. The native reader repeats identity/consistency checks and decodes the original ABI using the already pinned Alloy library. This is corroborated RPC evidence, not an independently verified receipt trie, a historical finality clock or a source permission grant. Raw blockchain facts do not imply a dataset redistribution license; preserve applicable provider terms.
 
@@ -186,7 +186,7 @@ For the verified first BTC window, 1,946 trade messages produce 483 observed one
 The venue-independent `catalog-prepare` operator command uses the **same native measurement function as `DATA_VALIDATE`**. It selects only original bars, matching instrument definitions and explicitly declared complete settlements, writes a new physical catalog, reads it back, then publishes `catalog-metadata.json` last. It never overwrites an existing output or changes source files.
 
 ```sh
-rustup run 1.98.1 cargo build --locked -p job \
+rustup run 1.99.1 cargo build --locked -p job \
   --features catalog-prepare --bin catalog-prepare
 
 target/debug/catalog-prepare \
@@ -202,7 +202,7 @@ Repeat with new destinations for disjoint Discovery, Validation and Sealed inter
 
 Instrument versions use the existing native definition array for every venue. Preparation keeps the latest original definition strictly before the interval start, plus all subsequent versions through the decision cutoff; when no earlier definition exists, the earliest original observation remains the baseline. An update received exactly at the interval start retains its update ordering checks. Every selected BAR must follow an available definition. Controls after event-end still matter to late-arriving BARs and pending orders; controls after cutoff are excluded from the physical partition. Declared availability must cover the original selected definition times. Fees and lifetime remain invariant; slippage uses the tick known at the actual decision, with availability covering both its original definition and the last BAR.
 
-Simulation uses the **unmodified official `nautilus-backtest 0.63.0` package**. This version cannot update an existing backtest matching engine through its public API. QuaZonai therefore rejects a simulation selection containing definition transitions before starting the engine; the local `job` CLI exits unsuccessfully with `QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED` and no result. This applies to fixed targets, candidates, portfolio sequences and rolling studies through the shared simulation entry. Catalog preparation, validation and point-in-time planning still preserve and use the full original history.
+Simulation uses the **unmodified official `nautilus-backtest 0.67.0` package**. This version cannot update an existing backtest matching engine through its public API. QuaZonai therefore rejects a simulation selection containing definition transitions before starting the engine; the local `job` CLI exits unsuccessfully with `QZ_SIMULATION_INSTRUMENT_UPDATES_UNSUPPORTED` and no result. This applies to fixed targets, candidates, portfolio sequences and rolling studies through the shared simulation entry. Catalog preparation, validation and point-in-time planning still preserve and use the full original history.
 
 Choose an explicitly reviewed window with one original definition per traded instrument. A later stable window uses the latest original definition strictly before its start, retaining its real timestamps. Transitions at the start or after event-end but before the decision cutoff remain unsupported; narrowing event labels alone must not discard information relevant to late data or pending orders. Do not remove versions, retimestamp data, preload a future definition, stitch independent account curves or recreate matching engines to make a continuous replay appear supported. Ordinary fills still must satisfy the original grid and price bounds; violations invalidate the result without clamping. Original settlement payouts retain their separate validation. Restoring continuous transition replay requires a verified public upstream API.
 
@@ -216,10 +216,10 @@ Remaining broad-history gaps include pre-CLOB FPMM normalization, lifecycle join
 
 ```sh
 python3 -B -m unittest discover -s runtimes/data -v
-rustup run 1.98.1 cargo test --locked -p job --features polymarket-history,catalog-prepare \
+rustup run 1.99.1 cargo test --locked -p job --features polymarket-history,catalog-prepare \
   --bin polymarket-history --test catalog_prepare --test catalog --test managed \
   --test instrument_versions --test native_instrument_updates
-rustup run 1.98.1 cargo clippy --locked -p job --features polymarket-history,catalog-prepare \
+rustup run 1.99.1 cargo clippy --locked -p job --features polymarket-history,catalog-prepare \
   --all-targets -- -D warnings
 ```
 

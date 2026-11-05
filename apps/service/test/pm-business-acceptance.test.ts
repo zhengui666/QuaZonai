@@ -17,6 +17,7 @@ import { evaluatePmIndependent } from '../src/pm-science.ts';
 import { pmAllocationMethod } from '../src/pm-method.ts';
 import { publishDatasetRevision } from '../src/dataset-revision-publish.ts';
 import { fauxAssistantMessage, fauxToolCall, setup } from './support.ts';
+import { preserveLegacyPmAdmission } from './legacy-pm-admission.ts';
 
 // Real HTTP + official SQLite/Durable. The research provider and job executable
 // from support.ts are explicitly protocol fixtures, not investment evidence.
@@ -194,7 +195,7 @@ test('PM HTTP intake: an unsupported market-making mandate cannot quietly become
   } finally { await state.cleanup(); }
 });
 
-test('PM HTTP source: an automatic revision invalidates the old basis and cannot reset an exhausted shared research budget', { timeout: 40_000 }, async () => {
+test('PM HTTP source: an automatic revision invalidates the old basis and starts research beyond a legacy quota', { timeout: 40_000 }, async () => {
   const state = await pmFixture();
   try {
     const dataset = state.options.config.datasets[0]!;
@@ -248,13 +249,13 @@ test('PM HTTP source: an automatic revision invalidates the old basis and cannot
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       view = await read(state, admitted.mandate.id);
-      if (view.campaigns.length === 2 && view.campaigns.at(-1)!.state === 'PAUSED') break;
+      if (view.campaigns.length === 2 && view.campaigns.at(-1)!.runtime.conversationId !== admitted.campaigns[0]!.runtime.conversationId && view.campaigns.at(-1)!.state !== 'PLANNED') break;
       await new Promise(resolve => setTimeout(resolve, 40));
     }
     assert.equal(view.campaigns.length, 2, 'The official monitor must admit the source change without a refresh HTTP request.');
-    assert.equal(view.campaigns.at(-1)!.state, 'PAUSED');
-    assert.equal(view.campaigns.at(-1)!.conclusionReason, 'shared_trial_budget_exhausted');
-    assert.equal(view.researchTrials.filter(trial => trial.countedAttempt).length, 1, 'A new dataset identity cannot grant a new trial allowance.');
+    assert.notEqual(view.campaigns.at(-1)!.conclusionReason, 'shared_trial_budget_exhausted');
+    assert.ok(!view.gaps.some(gap => gap.state !== 'RESOLVED' && gap.requiredCapability === 'shared_research_budget'));
+    assert.ok(view.researchTrials.some(trial => trial.countedAttempt), 'Original attempts remain in the ledger after the source revision.');
     assert.equal(view.history.find(decision => decision.id === original.id)!.status, 'SUPERSEDED');
     assert.notEqual(view.currentDecision?.id, original.id);
     const nextDataset = view.campaigns.at(-1)!.datasetRevisionIds[0]!;
@@ -291,6 +292,8 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       process.env.QZ_JOB_BINARY = nativeWrapper; state.options.config.jobBinary = nativeWrapper;
       state.options.extensions = [research, factors, fittedEnsemble];
       await state.restart();
+      // Retained pre-review native PM evidence/recovery, not new qualification.
+      preserveLegacyPmAdmission(state.service);
       scriptNativeResearch(state, source);
       const admitted = await start(state, { ...mandateInput(state, 'pm-native-supported-path'),
         goal: 'Research predictive alpha from causal bar features and compare complete daily net account outcomes with cash.',
@@ -433,7 +436,7 @@ test('PM native HTTP: learned signals produce a matched owner-NAV decision with 
       assert.equal(recoveredEvidence.statusCode, 200, recoveredEvidence.body);
       assert.equal(recoveredEvidence.json().payload.outcome, 'HISTORICAL_REPORT_RESTORED');
       assert.equal(recoveredEvidence.json().payload.restoredDecisionId, original.id);
-      assert.equal(recoveredEvidence.json().payload.prefixVerification.method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V1');
+      assert.equal(recoveredEvidence.json().payload.prefixVerification.method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V2');
       assert.deepEqual(recoveredRecord.comparisons[original.comparisonRef], originalComparison);
       assert.deepEqual(recoveredRecord.derivedTrials, originalAttempts); assert.deepEqual(recoveredRecord.budgetMovements, originalMovements);
       assert.deepEqual((await state.service.research.harness.snapshot(Exposures, BACKGROUND_CONTEXT))!.windows, originalExposures);
@@ -529,7 +532,9 @@ test('PM native source: a disjoint automatic data revision refits original panel
         await writeFile(`${manifestPath}.next`, JSON.stringify({ ...body, contentDigest: createHash('sha256').update(canonical(body)).digest('hex') }));
         await rename(`${manifestPath}.next`, manifestPath);
       }
-      await publish(0); await state.restart(); scriptNativeResearch(state, sources[0]);
+      await publish(0); await state.restart();
+      // Both original revisions belong to this pre-review lifecycle fixture.
+      preserveLegacyPmAdmission(state.service); scriptNativeResearch(state, sources[0]);
       const admitted = await start(state, { ...mandateInput(state, 'native-two-revision-lifecycle'),
         goal: 'Continuously research causal predictive alpha when new bar data arrives; compare matched daily net account outcomes with cash.',
         funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, businessPreference: 'NET_RETURN', maxTrials: 32 });

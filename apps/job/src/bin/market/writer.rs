@@ -1,12 +1,14 @@
 use anyhow::{ensure, Context, Result};
 use nautilus_model::{
     data::{
-        Bar, Data, FundingRateUpdate, HasTsInit, IndexPriceUpdate, MarkPriceUpdate, OrderBookDelta,
-        QuoteTick, TradeTick,
+        Bar, Data, DataBatch, FundingRateUpdate, HasTsInit, IndexPriceUpdate, MarkPriceUpdate,
+        NautilusDataType, OrderBookDelta, QuoteTick, TradeTick,
     },
     instruments::{Instrument, InstrumentAny},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::{
+    backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -30,7 +32,7 @@ fn identity(data: &Data) -> Result<(String, String)> {
     let kind = match data {
         Data::Trade(_) => "trades",
         Data::Bar(_) => "bars",
-        Data::Delta(_) => "book_deltas",
+        Data::BookDelta(_) => "book_deltas",
         Data::Quote(_) => "quotes",
         Data::FundingRate(_) => "funding_rates",
         Data::MarkPrice(_) => "mark_prices",
@@ -51,7 +53,7 @@ fn metadata(data: &Data) -> HashMap<String, String> {
             TradeTick::get_metadata(&d.instrument_id, d.price.precision, d.size.precision)
         }
         Data::Bar(d) => Bar::get_metadata(&d.bar_type, d.open.precision, d.volume.precision),
-        Data::Delta(d) => OrderBookDelta::get_metadata(
+        Data::BookDelta(d) => OrderBookDelta::get_metadata(
             &d.instrument_id,
             d.order.price.precision,
             d.order.size.precision,
@@ -110,7 +112,7 @@ impl Writer {
         if !verify_only {
             catalog.write_instruments(instruments.clone())?;
         }
-        let mut readback = catalog.instruments(None, None, None)?;
+        let mut readback = catalog.query_instruments_filtered(None, None, None)?;
         readback.sort_by_key(|i| (i.id(), Instrument::ts_init(i)));
         ensure!(
             serde_json::to_value(readback)? == serde_json::to_value(instruments)?,
@@ -186,32 +188,38 @@ impl Writer {
                 if !self.verify_only {
                     self.catalog.write_data_enum(items, None, None, None)?;
                 }
-                self.catalog.reset_session();
                 let start = Some(items[0].ts_init());
                 let end = Some(items.last().unwrap().ts_init());
                 let ids = Some(vec![key.1.clone()]);
-                macro_rules! read {
-                    ($type:ty) => {{
-                        self.catalog
-                            .query::<$type>(ids, start, end, None, None, false)?
-                            .take(items.len() + 1)
-                            .collect::<std::result::Result<Vec<Data>, _>>()?
-                    }};
+                let query = CatalogQuery::new(NautilusDataType::from_data(&items[0]))
+                    .with_identifiers(ids)
+                    .with_range(start, end);
+                let mut session = job::catalog::file_batch_session(
+                    &self.catalog,
+                    query,
+                    None,
+                    items.len().saturating_add(1).min(4096),
+                )?;
+                let mut observed = 0;
+                while let Some(batch) = session.next_batch()? {
+                    for index in 0..batch.len() {
+                        // Compare as rows arrive, including the first excess row;
+                        // never collect an unrestricted readback before checking it.
+                        let expected = items
+                            .get(observed)
+                            .context("NATIVE_RECORD_READBACK_MISMATCH")?;
+                        let actual = batch
+                            .get(index)
+                            .context("NATIVE_RECORD_READBACK_MISMATCH")?;
+                        ensure!(
+                            serde_json::to_value(actual.to_owned_data())?
+                                == serde_json::to_value(expected)?,
+                            "NATIVE_RECORD_READBACK_MISMATCH"
+                        );
+                        observed += 1;
+                    }
                 }
-                let readback = match &items[0] {
-                    Data::Trade(_) => read!(TradeTick),
-                    Data::Bar(_) => read!(Bar),
-                    Data::Delta(_) => read!(OrderBookDelta),
-                    Data::Quote(_) => read!(QuoteTick),
-                    Data::FundingRate(_) => read!(FundingRateUpdate),
-                    Data::MarkPrice(_) => read!(MarkPriceUpdate),
-                    Data::IndexPrice(_) => read!(IndexPriceUpdate),
-                    _ => anyhow::bail!("NATIVE_RECORD_UNSUPPORTED"),
-                };
-                ensure!(
-                    serde_json::to_value(&readback)? == serde_json::to_value(items)?,
-                    "NATIVE_RECORD_READBACK_MISMATCH"
-                );
+                ensure!(observed == items.len(), "NATIVE_RECORD_READBACK_MISMATCH");
                 self.last_written
                     .insert(key.clone(), items.last().unwrap().ts_init().as_u64());
                 *self
@@ -249,17 +257,20 @@ impl Writer {
     }
 
     pub(super) fn verify_trade_count(&mut self, count: u64) -> Result<()> {
-        self.catalog.reset_session();
         let mut actual = 0_u64;
-        for item in self
-            .catalog
-            .query::<TradeTick>(None, None, None, None, None, false)?
-        {
-            ensure!(
-                matches!(item?, Data::Trade(_)),
-                "RESUME_NATIVE_KIND_CHANGED"
-            );
-            actual += 1;
+        let mut session = job::catalog::file_batch_session(
+            &self.catalog,
+            CatalogQuery::new(NautilusDataType::TradeTick),
+            None,
+            count.saturating_add(1).min(4096) as usize,
+        )?;
+        while let Some(batch) = session.next_batch()? {
+            let DataBatch::Trade(batch) = batch else {
+                anyhow::bail!("RESUME_NATIVE_KIND_CHANGED");
+            };
+            actual = actual
+                .checked_add(batch.len() as u64)
+                .context("RESUME_NATIVE_ROWS_CHANGED")?;
             ensure!(actual <= count, "RESUME_NATIVE_ROWS_CHANGED");
         }
         ensure!(actual == count, "RESUME_NATIVE_ROWS_CHANGED");
@@ -327,13 +338,13 @@ mod tests {
             writer.push(Data::Bar(bar)).unwrap();
         }
         writer.finish().unwrap();
-        writer.catalog.reset_session();
         let readback = writer
             .catalog
             .query::<Bar>(Some(vec![kind]), None, None, None, None, false)
             .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         let bars = readback
             .into_iter()
             .map(|data| {
@@ -435,18 +446,25 @@ mod tests {
         assert_eq!(
             writer
                 .catalog
-                .query_files("trades", ids.clone(), None, None)
+                .query_files(
+                    &nautilus_persistence::catalog::types::CatalogDataType::Data(
+                        NautilusDataType::TradeTick
+                    ),
+                    ids.clone(),
+                    None,
+                    None
+                )
                 .unwrap()
                 .len(),
             5
         );
-        writer.catalog.reset_session();
         let readback = writer
             .catalog
             .query::<TradeTick>(ids, None, None, None, None, false)
             .unwrap()
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         let precision = readback
             .into_iter()
             .map(|data| {

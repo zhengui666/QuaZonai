@@ -209,7 +209,7 @@ export const AdjustAccount = defineTask<AutomaticInput, Checkpoint, null>({
         const status = capitalStatusForBinding(control(facts.accountControls?.[key]), fact.connection);
         if (unsettled || status.reserved !== allocation.reserved || status.controlRevision !== allocation.controlRevision || allocation.cashBuffer !== fact.view.automaticPolicy.cashBuffer || allocation.nativeClockNs === null || BigInt(nowNs()) - BigInt(allocation.nativeClockNs) >= BigInt(fact.view.automaticPolicy.maximumSnapshotAgeSeconds) * 1_000_000_000n) { allocation.status = 'BLOCKED'; allocation.receipt!.status = 'NOT_OFFERED'; allocation.reason = unsettled ? 'target_delivery_requires_reconciliation' : 'capital_exit_changed_before_delivery'; facts.observations[task.input.id] = json(fact); return { status: 'running', checkpoint: { phase: 'snapshot' } }; }
         allocation.status = 'UNCERTAIN'; allocation.receipt!.status = 'UNCERTAIN';
-        input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext }) as unknown as import('./downstream.ts').ObservationTaskInput;
+        input = json({ id: fact.view.id, connection: fact.connection, receiptId: allocation.receipt!.id, target: fact.allocationTarget!, allocation: fact.allocationContext, ...(fact.reviewSources ? { reviewSources: fact.reviewSources } : {}) }) as unknown as import('./downstream.ts').ObservationTaskInput;
         facts.observations[task.input.id] = json(fact);
         return { status: 'running', checkpoint: { phase: 'reconcile' } };
       }, context);

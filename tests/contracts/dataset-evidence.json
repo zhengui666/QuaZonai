@@ -16,7 +16,7 @@
   "license_state": "REVOKED",
   "checked_at": "2026-09-02T00:00:00Z",
   "quality": {
-    "native_version": "nautilus-persistence/0.63.0",
+    "native_version": "nautilus-persistence/0.67.0",
     "checked_at": "2026-08-31T00:00:00Z",
     "row_count": "9007199254740993",
     "instrument_count": 1,

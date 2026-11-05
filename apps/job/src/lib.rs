@@ -39,6 +39,8 @@ mod polymarket_source_record;
 pub mod polymarket_streaming_paper;
 pub mod portfolio;
 mod prediction;
+pub mod review_allocate;
+pub mod review_science;
 pub use optimization::allocate;
 mod recorded_fees;
 mod report;

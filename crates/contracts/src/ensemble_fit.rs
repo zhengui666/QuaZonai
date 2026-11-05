@@ -26,6 +26,26 @@ pub struct NativeEnsembleFoldV1 {
     pub validation_end_ns: DbCounter,
 }
 
+/// Host-verified immutable PASS reports. Native execution validates binding and time,
+/// but cannot authenticate an external report identity by itself.
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEnsembleReviewPriorMemberV1 {
+    pub factor_version_id: String,
+    pub source_report_id: String,
+    pub source_evidence_refs: Vec<String>,
+    /// Exclusive evidence-window end, strictly before the original TRAIN fit cutoff.
+    pub source_end_ns: DbCounter,
+    pub quality_coefficient: f64,
+    pub decision: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEnsembleReviewPriorV1 {
+    pub members: Vec<NativeEnsembleReviewPriorMemberV1>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeEnsembleFitRequestV1 {
@@ -33,6 +53,8 @@ pub struct NativeEnsembleFitRequestV1 {
     /// Exclusive fit cutoff, no later than every original report's TRAIN end.
     pub fit_end_ns: DbCounter,
     pub folds: Vec<NativeEnsembleFoldV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_prior: Option<NativeEnsembleReviewPriorV1>,
     pub members: Vec<NativeEnsembleFitMemberV1>,
 }
 
@@ -74,7 +96,12 @@ pub struct NativeEnsembleFitResultV1 {
     pub method: String,
     pub solver_version: String,
     pub calibration_version: String,
-    /// Explicit numerical reporting policy; no covariance jitter or ridge added.
+    /// Original quality evidence and fixed TRAIN OOF scale, absent for legacy fitting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_prior: Option<NativeEnsembleReviewPriorV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_prior_lambda: Option<f64>,
+    /// Explicit numerical reporting policy; no unreported jitter or ridge added.
     pub weight_decimal_places: u32,
     pub fit_end_ns: DbCounter,
     pub forecast_contract: NativeForecastRequestV1,

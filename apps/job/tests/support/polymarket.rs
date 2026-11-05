@@ -8,7 +8,7 @@ use nautilus_model::{
     instruments::{BinaryOption, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use std::{path::Path, str::FromStr};
 
 pub const IDS: [&str; 2] = [

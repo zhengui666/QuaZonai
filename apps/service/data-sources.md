@@ -67,3 +67,104 @@ All routes use the existing owner authentication:
 | `GET /api/v3/extensions` | Includes data providers with `kind: data` |
 | `PATCH /api/v3/extensions/:name` | Applies data-provider enablement immediately |
 | `GET /api/v3/datasets` | Current datasets available to new research and portfolio selection |
+
+## Review source evidence
+
+A source plugin may supply `DatasetConfig.reviewSourceEvidence` together with its
+existing `revisionManifest`. Both descriptors use paths relative to that manifest's
+directory and exact lowercase SHA-256 values:
+
+```json
+{
+  "metadata": { "path": "validation-metadata.json", "sha256": "<64 lowercase hex characters>" },
+  "license": { "path": "research-grant.json", "sha256": "<64 lowercase hex characters>" }
+}
+```
+
+The files must also occur in the manifest's `files` array with identical size and
+hash. Every catalog file remains covered by that same immutable source manifest.
+The registered dataset's scientific inputs must exactly match the manifest's
+resolved data; connection credential references do not change scientific identity.
+A source revision cannot be reused for different snapshot bytes. These are server
+source-plugin settings; `ResearchInput`, model tools and HTTP review metrics cannot
+supply replacement provenance.
+
+The metadata file uses the existing Rust `RuntimeCatalogMetadataV1` schema. It must
+be the source owner's original `VALIDATION` metadata: `registered_ref` equals the
+configured dataset ID, `native_snapshot_ref` equals the manifest's `sourceRevision`,
+and its sole quality report describes precisely the registered validation interval
+and availability cutoff. The native `review-source` command validates the complete
+metadata, instrument/universe and quality relationships through the existing domain
+validators. A command completion does not itself create `REAL` origin, verified
+historical availability or permission.
+
+The grant file uses `ReviewSourceLicense`: `schemaVersion: 1`, the exact `datasetId`,
+`sourceId`, `sourceRevision` and native `datasetRevisionId`, an original `grantId`,
+`issuer` and `reference`, `status: "ACTIVE" | "REVOKED"`, declared `purposes` including
+`"RESEARCH"`, and exclusive nanosecond-string bounds `validFromNs`/`validUntilNs`.
+The native quality report's `dataset_revision_id` must equal that grant identity.
+A missing grant, unknown source origin, unverified PIT, restated history, expiry,
+revocation, changed bytes or invalid native metadata cannot pass the provenance gate.
+
+Admission freezes the verified source documents and digests in a separate official
+Durable source-evidence document before the model starts. The review report cites
+that source evidence; the model receives a provenance summary rather than raw
+metadata or sealed values. The recorded PIT explanation remains the configured
+source owner's evidence, attributed as such. Hash verification and structural native
+validation do not independently reconstruct historical receiver clocks. Datasets
+without these documents remain usable for evidence-limited exploratory research and
+receive `INCONCLUSIVE` for automatic review release.
+
+## Quantitative review evidence
+
+New research freezes its quantitative Review policy. Missing historical availability,
+license, reference calibration, execution or independent evidence produces an
+`INCONCLUSIVE` report, even when the native calculation succeeds.
+
+A trusted source plugin or server DatasetConfig may register `reviewSourceEvidence`:
+`metadata` and `license` each contain a relative `path` and its `sha256`. The files
+must already appear, with matching byte counts and hashes, in the dataset's
+`revisionManifest`. The metadata uses the existing native catalog metadata schema;
+its registered dataset, source revision, dataset revision and Validation selection
+must match the admitted input. The source-owner license uses
+`packages/contracts/src/review-source.ts`. Merely setting claims in ResearchInput,
+or uploading metrics through HTTP, cannot establish source qualification.
+
+For a separate independent window, configure `heldoutMetadata` and, when its native
+dataset revision differs, `heldoutLicense`. The metadata's native partition is
+`SEALED`; the factor/portfolio evaluator calls that purpose `HELDOUT`. It must cover
+the actual independent selection, not the selection used for fitting weights.
+Source-owner evidence and native schema/quality validation are reported separately
+from independently demonstrated market results.
+
+`POST /api/v3/review-policies` derives efficacy q10/q90 anchors from at least 30
+historical reference roots. Coverage, stability fractions, mechanism fractions and
+probabilities retain versioned fixed scoring ranges; constant valid values on these
+bounded scales do not invalidate calibration. Every metric still requires 30 legal
+source observations. Supply `requestId`, `kind`, `evaluationStartNs` and
+`researchIds`, or `allocationIds` for `ALLOCATION`; evidence is loaded from retained
+Validation reports. Missing or degenerate reference evidence is rejected. Register
+the resulting policies for the corresponding data, frequency and prediction horizon
+before starting candidates; do not tune them from independent outcomes.
+
+A research start can include `reviewedFactorIds` referencing single-factor versions
+with earlier PASS reports. The service resolves and freezes model bytes, report
+versions and original Validation end times. The `strategy_ensemble_fit` tool accepts
+`sourceFactorIds` from that frozen set; only evidence strictly earlier than the new
+TRAIN cutoff can influence the fit. The model never supplies review scores or q.
+
+The portfolio page exposes multi-portfolio configuration with explicit member,
+cluster and turnover constraints. Scientific calls have no execution quota. Optional
+`independentDatasetId` selects a separate registered window. Weights always create
+a new candidate and shared-account study. The original target delivery conditions
+remain required; a configuration report does not send an order.
+
+An independently consumed suffix requires its own `heldoutMetadata` descriptor
+(and `heldoutLicense` when its native dataset identity needs a different grant).
+That original metadata must declare `SEALED`; its quality selection must match the
+actual held-out interval. Validation metadata or a constituent's source report
+cannot substitute for it. The documents are checked before the independent read.
+A new factor import, portfolio or allocation also re-reads the current configured
+source and grant: retraction, revocation, expiry, missing files and changed scope
+block new use. A changed source revision requires new evidence rather than renewing
+an old review; historical reports remain readable.

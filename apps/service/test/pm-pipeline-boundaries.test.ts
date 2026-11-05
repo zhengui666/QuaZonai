@@ -74,10 +74,12 @@ test('PM owner boundary: unsupported no-borrow and loss promises preserve capabi
   for (const [boundary, settings] of [[leverage, { account_kind: 'MARGIN', leverage: '1' }], [leverage, { account_kind: 'CASH', leverage: '2' }], [loss, { account_kind: 'CASH', leverage: '1' }]] as const) {
     const cycle = { id: 'original-cycle', strategyVersionId: 'original-strategy', datasetRevisionIds: ['original-dataset'], runtime: { conversationId: 1, taskId: 2 },
       basisRevision: 'original-basis', asOfNs: '300', availableCutoffNs: '300', accountBasis: null, dependencyRevisionRefs: [] } as unknown as Pm.DecisionCycle;
+    const sourceRequest = structuredClone(iterationRequest(data, true));
+    (sourceRequest.forecast as { selection: { maximum_rows?: number } }).selection.maximum_rows = 0; // Native serde echo for an omitted legacy field.
     const record = { mandate: { id: 'original-mandate', allowedUniverseRef: 'original-universe', capitalSource: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, ownerBoundaries: [boundary] },
       policy: { id: 'original-policy' }, gaps: {}, artifacts: { [cycle.id]: { maximumTrials: 2, research: { input: { data } },
         configured: { data, revision: { id: 'original-dataset', availableThroughNs: '300' }, strategy: {} },
-        nativeSource: { request: iterationRequest(data, true), fit: { members: [{ factor_version_id: 'protocol-only' }] }, simulationRequest: { settings } } } } } as unknown as PmRecord;
+        nativeSource: { request: sourceRequest, fit: { members: [{ factor_version_id: 'protocol-only' }] }, simulationRequest: { settings } } } } } as unknown as PmRecord;
     const result = await computePmDecision(record, cycle, configDefaults({ jobBinary: '/must-not-execute' }), BACKGROUND_CONTEXT);
     assert.equal(result.decision.action, 'NEEDS_EVIDENCE'); assert.equal(result.scienceCompleted, false);
     assert.equal(result.gaps[0]!.remedy, 'UNSUPPORTED'); assert.equal(result.decision.targetCommandId, null);

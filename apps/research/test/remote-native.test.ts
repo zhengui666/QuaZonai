@@ -10,6 +10,7 @@ import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } 
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { NativeExecutionRequest, NativeJson, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { canonical } from '../src/documents.ts';
+import { executionId } from '../../nautilus/src/server.ts';
 import { defaultNativeTarget, executeNativeValue, nativeCommands, nativeTargetForData, NativeRemoteUncertainty } from '../src/native-execution.ts';
 import { openResearch } from '../src/host.ts';
 import { FactorTask, runFactor } from '../plugins/native-factor-task.ts';
@@ -39,6 +40,7 @@ test('remote science uploads original artifacts, keeps shared catalog paths and 
     const admitted = await body(request); requests.push(admitted);
     const { requestId, ...original } = admitted;
     assert.equal(requestId, createHash('sha256').update(canonical(original as unknown as NativeJson)).digest('hex'));
+    assert.equal(requestId, executionId(original), 'client and worker preserve the original wire identity');
     reply(response, { schemaVersion: 1, requestId, status: 'COMPLETED', result: { native: '受控协议', input: admitted.input } });
   });
   try {
@@ -48,7 +50,10 @@ test('remote science uploads original artifacts, keeps shared catalog paths and 
     await writeFile(join(directory, 'objects', objectId), '{"native":"calibration"}');
     await writeFile(join(directory, 'objects', 'request.json'), 'unrelated scratch data');
     const args = ['--catalog', '/shared/catalog', '--model', join(directory, 'model.wasm'), '--scope', join(directory, 'scope.json'), '--objects', join(directory, 'objects')];
-    for (let i = 0; i < 2; i++) assert.deepEqual(await executeNativeValue(source.target, 'study-portfolio', { amount: '9007199254740993123' }, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input: { amount: '9007199254740993123' } });
+    const input = { amount: '9007199254740993123', rows: Array.from({ length: 2048 }, (_, index) => ({
+      clock: '1790000000000000001', index, label: '原生🐋',
+    })) };
+    for (let i = 0; i < 2; i++) assert.deepEqual(await executeNativeValue(source.target, 'study-portfolio', input, args, directory, BACKGROUND_CONTEXT), { native: '受控协议', input });
     assert.notEqual(requests[0]!.requestId, requests[1]!.requestId, 'changed bytes at an owner-managed catalog path cannot be replaced by an old invocation');
     assert.deepEqual(requests[0]!.args, ['--catalog', '/shared/catalog', '--model', '@file:model-0', '--scope', '@file:scope-1', '--objects', '@objects:objects-2']);
     assert.deepEqual(Object.keys(requests[0]!.files), ['model-0', 'scope-1', `objects-2/${objectId}`]);

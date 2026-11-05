@@ -18,7 +18,7 @@ import { NativeRemoteUncertainty, waitForRemoteNativeExecutionReceipt, retainNat
 import { executionDiagnostic } from '../../research/src/execution-errors.ts';
 import { assertNativeRemoteTaskSettled } from '../../research/src/native-remote-receipts.ts';
 import type { ServiceConfig } from './config.ts';
-import { boundScienceTarget } from './science-binding.ts';
+import { boundScienceTarget, withoutExecutionQuotas } from './science-binding.ts';
 import { factorReference } from './factors.ts';
 import { Application, json, object, Problem, text } from './facts.ts';
 import { assertBusinessAdmission } from './pm-maintenance.ts';
@@ -34,7 +34,7 @@ function fact(value: JsonObject): ReplayFact { return value as unknown as Replay
 function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
   if (source?.modality !== 'TRADE_TICK' || configured?.modality !== 'TRADE_TICK' || !source.request.input.representation
-    || canonical(source.request) !== canonical(request) || canonical(configured.request) !== canonical(source.request)) return null;
+    || canonical(withoutExecutionQuotas(source.request)) !== canonical(withoutExecutionQuotas(request)) || canonical(withoutExecutionQuotas(configured.request)) !== canonical(withoutExecutionQuotas(source.request))) return null;
   return { request: source.request, catalog: text(sourceData.catalog, 'catalog'), fundingCatalog: text(configuredData.catalog, 'catalog') };
 }
 
@@ -65,7 +65,7 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
         if (receipt.status === 'CANCELLED') throw new Error('nautilus_execution_cancelled');
         if (receipt.status !== 'COMPLETED') throw new Error('tick_economic_remote_execution_unsettled');
         result = validateNativeTickEconomicResult(receipt.result);
-        if (canonical(result.request) !== canonical(task.input.request)) throw new Error('tick_economic_result_request_mismatch');
+        if (canonical(withoutExecutionQuotas(result.request)) !== canonical(withoutExecutionQuotas(task.input.request))) throw new Error('tick_economic_result_request_mismatch');
       } else {
         directory = await mkdtemp(join(task.input.dataDir, 'tick-economic-'));
         const model = join(directory, 'model.wasm');
@@ -146,7 +146,7 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       if (input.fundingCatalog !== undefined && input.fundingCatalog !== source.fundingCatalog) throw new Problem('tick_economic_funding_catalog_mismatch', 409);
       const native = object(trial.result);
       const coverage = object(native.coverage, 'native_coverage');
-      if (canonical(native.request!) !== canonical(iterationRequest(study.input.data)) || coverage.modality !== 'TRADE_TICK'
+      if (canonical(withoutExecutionQuotas(native.request!)) !== canonical(withoutExecutionQuotas(iterationRequest(study.input.data))) || coverage.modality !== 'TRADE_TICK'
         || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
         || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
       const id = randomUUID();

@@ -329,7 +329,6 @@ struct AssetSummary {
 
 struct Budget {
     fuel: Option<u64>,
-    source_rows: u64,
 }
 
 fn record(
@@ -416,8 +415,6 @@ fn evaluate_asset(
             ensure!(current.event > previous.event, "TICK_CACHE_EVENT_ORDER");
         }
         let trades = u64::try_from(current.count)?;
-        ensure!(trades <= budget.source_rows, "TICK_SOURCE_ROW_LIMIT");
-        budget.source_rows -= trades;
         summary.trades = summary
             .trades
             .checked_add(trades)
@@ -582,10 +579,6 @@ pub(super) fn evaluate(
     let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some())?;
     let mut budget = Budget {
         fuel: request.parameters.total_fuel.map(|value| value.get()),
-        source_rows: request
-            .input
-            .source_row_limit()
-            .ok_or_else(|| anyhow::anyhow!("TICK_RESOURCE_LIMIT"))?,
     };
     let mut pooled: [Metric; 3] = std::array::from_fn(|_| Metric::default());
     let mut assets = BTreeMap::new();
@@ -663,13 +656,14 @@ pub(super) fn evaluate(
                 end_ns,
                 metric: pooled[index].finish()?,
                 assets,
+                diagnostics: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;
     let regime_partitions = groups.map(|groups| groups.finish(request)).transpose()?;
     let mut result = NativeTradeTickFactorEvaluationResultV1 {
         schema_version: SchemaV1, request: request.clone(),
-        native_versions: BTreeMap::from([("nautilus-model".into(), "0.63.0".into()), ("nautilus-persistence".into(), "0.63.0".into()), ("nautilus-indicators".into(), "0.63.0".into()), ("wasmi".into(), "2.0.0".into())]),
+        native_versions: BTreeMap::from([("nautilus-model".into(), "0.67.0".into()), ("nautilus-persistence".into(), "0.67.0".into()), ("nautilus-indicators".into(), "0.67.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
             ("input".into(), format!("{}: derived complete-event cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
             ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), if request.input.is_flow_cache() { FLOW_FEATURE_SCHEMA } else { FEATURE_SCHEMA }.into()),
@@ -758,10 +752,7 @@ mod tests {
         ] {
             let mut rows = original.clone();
             rows[0].signed_quantity = signed;
-            let mut budget = Budget {
-                fuel: None,
-                source_rows: 7,
-            };
+            let mut budget = Budget { fuel: None };
             let mut pooled = std::array::from_fn(|_| Metric::default());
             let failure = evaluate_asset(
                 &request,
@@ -787,7 +778,6 @@ mod tests {
         let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some()).unwrap();
         let mut budget = Budget {
             fuel: request.parameters.total_fuel.map(|value| value.get()),
-            source_rows: expected.coverage.trade_count.get(),
         };
         let mut pooled = std::array::from_fn(|_| Metric::default());
         let mut by_asset = BTreeMap::new();
@@ -808,7 +798,7 @@ mod tests {
             assert_eq!(summary.trades, rows.len() as u64);
             by_asset.insert(id, summary.metrics);
         }
-        assert_eq!(budget.source_rows, 0);
+
         for (index, expected) in expected.partitions.iter().enumerate() {
             same_metric(&pooled[index].finish().unwrap(), &expected.metric);
             for asset in &expected.assets {
@@ -884,24 +874,20 @@ mod tests {
     }
 
     #[test]
-    fn streaming_enforces_actual_source_budget_count_and_event_order() {
+    fn streaming_enforces_actual_source_counts_and_event_order() {
         let request = request();
         let wasm = model(0);
         let module = SignalModule::new(&wasm, false).unwrap();
         let original = super::super::cohorts(&series()["AUD/USD.SIM"], 100).unwrap();
-        for (mut rows, expected_count, source_rows, error) in [
-            (original.clone(), 7, 6, "TICK_SOURCE_ROW_LIMIT"),
-            (original.clone(), 8, 100, "TICK_CACHE_COHORT_COUNT_MISMATCH"),
-            (original.clone(), 6, 100, "TICK_CACHE_COHORT_COUNT_MISMATCH"),
-            (original.clone(), 7, 100, "TICK_CACHE_EVENT_ORDER"),
+        for (mut rows, expected_count, error) in [
+            (original.clone(), 8, "TICK_CACHE_COHORT_COUNT_MISMATCH"),
+            (original.clone(), 6, "TICK_CACHE_COHORT_COUNT_MISMATCH"),
+            (original.clone(), 7, "TICK_CACHE_EVENT_ORDER"),
         ] {
             if error == "TICK_CACHE_EVENT_ORDER" {
                 rows.swap(1, 2);
             }
-            let mut budget = Budget {
-                fuel: None,
-                source_rows,
-            };
+            let mut budget = Budget { fuel: None };
             let result = evaluate_asset(
                 &request,
                 (rows.into_iter().map(Ok), None),
@@ -924,10 +910,7 @@ mod tests {
         let module = SignalModule::new(&wasm, false).unwrap();
         let rows = super::super::cohorts(&series()["AUD/USD.SIM"], 100).unwrap();
         let mut labels = std::iter::once(Err(anyhow::anyhow!("label read failed")));
-        let mut budget = Budget {
-            fuel: None,
-            source_rows: 7,
-        };
+        let mut budget = Budget { fuel: None };
         let result = evaluate_asset(
             &request,
             (rows.into_iter().map(Ok), Some(&mut labels)),
@@ -938,7 +921,6 @@ mod tests {
             None,
         );
         assert_eq!(result.err().unwrap().to_string(), "label read failed");
-        assert_eq!(budget.source_rows, 5);
     }
     #[test]
     fn regime_metrics_match_explicit_pairs_without_changing_states_fuel_or_labels() {
@@ -1025,7 +1007,6 @@ mod tests {
             let module = SignalModule::new(&wasm, true).unwrap();
             let mut budget = Budget {
                 fuel: Some(1_000_000),
-                source_rows: 100,
             };
             let mut pooled = std::array::from_fn(|_| Metric::default());
             let mut groups = Groups::new(&request).unwrap();

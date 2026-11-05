@@ -133,10 +133,6 @@ fn read_series(
                 }
                 ensure!(event <= available, "CATALOG_TIME_INVALID");
                 ensure!(bar.bar_type == kind, "CATALOG_UNREQUESTED_BAR_TYPE");
-                ensure!(
-                    bars.len() < request.maximum_rows as usize,
-                    "CATALOG_ROW_LIMIT"
-                );
                 bars.push(bar);
             }
         }
@@ -184,6 +180,9 @@ pub fn scan_factor_catalog_with_scope(
     let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some())?;
     let mut remaining = request.parameters.total_fuel.map(|fuel| fuel.get());
     let mut pairs: [MetricPairs; 3] = Default::default();
+    // Review retains all original evaluation points without a separate row quota.
+    let mut diagnostic_points: [Option<Vec<NativeFactorPointV1>>; 3] =
+        [None, Some(Vec::new()), Some(Vec::new())];
     let mut identities = HashSet::new();
     let (mut observed, mut warmup_only, mut observations) = (0, 0, 0);
     let mut template = None;
@@ -203,10 +202,6 @@ pub fn scan_factor_catalog_with_scope(
         let original = evaluation(request, kind);
         template.get_or_insert_with(|| original.clone());
         observations += bars.len();
-        ensure!(
-            observations <= request.maximum_rows as usize,
-            "CATALOG_ROW_LIMIT"
-        );
         if bars.is_empty() {
             continue;
         }
@@ -260,12 +255,16 @@ pub fn scan_factor_catalog_with_scope(
                 NativeFactorPartitionV1::Validation => 1,
                 NativeFactorPartitionV1::Heldout => 2,
             };
-            pairs[slot].push(&NativeFactorPointV1 {
+            let point = NativeFactorPointV1 {
                 observation,
                 partition,
                 label_event_ns,
                 exclusion_reason,
-            });
+            };
+            pairs[slot].push(&point);
+            if let Some(points) = &mut diagnostic_points[slot] {
+                points.push(point);
+            }
         }
         warmup_only += usize::from(predictions == 0);
         remaining = model.remaining_fuel();
@@ -282,7 +281,8 @@ pub fn scan_factor_catalog_with_scope(
     ]
     .into_iter()
     .zip(pairs)
-    .map(|(partition, pairs)| {
+    .zip(diagnostic_points)
+    .map(|((partition, pairs), diagnostic_points)| {
         let (start_ns, end_ns) = partition_bounds(&template, partition);
         Ok(NativeFactorPartitionReportV1 {
             partition,
@@ -290,6 +290,16 @@ pub fn scan_factor_catalog_with_scope(
             end_ns,
             metric: pairs.finish()?,
             assets: Vec::new(),
+            diagnostics: diagnostic_points
+                .map(|points| {
+                    crate::review_science::factor_diagnostics(
+                        &points,
+                        partition,
+                        request.parameters.label_horizon_observations as usize,
+                        contracts::review_science::NativeReviewFactorScopeV1::PooledTimeSeries,
+                    )
+                })
+                .transpose()?,
         })
     })
     .collect::<Result<Vec<_>>>()?;
@@ -297,9 +307,9 @@ pub fn scan_factor_catalog_with_scope(
         schema_version: SchemaV1,
         request: request.clone(),
         native_versions: BTreeMap::from([
-            ("nautilus-model".into(), "0.63.0".into()),
-            ("nautilus-serialization".into(), "0.63.0".into()),
-            ("nautilus-indicators".into(), "0.63.0".into()),
+            ("nautilus-model".into(), "0.67.0".into()),
+            ("nautilus-serialization".into(), "0.67.0".into()),
+            ("nautilus-indicators".into(), "0.67.0".into()),
             ("ndarray".into(), "0.17.1".into()),
             ("ndarray-stats".into(), "0.7.0".into()),
             ("wasmi".into(), "2.0.0".into()),

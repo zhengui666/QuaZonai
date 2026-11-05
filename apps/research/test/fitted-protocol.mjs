@@ -8,7 +8,7 @@ appendFileSync(log, JSON.stringify({ command, input, args }) + '\n');
 if (command === 'catalog-prefix-digest') {
   const content = process.env.QZ_TEST_PREFIX_FILE ? readFileSync(process.env.QZ_TEST_PREFIX_FILE, 'utf8') : 'controlled protocol prefix';
   const hash = createHash('sha256').update(content).digest('hex');
-  console.log(JSON.stringify({ schema_version: 1, method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V1', selection: input, series_count: 1, row_count: '3', content_sha256: hash, series: [{ instrument_id: 'TEST.SIM', bar_type: input.bar_types[0], row_count: '3', instrument_version_count: 1, content_sha256: hash }] }));
+  console.log(JSON.stringify({ schema_version: 1, method: 'NAUTILUS_SELECTED_PREFIX_SHA256_V2', selection: input, series_count: 1, row_count: '3', content_sha256: hash, series: [{ instrument_id: 'TEST.SIM', bar_type: input.bar_types[0], row_count: '3', instrument_version_count: 1, content_sha256: hash }] }));
 } else if (command === 'evaluate-factor') {
   if (process.env.QZ_TEST_PREFIX_MUTATE_DURING_FIT && !args.includes('--summary-only')) writeFileSync(process.env.QZ_TEST_PREFIX_FILE, 'changed while reading full panels');
   const report = { request: input, partitions: [{ partition: 'VALIDATION', metric: { pearson_ic: { status: 'AVAILABLE', value: 0.1 } } }] };
@@ -18,7 +18,8 @@ if (command === 'catalog-prefix-digest') {
   assert.equal(input.fit_end_ns, '10'); assert.equal(input.members.length, 2);
   for (const member of input.members) { assert.ok(member.report.points.length); assert.match(member.source_evidence_ref, /^native-task:.*:panel:/); }
   for (const fold of input.folds) assert.ok(BigInt(fold.validation_end_ns) <= 10n);
-  console.log(JSON.stringify({ schema_version: 1, method: 'TEST_ONLY_PROTOCOL', fit_end_ns: '10', forecast_contract: input.members[0].report.request.forecast,
+  console.log(JSON.stringify({ schema_version: 1, method: input.review_prior ? 'TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1' : 'TEST_ONLY_PROTOCOL',
+    ...(input.review_prior ? { review_prior: input.review_prior, review_prior_lambda: 0.01 } : {}), fit_end_ns: '10', forecast_contract: input.members[0].report.request.forecast,
     members: input.members.map((member, index) => ({ factor_version_id: member.factor_version_id, source_evidence_ref: member.source_evidence_ref, weight: index === 0 ? '0' : '1', calibrations: [{ instrument_id: 'TEST.SIM', intercept: -100, slope: 1, training_observations: '3' }] })) }));
 } else if (command === 'forecast-factor' || command === 'forecast') {
   const model = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(args[args.indexOf('--model') + 1])));

@@ -114,6 +114,7 @@ fn export_observed_science(destination: &std::path::Path, cash_heavy: bool, hori
     let catalog_prefix =
         job::catalog_prefix::digest(catalog.path(), &request.forecast.selection).unwrap();
     let fit_request = NativeEnsembleFitRequestV1 {
+        review_prior: None,
         schema_version: SchemaV1,
         fit_end_ns: train_end,
         folds: [(1080, 2160), (2160, 3240), (3240, 4320)]

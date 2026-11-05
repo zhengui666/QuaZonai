@@ -16,9 +16,8 @@ create permissions or certify the source.
   Missing requested daily files fail, rather than silently narrowing the request.
 - Planning resolves one immutable Hub revision and saves the full plan. Download
   uses that saved plan, not today's `main`. Tokens filter local native conversion;
-  HF still transfers **whole daily files**. Optional `--max-bytes` limits selected
-  complete-file sizes, including cached files, not cumulative transfer or disk use.
-  There is no default budget and no default full-archive download.
+  HF still transfers **whole daily files**. The legacy `--max-bytes` option is
+  accepted and ignored. Explicit date/file selection remains required.
 - Only `plan` and `download` need public network access. Freeze, verification,
   conversion, preparation and configuration export are offline.
 - Provide original externally tagged Nautilus `InstrumentAny` JSON definitions
@@ -48,7 +47,7 @@ from scripts, outside Git and outside researcher-readable evidence mounts.
 ### 1. Save a plan, then acquire only its files
 
 ```bash
-python3 -B runtimes/data/source_plugins.py plan polymarket-v2-hf --start-date 2026-10-10 --end-date 2026-10-11 --token TOKEN_ID_FROM_ORIGINAL_DEFINITION --revision c2a6429292da3a4c6e263c2c84351c77f9bce097 --max-bytes 300000000 --output /absolute/v2/plans/selection-01.json
+python3 -B runtimes/data/source_plugins.py plan polymarket-v2-hf --start-date 2026-10-10 --end-date 2026-10-11 --token TOKEN_ID_FROM_ORIGINAL_DEFINITION --revision c2a6429292da3a4c6e263c2c84351c77f9bce097 --output /absolute/v2/plans/selection-01.json
 ```
 
 Inspect its fixed revision, original token/date request, file list, license and
@@ -222,7 +221,7 @@ Nautilus books the returned commission once. No global-average or fitted fee rat
 is charged. Keep prefix and Sealed fee records physically separate.
 
 `POLYMARKET_V2_RECORDED_LIQUIDITY` is an explicit, catalog-backtest-only fill
-policy paired with the recorded-fee adapter, native version `0.63.0` and the
+policy paired with the recorded-fee adapter, native version `0.67.0` and the
 closed native fill probability/seed parameters. It previews that same original
 record pool at the actual replay clock. Positive MARKET IOC fills are capped by
 both order leaves and remaining source quantity; only the actual fee callback
@@ -255,7 +254,7 @@ not the scientific compiler image. The image includes Python modules, the Node
 exporter and native `source-tools` dispatch shims; no host Node/Rust build is
 needed. Use explicit same-path input/output mounts. Network is allowed only for
 planning/download; never pass provider credentials or the service environment.
-See the [installed source-tool boundary](../../deploy/docker/README.md#scientific-images-and-source-tools).
+See the [installed source-tool boundary](../../deploy/docker/README.md#source-preparation).
 
 For example, with existing owner-managed directories and a new output:
 

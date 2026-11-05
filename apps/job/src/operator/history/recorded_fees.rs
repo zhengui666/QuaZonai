@@ -5,7 +5,7 @@ use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
 use contracts::{recorded_fees::*, science::NativeBarSelectionV1, DbCounter, SchemaV1};
 use nautilus_model::data::{Bar, TradeTick};
-use nautilus_persistence::backend::catalog::urisafe_instrument_id;
+use nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id;
 use nautilus_serialization::arrow::DecodeFromRecordBatch;
 use parquet::{
     arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
@@ -120,7 +120,6 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
                 end == available && end >= MINUTE && end.is_multiple_of(MINUTE),
                 "RECORDED_FEE_BAR_CLOCK_MISMATCH"
             );
-            ensure!(rows < selected.maximum_rows as usize, "CATALOG_ROW_LIMIT");
             rows += 1;
             observed = true;
             let volume = BigDecimal::from_str(&bar.volume.as_decimal().to_string())?;

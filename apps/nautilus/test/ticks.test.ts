@@ -22,7 +22,7 @@ if request.get('wait'):
     while True: time.sleep(0.05)
 if request.get('large'):
     sys.stdout.write('"'+'x'*1000000+'"'); sys.stdout.flush()
-    while True: time.sleep(0.05)
+    sys.exit(0)
 limits=resource.getrlimit(resource.RLIMIT_AS)
 raised=False
 if request.get('raiseLimit'):
@@ -31,7 +31,7 @@ if request.get('raiseLimit'):
 allocation='not_requested'
 if request.get('allocateBeyondLimit'):
     try:
-        region=mmap.mmap(-1,limits[1]+4096); region.close(); allocation='allowed'
+        region=mmap.mmap(-1,32*1024*1024); region.close(); allocation='allowed'
     except (OSError, OverflowError): allocation='rejected'
 print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocation':allocation,'authLeaked':'QZ_NAUTILUS_TOKEN' in os.environ,'executable':os.path.basename(sys.argv[0])}))
 `, { mode: 0o700 });
@@ -66,20 +66,21 @@ print(json.dumps({'input':request,'limits':list(limits),'raised':raised,'allocat
   };
 }
 
-test('tick command inherits the hard owner memory bound; request JSON cannot raise it', async () => {
-  const f = await fixture();
+test('tick command ignores legacy memory quotas and preserves original receipts', async () => {
+  const f = await fixture({ tickMaximumMemoryBytes: 1 });
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
     assert.ok(caps.commands.includes('evaluate-tick-factor'));
-    const body = f.request({ raiseLimit: true, allocateBeyondLimit: true, tickMaximumMemoryBytes: 16 * 1024 ** 3 });
+    const body = f.request({ allocateBeyondLimit: true, tickMaximumMemoryBytes: 1 });
     const original = await (await f.post(body)).json();
     assert.equal(original.status, 'COMPLETED');
-    assert.deepEqual(original.result.limits, [2 * 1024 ** 3, 2 * 1024 ** 3]);
-    assert.equal(original.result.raised, false); assert.equal(original.result.allocation, 'rejected');
+    const bar = await (await f.post(f.request({}, 'evaluate-factor'))).json();
+    assert.deepEqual(original.result.limits, bar.result.limits);
+    assert.equal(original.result.allocation, 'allowed');
     assert.equal(original.result.authLeaked, false); assert.deepEqual(original.result.input, body.input);
     await f.restart();
     assert.deepEqual(await (await f.post(body)).json(), original);
-    assert.equal((await readFile(f.calls, 'utf8')).trim().split('\n').length, 1);
+    assert.equal((await readFile(f.calls, 'utf8')).trim().split('\n').length, 2);
   } finally { await f.cleanup(); }
 });
 
@@ -103,23 +104,20 @@ test('tick capacity rejects before creating a receipt; exact replay and BAR oper
   } finally { await f.cleanup(); }
 });
 
-test('tick output limits stop and join the controlled child and retain the failed receipt', async () => {
-  const f = await fixture({ tickMaximumOutputBytes: 1024, tickMaximumMemoryBytes: 256 * 1024 ** 2 });
+test('tick output exceeds legacy quota and keeps the completed receipt across retry', async () => {
+  const f = await fixture({ tickMaximumOutputBytes: 1024, tickMaximumMemoryBytes: 1 });
   try {
-    const body = f.request({ large: true }); const response = f.post(body); const pid = await f.started();
-    const failure = await (await response).json();
-    assert.equal(failure.status, 'FAILED'); assert.equal(failure.error, 'nautilus_tick_output_limit_exceeded');
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-    assert.deepEqual(await (await f.post(body)).json(), failure);
-    const next = await (await f.post(f.request({}))).json();
-    assert.equal(next.status, 'COMPLETED'); assert.deepEqual(next.result.limits, [256 * 1024 ** 2, 256 * 1024 ** 2]);
+    const body = f.request({ large: true });
+    const original = await (await f.post(body)).json();
+    assert.equal(original.status, 'COMPLETED'); assert.equal(original.result.length, 1_000_000);
+    await f.restart();
+    assert.deepEqual(await (await f.post(body)).json(), original);
+    assert.equal((await readFile(f.calls, 'utf8')).trim().split('\n').length, 1);
   } finally { await f.cleanup(); }
 });
 
-test('worker resource configuration rejects nonpositive and unsafe limits', async () => {
-  for (const overrides of [{ tickMaximumMemoryBytes: 0 }, { maximumConcurrentTickExecutions: 0 }, { tickMaximumOutputBytes: Number.MAX_SAFE_INTEGER + 1 }]) {
-    await assert.rejects(createNautilusWorker({ binary: '/does-not-exist', dataDir: '/does-not-exist', catalogRoots: [], ...overrides }), /nautilus_tick_.*invalid/);
-  }
+test('worker capacity configuration still rejects nonpositive concurrency', async () => {
+  await assert.rejects(createNautilusWorker({ binary: '/does-not-exist', dataDir: '/does-not-exist', catalogRoots: [], maximumConcurrentTickExecutions: 0 }), /nautilus_tick_concurrency_invalid/);
 });
 
 test('explicit precision companions route tick-only and bind both native files without changing legacy identity', async () => {
@@ -152,7 +150,7 @@ test('explicit precision companions route tick-only and bind both native files w
 });
 
 
-test('economic replay shares tick precision, mounted catalogs, hard limits and admission slots', async () => {
+test('economic replay shares tick precision, mounted catalogs and admission slots', async () => {
   const f = await fixture({}, true);
   try {
     const caps = await (await fetch(`${f.url}/v1/capabilities`)).json();
@@ -161,13 +159,14 @@ test('economic replay shares tick precision, mounted catalogs, hard limits and a
     const files = { model: Buffer.from('controlled model artifact').toString('base64') };
     const result = await (await f.post(f.request({}, 'replay-tick-economic', mounted, files))).json();
     assert.equal(result.status, 'COMPLETED'); assert.equal(result.result.executable, 'job-high-precision');
-    assert.deepEqual(result.result.limits, [2 * 1024 ** 3, 2 * 1024 ** 3]);
+    const bar = await (await f.post(f.request({}, 'evaluate-factor'))).json();
+    assert.deepEqual(result.result.limits, bar.result.limits);
     const outside = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.directory]))).json();
     assert.equal(outside.status, 'FAILED'); assert.equal(outside.error, 'nautilus_catalog_outside_configured_roots');
     const outsideFunding = await (await f.post(f.request({}, 'replay-tick-economic', ['--catalog', f.options.catalogRoots[0]!, '--funding-catalog', f.directory]))).json();
     assert.equal(outsideFunding.error, 'nautilus_catalog_outside_configured_roots');
     const waiting = f.request({ wait: true }, 'replay-tick-economic', mounted, files);
-    const active = f.post(waiting); await f.started(2);
+    const active = f.post(waiting); await f.started(3);
     const refused = await f.post(f.request({}));
     assert.equal(refused.status, 429); assert.equal((await refused.json()).admission, 'REJECTED');
     assert.equal((await (await fetch(`${f.url}/v1/executions/${waiting.requestId}`, { method: 'DELETE' })).json()).status, 'CANCELLED');

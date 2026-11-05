@@ -49,7 +49,7 @@ fn real_native_cli_forecasts_and_replays_a_single_shared_account() {
 
 #[test]
 fn price_bar_forecast_cli_matches_the_original_features_without_trading_definitions() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 
     let (original, request) = market("0", 20);
     let forecast_request = forecast_request(&request);
@@ -166,7 +166,7 @@ fn native_cli_rejects_model_symlinks_and_fifos_without_opening_them() {
 
 #[test]
 fn malformed_native_catalog_exits_through_the_safe_cli_error_channel() {
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let (directory, request) = market("0", 20);
     let model = directory.path().join("model.wasm");
     std::fs::write(&model, module("f64.const 1")).unwrap();

@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -106,7 +107,6 @@ test('explicit tick contract preserves nanosecond strings and rejects incompatib
     { ...request, input: { ...request.input, event_end_ns: '20', decision_cutoff_ns: '19' } },
     { ...request, sampling: { ...request.sampling, maximum_cohort_rows: 100_001 } },
     { ...request, target: { kind: 'FIXED_BARS', horizon_cohorts: 1 } },
-    { ...request, parameters: { ...request.parameters, total_fuel: '0' } },
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
   assert.throws(() => nativeResearchInput({ ...tagged(), request: bar() }), /ambiguous_factor_request/);
   assert.throws(() => nativeResearchInput({ nativeInput: { modality: 'BAR', request: tick() } }), /native_bar_forecast_required/);
@@ -141,20 +141,19 @@ test('fixed event-time labels preserve exact duration through clipping and expos
   assert.equal('horizonNs' in original, false);
 });
 
-test('derived cohort cache has an exact full-source budget without changing the native tick row limit', () => {
+test('legacy row allowances do not limit admitted tick or full-source cache requests', () => {
   const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
   const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597' } };
   assert.deepEqual(validateNativeTickFactorRequest(cache), cache);
+  for (const input of [{ ...cache.input, maximum_rows: 0 }, { ...cache.input, maximum_source_rows: '0' }, { ...original.input, maximum_rows: 1_000_001 }, { ...original.input, maximum_source_rows: '100' }]) assert.deepEqual(validateNativeTickFactorRequest({ ...cache, input }).input, input);
+  const withoutLegacyLimits = { ...input };
+  assert.deepEqual(validateNativeTickFactorRequest({ ...original, input: withoutLegacyLimits, parameters: { ...original.parameters, total_fuel: '0' } }).input, withoutLegacyLimits);
   const clipped = iterationRequest({ catalog: '/controlled/cache-view', ...tagged(cache) });
   assert.equal((clipped.input as JsonObject).maximum_source_rows, '1308222597');
   assert.equal((clipped.input as JsonObject).event_end_ns, original.validation_end_ns);
   for (const invalid of [
-    { ...cache, input: { ...cache.input, maximum_rows: 1_000_000 } },
     { ...cache, input: { ...cache.input, maximum_source_rows: 1308222597 } },
-    { ...cache, input: { ...cache.input, maximum_source_rows: '0' } },
     { ...cache, input: { ...cache.input, maximum_source_rows: '9223372036854775808' } },
-    { ...original, input: { ...original.input, maximum_rows: 1_000_001 } },
-    { ...original, input: { ...original.input, maximum_source_rows: '100' } },
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
 });
 
@@ -173,8 +172,8 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
   assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
   assert.equal(((modelBriefInput({ data: tagged(original), policy: {} }).data.feature_model as JsonObject).features as string[]).length, 7);
-  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }), /ambiguous/);
-  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }), /invalid/);
+  assert.deepEqual(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }).input, { ...flow.input, maximum_rows: 100 });
+  assert.equal(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }).input.maximum_source_rows, '0');
 });
 
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {
@@ -229,7 +228,7 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
       const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
       return tool('factor_finalize', { trialId, reason: 'Preselect before owner-only final result' });
     }]);
-    const first = await host.start('tick-protocol', input);
+    const first = await startLegacyResearch(host, 'tick-protocol', input);
     await (await host.harness.submission(first.submissionId, context))!.wait(context);
     const original = (await host.state(first.conversationId)).research!;
     assert.equal(original.trials[0]!.status, 'COMPUTED', JSON.stringify(original.trials));
@@ -242,12 +241,12 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     assert.equal(entries.includes('NEVER_RETURN_FINAL'), false);
     assert.equal((original.final!.result as JsonObject).owner_only, 'NEVER_RETURN_FINAL');
     await host.close(); host = await openResearch(options);
-    assert.deepEqual(await host.start('tick-protocol', input), first);
+    assert.deepEqual(await startLegacyResearch(host, 'tick-protocol', input), first);
     assert.deepEqual((await host.state(first.conversationId)).research, original);
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
 
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'A copied BAR path cannot reset tick history', model: legacyModel }), tool('research_finish', { reason: 'Failed attempt remains disclosed' })]);
-    const second = await host.start('copied-bar', { ...input, data: { catalog: copied, request: bar() } });
+    const second = await startLegacyResearch(host, 'copied-bar', { ...input, data: { catalog: copied, request: bar() } });
     await (await host.harness.submission(second.submissionId, context))!.wait(context);
     const rejected = (await host.state(second.conversationId)).research!;
     assert.equal(rejected.trials[0]!.status, 'FAILED');
@@ -255,14 +254,14 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
 
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Original BAR feedback', model: legacyModel }), tool('research_finish', { reason: 'End BAR protocol' })]);
-    const third = await host.start('bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });
+    const third = await startLegacyResearch(host, 'bar-first', { ...input, data: { catalog, request: bar('B.SIM', '40') } });
     await (await host.harness.submission(third.submissionId, context))!.wait(context);
     assert.equal((await host.state(third.conversationId)).research!.trials[0]!.status, 'COMPUTED');
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Tick suffix was already exposed by BAR feedback', model }), async () => {
       const trialId = (await host.harness.snapshot(Exposures, context))!.windows.at(-1)!.taskId;
       return tool('factor_finalize', { trialId, reason: 'Must fail because BAR validation already exposed the final suffix' });
     }]);
-    const fourth = await host.start('tick-after-bar', { ...input, data: { catalog: copied, ...tagged(tick('B.SIM', '20')), sealed: { catalog: copied, ...tagged(tick('B.SIM')) } } });
+    const fourth = await startLegacyResearch(host, 'tick-after-bar', { ...input, data: { catalog: copied, ...tagged(tick('B.SIM', '20')), sealed: { catalog: copied, ...tagged(tick('B.SIM')) } } });
     await (await host.harness.submission(fourth.submissionId, context))!.wait(context);
     const fourthState = (await host.state(fourth.conversationId)).research!;
     // Prior iterative feedback is permitted for another iterative prefix, but it
@@ -273,7 +272,7 @@ console.log(JSON.stringify({request, ...(request.input?.event_end_ns==='40'?{own
 
     const beforeUnsupported = (await readFile(calls, 'utf8')).trim().split('\n').length;
     faux.setResponses([tool('factor_volume', { hypothesis: 'BAR volume is not implicitly cohort quantity', center: 0 }), tool('research_finish', { reason: 'Unsupported factor remains a disclosed attempt' })]);
-    const fifth = await host.start('tick-volume-rejected', { ...input, data: { catalog, ...tagged(tick('C.SIM', '20')) } });
+    const fifth = await startLegacyResearch(host, 'tick-volume-rejected', { ...input, data: { catalog, ...tagged(tick('C.SIM', '20')) } });
     await (await host.harness.submission(fifth.submissionId, context))!.wait(context);
     const fifthState = (await host.state(fifth.conversationId)).research!;
     assert.equal(fifthState.trials[0]!.status, 'FAILED');

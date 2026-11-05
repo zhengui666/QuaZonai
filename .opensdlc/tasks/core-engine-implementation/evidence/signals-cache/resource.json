@@ -1,0 +1,8 @@
+{
+  "exit_code": 0,
+  "wall_seconds": 1.4966941409998071,
+  "cpu_user_seconds": 1.497044,
+  "cpu_system_seconds": 0.0057469999999999995,
+  "peak_rss_kib_whole_harness": 14080,
+  "stderr": ""
+}

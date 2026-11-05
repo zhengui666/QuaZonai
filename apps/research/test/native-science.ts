@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, mkdtemp, rm, cp } from 'node:fs/promises';
@@ -61,7 +62,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
   ]);
   try {
     const original = input(setup_.model);
-    const receipt = await host.start('unattended-native-study', original);
+    const receipt = await startLegacyResearch(host, 'unattended-native-study', original);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const view = await host.view(receipt.conversationId);
     const study = view.research!;
@@ -69,7 +70,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.deepEqual(study.trials.map((trial) => trial.status), ['COMPUTED', 'COMPUTED']);
     for (const trial of study.trials) {
       const result = trial.result as JsonObject;
-      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.63.0');
+      assert.equal((result.native_versions as JsonObject)['nautilus-model'], '0.67.0');
       const validation = (result.partitions as JsonObject[])[1]!;
       assert.equal((validation.assets as JsonObject[]).length, 2);
       assert.equal(((validation.metric as JsonObject).pearson_ic as JsonObject).status, 'AVAILABLE');
@@ -87,7 +88,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     assert.equal(terminalTools.includes('pearson_ic'), false);
     const exposures = await host.harness.snapshot(Exposures, context);
     assert.deepEqual(exposures!.windows.map((window) => window.kind), ['ITERATION', 'ITERATION', 'FINAL']);
-    assert.deepEqual(await host.start('unattended-native-study', original), receipt);
+    assert.deepEqual(await startLegacyResearch(host, 'unattended-native-study', original), receipt);
     const conversation = (await host.harness.conversation(receipt.conversationId, context))!;
     const fork = await conversation.fork(view.entries[0]!.id, { ownership: { kind: 'ownerless' } }, context);
     const inherited = (await host.view(fork.id)).research!;
@@ -100,7 +101,7 @@ test('registered factor/evaluator additions run unattended on real multi-asset N
     try {
       assert.deepEqual((await restored.view(receipt.conversationId)).research, study);
       setup_.faux.setResponses([tool('factor_evaluate', { hypothesis: 'Attempt to reset exposed holdout with a new root.', model: ema }), tool('research_finish', { reason: 'Known exposure makes independent retuning invalid.' })]);
-      const retry = await restored.start('new-root-same-exposed-data', original);
+      const retry = await startLegacyResearch(restored, 'new-root-same-exposed-data', original);
       await (await restored.harness.submission(retry.submissionId, context))!.wait(context);
       const facts = (await restored.view(retry.conversationId)).research!;
       assert.equal(facts.trials[0]!.status, 'FAILED');
@@ -116,7 +117,7 @@ test('pure factor research needs no final sample, qualification or portfolio', {
   const host = await openResearch(setup_.options);
   try {
     const original = input(setup_.model); delete (original.data as JsonObject).sealed;
-    const receipt = await host.start('pure-factor', original);
+    const receipt = await startLegacyResearch(host, 'pure-factor', original);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials[0]!.status, 'COMPUTED');
@@ -144,7 +145,7 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
   ]);
   const host = await openResearch(setup_.options);
   try {
-    const b = await host.start('exposure-root-b', broad);
+    const b = await startLegacyResearch(host, 'exposure-root-b', broad);
     await (await host.harness.submission(b.submissionId, context))!.wait(context);
     assert.equal((await host.view(b.conversationId)).research!.trials[0]!.status, 'COMPUTED');
     const copied = join(setup_.directory, 'copied-catalog');
@@ -160,7 +161,7 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
         tool('factor_evaluate', { hypothesis: 'Root A retains its original narrower validation cut.', model: ema }),
         (transcript) => tool('factor_finalize', { reason: 'Attempt to assess the previously exposed suffix.', trialId: textResult(transcript, 'factor_evaluate').trialId }),
       ]);
-      const a = await restored.start('exposure-root-a', original);
+      const a = await startLegacyResearch(restored, 'exposure-root-a', original);
       await (await restored.harness.submission(a.submissionId, context))!.wait(context);
       const study = (await restored.view(a.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED');
@@ -177,14 +178,15 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
 
 function objectRequest(data: JsonObject): JsonObject { return data.request as JsonObject; }
 
-for (const fuel of ['omitted', 'null'] as const) {
+for (const fuel of ['omitted', 'null', 'legacy'] as const) {
   test(`${fuel} fuel stays unmetered through iteration and finalization`, { timeout: 120_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
     for (const data of [original.data, original.data.sealed as JsonObject]) {
       const parameters = ((data.request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      if (fuel === 'null') parameters.total_fuel = null;
+      if (fuel === 'legacy') parameters.total_fuel = '1';
+      else if (fuel === 'null') parameters.total_fuel = null;
       else delete parameters.total_fuel;
     }
     setup_.faux.setResponses([
@@ -198,7 +200,7 @@ for (const fuel of ['omitted', 'null'] as const) {
     ]);
     const host = await openResearch(setup_.options);
     try {
-      const receipt = await host.start(`unmetered-${fuel}`, original);
+      const receipt = await startLegacyResearch(host, `unmetered-${fuel}`, original);
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.view(receipt.conversationId)).research!;
       assert.deepEqual(study.input, original);
@@ -212,14 +214,14 @@ for (const fuel of ['omitted', 'null'] as const) {
 }
 
 for (const [name, model] of [
-  ['infinite-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) (loop $again br $again) f64.const 0))'],
+  ['trapping-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) unreachable))'],
   ['invalid-memory', '(module (memory 1 0) (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0))'],
 ] as const) {
   test(`model-generated ${name} fails finitely and keeps the original failed trial`, { timeout: 30_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
-    // This test explicitly requests a scientific budget; omitted fuel is unmetered.
+    // A historical fuel field cannot prevent the actual model trap or invalid-memory failure.
     (((original.data.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel = '10000000';
     delete original.data.sealed;
     setup_.faux.setResponses([
@@ -228,7 +230,7 @@ for (const [name, model] of [
     ]);
     const host = await openResearch(setup_.options);
     try {
-      const receipt = await host.start(name, original);
+      const receipt = await startLegacyResearch(host, name, original);
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.view(receipt.conversationId)).research!;
       assert.deepEqual(study.input, original);
@@ -267,7 +269,7 @@ test('invalid boundaries never poison exposure facts and a valid final still suc
         tool('factor_evaluate', { hypothesis: 'Invalid original boundary must be disclosed without a persisted exposure.', model: ema }),
         tool('research_finish', { reason: 'Invalid input; no science result claimed.' }),
       ]);
-      const receipt = await host.start(`invalid-${name}`, invalid);
+      const receipt = await startLegacyResearch(host, `invalid-${name}`, invalid);
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.view(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'FAILED');
@@ -282,7 +284,7 @@ test('invalid boundaries never poison exposure facts and a valid final still suc
         tool('factor_evaluate', { hypothesis: 'Valid causal factor after original invalid studies.', model: ema }),
         (transcript) => tool('factor_finalize', { reason: 'Unseen suffix remains usable; no malformed exposure was written.', trialId: textResult(transcript, 'factor_evaluate').trialId }),
       ]);
-      const receipt = await restored.start('valid-after-invalid-boundaries', input(setup_.model));
+      const receipt = await startLegacyResearch(restored, 'valid-after-invalid-boundaries', input(setup_.model));
       await (await restored.harness.submission(receipt.submissionId, context))!.wait(context);
       assert.equal((await restored.view(receipt.conversationId)).research!.final!.status, 'COMPUTED');
       assert.deepEqual((await restored.harness.snapshot(Exposures, context))!.windows.map((window) => window.kind), ['ITERATION', 'FINAL']);

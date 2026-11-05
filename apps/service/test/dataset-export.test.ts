@@ -47,14 +47,14 @@ async function fixture(partition: 'DISCOVERY' | 'SEALED' = 'DISCOVERY', fullPrim
     availability_provenance: 'Explicit fixture; no historical availability claim',
     universe: { instrument_definitions: [{ BinaryOption: { id: instrument, raw_symbol: token, currency: 'pUSD',
       ts_event: 'original-native-u64-not-a-research-input', ts_init: 'original-native-u64-not-a-research-input' } }] },
-    quality: { schema_version: 1, native_version: 'nautilus-persistence/0.63.0', checked_at: '2026-10-14T00:00:00Z', datasets: [{ ...native,
+    quality: { schema_version: 1, native_version: 'nautilus-persistence/0.67.0', checked_at: '2026-10-14T00:00:00Z', datasets: [{ ...native,
       row_count: full ? '9' : '4', instrument_ids: [instrument], first_event_ns: at(60),
       last_event_ns: at(full ? 540 : 240), available_through_ns: at(900), last_bar_notionals: null }] } };
   const metadataPath = join(prepared, 'catalog-metadata.json');
   const receiptPath = join(prepared, 'preparation.json');
   const requestPath = join(directory, 'original-factor.json');
   const reportPath = join(directory, 'original-import-report.json');
-  const report = { schema_version: 1, native_version: '0.63.0', source_reference: source, bars: 10,
+  const report = { schema_version: 1, native_version: '0.67.0', source_reference: source, bars: 10,
     coverage: 'UNPROVEN', historical_availability: 'UNVERIFIED', registered_in_quazonai: false,
     limitations: ['Configuration fixture only, not a native result'] };
   const reportBytes = JSON.stringify(report);
@@ -167,6 +167,20 @@ test('offline export preserves original requests and exact decimal strings, with
   } finally { await f.cleanup(); }
 });
 
+test('legacy row and fuel quotas do not reject an otherwise registered prepared export', async () => {
+  for (const quota of [0, 101]) {
+    const f = await fixture();
+    try {
+      const request = { ...f.request, forecast: { ...f.request.forecast,
+        selection: { ...f.request.forecast.selection, maximum_rows: quota },
+        parameters: { ...f.request.forecast.parameters, total_fuel: '0' } } };
+      await f.saveRequest(request);
+      const result = await exportDataset(f.options);
+      assert.deepEqual(result.data.request, request);
+    } finally { await f.cleanup(); }
+  }
+});
+
 test('prefix-only research preparation cannot silently enable a full-range portfolio strategy', async () => {
   const primary = await fixture(); const sealed = await fixture('SEALED');
   try {
@@ -224,9 +238,11 @@ test('compatible heldout request uses the same clipped criteria and keeps full o
   const primary = await fixture(); const sealed = await fixture('SEALED');
   try {
     await sealed.saveRequest({ ...sealed.request, forecast: { ...sealed.request.forecast,
+      selection: { ...sealed.request.forecast.selection, maximum_rows: 0 },
       parameters: { ...sealed.request.forecast.parameters, total_fuel: null } } });
     const { total_fuel: _fuel, ...parameters } = primary.request.forecast.parameters;
-    await primary.saveRequest({ ...primary.request, forecast: { ...primary.request.forecast, parameters } });
+    const { maximum_rows: _legacyRows, ...selection } = primary.request.forecast.selection;
+    await primary.saveRequest({ ...primary.request, forecast: { ...primary.request.forecast, selection, parameters } });
     const result = await exportDataset({ ...primary.options, sealedPrepared: sealed.receiptPath, sealedRequest: sealed.requestPath, ready: true });
     assert.equal(result.ready, true);
     assert.deepEqual(result.data.request, JSON.parse(await readFile(primary.requestPath, 'utf8')));
@@ -339,7 +355,7 @@ const invalid: [string, (f: Fixture) => Promise<void>][] = [
   ['empty measured data', async (f) => { f.metadata.row_count = '0'; await f.saveMetadata(); }],
   ['non-BAR metadata', async (f) => { f.metadata.data_kind = 'TRADE'; await f.saveMetadata(); }],
   ['non-native provider', async (f) => { f.metadata.provider_kind = 'TimeSeventeen/Polymarket-v2'; await f.saveMetadata(); }],
-  ['import version substituted for native quality version', async (f) => { f.metadata.quality.native_version = '0.63.0'; await f.saveMetadata(); }],
+  ['import version substituted for native quality version', async (f) => { f.metadata.quality.native_version = '0.67.0'; await f.saveMetadata(); }],
   ['wrong collateral', async (f) => { f.metadata.universe.instrument_definitions[0].BinaryOption.currency = 'USDC.e'; await f.saveMetadata(); }],
   ['wrong token mapping', async (f) => { f.receipt.source_request.tokens = ['123']; await f.saveReceipt(); }],
   ['unverified source window widened', async (f) => { f.receipt.source_window.end_seconds -= 500; await f.saveReceipt(); }],
@@ -347,14 +363,10 @@ const invalid: [string, (f: Fixture) => Promise<void>][] = [
   ['BAR outside prepared range', async (f) => { await f.saveRequest({ ...f.request, validation_end_ns: at(301) }); }],
   ['unknown BAR identity', async (f) => { await f.saveRequest({ ...f.request, forecast: { ...f.request.forecast,
     selection: { ...f.request.forecast.selection, bar_types: ['other-1-MINUTE-LAST-EXTERNAL'] } } }); }],
-  ['row budget widened', async (f) => { await f.saveRequest({ ...f.request, forecast: { ...f.request.forecast,
-    selection: { ...f.request.forecast.selection, maximum_rows: 101 } } }); }],
   ['numeric rather than string nanoseconds', async (f) => { await f.saveRequest({ ...f.request, train_end_ns: Number(at(120)) }); }],
   ['incorrect train-validation ordering', async (f) => { await f.saveRequest({ ...f.request, train_end_ns: at(301) }); }],
   ['non-increasing native forecast periods', async (f) => { await f.saveRequest({ ...f.request, forecast: { ...f.request.forecast,
     parameters: { ...f.request.forecast.parameters, fast_period: 2, slow_period: 1 } } }); }],
-  ['zero explicit native fuel', async (f) => { await f.saveRequest({ ...f.request, forecast: { ...f.request.forecast,
-    parameters: { ...f.request.forecast.parameters, total_fuel: '0' } } }); }],
   ['native cutoff before event end', async (f) => { await f.saveRequest({ ...f.request, forecast: { ...f.request.forecast,
     selection: { ...f.request.forecast.selection, decision_cutoff_ns: at(300) } } }); }],
   ['unknown top-level factor fields', async (f) => { await f.saveRequest({ ...f.request, heldout_values: { labels: [1, 0] } }); }],

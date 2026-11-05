@@ -9,6 +9,7 @@ import type { JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { Exposures } from '../plugins/native-exposure.ts';
 import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
+import { Study, Requests } from '../src/documents.ts';
 import research from '../plugins/research.ts';
 import factor from '../plugins/factor-wasm.ts';
 import heldout from '../plugins/heldout-wasm.ts';
@@ -49,7 +50,9 @@ else {
     await (await host.harness.submission(first.submissionId, context))!.wait(context);
     const facts = (await host.state(first.conversationId)).research!;
     assert.deepEqual(facts.trials.map((trial) => trial.status), ['COMPUTED', 'COMPUTED'], JSON.stringify(facts.trials));
-    assert.deepEqual(facts.input, input);
+    assert.deepEqual((await host.harness.snapshot(Requests, context))!.requests['request:catalog-protocol']!.input, input);
+    assert.deepEqual({ ...facts.input, policy: input.policy }, input);
+    assert.ok(facts.input!.policy.reviewPolicies);
     const scopes = (await host.harness.snapshot(CatalogScopes, context))!;
     assert.equal(scopes.roots.length, 1);
     const reference = scopes.roots[0]!.reference as JsonObject;
@@ -77,6 +80,12 @@ else {
     faux.setResponses([tool('factor_evaluate', { hypothesis: 'Narrow legacy prefix', model }), async () => {
       const windows = (await host.harness.snapshot(Exposures, context))!.windows;
       trialId = windows.at(-1)!.taskId as number;
+      // Reconstruct the pre-upgrade frozen study for this legacy exposure regression.
+      await host.harness.commit(async tx => {
+        const requests = await tx.doc(Requests);
+        const study = await tx.doc(Study, requests.requests['request:copied-legacy-protocol']!.conversationId);
+        delete study.input!.policy.reviewPolicies;
+      }, context);
       return tool('factor_finalize', { trialId, reason: 'Must reject a suffix already exposed through full-catalog feedback.' });
     }]);
     const second = await host.start('copied-legacy-protocol', { ...input, data: { ...legacy, sealed: legacy } });

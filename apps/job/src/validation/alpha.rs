@@ -258,8 +258,8 @@ pub fn validate_alpha(
     Ok(NativeAlphaValidationResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
-            ("nautilus-indicators".into(), "0.63.0".into()),
-            ("nautilus-persistence".into(), "0.63.0".into()),
+            ("nautilus-indicators".into(), "0.67.0".into()),
+            ("nautilus-persistence".into(), "0.67.0".into()),
             ("wasmi".into(), "2.0.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("linregress".into(), "0.5.4".into()),

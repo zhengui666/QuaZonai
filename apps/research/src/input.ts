@@ -1,3 +1,4 @@
+import { validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ResearchInput } from './documents.ts';
 import { publicLiteratureQueries, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { researchCampaignBinding } from './pm-campaign.ts';
@@ -29,17 +30,19 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  if (policy.reviewPolicy !== undefined) validateReviewPolicy(policy.reviewPolicy);
+  if (policy.reviewPolicies !== undefined) {
+    const reviews = record(policy.reviewPolicies, 'review_policies');
+    for (const kind of ['FACTOR', 'PORTFOLIO']) if (validateReviewPolicy(reviews[kind]).targetKind !== kind) throw new Error('review_policy_target_mismatch');
+  }
   const tagged = nativeResearchInput(data);
   const sealed = data.sealed === undefined ? null : nativeResearchInput(record(data.sealed, 'heldout_data'));
   if ((tagged || sealed) && tagged?.modality !== sealed?.modality && data.sealed !== undefined) throw new Error('native_research_modality_mismatch');
   if (tagged?.modality === 'TRADE_TICK') {
     if (policy.strategy !== undefined && policy.strategy !== null || input.specification !== undefined && researchSpecification(input.specification).search.scope !== 'single-factor') throw new Error('tick_factor_only_required');
   }
-  if (input.specification !== undefined && policy.max_trials === undefined) throw new Error('research_trial_budget_required');
-  if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || (policy.max_trials as number) < 0)) throw new Error('invalid_trial_budget');
   if (input.campaign !== undefined) {
     const campaign = researchCampaignBinding(input.campaign);
-    if (policy.max_trials !== campaign.budget.maximumTrials) throw new Error('campaign_trial_budget_mismatch');
     const raw = tagged ? nativeResearchRequest(data) : data.catalog_ensemble_request ?? data.catalog_scan_request ?? data.request;
     if (raw !== undefined) {
       const request = record(raw, 'native_request');

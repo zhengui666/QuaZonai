@@ -128,10 +128,12 @@ impl DataClient for SyntheticDataClient {
     async fn connect(&mut self) -> anyhow::Result<()> {
         // This uses the same public native event channel as an official adapter.
         // No test reaches into the node or writes to its private cache.
+        let instrument = InstrumentAny::CurrencyPair(currency_pair_btcusdt());
+        let definition = serde_json::to_value(&instrument)?;
+        assert!(definition["CurrencyPair"].get("maker_fee").is_none());
+        assert!(definition["CurrencyPair"].get("taker_fee").is_none());
         get_data_event_sender()
-            .send(DataEvent::Instrument(InstrumentAny::CurrencyPair(
-                currency_pair_btcusdt(),
-            )))
+            .send(DataEvent::Data(Data::Instrument(Box::new(instrument))))
             .map_err(|_| anyhow::anyhow!("synthetic instrument event channel closed"))?;
         let mut state = self.0.borrow_mut();
         state.connects += 1;
@@ -150,7 +152,7 @@ impl DataClient for SyntheticDataClient {
         self.0
             .borrow_mut()
             .quote_subscriptions
-            .push(command.instrument_id);
+            .extend(command.instrument_ids);
         Ok(())
     }
 
@@ -395,6 +397,10 @@ fn source_contract(config: &PaperConfig, claim: &HandoffClaimViewV2) {
     assert_eq!(checked.claim_replay_scope, "EXTERNAL_TYPESCRIPT_SERVICE");
     assert_eq!(checked.market_data_source, "BINANCE_SPOT_PUBLIC_JSON");
     assert_eq!(
+        checked.fee_basis,
+        "explicit simulated venue policy 0.001; not account commission rates"
+    );
+    assert_eq!(
         checked.market_time_basis,
         "NATIVE_ADAPTER_TIMESTAMPS_WITH_RECEIVE_TIME_FALLBACK_WHEN_EXCHANGE_TIME_ABSENT"
     );
@@ -498,6 +504,12 @@ fn quote(marked: bool) -> QuoteTick {
 async fn claimed_target_reaches_one_native_paper_session_and_retained_shutdown() {
     let directory = tempfile::tempdir().unwrap();
     let (config, claim) = fixture(directory.path());
+    // This live-clock Paper source has an installed venue policy, not a
+    // historical catalog. The actual fill below must still charge 0.001.
+    assert!(!directory
+        .path()
+        .join(contracts::catalogs::MAKER_TAKER_FEES_FILE)
+        .exists());
     source_contract(&config, &claim);
     let wire_claim = strategy_claim(&config, &claim);
     let package = domain::delivery::package_delivery(&wire_claim.package);

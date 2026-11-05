@@ -28,6 +28,8 @@ pub mod portfolio_history;
 pub mod recorded_fees;
 pub mod research;
 pub mod research_currency;
+pub mod review_allocation;
+pub mod review_science;
 pub mod runs;
 pub mod runtime;
 pub mod runtime_jobs;
@@ -49,6 +51,12 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(components(schemas(
     catalog_prefix::NativeCatalogPrefixResultV1,
+    review_science::NativeReviewScienceRequestV1,
+    review_science::NativeReviewScienceResultV1,
+    review_science::NativeReviewSourceRequestV1,
+    review_science::NativeReviewSourceResultV1,
+    review_allocation::NativeReviewAllocationRequestV1,
+    review_allocation::NativeReviewAllocationResultV1,
     evidence::MetricValueV1,
     evidence::MetricRequirementV1,
     execution::NativeTaskParametersV1,

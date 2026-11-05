@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn shape(value: &NativeForecastResultV1) -> Result<(), DomainError> {
     let expected = BTreeMap::from([
-        ("nautilus-indicators".to_owned(), "0.63.0".to_owned()),
-        ("nautilus-persistence".to_owned(), "0.63.0".to_owned()),
+        ("nautilus-indicators".to_owned(), "0.67.0".to_owned()),
+        ("nautilus-persistence".to_owned(), "0.67.0".to_owned()),
         ("wasmi".to_owned(), "2.0.0".to_owned()),
     ]);
     if value.native_versions != expected
@@ -80,7 +80,6 @@ pub(super) fn binding(
             value.consumed_fuel,
             parameters.total_fuel.map(|fuel| u128::from(fuel.get())),
         )
-        || value.points.len() > request.selection.maximum_rows as usize
     {
         return Err(bad("native_output.forecast_parameters"));
     }

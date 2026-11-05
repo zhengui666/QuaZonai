@@ -1,13 +1,14 @@
 //! Synthetic frozen archive -> real native BAR/definition roundtrips, offline only.
 #![cfg(feature = "catalog-prepare")]
+#[path = "support/venue_fees.rs"]
+mod venue_fees;
 use nautilus_model::{
-    data::{Bar, Data},
+    data::Bar,
     identifiers::{InstrumentId, Symbol},
     instruments::{CurrencyPair, InstrumentAny},
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
-use rust_decimal::Decimal;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -88,14 +89,25 @@ impl Fixture {
                 .size_precision(8)
                 .price_increment(Price::from("0.01"))
                 .size_increment(Quantity::from("0.00000001"))
-                .maker_fee(Decimal::from_str("0.001").unwrap())
-                .taker_fee(Decimal::from_str("0.001").unwrap())
                 .ts_event(0_u64.into())
                 .ts_init(0_u64.into())
                 .build()
                 .unwrap(),
         );
         let definitions = directory.path().join("instruments.json");
+        // Independent scenario policy remains a source input; importing candles
+        // alone does not certify or attach an account-specific commission rate.
+        venue_fees::write(
+            directory.path(),
+            "BINANCE",
+            Currency::USDT(),
+            2_000_000_000_000_000_000,
+            vec![contracts::science::NativeFeeRateV1 {
+                instrument_id: format!("{symbol}.BINANCE"),
+                maker: "0.001".parse().unwrap(),
+                taker: "0.001".parse().unwrap(),
+            }],
+        );
         write(&definitions, &json!([instrument]));
         Self {
             source: directory.path().join("source"),
@@ -167,11 +179,6 @@ impl Fixture {
         native
             .query::<Bar>(Some(vec![kind.into()]), None, None, None, None, true)
             .unwrap()
-            .map(|r| match r.unwrap() {
-                Data::Bar(b) => b,
-                _ => panic!("not BAR"),
-            })
-            .collect()
     }
 }
 
@@ -403,9 +410,10 @@ fn source_json_duplicate_members_are_never_overwritten() {
         f.reject();
     }
     let f = Fixture::standard();
-    let b = fs::read_to_string(&f.definitions)
-        .unwrap()
-        .replace("\"maker_fee\":", "\"maker_fee\":\"0\",\"maker_fee\":");
+    let b = fs::read_to_string(&f.definitions).unwrap().replace(
+        "\"price_increment\":",
+        "\"price_increment\":\"0.01\",\"price_increment\":",
+    );
     fs::write(&f.definitions, b).unwrap();
     f.reject();
 }
@@ -415,7 +423,7 @@ fn original_native_definitions_and_price_grids_fail_closed() {
         let f = Fixture::standard();
         f.definitions(|d| match case {
             0 => {
-                d.as_object_mut().unwrap().remove("maker_fee");
+                d.as_object_mut().unwrap().remove("quote_currency");
             }
             1 => d["raw_symbol"] = "ETHUSDT".into(),
             2 => d["id"] = "BTCUSDT.COINBASE".into(),

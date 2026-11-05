@@ -41,7 +41,7 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
     start: ensemble ? data.validation_end_ns! : request.validation_end_ns!, end: selection.event_end_ns! };
 }
 
-export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT'): Promise<void> {
+export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT', record = true): Promise<void> {
   const window = await footprint(data);
   const historical = evidenceMode === 'HISTORICAL_REASSESSMENT';
   const kind = historical ? (reserve ? 'HISTORICAL_FINAL' : 'HISTORICAL_ITERATION') : (reserve ? 'FINAL' : 'ITERATION');
@@ -135,7 +135,7 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
     }
     if (previous && !historical) throw new Error('heldout_already_exposed');
     if (historical && !previous) throw new Error('historical_exposure_required');
-    if (!ledger.windows.some((item) => item.taskId === api.taskId && item.kind === kind)) {
+    if (record && !ledger.windows.some((item) => item.taskId === api.taskId && item.kind === kind)) {
       // Owner-bound reassessment adds permanent, explicitly non-independent facts; it never rewrites prior exposure.
       ledger.windows.push({ ...window, kind, taskId: api.taskId, conversationId: api.conversationId,
         ...(historical ? { evidenceMode, priorExposureTaskIds: previous ? [previous.taskId!] : [] } : {}) });

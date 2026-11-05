@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -49,7 +50,7 @@ test('actual WABT parser detail reaches model failure feedback and original-tria
   let host = await openResearch(options);
   try {
     const input = { goal: 'Protocol-only invalid model', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
-    const receipt = await host.start('original-wat-failure', input);
+    const receipt = await startLegacyResearch(host, 'original-wat-failure', input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(receipt.conversationId)).research!;
     assert.match(failureFeedback!, /parseWat failed:/); assert.match(failureFeedback!, /factor\.wat:3:\d+: error:/);
@@ -68,7 +69,7 @@ test('actual WABT parser detail reaches model failure feedback and original-tria
     }
     await host.close(); host = await openResearch(options);
     assert.deepEqual((await host.state(receipt.conversationId)).research, study);
-    assert.deepEqual(await host.start('original-wat-failure', input), receipt);
+    assert.deepEqual(await startLegacyResearch(host, 'original-wat-failure', input), receipt);
     assert.equal(faux.state.callCount, 4);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -100,7 +101,7 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
   let host = await openResearch(options);
   try {
     const input = { goal: 'Protocol-only native suspension', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1 } };
-    const receipt = await host.start('original-interrupted-factor', input);
+    const receipt = await startLegacyResearch(host, 'original-interrupted-factor', input);
     let pid: number;
     const nativeStartDeadline = Date.now() + 5000;
     for (;;) {
@@ -124,14 +125,14 @@ console.log(JSON.stringify({ request: JSON.parse(input) }));
     const restored = await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context);
     assert.equal(restored.items.length, 1); assert.equal(restored.items[0]!.id, children.items[0]!.id); assert.equal(restored.items[0]!.state.outcome!.status, 'completed');
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2, 'safe replay runs only the interrupted native computation, not a new trial');
-    assert.deepEqual(await host.start('original-interrupted-factor', input), receipt); assert.equal(faux.state.callCount, 1);
+    assert.deepEqual(await startLegacyResearch(host, 'original-interrupted-factor', input), receipt); assert.equal(faux.state.callCount, 1);
   } finally {
     await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous;
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('group finalization retains its failed child decoding metadata and original selections', { timeout: 15_000 }, async () => {
+for (const mode of ['legacy-quotas', 'changed-window', 'changed-market'] as const) test(`group finalization preserves original selections with ${mode}`, { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-group-decode-')); const binary = join(directory, 'job');
   const previous = process.env.QZ_JOB_BINARY;
   await writeFile(binary, `#!/bin/sh\nprintf '%s' '{"broken":'\n`, { mode: 0o700 });
@@ -141,7 +142,8 @@ test('group finalization retains its failed child decoding metadata and original
     selection: { ...request.forecast.selection, bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'] } } } };
   const prepare = defineTool({ name: 'prepare', description: 'Counted test-only selection protocol', parameters: Type.Object({}), replay: 'safe',
     async execute(_args, api, ctx) {
-      await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original controlled selection' }, async () => ({ request: iterationRequest(data) }));
+      const bound = await api.snapshot(Study, api.conversationId, ctx);
+      await evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original controlled selection' }, async () => ({ request: iterationRequest(bound!.input!.data) }));
       return { content: [{ type: 'text', text: 'Original test-only selection recorded.' }], control: { terminate: true } };
     },
   });
@@ -153,16 +155,36 @@ test('group finalization retains its failed child decoding metadata and original
     const originals = [];
     for (const id of ['group-first', 'group-second']) {
       faux.setResponses([tool('prepare')]);
-      const receipt = await host.start(id, input);
+      const boundInput = structuredClone(input) as unknown as import('../src/documents.ts').ResearchInput;
+      for (const source of [boundInput.data, boundInput.data.sealed as JsonObject]) {
+        const forecast = (source.request as JsonObject).forecast as JsonObject;
+        forecast.parameters = { total_fuel: id === 'group-first' ? '1' : '7' };
+        if (id === 'group-second') (forecast.selection as JsonObject).maximum_rows = 0;
+        if (id === 'group-second' && mode === 'changed-market') (forecast.selection as JsonObject).bar_types = ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'];
+      }
+      if (id === 'group-second' && mode === 'changed-window') {
+        const finalRequest = (boundInput.data.sealed as JsonObject).request as JsonObject;
+        ((finalRequest.forecast as JsonObject).selection as JsonObject).event_end_ns = '31';
+      }
+      const receipt = await startLegacyResearch(host, id, boundInput);
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.state(receipt.conversationId)).research!;
       originals.push({ receipt, study, selection: { researchId: receipt.conversationId, trialId: Number(study.trials[0]!.taskId) } });
     }
-    faux.setResponses([tool('factor_finalize_group', { reason: 'Original selections precede the final protocol failure.', selections: originals.map(item => item.selection) })]);
+    faux.setResponses([tool('factor_finalize_group', { reason: 'Original selections precede the final protocol failure.', selections: originals.map(item => item.selection) }), ...(mode === 'legacy-quotas' ? [] : [(transcript: { messages: readonly unknown[] }) => {
+      assert.match(toolText(transcript, 'factor_finalize_group'), /heldout_group_window_mismatch/);
+      return fauxAssistantMessage('The actual independent data binding differs; preserve every original selection.');
+    }])]);
     const conversation = (await host.harness.conversation(originals[0]!.receipt.conversationId, context))!;
     const submission = await conversation.submit({ type: 'input', requestId: 'original-group-final', content: 'Assess the original selected group.' }, context);
     await submission.wait(context);
     const first = (await host.harness.snapshot(Study, conversation.id, context))!;
+    if (mode !== 'legacy-quotas') {
+      assert.equal(first.final, null);
+      for (const original of originals) assert.deepEqual((await host.state(original.receipt.conversationId)).research, original.study);
+      assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.factor.wasm' }, 100), context)).items.length, 0);
+      return;
+    }
     const child = await host.harness.waitForTask(first.final!.nativeTaskId as TaskId, context);
     assert.equal(child.state.outcome.status, 'failed');
     if (child.state.outcome.status === 'failed') {

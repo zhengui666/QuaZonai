@@ -36,7 +36,7 @@ export async function admitCampaignTrial(tx: Tx, api: Pick<ResearchRuntime, 'con
     consideredHypothesisIds: doc.hypotheses.filter(item => item.state !== 'RETIRED' && item.state !== 'REFUTED').map(item => item.id),
     selectedHypothesisIds: [hypothesis.id], nextExperimentPurpose: trial.purpose, expectedInformationEvidenceRef: null,
     resourceEstimateRef: `${id}:usage`, incumbentComparisonRef: doc.comparisons.at(-1)?.id ?? null,
-    reasonCodes: ['registered_hypothesis_incremental_question', 'original_trial_budget_available'], action: 'EXPERIMENT' });
+    reasonCodes: ['registered_hypothesis_incremental_question', 'original_trial_recorded'], action: 'EXPERIMENT' });
 }
 
 export async function settleCampaignTrial(tx: Tx, api: Pick<ResearchRuntime, 'conversationId' | 'taskId'>, result: JsonObject | null, errorCode: string | null, elapsedSeconds: string | null): Promise<void> {

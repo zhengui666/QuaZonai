@@ -1,6 +1,6 @@
 //! Atomic publication for compatibility reports, not the production artifact store.
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
@@ -49,8 +49,12 @@ fn write_with_sync<T: Serialize>(
     }
     let mut file = options.open(&pending)?;
     let guard = Pending(pending);
-    serde_json::to_writer_pretty(&mut file, report).map_err(io::Error::other)?;
-    file.write_all(b"\n")?;
+    {
+        let mut buffered = BufWriter::with_capacity(64 * 1024, &mut file);
+        serde_json::to_writer_pretty(&mut buffered, report).map_err(io::Error::other)?;
+        buffered.write_all(b"\n")?;
+        buffered.flush()?;
+    }
     sync(&file)?;
     drop(file);
     // Link is an atomic create-if-absent operation on the same filesystem. Unlike
@@ -65,7 +69,7 @@ mod tests {
     use std::fs;
     use std::io;
 
-    use serde::{Serialize, Serializer};
+    use serde::{ser::SerializeSeq, Serialize, Serializer};
     use serde_json::json;
 
     #[test]
@@ -85,7 +89,9 @@ mod tests {
     fn serialization_failure_does_not_publish_a_report() {
         struct Invalid;
         impl Serialize for Invalid {
-            fn serialize<S: Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut sequence = serializer.serialize_seq(None)?;
+                sequence.serialize_element("partial report")?;
                 Err(serde::ser::Error::custom("injected serialization failure"))
             }
         }
@@ -110,8 +116,15 @@ mod tests {
     fn successful_publication_is_complete_and_has_no_temporary_name() {
         let directory = tempfile::tempdir().unwrap();
         let expected = json!({"origin": "FIXTURE", "deliverable": false});
-        write_probe_report(directory.path(), "report.json", &expected).unwrap();
+        let mut encoded = serde_json::to_vec_pretty(&expected).unwrap();
+        encoded.push(b'\n');
+        write_with_sync(directory.path(), "report.json", &expected, |file| {
+            assert_eq!(file.metadata()?.len(), encoded.len() as u64);
+            file.sync_all()
+        })
+        .unwrap();
         let contents = fs::read_to_string(directory.path().join("report.json")).unwrap();
+        assert_eq!(contents.as_bytes(), encoded);
         assert!(contents.ends_with('\n'));
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&contents).unwrap(),

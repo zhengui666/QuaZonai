@@ -13,10 +13,10 @@ from release_support import DATABASE_IMAGE, validate_manifest, version
 
 REVISION = 'a' * 40
 class ReleaseTests(unittest.TestCase):
-    def test_image_completion_waits_for_independent_assessment(self):
+    def test_image_completion_waits_for_review_refusal(self):
         details = [{'trialRecords': [{'status': 'COMPUTED', 'error': None}],
-                    'final': {'status': status, 'reason': 'Stop before heldout'}}
-                   for status in ['STARTED', 'COMPUTED']]
+                    'final': {'status': status, 'reason': 'independent_review_not_passed'}}
+                   for status in ['STARTED', 'STOPPED']]
         with patch.object(smoke, 'api', side_effect=details) as api, \
              patch.object(smoke.time, 'sleep') as sleep:
             self.assertIs(smoke.completed(None, 'http://test-only', 1), details[-1])
@@ -24,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
         sleep.assert_called_once_with(1)
 
     def test_image_completion_still_rejects_terminal_noncomputed_results(self):
-        for status in ['STOPPED', 'FAILED']:
+        for status in ['COMPUTED', 'FAILED', 'STOPPED']:
             detail = {'trialRecords': [{'status': 'COMPUTED', 'error': None}],
                       'final': {'status': status, 'reason': 'Terminal controlled failure'}}
             with self.subTest(status=status), patch.object(smoke, 'api', return_value=detail) as api, \
@@ -108,7 +108,7 @@ class ReleaseTests(unittest.TestCase):
                      [{**successful, 'head_sha': 'b' * 40}],
                      [{**successful, 'path': '.github/workflows/dev-release.yml'}]]:
             with self.subTest(runs=runs), patch.object(release, 'api', return_value=[{'workflow_runs': runs}]), \
-                 patch.object(release.time, 'monotonic', side_effect=[0, 1, 115 * 60 + 1]), \
+                 patch.object(release.time, 'monotonic', side_effect=[0, 1, 235 * 60 + 1]), \
                  patch.object(release.time, 'sleep'), patch('builtins.print'):
                 with self.assertRaisesRegex(TimeoutError, 'Exact-source CI did not complete'):
                     release.wait_ci(REVISION)

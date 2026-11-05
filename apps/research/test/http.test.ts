@@ -1,3 +1,4 @@
+import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -39,10 +40,10 @@ test('real HTTP preserves native identity and truthful admitted/conflict/invalid
       assert.equal(invalid.status, 400);
       assert.deepEqual(await invalid.json(), { error: 'invalid_json_number' });
     }
-    assert.equal((await post({ requestId: 'invalid', input: { ...input, policy: { max_trials: -1 } } })).status, 400);
+    assert.equal((await post({ requestId: 'invalid', input: { ...input, goal: '' } })).status, 400);
     assert.equal((await post({ input: null })).status, 400);
     const view = await (await fetch(`${origin}/research/${receipt.conversationId}`)).json();
-    assert.deepEqual(view.research.input, input);
+    assertFrozenInput(view.research.input, input);
     assert.equal((await fetch(`${origin}/research/999999`)).status, 404);
     assert.equal((await fetch(`${origin}/research/no-id`)).status, 404);
     assert.equal((await fetch(`${origin}/research/${receipt.conversationId}/stop`, { method: 'POST' })).status, 202);

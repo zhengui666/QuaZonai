@@ -213,16 +213,6 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
             .clone(),
     )?;
     ensure!(retrieved_at <= Utc::now(), "SELECTION_FUTURE_CLOCK");
-    let budget = match plan.get("max_bytes") {
-        Some(Value::Null) => None,
-        Some(value) => Some(
-            value
-                .as_u64()
-                .filter(|v| *v > 0)
-                .context("SELECTION_BYTE_BUDGET_INVALID")?,
-        ),
-        None => anyhow::bail!("SELECTION_BYTE_BUDGET_INVALID"),
-    };
     let request = plan.get("request").context("SELECTION_REQUEST_INVALID")?;
     let includes = strings(request, "includes")?;
     for pattern in &includes {
@@ -312,10 +302,6 @@ pub(super) fn load(path: &Path, start: u64, end: u64) -> Result<Selection> {
         total = total
             .checked_add(size)
             .context("SELECTION_BYTE_BUDGET_INVALID")?;
-        ensure!(
-            budget.is_none_or(|maximum| size <= maximum && total <= maximum),
-            "SELECTION_BYTE_BUDGET_INVALID"
-        );
         if let Some(partition) = item.get("partition") {
             let source_markets = strings(partition, "markets")?;
             let unique = source_markets.iter().copied().collect::<BTreeSet<_>>();

@@ -27,7 +27,7 @@ test('historical Hyperliquid provider is discoverable and disabled without autom
   const sources = await dataSources(configDefaults({ dataDir: f.dataDir }));
   try {
     const source = sources.view().find(source => source.name === 'qz.data.hyperliquid')!;
-    assert.equal(source.enabled, false); assert.equal(source.lastLoadedAt, null); assert.equal(source.fields.length, 12);
+    assert.equal(source.enabled, false); assert.equal(source.lastLoadedAt, null); assert.equal(source.fields.length, 10);
     await sources.save(source.name, { enabled: true, config: { acquisitionDirectory: 'archive' } });
     await sources.refresh(source.name);
     assert.deepEqual(sources.view().find(item => item.name === source.name)!.datasetIds, ['hyperliquid-history']);
@@ -152,7 +152,8 @@ test('explicit TradeTick preparation selects spot/perpetual paths and uses no BA
     }
     assert.equal(calls[1]!.args.includes('--trade-ticks'), true); assert.equal(calls[1]!.args.includes('--resume'), true);
     assert.equal(calls[1]!.args[calls[1]!.args.indexOf('--start-seconds') + 1], '1791850200'); assert.equal(calls[1]!.args[calls[1]!.args.indexOf('--end-seconds') + 1], '1791850500');
-    assert.equal(calls[1]!.memory, 2 * 1024 * 1024 * 1024);
+    assert.equal(calls[1]!.memory, undefined);
+    assert.ok(!calls[1]!.args.includes('--max-trade-rows')); assert.ok(!calls[1]!.args.includes('--max-output-bytes'));
     assert.equal(dataset!.id, 'hyperliquid-trade-ticks'); assert.equal(dataset!.nativeModality, 'TRADE_TICK');
     assert.equal(dataset!.ready, false); assert.deepEqual(dataset!.preparation, { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' });
     assert.equal(dataset!.data.barIntervalMilliseconds, undefined); assert.equal(dataset!.data.nativeInput, undefined, 'source conversion does not invent research partitions or sampling policy');
@@ -179,7 +180,7 @@ test('TradeTick mode rejects implicit BAR adaptation, unsupported modality and m
     });
     await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', barMilliseconds: 100 }, { dataDir: f.dataDir }), /tick_bar_conflict/);
     await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TICKS' }, { dataDir: f.dataDir }), /modality_unsupported/);
-    await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', maxTradeRows: 1_000_001 }, { dataDir: f.dataDir }), /config_invalid/);
+    assert.equal((await plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', maxTradeRows: 1_000_001 }, { dataDir: f.dataDir }))[0]!.preparation!.nativePrepared, false);
     await assert.rejects(plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK', nativeBinary: 'market-history', instrumentsFile: 'definitions.json' }, { dataDir: f.dataDir }), /tick_receipt_mismatch/);
     const [raw] = await plugin.load({ acquisitionDirectory: 'archive', inputModality: 'TRADE_TICK' }, { dataDir: f.dataDir });
     assert.deepEqual(raw!.preparation, { archiveLoaded: true, nativePrepared: false, scientificQualification: 'UNVERIFIED' });

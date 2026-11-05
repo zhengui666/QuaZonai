@@ -24,7 +24,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   strategy versions ID | assessments ID | pause ID --file COMMAND.json | resume ID --file COMMAND.json
   research models | list [--cursor JSON] | get ID | stop ID | delete ID
   research start --file REQUEST.json [--request-id ORIGINAL_ID]
-  research start --goal TEXT --dataset ID --model provider:modelId --max-trials N --request-id ORIGINAL_ID
+  research start --goal TEXT --dataset ID --model provider:modelId --request-id ORIGINAL_ID
   research watch ID [--timeout SECONDS] | research wait ID [--timeout SECONDS]
   research diagnostics ID | research resume ID --submission-id PREVIOUS_TERMINAL_SUBMISSION
   factor list | get ID | delete ID | capacity ID [--file ASSUMPTIONS.json]
@@ -47,6 +47,7 @@ const options = {
   origin: { type: 'string' as const }, name: { type: 'string' as const }, replace: { type: 'boolean' as const },
   'development-http': { type: 'boolean' as const }, 'ca-certificate': { type: 'string' as const },
   file: { type: 'string' as const }, goal: { type: 'string' as const }, dataset: { type: 'string' as const },
+  // Preserve legacy flag request bodies for receipt replay; the service ignores the quota.
   model: { type: 'string' as const }, 'max-trials': { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
@@ -113,14 +114,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
       if (specification !== undefined) {
         try { const spec = researchSpecification(specification); if (input.goal !== spec.question) throw new Error('research_question_mismatch'); }
         catch (error) { throw new CliError(error instanceof Error ? error.message : 'invalid_research_specification'); }
-        const maximum = 'input' in submission ? object(input.policy).max_trials : input.maxTrials;
-        if (!Number.isSafeInteger(maximum) || Number(maximum) < 0) throw new CliError('research_trial_budget_required');
       }
     } else {
       const match = /^([^:]+):(.+)$/.exec(values.model ?? '');
-      const maximum = Number(values['max-trials']);
-      if (!values.goal || !values.dataset || !match || !Number.isSafeInteger(maximum) || maximum < 0 || !values['request-id']) throw new CliError('goal_dataset_model_max_trials_request_id_required');
-      submission = { requestId: values['request-id'], goal: values.goal, datasetId: values.dataset, model: { provider: match[1]!, modelId: match[2]! }, maxTrials: maximum };
+      if (!values.goal || !values.dataset || !match || !values['request-id']) throw new CliError('goal_dataset_model_request_id_required');
+      const maximum = values['max-trials'] === undefined ? undefined : Number(values['max-trials']);
+      if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < 0)) throw new CliError('legacy_max_trials_invalid');
+      submission = { requestId: values['request-id'], goal: values.goal, datasetId: values.dataset, model: { provider: match[1]!, modelId: match[2]! }, ...(maximum === undefined ? {} : { maxTrials: maximum }) };
       body = JSON.stringify(submission);
     }
     requestId(submission as unknown as Record<string, unknown>, values['request-id']);

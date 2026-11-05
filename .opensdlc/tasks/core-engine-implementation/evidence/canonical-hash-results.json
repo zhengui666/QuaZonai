@@ -1,0 +1,66 @@
+{
+  "warning": "Synthetic request to actual current exported executionId vs original source encoder; independent Node processes, shared cloud load including Cargo may affect time; not an HTTP latency or whole-engine benchmark",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "mode": "original",
+      "rows": 100000,
+      "wallMs": 269.652504,
+      "heapDeltaBytes": 76578432,
+      "maxRssKiB": 175764,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    },
+    {
+      "mode": "buffered",
+      "rows": 100000,
+      "wallMs": 157.190583,
+      "heapDeltaBytes": 827384,
+      "maxRssKiB": 102140,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    },
+    {
+      "mode": "buffered",
+      "rows": 100000,
+      "wallMs": 200.11004200000002,
+      "heapDeltaBytes": 723488,
+      "maxRssKiB": 101872,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    },
+    {
+      "mode": "original",
+      "rows": 100000,
+      "wallMs": 229.214808,
+      "heapDeltaBytes": 76511536,
+      "maxRssKiB": 175988,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    },
+    {
+      "mode": "original",
+      "rows": 100000,
+      "wallMs": 193.67055900000003,
+      "heapDeltaBytes": 76762464,
+      "maxRssKiB": 176792,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    },
+    {
+      "mode": "buffered",
+      "rows": 100000,
+      "wallMs": 134.88529499999999,
+      "heapDeltaBytes": 8708952,
+      "maxRssKiB": 101816,
+      "digest": "428285cc0e2fa27b1a9190e5c485f46deffaa1d99dd9901fddfb71d16c4ee7fe"
+    }
+  ],
+  "medians": {
+    "original": {
+      "wallMs": 229.214808,
+      "heapDeltaBytes": 76578432,
+      "maxRssKiB": 175988
+    },
+    "buffered": {
+      "wallMs": 157.190583,
+      "heapDeltaBytes": 827384,
+      "maxRssKiB": 101872
+    }
+  }
+}

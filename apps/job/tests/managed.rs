@@ -200,7 +200,7 @@ fn actual_managed_catalog_validation_publishes_native_counts_and_no_pit_claim() 
     attach_catalog(&f, id, catalog.path());
     assert!(execute(&f));
     let report: NativeDataQualityReportV1 = result(&f, "qz.data_quality");
-    assert_eq!(report.native_version, "nautilus-persistence/0.63.0");
+    assert_eq!(report.native_version, "nautilus-persistence/0.67.0");
     assert_eq!(report.datasets[0].row_count.get(), 40);
     assert_eq!(report.datasets[0].instrument_ids.len(), 2);
     assert_eq!(report.datasets[0].dataset_revision_id, id);

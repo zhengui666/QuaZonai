@@ -32,7 +32,8 @@ pub struct NativeBarSelectionV1 {
     /// Exclusive event-time boundary.
     pub event_end_ns: DbCounter,
     pub decision_cutoff_ns: DbCounter,
-    #[schema(minimum = 1)]
+    /// Legacy row allowance retained in frozen requests; no longer limits reads.
+    #[serde(default)]
     pub maximum_rows: u32,
 }
 
@@ -112,7 +113,7 @@ pub enum NativeAccountKind {
     Margin,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeFeeRateV1 {
     #[schema(min_length = 1, max_length = 200)]

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api } from './api';
 import { clearResearchIntent, readResearchIntent } from './request-intent';
 
-type Kind = 'research' | 'portfolios' | 'observations' | 'mandates' | `pm:${string}` | `capital:${string}` | `capital-preview:${string}`;
+type Kind = 'research' | 'portfolios' | 'review-allocations' | 'observations' | 'mandates' | `pm:${string}` | `capital:${string}` | `capital-preview:${string}`;
 interface Envelope { raw: string; persisted: boolean }
 const key = (kind: Kind) => `quazonai.command.${kind}.v3`;
 interface CommandState { pending?: Envelope; error?: unknown }

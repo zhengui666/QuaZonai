@@ -9,6 +9,15 @@ import { pathToFileURL } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { canonical, Requests, Study } from './documents.ts';
+import { ReviewLedger } from './review-documents.ts';
+import { freezeReviewPolicies } from './review-workflow.ts';
+import { reviewExtensionWithUsage } from '../plugins/review.ts';
+import { ReviewFactorAccountTask } from './review-factor-account.ts';
+import { bindReviewSourceEvidence, ReviewSourceValidationTask } from './review-source.ts';
+import type { CapturedReviewSource } from './review-source.ts';
+import { ReviewNativeTask } from './review-native-task.ts';
+import { IndependentReviewTask } from './review-runtime.ts';
+import { defineExtension } from '@earendil-works/pi-durable';
 import { LiteratureDoc } from './literature-document.ts';
 import { researchInput } from './input.ts';
 import { researchInstructions } from '../../../packages/contracts/src/research.ts';
@@ -54,10 +63,12 @@ export async function openResearch(options: {
       const module = await import(pathToFileURL(resolve(path)).href);
       registry.install(module.default as Extension);
     }
+    registry.install(reviewExtensionWithUsage(() => harness));
+    registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
     storage = options.storage ?? await openNodeSqliteStorage(options.database);
-    harness = await Harness.open(storage, { models, registry, settings }, context);
+    harness = await Harness.open(storage, { models, registry, settings: { ...settings, extensions: settings.extensions ?? registry.snapshot().installed().filter(extension => extension.name !== 'qz.review') } }, context);
   } catch (error) { await credentials?.close(); throw error; }
   let accepting = true;
   const admissions = new Set<Promise<unknown>>();
@@ -93,7 +104,7 @@ export async function openResearch(options: {
     // Repair a persisted owner-stop intent before submitting any new work.
     for (const id of new Set(Object.values(requests?.requests ?? {}).map(request => request.conversationId))) {
       const campaign = await harness.snapshot(CampaignResearchDoc, id, context);
-      if (campaign?.binding && campaign.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
+      if (campaign?.state === 'CLOSING' && campaign.closingReason === 'owner_stop') await settleOwnerStop(id);
     }
     for (const [key, request] of Object.entries(requests?.requests ?? {})) {
       const requestId = key.slice('request:'.length);
@@ -109,7 +120,7 @@ export async function openResearch(options: {
     harness.resume();
   } catch (error) { await harness.close(context); await credentials?.close(); throw error; }
 
-  async function start(requestId: string, value: ResearchInput, originalAdmission = false) {
+  async function start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
     if (typeof requestId !== 'string' || !requestId) throw new Error('request_id_required');
     const input = researchInput(value);
     const id = await harness.commit(async (tx) => {
@@ -119,6 +130,7 @@ export async function openResearch(options: {
       if (existing) {
         if (existing.recovery) throw new Error('request_id_conflict');
         if (canonical(existing.input) !== canonical(input)) throw new Error('request_id_conflict');
+        if (sourceEvidence && (!existing.sourceEvidence || canonical(existing.sourceEvidence) !== canonical(JSON.parse(JSON.stringify(sourceEvidence))))) throw new Error('review_source_identity_conflict');
         return existing.conversationId;
       }
       if (isRecoveryRequestId(requestId)) {
@@ -134,14 +146,15 @@ export async function openResearch(options: {
       const thinkingLevel = input.thinkingLevel ?? clampThinkingLevel(model, requestedThinking);
       const created = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       await configure(tx, created.id, { model: input.model, thinkingLevel, instructions: researchInstructions(input) });
-      (await tx.doc(Study, created.id)).input = input;
+      (await tx.doc(Study, created.id)).input = freezeReviewPolicies(input);
+      if (sourceEvidence) await bindReviewSourceEvidence(tx, created.id, input.data, sourceEvidence);
       if (input.campaign) {
         const campaign = await tx.doc(CampaignResearchDoc, created.id);
         campaign.binding = input.campaign;
         // Versioned technical allowance, not a market or scientific threshold.
-        campaign.orchestration = { policyVersion: 'qz.research.resources/1', maximumModelTurns: Math.min(Number.MAX_SAFE_INTEGER, Math.max(24, input.campaign.budget.maximumTrials * 12)), generationTaskIds: [] };
+        campaign.orchestration = { policyVersion: 'qz.research.resources/1', generationTaskIds: [] };
       }
-      requests.requests[key] = { input, conversationId: created.id };
+      requests.requests[key] = { input, conversationId: created.id, ...(sourceEvidence ? { sourceEvidence: JSON.parse(JSON.stringify(sourceEvidence)) } : {}) };
       return created.id;
     }, context);
     await rememberTier(id, input);
@@ -177,7 +190,10 @@ export async function openResearch(options: {
     await (await conversation(id)).abort(context, { background: true });
     await harness.commit(async tx => {
       const campaign = await tx.doc(CampaignResearchDoc, id);
-      if (!campaign.binding) return;
+      if (!campaign.binding) {
+        if (campaign.closingReason === 'owner_stop') campaign.state = 'CONCLUDED';
+        return;
+      }
       const study = await tx.doc(Study, id);
       for (const trial of study.trials.filter(item => item.status === 'STARTED')) {
         const task = await tx.task(trial.taskId as TaskId);
@@ -198,6 +214,7 @@ export async function openResearch(options: {
     return { research: await harness.snapshot(Study, id as ConversationId, context),
       campaignResearch: await harness.snapshot(CampaignResearchDoc, id as ConversationId, context),
       literature: await harness.snapshot(LiteratureDoc, id as ConversationId, context),
+      reviews: await harness.snapshot(ReviewLedger, id as ConversationId, context),
       submission: await latestSubmission(id), originalSubmission: await submissionFor(id) };
   }
   async function diagnostics(id: number) {
@@ -239,12 +256,9 @@ export async function openResearch(options: {
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
-      const maximum = study.input.policy.max_trials;
-      if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
       const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
       if (!intent) {
         const campaign = await tx.doc(CampaignResearchDoc, handle.id);
-        if (campaign.orchestration && campaign.orchestration.generationTaskIds.length >= campaign.orchestration.maximumModelTurns) throw new Error('orchestration_budget_exhausted');
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
         campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null;
@@ -259,9 +273,9 @@ export async function openResearch(options: {
   let closed: Promise<void> | undefined;
   return {
     harness, models, registry, withOwnerChange: ownerChange,
-    async start(requestId: string, value: ResearchInput, originalAdmission = false) {
+    async start(requestId: string, value: ResearchInput, originalAdmission = false, sourceEvidence?: CapturedReviewSource) {
       if (!accepting) throw new Error('research_closing');
-      const admission = start(requestId, value, originalAdmission);
+      const admission = start(requestId, value, originalAdmission, sourceEvidence);
       admissions.add(admission);
       try { return await admission; } finally { admissions.delete(admission); }
     },
@@ -313,7 +327,8 @@ export async function openResearch(options: {
       try {
         return { ...watch.value, research: await harness.snapshot(Study, watch.value.conversation.id, context),
           campaignResearch: await harness.snapshot(CampaignResearchDoc, watch.value.conversation.id, context),
-          literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context), submission: await submissionFor(id) };
+          literature: await harness.snapshot(LiteratureDoc, watch.value.conversation.id, context),
+          reviews: await harness.snapshot(ReviewLedger, watch.value.conversation.id, context), submission: await submissionFor(id) };
       } finally { await watch.stop(); }
     },
     async watch(id: number): Promise<ConversationWatch> {
@@ -332,7 +347,7 @@ export async function openResearch(options: {
           const facts = await tx.doc(Study, study.id);
           facts.final ??= { trialId: null, comparedTrials: facts.trials.map((trial) => trial.taskId!), status: 'STOPPED', reason: 'owner_stop', result: null };
           const campaign = await tx.doc(CampaignResearchDoc, study.id);
-          if (campaign.binding && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
+          if ((campaign.binding || campaign.closureTaskId !== null) && campaign.state !== 'CONCLUDED') { campaign.state = 'CLOSING'; campaign.closingReason = 'owner_stop'; }
         }, context);
         await settleOwnerStop(study.id);
         return this.view(id);

@@ -3,7 +3,7 @@ import { withoutAbortSignal } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { defineDocFamily, type JsonObject, type TaskId, type TaskRuntime } from '@earendil-works/pi-durable';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstat, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -12,11 +12,14 @@ import { setTimeout } from 'node:timers/promises';
 import { Agent, fetch } from 'undici';
 import { isTickNativeCommand } from '../../../packages/contracts/src/nautilus.ts';
 import type { NativeCapabilities, NativeExecutionReceipt, NativeExecutionRequest, NativeExecutionRejection, NativeJson, NativeTarget, RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { canonical } from './documents.ts';
 import { ExecutionFailure } from './execution-errors.ts';
-import { JsonReader, jsonChunks } from './native-json.ts';
+import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 
-export const nativeCommands = new Set(['evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
+type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
+const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
+/** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
+export function withNativeExecutionInterceptor<T>(interceptor: NativeInterceptor, operation: () => Promise<T>): Promise<T> { return nativeInterceptor.run(interceptor, operation); }
 const instanceCredentials = new Map<string, string>();
 const progressTracking = new AsyncLocalStorage<(snapshots: NativeJson[]) => Promise<void>>();
 /** Observes original account snapshots; never changes invocation or cancellation identity. */
@@ -226,7 +229,7 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   if (!capability.commands.includes(command)) throw new Error('nautilus_command_unsupported');
   const artifacts = await attachments(originalArgs);
   const content = { schemaVersion: 1 as const, invocationId: randomUUID(), implementationDigest: capability.implementationDigest, command, input, ...artifacts };
-  const requestId = createHash('sha256').update(canonical(content)).digest('hex');
+  const requestId = canonicalJsonDigest(content);
   const request: NativeExecutionRequest = { ...content, requestId };
   const path = `v1/executions/${requestId}`;
   const owner = tracking.getStore();
@@ -286,8 +289,38 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   } finally { if (timer) clearInterval(timer); progressAbort.abort(); await progressRead; }
 }
 
+/** Derive the unmetered execution payload without changing frozen scientific facts. */
+export function unmeteredNativeInput<T extends NativeJson>(value: T): T {
+  // Most payloads are large scientific arrays without quotas. Preserve unchanged
+  // branches instead of duplicating native evidence solely to inspect settings.
+  if (Array.isArray(value)) {
+    let copy: NativeJson[] | undefined;
+    for (let index = 0; index < value.length; index++) {
+      const child = unmeteredNativeInput(value[index]!);
+      if (child !== value[index]) { copy ??= [...value]; copy[index] = child; }
+    }
+    return (copy ?? value) as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    let copy: Record<string, NativeJson> | undefined;
+    for (const [key, original] of Object.entries(value)) {
+      if (key === 'total_fuel') { copy ??= { ...value }; delete copy[key]; continue; }
+      const child = unmeteredNativeInput(original);
+      if (child !== original) { copy ??= { ...value }; copy[key] = child; }
+    }
+    return (copy ?? value) as T;
+  }
+  return value;
+}
+
 /** Shared transport for the research and service scientific entry points. */
 export async function executeNativeValue(target: NativeTarget, command: string, input: NativeJson, args: string[], directory: string, context: Context): Promise<NativeJson> {
+  const interceptor = nativeInterceptor.getStore();
+  const execute = () => executeNativeUnwrapped(target, command, unmeteredNativeInput(input), args, directory, context);
+  return interceptor ? interceptor(command, input, execute) : execute();
+}
+
+async function executeNativeUnwrapped(target: NativeTarget, command: string, input: NativeJson, args: string[], directory: string, context: Context): Promise<NativeJson> {
   if (!nativeCommands.has(command)) throw new Error('native_command_unsupported');
   if (typeof target !== 'string') {
     try { return await executeRemote(target, command, input, args, context); }

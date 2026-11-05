@@ -25,14 +25,13 @@ pub(super) struct Arguments {
     request: PathBuf,
     #[arg(long)]
     output: PathBuf,
-    /// Aggregate logical bytes across both isolated catalogs and final metadata.
-    #[arg(long, default_value_t = 10 * 1024 * 1024 * 1024_u64)]
+    /// Legacy output-byte allowance; accepted and recorded, never enforced.
+    #[arg(long, default_value_t = 0)]
     maximum_output_bytes: u64,
 }
 
 struct OutputBudget<'a> {
     root: &'a Path,
-    maximum: u64,
     files: BTreeMap<PathBuf, u64>,
     written: u64,
 }
@@ -54,10 +53,6 @@ impl OutputBudget<'_> {
             .checked_sub(previous)
             .and_then(|bytes| bytes.checked_add(file.len()))
             .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
-        ensure!(
-            self.written <= self.maximum,
-            "TICK_PREPARATION_OUTPUT_LIMIT"
-        );
         Ok(())
     }
 
@@ -85,7 +80,6 @@ impl OutputBudget<'_> {
 
     fn check(&self) -> Result<u64> {
         let measured = self.measured()?;
-        ensure!(measured <= self.maximum, "TICK_PREPARATION_OUTPUT_LIMIT");
         Ok(measured)
     }
 }
@@ -99,7 +93,7 @@ fn publish(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 fn write_series(
-    catalog: &nautilus_persistence::backend::catalog::ParquetDataCatalog,
+    catalog: &nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog,
     root: &Path,
     original: &[TradeTick],
     budget: &mut OutputBudget<'_>,
@@ -124,8 +118,8 @@ fn write_series(
             .max()
             .unwrap();
         for trade in &mut encoded[start..end] {
-            trade.price = Price::from_raw(trade.price.raw, prices);
-            trade.size = Quantity::from_raw(trade.size.raw, sizes);
+            trade.price = Price::from_raw(trade.price.raw(), prices);
+            trade.size = Quantity::from_raw(trade.size.raw(), sizes);
         }
         start = end;
     }
@@ -164,8 +158,8 @@ fn same_rows(
                     && rows.iter().zip(actual).all(|(left, right)| {
                         left.instrument_id == right.instrument_id
                             && left.trade_id == right.trade_id
-                            && left.price.raw == right.price.raw
-                            && left.size.raw == right.size.raw
+                            && left.price.raw() == right.price.raw()
+                            && left.size.raw() == right.size.raw()
                             && left.aggressor_side == right.aggressor_side
                             && left.ts_event == right.ts_event
                             && left.ts_init == right.ts_init
@@ -183,7 +177,8 @@ fn copy_selected(
 ) -> Result<()> {
     fs::create_dir_all(root)?;
     let original = crate::catalog::open_catalog(source)?;
-    let mut definitions = original.instruments(Some(&request.input.instrument_ids), None, None)?;
+    let mut definitions =
+        original.query_instruments_filtered(Some(&request.input.instrument_ids), None, None)?;
     definitions.retain(|instrument| {
         request
             .input
@@ -223,7 +218,8 @@ fn copy_selected(
         same_rows(rows, &crate::ticks::catalog::load(root, request)?),
         "TICK_PREPARATION_READBACK_MISMATCH"
     );
-    let mut actual = native.instruments(Some(&request.input.instrument_ids), None, None)?;
+    let mut actual =
+        native.query_instruments_filtered(Some(&request.input.instrument_ids), None, None)?;
     actual.sort_by_key(|instrument| (instrument.id(), instrument.ts_init()));
     ensure!(
         serde_json::to_value(actual)? == serde_json::to_value(definitions)?,
@@ -233,10 +229,6 @@ fn copy_selected(
 }
 
 pub(super) fn run(args: &Arguments) -> Result<Value> {
-    ensure!(
-        args.maximum_output_bytes > 0,
-        "TICK_PREPARATION_OUTPUT_LIMIT"
-    );
     let request: NativeTradeTickFactorEvaluationRequestV1 = super::read_json(&args.request)?;
     domain::ticks::evaluation_request(&request)?;
     if request.input.is_cohort_cache() {
@@ -296,7 +288,6 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
     fs::create_dir(&output).context("OUTPUT_MUST_BE_NEW")?;
     let mut budget = OutputBudget {
         root: &output,
-        maximum: args.maximum_output_bytes,
         files: BTreeMap::new(),
         written: 0,
     };
@@ -332,10 +323,6 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         let measured = catalog_bytes
             .checked_add(metadata_bytes)
             .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
-        ensure!(
-            measured <= args.maximum_output_bytes,
-            "TICK_PREPARATION_OUTPUT_LIMIT"
-        );
         if metadata["output_bytes"].as_str() == Some(measured.to_string().as_str()) {
             break measured;
         }
@@ -437,7 +424,6 @@ mod tests {
         );
         let measured = OutputBudget {
             root: &output,
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -458,7 +444,10 @@ mod tests {
         let physical = public
             .query::<TradeTick>(None, None, None, None, None, false)
             .unwrap();
-        let physical = physical.map(|row| row.unwrap()).collect::<Vec<_>>();
+        let physical = physical
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(physical.len(), 5);
         assert!(physical.iter().all(
             |row| matches!(row, nautilus_model::data::Data::Trade(t) if t.ts_event.as_u64() < 50)
@@ -479,7 +468,6 @@ mod tests {
         );
         let research_bytes = OutputBudget {
             root: &output.join("research"),
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -487,7 +475,6 @@ mod tests {
         .unwrap();
         let independent_bytes = OutputBudget {
             root: &output.join("independent"),
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -501,11 +488,8 @@ mod tests {
             output: temp.path().join("aggregate-limited"),
             maximum_output_bytes: aggregate_limit,
         };
-        assert!(run(&aggregate)
-            .unwrap_err()
-            .to_string()
-            .contains("TICK_PREPARATION_OUTPUT_LIMIT"));
-        assert!(!aggregate.output.join("catalog-metadata.json").exists());
+        assert!(run(&aggregate).is_ok());
+        assert!(aggregate.output.join("catalog-metadata.json").exists());
         let mut oversized_request = request();
         oversized_request.sampling.maximum_cohort_rows = 1;
         let oversized_file = temp.path().join("oversized-request.json");
@@ -527,11 +511,8 @@ mod tests {
             output: temp.path().join("limited"),
             maximum_output_bytes: 1,
         };
-        assert!(run(&limited)
-            .unwrap_err()
-            .to_string()
-            .contains("TICK_PREPARATION_OUTPUT_LIMIT"));
-        assert!(!limited.output.join("catalog-metadata.json").exists());
+        assert!(run(&limited).is_ok());
+        assert!(limited.output.join("catalog-metadata.json").exists());
         assert_eq!(
             crate::ticks::catalog::load(&source, &request()).unwrap()["AUD/USD.SIM"],
             trades
@@ -698,8 +679,8 @@ mod tests {
             10_u64.into(),
         );
         let mut encoded = original;
-        encoded.price = Price::from_raw(original.price.raw, 4);
-        encoded.size = Quantity::from_raw(original.size.raw, 5);
+        encoded.price = Price::from_raw(original.price.raw(), 4);
+        encoded.size = Quantity::from_raw(original.size.raw(), 5);
         let one = BTreeMap::from([("AUD/USD.SIM".into(), vec![original])]);
         let two = BTreeMap::from([("AUD/USD.SIM".into(), vec![encoded])]);
         assert!(same_rows(&one, &two));

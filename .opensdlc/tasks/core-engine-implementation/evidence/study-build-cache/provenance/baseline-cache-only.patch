@@ -1,0 +1,13 @@
+--- /tmp/qz-study-build-cache-20261030/candidate/apps/job/src/signals.rs	2026-10-30 03:38:29.623143608 +0000
++++ /tmp/qz-study-build-cache-20261030/baseline/apps/job/src/signals.rs	2026-10-30 03:38:29.888852135 +0000
+@@ -41,8 +41,8 @@
+         Self {
+             entries: Vec::new(),
+             source_bytes: 0,
+-            max_entries: 32,
+-            max_source_bytes: 16 * 1024 * 1024,
++            max_entries: 0,
++            max_source_bytes: 0,
+         }
+     }
+ }

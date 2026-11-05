@@ -23,7 +23,7 @@ pub use output::{
     check_experiment_evaluation, check_observed_spot_simulation, check_observed_spot_study,
     check_portfolio_study, equity_curve_query, experiment_summary, freeze_alpha_calibration,
     output_bindings, output_shape, portfolio_equity_curve, portfolio_simulation_metrics,
-    strategy_portfolio_summary,
+    quality as native_quality, strategy_portfolio_summary,
 };
 pub use portfolio::{
     candidate_simulation, observed_spot_build_request, observed_spot_study_cutoffs,
@@ -51,7 +51,6 @@ pub(crate) fn fuel_within_budget(
 
 fn selection(value: &NativeBarSelectionV1) -> Result<(), DomainError> {
     if value.bar_types.is_empty()
-        || value.maximum_rows < 1
         || value.event_start_ns >= value.event_end_ns
         || value.event_end_ns > value.decision_cutoff_ns
     {

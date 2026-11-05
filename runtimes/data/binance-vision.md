@@ -8,7 +8,7 @@ the existing `catalog-prepare` executable. Existing Coinbase/Polymarket frozen
 descriptors and `qz.public_acquisition/1` remain unchanged. An installation must
 use a completed release containing this plugin before these capabilities are
 available. See the [source-plugin guide](source-plugins.md) and
-[installed source command](../../deploy/docker/README.md#installed-free-source-tools).
+[installed source command](../../deploy/docker/README.md#source-preparation).
 
 ## Scope and source identity
 

@@ -1,4 +1,4 @@
-//! Bounded fresh-account native replay, not a rescaling of previously observed fills.
+//! Fresh-account native replay, not a rescaling of previously observed fills.
 use anyhow::{ensure, Result};
 use bigdecimal::{BigDecimal, RoundingMode, Zero};
 use contracts::{capital_curve::*, DbCounter, DecimalValue, Id, SchemaV1};
@@ -115,7 +115,7 @@ fn minimum_sources(
 }
 
 /// Current fundable capital first, then an identifiable first-entry candidate.
-/// Remaining allowance bisects the widest planned numeric gap. A zero anchor
+/// Remaining method points bisect the widest planned numeric gap. A zero anchor
 /// permits exploration when a frozen-target first-entry candidate is unavailable
 /// or unfunded; zero itself is never replayed. No feasibility is interpolated.
 fn plan(capital: &DecimalValue, anchor: &DecimalValue, maximum: u32) -> Result<Vec<DecimalValue>> {
@@ -191,9 +191,8 @@ fn run(
         "CAPITAL_RESERVES_EXCEED_EQUITY"
     );
     ensure!(
-        (1..=64).contains(&request.budget.maximum_simulations)
-            && request.budget.maximum_elapsed_ms.get() > 0,
-        "CAPITAL_RESOURCE_BUDGET_INVALID"
+        request.budget.maximum_simulations > 0,
+        "CAPITAL_SAMPLING_POINTS_INVALID"
     );
     ensure!(
         !request.simulation.target_points.is_empty()
@@ -273,7 +272,7 @@ fn run(
             "COMPLETED_REPLAY_IS_NOT_TARGET_ACHIEVEMENT_OR_ECONOMIC_FEASIBILITY".into(),
             "NO_INTERPOLATION_MONOTONICITY_OR_CAPACITY_UPPER_BOUND".into(),
             "NO_IDENTIFIED_SCALE_IMPACT_SPREAD_AND_EXIT_MODEL".into(),
-            "ELAPSED_BUDGET_CONTROLS_ADMISSION_NOT_IN_FLIGHT_CANCELLATION".into(),
+            "LEGACY_ELAPSED_BUDGET_IGNORED_NATIVE_OWNER_RETAINS_CANCELLATION".into(),
             "FAILED_RUN_NATIVE_EVENTS_CPU_MEMORY_AND_FUEL_UNMETERED".into(),
         ],
     };
@@ -312,10 +311,6 @@ fn run(
         return Ok(report);
     }
     for capital in &report.generation.planned_capitals {
-        if started.elapsed().as_millis() >= u128::from(request.budget.maximum_elapsed_ms.get()) {
-            report.termination = NativeCapitalCurveTerminationV1::TimeBudgetExhausted;
-            break;
-        }
         let mut simulation = request.simulation.clone();
         simulation.settings.starting_capital = capital.clone();
         report.resources.attempted_simulations += 1;

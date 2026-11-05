@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -11,7 +12,7 @@ import { counter, decimal, json, nowNs, object, Problem, text } from './facts.ts
 import type { CapturedAccount } from './pm-account.ts';
 
 export interface NativeObservedSpotStart extends JsonObject {
-  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.63.0'; snapshot: JsonObject; available_ns: string;
+  schema_version: 1; snapshot_evidence_ref: string; source_native_version: '0.67.0'; snapshot: JsonObject; available_ns: string;
   open_orders_evidence_ref: string; open_orders_account_id: string; open_orders_asof_ns: string; open_orders_available_ns: string; open_orders_count: 0;
 }
 const refuse = (code: string): never => { throw new Problem(`pm_account_${code}`, 409); };
@@ -36,7 +37,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   if (counter(original.dropped_events, 'dropped_events') !== '0') refuse('native_observation_has_gap');
   const binding = object(original.binding, 'native_binding');
   exactKeys(binding, ['schema_version', 'project_id', 'environment', 'native_trader_id', 'native_session_id', 'native_account_id', 'native_version'], 'native_binding');
-  if (binding.schema_version !== 1 || binding.native_version !== '0.63.0') refuse('native_version_unsupported');
+  if (binding.schema_version !== 1 || binding.native_version !== '0.67.0') refuse('native_version_unsupported');
   for (const field of ['project_id', 'native_trader_id', 'native_session_id', 'native_account_id']) text(binding[field], field);
   const mode = object(capture.artifact.observation).mode;
   if (binding.environment !== (mode === 'paper' ? 'PAPER' : mode === 'live' ? 'LIVE' : null)) refuse('native_environment_mismatch');
@@ -88,7 +89,7 @@ export function toNativeObservedSpotStart(capture: CapturedAccount, options: { s
   const orderClock = counter(orders.asof_ns, 'open_orders_clock'); const orderAvailable = counter(orders.available_ns, 'open_orders_available');
   if (orders.account_id !== native.account_id || orderClock !== nativeClock) refuse('open_orders_basis_mismatch');
   if (BigInt(orderAvailable) < BigInt(orderClock) || BigInt(orderAvailable) > BigInt(received)) refuse('open_orders_clock_invalid');
-  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: '0.63.0', snapshot: json(native), available_ns: available,
+  return { schema_version: 1, snapshot_evidence_ref: capture.evidence.id, source_native_version: '0.67.0', snapshot: json(native), available_ns: available,
     open_orders_evidence_ref: capture.evidence.id, open_orders_account_id: String(orders.account_id), open_orders_asof_ns: orderClock,
     open_orders_available_ns: received, open_orders_count: 0 };
 }
@@ -147,7 +148,7 @@ export async function valueObservedSpotAccount(input: ObservedSpotValuationInput
   try {
     const original = await executeNative(input.binary, 'value-observed-spot', request, ['--catalog', input.catalog], directory, context);
     if (original.schema_version !== 1 || original.kind !== 'OBSERVED_SPOT_VALUATION' || original.basis !== 'DERIVED_REPORT_CURRENCY_INVENTORY_VALUE'
-      || canonical(original.request!) !== canonical(request) || original.report_currency !== input.capture.basis.currency || original.asof_ns !== asOfNs) refuse('native_valuation_basis_mismatch');
+      || canonical(withoutExecutionQuotas(original.request!)) !== canonical(withoutExecutionQuotas(request)) || original.report_currency !== input.capture.basis.currency || original.asof_ns !== asOfNs) refuse('native_valuation_basis_mismatch');
     const total = decimal(original.total, 'native_report_value'); const sourceAvailable = counter(original.available_ns, 'native_valuation_available');
     if (compareDecimal(total, '0') < 0 || BigInt(sourceAvailable) < BigInt(initial.available_ns)) refuse('native_valuation_amount_or_clock_invalid');
     object(original.source_evidence, 'native_valuation_source_evidence');
@@ -169,7 +170,7 @@ export async function valueObservedSpotAccount(input: ObservedSpotValuationInput
 
 /** Run both candidates from one original observed balance state. The wrapper
  * validates its own output binding; no failed leg becomes an economic loser.
- * Study members/objects and the caller's scientific budget are admitted upstream.
+ * Study members/objects and the caller's original trial identities are admitted upstream.
  */
 export async function compareObservedSpotAccount(input: ObservedSpotComparisonInput, context: Context): Promise<ObservedSpotComparisonResult> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.nativeDatasetRevisionId)) refuse('native_dataset_revision_uuid_required');
@@ -196,7 +197,7 @@ export async function compareObservedSpotAccount(input: ObservedSpotComparisonIn
     const args = ['--catalog', input.catalog]; if (input.operation.kind === 'STUDY') args.push('--objects', input.operation.objectsDirectory);
     const original = await executeNative(input.binary, study ? 'study-observed-spot' : 'compare-observed-spot', request, args, directory, context);
     if (original.schema_version !== 1 || original.kind !== (study ? 'OBSERVED_SPOT_STUDY_COMPARISON' : 'OBSERVED_SPOT_ACCOUNT_COMPARISON')
-      || original.basis !== 'HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES' || canonical(original.request!) !== canonical(request)) refuse('native_comparison_basis_mismatch');
+      || original.basis !== 'HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES' || canonical(withoutExecutionQuotas(original.request!)) !== canonical(withoutExecutionQuotas(request))) refuse('native_comparison_basis_mismatch');
     const leg = (value: unknown, allowStudyDiagnostics = false): ObservedSpotLeg => {
       const item = object(value, 'native_comparison_leg');
       if (item.status === 'COMPLETED' && item.reason === null) return { status: 'COMPLETED', result: object(item.result, 'native_comparison_result'), reason: null };

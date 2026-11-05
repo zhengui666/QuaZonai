@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -76,7 +77,7 @@ test('one ensemble trial retains members/weights, validation-only account feedba
     },
   ]);
   try {
-    const receipt = await host.start('ensemble', state.input);
+    const receipt = await startLegacyResearch(host, 'ensemble', state.input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const view = await host.view(receipt.conversationId); const facts = view.research!;
     assert.deepEqual(facts.input, state.input);
@@ -123,20 +124,21 @@ test('one ensemble trial retains members/weights, validation-only account feedba
   } finally { await host.close(); await state.cleanup(); }
 });
 
-test('invalid ensemble weights consume the existing budget and rejected proposals never compute', async () => {
+test('invalid ensemble attempts remain recorded without a legacy trial limit', async () => {
   const state = await setup(); state.input.policy.max_trials = 1;
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Invalid complete proposal.', members: [{ model: positive, weight: '0.7' }] }),
-    tool('strategy_portfolio_evaluate', { hypothesis: 'Not a free retry.', members }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Second invalid complete proposal.', members: [{ model: positive, weight: '0.7' }] }),
+    tool('research_finish', { reason: 'Invalid proposals are fully recorded.' }),
   ]);
   const host = await openResearch(state.options);
   try {
-    const receipt = await host.start('budget', state.input);
+    const receipt = await startLegacyResearch(host, 'budget', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'REJECTED']);
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'FAILED']);
     assert.equal(facts.trials[0]!.error, 'portfolio_weights_invalid');
-    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
+    assert.equal(facts.final!.reason, 'Invalid proposals are fully recorded.');
     assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
   } finally { await host.close(); await state.cleanup(); }
@@ -148,16 +150,13 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
   const model = '(module (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)) (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64) f64.const 1))';
   const originalRequest = { schema_version: 1, event_start_ns: '0', event_end_ns: '20', decision_cutoff_ns: '20', evaluation_start_ns: '10',
     source: 'TEST_ONLY', revision: 'original-test-source', modeled_lag_ns: '0', score_threshold: 0,
-    members: [{ weight: '0.5' }, { weight: '0.5' }], gross_exposure: '1', target_ttl_ns: '5', settings: { base_currency: 'pUSD', starting_capital: '3000' } };
+    members: [{ weight: '0.5', total_fuel: '1' }, { weight: '0.5', total_fuel: '1' }], gross_exposure: '1', target_ttl_ns: '5', settings: { base_currency: 'pUSD', starting_capital: '3000' } };
   const input: ResearchInput = { ...state.input, data: { catalog: state.input.data.catalog, catalog_partitions: join(state.directory, 'private-original-manifest.json'),
     train_end_ns: '10', validation_end_ns: '20', catalog_ensemble_request: originalRequest,
     sealed: { catalog: state.input.data.sealed.catalog, catalog_partitions: join(state.directory, 'private-final-manifest.json'), train_end_ns: '10', validation_end_ns: '20',
       catalog_ensemble_request: { ...originalRequest, event_end_ns: '30', decision_cutoff_ns: '30' } } },
     policy: { max_trials: 2, strategy: { name: 'all-catalog-causal-ensemble', kind: 'catalog-ensemble', evaluationPartition: 'HELDOUT' } } };
   const proposed = [{ model, weight: '0.25' }, { model, weight: '0.25' }, { model, weight: '0.5' }];
-  await assert.rejects(evaluatePortfolio({ data: { ...input.data, catalog_ensemble_request: { ...originalRequest,
-    members: [{ weight: '0.5', total_fuel: '100' }, { weight: '0.5' }] } },
-    members: proposed, policy: { name: 'metered-original', kind: 'catalog-ensemble' }, partition: 'VALIDATION', binary: state.options.database }, context), /catalog_ensemble_member_count_mismatch/);
   state.faux.setResponses([
     tool('catalog_input', {}),
     transcript => {
@@ -188,7 +187,7 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
   ]);
   const host = await openResearch(state.options);
   try {
-    const receipt = await host.start('compact-catalog-ensemble', input);
+    const receipt = await startLegacyResearch(host, 'compact-catalog-ensemble', input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(receipt.conversationId)).research!;
     assert.deepEqual(study.input, input);
@@ -216,7 +215,7 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
     assert.equal(modelEntries.includes('scope.json'), false);
     state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'A new conversation cannot reset final exposure.', members: proposed }),
       tool('research_finish', { reason: 'The original window is already exposed.' })]);
-    const exposed = await host.start('compact-catalog-exposed-again', input);
+    const exposed = await startLegacyResearch(host, 'compact-catalog-exposed-again', input);
     await (await host.harness.submission(exposed.submissionId, context))!.wait(context);
     assert.equal((await host.state(exposed.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
     assert.equal((await state.calls()).filter(call => call.command === 'replay-catalog-ensemble').length, 2);
@@ -224,7 +223,7 @@ test('compact catalog ensemble keeps the complete dynamic account proposal, pref
       tool('research_finish', { reason: 'Protocol reassessment recorded; no independent claim.' })]);
     const historicalInput = structuredClone(input);
     historicalInput.policy.strategy = { ...object(input.policy.strategy, 'policy'), evidenceMode: 'HISTORICAL_REASSESSMENT' };
-    const historical = await host.start('compact-catalog-historical', historicalInput);
+    const historical = await startLegacyResearch(host, 'compact-catalog-historical', historicalInput);
     await (await host.harness.submission(historical.submissionId, context))!.wait(context);
     const trial = (await host.state(historical.conversationId)).research!.trials[0]!;
     assert.equal(trial.status, 'COMPUTED', JSON.stringify(trial));
@@ -246,7 +245,7 @@ test('an allowed non-base instrument stays in the original proposal and resolved
     },
   ]);
   try {
-    const receipt = await host.start('selected-instrument', state.input);
+    const receipt = await startLegacyResearch(host, 'selected-instrument', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.deepEqual(facts.input, state.input);
@@ -279,22 +278,23 @@ test('an allowed non-base instrument stays in the original proposal and resolved
   } finally { await host.close(); await state.cleanup(); }
 });
 
-for (const universe of [false, true]) test(`outside ${universe ? 'declared universe' : 'legacy base instrument'} durably fails and consumes the original budget`, async () => {
+for (const universe of [false, true]) test(`outside ${universe ? 'declared universe' : 'legacy base instrument'} durably fails and retains every attempt`, async () => {
   const state = await setup(universe); state.input.policy.max_trials = 1;
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Not an admitted instrument.', members, instrumentId: 'OUTSIDE.SIM' }),
-    tool('strategy_portfolio_evaluate', { hypothesis: 'No free instrument retry.', members, instrumentId: 'TEST.SIM' }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Second inadmissible instrument.', members, instrumentId: 'OUTSIDE.SIM' }),
+    tool('research_finish', { reason: 'Invalid proposals are fully recorded.' }),
   ]);
   const host = await openResearch(state.options);
   try {
-    const receipt = await host.start(`invalid-instrument-${universe}`, state.input);
+    const receipt = await startLegacyResearch(host, `invalid-instrument-${universe}`, state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'REJECTED']);
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'FAILED']);
     assert.equal(facts.trials[0]!.error, 'strategy_instrument_not_allowed');
     assert.equal(object(facts.trials[0]!.proposal, 'proposal').instrumentId, 'OUTSIDE.SIM');
     assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').strategy, state.input.policy.strategy);
-    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
+    assert.equal(facts.final!.reason, 'Invalid proposals are fully recorded.');
     assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
     await host.close();
@@ -312,18 +312,19 @@ for (const explicit of [false, true]) for (const duplicate of [false, true]) tes
   settings.fee_rates = duplicate ? [...settings.fee_rates!, { ...fee }] : settings.fee_rates!.filter((rate) => rate.instrument_id !== selected);
   state.faux.setResponses([
     tool('strategy_portfolio_evaluate', { hypothesis: 'Exact original reserve required.', members, ...(explicit ? { instrumentId: selected } : {}) }),
-    tool('strategy_portfolio_evaluate', { hypothesis: 'No free reserve retry.', members }),
+    tool('strategy_portfolio_evaluate', { hypothesis: 'Second incomplete original reserve.', members, ...(explicit ? { instrumentId: selected } : {}) }),
+    tool('research_finish', { reason: 'Invalid proposals are fully recorded.' }),
   ]);
   const host = await openResearch(state.options);
   try {
-    const receipt = await host.start(`invalid-fees-${explicit}-${duplicate}`, state.input);
+    const receipt = await startLegacyResearch(host, `invalid-fees-${explicit}-${duplicate}`, state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'REJECTED']);
+    assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'FAILED']);
     assert.equal(facts.trials[0]!.error, duplicate ? 'strategy_instrument_fee_duplicate' : 'strategy_instrument_fee_missing');
     assert.deepEqual(object(facts.trials[0]!.proposal, 'proposal').strategy, state.input.policy.strategy);
     assert.deepEqual(facts.input, state.input);
-    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
+    assert.equal(facts.final!.reason, 'Invalid proposals are fully recorded.');
     assert.equal((await host.harness.commit((tx) => tx.scanTasks({ kind: 'qz.strategy-portfolio.evaluate' }, 100), context)).items.length, 0);
     await assert.rejects(readFile(state.log), { code: 'ENOENT' });
   } finally { await host.close(); await state.cleanup(); }
@@ -397,6 +398,28 @@ test('exact proposals, half-open target filtering and original sealed catalog ma
   assert.equal(request.forecast.parameters.total_fuel, null);
 });
 
+test('catalog replay binds unmetered native echoes to the original sealed data and rejects changed science', () => {
+  const request: JsonObject = { train_end_ns: '10', validation_end_ns: '20', forecast: {
+    selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' },
+    parameters: { total_fuel: '1', fast_period: 1, slow_period: 2 } } };
+  const data: JsonObject = { catalog: '/original-primary', request: { ...request, forecast: {
+    ...(request.forecast as JsonObject), selection: { ...((request.forecast as JsonObject).selection as JsonObject), event_end_ns: '20', decision_cutoff_ns: '20' } } },
+    sealed: { catalog: '/original-sealed', request } };
+  const original = structuredClone(data);
+  const echoed = structuredClone(request); const forecast = echoed.forecast as JsonObject;
+  delete (forecast.parameters as JsonObject).total_fuel;
+  (forecast.selection as JsonObject).maximum_rows = 0;
+  assert.equal(replayCatalog(data, echoed), '/original-sealed');
+  for (const selection of [{ ...forecast.selection as JsonObject, event_end_ns: '31' },
+    { ...forecast.selection as JsonObject, decision_cutoff_ns: '41' },
+    { ...forecast.selection as JsonObject, bar_types: ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'] }]) {
+    assert.throws(() => replayCatalog(data, { ...echoed, forecast: { ...forecast, selection } }), /strategy_request_binding_mismatch/);
+  }
+  assert.throws(() => replayCatalog(data, { ...echoed, forecast: { ...forecast, parameters: { ...forecast.parameters as JsonObject, fast_period: 3 } } }), /strategy_request_binding_mismatch/);
+  assert.throws(() => replayCatalog({ ...data, sealed: { ...data.sealed as JsonObject, catalog: null } }, echoed), /catalog_required/);
+  assert.deepEqual(data, original, 'matching an execution echo cannot rewrite frozen requests or catalog bindings');
+});
+
 test('owner stop aborts the ensemble child and joins its provider-free native process', { timeout: 10_000 }, async () => {
   const state = await setup(); const pidPath = join(state.directory, 'native.pid'); const script = join(state.directory, 'wait.mjs');
   await writeFile(script, `import {writeFileSync} from 'node:fs'; if (process.env.QZ_TEST_PROVIDER_SECRET) throw new Error('provider_environment_leaked'); writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000);`);
@@ -404,7 +427,7 @@ test('owner stop aborts the ensemble child and joins its provider-free native pr
   state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Owned cancellation protocol, no computation result.', members })]);
   const host = await openResearch(state.options);
   try {
-    const receipt = await host.start('ensemble-owner-stop', state.input);
+    const receipt = await startLegacyResearch(host, 'ensemble-owner-stop', state.input);
     let pid: number;
     for (;;) {
       try { pid = Number(await readFile(pidPath, 'utf8')); break; }
@@ -439,7 +462,7 @@ test('explicit historical reassessment preserves prior exposure and cannot becom
         return tool('strategy_portfolio_finalize', { trialId: result.trialId, reason: 'Once-only owner history reassessment, not independent qualification.' });
       },
     ]);
-    const receipt = await host.start('explicit-history', state.input);
+    const receipt = await startLegacyResearch(host, 'explicit-history', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
@@ -457,7 +480,7 @@ test('explicit historical reassessment preserves prior exposure and cannot becom
     const strict = JSON.parse(JSON.stringify(state.input)) as typeof state.input;
     delete (strict.policy.strategy as JsonObject).evidenceMode;
     state.faux.setResponses([tool('strategy_portfolio_evaluate', { hypothesis: 'Renaming cannot undo historical exposure.', members }), tool('research_finish', { reason: 'Still exposed.' })]);
-    const reset = await host.start('still-not-fresh', strict);
+    const reset = await startLegacyResearch(host, 'still-not-fresh', strict);
     await (await host.harness.submission(reset.submissionId, context))!.wait(context);
     assert.equal((await host.view(reset.conversationId)).research!.trials[0]!.error, 'heldout_already_exposed');
     assert.deepEqual((await host.harness.snapshot(Exposures, context))!.windows, windows);
@@ -487,7 +510,7 @@ for (const ownStudy of [false, true]) test(`historical reassessment requires pri
       },
       tool('research_finish', { reason: 'No prior other-study exposed window.' }),
     ]);
-    const receipt = await host.start('prior-history-required', state.input);
+    const receipt = await startLegacyResearch(host, 'prior-history-required', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials[0]!.status, 'FAILED', JSON.stringify(facts.trials));
@@ -507,7 +530,7 @@ test('explicit history can reassess another stopped studys original iteration ex
       tool('strategy_portfolio_evaluate', { hypothesis: 'Reassess a previously exposed iteration prefix, not fresh data.', members }),
       tool('research_finish', { reason: 'Protocol-only historical prefix control, no final exposure requested.' }),
     ]);
-    const receipt = await host.start('prior-iteration-history', state.input);
+    const receipt = await startLegacyResearch(host, 'prior-iteration-history', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials[0]!.status, 'COMPUTED', JSON.stringify(facts.trials));
@@ -557,7 +580,7 @@ test('large ensemble feedback and original-trial reads deliver the same account 
     },
   ]);
   try {
-    const receipt = await host.start('large-ensemble-feedback', state.input);
+    const receipt = await startLegacyResearch(host, 'large-ensemble-feedback', state.input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials.length, 1); assert.equal(facts.trials[0]!.status, 'COMPUTED');
@@ -622,7 +645,7 @@ test('large historical ledger pages disclose every trial and read failures witho
     },
   ]);
   try {
-    const receipt = await host.start('large-brief-feedback', state.input);
+    const receipt = await startLegacyResearch(host, 'large-brief-feedback', state.input);
     assert.equal((await (await host.harness.submission(receipt.submissionId, context))!.wait(context)).status, 'done');
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.equal(facts.trials.length, 4); assert.deepEqual(facts.trials.map((trial) => trial.status), ['FAILED', 'COMPUTED', 'COMPUTED', 'COMPUTED']);
@@ -659,7 +682,7 @@ for (const compact of [false, true]) test(`cross-market Harness retains ${compac
     },
   ]);
   try {
-    const receipt = await host.start('cross-market-original', state.input);
+    const receipt = await startLegacyResearch(host, 'cross-market-original', state.input);
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
     assert.deepEqual(facts.input, state.input);

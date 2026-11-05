@@ -67,7 +67,8 @@ test('large cross-market brief and all original training-market pages read compl
     const settled = await (await host.harness.submission(receipt.submissionId, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT);
     assert.equal(settled.status, 'done', JSON.stringify({ calls: faux.state.callCount, readMarkets: seen.length }));
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.deepEqual(facts.input, input);
+    assert.deepEqual({ ...facts.input, policy: input.policy }, input);
+    assert.ok(facts.input!.policy.reviewPolicies);
     assert.deepEqual(facts.trials, []);
     assert.deepEqual(seen, ids);
     assert.equal(facts.final!.status, 'STOPPED');

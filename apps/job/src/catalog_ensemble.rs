@@ -215,7 +215,9 @@ fn bound_scope(root: &Path, scope: &[String]) -> Result<Vec<BarType>> {
     let mut directories = kinds
         .iter()
         .map(|kind| {
-            nautilus_persistence::backend::catalog::urisafe_instrument_id(&kind.to_string())
+            nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(
+                &kind.to_string(),
+            )
         })
         .collect::<HashSet<_>>();
     ensure!(
@@ -250,7 +252,7 @@ fn series_rows(
     let name = kind.to_string();
     let directory = root
         .join("data/bars")
-        .join(nautilus_persistence::backend::catalog::urisafe_instrument_id(&name));
+        .join(nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(&name));
     let mut files = fs::read_dir(directory)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
@@ -264,7 +266,7 @@ fn series_rows(
     let mut bars = Vec::new();
     for path in files {
         if retain_bars
-            && nautilus_persistence::backend::catalog::parse_filename_timestamps(
+            && nautilus_persistence::backend::parquet::catalog::parse_filename_timestamps(
                 &path.to_string_lossy(),
             )
             .is_some_and(|(first, last)| last < start || first >= end)
@@ -381,7 +383,12 @@ fn market(
             bars,
         });
     }
-    Ok(NativeMarketData { series, rows })
+    Ok(NativeMarketData {
+        series,
+        rows,
+        execution_fees: None,
+        fee_selection: None,
+    })
 }
 
 fn complete_scope(
@@ -607,7 +614,7 @@ pub fn replay(
                         .account_type(AccountType::Margin)
                         .book_type(BookType::L1_MBP)
                         .base_currency(Currency::from_str("pUSD")?)
-                        .starting_balances(vec![Money::from_str(&format!(
+                        .starting_balances(vec![Money::from_str_exact(&format!(
                             "{} pUSD",
                             settings.starting_capital.as_decimal().to_plain_string()
                         ))
@@ -617,10 +624,10 @@ pub fn replay(
                         .fee_model(fee_errors.wrap(model.handle()))
                         .fill_model(FillModelHandle::new(fill_model))
                         .latency_model(LatencyModelHandle::new(StaticLatencyModel::new(
-                            latency.base_latency_ns.get().into(),
-                            latency.insert_latency_ns.get().into(),
-                            latency.update_latency_ns.get().into(),
-                            latency.cancel_latency_ns.get().into(),
+                            nautilus_core::DurationNanos::new(latency.base_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.insert_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.update_latency_ns.get()),
+                            nautilus_core::DurationNanos::new(latency.cancel_latency_ns.get()),
                         )))
                         .bar_execution(true)
                         .trade_execution(false)

@@ -8,7 +8,7 @@ export function readResearchIntent(storage: Pick<Storage, 'getItem'> = localStor
     const raw = storage.getItem(researchIntentKey);
     if (!raw) return;
     const value = JSON.parse(raw) as CompactResearchStart;
-    if (value.requestId && value.goal && value.model && value.datasetId && Number.isInteger(value.maxTrials)) return { raw, value };
+    if (value.requestId && value.goal && value.model && value.datasetId) return { raw, value };
   } catch { /* A damaged local draft is not a submitted research request. */ }
 }
 export function captureResearchIntent(input: Omit<CompactResearchStart, 'requestId'>, storage: Pick<Storage, 'setItem'> = localStorage): ResearchIntent {

@@ -1,3 +1,4 @@
+import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -97,7 +98,7 @@ test('saved continuation intent repairs only the missing native input after reop
     assert.deepEqual(Reflect.get(interrupted, 'previousStops'), [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]);
     const key = recoveryRequestId(state.receipt.conversationId, state.receipt.submissionId);
     const intent = (await state.host.harness.snapshot(Requests, context))!.requests[`request:${key}`]!;
-    assert.deepEqual(intent.input, state.input);
+    assertFrozenInput(intent.input, state.input);
     assert.deepEqual(Reflect.get(intent, 'recovery'), { previousSubmissionId: state.receipt.submissionId, mode: 'stopped' });
     state.faux.setResponses(responses()); await state.reopen();
     const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId);
@@ -127,9 +128,9 @@ test('a later owner stop wins over interrupted continuation replay and startup r
   } finally { await state.close(); }
 });
 
-for (const kind of ['selected', 'assessed', 'failed-final', 'exhausted', 'wrong-predecessor'] as const) {
+for (const kind of ['selected', 'assessed', 'failed-final', 'wrong-predecessor'] as const) {
   test(`stopped continuation refuses ${kind} without changing facts or model calls`, { timeout: 15_000 }, async () => {
-    const state = await stoppedStudy(kind === 'exhausted' ? 1 : 3);
+    const state = await stoppedStudy(3);
     try {
       if (['selected', 'assessed', 'failed-final'].includes(kind)) await state.host.harness.commit(async tx => {
         const final = (await tx.doc(Study, state.receipt.conversationId)).final!;
@@ -139,7 +140,7 @@ for (const kind of ['selected', 'assessed', 'failed-final', 'exhausted', 'wrong-
       }, context);
       const before = (await state.host.state(state.receipt.conversationId)).research;
       await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId + (kind === 'wrong-predecessor' ? 1 : 0)),
-        kind === 'exhausted' ? /trial_budget_exhausted/ : kind === 'wrong-predecessor' ? /research_not_recoverable_conflict/ : /research_already_final/);
+        kind === 'wrong-predecessor' ? /research_not_recoverable_conflict/ : /research_already_final/);
       assert.deepEqual((await state.host.state(state.receipt.conversationId)).research, before); assert.equal(state.faux.state.callCount, 2);
     } finally { await state.close(); }
   });
@@ -152,7 +153,7 @@ test('explicit maintenance stop resumes an actually aborted original submission,
     const [next, replay] = await Promise.all([0, 1].map(() => state.host.resume(state.receipt.conversationId, state.receipt.submissionId)));
     assert.deepEqual(replay, next); assert.equal(next.conversationId, state.receipt.conversationId); assert.equal(next.previousSubmissionId, state.receipt.submissionId);
     await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
-    const facts = (await state.host.state(next.conversationId)).research!; assert.deepEqual(facts.input, state.input); assert.equal(facts.trials.length, 1);
+    const facts = (await state.host.state(next.conversationId)).research!; assertFrozenInput(facts.input, state.input); assert.equal(facts.trials.length, 1);
     assert.deepEqual(facts.previousStops, [{ previousSubmissionId: state.receipt.submissionId, final: state.before.final }]); assert.equal(facts.previousStops![0]!.final.reason, 'owner_stop');
     const original = await state.host.submission(state.receipt.submissionId); assert.equal(original.status, 'unanswered'); assert.equal(original.reason, 'aborted');
     assert.deepEqual(await state.host.start('original-owner-key', state.input), state.receipt);
@@ -168,7 +169,7 @@ test('interrupted maintenance continuation repairs only the saved original nativ
     const interrupted = (await state.host.state(state.receipt.conversationId)).research!; assert.equal(interrupted.final, null);
     state.faux.setResponses(responses()); await state.reopen(); const next = await state.host.resume(state.receipt.conversationId, state.receipt.submissionId);
     await (await state.host.harness.submission(next.submissionId, context))!.wait(context);
-    const facts = (await state.host.state(next.conversationId)).research!; assert.deepEqual(facts.input, state.input); assert.equal(facts.trials.length, 1); assert.deepEqual(facts.previousStops, interrupted.previousStops); assert.equal(facts.previousStops!.length, 1);
+    const facts = (await state.host.state(next.conversationId)).research!; assertFrozenInput(facts.input, state.input); assert.equal(facts.trials.length, 1); assert.deepEqual(facts.previousStops, interrupted.previousStops); assert.equal(facts.previousStops!.length, 1);
     assert.equal(state.faux.state.callCount, 3);
   } finally { await state.close(); }
 });

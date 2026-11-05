@@ -3,6 +3,8 @@ import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 import { shortTitle } from '../src/titles';
 import type { CapacityReport, ExecutionErrorDetail, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
+import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
+import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
 
 // Controlled transport only. Real HTTP/durable integration is in real-service.spec.ts.
 async function contract(page: BrowserPage, setup = false, fast = false) {
@@ -61,6 +63,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     if (path === '/datasets') return reply([dataset]);
     if (path === '/mandates') return reply([]);
     if (path === '/factors') return reply([]);
+    if (path === '/review-allocations') return reply([]);
     if (path === '/usage') return reply(usage);
     if (path === '/research') {
       if (method === 'POST') {
@@ -96,6 +99,50 @@ async function audit(page: BrowserPage) {
 }
 async function fits(page: BrowserPage, width: number) { await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width); expect(await page.locator('.study-row').evaluateAll(rows => rows.filter(row => row.clientWidth && row.getBoundingClientRect().right > row.parentElement!.getBoundingClientRect().right + 1).length)).toBe(0); }
 
+test('multi-portfolio allocation preserves explicit constraints and the original request across uncertain submission', async ({ page }) => {
+  const state = await contract(page);
+  const source = (id: string, name: string): PortfolioView => {
+    const review = scoreReview({ id: `report-${id}`, target: { kind: 'PORTFOLIO', id, version: 'fixture-version', sourceEvidenceRefs: ['fixture-evidence'], evaluationStartNs: '100' }, policy: createReviewPolicy('PORTFOLIO', 'fixture-policy', '1'), metrics: [], checks: [], createdAt: '2026-11-02T10:00:00Z' });
+    // Controlled UI admission only; this transport fixture is not scientific approval.
+    return { ...state.portfolio, id, name, review: { ...review, decision: 'PASS', totalScore: 90 } };
+  };
+  let portfolios = [source('first', '配置来源一'), source('second', '配置来源二')];
+  const writes: string[] = []; let record: ReviewAllocationView | null = null;
+  await page.route('**/api/v3/portfolios', route => route.fulfill({ json: portfolios }));
+  await page.route('**/api/v3/review-allocations', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: record ? [record] : [] });
+    writes.push(route.request().postData()!);
+    if (writes.length === 1) return route.abort('failed');
+    const body = route.request().postDataJSON();
+    record = { id: 'new-allocation', requestId: body.requestId, name: body.name, status: 'RUNNING', portfolioIds: body.portfolioIds, taskId: 99, consumedScientificCalls: 3, weights: null, review: null, error: null, createdAt: '2026-11-02T10:00:00Z' };
+    return route.fulfill({ json: record, status: 202 });
+  });
+  await page.route('**/api/v3/review-allocations/new-allocation', route => route.fulfill({ json: record }));
+  const chooseSources = async (label: string) => {
+    const combobox = page.getByLabel(label, { exact: true });
+    await expect(combobox).toHaveAttribute('role', 'combobox');
+    await combobox.click(); await expect(combobox).toHaveAttribute('aria-controls', /.+/);
+    const listboxId = await combobox.getAttribute('aria-controls');
+    const dropdown = page.locator('.ant-select-dropdown').filter({ has: page.locator(`[id="${listboxId}"]`) });
+    await expect(dropdown).toHaveCount(1);
+    await dropdown.getByRole('option', { name: '配置来源一 / CNY', exact: true }).click();
+    await dropdown.getByRole('option', { name: '配置来源二 / CNY', exact: true }).click();
+    await combobox.press('Escape'); await expect(combobox).toHaveAttribute('aria-expanded', 'false');
+  };
+  await page.goto('/#/portfolios'); await page.getByRole('button', { name: '配置多组合资金', exact: true }).click();
+  const form = page.locator('.review-allocation-form'); await form.getByLabel('配置名称', { exact: true }).fill('质量风险配置');
+  await chooseSources('来源组合（至少两个）');
+  const members = form.locator('.review-allocation-member');
+  for (const [index, cap] of ['0.700000000000000001', '0.6'].entries()) { await members.nth(index).getByLabel('单组合权重上限（0–1）', { exact: true }).fill(cap); await members.nth(index).getByLabel('当前资金权重（0–1）', { exact: true }).fill('0'); }
+  await form.getByLabel('簇名称', { exact: true }).fill('共同风险'); await chooseSources('簇成员');
+  await form.getByLabel('簇合计上限（0–1）', { exact: true }).fill('1'); await form.getByLabel('最大换手（0–2）', { exact: true }).fill('1'); await form.getByRole('button', { name: '计算资金配置', exact: true }).click(); await expect(form.getByRole('button', { name: '核对原提交', exact: true })).toBeVisible();
+  expect(JSON.parse(writes[0]!)).toEqual({ requestId: expect.any(String), name: '质量风险配置', portfolioIds: ['first', 'second'], memberCaps: [{ id: 'first', maximumWeight: '0.700000000000000001' }, { id: 'second', maximumWeight: '0.6' }], currentWeights: [{ id: 'first', weight: '0' }, { id: 'second', weight: '0' }], clusterCaps: [{ id: '共同风险', members: ['first', 'second'], maximumWeight: '1' }], maximumTurnover: '1' });
+  portfolios = []; await page.reload(); await page.getByRole('button', { name: '核对原配置提交', exact: true }).click();
+  await expect(form.getByLabel('配置名称', { exact: true })).toHaveValue('质量风险配置'); await expect(form.getByLabel('配置名称', { exact: true })).toBeDisabled();
+  await form.getByRole('button', { name: '核对原提交', exact: true }).click(); await expect(page.locator('.review-allocation-detail')).toContainText('质量风险配置');
+  expect(writes).toEqual([writes[0], writes[0]]); await expect(page.locator('.review-allocation-detail')).toContainText('尚无评审报告');
+});
+
 test('research explicitly selects 365-day Sharpe and preserves its original criterion through retry', async ({ page }) => {
   const state = await contract(page);
   const dataset: DatasetView = { id: 'test-data', name: '测试数据', assetClass: 'equity', currency: 'CNY', source: 'test', start: null, end: null, ready: true,
@@ -108,7 +155,7 @@ test('research explicitly selects 365-day Sharpe and preserves its original crit
   await choose(page, '评价指标', '夏普比率（365 天年化，原生账户）');
   const explanation = criterion.getByRole('button', { name: '解释：夏普比率（365 天年化）', exact: true });
   await explanation.hover(); await expect(page.getByRole('tooltip')).toContainText('365 天'); await page.mouse.move(0, 0);
-  await page.getByLabel('试验预算', { exact: true }).fill('3'); await page.getByRole('button', { name: '开始研究' }).click();
+  await page.getByRole('button', { name: '开始研究' }).click();
   await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
   const original = state.writes.find(write => write.path === '/research')!.raw!;
   expect(JSON.parse(original).specification).toMatchObject({ evaluation: { metric: 'Sharpe Ratio (365 days)' }, search: { scope: 'ensemble', maxMembers: 2 } });
@@ -125,8 +172,8 @@ test('owner setup/login and uncertain research preserve the exact body after cha
   await page.getByLabel('确认密码', { exact: true }).fill('test-only-password'); await page.getByRole('button', { name: '创建密码', exact: true }).click(); await expect(page.getByRole('heading', { name: '研究', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '退出登录', exact: true }).click(); await expect(page.getByRole('heading', { name: '登录工作台' })).toBeVisible(); await page.getByLabel('密码', { exact: true }).fill('test-only-password'); await page.getByRole('checkbox', { name: '记住登录' }).check(); await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(page.locator('.study-row')).toHaveCount(3); await choose(page, '研究状态', '进行中'); await expect(page.locator('.study-row')).toHaveCount(1); await choose(page, '研究状态', '全部状态'); await expect(page.locator('.study-row')).toHaveCount(3); await fits(page, 1440); await audit(page); await page.screenshot({ path: info.outputPath('research-1440.png'), fullPage: true });
-  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await mandate(page, '测试目标'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await page.getByLabel('试验预算', { exact: true }).fill('3'); await expect(page.getByLabel('最多模型成员', { exact: true })).toBeHidden(); await expect(page.locator('.submission-preview')).toContainText('单一 Wasm 因子'); await expect(page.locator('.submission-preview')).not.toContainText('single-factor'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
-  const first = state.writes.find(value => value.path === '/research')!.raw!; expect(JSON.parse(first)).toEqual({ requestId: expect.any(String), goal: '测试目标', specification: { version: 1, name: '测试目标', question: '测试目标', rationale: 'Controlled hypothesis, protocol coverage only.', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' } }, model: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'medium', datasetId: 'test-data', maxTrials: 3 });
+  await page.getByRole('button', { name: '新建研究', exact: true }).click(); await mandate(page, '测试目标'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await expect(page.getByLabel('最多模型成员', { exact: true })).toBeHidden(); await expect(page.locator('.submission-preview')).toContainText('单一 Wasm 因子'); await expect(page.locator('.submission-preview')).not.toContainText('single-factor'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('连接失败', { exact: true })).toBeVisible();
+  const first = state.writes.find(value => value.path === '/research')!.raw!; expect(JSON.parse(first)).toEqual({ requestId: expect.any(String), goal: '测试目标', specification: { version: 1, name: '测试目标', question: '测试目标', rationale: 'Controlled hypothesis, protocol coverage only.', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } }, model: { provider: 'test', modelId: 'test-model' }, thinkingLevel: 'medium', datasetId: 'test-data' });
   state.hideModels(); await page.reload(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('测试目标'); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await expect(page.locator('.authoring-page')).not.toContainText('"provider"'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '测试目标', exact: true, level: 1 })).toBeVisible(); expect(state.writes.filter(value => value.path === '/research').map(value => value.raw)).toEqual([first, first]);
   await expect(page.locator('body')).not.toContainText('SHOULD_NOT_RENDER'); await expect(page.locator('pre')).toHaveCount(0); await page.getByRole('button', { name: '研究操作' }).click(); await page.getByRole('menuitem', { name: '停止研究' }).click(); await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click(); expect(state.writes.filter(value => value.path.endsWith('/stop'))).toHaveLength(0);
   await page.getByRole('button', { name: '研究操作' }).click(); await page.getByRole('menuitem', { name: '停止研究' }).click(); await page.getByRole('dialog').getByRole('button', { name: '停止研究', exact: true }).click(); await expect(page.locator('.document-identity')).toContainText('已停止'); await fits(page, 1440); await page.screenshot({ path: info.outputPath('research-detail-1440.png'), fullPage: true });
@@ -136,8 +183,7 @@ test('only explicit public literature topics survive draft and uncertain request
   const state = await contract(page); await page.goto('/#/research/new');
   const topics = page.getByLabel('公开论文检索主题（可选）', { exact: true });
   await expect(topics).toHaveValue('');
-  await mandate(page, 'Private strategy objective'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('1');
-  await topics.fill('one\ntwo\nthree\nfour'); await page.getByRole('button', { name: '开始研究', exact: true }).click();
+  await mandate(page, 'Private strategy objective'); await choose(page, '数据集', '测试数据 / CNY'); await topics.fill('one\ntwo\nthree\nfour'); await page.getByRole('button', { name: '开始研究', exact: true }).click();
   await expect(page.getByText('请输入最多 3 个公开主题，每行 1 个、最多 500 字，不含控制字符', { exact: true })).toBeVisible();
   expect(state.writes.filter(write => write.path === '/research')).toEqual([]);
   const approved = '  public momentum  \ntransaction costs'; await topics.fill(approved); await page.reload(); await expect(topics).toHaveValue(approved);
@@ -157,7 +203,7 @@ test('an idle unanswered study cannot be relabelled as an owner stop', async ({ 
 test('request conflicts require explicit editing and retain downloadable original bytes', async ({ page }, info) => {
   await contract(page); const bodies: string[] = [];
   await page.route('**/api/v3/research', route => { if (route.request().method() !== 'POST') return route.fallback(); bodies.push(route.request().postData()!); return bodies.length === 1 ? route.fulfill({ status: 409, json: { error: 'request_id_conflict' } }) : route.fallback(); });
-  await page.goto('/#/research/new'); await mandate(page, 'Original conflicted question'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await page.getByLabel('试验预算', { exact: true }).fill('1'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await expect(page.getByRole('button', { name: '重新编辑', exact: true })).toBeEnabled(); const original = bodies[0]!;
+  await page.goto('/#/research/new'); await mandate(page, 'Original conflicted question'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); await expect(page.getByRole('button', { name: '重新编辑', exact: true })).toBeEnabled(); const original = bodies[0]!;
   await page.getByRole('button', { name: '重新编辑', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click(); expect(bodies).toHaveLength(1); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBe(original);
   await page.getByRole('button', { name: '重新编辑', exact: true }).click(); const dialog = page.getByRole('dialog'); await expect(dialog).toContainText('不取消原提交'); await dialog.getByRole('button', { name: '保留原提交并重新编辑', exact: true }).click(); await expect(page.getByLabel('研究问题', { exact: true })).toBeEnabled(); await page.locator('.previous-command > summary').click(); const downloaded = page.waitForEvent('download'); await page.getByRole('link', { name: '下载原提交', exact: true }).click(); const downloadedPath = await (await downloaded).path(); expect(await readFile(downloadedPath!, 'utf8')).toBe(original); await page.setViewportSize({ width: 320, height: 844 }); await fits(page, 320); await audit(page); await page.setViewportSize({ width: 390, height: 844 }); await fits(page, 390); await page.screenshot({ path: info.outputPath('original-command-mobile.png'), fullPage: true });
   await page.reload(); await expect(page.locator('.previous-command')).toBeVisible(); await expect(page.getByLabel('研究问题', { exact: true })).toHaveValue('Original conflicted question'); await mandate(page, 'Explicit corrected question'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect.poll(() => bodies.length).toBe(2); expect(JSON.parse(bodies[1]!).requestId).not.toBe(JSON.parse(original).requestId); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBe(bodies[1]); await expect(page.locator('pre')).toHaveCount(0);
@@ -190,7 +236,7 @@ for (const beforeReplay of [true, false]) test(`a remounted command unlocks afte
   await contract(page); let first!: () => void; let second!: () => void; let firstFinished = false; const heldFirst = new Promise<void>(resolve => { first = resolve; }); const heldSecond = new Promise<void>(resolve => { second = resolve; }); const bodies: string[] = [];
   await page.route('**/api/v3/research', async route => { if (route.request().method() !== 'POST') return route.fallback(); bodies.push(route.request().postData()!); const ordinal = bodies.length; await (ordinal === 1 ? heldFirst : heldSecond); await route.fulfill({ status: 409, json: { error: 'model_unavailable' } }); if (ordinal === 1) firstFinished = true; });
   try {
-    await page.goto('/#/research/new'); await mandate(page, 'Definitively rejected original'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await page.getByLabel('试验预算', { exact: true }).fill('1'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect.poll(() => bodies.length).toBe(1); await page.getByRole('navigation', { name: '工作台设置' }).getByRole('link', { name: '设置', exact: true }).click(); await page.getByRole('navigation', { name: '设置分类' }).getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', level: 2, exact: true })).toBeVisible(); await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click(); await page.getByRole('button', { name: '新建研究', exact: true }).click();
+    await page.goto('/#/research/new'); await mandate(page, 'Definitively rejected original'); await choose(page, '数据集', '测试数据 / CNY'); await choose(page, '模型', '测试模型 / test'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect.poll(() => bodies.length).toBe(1); await page.getByRole('navigation', { name: '工作台设置' }).getByRole('link', { name: '设置', exact: true }).click(); await page.getByRole('navigation', { name: '设置分类' }).getByRole('link', { name: '数据', exact: true }).click(); await expect(page.getByRole('heading', { name: '数据', level: 2, exact: true })).toBeVisible(); await page.getByRole('navigation', { name: '主要工作区' }).getByRole('link', { name: '研究', exact: true }).click(); await page.getByRole('button', { name: '新建研究', exact: true }).click();
     if (beforeReplay) { first(); await expect.poll(() => firstFinished).toBe(true); await expect(page.getByLabel('研究问题', { exact: true })).toBeEnabled(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toHaveCount(0); expect(bodies).toHaveLength(1); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBeNull(); return; }
     await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect.poll(() => bodies.length).toBe(2); first(); await expect.poll(() => firstFinished).toBe(true); await expect(page.getByLabel('研究问题', { exact: true })).toBeDisabled(); second(); await expect(page.getByLabel('研究问题', { exact: true })).toBeEnabled(); expect(bodies[1]).toBe(bodies[0]); expect(await page.evaluate(() => sessionStorage.getItem('quazonai.command.research.v3'))).toBeNull(); await expect(page.getByRole('button', { name: '开始研究', exact: true })).toBeVisible();
   } finally { first(); second(); }
@@ -232,8 +278,7 @@ test('subscription speed and max defaults are saved, inherited and preserved on 
   await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast');
   await choose(page, '推理强度', '最高'); await choose(page, '推理速度', '标准'); await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
   expect(JSON.parse(state.writes.find(write => write.path === '/settings')!.raw!)).toEqual({ defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.4' }, thinkingLevel: 'max', serviceTier: 'default' });
-  await page.goto('/#/research/new'); await mandate(page, '订阅速度研究'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('3');
-  await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('标准'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
+  await page.goto('/#/research/new'); await mandate(page, '订阅速度研究'); await choose(page, '数据集', '测试数据 / CNY'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('标准'); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
   await choose(page, '推理速度', 'Fast'); await expect(page.locator('.submission-preview')).toContainText('Fast'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
   const original = state.writes.find(write => write.path === '/research')!.raw!; expect(JSON.parse(original)).toMatchObject({ thinkingLevel: 'max', serviceTier: 'priority' });
   await page.reload(); await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast'); await page.getByRole('button', { name: '核对提交', exact: true }).click(); await expect(page.getByRole('heading', { name: '订阅速度研究', exact: true, level: 1 })).toBeVisible();
@@ -244,7 +289,7 @@ test('switching to a model without speed options clears subscription speed', asy
   const state = await contract(page, false, true); await page.goto('/#/settings'); await choose(page, '默认模型', '测试模型 / test'); await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled(); await expect(page.getByText('当前模型服务不支持速度配置', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '保存设置', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/settings')!.raw!).serviceTier).toBeNull();
   await page.goto('/#/research/new'); await choose(page, '模型', '订阅模型 / openai-codex'); await choose(page, '推理速度', 'Fast'); await choose(page, '模型', '测试模型 / test'); await expect(page.getByLabel('推理速度', { exact: true })).toBeDisabled(); await expect(page.getByText('当前模型服务不支持速度配置', { exact: true })).toBeVisible();
-  await mandate(page, '标准模型研究'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByLabel('试验预算', { exact: true }).fill('1'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/research')!.raw!)).not.toHaveProperty('serviceTier');
+  await mandate(page, '标准模型研究'); await choose(page, '数据集', '测试数据 / CNY'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/research')!.raw!)).not.toHaveProperty('serviceTier');
 });
 
 test('model provider secrets stay transient; uncertain prompt response retries original body and cancel is explicit', async ({ page }) => {
@@ -431,9 +476,16 @@ test('late settings response cannot overwrite a newer save or discard a later dr
   } finally { release(); }
 });
 
-for (const budget of ['0', '9007199254740991']) test(`explicit trial budget ${budget} is serialized without a UI cap`, async ({ page }) => {
-  const state = await contract(page); await page.goto('/#/research/new'); await mandate(page, 'Explicit budget protocol'); await choose(page, '数据集', '测试数据 / CNY');
-  await page.getByLabel('试验预算', { exact: true }).fill('1.5'); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByText('请输入非负安全整数', { exact: true })).toBeVisible(); expect(state.writes).toEqual([]); await page.getByLabel('试验预算', { exact: true }).fill(budget); await page.getByRole('button', { name: '开始研究', exact: true }).click(); await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible(); expect(JSON.parse(state.writes.find(write => write.path === '/research')!.raw!).maxTrials).toBe(Number(budget));
+test('research starts without a trial quota and ignores a saved legacy quota', async ({ page }) => {
+  const state = await contract(page);
+  await page.addInitScript(() => sessionStorage.setItem('quazonai.draft.research', JSON.stringify({ maxTrials: '0' })));
+  await page.goto('/#/research/new');
+  await mandate(page, 'Research without a quota'); await choose(page, '数据集', '测试数据 / CNY');
+  await expect(page.getByLabel('试验预算', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '开始研究', exact: true }).click();
+  await expect(page.getByRole('button', { name: '核对提交', exact: true })).toBeVisible();
+  const submitted = JSON.parse(state.writes.find(write => write.path === '/research')!.raw!);
+  expect(submitted).not.toHaveProperty('maxTrials'); expect(submitted.specification.search.stop).toBe('selection');
 });
 
 test('light/dark and 320–1024 layouts retain exact long facts without page overflow', async ({ page }, info) => {

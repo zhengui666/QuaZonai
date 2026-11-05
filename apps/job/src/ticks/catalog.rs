@@ -2,10 +2,11 @@
 use anyhow::{ensure, Context, Result};
 use contracts::ticks::NativeTradeTickFactorEvaluationRequestV1;
 use nautilus_model::{
-    data::{Data, TradeTick},
+    data::{DataBatch, NautilusDataType, TradeTick},
     identifiers::InstrumentId,
     instruments::{Instrument, InstrumentAny},
 };
+use nautilus_persistence::catalog::types::CatalogQuery;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -46,10 +47,6 @@ pub(crate) fn source_provenance(root: &Path) -> Result<Value> {
         sibling
     };
     let file = File::open(&path).context("TICK_PROVENANCE_MISSING")?;
-    ensure!(
-        file.metadata()?.len() <= 16 * 1024 * 1024,
-        "TICK_PROVENANCE_LIMIT"
-    );
     serde_json::from_reader(file).context("TICK_PROVENANCE_INVALID")
 }
 
@@ -332,13 +329,13 @@ pub(crate) fn load(
         );
     }
     ensure!(!selected.is_empty(), "TICK_INSTRUMENTS_EMPTY");
-    let mut catalog =
+    let catalog =
         crate::catalog::open_catalog(root).context("TICK_NATIVE_FORMAT_OR_CATALOG_INCOMPATIBLE")?;
     // These definitions describe the native representation only. Filtering by
     // historical cutoff would incorrectly reject visibly late current metadata;
     // none of its economic parameters is consumed by factor-only evaluation.
     let definitions = catalog
-        .instruments(Some(&request.input.instrument_ids), None, None)
+        .query_instruments_filtered(Some(&request.input.instrument_ids), None, None)
         .context("TICK_NATIVE_DEFINITIONS_INVALID")?;
     for definition in &definitions {
         if request
@@ -365,71 +362,66 @@ pub(crate) fn load(
             "TICK_INSTRUMENT_DEFINITION_MISSING: {name}"
         );
     }
-    let event_interval = format!(
-        "ts_event >= {} AND ts_event < {}",
-        request.input.event_start_ns.get(),
-        request.input.event_end_ns.get()
-    );
     // This initial policy requires exact event-time proxy clocks. Availability
     // bounds would hide contradictory in-window rows before validation, so use
     // the explicit event filter and validate every selected row's clocks below.
-    let query = catalog
-        .query::<TradeTick>(
-            Some(request.input.instrument_ids.clone()),
-            None,
-            None,
-            Some(&event_interval),
-            None,
-            false,
-        )
-        .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
+    let query = CatalogQuery::new(NautilusDataType::TradeTick)
+        .with_identifiers(Some(request.input.instrument_ids.clone()));
+    let mut session = crate::catalog::file_batch_session(
+        &catalog,
+        query,
+        Some(request.input.event_start_ns.get()..request.input.event_end_ns.get()),
+        4096,
+    )
+    .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
     let mut identities = BTreeMap::new();
     let mut rows = 0_usize;
-    for item in query {
-        let Data::Trade(trade) = item.context("TICK_NATIVE_FORMAT_OR_DECODE_INCOMPATIBLE")? else {
+    while let Some(batch) = session
+        .next_batch()
+        .context("TICK_NATIVE_FORMAT_OR_DECODE_INCOMPATIBLE")?
+    {
+        let DataBatch::Trade(batch) = batch else {
             anyhow::bail!("TICK_NATIVE_TYPE_MISMATCH");
         };
-        let event = trade.ts_event.as_u64();
-        let available = trade.ts_init.as_u64();
-        ensure!(event == available, "TICK_AVAILABILITY_POLICY_UNSUPPORTED");
-        ensure!(
-            event >= request.input.event_start_ns.get()
-                && event < request.input.event_end_ns.get()
-                && available <= request.input.decision_cutoff_ns.get(),
-            "TICK_QUERY_OUTSIDE_SELECTION"
-        );
-        ensure!(
-            rows < request.input.maximum_rows.context("TICK_RESOURCE_LIMIT")? as usize,
-            "TICK_ROW_LIMIT"
-        );
-        let name = trade.instrument_id.to_string();
-        let trades = selected
-            .get_mut(&name)
-            .context("TICK_UNREQUESTED_INSTRUMENT")?;
-        ensure!(
-            !trade.price.is_undefined()
-                && trade.price.as_f64().is_finite()
-                && trade.price.as_f64() > 0.0,
-            "TICK_PRICE_INVALID"
-        );
-        ensure!(
-            !trade.size.is_undefined()
-                && trade.size.as_f64().is_finite()
-                && trade.size.as_f64() > 0.0,
-            "TICK_QUANTITY_INVALID"
-        );
-        let id = trade.trade_id.as_str();
-        ensure!(
-            !id.trim().is_empty() && !id.chars().any(char::is_control),
-            "TICK_ID_MISSING"
-        );
-        let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
-        if let Some(previous) = identities.insert(key, trade) {
-            ensure!(previous == trade, "TICK_ID_CONFLICT");
-            anyhow::bail!("TICK_ID_DUPLICATE");
+        for &trade in batch.as_ref() {
+            let event = trade.ts_event.as_u64();
+            let available = trade.ts_init.as_u64();
+            ensure!(event == available, "TICK_AVAILABILITY_POLICY_UNSUPPORTED");
+            ensure!(
+                event >= request.input.event_start_ns.get()
+                    && event < request.input.event_end_ns.get()
+                    && available <= request.input.decision_cutoff_ns.get(),
+                "TICK_QUERY_OUTSIDE_SELECTION"
+            );
+            let name = trade.instrument_id.to_string();
+            let trades = selected
+                .get_mut(&name)
+                .context("TICK_UNREQUESTED_INSTRUMENT")?;
+            ensure!(
+                !trade.price.is_undefined()
+                    && trade.price.as_f64().is_finite()
+                    && trade.price.as_f64() > 0.0,
+                "TICK_PRICE_INVALID"
+            );
+            ensure!(
+                !trade.size.is_undefined()
+                    && trade.size.as_f64().is_finite()
+                    && trade.size.as_f64() > 0.0,
+                "TICK_QUANTITY_INVALID"
+            );
+            let id = trade.trade_id.as_str();
+            ensure!(
+                !id.trim().is_empty() && !id.chars().any(char::is_control),
+                "TICK_ID_MISSING"
+            );
+            let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
+            if let Some(previous) = identities.insert(key, trade) {
+                ensure!(previous == trade, "TICK_ID_CONFLICT");
+                anyhow::bail!("TICK_ID_DUPLICATE");
+            }
+            trades.push(trade);
+            rows += 1;
         }
-        trades.push(trade);
-        rows += 1;
     }
     ensure!(rows > 0, "TICK_EMPTY_SELECTION");
     if let Some(prepared) = provenance.get("native_prepared_selection") {
@@ -468,7 +460,7 @@ mod tests {
         instruments::stubs::{audusd_sim, binary_option},
         types::{Price, Quantity},
     };
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     use serde_json::json;
 
     fn request() -> NativeTradeTickFactorEvaluationRequestV1 {
@@ -572,10 +564,14 @@ mod tests {
     fn native_query_preserves_trade_id_reuse_at_distinct_event_times() {
         let original = vec![tick(10, 10, "reused"), tick(20, 20, "reused")];
         let temp = native_fixture(original.clone());
-        assert_eq!(
-            load(temp.path(), &request()).unwrap()["AUD/USD.SIM"],
-            original
-        );
+        for legacy_limit in [None, Some(0), Some(1)] {
+            let mut request = request();
+            request.input.maximum_rows = legacy_limit;
+            assert_eq!(
+                load(temp.path(), &request).unwrap()["AUD/USD.SIM"],
+                original
+            );
+        }
     }
 
     #[test]

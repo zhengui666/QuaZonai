@@ -30,7 +30,8 @@ pub struct NativeCatalogFactorScanRequestV1 {
     pub validation_end_ns: DbCounter,
     pub event_end_ns: DbCounter,
     pub decision_cutoff_ns: DbCounter,
-    #[schema(minimum = 1)]
+    /// Legacy row allowance retained in frozen requests; no longer limits reads.
+    #[serde(default)]
     pub maximum_rows: u32,
     pub parameters: crate::science::NativeForecastParametersV1,
 }
@@ -152,6 +153,9 @@ pub struct NativeFactorPartitionReportV1 {
     /// Pooled qualifying score/return pairs across assets, not cross-sectional IC.
     pub metric: NativeFactorMetricV1,
     pub assets: Vec<NativeFactorAssetMetricV1>,
+    /// Computed from the original partition points before summary projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<crate::review_science::NativeFactorDiagnosticsV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

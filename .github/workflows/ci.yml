@@ -101,14 +101,16 @@ jobs:
     if: needs.scope.outputs.science == 'true'
     # glibc baseline is compatible with the pinned bookworm Node image.
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
-      RUSTUP_TOOLCHAIN: '1.98.1'
+      RUSTUP_TOOLCHAIN: '1.99.1'
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
-      PROFILE: ${{ github.event_name == 'push' && 'release' || 'debug' }}
+      # PRs can restore the base branch's release cache; a PR-only debug cache
+      # cannot seed other PRs or the subsequent dev push.
+      PROFILE: release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -125,6 +127,8 @@ jobs:
           npm ci --prefix apps/service --no-audit --no-fund
           npm ci --prefix apps/research --ignore-scripts --no-audit --no-fund
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --target wasm32-unknown-unknown
+      - name: Check native formatting before compiling the scientific stack
+        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           prefix-key: quazonai-science-v2
@@ -133,10 +137,14 @@ jobs:
           cache-workspace-crates: false
       - name: Build each required native executable once
         run: bash deploy/docker/native-build.sh "$PROFILE" "$RUNNER_TEMP/native-artifacts"
-      - name: Retained native rules, real science and integrated Node core scenario
+      - name: Retained native rules and real science
+        run: make check-science PROFILE="$PROFILE" QZ_EXPORT_OBSERVED_FIXTURES=0 QZ_SCIENCE_TEST_FILTER_ARGS="--skip export_disjoint_native_pm_revision_when_requested"
+      - name: Verify remote Nautilus integration
         env:
           QZ_JOB_BINARY: ${{ runner.temp }}/native-artifacts/job
-        run: make check-science check-core PROFILE="$PROFILE"
+          QZ_PM_NATIVE_FIXTURE: ${{ runner.temp }}/qz-pm-native-fixture/source.json
+          QZ_PM_FORWARD_FIXTURE_DIR: ${{ runner.temp }}/qz-pm-forward-fixture
+        run: node --experimental-strip-types --test apps/service/test/remote-native.ts
       - name: Mapped public history in the optional native format
         run: |
           profile_args=()

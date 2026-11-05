@@ -55,8 +55,8 @@ impl RecordedLiquidityModel {
         &self,
         instrument: &InstrumentAny,
         order: &OrderAny,
-        best_bid: Price,
-        best_ask: Price,
+        best_bid: Option<Price>,
+        best_ask: Option<Price>,
     ) -> Result<Option<OrderBook>> {
         ensure!(
             order.order_type() == OrderType::Market
@@ -71,6 +71,9 @@ impl RecordedLiquidityModel {
             OrderSide::Buy => (OrderSide::Sell, best_ask),
             OrderSide::Sell => (OrderSide::Buy, best_bid),
         };
+        // Missing opposite-side prices cannot become a fabricated quote or a
+        // None book, which would bypass the recorded pool via standard fills.
+        let price = price.context("RECORDED_LIQUIDITY_PRICE_UNAVAILABLE")?;
         ensure!(
             !price.is_undefined() && price.as_decimal() > Decimal::ZERO,
             "RECORDED_LIQUIDITY_PRICE_INVALID"
@@ -115,7 +118,7 @@ impl RecordedLiquidityModel {
         instrument.try_normalize_qty(size)?;
         let mut book = OrderBook::new(instrument.id(), BookType::L2_MBP);
         book.add(BookOrder::new(side, price, size, 1), 0, 0, now);
-        // Never return an empty book: upstream would fall back to default fills.
+        // The recorded pool supplies all liquidity; None would select standard fills.
         Ok(Some(book))
     }
 }
@@ -134,8 +137,8 @@ impl FillModel for RecordedLiquidityModel {
         &mut self,
         instrument: &InstrumentAny,
         order: &OrderAny,
-        best_bid: Price,
-        best_ask: Price,
+        best_bid: Option<Price>,
+        best_ask: Option<Price>,
     ) -> Result<Option<OrderBook>> {
         self.observer
             .observe(self.book(instrument, order, best_bid, best_ask))

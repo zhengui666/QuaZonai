@@ -237,7 +237,7 @@ pub(super) fn binding_with_balances(
             native_version,
             parameters,
             ..
-        } if native_version == "0.63.0"
+        } if native_version == "0.67.0"
             && parameters.acceptance == report.fee_acceptance
             && parameters.schedule == report.fee_schedule => {}
         _ => return Err(bad("spot_report.frozen_fee_model")),
@@ -416,7 +416,7 @@ pub(super) fn binding_with_balances(
                 clocks.push(observation.native_clock_ns);
             }
         }
-        if source.native_version != "0.63.0"
+        if source.native_version != "0.67.0"
             || clocks.len() as u64 != source.selected_row_count.get()
             || responses.len() as u64 != source.response_count.get()
             || clocks.iter().min().copied() != Some(source.first_received_ns)

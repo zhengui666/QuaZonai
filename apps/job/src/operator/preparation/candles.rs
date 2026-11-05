@@ -19,7 +19,6 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const MIB: u64 = 1024 * 1024;
 const SCHEMA: &str = "qz.public_acquisition/1";
 const PROVIDER: &str = "coinbase-candles";
 const TERMS: &str = "https://www.coinbase.com/legal/market_data";
@@ -27,7 +26,7 @@ const TERMS: &str = "https://www.coinbase.com/legal/market_data";
 #[derive(Parser)]
 #[command(about = "Import frozen crypto OHLCV into native BARs without certifying historical PIT")]
 pub struct Arguments {
-    /// Original acquisition.json from the bounded public-source runner.
+    /// Original acquisition.json from the public-source runner.
     #[arg(long)]
     pub acquisition: PathBuf,
     /// Original native InstrumentAny JSON array; no product definitions are synthesized.
@@ -45,7 +44,9 @@ struct Manifest {
     provider: Value,
     selection: Selection,
     selection_bounds: String,
-    limits: Limits,
+    /// Historical acquisition allowances are retained without enforcing quotas.
+    #[serde(default, rename = "limits")]
+    _limits: Value,
     requests: Vec<Request>,
     admission: Value,
     created_at: String,
@@ -64,41 +65,6 @@ struct Selection {
     start_seconds: u64,
     end_seconds: u64,
     interval_seconds: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Limits {
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_response_bytes: Option<u64>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_response_total_bytes: Option<u64>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_requests: Option<usize>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_records: Option<usize>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_output_bytes: Option<u64>,
-}
-
-impl Limits {
-    fn validate(&self) -> Result<()> {
-        // Preserve the exact frozen legacy shape. Null means no application cap in
-        // new manifests; only a caller-declared total byte budget is operational.
-        let legacy = self.max_response_bytes == Some(4 * MIB)
-            && self.max_requests == Some(128)
-            && self.max_records == Some(100_000)
-            && self.max_output_bytes == Some(128 * MIB);
-        let uncapped = self.max_response_bytes.is_none()
-            && self.max_requests.is_none()
-            && self.max_records.is_none()
-            && self.max_output_bytes.is_none();
-        ensure!(
-            (legacy || uncapped) && self.max_response_total_bytes.is_none_or(|v| v > 0),
-            "SOURCE_ACQUISITION_LIMITS"
-        );
-        Ok(())
-    }
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -299,8 +265,6 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
             "permission_status":"REQUIRES_INDEPENDENT_REVIEW"}),
         "SOURCE_ACQUISITION_CONTRACT"
     );
-    let limits = &manifest.limits;
-    limits.validate()?;
     ensure!(
         manifest.source_terms.reference == TERMS
             && manifest.source_terms.evidence_status
@@ -384,12 +348,6 @@ fn original_rows(manifest: &Manifest, root: &Path) -> Result<BTreeMap<u64, Origi
         bytes_read = bytes_read
             .checked_add(bytes.len() as u64)
             .context("SOURCE_BYTE_COUNT_OVERFLOW")?;
-        ensure!(
-            limits
-                .max_response_total_bytes
-                .is_none_or(|maximum| bytes_read <= maximum),
-            "SOURCE_BYTE_LIMIT"
-        );
         let source: Vec<[Box<RawValue>; 6]> = serde_json::from_slice(&bytes)?;
         ensure!(source.len() <= 300, "SOURCE_RESPONSE_ROW_LIMIT");
         let mut seen = BTreeSet::new();
@@ -591,7 +549,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         decision_cutoff_ns: counter(cutoff.as_u64())?,
         maximum_rows: u32::try_from(bars.len())?,
     };
-    let report = json!({"schema_version":1, "native_version":"0.63.0", "source_provider":PROVIDER,
+    let report = json!({"schema_version":1, "native_version":"0.67.0", "source_provider":PROVIDER,
     "source_record_kind":"OHLCV_CANDLE", "native_selection":native_selection, "instruments":1,
     "instrument_versions":instruments.len(), "bars":bars.len(), "catalog_relative_path":"catalog",
     "source_evidence_relative_path":"source-evidence.json", "native_readback_verified":true,
@@ -608,52 +566,4 @@ pub fn run(args: &Arguments) -> Result<Value> {
         &serde_json::to_vec_pretty(&report)?,
     )?;
     Ok(report)
-}
-
-#[cfg(test)]
-mod limit_contract_tests {
-    use super::*;
-
-    fn uncapped() -> Value {
-        json!({"max_response_bytes":null,"max_response_total_bytes":null,
-            "max_requests":null,"max_records":null,"max_output_bytes":null})
-    }
-
-    #[test]
-    fn accepts_exact_legacy_or_unlimited_manifest_without_mutating_it() {
-        for value in [
-            uncapped(),
-            json!({"max_response_bytes":4*MIB,
-            "max_response_total_bytes":32*MIB,"max_requests":128,
-            "max_records":100_000,"max_output_bytes":128*MIB}),
-        ] {
-            let original = value.clone();
-            serde_json::from_value::<Limits>(value.clone())
-                .unwrap()
-                .validate()
-                .unwrap();
-            assert_eq!(value, original);
-        }
-        let mut value = uncapped();
-        value["max_response_total_bytes"] = json!(129 * MIB);
-        serde_json::from_value::<Limits>(value)
-            .unwrap()
-            .validate()
-            .unwrap();
-    }
-
-    #[test]
-    fn refuses_missing_mixed_forged_or_zero_limit_metadata() {
-        let mut value = uncapped();
-        value.as_object_mut().unwrap().remove("max_records");
-        assert!(serde_json::from_value::<Limits>(value).is_err());
-        for (key, number) in [("max_records", 1), ("max_response_total_bytes", 0)] {
-            let mut value = uncapped();
-            value[key] = json!(number);
-            assert!(serde_json::from_value::<Limits>(value)
-                .unwrap()
-                .validate()
-                .is_err());
-        }
-    }
 }

@@ -1,3 +1,5 @@
+import { closeResearch } from '../src/closure.ts';
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
@@ -28,16 +30,17 @@ console.log(JSON.stringify({ request: JSON.parse(input), protocolOnly: true }));
   const faux = fauxProvider({ tokensPerSecond: 100_000 }); const models = createModels(); models.setProvider(faux.provider);
   const request = { train_end_ns: '10', validation_end_ns: '20', forecast: { selection: { bar_types: ['TEST.SIM-1-MINUTE-LAST-EXTERNAL'], event_start_ns: '0', event_end_ns: '30', decision_cutoff_ns: '40' }, parameters: {} } };
   const data = { catalog: directory, request, sealed: { catalog: directory, request } };
-  const trial = defineExtension({ name: 'test.closure-source', tasks: [FactorTask], tools: [defineTool({ name: 'candidate', description: 'Protocol-only registered candidate; no market evidence claim', parameters: Type.Object({}), replay: 'safe',
-    execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original protocol candidate' }, async () => ({ request: iterationRequest(data),
+  const trial = defineExtension({ name: 'test.closure-source', tasks: [FactorTask], tools: [defineTool({name:'close_selection',description:'TEST_ONLY original selection closure',parameters:Type.Object({}),replay:'safe',async execute(_args,api,ctx){await closeResearch(api,ctx,'owner_selection_complete');return {control:{terminate:true}};}}), defineTool({ name: 'candidate', description: 'Protocol-only registered candidate; no market evidence claim', parameters: Type.Object({}), replay: 'safe',
+    async execute(_args, api, ctx) {
+      return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { model: '(module)', hypothesis: 'Original protocol candidate' }, async () => ({ request: iterationRequest(data),
       partitions: [{ partition: 'VALIDATION', metric: { pearson_ic: { status: 'AVAILABLE', value: 0.5 } } }] }))); },
   })] });
   const options = { database: join(directory, 'research.sqlite'), models, extensions: [research, trial] };
   let host = await openResearch(options);
   try {
-    faux.setResponses([fauxAssistantMessage(fauxToolCall('candidate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('The original budget is complete.')]);
+    faux.setResponses([fauxAssistantMessage(fauxToolCall('candidate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage(fauxToolCall('close_selection', {}), { stopReason: 'toolUse' })]);
     const input = { goal: 'Recovery protocol only; not model-quality or performance evidence', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data, policy: { max_trials: 1, selection_metric: 'validation.pearson_ic' } };
-    const receipt = await host.start('original', input);
+    const receipt = await startLegacyResearch(host, 'original', input);
     for (;;) {
       try { if (Number(await readFile(pidPath, 'utf8')) > 0) break; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       await new Promise(resolve => setTimeout(resolve, 5));
@@ -70,6 +73,6 @@ console.log(JSON.stringify({ request: JSON.parse(input), protocolOnly: true }));
     assert.equal((await host.harness.commit(tx => tx.scanTasks({ kind: 'qz.research.close' }, 100), context)).items.length, 1);
     assert.equal(faux.state.callCount, 2);
     assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 2);
-    assert.deepEqual(await host.start('original', input), receipt);
+    assert.deepEqual(await startLegacyResearch(host, 'original', input), receipt);
   } finally { await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }
 });

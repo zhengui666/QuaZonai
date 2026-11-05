@@ -80,7 +80,7 @@ mod tests {
         let requirement = |threshold: &str| {
             serde_json::from_value::<MetricRequirementV1>(serde_json::json!({"schema_version":1,"metric_code":"FORWARD_DAILY_RETURN_MEAN","scope":"forward","comparator":"GE","threshold_low":threshold,"threshold_high":null,"required":true,"minimum_observations":"2","method_allowlist":["nautilus-analysis.ReturnsAverage"]})).unwrap()
         };
-        let mut metric:MetricValueV1=serde_json::from_value(serde_json::json!({"schema_version":1,"evaluation_id":evaluation,"metric_code":"FORWARD_DAILY_RETURN_MEAN","scope":"forward","value":0.1,"status":"OK","reason_code":null,"unit":"RETURN_PER_DAY","period_start":"2026-09-10T00:00:00Z","period_end":"2026-09-12T00:00:00Z","observation_count":"2","frequency":"UTC_DAY","annualization_factor":null,"method_id":"nautilus-analysis.ReturnsAverage","method_version":"0.63.0","source_artifact_id":Id::new(),"higher_is_better":true})).unwrap();
+        let mut metric:MetricValueV1=serde_json::from_value(serde_json::json!({"schema_version":1,"evaluation_id":evaluation,"metric_code":"FORWARD_DAILY_RETURN_MEAN","scope":"forward","value":0.1,"status":"OK","reason_code":null,"unit":"RETURN_PER_DAY","period_start":"2026-09-10T00:00:00Z","period_end":"2026-09-12T00:00:00Z","observation_count":"2","frequency":"UTC_DAY","annualization_factor":null,"method_id":"nautilus-analysis.ReturnsAverage","method_version":"0.67.0","source_artifact_id":Id::new(),"higher_is_better":true})).unwrap();
         for (floor, target, expected) in [
             ("0", "0.01", Classification::Healthy),
             ("0", "0.2", Classification::Watch),

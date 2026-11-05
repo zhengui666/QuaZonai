@@ -35,6 +35,14 @@ class UncappedDataTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def test_legacy_local_byte_limits_do_not_truncate_original_files(self):
+        original = b"original source bytes" * 100
+        path = self.root / "original.bin"
+        path.write_bytes(original)
+        for reader in (acquire.local_bytes, vision.local_bytes):
+            with self.subTest(reader=reader.__module__):
+                self.assertEqual(reader(path, 1), original)
+
     def test_all_129_supplier_pages_cover_the_original_selection(self):
         for name, instrument, seconds in (("coinbase-candles", "BTC-USD", 299 * 60),
                                           ("polymarket-prices", "123", 86400)):
@@ -47,7 +55,7 @@ class UncappedDataTest(unittest.TestCase):
                                 for left, right in zip(result["requests"], result["requests"][1:])))
             self.assertEqual(set(result["limits"].values()), {None})
             budget = 129 * MIB
-            self.assertEqual(acquire.plan(name, selection, budget)["limits"]["max_response_total_bytes"], budget)
+            self.assertIsNone(acquire.plan(name, selection, budget)["limits"]["max_response_total_bytes"])
 
     def test_all_100001_marks_and_exact_large_decimals_survive(self):
         count = 100_001
@@ -168,7 +176,7 @@ class UncappedDataTest(unittest.TestCase):
         endpoints = [f"https://rpc{i}.example" for i in range(5)]
         addresses = ["0x" + f"{i:040x}" for i in range(257)]
         requests = []
-        def rpc(endpoint, method, params, remaining):
+        def rpc(endpoint, method, params, remaining=None):
             self.assertIsNone(remaining)
             requests.append((endpoint, method, params))
             if method == "eth_chainId":
@@ -202,7 +210,7 @@ class UncappedDataTest(unittest.TestCase):
         output = self.root / "native"
         (output / "catalog").mkdir(parents=True)
         (output / "catalog/data.parquet").write_bytes(b"PAR1fixturePAR1")
-        report = {"schema_version": 1, "native_version": "0.63.0", "catalog_relative_path": "catalog",
+        report = {"schema_version": 1, "native_version": "0.67.0", "catalog_relative_path": "catalog",
                   "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
                   "registered_in_quazonai": False, "research_qualified": False,
                   "limitations": ["Fixture envelope only"], "instruments": 1_000_001,

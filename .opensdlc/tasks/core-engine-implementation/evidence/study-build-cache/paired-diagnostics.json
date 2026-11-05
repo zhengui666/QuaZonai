@@ -1,0 +1,66 @@
+{
+  "long_build": {
+    "pairs": 30,
+    "candidate_faster_pairs": 18,
+    "median_paired_ratio": 1.0141793728351405,
+    "descriptive_bootstrap_median_interval": [
+      0.9793895775372254,
+      1.0681093083166608
+    ],
+    "resamples": 5000,
+    "seed": 20261030,
+    "ordered_median_ratios": {
+      "baseline,candidate": 0.9745595270322379,
+      "candidate,baseline": 1.060211918043572
+    },
+    "interpretation": "descriptive independent-pair resampling; does not correct systematic host/layout/retention/order effects, not production percentile inference"
+  },
+  "long_study": {
+    "pairs": 30,
+    "candidate_faster_pairs": 16,
+    "median_paired_ratio": 1.003958029919943,
+    "descriptive_bootstrap_median_interval": [
+      0.9850290879303416,
+      1.030839049974188
+    ],
+    "resamples": 5000,
+    "seed": 20261030,
+    "ordered_median_ratios": {
+      "baseline,candidate": 1.003404707131789,
+      "candidate,baseline": 1.004511352708097
+    },
+    "interpretation": "descriptive independent-pair resampling; does not correct systematic host/layout/retention/order effects, not production percentile inference"
+  },
+  "short_build": {
+    "pairs": 30,
+    "candidate_faster_pairs": 19,
+    "median_paired_ratio": 1.07411192941492,
+    "descriptive_bootstrap_median_interval": [
+      0.9858050223468551,
+      1.109452998819131
+    ],
+    "resamples": 5000,
+    "seed": 20261030,
+    "ordered_median_ratios": {
+      "baseline,candidate": 1.0460294220291697,
+      "candidate,baseline": 1.0976333271125638
+    },
+    "interpretation": "descriptive independent-pair resampling; does not correct systematic host/layout/retention/order effects, not production percentile inference"
+  },
+  "short_study": {
+    "pairs": 30,
+    "candidate_faster_pairs": 28,
+    "median_paired_ratio": 1.0657515695714594,
+    "descriptive_bootstrap_median_interval": [
+      1.041242914526359,
+      1.0905664533695227
+    ],
+    "resamples": 5000,
+    "seed": 20261030,
+    "ordered_median_ratios": {
+      "baseline,candidate": 1.0818803393725003,
+      "candidate,baseline": 1.0451075288989107
+    },
+    "interpretation": "descriptive independent-pair resampling; does not correct systematic host/layout/retention/order effects, not production percentile inference"
+  }
+}
