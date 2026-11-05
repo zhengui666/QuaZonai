@@ -114,6 +114,9 @@ mod tests {
         definition.name = definition.code.clone();
         register(vec![definition.clone()]).unwrap();
         definition.precision -= 1;
+        assert!(register(vec![definition.clone()]).is_err());
+        definition.precision += 1;
+        definition.name = "Different named asset".to_string();
         assert!(register(vec![definition]).is_err());
     }
 
