@@ -57,8 +57,13 @@ fn register(definitions: Vec<Definition>) -> Result<()> {
             definition.currency_type,
         )?;
         if let Some(existing) = Currency::try_from_str(&definition.code) {
+            let mut existing = Definition::from(existing);
+            // A source code used as its name is a placeholder, not a conflicting denomination.
+            if definition.name == definition.code {
+                existing.name.clone_from(&definition.name);
+            }
             ensure!(
-                Definition::from(existing) == definition,
+                existing == definition,
                 "NATIVE_CURRENCY_DEFINITION_CONFLICT"
             );
         } else {
@@ -102,6 +107,15 @@ pub fn write(root: &Path, instruments: &[InstrumentAny]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_as_name_is_compatible_with_registered_currency_only_if_properties_match() {
+        let mut definition = Definition::from(Currency::CAKE());
+        definition.name = definition.code.clone();
+        register(vec![definition.clone()]).unwrap();
+        definition.precision -= 1;
+        assert!(register(vec![definition]).is_err());
+    }
 
     #[test]
     fn native_currency_properties_survive_registration_without_guessing() {
