@@ -75,7 +75,7 @@ test('state projections do not construct full transcript watches', { timeout: 20
   } finally { await state.cleanup(); }
 });
 
-test('resume refuses exhausted budgets, stopped studies and wrong original submissions', { timeout: 20_000 }, async () => {
+test('resume ignores legacy exhausted budgets while preserving stop and submission identity', { timeout: 20_000 }, async () => {
   const state = await setup(); state.options.extensions.push(probe);
   try {
     await state.restart();
@@ -87,11 +87,13 @@ test('resume refuses exhausted budgets, stopped studies and wrong original submi
     const receipt = start.json(); await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const url = `/api/v3/research/${receipt.conversationId}/resume`;
     const wrong = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId + 1 } }); assert.equal(wrong.statusCode, 409);
-    const exhausted = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId } }); assert.equal(exhausted.statusCode, 409); assert.equal(exhausted.json().error, 'trial_budget_exhausted');
+    state.faux.setResponses([fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 controlled unavailable provider' })]);
+    const resumed = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId } }); assert.equal(resumed.statusCode, 202, resumed.body);
+    await (await state.service.research.harness.submission(resumed.json().submissionId, context))!.wait(context);
     await state.service.research.stop(receipt.conversationId);
-    const stopped = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId } }); assert.equal(stopped.statusCode, 409); assert.equal(stopped.json().error, 'research_already_final');
+    const stopped = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: resumed.json().submissionId } }); assert.equal(stopped.statusCode, 409); assert.equal(stopped.json().error, 'research_already_final');
     const invalid = await state.service.app.inject({ method: 'POST', url, headers: state.headers, payload: { submissionId: receipt.submissionId, maxTrials: 10 } }); assert.equal(invalid.statusCode, 400);
-    assert.equal(state.faux.state.callCount, 2); assert.equal((await state.service.research.state(receipt.conversationId)).research!.trials.length, 1);
+    assert.equal(state.faux.state.callCount, 3); assert.equal((await state.service.research.state(receipt.conversationId)).research!.trials.length, 1);
   } finally { await state.cleanup(); }
 });
 

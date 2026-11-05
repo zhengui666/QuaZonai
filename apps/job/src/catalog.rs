@@ -188,7 +188,6 @@ pub(crate) fn last_bar_notionals(
 pub(crate) fn selected_types(selection: &NativeBarSelectionV1) -> Result<Vec<BarType>> {
     ensure!(
         !selection.bar_types.is_empty()
-            && selection.maximum_rows >= 1
             && selection.event_start_ns < selection.event_end_ns
             && selection.event_end_ns <= selection.decision_cutoff_ns,
         "CATALOG_SELECTION_INVALID"
@@ -308,7 +307,7 @@ fn load_catalog_mode(
 fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> Result<Vec<Bar>> {
     // Filter availability and the half-open event interval in Arrow before native
     // decoding. Same-timestamp records cannot enlarge a decoded batch beyond its
-    // fixed size; the first excess selected row is rejected before retention.
+    // fixed size; all rows in the original source/time selection are retained.
     let query = CatalogQuery::new(NautilusDataType::Bar)
         .with_identifiers(Some(selection.bar_types.clone()))
         .with_range(
@@ -319,9 +318,7 @@ fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> 
         catalog,
         query,
         Some(selection.event_start_ns.get()..selection.event_end_ns.get()),
-        (selection.maximum_rows as usize)
-            .saturating_add(1)
-            .min(4096),
+        4096,
     )?;
     let mut bars = Vec::new();
     while let Some(batch) = session.next_batch()? {
@@ -329,17 +326,11 @@ fn read_bars(catalog: &ParquetDataCatalog, selection: &NativeBarSelectionV1) -> 
             anyhow::bail!("CATALOG_NATIVE_TYPE_MISMATCH");
         };
         for bar in batch.as_ref() {
-            // Observe the first excess row without retaining it. Do not use the
-            // collected native query API and only then apply this contract.
-            ensure!(
-                bars.len() < selection.maximum_rows as usize,
-                "CATALOG_ROW_LIMIT"
-            );
             bars.push(*bar);
         }
     }
-    // File discovery groups series by path. Stable ordering only after the row
-    // budget has passed preserves each file's FIFO for equal availability.
+    // File discovery groups series by path. Stable ordering preserves each
+    // file's FIFO for equal availability.
     if !bars.is_sorted_by_key(|bar| bar.ts_init) {
         bars.sort_by_key(|bar| bar.ts_init);
     }
@@ -430,10 +421,6 @@ fn validate_native_mode(
     allow_empty_series: bool,
 ) -> Result<NativeMarketData> {
     let types = selected_types(selection)?;
-    ensure!(
-        bars.len() <= selection.maximum_rows as usize,
-        "CATALOG_ROW_LIMIT"
-    );
     let mut definitions = select_instrument_versions(instruments, selection)?;
     let mut series = Vec::with_capacity(types.len());
     let mut indices = BTreeMap::new();

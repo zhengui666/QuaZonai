@@ -239,7 +239,8 @@ test('only frozen owner queries leave private research; model text and out-of-ra
       assert.deepEqual(sent, queries); assert.equal(sent.some(query => query.includes('PRIVATE_SENTINEL')), false);
       return call('factor_evaluate', { hypothesis: 'Original private hypothesis with public literature context.', model: '(module)' });
     },
-    call('research_finish', { reason: 'Original single scientific attempt exhausted.' }),
+    fauxAssistantMessage('The original scientific attempt has no native data; preserve that failed receipt.'),
+    fauxAssistantMessage('The same native data gap remains; there is no new scientific evidence.'),
   ]);
   let host = await openResearch({ ...state, extensions: [extension, wasm] });
   try {

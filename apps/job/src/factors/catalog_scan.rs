@@ -133,10 +133,6 @@ fn read_series(
                 }
                 ensure!(event <= available, "CATALOG_TIME_INVALID");
                 ensure!(bar.bar_type == kind, "CATALOG_UNREQUESTED_BAR_TYPE");
-                ensure!(
-                    bars.len() < request.maximum_rows as usize,
-                    "CATALOG_ROW_LIMIT"
-                );
                 bars.push(bar);
             }
         }
@@ -184,8 +180,7 @@ pub fn scan_factor_catalog_with_scope(
     let module = SignalModule::new(wasm, request.parameters.total_fuel.is_some())?;
     let mut remaining = request.parameters.total_fuel.map(|fuel| fuel.get());
     let mut pairs: [MetricPairs; 3] = Default::default();
-    // Review adds bounded original points only; larger scans retain their original
-    // streaming IC and explicitly omit rank/bootstrap evidence, never sample it.
+    // Review retains all original evaluation points without a separate row quota.
     let mut diagnostic_points: [Option<Vec<NativeFactorPointV1>>; 3] =
         [None, Some(Vec::new()), Some(Vec::new())];
     let mut identities = HashSet::new();
@@ -207,10 +202,6 @@ pub fn scan_factor_catalog_with_scope(
         let original = evaluation(request, kind);
         template.get_or_insert_with(|| original.clone());
         observations += bars.len();
-        ensure!(
-            observations <= request.maximum_rows as usize,
-            "CATALOG_ROW_LIMIT"
-        );
         if bars.is_empty() {
             continue;
         }
@@ -272,11 +263,7 @@ pub fn scan_factor_catalog_with_scope(
             };
             pairs[slot].push(&point);
             if let Some(points) = &mut diagnostic_points[slot] {
-                if points.len() < crate::review_science::MAX_POINTS {
-                    points.push(point);
-                } else {
-                    diagnostic_points[slot] = None;
-                }
+                points.push(point);
             }
         }
         warmup_only += usize::from(predictions == 0);

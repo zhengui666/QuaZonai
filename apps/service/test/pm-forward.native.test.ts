@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
+import { unmeteredNativeInput } from '../../research/src/native-execution.ts';
 import { object } from '../src/facts.ts';
 import { addDecimal, compareDecimal, multiplyDecimal, subtractDecimal } from '../../../packages/contracts/src/pm-validation.ts';
 
@@ -29,14 +30,17 @@ function fixture() {
   return actual ??= (async () => {
     const source = object(JSON.parse(await readFile(join(fixtureDirectory!, 'source.json'), 'utf8')));
     assert.equal(source.evidenceKind, 'CONTROLLED_NATIVE_FORWARD_MODEL_TEST_NOT_LIVE_QUALIFICATION');
-    const request = object(source.request); return { source, request, result: await run(source, request) };
+    const request = object(source.request); const frozen = structuredClone(request);
+    const result = await run(source, request);
+    assert.deepEqual(request, frozen, 'Native execution must retain the original request and member fuel history');
+    return { source, request, result };
   })();
 }
 
 test('native forward: current marks revalue original observed quantities without creating a new snapshot or rolling TTL', options, async () => {
   const { request, result } = await fixture();
   assert.equal(result.kind, 'OBSERVED_SPOT_FORWARD_BUILD'); assert.equal(result.basis, 'FORWARD_MODEL_ESTIMATE_FROM_OBSERVED_SPOT_BALANCES');
-  assert.deepEqual(result.request, request);
+  assert.deepEqual(result.request, unmeteredNativeInput(request));
   const initial = object(request.initial_state), snapshot = object(initial.snapshot), cutoff = String(object(request.selection).decision_cutoff_ns);
   const valuation = object(result.valuation); assert.equal(valuation.asof_ns, cutoff);
   assert.ok(BigInt(String(snapshot.ts_event)) < BigInt(cutoff));
@@ -136,8 +140,10 @@ test('native forward: late original input rejects, and full deployment with posi
   await assert.rejects(run(source, late), /invalid contract field: observed_spot_start/);
   const full = structuredClone(request); const constraints = object(object(full.mandate).constraints);
   Object.assign(constraints, { min_cash_weight: '0', max_cash_weight: '0', min_net_exposure: '1', max_net_exposure: '1' });
+  const frozen = structuredClone(full);
   const result = await run(source, full);
-  assert.deepEqual(result.request, full); assert.equal(result.target, null); assert.equal(result.target_block_reason, 'FORWARD_LINEAR_COST_FUNDING_SHORTFALL');
+  assert.deepEqual(full, frozen, 'Native execution must not rewrite the full-deployment request');
+  assert.deepEqual(result.request, unmeteredNativeInput(full)); assert.equal(result.target, null); assert.equal(result.target_block_reason, 'FORWARD_LINEAR_COST_FUNDING_SHORTFALL');
   assert.equal(result.rounded_modeled_comparison, null, 'No executable proposal is created from the blocked continuous model.');
   assert.ok(object(result.modeled_comparison).proposed, 'Blocked execution retains its real model comparison.');
   assert.ok(rows(object(object(result.build).allocation).targets).length > 0, 'Original continuous solver proposal remains inspectable.');

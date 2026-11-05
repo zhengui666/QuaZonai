@@ -98,7 +98,7 @@ fn flow_cache_delivers_explicit_eighth_feature_for_positive_negative_and_balance
         rows.push(sell);
     }
     rows.sort_by_key(|row| row.ts_event);
-    let mut builder = cohort_cache::Builder::new_flow(&output, 100, 100, 1_000_000).unwrap();
+    let mut builder = cohort_cache::Builder::new_flow(&output, 100, 0, 0).unwrap();
     for row in &rows {
         builder.push(*row).unwrap();
     }
@@ -143,7 +143,14 @@ fn flow_cache_delivers_explicit_eighth_feature_for_positive_negative_and_balance
         },
     ] {
         request.target = target;
+        request.input.maximum_source_rows = Some(counter(1).unwrap());
+        let limited_legacy = evaluate(&root, &request, &wasm, true).unwrap();
+        request.input.maximum_source_rows = None;
         let result = evaluate(&root, &request, &wasm, true).unwrap();
+        assert_eq!(
+            limited_legacy.coverage.trade_count,
+            result.coverage.trade_count
+        );
         assert_eq!(result.methods["features"], FLOW_FEATURE_SCHEMA);
         assert_eq!(
             result.coverage.source_evidence["representation"],
@@ -240,7 +247,7 @@ fn a_cohort_is_one_prediction_and_oversized_cohorts_fail_without_truncation() {
 }
 
 #[test]
-fn tick_model_requires_explicit_feature_abi_and_native_request_rejects_invalid_limits() {
+fn tick_model_requires_explicit_feature_abi_and_preserves_legacy_row_fields() {
     let bar=wat::parse_str("(module (func (export \"predict\") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 1))").unwrap();
     assert_eq!(
         evaluate_series(&request(), series(), &bar, false)
@@ -250,7 +257,9 @@ fn tick_model_requires_explicit_feature_abi_and_native_request_rejects_invalid_l
     );
     let mut req = request();
     req.input.maximum_rows = Some(1_000_001);
-    assert!(evaluation_request(&req).is_err());
+    assert!(evaluation_request(&req).is_ok());
+    req.input.maximum_rows = None;
+    assert!(evaluation_request(&req).is_ok());
     req = request();
     req.validation_end_ns = req.train_end_ns;
     assert!(evaluation_request(&req).is_err());

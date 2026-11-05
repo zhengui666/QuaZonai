@@ -34,6 +34,21 @@ async function fixture() {
 }
 const resource = encodeURIComponent;
 
+test('PM admission has no required or enforced trial allowance', async () => {
+  const f = await fixture();
+  try {
+    for (const maxTrials of [undefined, 0, 1]) {
+      const response = await f.state.service.app.inject({ method: 'POST', url: '/api/v3/mandates', headers: f.state.headers,
+        payload: { requestId: `pm-no-quota-${maxTrials}`, goal: 'Protocol admission without a quota', datasetId: 'controlled', model: f.state.model,
+          funding: { kind: 'RESEARCH_SCENARIO', capital: { amount: '3000', currency: 'USD' } }, ...(maxTrials === undefined ? {} : { maxTrials }) } });
+      assert.equal(response.statusCode, 202, response.body);
+      const record = pmState(await f.state.service.pm.snapshot()).mandates[response.json<PmMandateView>().mandate.id]!;
+      assert.equal(record.budget.maximumTrials, null);
+      assert.ok(!Object.values(record.budgetMovements).some(movement => movement.kind === 'RESERVE'));
+    }
+  } finally { await f.state.cleanup(); }
+});
+
 test('PM routes: protected resource reads preserve admitted campaign and strategy identities without generating decisions', { timeout: 30_000 }, async () => {
   const { state, start, read } = await fixture();
   try {
@@ -133,16 +148,17 @@ test('PM controls: pause owns a separate durable task, resumes the original stud
   } finally { await f.state.cleanup(); }
 });
 
-test('PM controls: an exhausted-budget resume reports its actual failed task instead of claiming a restarted campaign', { timeout: 30_000 }, async () => {
+test('PM controls: a legacy exhausted-budget study resumes without resetting its ledger', { timeout: 30_000 }, async () => {
   const f = await activeControlFixture(1);
   try {
     const original = (await f.state.service.research.state(f.campaign.runtime.conversationId)).research!.trials;
     assert.equal((await control(f, 'pause', 'pause-exhausted')).record.state, 'APPLIED');
+    f.state.faux.setResponses([fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 controlled unavailable provider' })]);
     const resumed = await control(f, 'resume', 'resume-exhausted');
-    assert.equal(resumed.record.state, 'FAILED'); assert.equal(resumed.record.reason, 'trial_budget_exhausted');
-    assert.equal(resumed.task.state.status === 'terminal' && resumed.task.state.outcome.status, 'failed');
+    assert.equal(resumed.record.state, 'APPLIED');
+    assert.equal(resumed.task.state.status === 'terminal' && resumed.task.state.outcome.status, 'completed');
     const current = await f.read<PmMandateView>(`/mandates/${resource(f.view.mandate.id)}`);
-    assert.ok(current.gaps.some(gap => gap.requiredCapability === 'campaign_control' && gap.reasonCode === 'trial_budget_exhausted'));
+    assert.ok(!current.gaps.some(gap => gap.requiredCapability === 'campaign_control' && gap.reasonCode === 'trial_budget_exhausted'));
     assert.deepEqual((await f.state.service.research.state(f.campaign.runtime.conversationId)).research!.trials, original);
     const retry = await f.state.service.app.inject({ method: 'POST', url: resumed.url, headers: f.state.headers, payload: resumed.payload });
     assert.equal(retry.statusCode, 202); assert.equal((await controlRecord(f.state, f.view.mandate.id, resumed.key)).taskId, resumed.record.taskId);

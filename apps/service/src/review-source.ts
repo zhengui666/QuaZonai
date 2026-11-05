@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import { createHash } from 'node:crypto';
 import { readFile, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -24,7 +25,7 @@ export async function prepareReviewSourceEvidence(configured: DatasetConfig, pur
     if (!descriptor || typeof descriptor.path !== 'string' || !descriptor.path || isAbsolute(descriptor.path)
       || descriptor.path.split(/[\\/]/).includes('..') || !/^[a-f0-9]{64}$/.test(descriptor.sha256)) throw new Problem('review_source_descriptor_invalid');
     const path = resolve(root, descriptor.path); const stat = await lstat(path);
-    if (relative(root, path) !== descriptor.path || !stat.isFile() || stat.isSymbolicLink() || await realpath(path) !== path || stat.size > 8 * 1024 * 1024) throw new Problem('review_source_file_invalid');
+    if (relative(root, path) !== descriptor.path || !stat.isFile() || stat.isSymbolicLink() || await realpath(path) !== path) throw new Problem('review_source_file_invalid');
     const registered = (source.manifest.files as JsonObject[]).find(file => file.path === descriptor.path);
     const bytes = await readFile(path); const digest = createHash('sha256').update(bytes).digest('hex');
     if (!registered || registered.sha256 !== descriptor.sha256 || String(bytes.length) !== registered.bytes || digest !== descriptor.sha256) throw new Problem('review_source_file_not_bound');
@@ -52,10 +53,10 @@ export async function prepareReviewSourceEvidence(configured: DatasetConfig, pur
   const to = counter(purpose === 'HELDOUT' ? selection.event_end_ns : raw.validation_end_ns ?? selectedData.validation_end_ns, 'review_source_end');
   const measured = object(dataset.selection, 'quality_selection');
   if (selection.schema_version !== 1 || !Array.isArray(selection.bar_types) || !selection.bar_types.length
-    || !selection.bar_types.every(value => typeof value === 'string') || !Number.isSafeInteger(selection.maximum_rows) || Number(selection.maximum_rows) < 1) throw new Problem('review_source_explicit_bar_selection_required');
-  // Bind every original selection field, including BAR identity/order and row limit. Equal clocks alone do not bind a market.
+    || !selection.bar_types.every(value => typeof value === 'string')) throw new Problem('review_source_explicit_bar_selection_required');
+  // Bind scientific selection fields, including BAR identity/order. Retired row quotas are not source scope; original metadata bytes and digest remain bound.
   const expected = { ...selection, event_start_ns: from, event_end_ns: to };
-  if (canonical(measured) !== canonical(expected)) throw new Problem('review_source_validation_scope_mismatch');
+  if (canonical(withoutExecutionQuotas(measured)) !== canonical(withoutExecutionQuotas(expected))) throw new Problem('review_source_validation_scope_mismatch');
   const instrumentIds = [...new Set((selection.bar_types as string[]).map(type => {
     const parsed = /^(.+)-[1-9]\d*-[A-Z_]+-[A-Z_]+-(?:EXTERNAL|INTERNAL)$/.exec(type);
     if (!parsed) throw new Problem('review_source_bar_identity_unsupported');

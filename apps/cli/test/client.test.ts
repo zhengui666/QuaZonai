@@ -194,11 +194,11 @@ test('structured validation and factor/account-control commands preserve origina
   const sent: { method: string; url: string; bytes: string }[] = [];
   const api = await server((request, response, bytes) => { sent.push({ method: request.method!, url: request.url!, bytes }); json(response, { received: true }); });
   const config = await configuration(api.origin); const file = join(config.directory, 'original.json');
-  const specification = { version: 1, name: 'Original structured study', question: 'Original economic question', rationale: 'Explicit falsifiable mechanism', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'budget-or-selection' } };
+  const specification = { version: 1, name: 'Original structured study', question: 'Original economic question', rationale: 'Explicit falsifiable mechanism', evaluation: { metric: 'pearson_ic', direction: 'maximize', scheme: 'registered-partitions' }, search: { scope: 'single-factor', maxMembers: 1, stop: 'selection' } };
   try {
     await writeFile(file, JSON.stringify({ requestId: 'unsupported', specification: { ...specification, horizon: 9 } }));
     await assert.rejects(run(['research', 'start', '--file', file]), /research_override_unsupported/); assert.equal(sent.length, 0);
-    const bytes = JSON.stringify({ requestId: 'original-structured', goal: specification.question, specification, model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered', maxTrials: 2 }, null, 2) + '\n'; await writeFile(file, bytes);
+    const bytes = JSON.stringify({ requestId: 'original-structured', goal: specification.question, specification, model: { provider: 'faux', modelId: 'original' }, datasetId: 'registered' }, null, 2) + '\n'; await writeFile(file, bytes);
     await run(['research', 'start', '--file', file], () => {}); assert.equal(sent[0]!.bytes, bytes);
     await run(['factor', 'list'], () => {}); await run(['factor', 'get', 'r2.t3.m0'], () => {}); await run(['factor', 'capacity', 'r2.t3.m0'], () => {});
     const assumptions = '{ "scenarios":["1000.000000000000000001"], "participation":"0.01", "maximumAgeSeconds":60 }\n'; await writeFile(file, assumptions); await run(['factor', 'capacity', 'r2.t3.m0', '--file', file], () => {}); assert.equal(sent.at(-1)!.bytes, assumptions);
@@ -307,4 +307,20 @@ test('backtest wait timeout detaches without canceling or restarting the running
     assert.equal(receipts.at(-1).cancellationRequested, false);
     assert.deepEqual(requests, ['GET']);
   } finally { await config.close(); await native.close(); }
+});
+
+
+test('research goal flags need no quota and preserve legacy quota bytes for receipt replay', async () => {
+  const sent: Record<string, unknown>[] = [];
+  const api = await server((_request, response, bytes) => { sent.push(JSON.parse(bytes)); json(response, { conversationId: 41 }, 202); });
+  const config = await configuration(api.origin);
+  try {
+    const args = ['research', 'start', '--goal', 'Uncapped original question', '--dataset', 'registered', '--model', 'faux:original', '--request-id', 'uncapped-original'];
+    await run(args, () => {});
+    await run([...args, '--max-trials', '1'], () => {});
+    assert.deepEqual(sent[0], { requestId: 'uncapped-original', goal: 'Uncapped original question', datasetId: 'registered', model: { provider: 'faux', modelId: 'original' } });
+    assert.deepEqual(sent[1], { ...sent[0], maxTrials: 1 });
+    await run([...args, '--max-trials', '1'], () => {});
+    assert.deepEqual(sent[2], sent[1]);
+  } finally { await config.close(); await api.close(); }
 });

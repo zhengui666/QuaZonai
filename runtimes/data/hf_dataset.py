@@ -96,8 +96,6 @@ def partition_files(index, available, markets, start_date, end_date, includes=No
 def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_BYTES,
          manifest=None, markets=None, start_date=None, end_date=None):
     includes, markets = list(includes or []), list(markets or [])
-    if max_bytes is not None:
-        providers.integer(max_bytes, "max_bytes", minimum=1, maximum=None)
     if any(not isinstance(m, str) or not m.strip() for m in markets):
         raise ValueError("market selectors must be nonempty strings")
     if bool(start_date) != bool(end_date):
@@ -151,8 +149,6 @@ def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_B
             item["partition"] = partitions[path]
         files.append(item)
     total = sum(f["size"] for f in files)
-    if max_bytes is not None and total > max_bytes:
-        raise ValueError(f"requested files require {total} bytes, exceeding --max-bytes={max_bytes}")
     card = metadata.get("cardData") or {}
     license = card.get("license") if isinstance(card, dict) else None
     return {"schema": PLAN_SCHEMA, "repository": dataset, "requested_revision": revision or "main",
@@ -161,7 +157,7 @@ def plan(dataset, includes=None, revision=None, max_bytes=snapshot.DEFAULT_MAX_B
                         "start_date": start_date, "end_date": end_date},
             "selection_bounds": "[start_date,end_date)", "download_granularity": "FILE_PARTITION",
             "coverage": "NOT_ASSERTED",
-            "max_bytes": max_bytes, "total_bytes": total, "files": files}
+            "max_bytes": None, "total_bytes": total, "files": files}
 
 
 def inspect_file(path, item):
@@ -257,9 +253,6 @@ def validate_plan(selection):
         providers.integer(index.get("size"), "partition index byte size", maximum=MAX_INDEX_BYTES)
         if index.get("url") != snapshot.repository_file_url(repository, revision, index_path):
             raise ValueError("partition index source differs from its selected repository revision")
-    budget = selection.get("max_bytes")
-    if budget is not None:
-        providers.integer(budget, "max_bytes", minimum=1, maximum=None)
     files = selection.get("files")
     if not isinstance(files, list) or not files:
         raise ValueError("invalid on-demand file list")
@@ -287,11 +280,11 @@ def validate_plan(selection):
                 raise ValueError("selected file does not overlap its original partition request")
         elif partition is not None:
             raise ValueError("selected file claims a partition mapping without its source index")
-        total += providers.integer(item.get("size"), "source file byte size", maximum=budget)
-    declared_total = providers.integer(selection.get("total_bytes"), "total_bytes", maximum=budget)
-    if ((budget is not None and total > budget) or total != declared_total
+        total += providers.integer(item.get("size"), "source file byte size", maximum=None)
+    declared_total = providers.integer(selection.get("total_bytes"), "total_bytes", maximum=None)
+    if (total != declared_total
             or any(not any(fnmatch.fnmatchcase(path, pattern) for path in seen) for pattern in includes)):
-        raise ValueError("on-demand selection exceeds or differs from its byte budget")
+        raise ValueError("on-demand selection differs from its declared files or total bytes")
 
 
 def cache_root(cache_dir, selection):

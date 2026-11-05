@@ -13,7 +13,7 @@ it('capacity authoring preserves native decimal boundary strings and rejects out
 it('persists the exact research request across a failed send and a fresh retry', async () => {
   const values = new Map<string, string>();
   const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
-  const input = { goal: '测试研究', model: { provider: 'test', modelId: 'test-model' }, datasetId: 'test-data', maxTrials: 2 };
+  const input = { goal: '测试研究', model: { provider: 'test', modelId: 'test-model' }, datasetId: 'test-data' };
   const captured = captureResearchIntent(input, storage); input.goal = '已修改';
   const fetch = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(Response.json({ conversationId: 7, submissionId: 9 }, { status: 202 }));
   vi.stubGlobal('fetch', fetch);

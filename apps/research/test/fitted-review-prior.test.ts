@@ -4,8 +4,8 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { fittedReviewPrior } from '../plugins/native-fitted-portfolio.ts';
 import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
 
-function fixture(end = '200') {
-  const members = [1, 2].map(sourceTrialId => ({ sourceTrialId, factorVersionId: `factor:7:${sourceTrialId}`, model: 'original' }));
+function fixture(end = '200', count = 2) {
+  const members = Array.from({ length: count }, (_, index) => index + 1).map(sourceTrialId => ({ sourceTrialId, factorVersionId: `factor:7:${sourceTrialId}`, model: 'original' }));
   const trials = members.map(member => ({ taskId: member.sourceTrialId, result: { request: { validation_end_ns: end } } }));
   const records: Record<string, JsonObject> = {};
   for (const member of members) {
@@ -90,4 +90,21 @@ test('sourceFactorIds traverses the real Durable tool and frozen task to the nat
     const evidence = await readNativeEvidence(host.harness, receipt.conversationId, task.id, object((task.state.outcome!.result as JsonObject).native, 'native'), context);
     assert.deepEqual(object(evidence.fitRequest, 'request').review_prior, fitCall.input.review_prior);
   } finally { await host.close(); if (old === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = old; await rm(directory, { recursive: true, force: true }); }
+});
+
+test('all 65 authorized reviewed factor sources remain eligible for fitting', async () => {
+  const { admittedReviewedMembers } = await import('../plugins/native-fitted-portfolio.ts');
+  const { compileWasm } = await import('../plugins/native-wasm.ts');
+  const { createHash } = await import('node:crypto');
+  const source = fixture('5', 65); const model = '(module)';
+  const modelSha256 = createHash('sha256').update(compileWasm(model)).digest('hex');
+  const members = source.members.map(member => {
+    const report = structuredClone(source.records[`version-${member.sourceTrialId}`]!.report) as unknown as import('../../../packages/contracts/src/review.ts').ReviewReport;
+    report.policy.calibration!.endNs = '1'; report.target.evaluationStartNs = '3';
+    return { factorId: `r7.t${member.sourceTrialId}.m0`, factorVersionId: member.factorVersionId, sourceResearchId: 7,
+      sourceTrialId: member.sourceTrialId, modelSource: model, modelSha256, sourceEndNs: '5', report };
+  });
+  const actual = admittedReviewedMembers({ schemaVersion: 1, fitEndNs: '10', members }, members.map(member => member.factorId), '10');
+  assert.equal(actual.members.length, 65);
+  assert.deepEqual(actual.members.map(member => member.factorVersionId), members.map(member => member.factorVersionId));
 });

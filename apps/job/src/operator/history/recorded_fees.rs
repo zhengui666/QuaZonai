@@ -120,7 +120,6 @@ pub fn prepare(args: &Arguments) -> Result<Value> {
                 end == available && end >= MINUTE && end.is_multiple_of(MINUTE),
                 "RECORDED_FEE_BAR_CLOCK_MISMATCH"
             );
-            ensure!(rows < selected.maximum_rows as usize, "CATALOG_ROW_LIMIT");
             rows += 1;
             observed = true;
             let volume = BigDecimal::from_str(&bar.volume.as_decimal().to_string())?;

@@ -19,19 +19,33 @@ function portfolio(id: string): PortfolioView {
 const sources = [portfolio('one'), portfolio('two')];
 const fields: AllocationFields = {
   name: '风险分散配置', portfolioIds: ['one', 'two'], memberCaps: { one: '0.700000000000000001', two: '0.6' }, currentWeights: { one: '0', two: '0' },
-  clusters: [{ id: '共同风险组', members: ['one', 'two'], maximumWeight: '1' }], maximumTurnover: '1', maximumScientificCalls: '24',
+  clusters: [{ id: '共同风险组', members: ['one', 'two'], maximumWeight: '1' }], maximumTurnover: '1',
 };
 
 describe('multi-portfolio allocation inputs', () => {
   it('submits only selected source identities and explicit constraints, keeping decimal precision', () => {
     const input = allocationInput({ ...fields, metrics: [{ value: 99 }], score: 100 } as AllocationFields, sources);
-    expect(Object.keys(input).sort()).toEqual(['name', 'portfolioIds', 'memberCaps', 'clusterCaps', 'currentWeights', 'maximumTurnover', 'maximumScientificCalls'].sort());
+    expect(Object.keys(input).sort()).toEqual(['name', 'portfolioIds', 'memberCaps', 'clusterCaps', 'currentWeights', 'maximumTurnover'].sort());
     expect(input.memberCaps[0]).toEqual({ id: 'one', maximumWeight: '0.700000000000000001' });
-    expect(input.maximumScientificCalls).toBe(24);
+    expect(input).not.toHaveProperty('maximumScientificCalls');
     expect(input).not.toHaveProperty('reviewPolicy');
     expect(input).not.toHaveProperty('metrics');
     expect(input).not.toHaveProperty('score');
     expect(allocationInput({ ...fields, independentDatasetId: 'fresh-independent-window' }, sources).independentDatasetId).toBe('fresh-independent-window');
+  });
+  it('accepts every selected passing portfolio beyond the former member quota', () => {
+    const portfolios = Array.from({ length: 65 }, (_, index) => portfolio(`source-${index}`));
+    const ids = portfolios.map(row => row.id);
+    const input = allocationInput({ ...fields, portfolioIds: ids,
+      memberCaps: Object.fromEntries(ids.map(id => [id, '1'])),
+      currentWeights: Object.fromEntries(ids.map(id => [id, '0'])),
+      clusters: [{ id: 'shared-risk', members: ids, maximumWeight: '1' }],
+    }, portfolios);
+    expect(input.portfolioIds).toEqual(ids);
+    expect(input.memberCaps).toHaveLength(65);
+    const clusters = Array.from({ length: 129 }, (_, i) => ({ id: `cluster-${i}`, members: ids.slice(0, 2), maximumWeight: '1' }));
+    expect(allocationInput({ ...fields, portfolioIds: ids, memberCaps: Object.fromEntries(ids.map(id => [id, '1'])), currentWeights: Object.fromEntries(ids.map(id => [id, '0'])), clusters }, portfolios).clusterCaps).toHaveLength(129);
+    expect(() => allocationInput({ ...fields, portfolioIds: ['one', 'one'] }, sources)).toThrow('不同');
   });
   it('requires passing current sources and a compatible common account basis', () => {
     expect(portfolioAllocationEligible({ ...sources[0]!, review: undefined })).toBe(false);
@@ -46,7 +60,6 @@ describe('multi-portfolio allocation inputs', () => {
     expect(() => allocationInput({ ...fields, currentWeights: { one: '0.500000000000000001', two: '0.5' } }, sources)).toThrow('不能超过 1');
     expect(() => allocationInput({ ...fields, clusters: [] }, sources)).toThrow('至少一个相关簇');
     expect(() => allocationInput({ ...fields, clusters: [{ id: 'group', members: ['one', 'unknown'], maximumWeight: '1' }] }, sources)).toThrow('所选组合');
-    for (const maximumScientificCalls of ['', '1.2', '0', '4097']) expect(() => allocationInput({ ...fields, maximumScientificCalls }, sources)).toThrow('科学调用预算');
     expect(() => allocationInput({ ...fields, maximumTurnover: '' }, sources)).toThrow('精确小数');
   });
 });

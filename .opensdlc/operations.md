@@ -41,7 +41,7 @@ Graceful shutdown closes admissions and observers, then closes the Harness so in
 <a id="scientific-runtime"></a>
 ## Scientific execution and data
 
-Scientific processes use the matching [native job](../apps/job) and original typed inputs. Reuse official Task/NodeExecutionEnv lifecycle, explicit scientific budgets and native Nautilus/Clarabel/Arrow behavior. QZ imposes no process deadline/memory ceiling and does not inject fuel for omitted/null budgets. Preserve request/model/provenance association, owner cancellation and original target expiry across recovery. Computation is not qualification, equity comes from the native shared account and missing values remain null.
+Scientific processes use the matching [native job](../apps/job) and original typed inputs. Reuse official Task/NodeExecutionEnv lifecycle, scientific usage records and native Nautilus/Clarabel/Arrow behavior. QZ imposes no process deadline/memory ceiling and does not enforce model fuel or historical execution budgets. Preserve request/model/provenance association, owner cancellation and original target expiry across recovery. Computation is not qualification, equity comes from the native shared account and missing values remain null.
 
 Source acquisition and catalog preparation remain at [data tools](../runtimes/data/README.md) and [source plugins](../runtimes/data/source-plugins.md). Catalog paths, partitions, fees, availability and rights are actual owner configuration; preparation does not establish PIT, source permission or profitability.
 

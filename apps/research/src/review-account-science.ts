@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
@@ -47,7 +48,7 @@ export async function replayStoredReviewAccount(input: { data: JsonObject; sourc
     || BigInt(counter(selection.event_start_ns, 'review_original_event_start')) < BigInt(counter(original.train_end_ns, 'review_original_train_end'))
     || BigInt(counter(selection.decision_cutoff_ns, 'review_original_cutoff')) > BigInt(end)) throw new Error('review_original_account_outside_validation');
   if (input.source.catalog !== undefined && input.source.catalog !== input.data.catalog) throw new Error('review_original_account_catalog_mismatch');
-  if (input.source.request && canonical(input.source.request) !== canonical(original)) throw new Error('review_original_account_request_mismatch');
+  if (input.source.request && canonical(withoutExecutionQuotas(input.source.request)) !== canonical(withoutExecutionQuotas(original))) throw new Error('review_original_account_request_mismatch');
   const cash = structuredClone(request);
   cash.target_points = (cash.target_points as JsonObject[]).map(point => ({ ...point, cash_weight: '1', targets: (point.targets as JsonObject[]).map(target => ({ ...target, weight: '0' })) }));
   const stressRequest = adverseReviewRequest(request);

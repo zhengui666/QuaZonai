@@ -178,14 +178,15 @@ test('renamed dataset labels and copied catalogs cannot turn iterative feedback 
 
 function objectRequest(data: JsonObject): JsonObject { return data.request as JsonObject; }
 
-for (const fuel of ['omitted', 'null'] as const) {
+for (const fuel of ['omitted', 'null', 'legacy'] as const) {
   test(`${fuel} fuel stays unmetered through iteration and finalization`, { timeout: 120_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
     for (const data of [original.data, original.data.sealed as JsonObject]) {
       const parameters = ((data.request as JsonObject).forecast as JsonObject).parameters as JsonObject;
-      if (fuel === 'null') parameters.total_fuel = null;
+      if (fuel === 'legacy') parameters.total_fuel = '1';
+      else if (fuel === 'null') parameters.total_fuel = null;
       else delete parameters.total_fuel;
     }
     setup_.faux.setResponses([
@@ -213,14 +214,14 @@ for (const fuel of ['omitted', 'null'] as const) {
 }
 
 for (const [name, model] of [
-  ['infinite-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) (loop $again br $again) f64.const 0))'],
+  ['trapping-predict', '(module (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) unreachable))'],
   ['invalid-memory', '(module (memory 1 0) (func (export "predict") (param f64 f64 f64 f64 f64 f64 f64 f64) (result f64) f64.const 0))'],
 ] as const) {
   test(`model-generated ${name} fails finitely and keeps the original failed trial`, { timeout: 30_000 }, async () => {
     const setup_ = await setup();
     const original = input(setup_.model);
     original.data = structuredClone(original.data);
-    // This test explicitly requests a scientific budget; omitted fuel is unmetered.
+    // A historical fuel field cannot prevent the actual model trap or invalid-memory failure.
     (((original.data.request as JsonObject).forecast as JsonObject).parameters as JsonObject).total_fuel = '10000000';
     delete original.data.sealed;
     setup_.faux.setResponses([

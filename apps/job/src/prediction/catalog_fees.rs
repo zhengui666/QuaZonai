@@ -25,8 +25,6 @@ use std::{
     rc::Rc,
 };
 
-const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
-
 pub(crate) fn load(
     root: &Path,
     selection: &NativeBarSelectionV1,
@@ -58,17 +56,13 @@ pub(crate) fn load_file(
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let file = match options.open(path) {
+    let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) => return Err(error.into()),
     };
     ensure!(file.metadata()?.is_file(), "MAKER_TAKER_FEE_SOURCE_INVALID");
     let mut bytes = Vec::new();
-    file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= MAX_SOURCE_BYTES,
-        "MAKER_TAKER_FEE_SOURCE_TOO_LARGE"
-    );
+    file.read_to_end(&mut bytes)?;
     let source = serde_json::from_slice(&bytes).context("MAKER_TAKER_FEE_SOURCE_INVALID")?;
     domain::catalogs::maker_taker_fee_selection(&source, selection)?;
     Ok(source)
@@ -105,10 +99,6 @@ pub(crate) fn validate_source_market(
 pub(crate) fn write(root: &Path, source: &FrozenMakerTakerFeesV1) -> Result<()> {
     domain::catalogs::maker_taker_fee_source(source)?;
     let bytes = serde_json::to_vec(source)?;
-    ensure!(
-        bytes.len() as u64 <= MAX_SOURCE_BYTES,
-        "MAKER_TAKER_FEE_SOURCE_TOO_LARGE"
-    );
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

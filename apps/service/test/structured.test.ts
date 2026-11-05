@@ -219,10 +219,11 @@ test('structured budget-or-selection rejects an unselected model response bounda
     await (await state.service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await state.service.research.harness.snapshot(Study, receipt.conversationId, context))!;
     assert.equal(study.trials.length, 1); assert.equal(study.final!.status, 'COMPUTED'); assert.equal(study.final!.trialId, study.trials[0]!.taskId); assert.equal(state.faux.state.callCount, 2);
-    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_finish', { reason: 'Original zero trial budget' }), { stopReason: 'toolUse' })]);
+    state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
     const zero = await state.service.work.startResearch({ requestId: 'structured-zero-stop', goal: specification.question, specification, model: state.model, datasetId: 'controlled', maxTrials: 0 });
     await (await state.service.research.harness.submission(zero.submissionId, context))!.wait(context);
-    assert.equal((await state.service.research.harness.snapshot(Study, zero.conversationId, context))!.final!.reason, 'Original zero trial budget');
+    const unbounded = (await state.service.research.harness.snapshot(Study, zero.conversationId, context))!;
+    assert.equal(unbounded.trials.length, 1); assert.equal(unbounded.final!.status, 'COMPUTED');
   } finally { await state.cleanup(); }
 });
 
@@ -243,11 +244,14 @@ test('structured native input accepts only the registered inherited policy and s
     }
     const extra = await post('native-extra-policy', { ...input, policy: { ...policy, partitionOverride: 'TRAIN' } }); assert.equal(extra.statusCode, 400); assert.equal(extra.json().error, 'research_policy_unregistered');
     state.faux.setResponses([fauxAssistantMessage(fauxToolCall('controlled_trial', {}), { stopReason: 'toolUse' })]);
-    const accepted = await post('native-registered-policy', { ...input, policy: { ...policy, max_trials: 1 } }); assert.equal(accepted.statusCode, 202, accepted.body);
+    const noQuota = (value: any): any => Array.isArray(value) ? value.map(noQuota) : value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).filter(([key]) => !['max_trials', 'maximum_rows', 'maximum_source_rows', 'total_fuel'].includes(key)).map(([key, child]) => [key, noQuota(child)])) : value;
+    const acceptedInput = noQuota(input);
+    const accepted = await post('native-registered-policy', acceptedInput); assert.equal(accepted.statusCode, 202, accepted.body);
     await (await state.service.research.harness.submission(accepted.json().submissionId, context))!.wait(context);
     const recorded = (await state.service.research.state(accepted.json().conversationId)).research!.input!;
     assert.deepEqual(recorded.policy.strategy, registered.strategy);
-    await state.restart(); assert.equal((await post('native-registered-policy', { ...input, policy: { ...policy, max_trials: 1 } })).json().conversationId, accepted.json().conversationId);
+    await state.restart(); assert.equal((await post('native-registered-policy', acceptedInput)).json().conversationId, accepted.json().conversationId);
     const legacy = await post('native-legacy-policy', { ...input, specification: undefined, policy: { max_trials: 0, legacyOverride: true } }); assert.equal(legacy.statusCode, 202, legacy.body);
     await (await state.service.research.harness.submission(legacy.json().submissionId, context))!.wait(context);
   } finally { await state.cleanup(); }

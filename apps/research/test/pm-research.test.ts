@@ -65,10 +65,10 @@ async function fixture(maximumTrials: number, frontier = false, sealed = false) 
     async close() { await host.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
-test('budget closes after the last allowed candidate and deterministically selects it without another model turn', async () => {
+test('explicit selection closes a campaign with its full original trial ledger', async () => {
   const f = await fixture(2);
   try {
-    f.faux.setResponses([hypothesis(), trial(0.1), trial(0.7), fauxAssistantMessage('The admitted experiments are complete.')]);
+    f.faux.setResponses([hypothesis(), trial(0.1), trial(0.7), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('two', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId); const campaign = state.campaignResearch!;
     assert.equal(state.research!.final!.trialId, state.research!.trials[1]!.taskId, JSON.stringify(state));
@@ -86,7 +86,7 @@ test('suspension after scientific commit restores one settled Study and Campaign
   const f = await fixture(1);
   try {
     const committed = f.pauseAfterCommit();
-    f.faux.setResponses([hypothesis(), trial(0.6), fauxAssistantMessage('Finish the original candidate budget.')]);
+    f.faux.setResponses([hypothesis(), trial(0.6), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('atomic-settlement', f.input); await committed;
     const before = await f.host.state(receipt.conversationId);
     assert.equal(before.research!.trials[0]!.status, 'COMPUTED');
@@ -104,7 +104,7 @@ test('suspension after scientific commit restores one settled Study and Campaign
 for (const mode of ['frontier', 'tie', 'all-failed'] as const) test(`closing ${mode} retains candidates/failures and never consumes sealed data`, async () => {
   const f = await fixture(2, mode === 'frontier', true);
   try {
-    f.faux.setResponses([hypothesis(), trial(0.4, mode === 'all-failed'), trial(mode === 'frontier' ? 0.8 : 0.4, mode === 'all-failed'), fauxAssistantMessage('Close original experiment budget.')]);
+    f.faux.setResponses([hypothesis(), trial(0.4, mode === 'all-failed'), trial(mode === 'frontier' ? 0.8 : 0.4, mode === 'all-failed'), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start(mode, f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId); const campaign = state.campaignResearch!;
     assert.equal(state.research!.final!.trialId, null); assert.equal(state.research!.final!.result, null);
@@ -114,15 +114,15 @@ for (const mode of ['frontier', 'tie', 'all-failed'] as const) test(`closing ${m
   } finally { await f.close(); }
 });
 
-test('an over-budget tool records rejection and closes existing evidence without computing again', async () => {
+test('legacy trial limits do not reject later trials or erase their recorded usage', async () => {
   const f = await fixture(1);
   try {
-    f.faux.setResponses([hypothesis(), trial(0.4), trial(0.9)]);
+    f.faux.setResponses([hypothesis(), trial(0.4), trial(0.9), call('research_finish', { reason: 'Select from the complete comparison' })]);
     const receipt = await f.host.start('over', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId);
-    assert.equal(f.computed, 1); assert.deepEqual(state.research!.trials.map(item => item.status), ['COMPUTED', 'REJECTED']);
-    assert.equal(state.campaignResearch!.trials.filter(item => item.countedAttempt).length, 1);
-    assert.equal(state.research!.final!.trialId, state.research!.trials[0]!.taskId);
+    assert.equal(f.computed, 2); assert.deepEqual(state.research!.trials.map(item => item.status), ['COMPUTED', 'COMPUTED']);
+    assert.equal(state.campaignResearch!.trials.filter(item => item.countedAttempt).length, 2);
+    assert.equal(state.research!.final!.trialId, state.research!.trials[1]!.taskId);
   } finally { await f.close(); }
 });
 
@@ -130,7 +130,7 @@ test('PM portfolio consumer receives frozen selection without exposing sealed ev
   const f = await fixture(1, false, true);
   f.input.campaign!.independentConsumer = 'PM_PORTFOLIO';
   try {
-    f.faux.setResponses([hypothesis(), trial(0.4), fauxAssistantMessage('Freeze candidate for the registered PM consumer.')]);
+    f.faux.setResponses([hypothesis(), trial(0.4), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('pm-selection-only', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId);
     assert.equal(state.research!.final!.conclusion, 'SELECTED'); assert.equal(state.research!.final!.status, 'STOPPED');
@@ -167,15 +167,15 @@ test('PM account intake preserves pure factor research intent and asks for the c
   } finally { await f.close(); }
 });
 
-test('versioned model-turn allowance bounds an endless tool-read loop without calling it economic rejection', async () => {
+test('research model turns continue beyond the historical orchestration allowance', async () => {
   const f = await fixture(1);
   try {
-    f.faux.setResponses(Array.from({ length: 30 }, () => call('research_brief', {})));
+    f.faux.setResponses([...Array.from({ length: 30 }, () => call('research_brief', {})), hypothesis(), trial(0.7), call('research_finish', { reason: 'Select after reading the original research evidence' })]);
     const receipt = await f.host.start('tool-loop', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId);
-    assert.equal(state.research!.final!.reason, 'orchestration_budget_exhausted'); assert.equal(state.research!.final!.conclusion, 'NEEDS_EVIDENCE');
-    assert.equal(f.faux.state.callCount, 24); assert.equal(f.computed, 0);
-    assert.equal((await f.host.harness.snapshot(CampaignResearchDoc, receipt.conversationId, context))!.orchestration!.generationTaskIds.length, 24);
+    assert.equal(state.research!.final!.conclusion, 'SELECTED');
+    assert.equal(f.faux.state.callCount, 33); assert.equal(f.computed, 1);
+    assert.equal((await f.host.harness.snapshot(CampaignResearchDoc, receipt.conversationId, context))!.orchestration!.generationTaskIds.length, 33);
   } finally { await f.close(); }
 });
 
@@ -187,7 +187,7 @@ test('a rejected finalization leaves search admissible instead of persisting an 
         const entry = transcript.messages.filter(value => (value as { toolName?: string }).toolName === 'research_finish').at(-1) as { content: { text?: string }[] };
         assert.match(JSON.stringify(entry.content), /registered_final_evaluator_required/);
         return trial(0.6)(transcript);
-      }, fauxAssistantMessage('Original budget is complete.')]);
+      }, call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('rejected-finalizer', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId);
     assert.equal(f.computed, 2); assert.equal(state.campaignResearch!.trials.length, 2);
@@ -205,7 +205,7 @@ test('legacy group finalization cannot bypass a campaign comparison or its indep
         const entry = transcript.messages.filter(value => (value as { toolName?: string }).toolName === 'factor_finalize_group').at(-1) as { content: { text?: string }[] };
         assert.match(JSON.stringify(entry.content), /campaign_group_finalization_unsupported/);
         return trial(0.6)(transcript);
-      }, fauxAssistantMessage('Freeze for the registered consumer.')]);
+      }, call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('group-consumer', f.input); conversationId = receipt.conversationId;
     await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId);
@@ -226,11 +226,11 @@ test('registered comparison scope must match actual native validation interval a
   assert.throws(() => researchInput(mismatched), /campaign_native_capital_mismatch/);
 });
 
-test('unavailable hard resource meters reject admission rather than silently enforcing only a later attempt', () => {
+test('legacy resource allowances remain historical metadata and do not reject admission', () => {
   const campaign = binding(2);
   const input = { goal: 'Meter admission protocol', model: { provider: 'fixture', modelId: 'fixture' }, data: {}, policy: { max_trials: 2 }, campaign };
   for (const budget of [{ ...campaign.budget, nativeComputeSeconds: 10 }, { ...campaign.budget, modelSpend: { amount: '1', currency: 'USD' } }, { ...campaign.budget, dataBytes: '1000' }]) {
-    assert.throws(() => researchInput({ ...input, campaign: { ...campaign, budget } }), /campaign_resource_meter_unavailable/);
+    assert.deepEqual(researchInput({ ...input, campaign: { ...campaign, budget } }), { ...input, campaign: { ...campaign, budget } });
   }
 });
 
@@ -288,7 +288,7 @@ test('an explicit no-leverage intake produces a canonical boundary and can concl
     f.faux.setResponses([call('strategy_intake', { name: 'Unlevered research', archetype: 'PREDICTIVE_ALPHA', economicMechanism: 'Test an allocation hypothesis', falsificationConditions: ['No validation improvement'],
       requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Overfit'], ambiguities: [],
       ownerBoundaries: [{ kind: 'LEVERAGE', sourceStatement: '不要杠杆。', normalizedValue: { maximumGrossNavRatio: '1', borrowingAllowed: false } }] }),
-      hypothesis(), trial(0.4), fauxAssistantMessage('Compare the admitted evidence.')]);
+      hypothesis(), trial(0.4), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('no-leverage', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const state = await f.host.state(receipt.conversationId); const intake = state.campaignResearch!.intake!;
     assert.equal(intake.support, 'CONDITIONAL'); assert.deepEqual(intake.missingCapabilities, []);
@@ -348,7 +348,7 @@ test('original explicit no-leverage statements remain binding even when the firs
     f.faux.setResponses([call('strategy_intake', { name: 'Unlevered research', archetype: 'PREDICTIVE_ALPHA', economicMechanism: 'Test the allocation', falsificationConditions: ['No improvement'],
       requiredCapabilities: [], intendedHoldingHorizonRef: 'one-bar', knownFailureModes: ['Costs'], ambiguities: [], ownerBoundaries: [] }),
       call('research_finish', { reason: 'An empty comparison alone must not stop otherwise admissible research.' }),
-      hypothesis(), trial(0.4), fauxAssistantMessage('Close the original trial allowance.')]);
+      hypothesis(), trial(0.4), call('research_finish', { reason: 'The registered candidate comparison is complete.' })]);
     const receipt = await f.host.start('omitted-first-boundary', f.input); await (await f.host.harness.submission(receipt.submissionId, context))!.wait(context); await f.host.harness.waitForIdle(context);
     const intake = (await f.host.state(receipt.conversationId)).campaignResearch!.intake!;
     assert.equal(intake.support, 'CONDITIONAL'); assert.equal(intake.ownerBoundaries.length, 1);

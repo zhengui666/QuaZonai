@@ -30,7 +30,8 @@ pub struct NativeCatalogFactorScanRequestV1 {
     pub validation_end_ns: DbCounter,
     pub event_end_ns: DbCounter,
     pub decision_cutoff_ns: DbCounter,
-    #[schema(minimum = 1)]
+    /// Legacy row allowance retained in frozen requests; no longer limits reads.
+    #[serde(default)]
     pub maximum_rows: u32,
     pub parameters: crate::science::NativeForecastParametersV1,
 }

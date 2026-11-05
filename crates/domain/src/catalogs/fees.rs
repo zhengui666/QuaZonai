@@ -17,7 +17,6 @@ pub fn maker_taker_fee_source(source: &FrozenMakerTakerFeesV1) -> Result<(), Dom
         || source.valid_from_ns >= source.valid_until_ns
         || source.available_at_ns >= source.valid_until_ns
         || source.rates.is_empty()
-        || source.rates.len() > 65_536
     {
         return Err(bad("execution_fees.source"));
     }

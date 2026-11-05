@@ -33,7 +33,7 @@ export function registerReviewPolicyRoutes(app: FastifyInstance, host: ResearchH
     if (input.kind !== 'FACTOR' && input.kind !== 'PORTFOLIO' && input.kind !== 'ALLOCATION') throw new Problem('review_policy_kind_invalid');
     const evaluationStartNs = counter(input.evaluationStartNs, 'evaluation_start');
     const ids = input.kind === 'ALLOCATION' ? input.allocationIds : input.researchIds;
-    if (!Array.isArray(ids) || ids.length < 30 || ids.length > 1000 || new Set(ids).size !== ids.length
+    if (!Array.isArray(ids) || ids.length < 30 || new Set(ids).size !== ids.length
       || ids.some(id => input.kind === 'ALLOCATION' ? typeof id !== 'string' || !id : !Number.isSafeInteger(id) || Number(id) < 0)
       || (input.kind === 'ALLOCATION' ? input.researchIds !== undefined : input.allocationIds !== undefined)) throw new Problem('review_reference_roots_required');
     const prior = (await host.harness.snapshot(Policies, context))?.records[String(input.requestId)];

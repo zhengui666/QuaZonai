@@ -43,7 +43,7 @@ const reasons: Record<string, string> = {
   selection_frontier_only: '保留候选前沿，继续比较收益与风险',
   no_viable_candidate: '现有证据未支持可配置的候选',
   no_computed_candidates: '当前尚无完成计算的候选',
-  trial_budget_exhausted: '新增实验预算已用完，正在形成研究结论',
+  trial_budget_exhausted: '原记录曾因试验预算停止',
   capacity_evidence_unavailable: '尚未证明本次资金规模可以配置',
   economic_capacity_unavailable: '缺少经济容量所需的成本、冲击或退出证据',
   account_equity_unknown: '尚未取得权威账户净值',

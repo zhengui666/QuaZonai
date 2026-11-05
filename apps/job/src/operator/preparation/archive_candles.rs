@@ -580,22 +580,15 @@ pub fn run(args: &Arguments) -> Result<Value> {
         "SOURCE_IMPLEMENTATION_HASH"
     );
     let mut expected = spec.plan.clone();
-    let recorded_limits = manifest
-        .get("limits")
-        .context("SOURCE_ACQUISITION_LIMITS")?;
-    let mut uncapped_limits = expected["limits"].clone();
-    for value in uncapped_limits
-        .as_object_mut()
-        .context("SOURCE_PLAN")?
-        .values_mut()
-    {
-        *value = Value::Null;
+    // Legacy acquisition allowances are frozen evidence, not execution quotas.
+    if let Some(recorded_limits) = manifest.get("limits") {
+        expected["limits"] = recorded_limits.clone();
+    } else {
+        expected
+            .as_object_mut()
+            .context("SOURCE_PLAN")?
+            .remove("limits");
     }
-    ensure!(
-        *recorded_limits == expected["limits"] || *recorded_limits == uncapped_limits,
-        "SOURCE_ACQUISITION_LIMITS"
-    );
-    expected["limits"] = recorded_limits.clone();
     expected.as_object_mut().context("SOURCE_PLAN")?.extend(json!({
         "files":files,"decoded_member":{"name":spec.plan["member_name"],"size":decoded.len(),"sha256":digest(&decoded)},
         "checksum_sha256":checksum_hash,"archive_identity":format!("sha256:{}",digest(&archive)),"upstream_revision":null,

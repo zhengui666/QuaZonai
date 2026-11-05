@@ -10,6 +10,20 @@ import { Requests } from '../../research/src/documents.ts';
 import { acceptSnapshot } from '../src/downstream.ts';
 
 const api = '/api/v3';
+test('owner research admission accepts no trial quota and ignores a legacy zero quota', async () => {
+  const state = await setup();
+  try {
+    for (const legacy of [false, true]) {
+      state.faux.setResponses([fauxAssistantMessage('No scientific result claimed.')]);
+      const response = await state.service.app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
+        payload: { requestId: `no-quota-${legacy}`, goal: 'Research without an execution quota', model: state.model, datasetId: 'controlled', ...(legacy ? { maxTrials: 0 } : {}) } });
+      assert.equal(response.statusCode, 202, response.body);
+      await (await state.service.research.harness.submission(response.json().submissionId, context))!.wait(context);
+      const detail = await state.service.research.state(response.json().conversationId);
+      assert.equal(detail.research!.input!.policy.max_trials, legacy ? 0 : undefined);
+    }
+  } finally { await state.cleanup(); }
+});
 test('shared-source snapshot equality normalizes only known transport aliases, keeps native facts and validates every binding', () => {
   const connection = { id: 'TEST_ONLY', name: 'TEST_ONLY', url: 'http://127.0.0.1:1', mode: 'paper', clientId: 'current-client', accountId: 'current-account' };
   const fresh = () => ({ connection, snapshot: null, view: { currency: 'USD', positions: [], curve: [] } } as any);

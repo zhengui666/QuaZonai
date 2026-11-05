@@ -31,16 +31,6 @@ export async function evaluateTrial(
     const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
     if (campaign.state !== 'SEARCHING') throw new Error('research_search_closed');
     if (campaign.binding?.intakeRequired && (!campaign.intake || campaign.intake.support !== 'CONDITIONAL')) throw new Error('strategy_intake_evidence_required');
-    const maximum = study.input?.policy.max_trials;
-    const admitted = study.trials.filter((trial) => trial.status !== 'REJECTED').length;
-    if (typeof maximum === 'number' && admitted >= maximum) {
-      study.trials.push({ taskId: api.taskId, proposal, status: 'REJECTED', error: 'trial_budget_exhausted', result: null });
-      await admitCampaignTrial(tx, api, proposal, true);
-      return { rejected: true };
-    }
-    const measured = campaign.budgetMovements.filter(item => item.resource === 'NATIVE_SECONDS' && item.kind === 'CONSUME').reduce((sum, item) => sum + Number(item.amount), 0);
-    if (campaign.binding?.budget.nativeComputeSeconds != null && campaign.resourceMeasurements.some(item => item.resource === 'NATIVE_SECONDS' && item.status === 'UNAVAILABLE')) throw new Error('native_compute_budget_unverifiable');
-    if (campaign.binding?.budget.nativeComputeSeconds !== null && campaign.binding?.budget.nativeComputeSeconds !== undefined && measured >= campaign.binding.budget.nativeComputeSeconds) throw new Error('native_compute_budget_exhausted');
     await admitCampaignTrial(tx, api, proposal);
     const scope = study.input?.specification?.search;
     if (scope) {
@@ -100,7 +90,7 @@ export async function trialFeedback(api: ToolExecutionApi, context: Context, eva
   } catch (error) {
     if (context.abortSignal?.aborted) throw error;
     if (error instanceof Error && error.message === 'research_already_final') return { isError: true, content: [{ type: 'text', text: 'research_already_final: no additional scientific computation was started.' }], control: { terminate: true } };
-    if (!(error instanceof Error) || !['trial_budget_exhausted', 'native_compute_budget_exhausted', 'native_compute_budget_unverifiable', 'research_search_closed'].includes(error.message)) throw error;
+    if (!(error instanceof Error) || !['research_search_closed'].includes(error.message)) throw error;
     await closeResearch(api, context, error.message);
     return { isError: true, content: [{ type: 'text', text: 'Research search closed. Original attempts, failures and deterministic candidate comparison are retained; independent results remain owner-only.' }], control: { terminate: true } };
   }

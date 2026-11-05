@@ -209,9 +209,7 @@ pub struct Builder {
     outputs: BTreeMap<String, Output>,
     pending_rows: usize,
     buffered_bytes: usize,
-    maximum_working_rows: usize,
     maximum_cohort_rows: u32,
-    maximum_output_bytes: u64,
     written_bytes: u64,
     sealed: bool,
 }
@@ -220,14 +218,14 @@ impl Builder {
     pub fn new(
         output: &Path,
         maximum_cohort_rows: u32,
-        maximum_working_rows: usize,
-        maximum_output_bytes: u64,
+        _maximum_working_rows: usize,
+        _maximum_output_bytes: u64,
     ) -> Result<Self> {
         Self::create(
             output,
             maximum_cohort_rows,
-            maximum_working_rows,
-            maximum_output_bytes,
+            _maximum_working_rows,
+            _maximum_output_bytes,
             false,
         )
     }
@@ -235,14 +233,14 @@ impl Builder {
     pub fn new_flow(
         output: &Path,
         maximum_cohort_rows: u32,
-        maximum_working_rows: usize,
-        maximum_output_bytes: u64,
+        _maximum_working_rows: usize,
+        _maximum_output_bytes: u64,
     ) -> Result<Self> {
         Self::create(
             output,
             maximum_cohort_rows,
-            maximum_working_rows,
-            maximum_output_bytes,
+            _maximum_working_rows,
+            _maximum_output_bytes,
             true,
         )
     }
@@ -250,15 +248,12 @@ impl Builder {
     fn create(
         output: &Path,
         maximum_cohort_rows: u32,
-        maximum_working_rows: usize,
-        maximum_output_bytes: u64,
+        _maximum_working_rows: usize,
+        _maximum_output_bytes: u64,
         flow: bool,
     ) -> Result<Self> {
         ensure!(
-            maximum_cohort_rows > 0
-                && maximum_cohort_rows <= domain::ticks::MAXIMUM_COHORT_ROWS
-                && maximum_working_rows >= maximum_cohort_rows as usize
-                && maximum_output_bytes > 0,
+            maximum_cohort_rows > 0 && maximum_cohort_rows <= domain::ticks::MAXIMUM_COHORT_ROWS,
             "TICK_CACHE_RESOURCE_LIMIT"
         );
         fs::create_dir(output).context("OUTPUT_MUST_BE_NEW")?;
@@ -270,9 +265,7 @@ impl Builder {
             outputs: BTreeMap::new(),
             pending_rows: 0,
             buffered_bytes: 0,
-            maximum_working_rows,
             maximum_cohort_rows,
-            maximum_output_bytes,
             written_bytes: 0,
             sealed: false,
         })
@@ -333,10 +326,6 @@ impl Builder {
                 } else {
                     FRAME_BYTES
                 };
-                ensure!(
-                    self.written_bytes <= self.maximum_output_bytes,
-                    "TICK_CACHE_OUTPUT_LIMIT"
-                );
             }
         }
         if let Some(previous) = output.identities.insert(trade.trade_id, trade) {
@@ -347,10 +336,7 @@ impl Builder {
             output.pending.len() < self.maximum_cohort_rows as usize,
             "TICK_COHORT_ROW_LIMIT"
         );
-        ensure!(
-            self.pending_rows < self.maximum_working_rows,
-            "TICK_CACHE_WORKING_ROW_LIMIT"
-        );
+
         output.pending.push(trade);
         self.pending_rows += 1;
         if self.buffered_bytes >= BUFFERED_BYTES {
@@ -372,10 +358,7 @@ impl Builder {
                     FRAME_BYTES
                 };
             }
-            ensure!(
-                self.written_bytes <= self.maximum_output_bytes,
-                "TICK_CACHE_OUTPUT_LIMIT"
-            );
+
             output.verify()?;
             File::open(&output.path)?.sync_all()?;
         }
@@ -415,15 +398,12 @@ impl Builder {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error.into()),
         };
-        let bytes = self
+        let _bytes = self
             .written_bytes
             .checked_add(u64::try_from(serde_json::to_vec(&manifest)?.len())? + 1)
             .and_then(|bytes| bytes.checked_add(report_bytes))
             .context("TICK_CACHE_OUTPUT_LIMIT")?;
-        ensure!(
-            bytes <= self.maximum_output_bytes,
-            "TICK_CACHE_OUTPUT_LIMIT"
-        );
+
         publish(&self.root.join(MANIFEST_FILE), &manifest)
     }
 }
@@ -557,10 +537,6 @@ fn number(value: &Value, field: &str) -> Result<u64> {
 
 pub fn manifest(root: &Path) -> Result<Manifest> {
     let file = File::open(cache_path(root, MANIFEST_FILE)?)?;
-    ensure!(
-        file.metadata()?.len() <= 16 * 1024 * 1024,
-        "TICK_CACHE_MANIFEST_LIMIT"
-    );
     serde_json::from_reader(BufReader::new(file)).context("TICK_CACHE_MANIFEST_INVALID")
 }
 
@@ -712,15 +688,7 @@ pub(super) fn load(
         .map(|asset| asset.file.trade_count.get())
         .sum::<u64>();
     let selected_cohorts = assets.iter().map(|asset| asset.cohort_count).sum::<u64>();
-    ensure!(
-        selected_trades > 0
-            && selected_trades
-                <= request
-                    .input
-                    .source_row_limit()
-                    .context("TICK_CACHE_BUDGET_REQUIRED")?,
-        "TICK_CACHE_SOURCE_ROW_LIMIT"
-    );
+    ensure!(selected_trades > 0, "TICK_CACHE_SOURCE_EMPTY");
     let instrument_coverage = request
         .input
         .instrument_ids
@@ -789,12 +757,9 @@ pub fn concatenate(
     units: &[PathBuf],
     output: &Path,
     mut source_report: Value,
-    maximum_output_bytes: u64,
+    _maximum_output_bytes: u64,
 ) -> Result<Manifest> {
-    ensure!(
-        !units.is_empty() && maximum_output_bytes > 0,
-        "TICK_CACHE_RESOURCE_LIMIT"
-    );
+    ensure!(!units.is_empty(), "TICK_CACHE_INPUT_EMPTY");
     let output = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -926,7 +891,7 @@ pub fn concatenate(
                 written = written
                     .checked_add(width)
                     .context("TICK_CACHE_OUTPUT_LIMIT")?;
-                ensure!(written <= maximum_output_bytes, "TICK_CACHE_OUTPUT_LIMIT");
+
                 writer.write_all(&frame(&cohort, width == FLOW_FRAME_BYTES)?[..width as usize])?;
                 target.first_event_ns.get_or_insert(counter(cohort.event)?);
                 target.last_event_ns = Some(counter(cohort.event)?);
@@ -1003,13 +968,11 @@ pub fn concatenate(
     let metadata_bytes = u64::try_from(serde_json::to_vec(&result)?.len())?
         .checked_add(u64::try_from(serde_json::to_vec(&source_report)?.len())?)
         .and_then(|bytes| bytes.checked_add(2))
-        .context("TICK_CACHE_OUTPUT_LIMIT")?;
-    ensure!(
-        written
-            .checked_add(metadata_bytes)
-            .is_some_and(|bytes| bytes <= maximum_output_bytes),
-        "TICK_CACHE_OUTPUT_LIMIT"
-    );
+        .context("TICK_CACHE_OUTPUT_SIZE_OVERFLOW")?;
+    let _total_output_bytes = written
+        .checked_add(metadata_bytes)
+        .context("TICK_CACHE_OUTPUT_SIZE_OVERFLOW")?;
+
     publish(&output.join("import-report.json"), &source_report)?;
     publish(&root.join(MANIFEST_FILE), &result)?;
     Ok(result)
@@ -1019,7 +982,7 @@ pub fn prepare_views(
     source: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
     output: &Path,
-    maximum_output_bytes: u64,
+    _maximum_output_bytes: u64,
 ) -> Result<Value> {
     let input = load(source, request)?;
     let source = source.canonicalize()?;
@@ -1102,7 +1065,7 @@ pub fn prepare_views(
         "operational_state":"NATIVE_PREPARED","scientific_qualification":"UNQUALIFIED_EXPLORATORY",
         "catalog_format":format!("QZ_{}", full.representation),"request":request,"research_request":research_request,
         "research_catalog":"research/catalog","independent_catalog":"independent/catalog","coverage":input.coverage,
-        "maximum_output_bytes":maximum_output_bytes.to_string(),"output_bytes":"0"});
+        "maximum_output_bytes":_maximum_output_bytes.to_string(),"output_bytes":"0"});
     if !economic_sources.is_empty() {
         metadata["economic_sources"] = json!(economic_sources
             .iter()
@@ -1117,10 +1080,7 @@ pub fn prepare_views(
             .checked_add(views_bytes)
             .and_then(|bytes| bytes.checked_add(metadata_bytes))
             .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
-        ensure!(
-            bytes <= maximum_output_bytes,
-            "TICK_PREPARATION_OUTPUT_LIMIT"
-        );
+
         if metadata["output_bytes"].as_str() == Some(bytes.to_string().as_str()) {
             break;
         }

@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import { defineDocFamily, type ConversationId, type JsonObject } from '@earendil-works/pi-durable';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -26,7 +27,6 @@ export async function reservePortfolioReviewScience(input: PortfolioTaskInput, a
     const state = await tx.doc(PortfolioReviewScience, String(api.taskId), null);
     state.reservations ??= {};
     if (state.reservations[key] !== undefined) { if (state.reservations[key] !== calls) throw new Problem('portfolio_review_stage_identity_conflict'); pending = true; return; }
-    if (state.reservedCalls + calls > (input.review?.maximumScientificCalls ?? 64)) throw new Problem('portfolio_review_scientific_budget_exhausted');
     state.reservations[key] = calls; state.reservedCalls += calls;
   }, context);
   // A native process may already have run before its result checkpoint. Never
@@ -111,7 +111,7 @@ export async function reviewPortfolio(input: PortfolioTaskInput, api: ResearchRu
       const previous = peer.view.taskId === null ? null : await api.snapshot(PortfolioReviewScience, String(peer.view.taskId), context); const old = previous?.results.candidate;
       if (!old) { complete = false; continue; }
       const source = object(old.native); const original = object(source.simulationRequest);
-      if (canonical(original.selection!) !== canonical(simulationRequest.selection!) || canonical(original.settings!) !== canonical(simulationRequest.settings!)) { complete = false; continue; }
+      if (canonical(withoutExecutionQuotas(original.selection!)) !== canonical(withoutExecutionQuotas(simulationRequest.selection!)) || canonical(original.settings!) !== canonical(simulationRequest.settings!)) { complete = false; continue; }
       const returns = nativeReviewReturnPanel(object(source.simulation)); if (canonical(returns.times) !== canonical(panel.times)) { complete = false; continue; }
       cohort.push({ id: peer.view.id, returns: returns.returns });
     }

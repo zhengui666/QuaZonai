@@ -103,16 +103,16 @@ def local_bytes(path, limit=None):
              | getattr(os, "O_BINARY", 0))
     with os.fdopen(os.open(path, flags), "rb") as stream:
         before = os.fstat(stream.fileno())
-        if not stat.S_ISREG(before.st_mode) or (limit is not None and before.st_size > limit):
-            raise ValueError("input must be a regular file within any explicit byte limit")
-        body = stream.read() if limit is None else stream.read(limit + 1)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("input must be a regular file")
+        body = stream.read()
         after = os.fstat(stream.fileno())
     safe_local(path.parent, path.name)
     current = path.stat()
     identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-    if ((limit is not None and len(body) > limit) or len(body) != before.st_size
+    if (len(body) != before.st_size
             or identity(before) != identity(after) or identity(after) != identity(current)):
-        raise ValueError("input changed during read or exceeds byte limit")
+        raise ValueError("input changed during read")
     return body
 
 

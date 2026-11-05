@@ -61,14 +61,10 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   if (input.availability !== 'EVENT_TIME_PROXY_UNVERIFIED') throw new Error('native_tick_availability_unsupported');
   if (!Array.isArray(input.instrument_ids) || !input.instrument_ids.length || input.instrument_ids.length > 1_000_000 || input.instrument_ids.some(id => typeof id !== 'string' || !id || id.length > 200 || /[\s\u0000-\u001f\u007f]/.test(id)) || new Set(input.instrument_ids).size !== input.instrument_ids.length) throw new Error('native_tick_instrument_ids_invalid');
   if (typeof input.source_revision !== 'string' || !input.source_revision.trim() || input.source_revision.length > 512 || /[\u0000-\u001f\u007f]/.test(input.source_revision)) throw new Error('native_tick_source_revision_required');
-  if (input.representation === 'EVENT_TIME_COHORT_CACHE_V1' || input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1') {
-    if (input.maximum_rows !== undefined) throw new Error('native_tick_cache_row_budget_ambiguous');
-    counter(input.maximum_source_rows, 'maximum_source_rows', true);
-  } else {
-    if (input.representation !== undefined) throw new Error('native_tick_representation_unsupported');
-    if (input.maximum_source_rows !== undefined) throw new Error('native_tick_cache_row_budget_ambiguous');
-    integer(input.maximum_rows, 'maximum_rows', 1_000_000);
-  }
+  if (input.representation !== undefined && !['EVENT_TIME_COHORT_CACHE_V1', 'EVENT_TIME_COHORT_FLOW_CACHE_V1'].includes(String(input.representation))) throw new Error('native_tick_representation_unsupported');
+  // Legacy row quotas remain readable but do not constrain the selected time range.
+  if (input.maximum_rows !== undefined && input.maximum_rows !== null && (typeof input.maximum_rows !== 'number' || !Number.isSafeInteger(input.maximum_rows) || input.maximum_rows < 0 || input.maximum_rows > 4294967295)) throw new Error('native_tick_maximum_rows_invalid');
+  if (input.maximum_source_rows !== undefined && input.maximum_source_rows !== null) counter(input.maximum_source_rows, 'maximum_source_rows');
   const start = counter(input.event_start_ns, 'event_start');
   const train = counter(request.train_end_ns, 'train_end');
   const validation = counter(request.validation_end_ns, 'validation_end');
@@ -93,7 +89,7 @@ export function validateNativeTickFactorRequest(value: unknown): NativeTickFacto
   const fast = integer(parameters.fast_period_cohorts, 'fast_period_cohorts', 1_000_000);
   const slow = integer(parameters.slow_period_cohorts, 'slow_period_cohorts', 1_000_000);
   if (fast >= slow) throw new Error('native_tick_ema_periods_invalid');
-  if (parameters.total_fuel !== undefined) counter(parameters.total_fuel, 'total_fuel', true);
+  if (parameters.total_fuel !== undefined && parameters.total_fuel !== null) counter(parameters.total_fuel, 'total_fuel');
   if (request.evaluation_regimes !== undefined) {
     const dayNs = 86_400_000_000_000n;
     if (input.representation === undefined || [start, train, validation, end].some(value => value % dayNs !== 0n)) throw new Error('native_tick_regime_scope_invalid');

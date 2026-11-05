@@ -1,7 +1,7 @@
 """Source plugins for bounded public acquisition, not native or qualified research data.
 
 A plugin describes its capabilities, plans fixed public GET requests and interprets
-original JSON numbers. The acquisition runner owns I/O, budgets and publication.
+original JSON numbers. The acquisition runner owns I/O and publication.
 """
 
 from dataclasses import dataclass

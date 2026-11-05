@@ -4,7 +4,7 @@ import type { HarnessSettings } from '@earendil-works/pi-durable';
 // Starting values, not a provider performance guarantee. These are live host
 // settings; native pi.agent retains each conversation's model/thinking choice.
 export function researchSettings(value: HarnessSettings = {}): HarnessSettings {
-  const { timeoutMs: _retiredTimeout, ...stream } = value.stream ?? {};
+  const { timeoutMs: _retiredTimeout, maxTokens: _retiredTokens, ...stream } = (value.stream ?? {}) as NonNullable<HarnessSettings['stream']> & { maxTokens?: number };
   const settings = {
     ...value,
     stream: { maxRetries: 0, maxRetryDelayMs: 0, ...stream },

@@ -68,16 +68,12 @@ application retains it as non-execution evidence in the existing remote-referenc
 facts; it does not invent a terminal scientific receipt. A generic HTTP error or
 a refusal with another request identity cannot settle an uncertain execution.
 
-Tick execution requires Linux `/usr/bin/prlimit`. The worker applies both soft
-and hard address-space limits to the configured native executable, defaulting to
-2 GiB through `QZ_NAUTILUS_TICK_MEMORY_BYTES`. This is a virtual-address-space
-ceiling, not a measurement of resident memory; a native build using larger
-mappings or thread reservations may require an explicitly larger installation
-limit. Unsupported resource enforcement fails explicitly. Tick standard output
-is limited to 64 MiB by `QZ_NAUTILUS_TICK_OUTPUT_BYTES`; exceeding it stops and
-joins the child and retains a failed receipt. These owner settings cannot be
-raised by fields in the scientific request. They do not qualify the source or
-replace native row, cohort, output-file or scientific budget checks.
+Tick execution inherits the native host's resource availability. The worker no
+longer installs an address-space quota or terminates a child at an output-byte
+allowance. Legacy `QZ_NAUTILUS_TICK_MEMORY_BYTES` and
+`QZ_NAUTILUS_TICK_OUTPUT_BYTES` settings are ignored. Cancellation still stops
+and joins the actual child, and original execution receipts remain durable.
+The concurrent execution setting controls installation capacity separately.
 
 The version 1 contract is defined in
 [`packages/contracts/src/nautilus.ts`](../../packages/contracts/src/nautilus.ts):
