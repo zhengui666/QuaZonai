@@ -35,7 +35,6 @@ fn review_prior(
                 && nonempty(&member.source_report_id)
                 && reports.insert(&member.source_report_id)
                 && !member.source_evidence_refs.is_empty()
-                && member.source_evidence_refs.len() <= 256
                 && member
                     .source_evidence_refs
                     .iter()
@@ -117,14 +116,11 @@ fn calibrated(models: &[Vec<NativeEnsembleCalibrationV1>], row: &Row) -> Result<
         .collect()
 }
 
-/// Caller binds immutable factor/report identities and separately budgets every fit.
+/// Caller binds immutable factor/report identities and records every fit.
 /// No held-out or selection-partition observation enters calibration or the objective.
 pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResultV1> {
     let n = request.members.len();
-    ensure!(
-        (2..=64).contains(&n) && (1..=32).contains(&request.folds.len()),
-        "ENSEMBLE_FIT_LIMIT"
-    );
+    ensure!(n >= 2 && !request.folds.is_empty(), "ENSEMBLE_FIT_LIMIT");
     let prior = request
         .review_prior
         .as_ref()
@@ -158,10 +154,7 @@ pub fn fit(request: &NativeEnsembleFitRequestV1) -> Result<NativeEnsembleFitResu
             && request.fit_end_ns > first.request.forecast.selection.event_start_ns,
         "ENSEMBLE_FIT_OUTSIDE_TRAIN"
     );
-    ensure!(
-        first.points.len() <= 200_000 && !first.points.is_empty(),
-        "ENSEMBLE_PANEL_LIMIT"
-    );
+    ensure!(!first.points.is_empty(), "ENSEMBLE_PANEL_LIMIT");
     let reference = serde_json::to_value(&first.request)?;
     let mut ids = BTreeSet::new();
     for member in &request.members {
@@ -463,7 +456,7 @@ pub fn apply(request: &NativeEnsembleApplyRequestV1) -> Result<NativeEnsembleApp
         "ENSEMBLE_FROZEN_METHOD"
     );
     ensure!(
-        (2..=64).contains(&fit.members.len()) && fit.members.len() == request.members.len(),
+        fit.members.len() >= 2 && fit.members.len() == request.members.len(),
         "ENSEMBLE_APPLY_MEMBER_LIMIT"
     );
     if let Some(prior) = &fit.review_prior {

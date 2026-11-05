@@ -7,6 +7,10 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+fn legacy_elapsed_allowance() -> DbCounter {
+    DbCounter::ZERO
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCapitalBasisV1 {
@@ -19,12 +23,12 @@ pub struct NativeCapitalBasisV1 {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCapitalCurveBudgetV1 {
-    /// Host resource allowance, not a user-authored capital grid.
-    #[schema(minimum = 1, maximum = 64)]
+    /// Number of method sampling points, not a cumulative execution allowance.
+    #[schema(minimum = 1)]
     pub maximum_simulations: u32,
-    /// Monotonic elapsed-time admission limit checked before each replay.
-    /// This does not cancel an in-flight replay. The official task/process owner
-    /// retains cancellation authority; no implicit process deadline is installed.
+    /// Legacy execution allowance, retained in original request evidence and ignored.
+    /// The official task/process owner retains cancellation authority.
+    #[serde(default = "legacy_elapsed_allowance")]
     pub maximum_elapsed_ms: DbCounter,
 }
 

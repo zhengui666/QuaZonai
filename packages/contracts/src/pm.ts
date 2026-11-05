@@ -242,7 +242,8 @@ export interface PredictionRow {
   foldId: Id;
 }
 export interface ResearchBudget extends VersionedFact {
-  maximumTrials: number;
+  /** Retained for historical inputs; null records research without a trial quota. */
+  maximumTrials: number | null;
   nativeComputeSeconds: number | null;
   modelSpend: Money | null;
   dataBytes: string | null;
@@ -824,7 +825,8 @@ export interface PmMandateStart {
   model: ModelRef;
   thinkingLevel?: ThinkingLevel;
   serviceTier?: ServiceTier;
-  maxTrials: number;
+  /** Legacy request field, ignored by execution. */
+  maxTrials?: number;
   operatingAuthority?: MandateRevision['operatingAuthority'];
   businessPreference?: 'NET_RETURN' | 'DOWNSIDE_FIRST' | 'FRONTIER';
 }

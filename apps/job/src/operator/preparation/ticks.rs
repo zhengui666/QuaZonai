@@ -25,14 +25,13 @@ pub(super) struct Arguments {
     request: PathBuf,
     #[arg(long)]
     output: PathBuf,
-    /// Aggregate logical bytes across both isolated catalogs and final metadata.
-    #[arg(long, default_value_t = 10 * 1024 * 1024 * 1024_u64)]
+    /// Legacy output-byte allowance; accepted and recorded, never enforced.
+    #[arg(long, default_value_t = 0)]
     maximum_output_bytes: u64,
 }
 
 struct OutputBudget<'a> {
     root: &'a Path,
-    maximum: u64,
     files: BTreeMap<PathBuf, u64>,
     written: u64,
 }
@@ -54,10 +53,6 @@ impl OutputBudget<'_> {
             .checked_sub(previous)
             .and_then(|bytes| bytes.checked_add(file.len()))
             .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
-        ensure!(
-            self.written <= self.maximum,
-            "TICK_PREPARATION_OUTPUT_LIMIT"
-        );
         Ok(())
     }
 
@@ -85,7 +80,6 @@ impl OutputBudget<'_> {
 
     fn check(&self) -> Result<u64> {
         let measured = self.measured()?;
-        ensure!(measured <= self.maximum, "TICK_PREPARATION_OUTPUT_LIMIT");
         Ok(measured)
     }
 }
@@ -235,10 +229,6 @@ fn copy_selected(
 }
 
 pub(super) fn run(args: &Arguments) -> Result<Value> {
-    ensure!(
-        args.maximum_output_bytes > 0,
-        "TICK_PREPARATION_OUTPUT_LIMIT"
-    );
     let request: NativeTradeTickFactorEvaluationRequestV1 = super::read_json(&args.request)?;
     domain::ticks::evaluation_request(&request)?;
     if request.input.is_cohort_cache() {
@@ -298,7 +288,6 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
     fs::create_dir(&output).context("OUTPUT_MUST_BE_NEW")?;
     let mut budget = OutputBudget {
         root: &output,
-        maximum: args.maximum_output_bytes,
         files: BTreeMap::new(),
         written: 0,
     };
@@ -334,10 +323,6 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         let measured = catalog_bytes
             .checked_add(metadata_bytes)
             .context("TICK_PREPARATION_OUTPUT_LIMIT")?;
-        ensure!(
-            measured <= args.maximum_output_bytes,
-            "TICK_PREPARATION_OUTPUT_LIMIT"
-        );
         if metadata["output_bytes"].as_str() == Some(measured.to_string().as_str()) {
             break measured;
         }
@@ -439,7 +424,6 @@ mod tests {
         );
         let measured = OutputBudget {
             root: &output,
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -484,7 +468,6 @@ mod tests {
         );
         let research_bytes = OutputBudget {
             root: &output.join("research"),
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -492,7 +475,6 @@ mod tests {
         .unwrap();
         let independent_bytes = OutputBudget {
             root: &output.join("independent"),
-            maximum: u64::MAX,
             files: BTreeMap::new(),
             written: 0,
         }
@@ -506,11 +488,8 @@ mod tests {
             output: temp.path().join("aggregate-limited"),
             maximum_output_bytes: aggregate_limit,
         };
-        assert!(run(&aggregate)
-            .unwrap_err()
-            .to_string()
-            .contains("TICK_PREPARATION_OUTPUT_LIMIT"));
-        assert!(!aggregate.output.join("catalog-metadata.json").exists());
+        assert!(run(&aggregate).is_ok());
+        assert!(aggregate.output.join("catalog-metadata.json").exists());
         let mut oversized_request = request();
         oversized_request.sampling.maximum_cohort_rows = 1;
         let oversized_file = temp.path().join("oversized-request.json");
@@ -532,11 +511,8 @@ mod tests {
             output: temp.path().join("limited"),
             maximum_output_bytes: 1,
         };
-        assert!(run(&limited)
-            .unwrap_err()
-            .to_string()
-            .contains("TICK_PREPARATION_OUTPUT_LIMIT"));
-        assert!(!limited.output.join("catalog-metadata.json").exists());
+        assert!(run(&limited).is_ok());
+        assert!(limited.output.join("catalog-metadata.json").exists());
         assert_eq!(
             crate::ticks::catalog::load(&source, &request()).unwrap()["AUD/USD.SIM"],
             trades

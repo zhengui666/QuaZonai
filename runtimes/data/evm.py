@@ -116,9 +116,6 @@ def invalid_constant(_):
 
 
 def rpc_call(endpoint, method, params, remaining=None):
-    limit = remaining
-    if limit is not None and limit <= 0:
-        raise ValueError("download byte budget exhausted")
     request = urllib.request.Request(
         endpoint,
         data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(),
@@ -143,19 +140,16 @@ def rpc_call(endpoint, method, params, remaining=None):
             raise ValueError("unexpected RPC HTTP response")
         declared = response.headers.get("Content-Length")
         if declared is not None:
-            if not re.fullmatch(r"[0-9]+", declared) or (limit is not None and int(declared) > limit):
-                raise ValueError("RPC response exceeds byte budget")
+            if not re.fullmatch(r"[0-9]+", declared):
+                raise ValueError("invalid RPC response Content-Length")
             declared = int(declared)
-        while limit is None or len(body) < limit:
-            chunk = response.read1(CHUNK if limit is None else min(CHUNK, limit - len(body)))
+        while True:
+            chunk = response.read1(CHUNK)
             if not chunk:
                 break
             body.extend(chunk)
-        # Without a length, reaching the limit cannot prove EOF without reading
-        # beyond the budget. Fail closed instead of consuming an extra byte.
-        if ((declared is not None and len(body) != declared)
-                or (limit is not None and declared is None and len(body) == limit)):
-            raise ValueError("RPC response truncated or byte budget exhausted")
+        if declared is not None and len(body) != declared:
+            raise ValueError("RPC response truncated or Content-Length differs")
     value = json.loads(body, object_pairs_hook=unique_object, parse_constant=invalid_constant)
     if (not isinstance(value, dict) or value.get("jsonrpc") != "2.0"
             or type(value.get("id")) is not int or value["id"] != 1
@@ -218,8 +212,6 @@ def canonical_logs(response, header, addresses, topic0):
 def download(chain_id, endpoints, blocks, addresses, topic0, output, max_bytes=DEFAULT_MAX_BYTES):
     u64(chain_id)
     blocks = select_blocks(blocks)
-    if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
-        raise ValueError("positive byte budget required")
     if len(endpoints) < 2:
         raise ValueError("select at least two public RPC endpoints")
     hosts = [endpoint_host(endpoint) for endpoint in endpoints]
@@ -237,11 +229,8 @@ def download(chain_id, endpoints, blocks, addresses, topic0, output, max_bytes=D
 
     def request(endpoint, method, params):
         nonlocal downloaded_bytes
-        response, consumed = rpc_call(endpoint, method, params,
-            None if max_bytes is None else max_bytes - downloaded_bytes)
+        response, consumed = rpc_call(endpoint, method, params)
         downloaded_bytes += consumed
-        if max_bytes is not None and downloaded_bytes > max_bytes:
-            raise ValueError("download byte budget exhausted")
         return response
 
     observations = []
@@ -287,8 +276,6 @@ def download(chain_id, endpoints, blocks, addresses, topic0, output, max_bytes=D
                "query": {"blocks": blocks, "addresses": addresses, "topic0": topic0},
                "observations": observations}
     content = (json.dumps(archive, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
-    if max_bytes is not None and len(content) > max_bytes:
-        raise ValueError("archive exceeds byte budget")
     output.parent.mkdir(parents=True, exist_ok=True)
     safe_local(output.parent, output.name)
     publish_bytes(output, content)
@@ -308,7 +295,7 @@ def main(argv=None):
     parser.add_argument("--address", required=True, action="append", help="explicit contract address (repeatable)")
     parser.add_argument("--topic0", required=True)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
-                        help="optional explicit total response-body and output byte budget; default unlimited")
+                        help="legacy option accepted for compatibility; downloads are not byte-budgeted")
     parser.add_argument("--output", required=True, type=Path, help="new JSON file; no resume or overwrite")
     args = parser.parse_args(argv)
     try:

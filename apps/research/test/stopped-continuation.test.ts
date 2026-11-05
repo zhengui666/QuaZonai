@@ -128,9 +128,9 @@ test('a later owner stop wins over interrupted continuation replay and startup r
   } finally { await state.close(); }
 });
 
-for (const kind of ['selected', 'assessed', 'failed-final', 'exhausted', 'wrong-predecessor'] as const) {
+for (const kind of ['selected', 'assessed', 'failed-final', 'wrong-predecessor'] as const) {
   test(`stopped continuation refuses ${kind} without changing facts or model calls`, { timeout: 15_000 }, async () => {
-    const state = await stoppedStudy(kind === 'exhausted' ? 1 : 3);
+    const state = await stoppedStudy(3);
     try {
       if (['selected', 'assessed', 'failed-final'].includes(kind)) await state.host.harness.commit(async tx => {
         const final = (await tx.doc(Study, state.receipt.conversationId)).final!;
@@ -140,7 +140,7 @@ for (const kind of ['selected', 'assessed', 'failed-final', 'exhausted', 'wrong-
       }, context);
       const before = (await state.host.state(state.receipt.conversationId)).research;
       await assert.rejects(state.host.resume(state.receipt.conversationId, state.receipt.submissionId + (kind === 'wrong-predecessor' ? 1 : 0)),
-        kind === 'exhausted' ? /trial_budget_exhausted/ : kind === 'wrong-predecessor' ? /research_not_recoverable_conflict/ : /research_already_final/);
+        kind === 'wrong-predecessor' ? /research_not_recoverable_conflict/ : /research_already_final/);
       assert.deepEqual((await state.host.state(state.receipt.conversationId)).research, before); assert.equal(state.faux.state.callCount, 2);
     } finally { await state.close(); }
   });

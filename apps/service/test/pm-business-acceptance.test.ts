@@ -195,7 +195,7 @@ test('PM HTTP intake: an unsupported market-making mandate cannot quietly become
   } finally { await state.cleanup(); }
 });
 
-test('PM HTTP source: an automatic revision invalidates the old basis and cannot reset an exhausted shared research budget', { timeout: 40_000 }, async () => {
+test('PM HTTP source: an automatic revision invalidates the old basis and starts research beyond a legacy quota', { timeout: 40_000 }, async () => {
   const state = await pmFixture();
   try {
     const dataset = state.options.config.datasets[0]!;
@@ -249,13 +249,13 @@ test('PM HTTP source: an automatic revision invalidates the old basis and cannot
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
       view = await read(state, admitted.mandate.id);
-      if (view.campaigns.length === 2 && view.campaigns.at(-1)!.state === 'PAUSED') break;
+      if (view.campaigns.length === 2 && view.campaigns.at(-1)!.runtime.conversationId !== admitted.campaigns[0]!.runtime.conversationId && view.campaigns.at(-1)!.state !== 'PLANNED') break;
       await new Promise(resolve => setTimeout(resolve, 40));
     }
     assert.equal(view.campaigns.length, 2, 'The official monitor must admit the source change without a refresh HTTP request.');
-    assert.equal(view.campaigns.at(-1)!.state, 'PAUSED');
-    assert.equal(view.campaigns.at(-1)!.conclusionReason, 'shared_trial_budget_exhausted');
-    assert.equal(view.researchTrials.filter(trial => trial.countedAttempt).length, 1, 'A new dataset identity cannot grant a new trial allowance.');
+    assert.notEqual(view.campaigns.at(-1)!.conclusionReason, 'shared_trial_budget_exhausted');
+    assert.ok(!view.gaps.some(gap => gap.state !== 'RESOLVED' && gap.requiredCapability === 'shared_research_budget'));
+    assert.ok(view.researchTrials.some(trial => trial.countedAttempt), 'Original attempts remain in the ledger after the source revision.');
     assert.equal(view.history.find(decision => decision.id === original.id)!.status, 'SUPERSEDED');
     assert.notEqual(view.currentDecision?.id, original.id);
     const nextDataset = view.campaigns.at(-1)!.datasetRevisionIds[0]!;

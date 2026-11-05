@@ -107,7 +107,6 @@ test('explicit tick contract preserves nanosecond strings and rejects incompatib
     { ...request, input: { ...request.input, event_end_ns: '20', decision_cutoff_ns: '19' } },
     { ...request, sampling: { ...request.sampling, maximum_cohort_rows: 100_001 } },
     { ...request, target: { kind: 'FIXED_BARS', horizon_cohorts: 1 } },
-    { ...request, parameters: { ...request.parameters, total_fuel: '0' } },
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
   assert.throws(() => nativeResearchInput({ ...tagged(), request: bar() }), /ambiguous_factor_request/);
   assert.throws(() => nativeResearchInput({ nativeInput: { modality: 'BAR', request: tick() } }), /native_bar_forecast_required/);
@@ -142,20 +141,19 @@ test('fixed event-time labels preserve exact duration through clipping and expos
   assert.equal('horizonNs' in original, false);
 });
 
-test('derived cohort cache has an exact full-source budget without changing the native tick row limit', () => {
+test('legacy row allowances do not limit admitted tick or full-source cache requests', () => {
   const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
   const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597' } };
   assert.deepEqual(validateNativeTickFactorRequest(cache), cache);
+  for (const input of [{ ...cache.input, maximum_rows: 0 }, { ...cache.input, maximum_source_rows: '0' }, { ...original.input, maximum_rows: 1_000_001 }, { ...original.input, maximum_source_rows: '100' }]) assert.deepEqual(validateNativeTickFactorRequest({ ...cache, input }).input, input);
+  const withoutLegacyLimits = { ...input };
+  assert.deepEqual(validateNativeTickFactorRequest({ ...original, input: withoutLegacyLimits, parameters: { ...original.parameters, total_fuel: '0' } }).input, withoutLegacyLimits);
   const clipped = iterationRequest({ catalog: '/controlled/cache-view', ...tagged(cache) });
   assert.equal((clipped.input as JsonObject).maximum_source_rows, '1308222597');
   assert.equal((clipped.input as JsonObject).event_end_ns, original.validation_end_ns);
   for (const invalid of [
-    { ...cache, input: { ...cache.input, maximum_rows: 1_000_000 } },
     { ...cache, input: { ...cache.input, maximum_source_rows: 1308222597 } },
-    { ...cache, input: { ...cache.input, maximum_source_rows: '0' } },
     { ...cache, input: { ...cache.input, maximum_source_rows: '9223372036854775808' } },
-    { ...original, input: { ...original.input, maximum_rows: 1_000_001 } },
-    { ...original, input: { ...original.input, maximum_source_rows: '100' } },
   ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
 });
 
@@ -174,8 +172,8 @@ test('signed-flow cache exposes an explicit eighth feature and preserves old sev
   assert.match(JSON.stringify(brief.definitions), /unknown aggressors are rejected/);
   assert.match(datasetResearchSettings(tagged(flow)).inputFamily, /signed_quantity/);
   assert.equal(((modelBriefInput({ data: tagged(original), policy: {} }).data.feature_model as JsonObject).features as string[]).length, 7);
-  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }), /ambiguous/);
-  assert.throws(() => validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }), /invalid/);
+  assert.deepEqual(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_rows: 100 } }).input, { ...flow.input, maximum_rows: 100 });
+  assert.equal(validateNativeTickFactorRequest({ ...flow, input: { ...flow.input, maximum_source_rows: '0' } }).input.maximum_source_rows, '0');
 });
 
 test('tagged BAR keeps the legacy native request; tick clipping retains semantics and hides sealed data', () => {

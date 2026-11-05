@@ -11,7 +11,7 @@ import { mkdir } from 'node:fs/promises';
 import { canonical, Requests, Study } from './documents.ts';
 import { ReviewLedger } from './review-documents.ts';
 import { freezeReviewPolicies } from './review-workflow.ts';
-import { reviewExtensionWithBudget } from '../plugins/review.ts';
+import { reviewExtensionWithUsage } from '../plugins/review.ts';
 import { ReviewFactorAccountTask } from './review-factor-account.ts';
 import { bindReviewSourceEvidence, ReviewSourceValidationTask } from './review-source.ts';
 import type { CapturedReviewSource } from './review-source.ts';
@@ -63,7 +63,7 @@ export async function openResearch(options: {
       const module = await import(pathToFileURL(resolve(path)).href);
       registry.install(module.default as Extension);
     }
-    registry.install(reviewExtensionWithBudget(() => harness));
+    registry.install(reviewExtensionWithUsage(() => harness));
     registry.install(defineExtension({ name: 'qz.review-runtime', tasks: [IndependentReviewTask, ReviewNativeTask, ReviewSourceValidationTask, ReviewFactorAccountTask] }));
     registry.install(researchContinuation(() => harness));
     await mkdir(dirname(resolve(options.database)), { recursive: true });
@@ -152,7 +152,7 @@ export async function openResearch(options: {
         const campaign = await tx.doc(CampaignResearchDoc, created.id);
         campaign.binding = input.campaign;
         // Versioned technical allowance, not a market or scientific threshold.
-        campaign.orchestration = { policyVersion: 'qz.research.resources/1', maximumModelTurns: Math.min(Number.MAX_SAFE_INTEGER, Math.max(24, input.campaign.budget.maximumTrials * 12)), generationTaskIds: [] };
+        campaign.orchestration = { policyVersion: 'qz.research.resources/1', generationTaskIds: [] };
       }
       requests.requests[key] = { input, conversationId: created.id, ...(sourceEvidence ? { sourceEvidence: JSON.parse(JSON.stringify(sourceEvidence)) } : {}) };
       return created.id;
@@ -256,12 +256,9 @@ export async function openResearch(options: {
       const failed = current.submission.status === 'unanswered' && current.submission.reason === 'model_error';
       const interruptedStop = intent?.recovery?.mode === 'stopped' && (current.submission.status === 'done' || ownerAborted && study.previousStops?.some(stop => stop.previousSubmissionId === previousId && stop.final.reason === 'owner_stop'));
       if (!stopped && !failed && !interruptedStop) throw new Error('research_not_recoverable_conflict');
-      const maximum = study.input.policy.max_trials;
-      if (typeof maximum !== 'number' || study.trials.filter((trial) => trial.status !== 'REJECTED').length >= maximum) throw new Error('trial_budget_exhausted');
       const mode = intent?.recovery?.mode ?? (stopped ? 'stopped' : 'model_error');
       if (!intent) {
         const campaign = await tx.doc(CampaignResearchDoc, handle.id);
-        if (campaign.orchestration && campaign.orchestration.generationTaskIds.length >= campaign.orchestration.maximumModelTurns) throw new Error('orchestration_budget_exhausted');
         if (study.final) { study.previousStops = [...(study.previousStops ?? []), { previousSubmissionId: previousId, final: study.final }]; study.final = null; }
         if (campaign.closureTaskId !== null) campaign.previousClosures = [...(campaign.previousClosures ?? []), { taskId: campaign.closureTaskId, reason: campaign.closingReason }];
         campaign.state = 'SEARCHING'; campaign.closureTaskId = null; campaign.closingReason = null;

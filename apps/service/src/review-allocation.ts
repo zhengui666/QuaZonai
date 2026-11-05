@@ -34,15 +34,14 @@ const context = BACKGROUND_CONTEXT;
 interface AllocationFact { original: ReviewAllocationStart; view: ReviewAllocationView; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; native: JsonObject | null }
 export const ReviewAllocations = defineDoc<{ records: Record<string, JsonObject> }>({ kind: 'qz.review-allocations', version: 1, scope: 'session', initial: () => ({ records: {} }) });
 export interface ReviewStageBudget { reservedCalls: number; reservations: Record<string, number> }
-export function reserveReviewStage(state: ReviewStageBudget, key: string, calls: number, maximum: number, remote = false): void {
-  if (!key || !Number.isSafeInteger(calls) || calls < 0 || !Number.isSafeInteger(maximum) || maximum < 1) throw new Problem('review_allocation_stage_invalid');
+export function reserveReviewStage(state: ReviewStageBudget, key: string, calls: number, _legacyMaximum?: number, remote = false): void {
+  if (!key || !Number.isSafeInteger(calls) || calls < 0) throw new Problem('review_allocation_stage_invalid');
   const previous = state.reservations[key];
   if (previous !== undefined) {
     if (previous !== calls) throw new Problem('review_allocation_stage_identity_conflict');
     if (remote && calls > 0) throw new Problem('review_allocation_remote_stage_result_unknown_reconciliation_required');
     return;
   }
-  if (state.reservedCalls + calls > maximum) throw new Problem('review_allocation_scientific_budget_exhausted');
   state.reservations[key] = calls; state.reservedCalls += calls;
 }
 const Stages = defineDoc<{ results: Record<string, JsonObject>; reservedCalls: number; reservations: Record<string, number> }>({ kind: 'qz.review-allocation-stages', version: 1, scope: 'task', initial: () => ({ results: {}, reservedCalls: 0, reservations: {} }) });
@@ -114,7 +113,7 @@ function allocationCohortKey(sources: PortfolioFact[]): string {
     simulationSettings: { ...object(sources[0]!.policy.simulationSettings), starting_capital: sources[0]!.view.capital } }))).digest('hex');
 }
 interface AllocationComparisonCohort { id: string; totalTrials: number; previous: { id: string; native: JsonObject | null }[] }
-interface AllocationTaskInput { id: string; createdAt: string; dataDir: string; binary: NativeTarget; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; maximumScientificCalls: number; model: { provider: string; modelId: string }; reviewPolicy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; independentData?: JsonObject; independentSource: CapturedReviewSource | null; independentConfigured?: DatasetConfig; sourceGrants: { configured: DatasetConfig; captured: CapturedReviewSource }[]; cohort: AllocationComparisonCohort; stressMethod: typeof ALLOCATION_STRESS_METHOD }
+interface AllocationTaskInput { id: string; createdAt: string; dataDir: string; binary: NativeTarget; sources: PortfolioFact[]; policy: ReviewAllocationPolicy; maximumScientificCalls?: number; model: { provider: string; modelId: string }; reviewPolicy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; independentData?: JsonObject; independentSource: CapturedReviewSource | null; independentConfigured?: DatasetConfig; sourceGrants: { configured: DatasetConfig; captured: CapturedReviewSource }[]; cohort: AllocationComparisonCohort; stressMethod: typeof ALLOCATION_STRESS_METHOD }
 export const ReviewAllocationTask = defineTask<AllocationTaskInput, { phase: 'compute' }, null>({
   name: 'qz.review-allocation', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, ctx) {
@@ -335,8 +334,8 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
     const allowed = ['requestId', 'name', 'portfolioIds', 'memberCaps', 'clusterCaps', 'currentWeights', 'maximumTurnover', 'maximumScientificCalls', 'reviewPolicy', 'independentDatasetId'];
     if (Object.keys(input).some(key => !allowed.includes(key))) throw new Problem('review_allocation_unknown_input');
     text(input.requestId, 'request_id'); text(input.name, 'name');
-    if (!Array.isArray(input.portfolioIds) || input.portfolioIds.length < 2 || input.portfolioIds.length > 64 || new Set(input.portfolioIds).size !== input.portfolioIds.length || input.portfolioIds.some(id => typeof id !== 'string' || !id.trim())) throw new Problem('review_allocation_members_required');
-    if (!Number.isSafeInteger(input.maximumScientificCalls) || input.maximumScientificCalls < 1 || input.maximumScientificCalls > 4096 || !Array.isArray(input.memberCaps) || !Array.isArray(input.clusterCaps) || !Array.isArray(input.currentWeights) || typeof input.maximumTurnover !== 'string') throw new Problem('review_allocation_constraints_required');
+    if (!Array.isArray(input.portfolioIds) || input.portfolioIds.length < 2 || new Set(input.portfolioIds).size !== input.portfolioIds.length || input.portfolioIds.some(id => typeof id !== 'string' || !id.trim())) throw new Problem('review_allocation_members_required');
+    if (!Array.isArray(input.memberCaps) || !Array.isArray(input.clusterCaps) || !Array.isArray(input.currentWeights) || typeof input.maximumTurnover !== 'string') throw new Problem('review_allocation_constraints_required');
     const replay = Object.values((await host.harness.snapshot(ReviewAllocations, context))?.records ?? {}).map(fact).find(record => record.original.requestId === input.requestId);
     if (replay) { if (canonical(json(replay.original)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409); return reply.code(202).send(replay.view); }
     const independentConfigured = input.independentDatasetId === undefined ? undefined : config.datasets.find(dataset => dataset.id === input.independentDatasetId);
@@ -376,7 +375,7 @@ export function registerReviewAllocationRoutes(app: FastifyInstance, host: Resea
       if (previous.some(record => ['QUEUED', 'RUNNING'].includes(record.view.status))) throw new Problem('review_allocation_cohort_active', 409);
       const cohort: AllocationComparisonCohort = { id: cohortId, totalTrials: previous.length + 1, previous: previous.map(record => ({ id: record.view.id,
         native: record.native?.catalog === object(object(sources[0]!.evidence[0]!.input).data).catalog && record.native?.joint && typeof record.native.joint === 'object' && !Array.isArray(record.native.joint) ? record.native.joint as JsonObject : null })) };
-      const taskId = await tx.createTask(ReviewAllocationTask, { id, createdAt, cohort, independentSource, sourceGrants, stressMethod: ALLOCATION_STRESS_METHOD, dataDir: config.dataDir, binary: scienceTarget(config), sources, policy, maximumScientificCalls: input.maximumScientificCalls, model: config.defaultModel, reviewPolicy, ...(independentDataset ? { independentData: json(independentDataset.data.sealed ? object(independentDataset.data.sealed) : independentDataset.data), independentConfigured: json(independentDataset) as unknown as DatasetConfig } : {}) },
+      const taskId = await tx.createTask(ReviewAllocationTask, { id, createdAt, cohort, independentSource, sourceGrants, stressMethod: ALLOCATION_STRESS_METHOD, dataDir: config.dataDir, binary: scienceTarget(config), sources, policy, model: config.defaultModel, reviewPolicy, ...(independentDataset ? { independentData: json(independentDataset.data.sealed ? object(independentDataset.data.sealed) : independentDataset.data), independentConfigured: json(independentDataset) as unknown as DatasetConfig } : {}) },
         { conversationId: sources[0]!.view.researchIds[0] as ConversationId, ownership: { kind: 'conversation' } });
       const view: ReviewAllocationView = { id, requestId: input.requestId, name: input.name, status: 'QUEUED', portfolioIds: input.portfolioIds, taskId, consumedScientificCalls: 0, weights: null, review: null, error: null, createdAt };
       document.records[id] = json({ original: input, view, sources, policy, native: null } satisfies AllocationFact); return view;

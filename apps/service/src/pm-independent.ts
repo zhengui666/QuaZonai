@@ -39,7 +39,6 @@ export function pmIndependentTask(config: ServiceConfig) {
           const parent = parents.find(item => item.evidenceRefs.includes(decision.jointReplayEvidenceRef!));
           if (!parent || !decision.capital) throw new Problem('independent_selected_configuration_missing');
           const newIds = [trialId, baselineTrialId].filter(id => !record.derivedTrials[id]);
-          if (Object.values(record.derivedTrials).filter(item => item.countedAttempt).length + newIds.length > record.budget.maximumTrials) throw new Problem('independent_shared_trial_budget_exhausted');
           for (const id of newIds) {
           record.derivedTrials[id] = { ...fact(id), campaignId: parent.campaignId, hypothesisId: parent.hypothesisId, parentTrialIds: [parent.id],
             runtime: { conversationId: record.conversationId, taskId: runtime.taskId }, state: 'ADMITTED', purpose: 'ROBUSTNESS', proposalRef: decision.id,

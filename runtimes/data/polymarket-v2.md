@@ -16,9 +16,8 @@ create permissions or certify the source.
   Missing requested daily files fail, rather than silently narrowing the request.
 - Planning resolves one immutable Hub revision and saves the full plan. Download
   uses that saved plan, not today's `main`. Tokens filter local native conversion;
-  HF still transfers **whole daily files**. Optional `--max-bytes` limits selected
-  complete-file sizes, including cached files, not cumulative transfer or disk use.
-  There is no default budget and no default full-archive download.
+  HF still transfers **whole daily files**. The legacy `--max-bytes` option is
+  accepted and ignored. Explicit date/file selection remains required.
 - Only `plan` and `download` need public network access. Freeze, verification,
   conversion, preparation and configuration export are offline.
 - Provide original externally tagged Nautilus `InstrumentAny` JSON definitions
@@ -48,7 +47,7 @@ from scripts, outside Git and outside researcher-readable evidence mounts.
 ### 1. Save a plan, then acquire only its files
 
 ```bash
-python3 -B runtimes/data/source_plugins.py plan polymarket-v2-hf --start-date 2026-10-10 --end-date 2026-10-11 --token TOKEN_ID_FROM_ORIGINAL_DEFINITION --revision c2a6429292da3a4c6e263c2c84351c77f9bce097 --max-bytes 300000000 --output /absolute/v2/plans/selection-01.json
+python3 -B runtimes/data/source_plugins.py plan polymarket-v2-hf --start-date 2026-10-10 --end-date 2026-10-11 --token TOKEN_ID_FROM_ORIGINAL_DEFINITION --revision c2a6429292da3a4c6e263c2c84351c77f9bce097 --output /absolute/v2/plans/selection-01.json
 ```
 
 Inspect its fixed revision, original token/date request, file list, license and

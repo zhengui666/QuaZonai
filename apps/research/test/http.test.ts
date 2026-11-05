@@ -40,7 +40,7 @@ test('real HTTP preserves native identity and truthful admitted/conflict/invalid
       assert.equal(invalid.status, 400);
       assert.deepEqual(await invalid.json(), { error: 'invalid_json_number' });
     }
-    assert.equal((await post({ requestId: 'invalid', input: { ...input, policy: { max_trials: -1 } } })).status, 400);
+    assert.equal((await post({ requestId: 'invalid', input: { ...input, goal: '' } })).status, 400);
     assert.equal((await post({ input: null })).status, 400);
     const view = await (await fetch(`${origin}/research/${receipt.conversationId}`)).json();
     assertFrozenInput(view.research.input, input);

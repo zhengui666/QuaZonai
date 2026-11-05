@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { executeNativeValue } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
@@ -41,7 +42,7 @@ export async function forecastMembers(binary: NativeTarget, catalog: string, mem
     await writeFile(modelPath, compileWasm(member.model, 'selected-factor.wat', 'portfolio-evaluation'));
     const args = ['--catalog', catalog, '--model', modelPath];
     const summary = diagnostics ? await executeNative(binary, 'evaluate-factor', computationRequest, ['--summary-only', ...args], directory, context) : null;
-    if (summary && (canonical(summary.request!) !== canonical(computationRequest) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
+    if (summary && (canonical(withoutExecutionQuotas(summary.request!)) !== canonical(withoutExecutionQuotas(computationRequest)) || 'points' in summary)) throw new Error('native_summary_request_mismatch');
     const forecastRequest = object(computationRequest.forecast, 'forecast_request');
     const command = policy.forecastMode === 'price-volume' ? 'forecast-factor' : 'forecast';
     const forecasts = await executeNative(binary, command, forecastRequest, args, directory, context);
@@ -101,11 +102,7 @@ async function evaluateCatalogEnsemble(input: PortfolioEvaluationInput, context:
   const request = input.partition === 'VALIDATION' ? iterationRequest(input.data, true) : normalizedRequest(input.data);
   if (input.partition === 'HELDOUT') request.evaluation_start_ns = input.data.validation_end_ns!;
   if (!Array.isArray(request.members)) throw new Error('strategy_members_required');
-  const template = request.members.map(value => object(value, 'member_template'));
-  const metered = template.some(member => member.total_fuel !== undefined && member.total_fuel !== null);
-  if (metered && template.length !== input.members.length) throw new Error('catalog_ensemble_member_count_mismatch');
-  const nativeRequest = { ...request, members: input.members.map((member, index) => ({ weight: member.weight,
-    ...(metered && template[index]!.total_fuel !== undefined && template[index]!.total_fuel !== null ? { total_fuel: template[index]!.total_fuel! } : {}) })) };
+  const nativeRequest = { ...request, members: input.members.map(member => ({ weight: member.weight })) };
   if (!Array.isArray(scope?.barTypes) || !scope.barTypes.length || !scope.barTypes.every(type => typeof type === 'string')) throw new Error('catalog_scope_required');
   const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? process.env.QZ_SCRATCH_DIR ?? '/var/tmp', 'qz-catalog-ensemble-'));
   try {

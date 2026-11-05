@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -21,7 +22,7 @@ import type { ObservedSpotLeg, ObservedSpotValuationResult } from './pm-account-
 
 export interface PmScienceInput {
   source: JsonObject; capital: Money; currency: string; catalog: string;
-  dataDir: string; binary: NativeTarget; maximumTrials: number; cycleId: string; allocationMethod: JsonObject;
+  dataDir: string; binary: NativeTarget; maximumTrials?: number; capitalSamplingPoints?: number; cycleId: string; allocationMethod: JsonObject;
   ownerBoundaries?: OwnerBoundary[];
 }
 export interface PmScienceCheckpoint {
@@ -111,7 +112,6 @@ function scheduleClocks(anchor: bigint, start: bigint, end: bigint, ttl: bigint)
   const index = start > anchor ? (start - anchor + ttl - 1n) / ttl : 0n;
   const clocks: bigint[] = [];
   for (let at = anchor + index * ttl; at < end; at += ttl) {
-    if (clocks.length >= 100_000) throw new Error('pm_schedule_resource_limit');
     clocks.push(at);
   }
   return clocks;
@@ -159,7 +159,6 @@ export async function computePmAccountScience(input: PmAccountScienceInput, cont
 
 async function runPmAccountScience(input: PmAccountScienceInput, context: Context, checkpoint?: PmScienceCheckpoint,
   independent?: { source: JsonObject; selectedCapital: string; heldoutData: JsonObject }): Promise<PmAccountScienceResult | PmIndependentResult> {
-  if (!Number.isSafeInteger(input.maximumTrials) || input.maximumTrials < 2 || input.maximumTrials > 64) throw new Error('pm_account_science_budget_invalid');
   if (input.currency !== input.capture.basis.currency) throw new Error('pm_account_science_currency_mismatch');
   const sourceRequest = object(input.source.request, 'original_factor_request');
   const prefix = object(object(sourceRequest.forecast).selection, 'original_source_selection');
@@ -207,7 +206,7 @@ export async function evaluatePmIndependent(input: PmIndependentInput, context: 
   const selectedData = object(input.source.data, 'original_fit_source_data');
   if (typeof selectedData.catalog !== 'string' || typeof input.heldoutData.catalog !== 'string') throw new Error('pm_original_catalog_binding_missing');
   const request = object(input.source.request, 'selected_factor_request');
-  if (canonical(iterationRequest(input.heldoutData, true)) !== canonical(request)) throw new Error('pm_independent_training_contract_mismatch');
+  if (canonical(withoutExecutionQuotas(iterationRequest(input.heldoutData, true))) !== canonical(withoutExecutionQuotas(request))) throw new Error('pm_independent_training_contract_mismatch');
   const heldoutRequest = normalizedRequest(input.heldoutData);
   const forecastRequest = object(heldoutRequest.forecast, 'independent_forecast_request');
   const selected = object(forecastRequest.selection, 'independent_selection');
@@ -251,7 +250,6 @@ export async function evaluatePmIndependent(input: PmIndependentInput, context: 
 async function runPmScience(input: PmScienceInput, context: Context, checkpoint?: PmScienceCheckpoint,
   independent?: { selectedCapital: string; heldoutData: JsonObject },
   account?: { capture: CapturedAccount; datasetRevision: { id: string; contentRef: string }; bridge: JsonObject; valuation: ObservedSpotValuationResult }): Promise<PmScienceResult | PmIndependentResult | PmAccountScienceResult> {
-  if (!Number.isSafeInteger(input.maximumTrials) || input.maximumTrials < (independent ? 1 : 2) || input.maximumTrials > 65) throw new Error('pm_science_budget_invalid');
   if (input.currency !== input.capital.currency || compareDecimal(input.capital.amount, '0') <= 0) throw new Error('pm_science_capital_invalid');
   validatePmAllocationMethod(input.allocationMethod);
   const source = input.source; const fit = object(source.fit, 'frozen_fit');
@@ -300,7 +298,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
   let objects: JsonObject = {}; let bindings: JsonObject[] = [];
   const nativeImplementation = await implementationIdentity(input.binary, context);
   const fingerprint = createHash('sha256').update(canonical({ source: input.source, capital: { ...input.capital },
-    method: input.allocationMethod, maximumTrials: input.maximumTrials, cycleId: input.cycleId, catalog: input.catalog,
+    method: input.allocationMethod, maximumTrials: input.maximumTrials ?? 4, cycleId: input.cycleId, catalog: input.catalog,
     nativeImplementation, verifiedPrefix, ownerBoundaries: ownerBoundaries as unknown as JsonObject[],
     account: account ? { sourceEvidenceRef: account.capture.evidence.id, bridge: account.bridge, valuation: account.valuation as unknown as JsonObject } : null })).digest('hex');
   async function retained(key: string, compute: () => Promise<JsonObject>): Promise<JsonObject> {
@@ -321,7 +319,7 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     for (const [index, member] of sourceMembers.entries()) {
       const fitted = fittedMembers[index]!; const report = reports[index]!;
       if (typeof member.model !== 'string' || member.factorVersionId !== fitted.factor_version_id || member.factorVersionId !== report.factor_version_id
-        || fitted.source_evidence_ref !== report.source_evidence_ref || canonical(object(report.report).request!) !== canonical(request)) throw new Error('pm_factor_report_model_binding_mismatch');
+        || fitted.source_evidence_ref !== report.source_evidence_ref || canonical(withoutExecutionQuotas(object(report.report).request!)) !== canonical(withoutExecutionQuotas(request))) throw new Error('pm_factor_report_model_binding_mismatch');
       const reportId = await put(object(report.report));
       frozenMembers.push({ factor_version_id: fitted.factor_version_id!, report_artifact_id: reportId, report: report.report! });
     }
@@ -363,16 +361,17 @@ async function runPmScience(input: PmScienceInput, context: Context, checkpoint?
     if (!Array.isArray(settings.fee_rates) || !settings.fee_rates.length) throw new Error('pm_original_cost_schedule_missing');
     const assets = settings.fee_rates.map(value => { const fee = object(value); return { instrument_id: fee.instrument_id!, currency: input.currency,
       current_weight: '0', transaction_cost_rate: fee.taker!, available_notional: null, groups: [] }; });
-    const maximumPoints = account ? Math.floor(input.maximumTrials / 2) : input.maximumTrials - 1;
+    // A finite method evaluates declared capital points; legacy trial quotas do not truncate it.
+    const maximumPoints = input.capitalSamplingPoints ?? (account ? 2 : 3);
     const planned = independent ? { generation: { planned_capitals: [independent.selectedCapital] }, termination: 'FROZEN_SELECTION_NO_PLANNING' }
       : await retained('capital-plan', () => executeNative(input.binary, 'capital-curve', { schema_version: 1,
       simulation: { ...original, settings }, capital_basis: { currency: input.currency, equity: input.capital.amount, reserved: '0', owner_liquidity_reserve: '0' },
       // Planning only: this admission clock does not install an execution deadline.
-      budget: { maximum_simulations: maximumPoints, maximum_elapsed_ms: '1' } }, ['--catalog', input.catalog, '--plan-only',
+      budget: { maximum_simulations: maximumPoints } }, ['--catalog', input.catalog, '--plan-only',
         ...(account ? ['--dataset-revision-id', String(account.bridge.id)] : [])], directory, context));
     if ((!independent && planned.termination !== 'PLANNED_ONLY') || !Array.isArray(object(planned.generation).planned_capitals)) throw new Error('pm_capital_planner_result_invalid');
     const capitalPoints = object(planned.generation).planned_capitals as string[];
-    if (!capitalPoints.length || capitalPoints.length > (independent ? 1 : maximumPoints)) throw new Error('pm_capital_planner_budget_invalid');
+    if (!capitalPoints.length || capitalPoints.length > (independent ? 1 : maximumPoints)) throw new Error('pm_capital_planner_points_invalid');
     const resultPoints: PmSciencePoint[] = []; const studies: JsonObject[] = [];
     const accountPoints: PmAccountSciencePoint[] = [];
     let consumedTrials = 0;

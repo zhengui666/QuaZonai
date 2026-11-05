@@ -47,10 +47,6 @@ pub(crate) fn source_provenance(root: &Path) -> Result<Value> {
         sibling
     };
     let file = File::open(&path).context("TICK_PROVENANCE_MISSING")?;
-    ensure!(
-        file.metadata()?.len() <= 16 * 1024 * 1024,
-        "TICK_PROVENANCE_LIMIT"
-    );
     serde_json::from_reader(file).context("TICK_PROVENANCE_INVALID")
 }
 
@@ -375,9 +371,7 @@ pub(crate) fn load(
         &catalog,
         query,
         Some(request.input.event_start_ns.get()..request.input.event_end_ns.get()),
-        (request.input.maximum_rows.context("TICK_RESOURCE_LIMIT")? as usize)
-            .saturating_add(1)
-            .min(4096),
+        4096,
     )
     .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
     let mut identities = BTreeMap::new();
@@ -398,10 +392,6 @@ pub(crate) fn load(
                     && event < request.input.event_end_ns.get()
                     && available <= request.input.decision_cutoff_ns.get(),
                 "TICK_QUERY_OUTSIDE_SELECTION"
-            );
-            ensure!(
-                rows < request.input.maximum_rows.context("TICK_RESOURCE_LIMIT")? as usize,
-                "TICK_ROW_LIMIT"
             );
             let name = trade.instrument_id.to_string();
             let trades = selected
@@ -574,10 +564,14 @@ mod tests {
     fn native_query_preserves_trade_id_reuse_at_distinct_event_times() {
         let original = vec![tick(10, 10, "reused"), tick(20, 20, "reused")];
         let temp = native_fixture(original.clone());
-        assert_eq!(
-            load(temp.path(), &request()).unwrap()["AUD/USD.SIM"],
-            original
-        );
+        for legacy_limit in [None, Some(0), Some(1)] {
+            let mut request = request();
+            request.input.maximum_rows = legacy_limit;
+            assert_eq!(
+                load(temp.path(), &request).unwrap()["AUD/USD.SIM"],
+                original
+            );
+        }
     }
 
     #[test]

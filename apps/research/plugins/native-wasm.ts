@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { nativeTargetForData, executeNativeValue } from '../src/native-execution.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -88,7 +89,7 @@ export async function evaluateWasm(model: string, data: JsonObject, context: Con
     stage = 'decode';
     const output = object(value, 'native_result');
     stage = 'validate';
-    if (canonical(output.request!) !== canonical(request)) throw new Error('native_result_request_mismatch');
+    if (canonical(withoutExecutionQuotas(output.request!)) !== canonical(withoutExecutionQuotas(request))) throw new Error('native_result_request_mismatch');
     if ('points' in output) throw new Error('native_summary_required');
     return output;
   } catch (error) {

@@ -701,7 +701,7 @@ fn durable_host_runs_real_factor_plugins_and_unattended_feedback() {
 }
 
 #[test]
-fn price_volume_factors_retain_native_row_and_clock_checks() {
+fn price_volume_factors_ignore_legacy_row_allowances_and_retain_clock_checks() {
     let (original, request) = mixed_catalog(0.0, false);
     let market = load_catalog(original.path(), &request.forecast.selection).unwrap();
     for invalid_clock in [false, true] {
@@ -726,15 +726,15 @@ fn price_volume_factors_retain_native_row_and_clock_checks() {
         if !invalid_clock {
             limited.forecast.selection.maximum_rows -= 1;
         }
-        let error = evaluate_factor(prices.path(), &limited, &module(VOLUME_SCORE)).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            if invalid_clock {
-                "CATALOG_TIME_INVALID"
-            } else {
-                "CATALOG_ROW_LIMIT"
-            }
-        );
+        let result = evaluate_factor(prices.path(), &limited, &module(VOLUME_SCORE));
+        if invalid_clock {
+            assert_eq!(result.unwrap_err().to_string(), "CATALOG_TIME_INVALID");
+        } else {
+            assert!(
+                result.is_ok(),
+                "legacy row allowances cannot truncate factor input"
+            );
+        }
     }
 }
 

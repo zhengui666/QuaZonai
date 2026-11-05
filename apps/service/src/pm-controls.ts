@@ -141,7 +141,6 @@ export function pmControls(ready: Promise<{ host: ResearchHost }>) {
       ensureRevision(record, body.expectedRevision); const previous = Object.values(record.campaigns).at(-1)!;
       if (!['CONCLUDED', 'PAUSED'].includes(previous.state)) throw new Problem('campaign_already_active', 409);
       if (canonical(json(previous.datasetRevisionIds)) === canonical(json(record.datasets))) throw new Problem('new_campaign_requires_new_data_revision', 409);
-      if (Object.values(record.derivedTrials).filter(item => item.countedAttempt).length >= record.budget.maximumTrials) throw new Problem('shared_trial_budget_exhausted', 409);
       const campaignId = identity('campaign', [id, record.datasets]);
       if (!record.campaigns[campaignId]) {
         record.campaigns[campaignId] = { ...previous, ...fact(campaignId), state: 'PLANNED', runtime: { conversationId: record.conversationId, taskId: record.monitorTaskId },

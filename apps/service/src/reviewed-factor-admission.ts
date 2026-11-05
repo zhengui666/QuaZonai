@@ -56,7 +56,7 @@ export function authorizeReviewedFactor(factorId: string, study: { input: JsonOb
  * research request, so deletion or a different report cannot race acceptance. */
 export async function freezeReviewedFactors(tx: Tx, ids: unknown, data: JsonObject, config?: ServiceConfig): Promise<ReviewedFactorSources | null> {
   if (ids === undefined) return null;
-  if (!Array.isArray(ids) || ids.length < 2 || ids.length > 64 || ids.some(id => typeof id !== 'string')
+  if (!Array.isArray(ids) || ids.length < 2 || ids.some(id => typeof id !== 'string')
     || new Set(ids).size !== ids.length) throw new Problem('reviewed_factor_ids_invalid');
   if (data.catalog_ensemble_request !== undefined || data.catalog_scan_request !== undefined) throw new Problem('reviewed_factor_full_prediction_panel_required', 422);
   const request = iterationRequest(data, true);

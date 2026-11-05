@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
@@ -147,7 +148,7 @@ export async function valueObservedSpotAccount(input: ObservedSpotValuationInput
   try {
     const original = await executeNative(input.binary, 'value-observed-spot', request, ['--catalog', input.catalog], directory, context);
     if (original.schema_version !== 1 || original.kind !== 'OBSERVED_SPOT_VALUATION' || original.basis !== 'DERIVED_REPORT_CURRENCY_INVENTORY_VALUE'
-      || canonical(original.request!) !== canonical(request) || original.report_currency !== input.capture.basis.currency || original.asof_ns !== asOfNs) refuse('native_valuation_basis_mismatch');
+      || canonical(withoutExecutionQuotas(original.request!)) !== canonical(withoutExecutionQuotas(request)) || original.report_currency !== input.capture.basis.currency || original.asof_ns !== asOfNs) refuse('native_valuation_basis_mismatch');
     const total = decimal(original.total, 'native_report_value'); const sourceAvailable = counter(original.available_ns, 'native_valuation_available');
     if (compareDecimal(total, '0') < 0 || BigInt(sourceAvailable) < BigInt(initial.available_ns)) refuse('native_valuation_amount_or_clock_invalid');
     object(original.source_evidence, 'native_valuation_source_evidence');
@@ -169,7 +170,7 @@ export async function valueObservedSpotAccount(input: ObservedSpotValuationInput
 
 /** Run both candidates from one original observed balance state. The wrapper
  * validates its own output binding; no failed leg becomes an economic loser.
- * Study members/objects and the caller's scientific budget are admitted upstream.
+ * Study members/objects and the caller's original trial identities are admitted upstream.
  */
 export async function compareObservedSpotAccount(input: ObservedSpotComparisonInput, context: Context): Promise<ObservedSpotComparisonResult> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.nativeDatasetRevisionId)) refuse('native_dataset_revision_uuid_required');
@@ -196,7 +197,7 @@ export async function compareObservedSpotAccount(input: ObservedSpotComparisonIn
     const args = ['--catalog', input.catalog]; if (input.operation.kind === 'STUDY') args.push('--objects', input.operation.objectsDirectory);
     const original = await executeNative(input.binary, study ? 'study-observed-spot' : 'compare-observed-spot', request, args, directory, context);
     if (original.schema_version !== 1 || original.kind !== (study ? 'OBSERVED_SPOT_STUDY_COMPARISON' : 'OBSERVED_SPOT_ACCOUNT_COMPARISON')
-      || original.basis !== 'HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES' || canonical(original.request!) !== canonical(request)) refuse('native_comparison_basis_mismatch');
+      || original.basis !== 'HISTORICAL_REPLAY_FROM_OBSERVED_SPOT_BALANCES' || canonical(withoutExecutionQuotas(original.request!)) !== canonical(withoutExecutionQuotas(request))) refuse('native_comparison_basis_mismatch');
     const leg = (value: unknown, allowStudyDiagnostics = false): ObservedSpotLeg => {
       const item = object(value, 'native_comparison_leg');
       if (item.status === 'COMPLETED' && item.reason === null) return { status: 'COMPLETED', result: object(item.result, 'native_comparison_result'), reason: null };

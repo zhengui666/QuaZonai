@@ -146,9 +146,12 @@ class PolymarketV2Test(unittest.TestCase):
                 source.source_request(start, end, [TOKEN])
 
     def test_missing_day_or_whole_file_budget_never_shrinks_a_request(self):
-        for metadata, budget in ((self.metadata(days=("2026_09_01",)), None), (self.metadata(), len(ENVELOPE))):
-            with patch.object(snapshot, "repository_metadata", return_value=metadata), self.assertRaises(ValueError):
-                source.plan("2026-09-01", "2026-09-03", [TOKEN], COMMIT, budget)
+        with patch.object(snapshot, "repository_metadata", return_value=self.metadata(days=("2026_09_01",))), self.assertRaises(ValueError):
+            source.plan("2026-09-01", "2026-09-03", [TOKEN], COMMIT)
+        with patch.object(snapshot, "repository_metadata", return_value=self.metadata()):
+            result = source.plan("2026-09-01", "2026-09-03", [TOKEN], COMMIT, 1)
+            self.assertEqual(len(result["files"]), 2)
+            self.assertIsNone(result["max_bytes"])
         with patch.object(snapshot, "repository_metadata", return_value=self.metadata(size=6_000_000_000)):
             result = source.plan("2026-09-01", "2026-09-03", [TOKEN], COMMIT)
         self.assertEqual(result["total_bytes"], 12_000_000_000)

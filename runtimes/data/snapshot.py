@@ -42,9 +42,7 @@ def fetch_json(url):
 
 def fetch_bytes(url, limit=None):
     with urllib.request.urlopen(url, timeout=60) as response:
-        body = response.read() if limit is None else response.read(limit + 1)
-    if limit is not None and len(body) > limit:
-        raise ValueError("repository metadata exceeds its byte limit")
+        body = response.read()
     return body
 
 
@@ -86,8 +84,6 @@ def repository_file_url(dataset, revision, path):
 def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=None):
     if not includes:
         raise ValueError("explicit --include is required")
-    if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
-        raise ValueError("explicit --max-bytes must be positive")
     for pattern in includes:
         checked_path(pattern)
     commit, available, metadata, metadata_url = repository_metadata(dataset, revision)
@@ -119,8 +115,6 @@ def plan(dataset, includes, revision=None, max_bytes=DEFAULT_MAX_BYTES, license=
                       "git_blob": blob_id if lfs is None else None,
                       "url": f"{HUB}/datasets/{dataset}/resolve/{commit}/{urllib.parse.quote(path)}"})
     total = sum(item["size"] for item in files)
-    if max_bytes is not None and total > max_bytes:
-        raise ValueError(f"selection requires {total} bytes, exceeding --max-bytes={max_bytes}")
     card = metadata.get("cardData") or {}
     if not isinstance(card, dict):
         raise ValueError("invalid dataset card metadata")
@@ -387,7 +381,7 @@ def main(argv=None):
     parser.add_argument("--include", action="append", required=True, help="explicit repository glob (repeatable)")
     parser.add_argument("--revision", help="branch, tag or immutable commit; resolved before file selection")
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
-                        help="optional explicit total file byte budget; default unlimited")
+                        help="legacy option accepted for compatibility; downloads are not byte-budgeted")
     parser.add_argument("--license", help="verified source terms, only when dataset card omits a license")
     parser.add_argument("--output", type=Path, help="snapshot directory (required for download)")
     args = parser.parse_args(argv)

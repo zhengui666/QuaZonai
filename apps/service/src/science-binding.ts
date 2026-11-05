@@ -21,3 +21,5 @@ export function pmScienceData(record: Pick<PmRecord, 'artifacts'>, data: JsonObj
   const original = json(data);
   return binding ? bindScienceData(original, validateRemoteTarget(binding.target)) : original;
 }
+
+export { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';

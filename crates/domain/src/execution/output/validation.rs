@@ -388,14 +388,9 @@ pub(super) fn binding(
     let selection = &request.forecast.selection;
     let warmup = request.forecast.parameters.slow_period as usize - 1;
     let horizon = request.forecast.parameters.label_horizon_observations as usize;
-    let mut source_rows = 0_u64;
     for (index, group) in groups.iter().enumerate() {
         let first = &group[0];
-        source_rows += first.source_row_count.get();
-        if first.instrument_id != selected[index]
-            || first.bar_type != selection.bar_types[index]
-            || source_rows > u64::from(selection.maximum_rows)
-        {
+        if first.instrument_id != selected[index] || first.bar_type != selection.bar_types[index] {
             return Err(bad("native_output.validation_selection"));
         }
         let rows = (first.source_row_count.get() as usize)

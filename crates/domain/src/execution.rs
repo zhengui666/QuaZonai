@@ -51,7 +51,6 @@ pub(crate) fn fuel_within_budget(
 
 fn selection(value: &NativeBarSelectionV1) -> Result<(), DomainError> {
     if value.bar_types.is_empty()
-        || value.maximum_rows < 1
         || value.event_start_ns >= value.event_end_ns
         || value.event_end_ns > value.decision_cutoff_ns
     {

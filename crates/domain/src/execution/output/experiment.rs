@@ -114,7 +114,6 @@ pub fn binding(
             value.consumed_fuel,
             request.total_fuel.map(|fuel| u128::from(fuel.get())),
         )
-        || value.source_row_count.get() > u64::from(request.selection.maximum_rows)
     {
         return Err(bad("experiment_result.binding"));
     }
@@ -215,7 +214,6 @@ pub fn binding(
             || replay.selection.event_start_ns < request.selection.event_start_ns
             || replay.selection.event_end_ns > request.selection.event_end_ns
             || replay.selection.decision_cutoff_ns > request.selection.decision_cutoff_ns
-            || replay.selection.maximum_rows > request.selection.maximum_rows
             || serde_json::to_value(&replay.settings).ok()
                 != serde_json::to_value(&request.settings).ok()
             || replay.target_points.len() != fold.decisions.len()

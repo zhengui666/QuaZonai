@@ -192,8 +192,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   if (coverage.source_revision !== full.input.source_revision || coverage.availability !== full.input.availability
     || !Array.isArray(coverage.instrument_ids) || coverage.instrument_ids.some(id => typeof id !== 'string')
     || canonical([...coverage.instrument_ids].sort()) !== canonical([...full.input.instrument_ids].sort())
-    || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
-    || BigInt(coverage.trade_count) > BigInt(cache ? full.input.maximum_source_rows! : full.input.maximum_rows!)) throw new Error('tick_prepared_coverage_mismatch');
+    || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)) throw new Error('tick_prepared_coverage_mismatch');
   if (fullCacheCoverage && (fullCacheCoverage.trades !== BigInt(coverage.trade_count)
     || fullCacheCoverage.cohorts !== cacheCounter(coverage.cohort_count)
     || cacheCoverage!.trades > fullCacheCoverage.trades)) throw new Error('tick_cache_coverage_mismatch');

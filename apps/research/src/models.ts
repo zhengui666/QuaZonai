@@ -24,7 +24,10 @@ export function supportsServiceTier(model: Model<Api>) {
 export function subscriptionSpeed(models: Models) {
   // Index QZ-admitted studies before native work resumes, including compaction.
   const tiers = new Map<string, ServiceTier>();
-  const streamSimple: Models['streamSimple'] = (model, transcript, options) => {
+  const streamSimple: Models['streamSimple'] = (model, transcript, supplied) => {
+    // Also cover old Durable checkpoints which captured stream options before
+    // the current host settings took effect. Keep provider/model native limits.
+    const { maxTokens: _legacyTokens, ...options } = supplied ?? {};
     if (!supportsServiceTier(model)) return models.streamSimple(model, transcript, options);
     return models.streamSimple(model, transcript, { ...options, async onPayload(payload, selected) {
       const transformed = await options?.onPayload?.(payload, selected);
@@ -33,8 +36,10 @@ export function subscriptionSpeed(models: Models) {
       return tier ? { ...(transformed ?? payload) as object, service_tier: tier } : transformed;
     } });
   };
-  const completeSimple: Models['completeSimple'] = (model, transcript, options) => supportsServiceTier(model)
-    ? streamSimple(model, transcript, options).result() : models.completeSimple(model, transcript, options);
+  const completeSimple: Models['completeSimple'] = (model, transcript, supplied) => {
+    const { maxTokens: _legacyTokens, ...options } = supplied ?? {};
+    return supportsServiceTier(model) ? streamSimple(model, transcript, options).result() : models.completeSimple(model, transcript, options);
+  };
   return {
     tiers,
     models: new Proxy(models, { get(target, key) {

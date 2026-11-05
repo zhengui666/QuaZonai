@@ -11,9 +11,8 @@ import { parseOriginalJson } from '../dataset-json.ts';
 const profileFile = fileURLToPath(new URL('../../../../runtimes/data/sources/hyperliquid.json', import.meta.url));
 const hubFile = fileURLToPath(new URL('../../../../runtimes/data/hub.py', import.meta.url));
 export type HyperliquidOperator = (command: string, args: string[], options: { signal?: AbortSignal; maxMemoryBytes?: number }) => Promise<void>;
-const runOperator: HyperliquidOperator = (command, args, { signal, maxMemoryBytes }) => new Promise((accept, reject) => {
-  if (maxMemoryBytes && process.platform !== 'linux') return reject(new Error('hyperliquid_native_memory_limit_unsupported'));
-  const child = spawn(maxMemoryBytes ? 'prlimit' : command, maxMemoryBytes ? [`--as=${maxMemoryBytes}`, '--', command, ...args] : args, { shell: false, stdio: ['ignore', 'ignore', 'pipe'], signal });
+const runOperator: HyperliquidOperator = (command, args, { signal }) => new Promise((accept, reject) => {
+  const child = spawn(command, args, { shell: false, stdio: ['ignore', 'ignore', 'pipe'], signal });
   let failed = false;
   let stderr = '';
   child.stderr?.setEncoding('utf8');
@@ -101,8 +100,6 @@ export function hyperliquidDataPlugin(run: HyperliquidOperator = runOperator): D
       { key: 'barMilliseconds', label: '聚合毫秒数', type: 'number', description: '默认 1ms，保留原始毫秒逐笔；可设 100 表示 0.1s BAR。仅从实际成交构建，不填空窗；与 VPS 网络延迟无关。' },
       { key: 'inputModality', label: '历史研究输入类型', type: 'text', choices: [{ value: 'BAR', label: 'BAR（聚合 K 线，兼容默认）' }, { value: 'TRADE_TICK', label: 'TradeTick（原生逐笔）' }], description: '留空兼容 BAR。原生逐笔只选择已有永续和现货成交，不构建 K 线，也不要求 outcome 文件。' },
       { key: 'nativeOutputDirectory', label: '原生准备目录', type: 'text', description: '逐笔模式可指定不可变转换单元目录；完整单元重读核验后复用，中断单元需使用新目录。原始档案不改写。' },
-      { key: 'maxTradeRows', label: '逐笔单元成交行上限', type: 'number', description: '逐笔模式默认且最多 1000000；超限失败，按日期缩小转换单元，不采样或静默截断。' },
-      { key: 'maxOutputBytes', label: '逐笔单元输出字节上限', type: 'number', description: '逐笔模式默认且最多 10GiB，包含目录和准备报告。原生进程另以 2GiB 地址空间上限运行。' },
       { key: 'eventStartSeconds', label: '逐笔单元开始秒（UTC）', type: 'number', description: '可选 Unix 秒；与结束秒一起指定原始档案内的半开事件区间，便于有界转换。' },
       { key: 'eventEndSeconds', label: '逐笔单元结束秒（不含）', type: 'number', description: '可选 Unix 秒；不会移动原始成交时钟。中断单元使用新输出目录重做，完整单元可核验复用。' },
     ],
@@ -121,13 +118,10 @@ export function hyperliquidDataPlugin(run: HyperliquidOperator = runOperator): D
       const prefixes = tick ? profile.research_trade_path_prefixes : [];
       if (!Array.isArray(prefixes) || prefixes.some(prefix => typeof prefix !== 'string' || !prefix.endsWith('/')) || tick && !prefixes.length) throw new Error('hyperliquid_profile_scope_invalid');
       const pathArgs = (prefixes as string[]).flatMap(prefix => ['--path-prefix', prefix]);
-      const maxRows = config.maxTradeRows ?? 1_000_000; const maxBytes = config.maxOutputBytes ?? 10 * 1024 * 1024 * 1024;
       const eventStart = config.eventStartSeconds; const eventEnd = config.eventEndSeconds;
-      if (typeof maxRows !== 'number' || !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1_000_000
-        || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 10 * 1024 * 1024 * 1024
-        || (eventStart === undefined) !== (eventEnd === undefined)
+      if ((eventStart === undefined) !== (eventEnd === undefined)
         || eventStart !== undefined && (typeof eventStart !== 'number' || !Number.isSafeInteger(eventStart) || eventStart < 0 || typeof eventEnd !== 'number' || !Number.isSafeInteger(eventEnd) || eventEnd <= eventStart)
-        || !tick && [config.nativeOutputDirectory, config.maxTradeRows, config.maxOutputBytes, eventStart, eventEnd].some(value => value !== undefined)) throw new Error('hyperliquid_config_invalid');
+        || !tick && [config.nativeOutputDirectory, eventStart, eventEnd].some(value => value !== undefined)) throw new Error('hyperliquid_config_invalid');
       signal?.throwIfAborted();
       if (config.startDate !== undefined) {
         const start = date(config.startDate); const end = date(config.endDate);
@@ -148,9 +142,9 @@ export function hyperliquidDataPlugin(run: HyperliquidOperator = runOperator): D
       if (!tick) data.barIntervalMilliseconds = grain;
       if (binary && instruments) {
         const output = tick ? configPath(config, 'nativeOutputDirectory', dataDir) ?? join(root, `native-${randomUUID()}`) : join(root, `native-${randomUUID()}`);
-        const conversion = tick ? ['--trade-ticks', ...pathArgs, '--max-trade-rows', String(maxRows), '--max-output-bytes', String(maxBytes),
+        const conversion = tick ? ['--trade-ticks', ...pathArgs,
           ...(eventStart === undefined ? [] : ['--start-seconds', String(eventStart), '--end-seconds', String(eventEnd)]), ...(config.nativeOutputDirectory ? ['--resume'] : [])] : ['--bar-milliseconds', String(grain)];
-        await run(binary, ['import', '--manifest', manifestFile, '--instruments', instruments, ...conversion, '--native-precision', '--output', output], { signal, ...(tick ? { maxMemoryBytes: 2 * 1024 * 1024 * 1024 } : {}) });
+        await run(binary, ['import', '--manifest', manifestFile, '--instruments', instruments, ...conversion, '--native-precision', '--output', output], { signal });
         signal?.throwIfAborted();
         const reportFile = join(output, 'import-report.json'); const report = await json(reportFile);
         if (report.status !== 'IMPORTED' || typeof report.readback_records !== 'number' || !Number.isSafeInteger(report.readback_records) || report.readback_records <= 0

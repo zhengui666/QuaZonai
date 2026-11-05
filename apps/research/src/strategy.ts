@@ -167,7 +167,6 @@ export function validateCatalogEnsembleRequest(data: JsonObject): JsonObject {
     if (Object.keys(member).some(key => !Object.hasOwn(nativeSchemas.NativeCatalogEnsembleMemberV1.properties, key))) throw new Error('catalog_ensemble_member_invalid');
     if (nativeDecimal(member.weight) <= 0n) throw new Error('catalog_ensemble_member_weight_invalid');
     weight += Number(member.weight);
-    if (member.total_fuel !== undefined && nativeCounter(member.total_fuel, 'catalog_ensemble_fuel') === 0n) throw new Error('catalog_ensemble_fuel_invalid');
   }
   if (!Number.isFinite(weight) || weight <= 0) throw new Error('catalog_ensemble_member_weight_invalid');
   const gross = nativeDecimal(request.gross_exposure);

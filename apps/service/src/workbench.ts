@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import { bindScienceData, scienceDataWithoutBinding, scienceTarget } from './config.ts';
 import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilus.ts';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -110,13 +111,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       object(input, 'research_input'); text(input.goal, 'goal');
       publicLiteratureQueries(input.publicLiteratureQueries);
       const data = object(input.data, 'dataset');
-      const registered = config.datasets.find((dataset) => dataset.ready && canonical(scienceDataWithoutBinding(json(dataset.data))) === canonical(scienceDataWithoutBinding(data)));
+      const registered = config.datasets.find((dataset) => dataset.ready && canonical(withoutExecutionQuotas(scienceDataWithoutBinding(json(dataset.data)))) === canonical(withoutExecutionQuotas(scienceDataWithoutBinding(data))));
       if (!registered) throw new Problem('dataset_input_unregistered');
       sourceDataset = registered;
       input.data = retainedNautilusTarget ? bindScienceData(registered.data, retainedNautilusTarget) : structuredClone(registered.data);
       if (input.specification) {
-        const inherited = { ...registered.policy, max_trials: object(input.policy, 'policy').max_trials, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
-        if (canonical(json(input.policy)) !== canonical(json(inherited))) throw new Problem('research_policy_unregistered');
+        const inherited = { ...registered.policy, ...(registered.strategy ? { strategy: json(registered.strategy) } : {}) };
+        if (canonical(withoutExecutionQuotas(json(input.policy))) !== canonical(withoutExecutionQuotas(json(inherited)))) throw new Problem('research_policy_unregistered');
         capturedDataset = captureDataset(registered);
       }
     } else {
@@ -124,14 +125,13 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const configured = dataset(text(submission.datasetId, 'dataset_id'));
       sourceDataset = configured;
       capturedDataset = captureDataset(configured);
-      if (!Number.isSafeInteger(submission.maxTrials) || submission.maxTrials < 0) throw new Problem('max_trials_invalid');
       if (submission.serviceTier !== undefined && !['default', 'priority'].includes(submission.serviceTier)) throw new Problem('invalid_service_tier');
       const preferences = await getSettings();
       const preferredModel = preferences.defaultModel?.provider === submission.model?.provider && preferences.defaultModel?.modelId === submission.model?.modelId;
       const thinkingLevel = submission.thinkingLevel ?? (preferredModel ? preferences.thinkingLevel : null);
       const serviceTier = submission.serviceTier ?? (preferredModel ? preferences.serviceTier : null);
       input = { goal: text(submission.goal, 'goal'), ...(submission.specification ? { specification: structuredClone(submission.specification) } : {}), ...(publicQueries ? { publicLiteratureQueries: publicQueries } : {}), model: submission.model, ...(thinkingLevel !== null && thinkingLevel !== undefined ? { thinkingLevel } : {}), ...(serviceTier !== null && serviceTier !== undefined ? { serviceTier } : {}), data: structuredClone(configured.data),
-        policy: { ...configured.policy, max_trials: submission.maxTrials, ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
+        policy: { ...configured.policy, ...(submission.maxTrials !== undefined ? { max_trials: submission.maxTrials } : {}), ...(configured.strategy ? { strategy: json(configured.strategy) } : {}) } };
     }
     const model = object(input.model, 'model'); text(model.provider, 'provider'); text(model.modelId, 'model_id');
     const available = await host.availableModels(String(model.provider));
@@ -147,7 +147,6 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       const profiles = object(policy.reviewPolicies, 'review_policies');
       for (const kind of ['FACTOR', 'PORTFOLIO']) if (profiles[kind] !== undefined) profiles[kind] = json(await resolveRegisteredReviewPolicy(host.harness, profiles[kind]));
     }
-    if (policy.max_trials !== undefined && (!Number.isSafeInteger(policy.max_trials) || Number(policy.max_trials) < 0)) throw new Problem('max_trials_invalid');
     const validated = researchInput(input);
     const sourceEvidence = sourceDataset ? await prepareReviewSourceEvidence(sourceDataset) : null;
     if (sourceDataset && sourceEvidence) await assertCurrentReviewSource(sourceDataset, sourceEvidence);
@@ -344,7 +343,7 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
         const conversationId = id as ConversationId;
         if (!await tx.conversation(conversationId)) throw new Problem('research_not_found', 404);
         const study = await tx.doc(Study, conversationId);
-        if (!study.input || canonical(scienceDataWithoutBinding(study.input.data)) !== canonical(scienceDataWithoutBinding(json(configured.data)))) throw new Problem('research_dataset_mismatch', 422);
+        if (!study.input || canonical(withoutExecutionQuotas(scienceDataWithoutBinding(study.input.data))) !== canonical(withoutExecutionQuotas(scienceDataWithoutBinding(json(configured.data))))) throw new Problem('research_dataset_mismatch', 422);
         if (canonical(study.input.policy.strategy ?? null) !== canonical(json(configured.strategy))) throw new Problem('strategy_policy_not_admitted_with_research', 422);
         const final = study.final; const selected = study.trials.find((trial) => trial.taskId === final?.trialId);
         if (final?.status !== 'COMPUTED' || selected?.status !== 'COMPUTED' || !final.result) throw new Problem('independent_evidence_missing', 422);
@@ -383,7 +382,6 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
     const id = randomUUID();
     const sourceInput = object(evidence[0]!.input);
     const sourcePolicy = object(sourceInput.policy);
-    if (input.maximumScientificCalls !== undefined && (!Number.isSafeInteger(input.maximumScientificCalls) || input.maximumScientificCalls < 1 || input.maximumScientificCalls > 4096)) throw new Problem('review_scientific_budget_invalid');
     const independent = input.independentDatasetId === undefined ? undefined : dataset(text(input.independentDatasetId, 'independent_dataset_id'));
     if (independent && independent.currency !== configured.currency) throw new Problem('portfolio_independent_currency_mismatch');
     const independentSource = independent ? await prepareReviewSourceEvidence(independent, 'HELDOUT') : null;
@@ -394,7 +392,6 @@ export function workbench(host: ResearchHost, config: ServiceConfig) {
       model: object(sourceInput.model) as { provider: string; modelId: string },
       ...(typeof sourceInput.thinkingLevel === 'string' ? { thinkingLevel: sourceInput.thinkingLevel as import('../../../packages/contracts/src/index.ts').ThinkingLevel } : {}),
       createdAt: new Date().toISOString(),
-      maximumScientificCalls: input.maximumScientificCalls ?? 64,
       stressMethod: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' as const,
       ...(independent ? { independentData: json(independent.data.sealed ? object(independent.data.sealed) : independent.data) } : {}),
       ...(independentSource ? { independentSource } : {}),

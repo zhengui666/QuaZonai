@@ -120,23 +120,22 @@ test('native abort joins the running tool; cancelling an observation does not ca
   } finally { await host.close(); await setup_.cleanup(); }
 });
 
-test('explicit zero trial budget records rejection and terminates without running science', async () => {
+test('legacy zero trial allowance does not prevent scientific computation', async () => {
   const setup_ = await setup(); let computations = 0;
   const plugin = defineExtension({ name: 'budget-science', tools: [defineTool({
     name: 'evaluate', description: 'Budget protocol probe', parameters: Type.Object({}), replay: 'safe',
     async execute(_args, api, ctx) { return trialFeedback(api, ctx, () => evaluateTrial(api, ctx, { hypothesis: 'budget check' }, async () => { computations++; return {}; })); },
   })] });
-  setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('evaluate', {}), { stopReason: 'toolUse' })]);
+  setup_.faux.setResponses([fauxAssistantMessage(fauxToolCall('evaluate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Finished protocol probe')]);
   const host = await openResearch({ ...setup_, extensions: [plugin] });
   try {
     const receipt = await host.start('zero-budget', { ...input(setup_.model), policy: { max_trials: 0 } });
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await host.view(receipt.conversationId)).research!;
-    assert.equal(computations, 0);
-    assert.equal(facts.trials[0]!.status, 'REJECTED');
-    assert.equal(facts.final!.reason, 'trial_budget_exhausted');
-    assert.equal(facts.final!.status, 'STOPPED');
-    assert.equal(setup_.faux.state.callCount, 1);
+    assert.equal(computations, 1);
+    assert.equal(facts.trials[0]!.status, 'COMPUTED');
+    assert.equal(facts.final, null);
+    assert.equal(setup_.faux.state.callCount, 2);
   } finally { await host.close(); await setup_.cleanup(); }
 });
 

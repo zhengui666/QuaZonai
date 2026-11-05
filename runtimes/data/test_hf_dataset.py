@@ -155,14 +155,14 @@ class HfDatasetTest(unittest.TestCase):
         self.assertEqual(partition["market_mapping"], "UNKNOWN")
         self.assertEqual(partition["markets"], [])
         self.assertEqual(selection["coverage"], "NOT_ASSERTED")
+        selection["max_bytes"] = 1  # Original persisted quota is readable but no longer enforced.
         result = hf_dataset.download(selection, self.cache, self.output)
         self.assertEqual(result["files"][0]["partition"], partition)
         self.assertEqual(hf_dataset.verify(self.output / "selection.json")["files"], 1)
         reused = hf_dataset.download(selection, self.cache, self.root / "reused")
         self.assertEqual(reused["cached_files"], 1)
         self.assertEqual(len(self.data_requests()), 1)
-        with self.assertRaisesRegex(ValueError, "exceeding"):
-            hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"], max_bytes=1)
+        self.assertIsNone(hf_dataset.plan(DATASET, manifest="partitions.json", includes=["data/a.parquet"], max_bytes=1)["max_bytes"])
 
     def test_unknown_market_partition_never_matches_market_or_all_selectors(self):
         self.unknown_first_partition()
@@ -209,9 +209,8 @@ class HfDatasetTest(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 hf_dataset.validate_plan(altered)
 
-    def test_budget_and_missing_partition_mapping_fail_before_data_download(self):
-        with self.assertRaisesRegex(ValueError, "exceeding"):
-            self.plan(max_bytes=1)
+    def test_missing_partition_mapping_fails_before_data_download(self):
+        self.assertIsNone(self.plan(max_bytes=1)["max_bytes"])
         for update in ({"path": "data/missing.parquet"}, {"markets": []},
                        {"start_date": "2026-09-02"}, {"format": "guessed"}, {"path": "../outside"}):
             original = dict(self.index["files"][0])
@@ -962,11 +961,10 @@ class HfArchiveMetadataTest(unittest.TestCase):
         hf_dataset.validate_plan(plan)
         self.network.assert_not_called()
 
-    def test_narrow_date_still_requires_entire_monthly_file_budget(self):
+    def test_narrow_date_retains_entire_monthly_file_despite_legacy_budget(self):
         options = {"start_date": "2025-12-15", "end_date": "2025-12-16"}
-        with self.assertRaisesRegex(ValueError, "5132274521 bytes"):
-            self.plan(max_bytes=5132274520, **options)
-        plan = self.plan(max_bytes=5132274521, **options)
+        plan = self.plan(max_bytes=1, **options)
+        self.assertIsNone(plan["max_bytes"])
         self.assertEqual([(f["path"], f["size"]) for f in plan["files"]],
                          [("order_filled/year=2025/month=12.parquet", 5132274521)])
         self.assertEqual(plan["files"][0]["partition"]["start_date"], "2025-12-01")

@@ -17,16 +17,15 @@ target/debug/market-history import \
   --instruments /absolute/data/original-hyperliquid-instruments.json \
   --cohort-cache --native-precision \
   --path-prefix perp_fills_all/ --path-prefix spot_fills/ \
-  --max-trade-rows 1308222597 --max-output-bytes 25769803776 \
   --output /absolute/catalogs/hyperliquid-cohorts
 ```
 
-The row budget above is the measured candidate count for the pinned archive and
-its declared processing filters, not a general default or a profitability claim.
-Set an explicit budget for the actual source. Cache mode keeps at most one
-unfinished cohort per instrument, up to 100,000 trades per cohort and 1,000,000
-unfinished source rows in aggregate, under the existing 2 GiB address-space
-limit. It retains cohorts across file boundaries and rejects source time reversal
+The pinned archive census is a measured candidate count for its declared
+processing filters, not a profitability claim. Legacy row/output byte options
+are accepted and ignored. Cache mode keeps at most one
+unfinished cohort per instrument. The scientific event-time sampling definition
+retains at most 100,000 trades per cohort; aggregate working rows, output bytes
+and address space have no application quotas. It retains cohorts across file boundaries and rejects source time reversal
 or repeated/conflicting identities within an event. This source's published
 stream/date file order must therefore remain chronological; arbitrary unsorted
 archives are not silently sorted or sampled. Completed cache frames are read
@@ -73,8 +72,8 @@ only newly produced immutable derived files. The primary range ends before the
 validation cutoff; boundary checks prevent it from omitting an in-range cohort
 or expanding into held-out observations. Reads never decode prices outside the
 declared view; neighboring frame clocks are used only to check completeness.
-The preparation byte budget counts both logical view file sets and metadata,
-even though their data files share physical blocks. Publication clones or copies
+Preparation records both logical view file sets and metadata without byte
+budgets; their data files share physical blocks. Publication clones or copies
 each shared inode once into its owned revision, then links aliases only within
 that revision. Exported research inputs point to that owned immutable copy.
 Allow room for one physical cache plus one publication copy when reflinks are

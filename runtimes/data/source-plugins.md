@@ -144,7 +144,7 @@ python3 -B runtimes/data/source_plugins.py plan coinbase-candles \
 
 python3 -B runtimes/data/source_plugins.py download coinbase-candles \
   --instrument BTC-USD --start-seconds 1788220800 --end-seconds 1788220980 \
-  --interval-seconds 60 --max-bytes 1048576 \
+  --interval-seconds 60 \
   --terms-file /absolute/original-coinbase-terms.txt \
   --output /absolute/data/coinbase-selection
 
@@ -202,7 +202,7 @@ python3 -B runtimes/data/source_plugins.py download polymarket-capture \
   --include 'metadata/clock.json' --include 'PROVENANCE.md' \
   --include 'metadata/window_meta.parquet' \
   --include 'metadata/quality_report.json' \
-  --max-bytes 33554432 --output /absolute/data/lokima-selection
+  --output /absolute/data/lokima-selection
 
 python3 -B runtimes/data/source_plugins.py verify polymarket-capture \
   --snapshot /absolute/data/lokima-selection/snapshot.json
@@ -237,8 +237,8 @@ python3 -B runtimes/data/source_plugins.py convert polymarket-archive \
 
 `joseph-books` preserves its existing minute-end book semantics and accepts no BAR
 aggregation. `time-seventeen-v2` can additionally receive an existing original
-`--chain-evidence` file, verified by the native adapter. Larger explicit snapshots
-need an appropriate `--max-bytes` on verification/conversion. Chain acquisition,
+`--chain-evidence` file, verified by the native adapter. Legacy `--max-bytes` values
+are accepted and ignored on verification/conversion. Chain acquisition,
 live capture collection, arbitrary vendor schemas, and source-specific native
 extensions are not added by this wrapper.
 
@@ -374,7 +374,7 @@ fields need to be written by the owner. Export the next completed preparation
 under the same dataset ID to a new configuration filename in the same directory.
 An already registered service monitor reads the new revision through the same
 alias, retains prior revisions and runs its existing invalidation/research rules.
-This does not rewrite the running service configuration or reset research budgets
+This does not rewrite the running service configuration or reset research history
 and Sealed exposure. The adapter retains the supplied research request boundaries;
 `prepare` without an original research request cannot invent future partitions.
 

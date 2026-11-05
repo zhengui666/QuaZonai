@@ -30,7 +30,7 @@ MAX_REPORT_BYTES = None
 MAX_EVIDENCE_BYTES = None
 ARCHIVE_FORMATS = ("moose-fills", "time-seventeen-v2", "sii-order-filled", "joseph-books")
 MAKER_TAKER_FEES_FILE = "frozen-maker-taker-fees.json"
-MAX_FEE_SOURCE_BYTES = 16 * 1024 * 1024
+MAX_FEE_SOURCE_BYTES = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ def archive_verify(args):
 
 def byte_budget_options(parser):
     parser.add_argument("--max-bytes", type=int, default=snapshot.DEFAULT_MAX_BYTES,
-                        help="optional explicit total snapshot file byte budget; default unlimited")
+                        help="legacy option accepted for compatibility; downloads are not byte-budgeted")
 
 
 def snapshot_options(parser, download=False):
@@ -176,8 +176,6 @@ def snapshot_verify_options(parser):
 
 def verified_snapshot(path, max_bytes=None):
     """Offline file integrity only; format interpretation stays in the native adapter."""
-    if max_bytes is not None:
-        providers.integer(max_bytes, "max_bytes", minimum=1, maximum=None)
     path = local_path(path)
     manifest = load_json(path)
     expected = {"schema_version", "repository", "revision", "license", "license_reference",
@@ -205,10 +203,8 @@ def verified_snapshot(path, max_bytes=None):
         if relative in seen or relative.split("/")[0] == "snapshot.json":
             raise ValueError("duplicate or conflicting snapshot path")
         seen.add(relative)
-        providers.integer(item["size"], "snapshot file size", maximum=max_bytes)
+        providers.integer(item["size"], "snapshot file size", maximum=None)
         total += item["size"]
-        if max_bytes is not None and total > max_bytes:
-            raise ValueError("snapshot exceeds the explicit byte budget")
         expected_url = (f"{snapshot.HUB}/datasets/{manifest['repository']}/resolve/"
                         f"{manifest['revision']}/{urllib.parse.quote(relative)}")
         if (item["url"] != expected_url or not isinstance(item["sha256"], str)

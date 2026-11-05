@@ -45,7 +45,7 @@ export type CampaignResearchState = {
   previousClosures?: { taskId: TaskId<JsonObject>; reason: string | null }[];
   closingReason: string | null;
   intake: StrategyIntake | null;
-  orchestration: { policyVersion: 'qz.research.resources/1'; maximumModelTurns: number; generationTaskIds: number[] } | null;
+  orchestration: { policyVersion: 'qz.research.resources/1'; maximumModelTurns?: number; generationTaskIds: number[] } | null;
 };
 /** Research-owned facts; the service owns Mandate/Campaign lifecycle records. */
 export const CampaignResearchDoc = defineDoc<CampaignResearchState>({
@@ -77,8 +77,5 @@ export function researchCampaignBinding(value: unknown): ResearchCampaignBinding
   if (!Array.isArray(binding.frontierDefinitionIds) || !binding.frontierDefinitionIds.every(id => definitions.some(item => item.id === id))) throw new Error('campaign_frontier_definition_missing');
   if (!Array.isArray(binding.datasetRevisionIds) || !binding.datasetRevisionIds.length || !binding.datasetRevisionIds.every(id => typeof id === 'string' && id.length > 0)) throw new Error('campaign_dataset_revisions_required');
   if (JSON.stringify([...binding.datasetRevisionIds].sort()) !== JSON.stringify([...scopes[0]!.datasetRevisionIds].sort())) throw new Error('campaign_scope_dataset_mismatch');
-  // Measured per-attempt wall seconds are evidence, not a cross-restart hard
-  // timer. Unsupported hard caps must never silently become admission hints.
-  if (budget.nativeComputeSeconds !== null || budget.modelSpend !== null || budget.dataBytes !== null) throw new Error('campaign_resource_meter_unavailable');
   return structuredClone({ ...binding, ...(ownerBoundaries ? { ownerBoundaries } : {}), policy, budget, scopes, definitions });
 }

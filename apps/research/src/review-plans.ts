@@ -62,5 +62,5 @@ export async function portfolioCohortSelectionEvidence(api: ResearchRuntime, con
   const policy = resolvePortfolioPolicy(object(selected.proposal)!, object(input.policy.strategy)!);
   const account = await portfolioAccountEvidence(api, context, input.data, source.source, policy, `${evidenceRef}#reference-strategy`);
   return { plans, selectedAccount: account, cohort: { status: plans.length ? 'COMPLETE' : 'INCOMPLETE', reason: plans.length ? null : 'complete_original_portfolio_return_cohort_missing',
-    sourceEvidenceTaskId: object(selected.result)?.evidenceTaskId ?? null, maximumAdditionalScientificCalls: 4 } };
+    sourceEvidenceTaskId: object(selected.result)?.evidenceTaskId ?? null } };
 }

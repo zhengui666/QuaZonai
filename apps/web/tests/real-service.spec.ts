@@ -35,7 +35,7 @@ async function start(page: Page, url: string, goal: string) {
   const catalog = await (await page.request.get(`${url}/api/v3/models`)).json() as ModelCatalog;
   const model = catalog.models.find(model => model.provider === 'faux')!; expect(model).toBeTruthy();
   await page.getByLabel('模型', { exact: true }).click(); await page.getByRole('option', { name: `${model.name} / ${model.provider}`, exact: true }).click();
-  await page.getByLabel('试验预算', { exact: true }).fill('1'); await page.getByRole('button', { name: '开始研究', exact: true }).click();
+  await page.getByRole('button', { name: '开始研究', exact: true }).click();
 }
 
 test('production Web talks to a disposable real HTTP service through setup, evidence, backtest and original receipt recovery', async ({ page }, info) => {

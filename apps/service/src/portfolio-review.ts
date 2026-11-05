@@ -26,7 +26,6 @@ export async function reservePortfolioReviewScience(input: PortfolioTaskInput, a
     const state = await tx.doc(PortfolioReviewScience, String(api.taskId), null);
     state.reservations ??= {};
     if (state.reservations[key] !== undefined) { if (state.reservations[key] !== calls) throw new Problem('portfolio_review_stage_identity_conflict'); pending = true; return; }
-    if (state.reservedCalls + calls > (input.review?.maximumScientificCalls ?? 64)) throw new Problem('portfolio_review_scientific_budget_exhausted');
     state.reservations[key] = calls; state.reservedCalls += calls;
   }, context);
   // A native process may already have run before its result checkpoint. Never

@@ -87,7 +87,8 @@ test('capital validation forwards task abort and cancels only the accepted origi
 
 test('unanswered capital cancellation retains the original reference through Durable stop and reopen', { timeout: 15_000 }, async t => {
   const actualTimeout = AbortSignal.timeout.bind(AbortSignal); const deadlines: number[] = [];
-  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 10 : milliseconds); });
+  // Leave time for the real loopback DELETE to reach the peer under concurrent CI work.
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => { deadlines.push(milliseconds); return actualTimeout(milliseconds === 15_000 ? 100 : milliseconds); });
   const directory = await mkdtemp(join(tmpdir(), 'qz-capital-unknown-receipt-')); const accepted = signal();
   let original: NativeExecutionRequest | undefined; let posts = 0; let cancels = 0;
   const source = await peer(async (request, response) => {
