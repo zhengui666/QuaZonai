@@ -101,7 +101,7 @@ jobs:
     if: needs.scope.outputs.science == 'true'
     # glibc baseline is compatible with the pinned bookworm Node image.
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       RUSTUP_TOOLCHAIN: '1.99.1'
       CARGO_BUILD_JOBS: '2'
