@@ -80,7 +80,6 @@ pub(super) fn binding(
             value.consumed_fuel,
             parameters.total_fuel.map(|fuel| u128::from(fuel.get())),
         )
-        || value.points.len() > request.selection.maximum_rows as usize
     {
         return Err(bad("native_output.forecast_parameters"));
     }

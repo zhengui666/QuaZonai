@@ -57,7 +57,6 @@ test('PM intake preserves one original request after a lost response, without as
   const state = await pmTransport(page, false, false, true); await page.goto('/#/pm/new');
   await page.getByLabel('投资目标', { exact: true }).fill('希望按净收益优先比较，不虚构流动性。');
   await page.getByLabel('研究本金', { exact: true }).fill('3000.000000000000000001');
-  await page.getByLabel('研究试验预算', { exact: true }).fill('12');
   await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
   await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理速度', { exact: true }) })).toContainText('Fast');
   await choose(page, '推理强度', '高'); await choose(page, '推理速度', '标准');
@@ -71,7 +70,7 @@ test('PM intake preserves one original request after a lost response, without as
   expect(original.funding.capital.amount).toBe('3000.000000000000000001');
   expect(original.businessPreference).toBe('FRONTIER');
   expect(original).toMatchObject({ model: { provider: 'openai-codex', modelId: 'test-subscription' }, thinkingLevel: 'high', serviceTier: 'default' });
-  expect(original).not.toHaveProperty('weights'); expect(original).not.toHaveProperty('capitalGrid');
+  expect(original).not.toHaveProperty('maxTrials'); expect(original).not.toHaveProperty('weights'); expect(original).not.toHaveProperty('capitalGrid');
   await page.reload();
   await expect(page.getByLabel('投资目标', { exact: true })).toHaveValue(original.goal);
   await expect(page.getByLabel('推理强度', { exact: true })).toBeDisabled();
@@ -91,7 +90,6 @@ test('PM switching model clears unsupported speed and resets strength before fre
   await expect(page.locator('.ant-form-item').filter({ has: page.getByLabel('推理强度', { exact: true }) })).toContainText('最高');
   await page.getByLabel('投资目标', { exact: true }).fill('使用当前模型的可用能力');
   await page.getByLabel('研究本金', { exact: true }).fill('3000');
-  await page.getByLabel('研究试验预算', { exact: true }).fill('1');
   await page.getByRole('button', { name: '开始研究' }).click();
   await expect(page.getByRole('button', { name: '核对原提交' })).toBeVisible();
   const original = JSON.parse(state.writes[0]!.raw);

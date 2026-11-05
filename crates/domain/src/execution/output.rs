@@ -122,7 +122,6 @@ pub fn quality(value: &NativeDataQualityReportV1) -> Result<(), DomainError> {
                 .collect::<Vec<_>>()
                 != ids
             || item.row_count.get() < ids.len() as u64
-            || item.row_count.get() > u64::from(item.selection.maximum_rows)
             || item.first_event_ns < item.selection.event_start_ns
             || item.first_event_ns > item.last_event_ns
             || item.last_event_ns >= item.selection.event_end_ns

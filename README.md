@@ -53,7 +53,7 @@ quazonai portfolio list
 quazonai observation list
 ```
 
-保留原始提交文件与 `requestId`；超时后用同一正文、同一身份重放原回执。HTTP 202 仅表示接收。官方 durable 负责重试、子任务、重放、取消和恢复；研究继续沿用原试验账本和预算。独立样本不反馈模型调参，计算成功与回测曲线都不代表盈利或获准实盘交易。
+保留原始提交文件与 `requestId`；超时后用同一正文、同一身份重放原回执。HTTP 202 仅表示接收。官方 durable 负责重试、子任务、重放、取消和恢复；研究继续沿用原试验账本和实际用量记录，不设置试验次数、模型轮次或 token 预算上限。独立样本不反馈模型调参，计算成功与回测曲线都不代表盈利或获准实盘交易。
 
 数据获取与原生准备见[来源插件](runtimes/data/source-plugins.md)和[历史数据准备](runtimes/data/README.md)。准备成功不代替来源许可、历史可得性或质量证据。开发与精简核心链路检查见[项目入口](.opensdlc/project.md#commands)。
 

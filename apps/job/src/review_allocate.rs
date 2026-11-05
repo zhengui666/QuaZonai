@@ -21,12 +21,9 @@ pub fn allocate(
     request: &NativeReviewAllocationRequestV1,
 ) -> Result<NativeReviewAllocationResultV1> {
     let n = request.members.len();
-    ensure!((2..=64).contains(&n), "REVIEW_ALLOCATION_MEMBER_LIMIT");
+    ensure!(n >= 2, "REVIEW_ALLOCATION_MEMBERS_REQUIRED");
     let samples = request.members[0].observations.len();
-    ensure!(
-        (30..=200_000).contains(&samples) && n * samples <= 4_000_000,
-        "REVIEW_ALLOCATION_SAMPLE_LIMIT"
-    );
+    ensure!(samples >= 30, "REVIEW_ALLOCATION_SAMPLE_LIMIT");
     let mut ids = BTreeMap::new();
     let mut report_ids = BTreeSet::new();
     for (i, member) in request.members.iter().enumerate() {
@@ -48,9 +45,7 @@ pub fn allocate(
         );
     }
     ensure!(
-        request.member_caps.len() == n
-            && request.current_weights.len() == n
-            && request.cluster_caps.len() <= 128,
+        request.member_caps.len() == n && request.current_weights.len() == n,
         "REVIEW_ALLOCATION_CONSTRAINTS_REQUIRED"
     );
     let mut caps = vec![None; n];

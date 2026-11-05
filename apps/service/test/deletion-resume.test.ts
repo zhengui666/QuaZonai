@@ -62,7 +62,7 @@ async function stoppedPmResearch() {
     assert.equal(stopped.research!.final!.status, 'STOPPED'); assert.equal(stopped.research!.final!.reason, 'owner_stop');
     assert.equal(stopped.research!.final!.trialId, null); assert.equal(stopped.research!.final!.result, null);
     assert.equal(stopped.submission!.status, 'unanswered'); assert.equal(stopped.submission!.reason, 'aborted');
-    assert.equal(stopped.research!.trials.length, 1); assert.ok(stopped.research!.trials.length < Number(stopped.research!.input!.policy.max_trials));
+    assert.equal(stopped.research!.trials.length, 1); assert.equal(stopped.research!.input!.policy.max_trials, undefined);
     return { state, id, path, conversationId, submissionId: stopped.submission!.id };
   } catch (error) { await state.cleanup(); throw error; }
 }

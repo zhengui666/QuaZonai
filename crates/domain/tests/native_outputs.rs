@@ -100,7 +100,13 @@ fn structurally_deserializable_empty_quality_is_not_successful_validation() {
 fn every_quality_dimension_and_exact_native_selection_are_checked() {
     let (parameters, report) = quality();
     assert!(accepts(&parameters, &[output("qz.data_quality", &report)]));
-    for dimension in 0..15 {
+    let mut above_legacy_allowance = report.clone();
+    above_legacy_allowance.datasets[0].row_count = count(11);
+    assert!(accepts(
+        &parameters,
+        &[output("qz.data_quality", &above_legacy_allowance)]
+    ));
+    for dimension in (0..15).filter(|dimension| *dimension != 4) {
         let mut invalid = report.clone();
         match dimension {
             0 => invalid.datasets.push(invalid.datasets[0].clone()),

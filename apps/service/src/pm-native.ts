@@ -1,4 +1,4 @@
-import { boundScienceTarget } from './science-binding.ts';
+import { boundScienceTarget, withoutExecutionQuotas } from './science-binding.ts';
 import type { Context } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type * as Pm from '../../../packages/contracts/src/pm.ts';
@@ -65,12 +65,11 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   if (isAccount && !cycle.accountBasis) return unavailable('authoritative_account_basis_missing', 'matched_account_starting_state', 'REFRESH_SOURCE');
   if (Object.values(record.gaps).some(item => item.state !== 'RESOLVED' && ['owner_boundary_normalization_required', 'strategy_intake_needs_clarification', 'strategy_archetype_unsupported'].includes(item.reasonCode))) return unavailable('owner_intent_requires_clarification', 'owner_boundary_normalization', 'CLARIFY_INTENT');
   if (!capital && !isAccount) return unavailable('capital_basis_unavailable', 'capital_basis', 'REFRESH_SOURCE');
-  if (frozen.budgetUnavailable) return unavailable('shared_trial_budget_exhausted', 'shared_research_budget', 'CLARIFY_INTENT');
   if (!frozen.nativeSource) return unavailable('selected_fitted_joint_replay_missing');
   const source = object(frozen.nativeSource, 'fitted_native_source');
   const sourceRequest = object(source.request, 'fitted_source_request');
   const studyInput = object(object(frozen.research, 'frozen_research').input, 'frozen_research_input');
-  if (canonical(object(studyInput.data, 'frozen_research_data')) !== canonical(data) || canonical(sourceRequest) !== canonical(iterationRequest(data, true))) return unavailable('fitted_evidence_dataset_revision_mismatch');
+  if (canonical(object(studyInput.data, 'frozen_research_data')) !== canonical(data) || canonical(withoutExecutionQuotas(sourceRequest)) !== canonical(withoutExecutionQuotas(iterationRequest(data, true)))) return unavailable('fitted_evidence_dataset_revision_mismatch');
   const fit = object(source.fit, 'frozen_fit');
   if (!Array.isArray(fit.members) || !fit.members.length) return unavailable('fitted_factor_members_missing');
   const ensembleId = identity('ensemble', [cycle.strategyVersionId, fit]);
@@ -88,7 +87,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
       ownerBoundaries: record.mandate.ownerBoundaries, originalSettings: object(source.simulationRequest).settings }), 'CONTROL');
     // No scientific configuration has executed at this capability boundary.
     // Release only this cycle's admitted but unexecuted downstream slots.
-    result.trialSettlements = Array.from({ length: Number(frozen.maximumTrials ?? 0) }, () => ({ state: 'REJECTED' as const, countedAttempt: false, evidenceRefs: [ref], errorCode: reason }));
+    result.trialSettlements = Array.from({ length: Number(frozen.maximumTrials ?? 4) }, () => ({ state: 'REJECTED' as const, countedAttempt: false, evidenceRefs: [ref], errorCode: reason }));
     return unavailable(reason, capability, 'UNSUPPORTED');
   };
   for (const boundary of record.mandate.ownerBoundaries) {
@@ -107,7 +106,11 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
     trainingEvidenceRefs: [fitEvidenceId], jointValidationEvidenceRefs: [], qualification: 'CANDIDATE', rejectionReasonCodes: [] };
   result.ensembles[ensembleId] = ensemble; decision.ensembleRevisionId = ensembleId;
   const common = { source, currency: capital?.currency ?? cycle.accountBasis!.currency, catalog: String(data.catalog), dataDir: config.dataDir,
-    binary: boundScienceTarget(config, data), maximumTrials: Number(frozen.maximumTrials ?? 0), cycleId: cycle.id,
+    binary: boundScienceTarget(config, data), maximumTrials: Number(frozen.maximumTrials ?? 4),
+    // Existing admitted plans retain their exact scientific/checkpoint identity.
+    // New plans use method-defined points independent of any owner quota.
+    capitalSamplingPoints: frozen.capitalSamplingVersion === 'QZ_DECLARED_CAPITAL_POINTS_V1' ? isAccount ? 2 : 3
+      : isAccount ? Math.floor(Number(frozen.maximumTrials ?? 4) / 2) : Number(frozen.maximumTrials ?? 4) - 1, cycleId: cycle.id,
     ownerBoundaries: record.mandate.ownerBoundaries,
     allocationMethod: object(object(record.policy.validDomain).jointAllocationMethod, 'joint_allocation_method') };
   let accountScience: PmAccountScienceResult | null = null;
@@ -205,7 +208,7 @@ export async function computePmDecision(record: PmRecord, cycle: Pm.DecisionCycl
   if (capacity.feasibleRegions.length) capacity.status = 'AVAILABLE';
   const cashId = identity('operating-configuration', [cycle.id, 'cash']);
   const cashEvidenceId = evidence(identity('replay', cashId), baseline as unknown as JsonObject, 'SELECTION');
-  const reserved = Number(frozen.maximumTrials ?? 0);
+  const reserved = Number(frozen.maximumTrials ?? 4);
   while (result.trialSettlements.length < reserved - (isAccount ? 0 : 1)) result.trialSettlements.push({ state: 'REJECTED', countedAttempt: false, evidenceRefs: [], errorCode: 'planned_configuration_not_executed' });
   if (!isAccount) result.trialSettlements.push({ state: 'COMPUTED', countedAttempt: true, evidenceRefs: [cashEvidenceId], errorCode: null });
   const cashMetrics = baseline.simulation ? metricsFor(baseline.simulation, cashEvidenceId) : [];

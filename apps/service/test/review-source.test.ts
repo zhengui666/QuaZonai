@@ -13,9 +13,9 @@ import type { DatasetConfig } from '../src/config.ts';
 import type { JsonObject } from '@earendil-works/pi-durable';
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 // Source-authority/file boundary fixtures, not market PIT evidence or an actual native-validation result.
-async function fixture() {
+async function fixture(maximumRows: number | null = 1000) {
   const root = await mkdtemp(join(tmpdir(), 'qz-review-source-test-')); await mkdir(join(root, 'catalog'));
-  const selection = { schema_version: 1, maximum_rows: 1000, event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['ORIGINAL.SIM-1-MINUTE-LAST-EXTERNAL'] };
+  const selection = { schema_version: 1, ...(maximumRows === null ? {} : { maximum_rows: maximumRows }), event_start_ns: '100', event_end_ns: '200', decision_cutoff_ns: '200', bar_types: ['ORIGINAL.SIM-1-MINUTE-LAST-EXTERNAL'] };
   const request = { forecast: { selection }, train_end_ns: '140', validation_end_ns: '180' };
   const metadata = { registered_ref: 'original', native_snapshot_ref: 'snapshot:1', partition: 'VALIDATION', origin: 'REAL', pit_status: 'VERIFIED', revision_policy: 'AS_KNOWN_THEN',
     provenance_reference: 'configured-source-owner:fixture', availability_provenance: 'fixture source-owner statement', quality: { datasets: [{ dataset_revision_id: 'native-dataset:1', instrument_ids: ['ORIGINAL.SIM'], selection: { ...selection, event_start_ns: '140', event_end_ns: '180' } }] } };
@@ -56,6 +56,22 @@ test('configured source provenance requires byte bindings and the settled native
     assert.equal(trustedSourceChecks({ ...captured, license: { ...captured.license, validUntilNs: '299' } }, native, f.configured.data, '300')[0]!.status, 'FAIL');
     assert.equal(trustedSourceChecks(captured, native, { ...f.configured.data, catalog: '/another/snapshot' }, '300')[0]!.status, 'FAIL');
     assert.equal(trustedSourceChecks(captured, { ...native, metadata: { ...captured.metadata, native_snapshot_ref: 'another-revision' } }, f.configured.data, '300')[0]!.status, 'UNKNOWN');
+  } finally { await f.close(); }
+});
+test('source provenance accepts an absent or zero legacy row quota with exact original source scope', async () => {
+  for (const maximumRows of [null, 0]) {
+    const f = await fixture(maximumRows);
+    try { assert.ok(await prepareReviewSourceEvidence(f.configured)); }
+    finally { await f.close(); }
+  }
+});
+test('native metadata echoing a default zero row quota binds the original request that omitted it', async () => {
+  const f = await fixture(null);
+  try {
+    const quality = f.metadata.quality.datasets[0]!;
+    const configured = await f.replaceMetadata({ ...f.metadata, quality: { datasets: [{ ...quality, selection: { ...quality.selection, maximum_rows: 0 } }] } });
+    assert.ok(await prepareReviewSourceEvidence(configured));
+    assert.equal('maximum_rows' in (configured.data.request as { forecast: { selection: object } }).forecast.selection, false);
   } finally { await f.close(); }
 });
 test('unconfigured and caller-authored claims cannot manufacture source provenance', async () => {
@@ -115,12 +131,11 @@ test('an empty native HELDOUT partition is distinct from leaked heldout observat
   } finally { await f.close(); }
 });
 
-test('equal timestamps cannot bind another BAR, row limit or instrument set even with valid source hashes', async () => {
+test('equal timestamps cannot bind another BAR or instrument set even with valid source hashes', async () => {
   const f = await fixture(); try {
     const quality = f.metadata.quality.datasets[0]!;
     for (const changed of [
       { ...quality, selection: { ...quality.selection, bar_types: ['OTHER.SIM-1-MINUTE-LAST-EXTERNAL'] }, instrument_ids: ['OTHER.SIM'] },
-      { ...quality, selection: { ...quality.selection, maximum_rows: 999 } },
       { ...quality, instrument_ids: ['OTHER.SIM'] },
       { ...quality, instrument_ids: ['ORIGINAL.SIM', 'UNREQUESTED.SIM'] },
     ]) {

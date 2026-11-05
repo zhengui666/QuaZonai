@@ -38,7 +38,7 @@ export function preserveLegacyPmAdmission(service: Service) {
       const campaign = await tx.doc(CampaignResearchDoc, conversation.id);
       campaign.binding = structuredClone(input.campaign!);
       campaign.orchestration = { policyVersion: 'qz.research.resources/1',
-        maximumModelTurns: Math.min(Number.MAX_SAFE_INTEGER, Math.max(24, input.campaign!.budget.maximumTrials * 12)), generationTaskIds: [] };
+        generationTaskIds: [] };
       requests.requests[key] = { input, conversationId: conversation.id };
     }, BACKGROUND_CONTEXT);
     // Exercise the original service body capture and immutable-request replay.

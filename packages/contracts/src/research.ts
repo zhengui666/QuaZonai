@@ -23,7 +23,7 @@ export function researchSpecification(value: unknown): ResearchSpecification {
   if (!['pearson_ic', 'Sharpe Ratio (252 days)', 'Sharpe Ratio (365 days)'].includes(String(evaluation.metric)) || evaluation.direction !== 'maximize' || evaluation.scheme !== 'registered-partitions') throw new Error('research_evaluation_unsupported');
   if (evaluation.target !== undefined && (typeof evaluation.target !== 'number' || !Number.isFinite(evaluation.target))) throw new Error('research_target_invalid');
   const search = object(spec.search); fields(search, ['scope', 'maxMembers', 'stop']);
-  if (!['single-factor', 'ensemble'].includes(String(search.scope)) || !Number.isSafeInteger(search.maxMembers) || Number(search.maxMembers) < 1 || search.scope === 'single-factor' && search.maxMembers !== 1 || search.stop !== 'budget-or-selection') throw new Error('research_search_unsupported');
+  if (!['single-factor', 'ensemble'].includes(String(search.scope)) || !Number.isSafeInteger(search.maxMembers) || Number(search.maxMembers) < 1 || search.scope === 'single-factor' && search.maxMembers !== 1 || !['selection', 'budget-or-selection'].includes(String(search.stop))) throw new Error('research_search_unsupported');
   if (search.scope === 'ensemble' && evaluation.metric === 'pearson_ic') throw new Error('ensemble_account_metric_required');
   if (search.scope === 'single-factor' && evaluation.metric !== 'pearson_ic') throw new Error('factor_metric_required');
   if (spec.capital !== undefined) researchCapital(spec.capital);
@@ -40,7 +40,7 @@ export function researchCapital(value: unknown): CapitalAssumptions {
 
 export function researchInstructions(input: { goal: string; specification?: ResearchSpecification }): string {
   if (!input.specification) return input.goal;
-  return `Original structured research mandate (authoritative; do not replace with prose):\n${JSON.stringify(input.specification)}\nUse research_brief for captured data, policy and remaining attempts. Only original registered partitions and supported tools are permitted. Final selection ends search; the attempt budget also stops it. Capital assumptions do not establish profitability or executable depth.`;
+  return `Original structured research mandate (authoritative; do not replace with prose):\n${JSON.stringify(input.specification)}\nUse research_brief for captured data, policy and the cumulative trial ledger. Only original registered partitions and supported tools are permitted. Final selection ends search; legacy budget fields impose no execution quota. Capital assumptions do not establish profitability or executable depth.`;
 }
 
 /** Compare only the named partition's actual metric; component diagnostics are not account evidence. */

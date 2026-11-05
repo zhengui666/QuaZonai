@@ -41,10 +41,10 @@ pub struct NativeTradeTickInputV1 {
     /// Absence retains the original native TradeTick representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representation: Option<NativeTickRepresentationV1>,
-    /// Original total selected-row cap; not a streaming memory limit.
+    /// Legacy selected-row allowance, retained as input evidence and ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum_rows: Option<u32>,
-    /// Exact full-source budget for the explicitly derived cache representation.
+    /// Legacy cache source-row allowance, retained as input evidence and ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maximum_source_rows: Option<DbCounter>,
     pub source_revision: String,

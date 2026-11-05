@@ -124,3 +124,45 @@ fn cluster_and_turnover_constraints_remain_binding() {
         .sum::<bigdecimal::BigDecimal>();
     assert!(change <= *input.maximum_turnover.as_decimal());
 }
+
+#[test]
+fn allocation_accepts_the_complete_member_and_cluster_sets_past_previous_quotas() {
+    let mut input = request();
+    let template = input.members[0].clone();
+    input.members = (0..65)
+        .map(|index| NativeReviewAllocationMemberV1 {
+            id: format!("m{index}"),
+            source_report_id: format!("r{index}"),
+            ..template.clone()
+        })
+        .collect();
+    input.member_caps = input
+        .members
+        .iter()
+        .map(|m| NativeReviewMemberCapV1 {
+            id: m.id.clone(),
+            maximum_weight: d("1"),
+        })
+        .collect();
+    input.current_weights = input
+        .members
+        .iter()
+        .map(|m| NativeReviewCurrentWeightV1 {
+            id: m.id.clone(),
+            weight: d("0"),
+        })
+        .collect();
+    input.cluster_caps = (0..129)
+        .map(|index| NativeReviewClusterCapV1 {
+            id: format!("c{index}"),
+            members: vec!["m0".into()],
+            maximum_weight: d("1"),
+        })
+        .collect();
+    let result = job::review_allocate::allocate(&input).unwrap();
+    assert_eq!(result.members.len(), 65);
+    assert!(result
+        .members
+        .iter()
+        .all(|m| m.weight.as_decimal() > &bigdecimal::BigDecimal::from(0)));
+}

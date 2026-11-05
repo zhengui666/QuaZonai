@@ -49,6 +49,47 @@ fn curve(catalog: &Path, request: &impl serde::Serialize) -> NativeCapitalCurveR
 }
 
 #[test]
+fn legacy_elapsed_budget_cannot_truncate_method_points() {
+    let (catalog, mut request) = input();
+    request.budget.maximum_elapsed_ms = DbCounter::ZERO;
+    let mut legacy = serde_json::to_value(&request).unwrap();
+    legacy["budget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("maximum_elapsed_ms");
+    let result = curve(catalog.path(), &legacy);
+    assert_eq!(
+        result.termination,
+        NativeCapitalCurveTerminationV1::Completed
+    );
+    assert_eq!(result.points.len(), 3);
+    assert_eq!(result.resources.attempted_simulations, 3);
+    assert_eq!(result.request.budget.maximum_elapsed_ms, DbCounter::ZERO);
+}
+
+#[test]
+fn method_sampling_accepts_more_than_the_previous_execution_quota() {
+    let (catalog, mut request) = input();
+    request.budget.maximum_simulations = 65;
+    let output = native::command(
+        &[
+            "capital-curve".as_ref(),
+            "--catalog".as_ref(),
+            catalog.path().as_os_str(),
+            "--plan-only".as_ref(),
+        ],
+        &request,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: NativeCapitalCurveResultV1 = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.generation.planned_capitals.len(), 65);
+}
+
+#[test]
 fn every_automatic_capital_point_matches_a_separate_native_replay() {
     let (catalog, mut request) = input();
     request.capital_basis.equity = "1000200".parse().unwrap();
@@ -381,8 +422,6 @@ fn invalid_money_budget_identity_and_external_grids_are_rejected() {
         ("/capital_basis/reserved", serde_json::json!("-1")),
         ("/capital_basis/currency", serde_json::json!("EUR")),
         ("/budget/maximum_simulations", serde_json::json!(0)),
-        ("/budget/maximum_simulations", serde_json::json!(65)),
-        ("/budget/maximum_elapsed_ms", serde_json::json!("0")),
     ] {
         let mut invalid = original.clone();
         *invalid.pointer_mut(pointer).unwrap() = value;

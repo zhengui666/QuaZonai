@@ -18,7 +18,7 @@ import { JsonReader, jsonChunks, canonicalJsonDigest } from './native-json.ts';
 export const nativeCommands = new Set(['review-science', 'review-source', 'review-allocate', 'evaluate-factor', 'evaluate-tick-factor', 'replay-tick-economic', 'forecast', 'forecast-factor', 'evaluate-experiment', 'simulate', 'replay-catalog-ensemble', 'study-portfolio', 'allocate', 'blend-targets', 'assess-capacity', 'size-account', 'validate-capital-exit', 'fit-ensemble', 'apply-ensemble', 'capital-curve', 'freeze-ensemble-calibrations', 'compare-observed-spot', 'study-observed-spot', 'value-observed-spot', 'build-observed-spot', 'catalog-prefix-digest', 'catalog-factor-scope', 'scan-factor-catalog']);
 type NativeInterceptor = (command: string, input: NativeJson, next: () => Promise<NativeJson>) => Promise<NativeJson>;
 const nativeInterceptor = new AsyncLocalStorage<NativeInterceptor>();
-/** Scoped checkpoint/budget adapter for a fixed review computation; other science is unchanged. */
+/** Scoped checkpoint adapter for a fixed review computation; other science is unchanged. */
 export function withNativeExecutionInterceptor<T>(interceptor: NativeInterceptor, operation: () => Promise<T>): Promise<T> { return nativeInterceptor.run(interceptor, operation); }
 const instanceCredentials = new Map<string, string>();
 const progressTracking = new AsyncLocalStorage<(snapshots: NativeJson[]) => Promise<void>>();
@@ -289,10 +289,34 @@ async function executeRemote(target: RemoteNativeTarget, command: string, input:
   } finally { if (timer) clearInterval(timer); progressAbort.abort(); await progressRead; }
 }
 
+/** Derive the unmetered execution payload without changing frozen scientific facts. */
+export function unmeteredNativeInput<T extends NativeJson>(value: T): T {
+  // Most payloads are large scientific arrays without quotas. Preserve unchanged
+  // branches instead of duplicating native evidence solely to inspect settings.
+  if (Array.isArray(value)) {
+    let copy: NativeJson[] | undefined;
+    for (let index = 0; index < value.length; index++) {
+      const child = unmeteredNativeInput(value[index]!);
+      if (child !== value[index]) { copy ??= [...value]; copy[index] = child; }
+    }
+    return (copy ?? value) as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    let copy: Record<string, NativeJson> | undefined;
+    for (const [key, original] of Object.entries(value)) {
+      if (key === 'total_fuel') { copy ??= { ...value }; delete copy[key]; continue; }
+      const child = unmeteredNativeInput(original);
+      if (child !== original) { copy ??= { ...value }; copy[key] = child; }
+    }
+    return (copy ?? value) as T;
+  }
+  return value;
+}
+
 /** Shared transport for the research and service scientific entry points. */
 export async function executeNativeValue(target: NativeTarget, command: string, input: NativeJson, args: string[], directory: string, context: Context): Promise<NativeJson> {
   const interceptor = nativeInterceptor.getStore();
-  const execute = () => executeNativeUnwrapped(target, command, input, args, directory, context);
+  const execute = () => executeNativeUnwrapped(target, command, unmeteredNativeInput(input), args, directory, context);
   return interceptor ? interceptor(command, input, execute) : execute();
 }
 

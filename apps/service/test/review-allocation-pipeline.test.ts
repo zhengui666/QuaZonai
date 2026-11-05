@@ -31,12 +31,13 @@ for (const mode of ['COMPLETE', 'MISSING_INDEPENDENT_PROOF', 'FAILED_INDEPENDENT
     state.options.config.jobBinary = binary; state.options.config.defaultModel = state.model;
     const request = { train_end_ns: String(150n*DAY), validation_end_ns: String(300n*DAY), forecast: { schema_version:1,
       selection:{schema_version:1,bar_types:['TEST.SIM-1-DAY-LAST-EXTERNAL'],event_start_ns:'0',event_end_ns:String(350n*DAY),decision_cutoff_ns:String(350n*DAY),maximum_rows:1000},
-      parameters:{schema_version:1,fast_period:2,slow_period:3,label_horizon_observations:1} } };
+      parameters:{schema_version:1,fast_period:2,slow_period:3,label_horizon_observations:1,total_fuel:'1'} } };
     const settings = {base_currency:'USD',starting_capital:'1000',fill_model:{adapter_kind:'NAUTILUS_DEFAULT_FILL',parameters:{prob_slippage:'0'}},latency_model:{adapter_kind:'NAUTILUS_STATIC_LATENCY',parameters:{base_latency_ns:'0'}}};
     const strategy = {name:'TEST_ONLY',kind:'factor-threshold',instrumentId:'TEST.SIM',threshold:0,investedWeight:'1',targetTtlNs:String(2n*DAY),simulationSettings:settings};
     const dataset = state.options.config.datasets[0]!;
     dataset.data.request = request; dataset.strategy = strategy as any;
-    state.options.config.datasets.push({...dataset,id:'independent-test-only',data:{...dataset.data,request:{...request,validation_end_ns:String(400n*DAY),forecast:{...request.forecast,selection:{...request.forecast.selection,event_end_ns:String(600n*DAY),decision_cutoff_ns:String(600n*DAY)}}}}});
+    const { total_fuel: _retiredFuel, ...independentParameters } = request.forecast.parameters;
+    state.options.config.datasets.push({...dataset,id:'independent-test-only',data:{...dataset.data,request:{...request,validation_end_ns:String(400n*DAY),forecast:{...request.forecast,parameters:independentParameters,selection:{...request.forecast.selection,event_end_ns:String(600n*DAY),decision_cutoff_ns:String(600n*DAY)}}}}});
     // A configured source-owner snapshot fixture exercises the authority boundary only;
     // its TEST_ONLY native validator is not evidence of actual historical market PIT.
     const independentDataset = state.options.config.datasets.at(-1)!;

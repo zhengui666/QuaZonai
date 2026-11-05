@@ -56,7 +56,7 @@ test('isolated review reads every category, retains missing evidence and reopens
       assert.deepEqual(evidence, f.input.evidence[kind]); observed.push(evidence);
       return evidence;
     };
-    f.faux.setResponses([message(`review_${kinds[0]}`, {}), ...kinds.slice(1).map((kind, i) => (transcript: { messages: readonly unknown[] }) => {
+    f.faux.setResponses([...Array.from({ length: 13 }, () => message('review_context', {})), message(`review_${kinds[0]}`, {}), ...kinds.slice(1).map((kind, i) => (transcript: { messages: readonly unknown[] }) => {
       read(transcript, kinds[i]!); return message(`review_${kind}`, {});
     }), (transcript: { messages: readonly unknown[] }) => {
       const evidence = read(transcript, kinds.at(-1)!);
@@ -75,13 +75,13 @@ test('isolated review reads every category, retains missing evidence and reopens
     const reviewer = Number(result.reviewerConversationId);
     const session = await host.harness.snapshot(ReviewSession, reviewer as ConversationId, context);
     assert.equal(observed.length, 6, 'all six successful JSON payloads were consumed before finish');
-    assert.equal(session!.finished, true); assert.deepEqual(session!.reads, kinds); assert.equal(session!.calls, 7);
+    assert.equal(session!.finished, true); assert.deepEqual(session!.reads, kinds); assert.equal(session!.calls, 20);
     assert.equal(session!.narrative, finish('fixture:validation').narrative);
-    assert.equal(f.faux.state.callCount, 7);
+    assert.equal(f.faux.state.callCount, 20);
     await host.close(); host = await openResearch(f);
     const repeated = await host.harness.waitForTask(id, context);
     assert.deepEqual(repeated.state.outcome, task.state.outcome);
-    assert.equal(f.faux.state.callCount, 7);
+    assert.equal(f.faux.state.callCount, 20);
     assert.equal((await host.harness.snapshot(ReviewSession, reviewer as ConversationId, context))!.finished, true);
   } finally { await host.close(); await rm(f.directory, { recursive: true, force: true }); }
 });

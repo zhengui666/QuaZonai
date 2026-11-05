@@ -407,3 +407,78 @@ fn source_cli_rejects_missing_source_owner_metadata_without_success_output() {
     assert!(result.stdout.is_empty());
     assert!(String::from_utf8_lossy(&result.stderr).contains("QZ_NATIVE_JOB_FAILED"));
 }
+
+#[test]
+fn complete_selection_reviews_all_trials_past_the_previous_cohort_quota() {
+    let trials = (0..65)
+        .map(|trial| {
+            series(
+                &format!("t{trial}"),
+                (0..64)
+                    .map(|i| if i % 2 == 0 { 0.01 } else { -0.009 } + trial as f64 * 0.00001)
+                    .collect(),
+            )
+        })
+        .collect();
+    let result = analyze(&request(NativeReviewAnalysisV1::Selection {
+        total_trials: 65,
+        ledger_complete: true,
+        selected_trial_id: "t64".into(),
+        trials,
+        timestamps_ns: times(64),
+        frequency: "DAY".into(),
+        block_length: 1,
+    }))
+    .unwrap();
+    assert_eq!(result.scope, "SELECTION_COHORT");
+    for code in ["dsr", "pbo"] {
+        assert!(
+            result
+                .metrics
+                .iter()
+                .find(|m| m.code == code)
+                .unwrap()
+                .value
+                .is_some(),
+            "{code}"
+        );
+    }
+}
+
+#[test]
+fn full_factor_diagnostics_detect_duplicates_beyond_the_previous_point_quota() {
+    let mut points = factor_points(20_001);
+    points[20_000] = points[0].clone();
+    let result = job::review_science::factor_diagnostics(
+        &points,
+        contracts::factors::NativeFactorPartitionV1::Validation,
+        1,
+        NativeReviewFactorScopeV1::PooledTimeSeries,
+    )
+    .unwrap();
+    let rank = result
+        .metrics
+        .iter()
+        .find(|metric| metric.code == "rank_ic")
+        .unwrap();
+    assert_eq!(rank.status, NativeReviewMetricStatusV1::InvalidInput);
+    assert_eq!(
+        rank.reason.as_deref(),
+        Some("REVIEW_DUPLICATE_FACTOR_POINT")
+    );
+}
+
+#[test]
+fn long_original_blocks_return_insufficient_evidence_without_a_resource_rejection() {
+    let result = analyze(&request(NativeReviewAnalysisV1::Selection {
+        total_trials: 1,
+        ledger_complete: true,
+        selected_trial_id: "only".into(),
+        trials: vec![series("only", vec![0.01; 64])],
+        timestamps_ns: times(64),
+        frequency: "DAY".into(),
+        block_length: 20_001,
+    }))
+    .unwrap();
+    assert!(result.metrics.iter().all(|metric| metric.value.is_none()));
+}

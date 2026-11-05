@@ -151,7 +151,7 @@ export function reviewIndependentOutcomeCheck(policy: ReviewPolicy, metrics: rea
 
 /** Reports and aligned prior data are resolved by the service, never uploaded metric summaries. */
 export function buildReviewAllocationRequest(members: ReviewAllocationMember[], policy: ReviewAllocationPolicy): ReviewAllocationRequest {
-  if (!identifier(policy.id) || !ns(policy.frozenAtNs) || !['FACTOR', 'PORTFOLIO'].includes(policy.kind) || members.length < 2 || members.length > 64 || !unique(members.map(m => m.id))) invalid('review_allocation_policy_invalid');
+  if (!identifier(policy.id) || !ns(policy.frozenAtNs) || !['FACTOR', 'PORTFOLIO'].includes(policy.kind) || members.length < 2 || !unique(members.map(m => m.id))) invalid('review_allocation_policy_invalid');
   const times = policy.observationTimesNs;
   if (times.length < 30 || !times.every(ns) || times.some((t, i) => i > 0 && BigInt(t) <= BigInt(times[i - 1]!)) || BigInt(times.at(-1)!) >= BigInt(policy.frozenAtNs) || policy.observationEvidenceRefs.length !== members.length || !policy.observationEvidenceRefs.every(identifier)) invalid('review_allocation_observations_invalid');
   const resolved = members.map(m => {

@@ -32,7 +32,7 @@ export function PortfolioAllocations({ portfolios }: { portfolios: PortfolioView
     initialized.current = true;
     if (command.values) {
       const original = command.values;
-      form.setFieldsValue({ ...original, maximumScientificCalls: String(original.maximumScientificCalls),
+      form.setFieldsValue({ ...original,
         memberCaps: Object.fromEntries((original.memberCaps as { id: string; maximumWeight: string }[]).map(row => [row.id, row.maximumWeight])),
         currentWeights: Object.fromEntries((original.currentWeights as { id: string; weight: string }[]).map(row => [row.id, row.weight])),
         clusters: original.clusterCaps as AllocationFields['clusters'],
@@ -64,7 +64,7 @@ export function PortfolioAllocations({ portfolios }: { portfolios: PortfolioView
         <Form.Item label="簇合计上限（0–1）" name={[field.name, 'maximumWeight']} rules={[{ required: true, message: '请明确填写相关簇上限' }]}><Input inputMode="decimal" /></Form.Item>
         <Button type="text" danger onClick={() => remove(field.name)}>移除此簇</Button>
       </div>)}<Button type="dashed" onClick={() => add({ id: '', members: [], maximumWeight: '' })}>增加相关簇</Button></>}</Form.List>
-      <div className="form-columns review-allocation-limits"><Form.Item label="最大换手（0–2）" name="maximumTurnover" extra="各组合新旧资金权重绝对变化之和；1 = 100%。" rules={[{ required: true, message: '请填写最大换手' }]}><Input inputMode="decimal" /></Form.Item><Form.Item label="科学调用预算（1–4096）" name="maximumScientificCalls" extra="包括预测、配权、合并目标和共享账户模拟。" rules={[{ required: true, message: '请明确填写调用预算' }]}><Input inputMode="numeric" /></Form.Item></div>
+      <div className="form-columns review-allocation-limits"><Form.Item label="最大换手（0–2）" name="maximumTurnover" extra="各组合新旧资金权重绝对变化之和；1 = 100%。" rules={[{ required: true, message: '请填写最大换手' }]}><Input inputMode="decimal" /></Form.Item></div>
       {validationError && <p className="error-text" role="alert">{validationError}</p>}<ErrorNotice error={command.error} /><DraftNotice saved={saved || !!command.pending} />
       <div className="form-actions">{command.pending ? <Button type="primary" disabled={command.busy} loading={command.busy} onClick={() => { void command.submit(); }}>核对原提交</Button> : <Button type="primary" htmlType="submit" loading={command.busy} disabled={eligible.length < 2}>计算资金配置</Button>}</div>
     </Form>}

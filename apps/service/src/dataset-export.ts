@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from './science-binding.ts';
 import { constants } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { link, lstat, mkdtemp, open, readFile, readdir, rm, unlink } from 'node:fs/promises';
@@ -51,7 +52,7 @@ function selection(value: unknown, catalog = false): JsonObject {
     || new Set(result.bar_types).size !== result.bar_types.length)
     || ns(result.event_start_ns) >= ns(result.event_end_ns)
     || ns(result.event_end_ns) > ns(result.decision_cutoff_ns)) throw new Error('native_selection_required');
-  ns(result.decision_cutoff_ns); uint(result.maximum_rows);
+  ns(result.decision_cutoff_ns);
   return result;
 }
 export function factorRequest(value: JsonObject, catalog = false): JsonObject {
@@ -64,8 +65,7 @@ export function factorRequest(value: JsonObject, catalog = false): JsonObject {
   if (value.schema_version !== 1 || forecast.schema_version !== 1 || parameters.schema_version !== 1) throw new Error('native_schema_version_required');
   selection(catalog ? value : forecast.selection, catalog);
   uint(parameters.fast_period); uint(parameters.slow_period); uint(parameters.label_horizon_observations);
-  if (Number(parameters.slow_period) <= Number(parameters.fast_period)
-    || (parameters.total_fuel !== null && parameters.total_fuel !== undefined && ns(parameters.total_fuel) === 0n)) throw new Error('native_forecast_parameters_required');
+  if (Number(parameters.slow_period) <= Number(parameters.fast_period)) throw new Error('native_forecast_parameters_required');
   // Reuse the exact current research boundary and optional-fuel normalization.
   iterationRequest(catalog ? { catalog_scan_request: value } : { request: value });
   return value;
@@ -75,8 +75,7 @@ function contained(wanted: JsonObject, prepared: JsonObject): void {
   if ((wanted.bar_types as string[]).some((id) => !bars.includes(id))
     || ns(wanted.event_start_ns) < ns(prepared.event_start_ns)
     || ns(wanted.event_end_ns) > ns(prepared.event_end_ns)
-    || ns(wanted.decision_cutoff_ns) > ns(prepared.decision_cutoff_ns)
-    || uint(wanted.maximum_rows) > uint(prepared.maximum_rows)) throw new Error('request_outside_prepared_selection');
+    || ns(wanted.decision_cutoff_ns) > ns(prepared.decision_cutoff_ns)) throw new Error('request_outside_prepared_selection');
 }
 async function noSymlinks(path: string, checked = new Set<string>()): Promise<void> {
   let current = parse(path).root;
@@ -220,7 +219,7 @@ export async function exportDataset(options: DatasetExportOptions): Promise<Data
     || sealed.definitionJson !== primary.definitionJson || sealed.window.bar_seconds !== primary.window.bar_seconds
     || sealed.window.start_seconds !== primary.window.start_seconds
     || Number(sealed.window.end_seconds) < Number(primary.window.end_seconds) || sealed.firstEvent !== primary.firstEvent
-    || canonical(iterationRequest({ request: primary.request }, clippedStrategy)) !== canonical(iterationRequest({ request: sealed.request }, clippedStrategy))
+    || canonical(withoutExecutionQuotas(iterationRequest({ request: primary.request }, clippedStrategy))) !== canonical(withoutExecutionQuotas(iterationRequest({ request: sealed.request }, clippedStrategy)))
     || ns(object(object(sealed.request.forecast).selection).event_end_ns) <= ns(sealed.request.validation_end_ns))) throw new Error('heldout_criteria_mismatch');
   if (within(output, primary.catalog) || (sealed && within(output, sealed.catalog))) throw new Error('dataset_output_overlaps_catalog');
   const data: JsonObject = { catalog: primary.catalog, request: primary.request };

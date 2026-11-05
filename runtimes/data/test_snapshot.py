@@ -74,11 +74,13 @@ class SnapshotTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requested commit"):
             self.plan(revision="b" * 40)
 
-    def test_budget_is_checked_before_any_file_download(self):
-        with self.assertRaisesRegex(ValueError, "exceeding"):
-            self.plan(max_bytes=30)
+    def test_legacy_budget_does_not_limit_original_file_selection(self):
+        selection = self.plan(max_bytes=1)
+        self.assertGreater(selection["total_bytes"], 1)
         self.assertEqual(self.http.call_count, 2)
         self.assertFalse(self.output.exists())
+        manifest = snapshot.download(selection, self.output)
+        self.assertEqual(sum(item["size"] for item in manifest["files"]), selection["total_bytes"])
 
     def test_download_and_completed_reuse_validate_every_hash(self):
         selection = self.plan()

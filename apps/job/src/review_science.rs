@@ -4,7 +4,6 @@ use contracts::{factors::*, review_science::*, SchemaV1};
 use std::collections::{BTreeMap, BTreeSet};
 
 const METHOD: &str = "qz.review-science.v1";
-pub(crate) const MAX_POINTS: usize = 20_000;
 const BOOTSTRAPS: usize = 512;
 
 pub fn validate_source(
@@ -142,12 +141,6 @@ pub fn factor_diagnostics(
             "Factor labels are forward price returns, not executable strategy PnL.".into(),
         ],
     };
-    if included.len() > MAX_POINTS {
-        output
-            .metrics
-            .push(metric("rank_ic", None, "REVIEW_DIAGNOSTIC_POINT_LIMIT"));
-        return Ok(output);
-    }
     let mut groups: BTreeMap<u64, Vec<(f64, f64)>> = BTreeMap::new();
     let mut keys = BTreeSet::new();
     for point in &included {
@@ -311,11 +304,11 @@ fn validate_returns(
     block: u32,
 ) -> Result<()> {
     ensure!(
-        !frequency.trim().is_empty() && block > 0 && block as usize <= MAX_POINTS,
+        !frequency.trim().is_empty() && block > 0,
         "REVIEW_RETURN_POLICY_INVALID"
     );
     ensure!(
-        timestamps.len() <= MAX_POINTS && timestamps.windows(2).all(|p| p[0] < p[1]),
+        timestamps.windows(2).all(|p| p[0] < p[1]),
         "REVIEW_RETURN_TIME_INVALID"
     );
     let mut ids = BTreeSet::new();
@@ -461,7 +454,6 @@ pub fn analyze(request: &NativeReviewScienceRequestV1) -> Result<NativeReviewSci
             frequency,
             block_length,
         } => {
-            ensure!(trials.len() <= 64, "REVIEW_TRIAL_LIMIT");
             out.scope = "SELECTION_COHORT".into();
             validate_returns(
                 &trials.iter().collect::<Vec<_>>(),

@@ -36,19 +36,7 @@ pub fn evaluation_request(
     {
         return fail("TICK_PARTITION_BOUNDARIES");
     }
-    let budget_valid = if input.is_cohort_cache() {
-        input.maximum_rows.is_none()
-            && input
-                .maximum_source_rows
-                .is_some_and(|value| value.get() > 0)
-    } else {
-        input.maximum_source_rows.is_none()
-            && input
-                .maximum_rows
-                .is_some_and(|value| value > 0 && value <= MAXIMUM_TICK_ROWS)
-    };
-    if !budget_valid
-        || request.sampling.maximum_cohort_rows == 0
+    if request.sampling.maximum_cohort_rows == 0
         || request.sampling.maximum_cohort_rows > MAXIMUM_COHORT_ROWS
     {
         return fail("TICK_RESOURCE_LIMIT");
@@ -206,7 +194,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn cache_representation_uses_a_separate_exact_source_budget() {
+    fn cache_representation_preserves_legacy_row_fields_without_execution_quotas() {
         let native: NativeTradeTickFactorEvaluationRequestV1 = serde_json::from_value(json!({
             "schema_version":1,"input":{"modality":"TRADE_TICK","instrument_ids":["AUD/USD.SIM"],
                 "event_start_ns":"0","event_end_ns":"80","decision_cutoff_ns":"80","maximum_rows":100,
@@ -253,16 +241,16 @@ mod tests {
         );
         assert_eq!(flow.input.source_row_limit(), Some(4_500_000_000));
         cache.input.maximum_rows = Some(100);
-        assert!(evaluation_request(&cache).is_err());
+        assert!(evaluation_request(&cache).is_ok());
         cache.input.maximum_rows = None;
         cache.input.maximum_source_rows = None;
-        assert!(evaluation_request(&cache).is_err());
+        assert!(evaluation_request(&cache).is_ok());
         let mut invalid_native = native;
         invalid_native.input.maximum_source_rows = Some(DbCounter::new(1).unwrap());
-        assert!(evaluation_request(&invalid_native).is_err());
+        assert!(evaluation_request(&invalid_native).is_ok());
         invalid_native.input.maximum_source_rows = None;
         invalid_native.input.maximum_rows = Some(MAXIMUM_TICK_ROWS + 1);
-        assert!(evaluation_request(&invalid_native).is_err());
+        assert!(evaluation_request(&invalid_native).is_ok());
     }
     #[test]
     fn target_duration_is_exact_positive_and_cannot_mix_old_fields() {

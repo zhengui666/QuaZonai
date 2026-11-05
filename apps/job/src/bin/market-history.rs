@@ -45,7 +45,8 @@ enum Command {
         units: Vec<PathBuf>,
         #[arg(long)]
         output: PathBuf,
-        #[arg(long, default_value_t = 48_u64 * 1024 * 1024 * 1024)]
+        /// Legacy output allowance; accepted and ignored.
+        #[arg(long, default_value_t = 0)]
         max_output_bytes: u64,
     },
     /// Obtain current definitions using the official public adapter, without historical backdating.
@@ -91,9 +92,11 @@ enum Command {
         /// Verify and reuse an already completed immutable unit; interrupted outputs need a new directory.
         #[arg(long)]
         resume: bool,
-        #[arg(long, default_value_t = 1_000_000)]
+        /// Legacy trade-row allowance; accepted and ignored.
+        #[arg(long, default_value_t = 0)]
         max_trade_rows: u64,
-        #[arg(long, default_value_t = 10_u64 * 1024 * 1024 * 1024)]
+        /// Legacy output allowance; accepted and ignored.
+        #[arg(long, default_value_t = 0)]
         max_output_bytes: u64,
         #[arg(long)]
         output: PathBuf,
@@ -398,7 +401,7 @@ struct ImportOptions<'a> {
     cohort_flow_cache: bool,
     path_prefixes: &'a [String],
     resume: bool,
-    max_trade_rows: u64,
+    _max_trade_rows: u64,
     max_output_bytes: u64,
 }
 
@@ -489,13 +492,7 @@ fn import(
         "RESUME_REQUIRES_EXPLICIT_TRADE_TICKS"
     );
     ensure!(
-        !options.trade_ticks
-            || (bar_seconds.is_none()
-                && bar_milliseconds.is_none()
-                && options.max_trade_rows > 0
-                && options.max_trade_rows <= 1_000_000
-                && options.max_output_bytes > 0
-                && options.max_output_bytes <= 10 * 1024 * 1024 * 1024),
+        !options.trade_ticks || (bar_seconds.is_none() && bar_milliseconds.is_none()),
         "TRADE_INPUT_RESOURCE_OR_MODALITY_INVALID"
     );
     let selected_files = manifest
@@ -601,12 +598,7 @@ fn import(
     }
     ensure!(
         !options.is_cache()
-            || (!options.resume
-                && bar_seconds.is_none()
-                && bar_milliseconds.is_none()
-                && options.max_trade_rows > 0
-                && options.max_trade_rows <= i64::MAX as u64
-                && options.max_output_bytes > 0),
+            || (!options.resume && bar_seconds.is_none() && bar_milliseconds.is_none()),
         "COHORT_CACHE_OPTIONS_INVALID"
     );
     let mut cache = options
@@ -632,7 +624,7 @@ fn import(
             output,
             &instruments,
             previous_report.is_some(),
-            options.trade_ticks.then_some(options.max_output_bytes),
+            None,
         )?)
     };
     let mut aggregation = records::Aggregation::with_milliseconds(bar_seconds, bar_milliseconds)?;
@@ -683,11 +675,6 @@ fn import(
                 return Ok(());
             }
             report.selected_rows += 1;
-            ensure!(
-                !(options.trade_ticks || options.is_cache())
-                    || report.selected_rows <= options.max_trade_rows,
-                "TRADE_INPUT_ROW_LIMIT; use smaller immutable import units"
-            );
             coverage.selected_rows += 1;
             let symbol = if stream.symbol_from_file_stem {
                 file_symbol(&path)?
@@ -850,27 +837,9 @@ fn import(
     Ok(report)
 }
 
-#[cfg(target_os = "linux")]
 fn trade_memory_limit() -> Result<()> {
-    use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
-    let cap = 2 * 1024 * 1024 * 1024_u64;
-    let original = getrlimit(Resource::As);
-    let maximum = original.maximum.unwrap_or(cap).min(cap);
-    let current = original.current.unwrap_or(cap).min(maximum);
-    setrlimit(
-        Resource::As,
-        Rlimit {
-            current: Some(current),
-            maximum: Some(maximum),
-        },
-    )
-    .context("TRADE_INPUT_MEMORY_LIMIT_UNAVAILABLE")?;
+    // Legacy entrypoint retained; no application address-space quota is installed.
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn trade_memory_limit() -> Result<()> {
-    anyhow::bail!("TRADE_INPUT_MEMORY_LIMIT_UNSUPPORTED_PLATFORM")
 }
 
 fn main() {
@@ -928,7 +897,7 @@ fn main() {
                     cohort_flow_cache,
                     path_prefixes: &path_prefixes,
                     resume,
-                    max_trade_rows,
+                    _max_trade_rows: max_trade_rows,
                     max_output_bytes,
                 },
             )
@@ -963,7 +932,7 @@ mod tests {
             cohort_flow_cache: false,
             path_prefixes: prefixes,
             resume,
-            max_trade_rows: rows,
+            _max_trade_rows: rows,
             max_output_bytes: bytes,
         }
     }
@@ -1014,7 +983,7 @@ mod tests {
             &manifest,
             &instruments,
             &output,
-            tick_options(&prefixes, false, 10, 10_000_000),
+            tick_options(&prefixes, false, 0, 0),
         )
         .unwrap();
         assert_eq!(report.status, "IMPORTED");
@@ -1512,7 +1481,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_import_rejects_duplicate_identity_and_resource_overflow_without_publishing_success() {
+    fn tick_import_preserves_duplicate_identity_failure_and_ignores_legacy_quotas() {
         let temp = tempfile::tempdir().unwrap();
         let row = "BTCUSDT,1767225600001,10.12,0.1234567890,T-1,B\n";
         let (manifest, instruments, csv) = tick_source(temp.path(), &row.repeat(2));
@@ -1537,14 +1506,18 @@ mod tests {
         .is_err());
         for (name, max_rows, max_bytes) in [("row-limit", 1, 10_000_000), ("byte-limit", 10, 1)] {
             let output = temp.path().join(name);
-            assert!(import(
+            let report = import(
                 &manifest,
                 &instruments,
                 &output,
-                tick_options(&prefixes, false, max_rows, max_bytes)
+                tick_options(&prefixes, false, max_rows, max_bytes),
             )
-            .is_err());
-            assert!(!output.join("import-report.json").exists());
+            .unwrap();
+            assert_eq!(
+                report.status, "INCOMPLETE",
+                "the duplicate source remains explicit; legacy quotas are ignored"
+            );
+            assert!(output.join("import-report.json").exists());
             assert!(
                 import(
                     &manifest,
@@ -1553,7 +1526,7 @@ mod tests {
                     tick_options(&prefixes, true, 10, 10_000_000)
                 )
                 .is_err(),
-                "interrupted native output must not be reused"
+                "incomplete native source evidence must not be reused"
             );
         }
         assert_eq!(fs::read(csv).unwrap(), original);

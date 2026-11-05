@@ -42,7 +42,7 @@ Pinned defaults used for verification:
 
 ## Plan and download
 
-Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. No default byte budget is imposed; `--max-bytes` is an optional explicit operator budget. Exact file sizes and content hashes are still verified.
+Run from the source checkout with Python 3.10+. No Python packages or account are required for public, ungated sources. The command prints the fixed revision, file list, declared license and total bytes before acquisition. An explicit `--include` is always required. There is no byte budget; legacy `--max-bytes` values are accepted and ignored. Exact file sizes and content hashes are still verified.
 
 ```sh
 python3 -B runtimes/data/snapshot.py plan \
@@ -96,7 +96,7 @@ target/debug/polymarket-history archive \
 
 For books, select `--format joseph-books`, omit `--bar-seconds`, and provide the matching native instrument definitions. The selection window is half-open on **minute-end event time**: source `minute_ts + 60`. Each complete book becomes native Clear/Add snapshot deltas; two-sided books also produce quotes with actual top sizes. Empty or one-sided books never generate quotes with invented zero prices. Sequence `0` means unknown, not a verified event sequence. These are snapshots, not continuous replay across missing minutes/days. Do not derive transaction volume or settlement from them.
 
-There is no implicit one-million-record or 256-definition cap in the current archive converter. Explicit scientific selections still require their original `maximum_rows` budget and supported native numeric ranges. Split large work deliberately by non-overlapping time/asset selections into new catalog directories when appropriate. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
+There is no implicit one-million-record or 256-definition cap in the current archive converter. Explicit scientific selections retain their original time/asset scope and supported native numeric ranges; legacy `maximum_rows` values do not cap acquisition. Split large work deliberately by non-overlapping time/asset selections into new catalog directories when appropriate. Do not concatenate overlapping providers or reinterpret `orders_matched`, wallet-split records, YES-normalized rows or derived price marks as additional fills. The import report distinguishes unique `instruments` from `instrument_versions`.
 
 ## Quality, research admission and recovery
 
@@ -127,7 +127,7 @@ python3 -B runtimes/data/evm.py \
   --output /absolute/data/v2-eight-blocks.json
 ```
 
-For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no default byte budget. An explicit `--max-bytes` optionally bounds cumulative response-body and output bytes. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
+For a continuous block selection replace the repeated `--block` arguments with inclusive `--from-block` and `--to-block`. There is no application-imposed block, address or endpoint count cap. The query covers all matching logs in each explicit block; native conversion then filters tokens and UTC time. Block selection does not freeze a historical market universe. Response bodies and output have no byte budget; legacy `--max-bytes` values are ignored. Healthy transfers have no total wall-time deadline; connection and socket-idle timeouts remain. Connections can be attempted at most three times with short backoff before any response body is read; HTTP errors, interrupted bodies, malformed data and provider disagreement are not retried. There is no overwrite or resume; use a new output file. A failed acquisition publishes no final file.
 
 The collector binds logs to block hashes, transaction hashes/indices and canonical log indices, checks parent links for adjacent blocks, and requires agreement between providers. The snapshot preserves each original response, endpoint and actual retrieval time. The native reader repeats identity/consistency checks and decodes the original ABI using the already pinned Alloy library. This is corroborated RPC evidence, not an independently verified receipt trie, a historical finality clock or a source permission grant. Raw blockchain facts do not imply a dataset redistribution license; preserve applicable provider terms.
 

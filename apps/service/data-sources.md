@@ -154,7 +154,7 @@ versions and original Validation end times. The `strategy_ensemble_fit` tool acc
 TRAIN cutoff can influence the fit. The model never supplies review scores or q.
 
 The portfolio page exposes multi-portfolio configuration with explicit member,
-cluster and turnover constraints and a scientific-call budget. Optional
+cluster and turnover constraints. Scientific calls have no execution quota. Optional
 `independentDatasetId` selects a separate registered window. Weights always create
 a new candidate and shared-account study. The original target delivery conditions
 remain required; a configuration report does not send an order.

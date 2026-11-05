@@ -242,3 +242,38 @@ fn missing_malformed_or_future_source_never_becomes_zero_fees() {
     std::fs::write(directory.path().join(MAKER_TAKER_FEES_FILE), b"{}").unwrap();
     assert!(load(directory.path(), &selection).is_err());
 }
+
+#[test]
+fn source_bytes_past_the_previous_allowance_keep_original_fees_and_validation() {
+    let directory = tempfile::tempdir().unwrap();
+    let selection = NativeBarSelectionV1 {
+        schema_version: SchemaV1,
+        bar_types: vec!["GBP/USD.SIM-1-MINUTE-LAST-EXTERNAL".into()],
+        event_start_ns: count(10),
+        event_end_ns: count(80),
+        decision_cutoff_ns: count(90),
+        maximum_rows: 0,
+    };
+    let original = source();
+    let mut bytes = vec![b' '; 16 * 1024 * 1024];
+    bytes.extend(serde_json::to_vec(&original).unwrap());
+    let path = directory.path().join(MAKER_TAKER_FEES_FILE);
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(load_file(&path, &selection).unwrap(), original);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), bytes.len() as u64);
+}
+
+#[test]
+fn complete_fee_rate_sets_past_the_previous_count_quota_still_validate_every_identity() {
+    let mut original = source();
+    original.rates = (0..65_537)
+        .map(|index| NativeFeeRateV1 {
+            instrument_id: format!("I{index}.SIM"),
+            maker: "0".parse().unwrap(),
+            taker: "0.001".parse().unwrap(),
+        })
+        .collect();
+    assert!(domain::catalogs::maker_taker_fee_source(&original).is_ok());
+    original.rates[65_536].instrument_id = original.rates[0].instrument_id.clone();
+    assert!(domain::catalogs::maker_taker_fee_source(&original).is_err());
+}

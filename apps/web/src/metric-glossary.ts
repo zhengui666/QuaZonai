@@ -122,7 +122,7 @@ const glossary: Record<string, MetricDefinition> = {
   outputTokens: definition('输出词元', '官方模型用量报告的输出 Token 数，单位：词元。未报告不记为零。'),
   cost: definition('模型费用', '官方提供者用量报告记录的费用金额。按报告原值显示；未提供币种或费用时不推算。'),
   activeTasks: definition('活动任务', '官方 Durable 当前记录的活动任务数量，单位：个。不同于研究数或正在运行的科学进程数。'),
-  trials: definition('试验次数', '原研究账本已经记录的试验次数，单位：次。失败、拒绝及取消仍占用原预算，不是成功结果数。若显示 a / b，b 为原始试验预算。'),
+  trials: definition('试验次数', '原研究账本已经记录的试验次数，单位：次。包含失败、拒绝及取消，不是成功结果数。'),
   members: definition('成员数', '组合绑定的原子因子或历史研究成员数量，单位：个。成员共享一次原生账户模拟，不加总各自权益。'),
 };
 const annualized: Record<string, [string, string]> = {

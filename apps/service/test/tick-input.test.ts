@@ -49,6 +49,23 @@ test('tick export preserves exact selection and separate partitions with operati
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
+test('tick publication compares scientific inputs across retired row and fuel echoes without rewriting source requests', async () => {
+  const f = await preparedFixture();
+  try {
+    const original = { ...request, parameters: { ...request.parameters, total_fuel: '1000000' } };
+    await writeFile(f.options.request, JSON.stringify(original));
+    const metadata = { ...f.metadata,
+      request: { ...request, input: { ...request.input, maximum_rows: 0 } },
+      research_request: { ...research, input: { ...research.input, maximum_rows: 1 } } };
+    await writeFile(f.options.prepared, JSON.stringify(metadata));
+    const bytes = await readFile(f.options.request);
+    const exported = await exportDataset(f.options);
+    assert.deepEqual((exported.data.sealed as { nativeInput: unknown }).nativeInput, { modality: 'TRADE_TICK', request: original });
+    assert.deepEqual(exported.data.nativeInput, { modality: 'TRADE_TICK', request: metadata.research_request });
+    assert.deepEqual(await readFile(f.options.request), bytes);
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
 test('tick export rejects duplicated original keys, qualification relabeling, missing ticks and changed sampling', async () => {
   for (const failure of ['duplicate', 'qualification', 'missing', 'sampling'] as const) {
     const f = await preparedFixture();

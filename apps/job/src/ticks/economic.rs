@@ -1574,11 +1574,8 @@ pub(crate) fn funding_sources(
         );
         files.push((name.into(), state.len()));
     }
-    ensure!(
-        files[1].1 <= 16 * 1024 * 1024,
-        "ECONOMIC_FUNDING_MANIFEST_LIMIT"
-    );
-    let manifest: FundingManifest = serde_json::from_reader(File::open(root.join(names[1]))?)?;
+    let manifest: FundingManifest =
+        serde_json::from_reader(BufReader::new(File::open(root.join(names[1]))?))?;
     ensure!(
         manifest.source_revision == request.input.source_revision
             && manifest.start_ns <= request.input.event_start_ns

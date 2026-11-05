@@ -1,3 +1,4 @@
+import { withoutExecutionQuotas } from '../../../packages/contracts/src/execution-quotas.ts';
 import { requireTrialReview } from '../src/review-workflow.ts';
 import { nativeTargetForData } from '../src/native-execution.ts';
 import type { Context } from '@earendil-works/chord';
@@ -36,8 +37,8 @@ export async function finalizePortfolio(args: {trialId: number; reason: string},
         const result = object(trial.result, 'trial_result');
         const registeredRequest = input.data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
         if (canonical(proposal.request!) !== canonical(input.data.catalog_ensemble_request ?? input.data.request!) || canonical(proposal.strategy!) !== canonical(input.policy.strategy!)
-          || canonical(iterationRequest(data, true)) !== canonical(registeredRequest!)
-          || canonical(iterationRequest(input.data, true)) !== canonical(registeredRequest!)) throw new Error('heldout_criteria_mismatch');
+          || canonical(withoutExecutionQuotas(iterationRequest(data, true))) !== canonical(withoutExecutionQuotas(registeredRequest!))
+          || canonical(withoutExecutionQuotas(iterationRequest(input.data, true))) !== canonical(withoutExecutionQuotas(registeredRequest!))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
         study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
         const campaign = await tx.doc(CampaignResearchDoc, api.conversationId);
@@ -77,8 +78,8 @@ export async function finalizeFactor(args: {trialId: number; reason: string}, ap
         const proposal = object(trial.proposal, 'proposal');
         if (typeof proposal.model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
         const iterative = iterationRequest(data);
-        if (canonical(iterative) !== canonical(object(trial.result, 'trial_result').request!)
-          || canonical(iterative) !== canonical(iterationRequest(input.data))
+        if (canonical(withoutExecutionQuotas(iterative)) !== canonical(withoutExecutionQuotas(object(trial.result, 'trial_result').request!))
+          || canonical(withoutExecutionQuotas(iterative)) !== canonical(withoutExecutionQuotas(iterationRequest(input.data)))
           || input.data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(input.data))) throw new Error('heldout_criteria_mismatch');
         const comparison = await freezeSelection(tx, api, args.trialId);
         study.final ??= { taskId: api.taskId, trialId: args.trialId, comparedTrials: study.trials.map((item) => item.taskId!), reason: args.reason, comparison, status: 'STARTED', result: null, error: null };
@@ -115,12 +116,12 @@ async function preflightFinalizer(trialId: number, api: ResearchRuntime, context
     if (!Array.isArray(proposal.members)) throw new Error('selected_portfolio_evaluator_unavailable');
     const registered = data.catalog_ensemble_request !== undefined ? result.registered_request ?? result.request : result.request;
     if (canonical(proposal.request!) !== canonical(data.catalog_ensemble_request ?? data.request!) || canonical(proposal.strategy!) !== canonical(policy.strategy!)
-      || canonical(iterationRequest(heldout, true)) !== canonical(registered!) || canonical(iterationRequest(data, true)) !== canonical(registered!)) throw new Error('heldout_criteria_mismatch');
+      || canonical(withoutExecutionQuotas(iterationRequest(heldout, true))) !== canonical(withoutExecutionQuotas(registered!)) || canonical(withoutExecutionQuotas(iterationRequest(data, true))) !== canonical(withoutExecutionQuotas(registered!))) throw new Error('heldout_criteria_mismatch');
     resolvePortfolioPolicy(proposal, object(policy.strategy, 'strategy_policy'));
   } else {
     if (typeof proposal.model !== 'string') throw new Error('selected_factor_evaluator_unavailable');
     const request = iterationRequest(heldout);
-    if (canonical(request) !== canonical(result.request!) || canonical(request) !== canonical(iterationRequest(data))
+    if (canonical(withoutExecutionQuotas(request)) !== canonical(withoutExecutionQuotas(result.request!)) || canonical(withoutExecutionQuotas(request)) !== canonical(withoutExecutionQuotas(iterationRequest(data)))
       || data.nativeInput !== undefined && canonical(proposal.request!) !== canonical(nativeResearchRequest(data))) throw new Error('heldout_criteria_mismatch');
   }
 }

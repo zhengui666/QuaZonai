@@ -50,7 +50,7 @@ class ProvidersTest(unittest.TestCase):
         self.assertEqual(len(marks["requests"]), 2)
         self.assertIn("market=123&startTs=10&endTs=86410&fidelity=2", marks["requests"][0]["url"])
 
-    def test_invalid_instruments_windows_intervals_and_budgets_fail_before_io(self):
+    def test_invalid_instruments_windows_and_intervals_fail_before_io(self):
         cases = [
             ("coinbase-candles", Selection("../BTC-USD", 0, 60, 60)),
             ("coinbase-candles", Selection("btc-usd", 0, 60, 60)),
@@ -67,8 +67,7 @@ class ProvidersTest(unittest.TestCase):
             with self.subTest(provider=provider, selection=selection), self.assertRaises(ValueError):
                 acquire.plan(provider, selection)
         for budget in (0, -1, True):
-            with self.assertRaises(ValueError):
-                acquire.plan("coinbase-candles", Selection("BTC-USD", 0, 60, 60), budget)
+            self.assertIsNone(acquire.plan("coinbase-candles", Selection("BTC-USD", 0, 60, 60), budget)["limits"]["max_response_total_bytes"])
 
     def test_registry_extension_uses_same_dispatch_and_validates_request_plan(self):
         class Other(providers.CoinbaseCandles):
@@ -334,12 +333,16 @@ class AcquisitionTest(unittest.TestCase):
             self.download()
         self.assertFalse((self.output / "acquisition.json").exists())
 
-    def test_total_response_budget_is_enforced_by_runner(self):
-        with self.assertRaisesRegex(ValueError, "byte budget"):
-            self.download(max_bytes=1)
-        self.assertFalse((self.output / "acquisition.json").exists())
+    def test_legacy_response_budget_does_not_limit_acquisition_or_verification(self):
+        manifest = self.download(max_bytes=1)
+        self.assertTrue((self.output / "acquisition.json").exists())
+        self.assertIsNone(manifest["limits"]["max_response_total_bytes"])
+        # A historical manifest keeps its original quota metadata, without enforcing it.
+        manifest["limits"]["max_response_total_bytes"] = 1
+        (self.output / "acquisition.json").write_text(json.dumps(manifest))
+        self.assertEqual(acquire.verify(self.output)["record_count"], manifest["record_count"])
 
-    def test_output_has_no_implicit_budget_and_explicit_download_bound_remains(self):
+    def test_output_and_all_supplier_pages_ignore_legacy_download_bound(self):
         manifest = self.download(max_bytes=1000)
         self.assertGreater((self.output / "acquisition.json").stat().st_size, 1000)
         self.assertIsNone(manifest["limits"]["max_output_bytes"])
@@ -350,8 +353,8 @@ class AcquisitionTest(unittest.TestCase):
                  "retrieved_at": "2026-09-30T00:00:03Z"}
         self.fetch.side_effect = [(b'[]', deepcopy(OBSERVATION)), (b'[]', later)]
         self.download(max_bytes=100)
-        self.assertEqual(self.fetch.call_args_list[-2].args[1], 100)
-        self.assertEqual(self.fetch.call_args_list[-1].args[1], 98)
+        self.assertIsNone(self.fetch.call_args_list[-2].args[1])
+        self.assertIsNone(self.fetch.call_args_list[-1].args[1])
 
 
 class Response(io.BytesIO):
@@ -380,15 +383,16 @@ class TransportTest(unittest.TestCase):
                  (b'[]', 200, {"Content-Type": "application/json", "Content-Length": "-1"}),
                  (b'[]', 200, {"Content-Type": "application/json", "Content-Encoding": "gzip"}),
                  (b'[]', 200, {"Content-Type": "text/html"}),
-                 (b'[]', 206, {"Content-Type": "application/json"}),
-                 (b'x' * 100, 200, {"Content-Type": "application/json"})]
+                 (b'[]', 206, {"Content-Type": "application/json"})]
         for body, status, headers in cases:
             with self.subTest(status=status, headers=headers):
                 with patch.object(acquire.OPENER, "open", return_value=Response(body, status, headers)), self.assertRaises(ValueError):
                     acquire.fetch("https://api.exchange.coinbase.com/", 100)
-        with patch.object(acquire.OPENER, "open") as opened, self.assertRaises(ValueError):
-            acquire.fetch("https://api.exchange.coinbase.com/", 0)
-        opened.assert_not_called()
+        for limit in (0, 1, -1):
+            body = b"x" * 101
+            with patch.object(acquire.OPENER, "open", return_value=Response(body, headers={"Content-Type": "application/json"})):
+                observed, _ = acquire.fetch("https://api.exchange.coinbase.com/", limit)
+            self.assertEqual(observed, body)
 
     def test_http_errors_and_body_failures_are_not_retried(self):
         for error in (urllib.error.HTTPError("url", 429, "rate limited", {}, None),

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { constants, createReadStream } from 'node:fs';
-import { access, readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { readFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
@@ -30,8 +30,9 @@ export interface WorkerOptions {
   catalogRoots: string[];
   token?: string;
   maximumRequestBytes?: number;
-  /** Worker-owned tick limits; scientific JSON cannot raise these limits. */
+  /** Concurrent worker capacity, separate from cumulative research execution. */
   maximumConcurrentTickExecutions?: number;
+  /** Legacy configuration accepted for compatibility; execution quotas are ignored. */
   tickMaximumMemoryBytes?: number;
   tickMaximumOutputBytes?: number;
 }
@@ -96,8 +97,6 @@ function validateRequest(value: unknown, digest: string): Request {
 
 export async function createNautilusWorker(options: WorkerOptions) {
   const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
-  const tickMemoryBytes = positiveLimit(options.tickMaximumMemoryBytes, 2 * 1024 ** 3, 'nautilus_tick_memory_limit_invalid');
-  const tickOutputBytes = positiveLimit(options.tickMaximumOutputBytes, 64 * 1024 ** 2, 'nautilus_tick_output_limit_invalid');
   const binary = await realpath(options.binary);
   const tickBinary = options.tickBinary === undefined ? binary : await realpath(options.tickBinary);
   async function implementationIdentity() {
@@ -213,18 +212,13 @@ export async function createNautilusWorker(options: WorkerOptions) {
           // tokens, worker auth and unrelated host environment never reach it.
           const tick = isTickNativeCommand(request.command);
           const selectedBinary = tick ? tickBinary : binary;
-          const executable = tick ? '/usr/bin/prlimit' : selectedBinary;
-          const childArgs = tick ? [`--as=${tickMemoryBytes}:${tickMemoryBytes}`, '--', selectedBinary, request.command, ...args] : [request.command, ...args];
+          const childArgs = [request.command, ...args];
           if (['simulate', 'replay-catalog-ensemble'].includes(request.command)) execution.progressPath = join(directory, 'progress.ndjson');
-          child = spawn(executable, childArgs, { cwd: directory, detached: true,
+          child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
             env: { PATH: '/usr/bin:/bin', TMPDIR: directory, ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
-          const parser = new JsonReader(); let parseError: unknown; let stderr = ''; let outputBytes = 0; let outputExceeded = false;
+          const parser = new JsonReader(); let parseError: unknown; let stderr = '';
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
           child.stdout!.on('data', chunk => {
-            if (tick) {
-              outputBytes += Buffer.byteLength(chunk);
-              if (outputBytes > tickOutputBytes) { outputExceeded = true; signal('SIGKILL'); return; }
-            }
             if (!parseError) { try { parser.write(chunk); } catch (error) { parseError = error; } }
           });
           child.stderr!.on('data', chunk => { if (stderr.length < 65_536) stderr += chunk.slice(0, 65_536 - stderr.length); });
@@ -237,7 +231,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
             signal('SIGKILL');
             receipt = { ...running, status: 'CANCELLED' };
           }
-          else if (outputExceeded) receipt = { ...running, status: 'FAILED', error: 'nautilus_tick_output_limit_exceeded' };
           else if (code !== 0) receipt = { ...running, status: 'FAILED', error: stderr.trim() || `native_${request.command}_exit_${code}` };
           else {
             if (parseError) throw parseError;
@@ -264,9 +257,6 @@ export async function createNautilusWorker(options: WorkerOptions) {
         // another tick invocation occupies the installation's capacity.
         const original = await read(request.requestId);
         if (original) return { promise: Promise.resolve(original), cancel() {}, observers: 0 };
-        if (process.platform !== 'linux') rejectAdmission(request.requestId, 'nautilus_tick_resource_limits_unavailable', 501);
-        try { await access('/usr/bin/prlimit', constants.X_OK); }
-        catch { rejectAdmission(request.requestId, 'nautilus_tick_resource_limits_unavailable', 501); }
         if (tickSlots.size >= tickConcurrency) rejectAdmission(request.requestId, 'nautilus_tick_capacity_exhausted', 429);
         tickSlots.add(request.requestId);
       }

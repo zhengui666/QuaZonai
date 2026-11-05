@@ -126,11 +126,11 @@ fn complete_catalog_reports_short_and_unobserved_series_without_filling_metrics(
     assert_eq!(scanned.coverage.warmup_only_series.get(), 1);
     assert_eq!(scanned.partitions[2].metric.pearson_ic.value, None);
     input.maximum_rows = 28;
-    assert!(
-        scan_factor_catalog(root.path(), &input, &module("local.get 4"))
-            .unwrap_err()
-            .to_string()
-            .contains("CATALOG_ROW_LIMIT")
+    let smaller_legacy_allowance =
+        scan_factor_catalog(root.path(), &input, &module("local.get 4")).unwrap();
+    assert_eq!(
+        smaller_legacy_allowance.coverage.observations,
+        scanned.coverage.observations
     );
 }
 

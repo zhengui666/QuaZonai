@@ -162,16 +162,16 @@ test('two original computed factors reach native DSR analysis and retain their a
   }finally{await host.close();await f.close();}
 });
 
-test('a 33-factor cohort preserves its denominator and stops at the frozen budget without native calls', {timeout:30000},async()=>{
+test('a 33-factor cohort computes every original member without the former quota', {timeout:60000},async()=>{
   const f=await fixture();const host=await openResearch(f.options);
   try {
     const trials=Array.from({length:33},(_,index)=>trial(index+1));const selected=trials[0]!;
     const receipt=await admit(host,{input:f.input,selected,trials,mode:'COHORT'});const settled=await host.harness.waitForTask(receipt.taskId as TaskId<JsonObject>,context);
     assert.equal(settled.state.outcome.status,'completed',JSON.stringify(settled.state));if(settled.state.outcome.status!=='completed')return;
     const result=settled.state.outcome.result;const cohort=result.cohort as JsonObject;
-    assert.deepEqual(result.plans,[]);assert.equal(result.selectedAccount,null);assert.equal(cohort.totalTrials,33);
-    assert.equal(cohort.maximumScientificCalls,257);assert.equal(cohort.status,'INCOMPLETE');assert.equal(cohort.reason,'factor_review_reference_cohort_budget_limit');
-    assert.equal((await f.calls()).length,0,'do not run a selectively truncated 32-factor sample');
-    const facts=await host.harness.snapshot(ReviewFactorAccounts,receipt.conversationId,context);assert.deepEqual(facts?.records,{});
+    assert.equal((result.plans as JsonObject[]).length,1);assert.ok(result.selectedAccount);assert.equal(cohort.totalTrials,33);
+    assert.equal(cohort.ledgerComplete,true);assert.equal(cohort.comparableReturnSeries,33);
+    assert.equal((await f.calls()).length,264,'all 33 reference accounts run their full eight stages');
+    const facts=await host.harness.snapshot(ReviewFactorAccounts,receipt.conversationId,context);assert.equal(Object.keys(facts!.records).length,33);
   }finally{await host.close();await f.close();}
 });

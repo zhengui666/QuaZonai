@@ -17,7 +17,7 @@ import { NativeEvidencePart, readNativeEvidence, retainNativeEvidence } from '..
 const object = (value: unknown): JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
 type AccountRecord = {
   digest: string; taskId: TaskId<JsonObject>; status: 'RESERVED' | 'COMPUTED' | 'FAILED';
-  maximumCalls: number; calls: { command: string; digest: string; result: JsonObject | null }[]; result: JsonObject | null;
+  maximumCalls?: number; calls: { command: string; digest: string; result: JsonObject | null }[]; result: JsonObject | null;
 }
 /** Persistent scientific facts: task-scoped documents retire at settlement and are never a cohort archive. */
 export const ReviewFactorAccounts = defineDoc<{ records: Record<string, AccountRecord>; cohorts: Record<string, JsonObject> }>({
@@ -26,14 +26,13 @@ export const ReviewFactorAccounts = defineDoc<{ records: Record<string, AccountR
 const detached = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const sourceKey = (data: JsonObject, model: string, policy: StrategyPolicy, evidenceRef: string) => createHash('sha256').update(canonical(detached({ data, model, policy, evidenceRef }) as unknown as JsonObject)).digest('hex');
 
-/** Fixed diagnostic budgets: 8 calls for a factor replay, or 4 for an original joint account and its cash/stress comparisons. */
-export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: string; policy: StrategyPolicy; binary: NativeTarget; evidenceRef: string; maximumCalls: number; recordKey: string; portfolioSource?: JsonObject }, { phase: 'compute' }, JsonObject>({
+/** Journal every fixed diagnostic computation and its original receipt. */
+export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: string; policy: StrategyPolicy; binary: NativeTarget; evidenceRef: string; maximumCalls?: number; recordKey: string; portfolioSource?: JsonObject }, { phase: 'compute' }, JsonObject>({
   name: 'qz.review.factor-account', version: 1, initial: () => ({ phase: 'compute' }),
   phases: { async compute(task, runtime, context) {
     return withNativeRemoteTracking(task.id, runtime, context, async () => {
       let ordinal = 0;
       try {
-        if (task.input.maximumCalls !== (task.input.portfolioSource ? 4 : 8)) throw new Error('review_account_budget_contract_mismatch');
         const result = await withNativeExecutionInterceptor(async (command, input, next) => {
           const index = ordinal++; const digest = canonicalJsonDigest(input);
           let stored: JsonObject | null = null; let reserved = false;
@@ -42,7 +41,7 @@ export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: str
             const state = journal.records[task.input.recordKey]; if (!state || state.taskId !== task.id) throw new Error('review_factor_account_receipt_missing');
             const original = state.calls[index];
             if (original) { if (original.command !== command || original.digest !== digest) throw new Error('review_factor_account_stage_conflict'); stored = detached(original.result); reserved = true; }
-            else { if (index >= task.input.maximumCalls) throw new Error('review_factor_account_budget_exhausted'); state.calls.push({ command, digest, result: null }); }
+            else state.calls.push({ command, digest, result: null });
             return undefined;
           }, context);
           if (stored) return await readNativeEvidence(runtime, runtime.conversationId, task.id, stored, context) as NativeJson;
@@ -58,11 +57,11 @@ export const ReviewFactorAccountTask = defineTask<{ data: JsonObject; model: str
           return value;
         }, () => task.input.portfolioSource ? replayStoredReviewAccount({ data: task.input.data, source: task.input.portfolioSource, binary: task.input.binary, evidenceRef: task.input.evidenceRef }, context) : replayReviewAccount({ data: task.input.data, members: [{ model: task.input.model, weight: '1' }], policy: task.input.policy, binary: task.input.binary, evidenceRef: task.input.evidenceRef }, context));
         const full = await retainNativeEvidence(result.evidence, async (part, data) => {
-          await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${(task.input.maximumCalls + 1) * 1000000 + part}`, null)).data = data; return undefined; }, context);
+          await runtime.commit(async tx => { (await tx.doc(NativeEvidencePart, runtime.conversationId, `${task.id}:${ordinal * 1000000 + part}`, null)).data = data; return undefined; }, context);
         });
-        if (full.format) full.partOffset = (task.input.maximumCalls + 1) * 1000000;
+        if (full.format) full.partOffset = ordinal * 1000000;
         const evidence: JsonObject = { method: result.evidence.method ?? 'QZ_FACTOR_ACCOUNT_REVIEW_V1', paired: result.evidence.paired ?? null,
-          stress: result.evidence.stress ?? null, assumptions: result.evidence.assumptions ?? [], limitations: result.evidence.limitations ?? [], consumedScientificCalls: ordinal, maximumScientificCalls: task.input.maximumCalls };
+          stress: result.evidence.stress ?? null, assumptions: result.evidence.assumptions ?? [], limitations: result.evidence.limitations ?? [], consumedScientificCalls: ordinal };
         await runtime.commit(async tx => {
           const output = { metrics: JSON.parse(JSON.stringify(result.metrics)), evidence, native: full, evidenceTaskId: task.id };
           const record = (await tx.doc(ReviewFactorAccounts, runtime.conversationId)).records[task.input.recordKey]!;
@@ -84,8 +83,8 @@ export async function factorAccountEvidence(api: ResearchRuntime, context: Conte
   const admission = await api.commit(async tx => {
     const journal = await tx.doc(ReviewFactorAccounts, api.conversationId); const previous = journal.records[key];
     if (previous) return { id: previous.taskId, status: previous.status, result: detached(previous.result) };
-    const id = await tx.createTask(ReviewFactorAccountTask, { data, model, policy, evidenceRef, binary: nativeTargetForData(data), maximumCalls: 8 as const, recordKey: key }, { ownership: { kind: 'task', taskId: api.taskId } });
-    journal.records[key] = { digest: key, taskId: id, status: 'RESERVED', maximumCalls: 8, calls: [], result: null };
+    const id = await tx.createTask(ReviewFactorAccountTask, { data, model, policy, evidenceRef, binary: nativeTargetForData(data), recordKey: key }, { ownership: { kind: 'task', taskId: api.taskId } });
+    journal.records[key] = { digest: key, taskId: id, status: 'RESERVED', calls: [], result: null };
     return { id, status: 'RESERVED', result: null };
   }, context);
   if (admission.status === 'COMPUTED') return admission.result;
@@ -110,16 +109,10 @@ export async function factorCohortSelectionEvidence(api: ResearchRuntime, contex
   const policy = thresholdPolicy(object(input.policy.strategy));
   const members = factorReviewCohort(selected, trials);
   const digest = createHash('sha256').update(canonical(detached({ data: input.data, policy, members }) as unknown as JsonObject)).digest('hex');
-  const maximumCalls = Math.min(members.length, 32) * 8 + 1;
   await api.commit(async tx => {
     const journal = await tx.doc(ReviewFactorAccounts, api.conversationId);
-    journal.cohorts[digest] ??= { method: 'QZ_FACTOR_REFERENCE_COHORT_V1', trialIds: members.map(trial => trial.taskId!), maximumScientificCalls: maximumCalls, reservations: {}, status: 'STARTED' };
+    journal.cohorts[digest] ??= { method: 'QZ_FACTOR_REFERENCE_COHORT_V1', trialIds: members.map(trial => trial.taskId!), reservations: {}, status: 'STARTED' };
   }, context);
-  if (members.length > 32) {
-    const incomplete = { id: digest, status: 'INCOMPLETE', reason: 'factor_review_reference_cohort_budget_limit', totalTrials: members.length, maximumScientificCalls: maximumCalls };
-    await api.commit(async tx => { const cohort = (await tx.doc(ReviewFactorAccounts, api.conversationId)).cohorts[digest]!; cohort.status = 'INCOMPLETE'; cohort.disclosure = incomplete; }, context);
-    return { plans: [], selectedAccount: null, cohort: incomplete };
-  }
   const rows: { id: string; returns: number[] }[] = []; let timestamps: string[] | null = null;
   let selectedAccount: JsonObject | null = null;
   let complete = members.length > 0 && members.some(trial => trial.taskId === selected.taskId);
@@ -129,7 +122,6 @@ export async function factorCohortSelectionEvidence(api: ResearchRuntime, contex
     await api.commit(async tx => {
       const cohort = (await tx.doc(ReviewFactorAccounts, api.conversationId)).cohorts[digest]!;
       const reservations = object(cohort.reservations); reservations[String(trial.taskId)] ??= 8; cohort.reservations = reservations;
-      if (Object.values(reservations).reduce<number>((sum, value) => sum + Number(value), 0) > maximumCalls) throw new Error('factor_review_cohort_budget_exhausted');
     }, context);
     const account = await factorAccountEvidence(api, context, input.data, object(trial.proposal).model as string, policy, reference);
     if (trial.taskId === selected.taskId) selectedAccount = account;
@@ -144,7 +136,7 @@ export async function factorCohortSelectionEvidence(api: ResearchRuntime, contex
     } catch { complete = false; }
   }
   const disclosure: JsonObject = { id: digest, method: 'QZ_FACTOR_REFERENCE_COHORT_V1', totalTrials: members.length,
-    comparableReturnSeries: rows.length, ledgerComplete: complete && rows.length === members.length, trialIds: members.map(trial => trial.taskId!), maximumScientificCalls: maximumCalls };
+    comparableReturnSeries: rows.length, ledgerComplete: complete && rows.length === members.length, trialIds: members.map(trial => trial.taskId!) };
   await api.commit(async tx => {
     const cohort = (await tx.doc(ReviewFactorAccounts, api.conversationId)).cohorts[digest]!;
     cohort.status = 'COMPUTED'; cohort.disclosure = disclosure;
@@ -163,8 +155,8 @@ export async function portfolioAccountEvidence(api: ResearchRuntime, context: Co
   const admission = await api.commit(async tx => {
     const journal = await tx.doc(ReviewFactorAccounts, api.conversationId); const previous = journal.records[key];
     if (previous) return { id: previous.taskId, status: previous.status, result: detached(previous.result) };
-    const id = await tx.createTask(ReviewFactorAccountTask, { data, model: '', policy, portfolioSource: original, evidenceRef, binary: nativeTargetForData(data), maximumCalls: 4, recordKey: key }, { ownership: { kind: 'task', taskId: api.taskId } });
-    journal.records[key] = { digest: key, taskId: id, status: 'RESERVED', maximumCalls: 4, calls: [], result: null };
+    const id = await tx.createTask(ReviewFactorAccountTask, { data, model: '', policy, portfolioSource: original, evidenceRef, binary: nativeTargetForData(data), recordKey: key }, { ownership: { kind: 'task', taskId: api.taskId } });
+    journal.records[key] = { digest: key, taskId: id, status: 'RESERVED', calls: [], result: null };
     return { id, status: 'RESERVED', result: null };
   }, context);
   if (admission.status === 'COMPUTED') return admission.result;

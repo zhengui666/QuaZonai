@@ -249,7 +249,7 @@ fn native_catalog_round_trip_preserves_identity_values_and_times() {
     assert_eq!(result.series[0].bars, bars);
     let mut limited = selection.clone();
     limited.maximum_rows = 3;
-    assert!(load_catalog(directory.path(), &limited).is_err());
+    assert_eq!(load_catalog(directory.path(), &limited).unwrap().rows, 4);
     let mut before = selection;
     before.event_end_ns = DbCounter::new(240_000_000_000).unwrap();
     before.maximum_rows = 3;
@@ -283,7 +283,7 @@ fn native_event_pushdown_keeps_late_available_rows_and_counts_only_the_requested
     assert_eq!(selected.series[0].bars, bars[..2]);
     assert_eq!(selected.rows, 2);
     selection.maximum_rows = 1;
-    assert!(load_catalog(directory.path(), &selection).is_err());
+    assert_eq!(load_catalog(directory.path(), &selection).unwrap().rows, 2);
     selection.maximum_rows = 2;
     selection.decision_cutoff_ns = DbCounter::new(210_000_000_000).unwrap();
     let earlier = load_catalog(directory.path(), &selection).unwrap();
@@ -359,7 +359,7 @@ fn catalog_root_symlink_is_not_an_authorized_mount() {
 }
 
 #[test]
-fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
+fn compressed_native_catalog_reads_full_selected_input_past_legacy_allowance() {
     let directory = tempfile::tempdir().unwrap();
     let (instrument, original, mut selection) = fixture();
     let bars: Vec<_> = (1..=50_000_u64)
@@ -399,8 +399,10 @@ fn compressed_native_catalog_cannot_expand_past_the_decoded_row_limit() {
         "fixture must actually expand substantially after native decoding"
     );
     selection.maximum_rows = 3;
-    let error = load_catalog(directory.path(), &selection).err().unwrap();
-    assert_eq!(error.to_string(), "CATALOG_ROW_LIMIT");
+    assert_eq!(
+        load_catalog(directory.path(), &selection).unwrap().rows,
+        50_000
+    );
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
 
@@ -524,16 +526,13 @@ fn typed_catalog_session_bounds_equal_time_batches_and_rejects_the_first_excess_
     );
     selection.maximum_rows = 3;
     assert_eq!(
-        load_catalog(directory.path(), &selection)
-            .err()
-            .unwrap()
-            .to_string(),
-        "CATALOG_ROW_LIMIT"
+        load_catalog(directory.path(), &selection).unwrap().series[0].bars,
+        bars
     );
 }
 
 #[test]
-fn oversized_equal_time_cohort_stops_before_a_later_corrupt_row_group() {
+fn legacy_row_allowance_does_not_hide_a_later_corrupt_row_group() {
     use parquet::file::reader::{FileReader, SerializedFileReader};
 
     let directory = tempfile::tempdir().unwrap();
@@ -565,30 +564,27 @@ fn oversized_equal_time_cohort_stops_before_a_later_corrupt_row_group() {
     corrupted[offset as usize..(offset + length) as usize].fill(0xff);
     std::fs::write(&path, &corrupted).unwrap();
 
-    // A timestamp-aligned native session would read the entire 20,000-row
-    // cohort and hit the corruption before its caller could apply this cap.
+    // Full selected input remains authoritative even when a legacy row
+    // allowance is smaller than the first native batch. Corruption is not hidden.
     selection.maximum_rows = 3;
+    let first_error = load_catalog(directory.path(), &selection)
+        .err()
+        .unwrap()
+        .to_string();
+    selection.maximum_rows = 20_000;
     assert_eq!(
         load_catalog(directory.path(), &selection)
             .err()
             .unwrap()
             .to_string(),
-        "CATALOG_ROW_LIMIT"
+        first_error
     );
-    selection.maximum_rows = 20_000;
-    assert_ne!(
-        load_catalog(directory.path(), &selection)
-            .err()
-            .unwrap()
-            .to_string(),
-        "CATALOG_ROW_LIMIT",
-        "the later corrupt group must fail if the budget permits reading it"
-    );
+    assert_ne!(first_error, "CATALOG_ROW_LIMIT");
     assert_eq!(std::fs::read(path).unwrap(), corrupted);
 }
 
 #[test]
-fn decoded_row_limit_is_checked_across_native_batch_boundaries() {
+fn full_selected_rows_are_retained_across_native_batch_boundaries() {
     let directory = tempfile::tempdir().unwrap();
     let (instrument, original, mut selection) = fixture();
     let bars = (1..=4097_u64)
@@ -611,11 +607,8 @@ fn decoded_row_limit_is_checked_across_native_batch_boundaries() {
     catalog.write_to_parquet(&bars, None, None, None).unwrap();
     selection.maximum_rows = 4096;
     assert_eq!(
-        load_catalog(directory.path(), &selection)
-            .err()
-            .unwrap()
-            .to_string(),
-        "CATALOG_ROW_LIMIT"
+        load_catalog(directory.path(), &selection).unwrap().series[0].bars,
+        bars
     );
     selection.maximum_rows = 4097;
     assert_eq!(

@@ -173,7 +173,7 @@ test('catalog admission rejects malformed native source, models, exposure and me
   const invalidRequests: JsonObject[] = [{ schema_version: 2 }, { source: 'TEST_ONLY' }, { revision: ' ' }, { source_extra: true },
     { gross_exposure: '0' }, { gross_exposure: '1.000000000000000001' }, { target_ttl_ns: '0' }, { score_threshold: Infinity },
     { score_max_age_ns: '0' }, { members: [{ weight: '1' }] }, { members: [{ weight: '0' }, { weight: '1' }] },
-    { members: [{ weight: '1', total_fuel: '0' }, { weight: '1' }] }, { members: [{ weight: '1', unexpected: '1' }, { weight: '1' }] }];
+ { members: [{ weight: '1', unexpected: '1' }, { weight: '1' }] }];
   for (const change of invalidRequests) {
     assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, ...change } }), /catalog_ensemble_/);
   }
@@ -193,11 +193,17 @@ test('catalog admission rejects malformed native source, models, exposure and me
 test('catalog admission validates raw and clipped partition clocks, scalar limits and the native settlement TTL', () => {
   const invalid: JsonObject[] = [{ evaluation_start_ns: '0' }, { evaluation_start_ns: '30' }, { decision_cutoff_ns: '29' },
     { modeled_lag_ns: '11' }, { target_ttl_ns: '2' }, { target_ttl_ns: maxDbCounter.toString() },
-    { modeled_lag_ns: (maxDbCounter + 1n).toString() }, { score_max_age_ns: (maxDbCounter + 1n).toString() }, { evaluation_start_ns: '01' },
-    { members: [{ weight: '1', total_fuel: (maxDbCounter + 1n).toString() }, { weight: '1' }] }];
+    { modeled_lag_ns: (maxDbCounter + 1n).toString() }, { score_max_age_ns: (maxDbCounter + 1n).toString() }, { evaluation_start_ns: '01' }];
   for (const change of invalid) {
     assert.throws(() => validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: { ...catalogRequest, ...change } }), /catalog_ensemble_|strategy_simulation_/);
   }
   const delayed = { ...catalogRequest, modeled_lag_ns: '10', score_max_age_ns: '1', target_ttl_ns: '3' };
   assert.deepEqual(validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: delayed }), delayed);
+});
+
+test('legacy catalog fuel values no longer restrict scientific admission', () => {
+  for (const total_fuel of ['0', '1', (maxDbCounter + 1n).toString()]) {
+    const request = { ...catalogRequest, members: [{ weight: '1', total_fuel }, { weight: '1', total_fuel }] };
+    assert.deepEqual(validateCatalogEnsembleRequest({ ...catalogData, catalog_ensemble_request: request }), request);
+  }
 });

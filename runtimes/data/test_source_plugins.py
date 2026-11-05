@@ -232,15 +232,13 @@ class PreparationTest(unittest.TestCase):
         run.assert_not_called()
         self.assertFalse(self.output.exists())
 
-    def test_snapshot_hash_budget_and_symlinks_fail_before_native(self):
+    def test_snapshot_hash_and_symlinks_fail_before_native(self):
         self.snapshot_fixture()
         original = (self.snapshot_dir / "original.parquet").read_bytes()
-        for mode in ("tampered", "budget", "symlink"):
+        for mode in ("tampered", "symlink"):
             with self.subTest(mode=mode):
                 if mode == "tampered":
                     (self.snapshot_dir / "original.parquet").write_bytes(b"changed")
-                elif mode == "budget":
-                    self.capture.max_bytes = 1
                 else:
                     path = self.snapshot_dir / "original.parquet"
                     path.unlink()
@@ -255,6 +253,7 @@ class PreparationTest(unittest.TestCase):
 
     def test_capture_uses_native_adapter_and_preserves_original_selection(self):
         self.snapshot_fixture()
+        self.capture.max_bytes = 1
         report, evidence = self.history_artifacts()
         with patch.object(plugins.subprocess, "run", side_effect=self.runner(report, evidence)) as run:
             result = plugins.history_convert(self.capture, capture=True)

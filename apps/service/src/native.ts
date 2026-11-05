@@ -13,6 +13,7 @@ import { json, object, Problem } from './facts.ts';
 import { nativeCurve } from './projections.ts';
 import type { CapacityReport, Metric, ResearchSpecification, PortfolioProgress, EquityPoint } from '../../../packages/contracts/src/index.ts';
 import { assessCapacity, capacityPolicy, unavailableCapacity } from './capacity.ts';
+import { withoutExecutionQuotas } from './science-binding.ts';
 
 export interface PortfolioTaskInput {
   review?: { policy: import('../../../packages/contracts/src/review.ts').ReviewPolicy; model: { provider: string; modelId: string }; thinkingLevel?: import('../../../packages/contracts/src/index.ts').ThinkingLevel; createdAt: string; independentData?: JsonObject; independentSource?: import('../../research/src/review-source.ts').CapturedReviewSource | null; maximumScientificCalls?: number; stressMethod?: 'QZ_REVIEW_ONE_BAR_NATIVE_SLIPPAGE_V1' };
@@ -33,7 +34,7 @@ export function assertPortfolioIndependentContract(input: PortfolioTaskInput, da
   for (const source of Array.isArray(input.evidence) ? input.evidence : [input.evidence]) {
     const request = object(object(object(source.selected).result).request, 'reviewed_validation_request');
     const { selection, ...method } = object(request.forecast, 'reviewed_forecast');
-    if (canonical(method) !== canonical(independentMethod)
+    if (canonical(withoutExecutionQuotas(method)) !== canonical(withoutExecutionQuotas(independentMethod))
       || canonical(object(selection).bar_types!) !== canonical(object(independentSelection).bar_types!)) throw new Problem('portfolio_independent_forecast_contract_changed', 422);
   }
   const currency = object(json(input.policy).simulationSettings).base_currency;
@@ -107,7 +108,7 @@ export async function computePortfolio(input: PortfolioTaskInput, context: Conte
       // Forecast keeps the complete original prefix even when only HELDOUT is traded.
       const targets = await forecastMembers(input.binary, sourceCatalog, members, request, policy, input.currency, directory, context, false, partition ?? policy.evaluationPartition, proposal.members !== undefined);
       await update('FORECASTING', sourceIndex + 1, evidence.length);
-      if (selection && canonical(selection) !== canonical(targets.selection)) throw new Problem('strategy_selection_mismatch');
+      if (selection && canonical(withoutExecutionQuotas(selection)) !== canonical(withoutExecutionQuotas(targets.selection))) throw new Problem('strategy_selection_mismatch');
       selection = targets.selection;
       memberRows.push(targets.points);
       const first = targets.components[0]!;
