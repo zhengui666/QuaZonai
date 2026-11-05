@@ -111,6 +111,44 @@ test('explicit funding sidecars survive owned publication while unrelated files 
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
+test('spot valuation publication clips and validates research and independent views', async () => {
+  for (const failure of [null, 'size', 'view', 'future_primary', 'future_full', 'instrument', 'legacy'] as const) {
+    const f = await preparedCache(undefined, true);
+    try {
+      const rates = '';
+      const funding = JSON.stringify({ source_revision: f.request.input.source_revision, start_ns: '0', end_ns: '80',
+        instruments: ['BTCUSDT.SIM'], rows: 0, missing_instruments: [] });
+      const early = `{"instrument_id":"${failure === 'instrument' ? 'OTHER.SIM' : 'BTCUSDT.SIM'}","received_ns":"10","bid":"10","ask":"11"}\n`;
+      const heldout = '{"instrument_id":"BTCUSDT.SIM","received_ns":"50","bid":"20","ask":"21"}\n';
+      const beyond = '{"instrument_id":"BTCUSDT.SIM","received_ns":"80","bid":"30","ask":"31"}\n';
+      const primaryQuote = failure === 'view' ? early.replace('"10","ask"', '"12","ask"') : early + (failure === 'future_primary' ? heldout : '');
+      const fullQuote = early + (failure === 'legacy' ? '' : heldout) + (failure === 'future_full' ? beyond : '');
+      const sources = new Map([['funding-rates.jsonl', rates], ['funding-rates.manifest.json', funding]]);
+      for (const [name, bytes] of sources) {
+        const path = join(f.directory, name); await writeFile(path, bytes);
+        for (const part of ['research', 'independent']) await link(path, join(f.prepared, part, 'catalog', name));
+      }
+      await writeFile(join(f.prepared, 'research/catalog/spot-valuation.jsonl'), primaryQuote);
+      await writeFile(join(f.prepared, 'independent/catalog/spot-valuation.jsonl'), fullQuote);
+      const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8'));
+      metadata.economic_sources = [...sources].map(([path, bytes]) => ({ path, bytes: String(Buffer.byteLength(bytes)) }));
+      metadata.economic_sources.push({ path: 'spot-valuation.jsonl', bytes: String(Buffer.byteLength(fullQuote) + (failure === 'size' ? 1 : 0)),
+        ...(failure === 'legacy' ? {} : { research_bytes: String(Buffer.byteLength(primaryQuote)) }) });
+      await writeFile(f.options.prepared, JSON.stringify(metadata));
+      if (failure && failure !== 'legacy') await assert.rejects(exportDataset(f.options), failure === 'size' ? /economic_source_size_mismatch/ : failure === 'future_full' ? /spot_valuation_window_invalid/ : failure === 'instrument' ? /spot_valuation_instrument_invalid/ : /spot_valuation_view_mismatch/);
+      else {
+        const result = await exportDataset(f.options); const primary = String(result.data.catalog);
+        const independent = String((result.data.sealed as Record<string, unknown>).catalog);
+        assert.equal(await readFile(join(primary, 'spot-valuation.jsonl'), 'utf8'), early);
+        assert.equal(await readFile(join(independent, 'spot-valuation.jsonl'), 'utf8'), fullQuote);
+        assert.equal((await readFile(join(primary, 'spot-valuation.jsonl'), 'utf8')).includes('"received_ns":"50"'), false);
+        await writeFile(join(f.prepared, 'research/catalog/spot-valuation.jsonl'), 'changed producer');
+        assert.equal(await readFile(join(primary, 'spot-valuation.jsonl'), 'utf8'), early);
+      }
+    } finally { await rm(f.directory, { recursive: true, force: true }); }
+  }
+});
+
 test('40-byte signed-flow views preserve positive, negative and balanced-zero marks in owned publication', async () => {
   const f = await preparedCache({ kind: 'FIXED_EVENT_TIME', horizon_ns: '10' }, true);
   try {
