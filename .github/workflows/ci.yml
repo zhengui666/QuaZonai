@@ -108,7 +108,9 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
-      PROFILE: ${{ github.event_name == 'push' && 'release' || 'debug' }}
+      # PRs can restore the base branch's release cache; a PR-only debug cache
+      # cannot seed other PRs or the subsequent dev push.
+      PROFILE: release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
