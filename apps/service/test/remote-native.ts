@@ -1,3 +1,4 @@
+import './pm-prefix.test.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -13,7 +14,7 @@ import type { RemoteNativeTarget } from '../../../packages/contracts/src/nautilu
 import { createNautilusWorker } from '../../nautilus/src/server.ts';
 import { executeNative } from '../../research/plugins/native-portfolio.ts';
 import { compileWasm, evaluateWasm } from '../../research/plugins/native-wasm.ts';
-import { remoteNativeCapabilities } from '../../research/src/native-execution.ts';
+import { remoteNativeCapabilities, unmeteredNativeInput } from '../../research/src/native-execution.ts';
 import { object } from '../src/facts.ts';
 
 // Run only in the native gate, after check-science exports its original
@@ -52,7 +53,7 @@ test('actual remote Nautilus preserves factor, forecast and shared-account resul
   const binary = process.env.QZ_JOB_BINARY; assert.ok(binary, 'Matching QZ_JOB_BINARY is required for the independent worker');
   const source = await sourceFixture('QZ_PM_NATIVE_FIXTURE');
   assert.equal(source.fixtureProvenance, 'SYNTHETIC_TEST_ONLY_MICRO_LOT_ORIGINAL_NATIVE_PARQUET_WASM_CLARABEL_NAUTILUS');
-  const catalog = String(source.catalog); const request = object(source.request);
+  const catalog = String(source.catalog); const request = object(source.request); const frozenRequest = structuredClone(request);
   assert.ok(Array.isArray(source.members) && source.members.length >= 2);
   const model = String(object(source.members[0]).model);
   const root = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? tmpdir(), 'qz-remote-native-'));
@@ -71,7 +72,8 @@ test('actual remote Nautilus preserves factor, forecast and shared-account resul
     const localFactor = await executeNative(binary, 'evaluate-factor', request, args, scratch, BACKGROUND_CONTEXT);
     const remoteFactor = await executeNative(first.target, 'evaluate-factor', request, args, scratch, BACKGROUND_CONTEXT);
     assert.deepEqual(remoteFactor, localFactor, 'Transferred WASM and native JSON must preserve complete original factor evidence');
-    assert.deepEqual(remoteFactor.request, request);
+    assert.deepEqual(remoteFactor.request, unmeteredNativeInput(request));
+    assert.deepEqual(request, frozenRequest, 'Execution cannot mutate the frozen factor request or its historical fuel field');
     const summary = await evaluateWasm(model, { catalog, request }, BACKGROUND_CONTEXT, undefined, first.target);
     assert.equal(Object.hasOwn(summary, 'points'), false);
     assert.deepEqual(summary.partitions, remoteFactor.partitions);
@@ -110,12 +112,13 @@ test('actual remote forward calculation transfers original model/calibration obj
   const scratch = join(root, 'client'); await mkdir(scratch);
   const instance = await worker(binary, join(root, 'worker'), [String(source.catalog)], 'objects');
   try {
-    const request = object(source.request);
+    const request = object(source.request); const frozenRequest = structuredClone(request);
     const args = ['--catalog', String(source.catalog), '--objects', String(source.objectsDirectory)];
     const local = await executeNative(binary, 'build-observed-spot', request, args, scratch, BACKGROUND_CONTEXT);
     const remote = await executeNative(instance.target, 'build-observed-spot', request, args, scratch, BACKGROUND_CONTEXT);
     assert.deepEqual(remote, local, 'WASM/calibration UUID objects are transported with their exact bytes and original identifiers');
-    assert.equal(remote.kind, 'OBSERVED_SPOT_FORWARD_BUILD'); assert.deepEqual(remote.request, request);
+    assert.equal(remote.kind, 'OBSERVED_SPOT_FORWARD_BUILD'); assert.deepEqual(remote.request, unmeteredNativeInput(request));
+    assert.deepEqual(request, frozenRequest, 'Execution cannot mutate the frozen forward request or member fuel history');
     assert.equal(object(remote.valuation).total, '1499.3');
     assert.ok(remote.target); assert.equal(remote.target_block_reason, null);
     assert.deepEqual(object(object(remote.valuation).request).initial_state, request.initial_state);
