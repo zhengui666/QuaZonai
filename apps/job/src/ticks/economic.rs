@@ -2480,6 +2480,26 @@ fn append_day(
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     let usdt0 = Currency::from_str("USDT0")?;
+    let mut missing_balances = Vec::new();
+    for (name, ledger) in [
+        (NativeTickBalanceLedgerV1::Cash, cash),
+        (NativeTickBalanceLedgerV1::Margin, margin),
+    ] {
+        if let Some(ledger) = ledger {
+            for balance in ledger.balances() {
+                if !balance.as_decimal().is_zero()
+                    && valuation_fx(balance.currency, assets, fx_ids, at, age, quotes).is_none()
+                {
+                    missing_balances.push(NativeTickMissingBalanceV1 {
+                        ledger: name,
+                        currency: balance.currency.to_string(),
+                        amount: balance.as_decimal().to_string(),
+                    });
+                }
+            }
+        }
+    }
+    missing_balances.sort_by(|a, b| (&a.ledger, &a.currency).cmp(&(&b.ledger, &b.currency)));
     let mut reason = String::new();
     let equity = if funding_unknown {
         reason = "FUNDING_UNAVAILABLE".into();
@@ -2555,6 +2575,7 @@ fn append_day(
         equity_usdt: equity.map(exact).transpose()?,
         net_return,
         unknown_reason: equity.is_none().then_some(reason),
+        missing_balances,
     });
     Ok(())
 }

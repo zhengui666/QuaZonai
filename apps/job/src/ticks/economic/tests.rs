@@ -118,18 +118,21 @@ fn daily_net_metrics_keep_unavailable_days_and_do_not_annualize_noncontiguous_el
             equity_usdt: None,
             net_return: Some(0.01),
             unknown_reason: None,
+            missing_balances: Vec::new(),
         },
         NativeTickEconomicDayV1 {
             day_start_ns: counter(DAY).unwrap(),
             equity_usdt: None,
             net_return: None,
             unknown_reason: Some("MISSING_MARK".into()),
+            missing_balances: Vec::new(),
         },
         NativeTickEconomicDayV1 {
             day_start_ns: counter(2 * DAY).unwrap(),
             equity_usdt: None,
             net_return: Some(-0.01),
             unknown_reason: None,
+            missing_balances: Vec::new(),
         },
     ];
     let reports = metrics(&request, &days).unwrap();

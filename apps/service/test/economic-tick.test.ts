@@ -14,7 +14,7 @@ import { Requests, Study } from '../../research/src/documents.ts';
 import { NativeRemoteUncertainty } from '../../research/src/native-execution.ts';
 import { TickEconomicReplay, TickEconomicReplays } from '../src/economic-tick.ts';
 import { iterationRequest } from '../../research/plugins/native-wasm.ts';
-import { validateNativeTickEconomicRequest } from '../../../packages/contracts/src/economic-tick.ts';
+import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult } from '../../../packages/contracts/src/economic-tick.ts';
 import { Application, json } from '../src/facts.ts';
 import { configDefaults } from '../src/config.ts';
 import { createService } from '../src/service.ts';
@@ -37,7 +37,7 @@ with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
 print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','catalog':sys.argv[sys.argv.index('--catalog')+1],'funding_catalog':sys.argv[sys.argv.index('--funding-catalog')+1]},
 'coverage':{'modality':'TRADE_TICK','source_revision':request['research']['input']['source_revision']},
 'assets':[{'instrument_id':'BTC.SIM','native_kind':'CryptoPerpetual','cohorts':'2','decisions':'1','execution_attempts':'0'}],
-'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'controlled_missing_mark'}],
+'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'controlled_missing_mark','missing_balances':[{'ledger':'CASH','currency':'BTC','amount':'0.2'},{'ledger':'MARGIN','currency':'ETH','amount':'1'}]}],
 'metrics':[{'partition':'HELDOUT','regime':'UNKNOWN','days':'1','valid_return_days':'0','sharpe_365':None,'conditional_annualized_return_365':None}],
 'conversion_ns':None,'initial_usdc_after_cost':None,'funding_usdc':'0','fees_usdc_equivalent':None,
 'fees_by_currency':{},'initial_conversion_cost_usdc':'0','nominal_usd_settled_usdc':'0',
@@ -88,6 +88,27 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     await service.research.harness.waitForTask(view.taskId as TaskId, context);
     const result = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json();
     assert.equal(result.status, 'COMPUTED', JSON.stringify(result)); assert.equal(result.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
+    assert.deepEqual(result.result.days[0].missing_balances, [{ ledger: 'CASH', currency: 'BTC', amount: '0.2' }, { ledger: 'MARGIN', currency: 'ETH', amount: '1' }]);
+    const invalid = structuredClone(result.result); invalid.days[0].missing_balances[0].amount = 'unknown';
+    assert.throws(() => validateNativeTickEconomicResult(invalid), /tick_economic_result_days_invalid/);
+    const legacy = structuredClone(result.result); delete legacy.days[0].missing_balances;
+    assert.doesNotThrow(() => validateNativeTickEconomicResult(legacy));
+    const nullable = structuredClone(result.result); nullable.days[0].missing_balances = null;
+    assert.throws(() => validateNativeTickEconomicResult(nullable), /tick_economic_result_days_invalid/);
+    const invalidLedger = structuredClone(result.result); invalidLedger.days[0].missing_balances[0].ledger = 'OTHER';
+    assert.throws(() => validateNativeTickEconomicResult(invalidLedger), /tick_economic_result_days_invalid/);
+    invalidLedger.days[0].missing_balances[0].ledger = ['CASH'];
+    assert.throws(() => validateNativeTickEconomicResult(invalidLedger), /tick_economic_result_days_invalid/);
+    const largeBalance = structuredClone(result.result); largeBalance.days[0].missing_balances[0].amount = '999999999999999999999999999.12345678';
+    assert.doesNotThrow(() => validateNativeTickEconomicResult(largeBalance));
+    for (const amount of ['0', '-12.34', '+1', '.5', '1.']) {
+      largeBalance.days[0].missing_balances[0].amount = amount;
+      assert.doesNotThrow(() => validateNativeTickEconomicResult(largeBalance));
+    }
+    for (const amount of ['', '1e3', '1..2', '1\n']) {
+      invalid.days[0].missing_balances[0].amount = amount;
+      assert.throws(() => validateNativeTickEconomicResult(invalid), /tick_economic_result_days_invalid/);
+    }
     assert.equal(result.result.methods.catalog, catalog);
     assert.equal(result.result.methods.funding_catalog, republishedPrimary); assert.equal(result.fundingCatalog, republishedPrimary);
     assert.deepEqual(result.result.request, request); assert.equal(result.result.request.context_source, 'context-prices.manifest.json'); assert.equal(result.result.targets[0].weight, '0.1234567890123456789012345678'); assert.equal(result.result.days[0].equity_usdt, null); assert.equal(result.result.days[0].net_return, null);

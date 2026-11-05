@@ -88,7 +88,8 @@ export type NativeTickEconomicResult = {
   };
   methods: Record<string, string>; coverage: JsonObject;
   assets: { instrument_id: string; native_kind: string; cohorts: string; decisions: string; execution_attempts: string }[];
-  days: { day_start_ns: string; equity_usdt: string | null; net_return: number | null; unknown_reason: string | null }[];
+  // Balance FX failures only; absence or emptiness does not establish complete NAV, marks, reporting FX, or funding.
+  days: { day_start_ns: string; equity_usdt: string | null; net_return: number | null; unknown_reason: string | null; missing_balances?: { ledger: 'CASH' | 'MARGIN'; currency: string; amount: string }[] }[];
   metrics: { partition: 'TRAIN' | 'VALIDATION' | 'HELDOUT'; regime: 'BULL' | 'BEAR' | 'RANGE' | 'UNKNOWN'; days: string; valid_return_days: string; sharpe_365: number | null; conditional_annualized_return_365: number | null }[];
   conversion_ns: string | null; initial_usdc_after_cost: string | null; funding_usdc: string;
   fees_usdc_equivalent: string | null; fees_by_currency: Record<string, string>; initial_conversion_cost_usdc: string; nominal_usd_settled_usdc: string;
@@ -131,10 +132,14 @@ export function validateNativeTickEconomicResult(value: unknown): NativeTickEcon
     return typeof row.instrument_id !== 'string' || !row.instrument_id || typeof row.native_kind !== 'string' || !row.native_kind || !counter(row.cohorts) || !counter(row.decisions) || !counter(row.execution_attempts);
   })) throw new Error('tick_economic_result_assets_invalid');
   if (!Array.isArray(result.days) || result.days.some(value => {
-    const row = object(value); fields(row, ['day_start_ns', 'equity_usdt', 'net_return', 'unknown_reason']);
+    const row = object(value); fields(row, ['day_start_ns', 'equity_usdt', 'net_return', 'unknown_reason', 'missing_balances']);
     return !counter(row.day_start_ns) || row.equity_usdt !== null && !decimal(row.equity_usdt)
       || row.net_return !== null && (typeof row.net_return !== 'number' || !Number.isFinite(row.net_return))
-      || row.unknown_reason !== null && typeof row.unknown_reason !== 'string';
+      || row.unknown_reason !== null && typeof row.unknown_reason !== 'string'
+      || row.missing_balances !== undefined && (!Array.isArray(row.missing_balances) || row.missing_balances.some(value => {
+        const balance = object(value); fields(balance, ['ledger', 'currency', 'amount']);
+        return typeof balance.ledger !== 'string' || !['CASH', 'MARGIN'].includes(balance.ledger) || typeof balance.currency !== 'string' || typeof balance.amount !== 'string' || !/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?![\s\S])/.test(balance.amount);
+      }));
   })) throw new Error('tick_economic_result_days_invalid');
   if (!Array.isArray(result.metrics) || result.metrics.some(value => {
     const row = object(value); fields(row, ['partition', 'regime', 'days', 'valid_return_days', 'sharpe_365', 'conditional_annualized_return_365']);

@@ -535,6 +535,98 @@ fn daily_reason_identifies_stale_nonzero_spot_balance_but_not_zero_balance() {
     )));
     assert!(reason.contains(&format!("at_ns={at}:maximum_age_ns={HOUR}:state=STALE")));
     assert!(previous.is_none());
+    assert_eq!(days[0].missing_balances.len(), 1);
+    assert_eq!(days[0].missing_balances[0].currency, "BTC");
+
+    // Funding failure must not hide the missing balance inventory.
+    let bridge = assets
+        .iter()
+        .find(|asset| asset.instrument.id().to_string() == BRIDGE)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut inventory_cash =
+        Some(build(&assets, false, Decimal::from(1000), &request.scenario).unwrap());
+    for (index, instrument) in [&instrument, &bridge].into_iter().enumerate() {
+        let time = (index as u64 * 2 + 1) * SECOND;
+        inventory_cash
+            .as_mut()
+            .unwrap()
+            .step(time, instrument, 100.0, 10.0, None)
+            .unwrap();
+        inventory_cash
+            .as_mut()
+            .unwrap()
+            .step(time + SECOND, instrument, 100.0, 10.0, Some(Decimal::ONE))
+            .unwrap();
+    }
+    let bridge_index = assets
+        .iter()
+        .position(|asset| asset.instrument.id().to_string() == BRIDGE)
+        .unwrap();
+    let bridge_mark = assets[bridge_index].mark;
+    assets[bridge_index].mark = Some((2 * SECOND, Decimal::ONE));
+    let perp = assets
+        .iter()
+        .find(|asset| asset.instrument.id().to_string() == LATE)
+        .unwrap()
+        .instrument
+        .clone();
+    let mut inventory_margin =
+        Some(build(&assets, true, Decimal::from(1000), &request.scenario).unwrap());
+    inventory_margin
+        .as_mut()
+        .unwrap()
+        .step(SECOND, &perp, 100.0, 10.0, None)
+        .unwrap();
+    inventory_margin
+        .as_mut()
+        .unwrap()
+        .queue_adjustment(2 * SECOND, Money::from("1 ETH"))
+        .unwrap();
+    inventory_margin
+        .as_mut()
+        .unwrap()
+        .step(2 * SECOND, &perp, 100.0, 10.0, None)
+        .unwrap();
+    let mut inventory_days = Vec::new();
+    append_day(
+        &mut inventory_days,
+        0,
+        at,
+        &mut None,
+        &inventory_cash,
+        &inventory_margin,
+        &assets,
+        &fx_ids,
+        &request.scenario,
+        Decimal::ZERO,
+        Decimal::from(2000),
+        Decimal::ZERO,
+        true,
+        &mut None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        inventory_days[0].unknown_reason.as_deref(),
+        Some("FUNDING_UNAVAILABLE")
+    );
+    let missing = &inventory_days[0].missing_balances;
+    assert_eq!(
+        missing
+            .iter()
+            .map(|entry| entry.currency.as_str())
+            .collect::<Vec<_>>(),
+        ["BTC", "USDT0", "ETH"]
+    );
+    assert!(missing[..2]
+        .iter()
+        .all(|entry| entry.ledger == NativeTickBalanceLedgerV1::Cash));
+    assert_eq!(missing[2].ledger, NativeTickBalanceLedgerV1::Margin);
+    inventory_cash.as_mut().unwrap().finish().unwrap();
+    inventory_margin.as_mut().unwrap().finish().unwrap();
+    assets[bridge_index].mark = bridge_mark;
     let path = directory.path().join("spot-valuation.jsonl");
     let mut input = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
     for clock in 1..=20_000 {
