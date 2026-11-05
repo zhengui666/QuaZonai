@@ -86,7 +86,7 @@ def completed(opener, origin, id, *, native=True):
         if detail['final'] is not None and detail['final']['status'] != 'STARTED':
             if native:
                 assert detail['trialRecords'][0]['status'] == 'COMPUTED', detail['trialRecords'][0]['error']
-                assert detail['final']['status'] == 'COMPUTED', (detail['final']['status'], detail['final']['reason'])
+                assert (detail['final']['status'], detail['final']['reason']) == ('STOPPED', 'independent_review_not_passed'), (detail['final']['status'], detail['final']['reason'])
             else:
                 assert detail['trialRecords'] == [] and detail['final']['status'] == 'STOPPED'
             return detail
@@ -239,7 +239,7 @@ def smoke(args):
                  '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
             run(['docker', 'run', '--rm', '--network=none', '--entrypoint', 'node', app,
                  '--experimental-strip-types', '/opt/quazonai/apps/service/src/dataset-export.ts', '--help'], capture=True)
-            scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real remote HTTP Nautilus factor/heldout'
+            scope = 'Service-only controlled receipt (NO native trial)' if args.service_only else 'Real remote HTTP Nautilus factor and review refusal'
             print(scope + ': Node setup/login, original receipt replay, restart/update, stopped SQLite/PG backup restore and isolated compiler passed. No quality/remote-stop/order claim.')
         finally:
             if (root / 'installation.json').exists():

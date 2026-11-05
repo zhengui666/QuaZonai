@@ -2,7 +2,7 @@
 //! Labels in this result are restricted evaluation evidence, not a public Agent response.
 use crate::{
     catalog::{load_catalog, NativeBarSeries, NativeMarketData},
-    signals::SignalModule,
+    signals::{SignalModule, SignalModuleCache},
 };
 use anyhow::{ensure, Result};
 use contracts::{science::*, DbCounter, SchemaV1};
@@ -102,8 +102,8 @@ fn forecast_result(
     NativeForecastResultV1 {
         schema_version: SchemaV1,
         native_versions: BTreeMap::from([
-            ("nautilus-indicators".into(), "0.63.0".into()),
-            ("nautilus-persistence".into(), "0.63.0".into()),
+            ("nautilus-indicators".into(), "0.67.0".into()),
+            ("nautilus-persistence".into(), "0.67.0".into()),
             ("wasmi".into(), "2.0.0".into()),
         ]),
         consumed_fuel,
@@ -120,6 +120,29 @@ pub(crate) fn forecast_latest_market(
     module: &[u8],
 ) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     forecast_points(market, request, module, true)
+}
+
+/// Reuse task-local compiled code while every cutoff and asset still gets a
+/// fresh Store and the caller's current explicit fuel remainder.
+pub(crate) fn forecast_latest_market_cached(
+    market: &NativeMarketData,
+    request: &NativeForecastRequestV1,
+    module: &[u8],
+    cache: &mut SignalModuleCache,
+) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
+    domain::execution::forecast_request(request)?;
+    let module = cache.get_or_compile(module, request.parameters.total_fuel.is_some())?;
+    forecast_compiled_bar_points(
+        market
+            .series
+            .iter()
+            .map(|series| (series.instrument.id().to_string(), series.bars.as_slice())),
+        market.rows,
+        market.series.len(),
+        request,
+        &module,
+        true,
+    )
 }
 
 fn forecast_points(
@@ -150,8 +173,19 @@ fn forecast_bar_points<'a>(
     latest_only: bool,
 ) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     domain::execution::forecast_request(request)?;
+    let module = SignalModule::new(module, request.parameters.total_fuel.is_some())?;
+    forecast_compiled_bar_points(series, rows, assets, request, &module, latest_only)
+}
+
+fn forecast_compiled_bar_points<'a>(
+    series: impl Iterator<Item = (String, &'a [Bar])>,
+    rows: usize,
+    assets: usize,
+    request: &NativeForecastRequestV1,
+    module: &SignalModule,
+    latest_only: bool,
+) -> Result<(Option<DbCounter>, Vec<NativeForecastPointV1>)> {
     let parameters = &request.parameters;
-    let module = SignalModule::new(module, parameters.total_fuel.is_some())?;
     let mut remaining = parameters.total_fuel.map(|fuel| fuel.get());
     let mut points = Vec::with_capacity(if latest_only { assets } else { rows });
     let mut prediction_count = 0_u64;

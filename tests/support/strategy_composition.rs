@@ -186,7 +186,7 @@ pub fn current_report() -> NativeStrategyCompositionResultV1 {
             total_fuel: Some(count(100_000)),
         },
         native_versions: BTreeMap::from([
-            ("nautilus-backtest".into(), "0.63.0".into()),
+            ("nautilus-backtest".into(), "0.67.0".into()),
             ("wasmi".into(), "2.0.0".into()),
             ("strategy-composition".into(), "1".into()),
         ]),

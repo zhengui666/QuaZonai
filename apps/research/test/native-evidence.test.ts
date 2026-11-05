@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ConversationId, DocumentReader, JsonObject, TaskId } from '@earendil-works/pi-durable';
@@ -18,12 +19,17 @@ test('small native evidence retains its original inline representation', async (
 test('complete compressed native evidence retains its original-child association and reads back losslessly', async () => {
   const native: JsonObject = { original: randomBytes(2 * 1024 * 1024).toString('base64'),
     members: [{ model: '原生🙂', weight: '0.000000000000000001' }], clock: '1791849600000000000',
+    rows: Array.from({ length: 2048 }, (_, index) => ({ index, snapshot: { balances: [
+      { total: { amount: '3000.000000000000000001', currency: 'USDC' } },
+    ], events: [{ source: { native: { clock: '1791849600000000001', text: '原生🐋' } } }] } })),
     simulation: { cash: '3000.000000', fee: '0.000001', missing: null } };
   const parts = new Map<string, { data: string }>();
   const stored = await retainNativeEvidence(native, async (index, data) => { parts.set(`${taskId}:${index}`, { data }); });
   assert.equal(stored.format, 'qz.native-evidence/gzip-json/v1');
   assert.equal(stored.parts, parts.size);
   assert.ok(parts.size > 1);
+  assert.equal(gunzipSync(Buffer.concat([...parts.values()].map(part => Buffer.from(part.data, 'base64')))).toString('utf8'),
+    JSON.stringify(native), 'stored gzip retains the original standard JSON bytes independently of the reader');
   const reader = { async snapshot(token: unknown, id: ConversationId, key: string) {
     assert.equal(token, NativeEvidencePart); assert.equal(id, conversationId); return parts.get(key);
   } } as unknown as DocumentReader;
@@ -35,4 +41,11 @@ test('complete compressed native evidence retains its original-child association
 test('a failed native evidence part save cannot publish a completed representation', async () => {
   const failure = new Error('original-store-write-failed');
   await assert.rejects(retainNativeEvidence({ raw: 'x'.repeat(2 * 1024 * 1024) }, async () => { throw failure; }), failure);
+});
+
+test('a late serialization failure in the compressed stream cannot publish a completed representation', async () => {
+  const failure = new Error('original-late-native-evidence-error');
+  const native = { frames: Array.from({ length: 8 }, () => ({ original: '原生🐋'.repeat(100_000) })),
+    get tail(): never { throw failure; } };
+  await assert.rejects(retainNativeEvidence(native, async () => {}), failure);
 });

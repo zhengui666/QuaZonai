@@ -20,7 +20,7 @@ export function accountSourceFixture() {
     accountSourceId: 'native-source', observationId: 'native-observation', controlRevision: '7', sequence: '9007199254740995', nativeClockNs: '99',
     equity: null, cash: null, positions: [],
     nativeObservation: { schema_version: 1, binding: { schema_version: 1, project_id: '01900000-0000-7000-8000-000000000002', environment: 'PAPER',
-      native_trader_id: 'TRADER-001', native_session_id: 'SESSION-001', native_account_id: 'VENUE-001', native_version: '0.63.0' },
+      native_trader_id: 'TRADER-001', native_session_id: 'SESSION-001', native_account_id: 'VENUE-001', native_version: '0.67.0' },
       sequence: '9007199254740995', dropped_events: '0', observed_at_ns: '101', connection: 'CONNECTED', snapshot: native },
     openOrders: { schema_version: 1, account_id: 'VENUE-001', asof_ns: '99', available_ns: '101', count: 0 } };
   const observation: ObservationFact = { input: { requestId: 'source-original', portfolioId: 'portfolio-original', mode: 'paper', connectionId: connection.id },

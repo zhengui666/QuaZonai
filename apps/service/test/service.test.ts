@@ -1,3 +1,4 @@
+import { assertFrozenInput } from '../../research/test/frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
@@ -57,7 +58,7 @@ test('owner cookie/device auth, read-only GET, original research identity/replay
     assert.equal(full.statusCode, 202, full.body);
     await (await state.service.research.harness.submission(full.json().submissionId, context))!.wait(context);
     const fullDetail = (await app.inject({ url: `${api}/research/${full.json().conversationId}`, headers: state.headers })).json();
-    assert.deepEqual(fullDetail.input, original); assert.equal(fullDetail.dataset, null); assert.equal(fullDetail.datasetId, null);
+    assertFrozenInput(fullDetail.input, original); assert.equal(fullDetail.dataset, null); assert.equal(fullDetail.datasetId, null);
     const invalid = await app.inject({ method: 'POST', url: `${api}/research`, headers: state.headers,
       payload: { requestId: 'invalid-full-input', input: { ...original, policy: { budget: 9007199254740992 } } } });
     assert.equal(invalid.statusCode, 400); assert.equal(invalid.json().error, 'invalid_json_number');

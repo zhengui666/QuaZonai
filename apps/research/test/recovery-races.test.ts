@@ -1,3 +1,4 @@
+import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -149,7 +150,7 @@ test('an owner stop before missing original admission prevents retry and startup
     await assert.rejects(host.start('interrupted-start', state.input), /research_already_final/);
     assert.equal(await host.submissionFor(conversationId), null);
     const study = (await host.state(conversationId)).research!;
-    assert.deepEqual(study.input, state.input); assert.deepEqual(study.trials, []);
+    assertFrozenInput(study.input, state.input); assert.deepEqual(study.trials, []);
     assert.equal(study.final!.reason, 'owner_stop'); assert.equal(state.faux.state.callCount, 0);
   } finally { await host.close(); await rm(state.directory, { recursive: true, force: true }); }
 });

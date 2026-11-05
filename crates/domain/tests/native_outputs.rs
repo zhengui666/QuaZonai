@@ -70,7 +70,7 @@ fn quality() -> (NativeTaskParametersV1, NativeDataQualityReportV1) {
         },
         NativeDataQualityReportV1 {
             schema_version: SchemaV1,
-            native_version: "nautilus-persistence/0.63.0".into(),
+            native_version: "nautilus-persistence/0.67.0".into(),
             checked_at: clock(),
             datasets: vec![NativeDatasetQualityV1 {
                 settlements: Vec::new(),
@@ -275,7 +275,7 @@ fn compiler_report_cannot_borrow_another_code_or_model_object() {
         schema_version: SchemaV1,
         code_artifact_id: code,
         model_storage_ref: model.0.storage_ref,
-        rustc_version: "rustc 1.98.1 (native version-format fixture)".into(),
+        rustc_version: "rustc 1.99.1 (native version-format fixture)".into(),
         target: "wasm32-unknown-unknown".into(),
         abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
         module_bytes: model.0.byte_count,
@@ -315,7 +315,7 @@ fn compiler_report_cannot_borrow_another_code_or_model_object() {
             0 => invalid.code_artifact_id = Id::new(),
             1 => invalid.model_storage_ref = Id::new(),
             2 => invalid.module_bytes = count(9),
-            3 => invalid.rustc_version = "rustc 1.98.10 spoof".into(),
+            3 => invalid.rustc_version = "rustc 1.99.10 spoof".into(),
             _ => invalid.abi = "arbitrary-entrypoint".into(),
         }
         assert!(!accepts(
@@ -342,7 +342,7 @@ fn compiler_output_above_two_mib_retains_exact_bytes_and_identity_bindings() {
         schema_version: SchemaV1,
         code_artifact_id: code,
         model_storage_ref: model.0.storage_ref,
-        rustc_version: "rustc 1.98.1 (native version-format fixture)".into(),
+        rustc_version: "rustc 1.99.1 (native version-format fixture)".into(),
         target: "wasm32-unknown-unknown".into(),
         abi: "predict(f64,f64,f64,f64,f64,f64,f64,f64)->f64".into(),
         module_bytes: model.0.byte_count,
@@ -416,8 +416,8 @@ fn forecast() -> (NativeTaskParametersV1, NativeForecastResultV1) {
         NativeForecastResultV1 {
             schema_version: SchemaV1,
             native_versions: BTreeMap::from([
-                ("nautilus-indicators".into(), "0.63.0".into()),
-                ("nautilus-persistence".into(), "0.63.0".into()),
+                ("nautilus-indicators".into(), "0.67.0".into()),
+                ("nautilus-persistence".into(), "0.67.0".into()),
                 ("wasmi".into(), "2.0.0".into()),
             ]),
             consumed_fuel: Some(count(10)),

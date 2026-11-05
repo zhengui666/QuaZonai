@@ -6,7 +6,7 @@ mod prediction;
 
 use contracts::factors::NativeFactorEvaluationRequestV1;
 use nautilus_model::data::Bar;
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use parquet::{
     data_type::{ByteArrayType, DoubleType, Int64Type},
     file::writer::SerializedFileWriter,
@@ -375,11 +375,11 @@ fn public_v2_schema_runs_through_real_dispatch_preparation_export_and_factor_eva
     .unwrap();
     let bars = catalog
         .query::<Bar>(None, None, None, None, None, true)
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect::<Vec<_>>();
+        .unwrap();
     assert_eq!(bars.len(), 29);
-    assert!(!bars.iter().any(|row| matches!(row, nautilus_model::data::Data::Bar(bar) if bar.ts_event.as_u64() == (START + 480) * NS)));
+    assert!(!bars
+        .iter()
+        .any(|bar| bar.ts_event.as_u64() == (START + 480) * NS));
     let request = json!({"schema_version": 1, "forecast": {"schema_version": 1, "selection": selected["selection"],
         "parameters": {"schema_version": 1, "fast_period": 1, "slow_period": 2, "label_horizon_observations": 1, "total_fuel": "1000000"}},
         "train_end_ns": ((START + 600) * NS).to_string(), "validation_end_ns": ((START + 1200) * NS).to_string()});

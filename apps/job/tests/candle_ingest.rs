@@ -2,11 +2,11 @@
 #![cfg(feature = "catalog-prepare")]
 use contracts::{science::NativeBarSelectionV1, DbCounter, SchemaV1};
 use nautilus_model::{
-    data::{Bar, Data},
+    data::Bar,
     instruments::InstrumentAny,
     types::{Currency, Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::Value;
 use std::{
     fs,
@@ -94,11 +94,6 @@ impl Fixture {
                 true,
             )
             .unwrap()
-            .map(|row| match row.unwrap() {
-                Data::Bar(bar) => bar,
-                _ => panic!("unexpected record"),
-            })
-            .collect()
     }
     fn change_raw(&mut self, raw: &[u8]) {
         fs::write(self.source.join("raw/0000.json"), raw).unwrap();

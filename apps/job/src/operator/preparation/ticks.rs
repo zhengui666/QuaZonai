@@ -99,7 +99,7 @@ fn publish(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 fn write_series(
-    catalog: &nautilus_persistence::backend::catalog::ParquetDataCatalog,
+    catalog: &nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog,
     root: &Path,
     original: &[TradeTick],
     budget: &mut OutputBudget<'_>,
@@ -124,8 +124,8 @@ fn write_series(
             .max()
             .unwrap();
         for trade in &mut encoded[start..end] {
-            trade.price = Price::from_raw(trade.price.raw, prices);
-            trade.size = Quantity::from_raw(trade.size.raw, sizes);
+            trade.price = Price::from_raw(trade.price.raw(), prices);
+            trade.size = Quantity::from_raw(trade.size.raw(), sizes);
         }
         start = end;
     }
@@ -164,8 +164,8 @@ fn same_rows(
                     && rows.iter().zip(actual).all(|(left, right)| {
                         left.instrument_id == right.instrument_id
                             && left.trade_id == right.trade_id
-                            && left.price.raw == right.price.raw
-                            && left.size.raw == right.size.raw
+                            && left.price.raw() == right.price.raw()
+                            && left.size.raw() == right.size.raw()
                             && left.aggressor_side == right.aggressor_side
                             && left.ts_event == right.ts_event
                             && left.ts_init == right.ts_init
@@ -183,7 +183,8 @@ fn copy_selected(
 ) -> Result<()> {
     fs::create_dir_all(root)?;
     let original = crate::catalog::open_catalog(source)?;
-    let mut definitions = original.instruments(Some(&request.input.instrument_ids), None, None)?;
+    let mut definitions =
+        original.query_instruments_filtered(Some(&request.input.instrument_ids), None, None)?;
     definitions.retain(|instrument| {
         request
             .input
@@ -223,7 +224,8 @@ fn copy_selected(
         same_rows(rows, &crate::ticks::catalog::load(root, request)?),
         "TICK_PREPARATION_READBACK_MISMATCH"
     );
-    let mut actual = native.instruments(Some(&request.input.instrument_ids), None, None)?;
+    let mut actual =
+        native.query_instruments_filtered(Some(&request.input.instrument_ids), None, None)?;
     actual.sort_by_key(|instrument| (instrument.id(), instrument.ts_init()));
     ensure!(
         serde_json::to_value(actual)? == serde_json::to_value(definitions)?,
@@ -458,7 +460,10 @@ mod tests {
         let physical = public
             .query::<TradeTick>(None, None, None, None, None, false)
             .unwrap();
-        let physical = physical.map(|row| row.unwrap()).collect::<Vec<_>>();
+        let physical = physical
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(physical.len(), 5);
         assert!(physical.iter().all(
             |row| matches!(row, nautilus_model::data::Data::Trade(t) if t.ts_event.as_u64() < 50)
@@ -698,8 +703,8 @@ mod tests {
             10_u64.into(),
         );
         let mut encoded = original;
-        encoded.price = Price::from_raw(original.price.raw, 4);
-        encoded.size = Quantity::from_raw(original.size.raw, 5);
+        encoded.price = Price::from_raw(original.price.raw(), 4);
+        encoded.size = Quantity::from_raw(original.size.raw(), 5);
         let one = BTreeMap::from([("AUD/USD.SIM".into(), vec![original])]);
         let two = BTreeMap::from([("AUD/USD.SIM".into(), vec![encoded])]);
         assert!(same_rows(&one, &two));

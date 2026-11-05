@@ -9,7 +9,7 @@ use contracts::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -95,6 +95,15 @@ impl Write for LimitedFile {
     }
 }
 
+fn write_json(writer: impl Write, value: &impl Serialize) -> Result<()> {
+    let mut buffered = BufWriter::with_capacity(64 * 1024, writer);
+    serde_json::to_writer(&mut buffered, value)?;
+    // A successful serializer can leave all bytes in memory. Surface quota and
+    // disk errors before freezing the file or publishing its descriptor.
+    buffered.flush()?;
+    Ok(())
+}
+
 struct Outputs {
     root: PathBuf,
     remaining: Option<u64>,
@@ -103,7 +112,7 @@ struct Outputs {
 impl Outputs {
     fn json(&mut self, name: &str, kind: RuntimeOutputKind, value: &impl Serialize) -> Result<Id> {
         self.document(name, kind, "application/json", |stream| {
-            Ok(serde_json::to_writer(stream, value)?)
+            write_json(stream, value)
         })
     }
     fn document(
@@ -181,7 +190,7 @@ impl Outputs {
             remaining: None,
             written: 0,
         };
-        serde_json::to_writer(&mut stream, &index)?;
+        write_json(&mut stream, &index)?;
         stream.flush()?;
         frozen(&stream.file)?;
         publish(&staged, &self.root.join("index.json"))?;
@@ -247,7 +256,7 @@ fn compile_with(
     ensure!(version.stdout.len() <= 512, "NATIVE_COMPILER_VERSION");
     let version = std::str::from_utf8(&version.stdout)?.trim();
     ensure!(
-        version.starts_with("rustc 1.98.1 "),
+        version.starts_with("rustc 1.99.1 "),
         "NATIVE_COMPILER_VERSION"
     );
     // rustc creates linker scratch directories next to -o, regardless of
@@ -740,6 +749,81 @@ mod tests {
     }
 
     #[test]
+    fn buffered_json_keeps_exact_bytes_with_batched_writes() {
+        #[derive(Default)]
+        struct Writes {
+            bytes: Vec<u8>,
+            calls: usize,
+        }
+        impl Write for Writes {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let rows = vec![
+            serde_json::json!({
+                "timestamp": "1790000000000000001", "decimal": "0.000000000000000001"
+            });
+            10_000
+        ];
+        let mut writer = Writes::default();
+        write_json(&mut writer, &rows).unwrap();
+        assert_eq!(writer.bytes, serde_json::to_vec(&rows).unwrap());
+        assert!(
+            writer.calls < 100,
+            "JSON tokens must not each reach the file"
+        );
+    }
+
+    #[test]
+    fn buffered_json_flush_enforces_exact_budget_before_publication() {
+        for count in [1, 2048] {
+            let value = vec![serde_json::json!({"clock": "1790000000000000001"}); count];
+            let expected = serde_json::to_vec(&value).unwrap();
+            let size = expected.len() as u64;
+            let root = tempfile::tempdir().unwrap();
+            let mut outputs = test_outputs(root.path(), size - 1);
+            let error = outputs
+                .json("test", RuntimeOutputKind::Report, &value)
+                .unwrap_err();
+            assert!(error.to_string().contains("NATIVE_OUTPUT_LIMIT"));
+            assert_eq!(outputs.remaining, Some(size - 1));
+            assert!(outputs.items.is_empty());
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+
+            let mut outputs = test_outputs(root.path(), size);
+            let id = outputs
+                .json("test", RuntimeOutputKind::Report, &value)
+                .unwrap();
+            assert_eq!(
+                fs::read(root.path().join(id.to_string())).unwrap(),
+                expected
+            );
+            assert_eq!(outputs.items[0].byte_count.get(), size);
+            assert_eq!(outputs.remaining, Some(0));
+        }
+    }
+
+    #[test]
+    fn buffered_json_reports_a_write_error_deferred_until_flush() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("read-only-handle");
+        File::create(&path).unwrap();
+        let mut writer = LimitedFile {
+            file: File::open(path).unwrap(),
+            remaining: None,
+            written: 0,
+        };
+        assert!(write_json(&mut writer, &true).is_err());
+        assert_eq!(writer.written, 0);
+    }
+
+    #[test]
     fn output_publication_never_overwrites_or_adds_a_link() {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join(Id::new().to_string());
@@ -893,7 +977,7 @@ mod tests {
             r#"#!/bin/sh
 set -eu
 if [ "$1" = '--version' ]; then
-    printf '%s\n' 'rustc 1.98.1 (controlled fixture)'
+    printf '%s\n' 'rustc 1.99.1 (controlled fixture)'
     exit 0
 fi
 fixture=${0%/*}

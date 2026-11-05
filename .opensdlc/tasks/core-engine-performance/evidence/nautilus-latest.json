@@ -1,0 +1,193 @@
+{
+  "checked_at_utc": "2026-10-29T16:36:03.468015+00:00",
+  "selection_rule": "highest non-yanked version without pre-release suffix for each directly used Rust crate; Python pre-release tracked separately",
+  "rust_packages": [
+    {
+      "crate": "nautilus-backtest",
+      "version": "0.67.0",
+      "checksum": "72812aeec177e99ba661c3ca0d1075ae8b1ee3285cc97ba33d15912bc6de0bd5",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-backtest"
+    },
+    {
+      "crate": "nautilus-analysis",
+      "version": "0.67.0",
+      "checksum": "614c4d8b9497f6e761f10899a9e209b2c5825537dcc24876ab44c40c1080d103",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-analysis"
+    },
+    {
+      "crate": "nautilus-common",
+      "version": "0.67.0",
+      "checksum": "dda666fb366242b24c157935e971d88f89fae8d697d8ad4072e3102d1a377758",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-common"
+    },
+    {
+      "crate": "nautilus-core",
+      "version": "0.67.0",
+      "checksum": "775708553c018c387db6732dac8420daf35dee452aef51e1a58dc68d7eba4e3d",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-core"
+    },
+    {
+      "crate": "nautilus-execution",
+      "version": "0.67.0",
+      "checksum": "4540fdc0290e044cc750908cf8ec2dae7ea2d02fed8b0ea7ea1e48cafdb3cc63",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-execution"
+    },
+    {
+      "crate": "nautilus-portfolio",
+      "version": "0.67.0",
+      "checksum": "f288f18b79ead043fa385b5e98bf1c233b7601ce2cb586e263ed7c1327953101",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-portfolio"
+    },
+    {
+      "crate": "nautilus-persistence",
+      "version": "0.67.0",
+      "checksum": "0f28b1c0cfddf08db0a8cf66a5e03a3204fba8ece601d3026eeb364a95b9ecaf",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-persistence"
+    },
+    {
+      "crate": "nautilus-indicators",
+      "version": "0.67.0",
+      "checksum": "426a4436ac3ad28b4e6e7d565081a079b9f88f6d8a1b39997164599ad6a8b27a",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-indicators"
+    },
+    {
+      "crate": "nautilus-polymarket",
+      "version": "0.67.0",
+      "checksum": "6b153e20b268d4cb9095848c7524cd948916a42dcc0af6885a3afaf08d105971",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-polymarket"
+    },
+    {
+      "crate": "nautilus-data",
+      "version": "0.67.0",
+      "checksum": "1665b654f0c850887e22e805b38846fbffd82f089b330aaacbb6844d2f5cb50b",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-data"
+    },
+    {
+      "crate": "nautilus-model",
+      "version": "0.67.0",
+      "checksum": "7913dea63c571134f82fad4c9ef92f4f543d2d025c98ad7f611de232a5c5c7a5",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-model"
+    },
+    {
+      "crate": "nautilus-trading",
+      "version": "0.67.0",
+      "checksum": "b25bcccb31cf8dc836a8708b3e412befa80b1537d1b66c4aed52d9a01749c525",
+      "rust_version": "1.99.1",
+      "yanked": false,
+      "index_url": "https://index.crates.io/na/ut/nautilus-trading"
+    }
+  ],
+  "rust_backtest_vcs_sha": "d53849b216e20f2c122ca01b4dd0da377638b186",
+  "python": {
+    "index_default_version": "1.231.0",
+    "requires_python": "<3.15,>=3.12",
+    "recent_release_uploads": [
+      [
+        "2026-10-29T02:10:19.905932Z",
+        "2.0.0rc8"
+      ],
+      [
+        "2026-10-15T21:05:08.353494Z",
+        "2.0.0rc7"
+      ],
+      [
+        "2026-10-05T02:59:49.943153Z",
+        "2.0.0rc6"
+      ],
+      [
+        "2026-09-15T06:13:57.781978Z",
+        "2.0.0rc5"
+      ],
+      [
+        "2026-09-02T03:24:16.099884Z",
+        "2.0.0rc4"
+      ]
+    ],
+    "source": "https://pypi.org/pypi/nautilus_trader/json"
+  },
+  "python_rc": {
+    "source": "https://pypi.org/pypi/nautilus_trader/2.0.0rc8/json",
+    "version": "2.0.0rc8",
+    "requires_python": "<3.15,>=3.13",
+    "release_upload_min": "2026-10-29T02:09:24.921717Z",
+    "release_upload_max": "2026-10-29T02:10:19.905932Z",
+    "filenames": [
+      "nautilus_trader-2.0.0rc8-cp313-cp313-macosx_11_0_arm64.whl",
+      "nautilus_trader-2.0.0rc8-cp313-cp313-manylinux_2_34_aarch64.whl",
+      "nautilus_trader-2.0.0rc8-cp313-cp313-manylinux_2_34_x86_64.whl",
+      "nautilus_trader-2.0.0rc8-cp313-cp313-win_amd64.whl",
+      "nautilus_trader-2.0.0rc8-cp314-cp314-macosx_11_0_arm64.whl",
+      "nautilus_trader-2.0.0rc8-cp314-cp314-manylinux_2_34_aarch64.whl",
+      "nautilus_trader-2.0.0rc8-cp314-cp314-manylinux_2_34_x86_64.whl",
+      "nautilus_trader-2.0.0rc8-cp314-cp314-win_amd64.whl",
+      "nautilus_trader-2.0.0rc8.tar.gz"
+    ]
+  },
+  "scope": "registry and official source research only; QuaZonai dependency files have not been changed; no upgraded engine benchmark or build claimed",
+  "fee_money_source_review_2026_10_30": {
+    "scope": "Official 0.67.0 package source inspection and implementation oracle corrections, distinct from historical 0.63 performance observations. Exact Money storage does not change MakerTaker commission rounding. A later lib run confirmed the 0.0008 USD serde assertion passed before the ordinary FromStr assertion failed; final corrected tests and actual CLI precision acceptance require execution on the delivered head.",
+    "official_sources": [
+      "https://static.crates.io/crates/nautilus-model/nautilus-model-0.67.0.crate",
+      "https://static.crates.io/crates/nautilus-execution/nautilus-execution-0.67.0.crate",
+      "https://static.crates.io/crates/nautilus-polymarket/nautilus-polymarket-0.67.0.crate"
+    ],
+    "maker_taker": {
+      "path": "nautilus-execution/src/models/fee.rs MakerTakerFeeModel::get_commission -> nautilus-model/src/fees.rs calculate_maker_taker_commission -> types/money.rs Money::from_decimal -> types/fixed.rs bankers_round",
+      "policy": "Official per-fill currency-precision half-even rounding; no public MakerTaker option selecting from_decimal_exact/native. Source rates are independent frozen venue policy; actual commission arithmetic stays upstream.",
+      "independent_usd_oracles": [
+        {
+          "unrounded": "0.0008",
+          "actual": "0.00"
+        },
+        {
+          "unrounded": "0.005",
+          "actual": "0.00"
+        },
+        {
+          "unrounded": "0.015",
+          "actual": "0.02"
+        },
+        {
+          "unrounded": "0.025",
+          "actual": "0.02"
+        },
+        {
+          "unrounded": "-0.015",
+          "actual": "-0.02"
+        }
+      ]
+    },
+    "exact_money": {
+      "path": "nautilus-model/src/types/money.rs Money::from_decimal_exact/from_str_exact/as_decimal; Display/Serialize use to_decimal_string; Deserialize calls from_str_exact; ordinary FromStr calls parse(exact=false)",
+      "policy": "Exact construction, explicit exact parsing, Display and serde preserve representable fractional digits below currency precision. Ordinary Money::from_str rounds to currency precision, so parsing the display of exact 0.0008 USD through that trait yields 0.00 USD. Exact roundtrip/accumulation, the ordinary parser's rounding, and commission construction are separate acceptance cases.",
+      "qz_input_boundary": "The six contract-required exact initial-capital/observed-balance inputs use the public Money::from_str_exact API and propagate unrepresentable-value errors. Canonical result Value stays original; account observer projects native as_decimal directly into DecimalValue. The official fee models retain their own rounding policies."
+    },
+    "polymarket": {
+      "path": "nautilus-polymarket/src/models.rs PolymarketFeeModel::get_commission",
+      "policy": "Fee-equivalent quantity*rate*price*(1-price); taker ToZero at 5 decimal places; maker negative fee-equivalent*rebate_rate rounded half-even at 5 places; then Money::from_decimal in original quote currency.",
+      "independent_oracle": "Original fixture rate 0.05, price 0.4: each quantity 0.0005 yields zero taker commission; combined quantity 0.001 yields 0.00001. Original source schedule is unchanged; fixture quantities isolate the new rounding boundaries."
+    }
+  }
+}

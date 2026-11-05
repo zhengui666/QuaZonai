@@ -1,0 +1,23 @@
+{
+  "base": "78a84bdd31f524b4965560fc4b6ae4ab53cafcef",
+  "files": [
+    {
+      "file": "apps/research/src/native-json.ts",
+      "scope": "jsonChunks/fragments/JsonReader",
+      "unchangedFromBase": true,
+      "sha256": "199a514fb7dbc828fb394351ededb1e19b6f734ace9f39ed02d3360dbdaf5988"
+    },
+    {
+      "file": "apps/service/src/pm-evidence.ts",
+      "scope": "whole file",
+      "unchangedFromBase": true,
+      "sha256": "4c836490657a108e75ea9122ac8ef64526620f97281c8cd31533251bcb1a3a20"
+    },
+    {
+      "file": "apps/research/plugins/native-evidence.ts",
+      "scope": "whole file",
+      "unchangedFromBase": true,
+      "sha256": "fa7a62d3656f1d9b821b75aba00294ebfff4b36ef7eca23b38392a9b27186bbd"
+    }
+  ]
+}

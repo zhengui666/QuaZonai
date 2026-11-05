@@ -1,7 +1,9 @@
+import { startLegacyResearch } from '../../research/test/legacy-study.ts';
 import assert from 'node:assert/strict';
 import './capital-native.ts';
 import './pm-science-native.ts';
 import './pm-independent-policy.test.ts';
+import './pm-review-consumer.test.ts';
 import './pm-method.test.ts';
 import './pm-account-native.test.ts';
 import './pm-account-http.test.ts';
@@ -17,7 +19,8 @@ import './pm-operations.test.ts';
 import './pm-business-acceptance.test.ts';
 import { test } from 'node:test';
 import { readFile, mkdtemp, mkdir, rm, cp, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { v7 as uuidv7 } from 'uuid';
 import { tmpdir } from 'node:os';
 import Fastify from 'fastify';
 import { createModels, fauxProvider, fauxAssistantMessage, fauxToolCall, Type } from '@earendil-works/pi-ai';
@@ -34,10 +37,87 @@ import { Exposures } from '../../research/plugins/native-exposure.ts';
 import { CatalogScopes } from '../../research/plugins/native-catalog-scope.ts';
 import { openResearch } from '../../research/src/host.ts';
 import { factorViews } from '../src/factors.ts';
+import { runReviewScience } from '../../research/src/review-science-adapter.ts';
+import { canonicalJsonDigest } from '../../research/src/native-json.ts';
 
+
+const fixtureFeesFile = 'frozen-maker-taker-fees.json';
+
+test('review diagnostics bridge binds synthetic original source through real Rust stdout and TS projection', { timeout: 30_000 }, async () => {
+  assert.ok(process.env.QZ_JOB_BINARY, 'QZ_JOB_BINARY must name the existing scientific job');
+  for (const count of [128, 20]) {
+    // Synthetic protocol evidence only: no market history, source qualification,
+    // model review or future profitability is established by these returns.
+    const baseline = Array.from({ length: count }, (_, index) => index % 2 === 0 ? 0.02 : -0.01);
+    const analysis: JsonObject = { kind: 'PORTFOLIO', candidate: { id: 'synthetic-candidate', returns: baseline.map(value => value - 0.003) },
+      baseline: { id: 'synthetic-baseline', returns: baseline }, timestamps_ns: baseline.map((_, index) => String(BigInt(index) * 86_400_000_000_000n)),
+      frequency: 'DAY', block_length: 2 };
+    const source: JsonObject = Object.freeze({ fixture: 'synthetic-original-shared-account-returns', analysis });
+    const frozen = JSON.stringify(source); const evidenceRef = `fixture:original:${count}`;
+    const result = await runReviewScience({ source, analysis, evidenceRef, target: process.env.QZ_JOB_BINARY, context });
+    assert.equal(result.native.source_digest, `sha256:${canonicalJsonDigest(source)}`);
+    assert.equal(result.native.method_version, 'qz.review-science.v1');
+    assert.equal(result.native.scope, 'SHARED_ACCOUNT');
+    assert.equal(result.native.observations, count);
+    const delta = result.metrics.find(metric => metric.key === 'incremental.net_return_delta')!;
+    assert.equal(delta.method, 'qz.review-science.v1'); assert.equal(delta.scope, 'SHARED_ACCOUNT');
+    assert.equal(delta.evidenceRef, evidenceRef); assert.equal(delta.status, 'AVAILABLE');
+    assert.ok(Math.abs(delta.value! + 0.003) < 1e-12);
+    const lower = result.metrics.find(metric => metric.key === 'incremental.net_return_delta_lower')!;
+    if (count === 128) { assert.equal(lower.status, 'AVAILABLE'); assert.ok(lower.value! < -0.0029); }
+    else { assert.equal(lower.status, 'INSUFFICIENT'); assert.equal(lower.value, null); assert.equal(lower.reason, 'BOOTSTRAP_REQUIRES_30_COMPLETE_BLOCKS'); }
+    assert.equal(JSON.stringify(source), frozen, 'the review producer must retain the original source');
+  }
+});
+
+async function prepareFixtureCatalog(directory: string, catalog: string, fixture: JsonObject, prepare: string,
+  fees: JsonObject, instrumentIds: string[], count: number, availableNs: bigint) {
+  const declaration = structuredClone(object(fixture.metadata));
+  delete declaration.row_count; delete declaration.quality; delete declaration.execution_fees;
+  const universe = object(declaration.universe);
+  delete universe.instrument_definitions;
+  const membership = object((universe.membership as JsonObject[])[0]);
+  universe.membership = instrumentIds.map(instrument_id => ({ ...membership, instrument_id }));
+  const end = BigInt(count + 1) * 60_000_000_000n;
+  const cutoff = availableNs > end ? availableNs : end;
+  declaration.event_end = new Date(Number(end / 1_000_000n)).toISOString();
+  declaration.available_through = new Date(Number(availableNs / 1_000_000n)).toISOString();
+  const selection = { ...object(fixture.selection), dataset_revision_id: uuidv7(), selection: {
+    ...object(object(fixture.selection).selection), bar_types: instrumentIds.map(id => `${id}-1-MINUTE-LAST-EXTERNAL`),
+    event_end_ns: end.toString(), decision_cutoff_ns: cutoff.toString(), maximum_rows: count * instrumentIds.length,
+  } };
+  const feePath = join(directory, 'fee-source.json'); const declarationPath = join(directory, 'declaration.json');
+  const selectionPath = join(directory, 'selection.json'); const prepared = join(directory, 'prepared');
+  const originalFeeBytes = JSON.stringify(fees);
+  await writeFile(feePath, originalFeeBytes, { flag: 'wx' });
+  await writeFile(declarationPath, JSON.stringify(declaration), { flag: 'wx' });
+  await writeFile(selectionPath, JSON.stringify(selection), { flag: 'wx' });
+  const env = new NodeExecutionEnv({ cwd: directory }); let stderr = '';
+  try {
+    const result = getOrThrow(await env.exec([prepare, '--catalog', catalog, '--declaration', declarationPath,
+      '--selection', selectionPath, '--fee-source', feePath, '--output', prepared], {
+      timeout: 20, inheritEnv: false, env: { PATH: '/usr/bin:/bin', TMPDIR: process.env.PI_SCRATCH_DIR ?? tmpdir() },
+      onOutput: (chunk, _context, info) => { if (info.stream === 'stderr') stderr += chunk; },
+    }, context));
+    assert.equal(result.exitCode, 0, stderr || 'native synthetic fee preparation failed');
+  } finally { await env.cleanup(context); }
+  const metadata = JSON.parse(await readFile(join(prepared, 'catalog-metadata.json'), 'utf8'));
+  assert.deepEqual(metadata.execution_fees, fees);
+  assert.deepEqual(JSON.parse(await readFile(join(prepared, 'catalog', fixtureFeesFile), 'utf8')), fees);
+  assert.equal(await readFile(feePath, 'utf8'), originalFeeBytes);
+  return join(prepared, 'catalog');
+}
 
 async function expandedCatalog(directory: string, fixturePath: string, prepare: string, causal = false, count = 599, symbol = 'BTC-USD', interleaved = false) {
   const root = dirname(fixturePath); const source = join(directory, 'synthetic-source');
+  const fixture = object(JSON.parse(await readFile(fixturePath, 'utf8')));
+  const fees = structuredClone(object(object(fixture.metadata).execution_fees));
+  assert.equal(fees.origin, 'FIXTURE');
+  assert.deepEqual(fees.rates, [{ instrument_id: 'BTC-USD.COINBASE', maker: '0.004', taker: '0.006' }]);
+  // The existing synthetic ETH fixture uses the same explicit research policy
+  // as BTC. Bind that fixture input before any simulation request is authored.
+  fees.source_reference = 'fixture://core-native/expanded-candle-venue-fees';
+  fees.rates = (fees.rates as JsonObject[]).map(rate => ({ ...rate, instrument_id: `${symbol}.COINBASE` }));
   await cp(join(root, 'acquired'), source, { recursive: true });
   const manifest = JSON.parse(await readFile(join(source, 'acquisition.json'), 'utf8'));
   const row = JSON.parse((await readFile(join(source, 'records.jsonl'), 'utf8')).split('\n')[0]);
@@ -57,6 +137,12 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
     source_response: `raw/${String(Math.floor(index / batchSize)).padStart(4, '0')}.json`, source_row_index: index % batchSize,
     observed_at: causal ? new Date((Math.min((Math.floor(index / batchSize) + 1) * batchSize, count) * 60 + receiptLag) * 1000).toISOString() : `2024-01-02T00:00:0${Math.floor(index / batchSize) + 1}Z` }));
   const records = rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
+  const availableNs = rows.reduce((latest, row) => {
+    const received = BigInt(Date.parse(row.observed_at)) * 1_000_000n;
+    return received > latest ? received : latest;
+  }, 0n);
+  const freeze = (catalog: string) => prepareFixtureCatalog(directory, catalog, fixture, prepare, fees,
+    [`${symbol}.COINBASE`], count, availableNs);
   manifest.selection.end_seconds = count * 60; manifest.created_at = causal ? new Date((count * 60 + 2) * 1000).toISOString() : '2024-01-02T00:00:04Z';
   const template = manifest.responses[0]; manifest.responses = []; manifest.raw_response_bytes = 0;
   const clock = (seconds: number) => new Date(seconds * 1000).toISOString().replace('.000Z', 'Z').replaceAll(':', '%3A');
@@ -87,7 +173,7 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
   }
   if (!causal) {
     await writeFile(join(source, 'records.jsonl'), records); await writeFile(join(source, 'acquisition.json'), JSON.stringify(manifest));
-    return ingest(source, join(directory, 'native-import'));
+    return freeze(await ingest(source, join(directory, 'native-import')));
   }
   // The importer requires 299-interval pagination and retrieval after the whole acquisition window.
   // Each causal batch is therefore its own short acquisition, not an invalid mid-window REST receipt.
@@ -106,11 +192,11 @@ async function expandedCatalog(directory: string, fixturePath: string, prepare: 
     // Union only native-validated, nonoverlapping BAR files and the same original instrument definition.
     await cp(await ingest(batchSource, join(directory, `native-import-${index}`)), catalog, { recursive: true });
   }
-  return catalog;
+  return freeze(catalog);
 }
 
 function nativeTestSettings(capital: string) {
-  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.63.0', parameters });
+  const modelRef = (adapter_kind: string, upstream_class: string, parameters: Record<string, unknown>) => ({ schema_version: 1, adapter_kind, upstream_class, upstream_version: '0.67.0', parameters });
   return json({ schema_version: 1, base_currency: 'USD', starting_capital: capital, account_kind: 'MARGIN', leverage: '1', exposure_tolerance: '0.000001', snapshot_interval_ms: 60_000,
     fill_model: modelRef('NAUTILUS_DEFAULT_FILL', 'nautilus_execution::models::fill::DefaultFillModel', { prob_fill_on_limit: '1', prob_slippage: '0', random_seed: '7' }),
     fee_model: modelRef('NAUTILUS_MAKER_TAKER', 'nautilus_execution::models::fee::MakerTakerFeeModel', {}),
@@ -140,7 +226,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
         fauxAssistantMessage(fauxToolCall('factor_evaluate', { hypothesis: 'First frozen kernel control', model: wat }), { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxToolCall('hold_original_selection', {}), { stopReason: 'toolUse' }),
       ]);
-      const receipt = await host.start('catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
+      const receipt = await startLegacyResearch(host, 'catalog-kernel-peer', { goal: 'Bounded first selection for native group control', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } });
       await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await host.state(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -165,14 +251,14 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
       },
     ]);
     const original = { goal: 'Full-catalog native control; no market/PIT/model-quality claim', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: { ...data, sealed: data }, policy: { max_trials: 1 } };
-    const receipt = await host.start('catalog-kernel-control', original); id = receipt.conversationId;
+    const receipt = await startLegacyResearch(host, 'catalog-kernel-control', original); id = receipt.conversationId;
     await (await host.harness.submission(receipt.submissionId, context))!.wait(context);
     const study = (await host.state(id)).research!;
     assert.deepEqual(study.input, original); assert.equal(study.trials.length, 1);
     assert.ok(study.final, JSON.stringify({ trials: study.trials, final: study.final }));
     assert.equal(study.final.status, 'COMPUTED', JSON.stringify(study.final));
     const result = object(study.final.result);
-    assert.equal(object(result.native_versions)['nautilus-model'], '0.63.0');
+    assert.equal(object(result.native_versions)['nautilus-model'], '0.67.0');
     assert.equal(object(result.coverage).observations, '3');
     assert.equal(object(result.request).event_end_ns, request.event_end_ns);
     assert.equal('points' in result || 'portfolio' in result || 'simulation' in result, false);
@@ -186,7 +272,7 @@ for (const grouped of [false, true]) test(`full-catalog factor input reaches the
     assert.deepEqual(windows.map(window => window.kind), grouped ? ['ITERATION', 'ITERATION', 'FINAL'] : ['ITERATION', 'FINAL']);
     assert.deepEqual(windows[0]!.barTypesRef, windows[1]!.barTypesRef);
     assert.equal(factorViews(id, study)[0]!.combinable, false);
-    assert.deepEqual(await host.start('catalog-kernel-control', original), receipt);
+    assert.deepEqual(await startLegacyResearch(host, 'catalog-kernel-control', original), receipt);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -234,8 +320,16 @@ test('two original studies → native target blending → one fee-affected share
             selections: [...selections, { researchId: original.conversationId, trialId: Number(trial.taskId) }] }), { stopReason: 'toolUse' });
         },
       ]);
-      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: 'Late-arrival native control, not historical PIT', model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'late-native-fixture', maxTrials: 1 } });
-      assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); receipts.push(receipt);
+      // Reconstruct an already-frozen pre-review admission. This native fixture
+      // intentionally has no historical PIT/reference cohort; it verifies the
+      // retained science/HTTP path rather than new Review qualification.
+      const source = config.datasets[0]!;
+      const original = { goal: 'Late-arrival native control, not historical PIT', model: { provider: faux.provider.id, modelId: faux.getModel().id },
+        data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+      const frozen = await startLegacyResearch(service.research, `native-idea-${index}`, original);
+      receipts.push(frozen); // The second model response binds this exact study.
+      const start = await service.app.inject({ method: 'POST', url: '/api/v3/research', headers, payload: { requestId: `native-idea-${index}`, goal: original.goal, model: original.model, datasetId: 'late-native-fixture', maxTrials: 1 } });
+      assert.equal(start.statusCode, 202, start.body); const receipt = start.json(); assert.deepEqual(receipt, frozen);
       await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
       const study = (await service.research.view(receipt.conversationId)).research!;
       assert.equal(study.trials[0]!.status, 'COMPUTED', JSON.stringify(study.trials));
@@ -246,7 +340,7 @@ test('two original studies → native target blending → one fee-affected share
       const failures = (await service.research.tasks()).records.items.flatMap((record) => record.state.status === 'terminal' && 'error' in record.state.outcome ? [record.state.outcome.error] : []);
       assert.ok(study.final, JSON.stringify(failures));
       assert.equal(study.final!.status, 'COMPUTED', JSON.stringify(study.final));
-      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.63.0');
+      assert.equal(object(object(study.final!.result).native_versions)['nautilus-model'], '0.67.0');
       const detail = (await service.app.inject({ url: `/api/v3/research/${receipt.conversationId}`, headers })).json();
       assert.deepEqual(detail.submission, { id: receipt.submissionId, status: 'done', requestId: `native-idea-${receipts.indexOf(receipt)}` });
     }
@@ -276,7 +370,7 @@ test('two original studies → native target blending → one fee-affected share
     }
     assert.deepEqual(object(native.simulationRequest).target_points, combined);
     assert.ok(sources.every((source) => !('simulation' in source))); // There is only the combined shared account, never two equity curves.
-    assert.equal(simulation.native_version, '0.63.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
+    assert.equal(simulation.native_version, '0.67.0'); assert.deepEqual(fact.view.curve, nativeCurve(simulation, 'USD'));
     assert.ok(fact.view.curve.length); assert.equal(fact.view.targets[0]!.weight, '0.0625');
     assert.ok(BigInt(String(simulation.orders)) > 0n); assert.ok(BigInt(String(simulation.positions)) > 0n);
     assert.ok(fact.view.curve.some((point) => point.value !== null && decimalUnits(point.value) !== decimalUnits('1000')), 'blended target must affect the native account, including original fees');
@@ -319,12 +413,32 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
     const prefixDir = join(directory, 'prefix'); const sealedDir = join(directory, 'sealed');
     await mkdir(prefixDir); await mkdir(sealedDir);
     const prepare = process.env.QZ_CATALOG_PREPARE_BINARY ?? join(dirname(process.env.QZ_JOB_BINARY), 'catalog-prepare');
-    const catalog = await expandedCatalog(prefixDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, prefixCount, 'BTC-USD', crossMarket);
-    const sealed = await expandedCatalog(sealedDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, finalCount, 'BTC-USD', crossMarket);
+    let catalog = await expandedCatalog(prefixDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, prefixCount, 'BTC-USD', crossMarket);
+    let sealed = await expandedCatalog(sealedDir, process.env.QZ_BROWSER_FIXTURE, prepare, true, finalCount, 'BTC-USD', crossMarket);
     if (universe) {
       for (const [root, destination, count] of [[prefixDir, catalog, prefixCount], [sealedDir, sealed, finalCount]] as const) {
         const other = join(root, 'other-instrument'); await mkdir(other);
-        await cp(await expandedCatalog(other, process.env.QZ_BROWSER_FIXTURE, prepare, true, count, 'ETH-USD', crossMarket), destination, { recursive: true });
+        const second = await expandedCatalog(other, process.env.QZ_BROWSER_FIXTURE, prepare, true, count, 'ETH-USD', crossMarket);
+        const joint = join(root, 'joint'); await mkdir(joint);
+        const source = join(joint, 'source');
+        // Prepared inputs stay unchanged. Assemble a new explicit fixture
+        // source, and merge its two independently prepared policy entries.
+        for (const original of [destination, second]) await cp(original, source, {
+          recursive: true, filter: path => basename(path) !== fixtureFeesFile,
+        });
+        const firstMetadata = JSON.parse(await readFile(join(dirname(destination), 'catalog-metadata.json'), 'utf8'));
+        const secondMetadata = JSON.parse(await readFile(join(dirname(second), 'catalog-metadata.json'), 'utf8'));
+        const { rates: firstRates, ...policy } = object(firstMetadata.execution_fees);
+        const { rates: secondRates, ...secondPolicy } = object(secondMetadata.execution_fees);
+        assert.deepEqual(secondPolicy, policy);
+        assert.ok(Array.isArray(firstRates) && Array.isArray(secondRates));
+        const fees = { ...policy, rates: [...firstRates, ...secondRates].map(value => object(value)) };
+        assert.deepEqual(fees.rates.map(rate => rate.instrument_id), ['BTC-USD.COINBASE', 'ETH-USD.COINBASE']);
+        const availableNs = BigInt(Math.max(Date.parse(firstMetadata.available_through), Date.parse(secondMetadata.available_through))) * 1_000_000n;
+        const fixture = object(JSON.parse(await readFile(process.env.QZ_BROWSER_FIXTURE, 'utf8')));
+        const prepared = await prepareFixtureCatalog(joint, source, fixture, prepare, fees,
+          ['BTC-USD.COINBASE', 'ETH-USD.COINBASE'], count, availableNs);
+        if (root === prefixDir) catalog = prepared; else sealed = prepared;
       }
     }
     const fixture = JSON.parse(await readFile(process.env.QZ_BROWSER_FIXTURE, 'utf8'));
@@ -392,8 +506,16 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: selected!, reason: 'Select original ensemble after read-only recovery; before final exposure.' }), { stopReason: 'toolUse' });
       },
     ]);
-    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: 'Native ensemble isolation control; synthetic data only.',
-      model: { provider: faux.provider.id, modelId: faux.getModel().id }, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+    // Preserve this synthetic retained-science proof as a pre-review immutable
+    // admission; do not invent REAL/PIT or bypass the production Review default.
+    // The service still captures and replays the original simplified owner body.
+    const source = config.datasets[0]!;
+    const original = { goal: 'Native ensemble isolation control; synthetic data only.', model: { provider: faux.provider.id, modelId: faux.getModel().id },
+      data: source.data, policy: { ...source.policy, max_trials: 1, strategy: json(source.strategy!) } };
+    const frozen = await startLegacyResearch(service.research, 'native-ensemble', original);
+    const receipt = await service.work.startResearch({ requestId: 'native-ensemble', goal: original.goal,
+      model: original.model, datasetId: 'ensemble-native-fixture', maxTrials: 1 });
+    assert.deepEqual(receipt, frozen);
     await (await service.research.harness.submission(receipt.submissionId, context))!.wait(context);
     const facts = (await service.research.view(receipt.conversationId)).research!;
     assert.equal(facts.trials.length, 1, 'read-only retrieval must not register another candidate');
@@ -418,7 +540,7 @@ for (const variant of ['legacy', 'fixed-pool', 'historical', 'cross-market', 'si
       for (const component of evidence.components as JsonObject[]) {
         assert.deepEqual(object(object(component.forecastRequest).selection).bar_types, crossMarket ? selectedBars : request.forecast.selection.bar_types);
       }
-      assert.equal(object(evidence.simulation).native_version, '0.63.0');
+      assert.equal(object(evidence.simulation).native_version, '0.67.0');
       assert.ok(BigInt(String(object(evidence.simulation).orders)) > 0n);
       assert.ok(BigInt(String(object(evidence.simulation).positions)) > 0n);
       if (crossMarket) {

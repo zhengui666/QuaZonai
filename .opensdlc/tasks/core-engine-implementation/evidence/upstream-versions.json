@@ -1,0 +1,125 @@
+{
+  "checked_at_utc": "2026-10-30T01:18:30.470787+00:00",
+  "base_dev": "78a84bdd31f524b4965560fc4b6ae4ab53cafcef",
+  "packages": [
+    {
+      "name": "nautilus-analysis",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "614c4d8b9497f6e761f10899a9e209b2c5825537dcc24876ab44c40c1080d103",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-backtest",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "72812aeec177e99ba661c3ca0d1075ae8b1ee3285cc97ba33d15912bc6de0bd5",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-binance",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "cab442ef3fffe071ecaf30a301349c5ca4e0a57523813e5319096fe585c2d74b",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-common",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "dda666fb366242b24c157935e971d88f89fae8d697d8ad4072e3102d1a377758",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-core",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "775708553c018c387db6732dac8420daf35dee452aef51e1a58dc68d7eba4e3d",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-data",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "1665b654f0c850887e22e805b38846fbffd82f089b330aaacbb6844d2f5cb50b",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-execution",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "4540fdc0290e044cc750908cf8ec2dae7ea2d02fed8b0ea7ea1e48cafdb3cc63",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-hyperliquid",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "0e9b4861f983de5a80c6e67353ba316b44cf8a023c1abb205b75aba3bab16e6f",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-indicators",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "426a4436ac3ad28b4e6e7d565081a079b9f88f6d8a1b39997164599ad6a8b27a",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-live",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "d9e8e0d9d4ae4454f36c77b7e520da949a348a1c33c4c5b452332579c13d5fc9",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-model",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "7913dea63c571134f82fad4c9ef92f4f543d2d025c98ad7f611de232a5c5c7a5",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-persistence",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "0f28b1c0cfddf08db0a8cf66a5e03a3204fba8ece601d3026eeb364a95b9ecaf",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-polymarket",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "6b153e20b268d4cb9095848c7524cd948916a42dcc0af6885a3afaf08d105971",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-portfolio",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "f288f18b79ead043fa385b5e98bf1c233b7601ce2cb586e263ed7c1327953101",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-sandbox",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "ebf69f50617d3d43a8592c065d9f5c7326d28059c580440e06e1ad787cdf7307",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-serialization",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "49fbe21aa1e054710db747996f8edc6055ccd265064794dff6ed1458881e82ed",
+      "yanked": false
+    },
+    {
+      "name": "nautilus-trading",
+      "version": "0.67.0",
+      "rust_version": "1.99.1",
+      "checksum": "b25bcccb31cf8dc836a8708b3e412befa80b1537d1b66c4aed52d9a01749c525",
+      "yanked": false
+    }
+  ]
+}

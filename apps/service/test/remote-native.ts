@@ -86,7 +86,7 @@ test('actual remote Nautilus preserves factor, forecast and shared-account resul
     for (const key of ['native_version', 'events', 'orders', 'positions', 'consumed_target_points', 'statistics', 'returns_kind', 'returns_status', 'returns_reason', 'returns', 'settled_replay_ns']) {
       assert.deepEqual(normalizeSignedZero(remoteAccount[key]), normalizeSignedZero(localAccount[key]), `Native account field ${key} must agree across the HTTP boundary`);
     }
-    assert.equal(remoteAccount.native_version, '0.63.0');
+    assert.equal(remoteAccount.native_version, '0.67.0');
     assert.ok(BigInt(String(remoteAccount.consumed_target_points)) > 0n);
     assert.ok(BigInt(String(remoteAccount.orders)) > 0n, 'The fixture must exercise native orders, not an empty account response');
     assert.ok(remoteAccount.canonical_result);

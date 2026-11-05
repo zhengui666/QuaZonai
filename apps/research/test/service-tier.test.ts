@@ -1,3 +1,4 @@
+import { assertFrozenInput } from './frozen-input.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -105,7 +106,7 @@ test('reopening a failed original Codex study keeps Fast and max on the recovere
     assert.deepEqual(controlled.requests.map(body => body.service_tier), ['priority', 'priority']);
     assert.deepEqual(controlled.requests.map(body => body.reasoning.effort), ['max', 'max']);
     assert.equal(controlled.requests[0]!.prompt_cache_key, controlled.requests[1]!.prompt_cache_key);
-    assert.deepEqual((await host.view(receipt.conversationId)).research!.input, original);
+    assertFrozenInput((await host.view(receipt.conversationId)).research!.input, original);
   } finally { await host.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

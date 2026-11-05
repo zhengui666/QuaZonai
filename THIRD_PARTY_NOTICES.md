@@ -6,7 +6,7 @@ The selected components below explain integration and attribution. The generated
 
 | Component | Upstream license | Use |
 |---|---|---|
-| Nautilus Rust 0.63.0 | [LGPL-3.0-only](licenses/nautilus-backtest-LGPL-3.0.txt) | Native BacktestEngine, model, trading, analysis, persistence and Polymarket adapters; original license text retained without implementation source |
+| Nautilus Rust 0.67.0 | [LGPL-3.0-only](licenses/nautilus-backtest-LGPL-3.0.txt) | Native BacktestEngine, model, trading, analysis, persistence and Polymarket adapters; original license text retained without implementation source |
 | Clarabel.rs 0.11.1 | Apache-2.0 | Native convex solver, not a QZ-owned numerical implementation |
 | GNU tar | GPL-3.0-or-later | Stream original recorded-cost archives through the installed upstream executable |
 | Zstandard CLI | BSD-3-Clause OR GPL-2.0-only | Decompress original `.tar.zst` inputs; native images retain installed tool/library copyright and common license files |

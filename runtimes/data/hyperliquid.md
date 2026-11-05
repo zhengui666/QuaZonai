@@ -398,7 +398,7 @@ The end date is exclusive UTC. Omit `--kind` for all declared streams, or repeat
 Build the optional operator:
 
 ```bash
-rustup run 1.98.1 cargo build --locked -p job \
+rustup run 1.99.1 cargo build --locked -p job \
   --features market-history,catalog-prepare --bin market-history --bin catalog-prepare --bin job
 ```
 

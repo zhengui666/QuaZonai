@@ -100,7 +100,7 @@ fn complete_catalog_reports_short_and_unobserved_series_without_filling_metrics(
     let (root, request) = mixed_catalog(0.0, false);
     let market = job::catalog::load_catalog(root.path(), &request.forecast.selection).unwrap();
     let mut bar = market.series[0].bars[0];
-    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+    let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
         root.path().to_str().unwrap(),
         None,
         Some(16),
@@ -148,7 +148,7 @@ fn catalog_scan_accepts_multiple_timeframes_for_the_same_instrument() {
         bar.ts_event = ((index as u64 + 1) * hour).into();
         bar.ts_init = (bar.ts_event.as_u64() + 1).into();
     }
-    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+    let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
         root.path().to_str().unwrap(),
         None,
         Some(16),
@@ -204,7 +204,7 @@ fn catalog_scan_retains_native_root_and_positive_price_validation() {
     bar.low = bar.open;
     bar.close = bar.open;
     let invalid = tempfile::tempdir().unwrap();
-    let catalog = nautilus_persistence::backend::catalog::ParquetDataCatalog::from_uri(
+    let catalog = nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog::from_uri(
         invalid.path().to_str().unwrap(),
         None,
         Some(16),

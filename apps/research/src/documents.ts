@@ -19,6 +19,7 @@ export const Study = defineDoc<{
   input: ResearchInput | null;
   trials: JsonObject[];
   final: JsonObject | null;
+  reviewSelection?: { trialId: number; version: string };
   deletedAt?: string;
   deletedFactors?: Record<string, string>;
   previousStops?: { previousSubmissionId: number; final: JsonObject }[];
@@ -29,6 +30,7 @@ export const Study = defineDoc<{
 
 export const Requests = defineDoc<{ requests: Record<string, {
   input: JsonValue; conversationId: ConversationId;
+  sourceEvidence?: JsonObject;
   recovery?: { previousSubmissionId: number; mode: 'model_error' | 'stopped' };
 }> }>({
   kind: 'qz.research-requests', version: 1, scope: 'session',

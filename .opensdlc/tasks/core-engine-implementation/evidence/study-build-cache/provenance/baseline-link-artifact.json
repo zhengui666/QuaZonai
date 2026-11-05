@@ -1,0 +1,9 @@
+{
+  "library": "/workspace/QuaZonai/target/release/deps/libjob-de838d0634674e13.rlib",
+  "library_sha256": "17fc4d440d604928a0cdddbad511e3cca2dfafeb1e729aff9274f950f9e7c895",
+  "dependency_record_sha256": "8d86480ae5ec808f11c7418e8e579f50b4ccf1a40d82641be0634d3815e56839",
+  "candidate_job_sha256": "e91934b6ee93819cd0c205a78e9f4d5f2d4b77daf59e7fef517534c7691901cd",
+  "baseline_job_sha256": "cdd26ea7abe0e7c858d2ed6d06a44951d33b3684421e3d0f5e27f9a63aa78af8",
+  "baseline_build_sha256": "52f174d05392238cebc34e70970049879dc588c1859eb9431a7c34027678de69",
+  "candidate_build_sha256": "9ac663a84bd0cf2a6400bfc5c47743f730c643f2cd27f8c04f22517d019138d0"
+}

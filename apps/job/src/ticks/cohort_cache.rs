@@ -287,7 +287,7 @@ impl Builder {
         if !self.outputs.contains_key(&id) {
             let path = format!(
                 "data/cohorts/{}.bin",
-                nautilus_persistence::backend::catalog::urisafe_instrument_id(&id)
+                nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(&id)
             );
             let file_path = self.root.join(&path);
             OpenOptions::new()
@@ -872,7 +872,7 @@ pub fn concatenate(
             if !outputs.contains_key(&record.instrument_id) {
                 let path = format!(
                     "data/cohorts/{}.bin",
-                    nautilus_persistence::backend::catalog::urisafe_instrument_id(
+                    nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id(
                         &record.instrument_id
                     )
                 );

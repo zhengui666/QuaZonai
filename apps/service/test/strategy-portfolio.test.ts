@@ -1,3 +1,4 @@
+import { Study } from '../../research/src/documents.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -47,7 +48,10 @@ for (const universe of [false, true]) test(`${universe ? 'fixed-universe' : 'leg
     state.faux.setResponses([
       fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'One ensemble wire protocol, not a profitability claim.', members, ...(universe ? { instrumentId: 'TEST.SIM' } : {}) }), { stopReason: 'toolUse' }),
       async () => {
-        const page = await state.service.research.list(); const view = await state.service.research.view(page.items[0]!.id);
+        const page = await state.service.research.list();
+        // Retained pre-review scientific account-replay fixture.
+        await state.service.research.harness.commit(async tx => { delete (await tx.doc(Study, page.items[0]!.id)).input!.policy.reviewPolicies; }, context);
+        const view = await state.service.research.view(page.items[0]!.id);
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Selection precedes final exposure.' }), { stopReason: 'toolUse' });
       },
     ]);
@@ -237,7 +241,10 @@ test('cross-market owner portfolio command accepts the originally admitted polic
     state.faux.setResponses([
       fauxAssistantMessage(fauxToolCall('strategy_portfolio_evaluate', { hypothesis: 'Multi-market owner-command protocol, not profitability.', members: [{ model: wat, weight: '1' }], allocations }), { stopReason: 'toolUse' }),
       async () => {
-        const page = await state.service.research.list(); const view = await state.service.research.view(page.items[0]!.id);
+        const page = await state.service.research.list();
+        // Retained pre-review scientific account-replay fixture.
+        await state.service.research.harness.commit(async tx => { delete (await tx.doc(Study, page.items[0]!.id)).input!.policy.reviewPolicies; }, context);
+        const view = await state.service.research.view(page.items[0]!.id);
         return fauxAssistantMessage(fauxToolCall('strategy_portfolio_finalize', { trialId: view.research!.trials[0]!.taskId, reason: 'Protocol-only original selection before independent assessment.' }), { stopReason: 'toolUse' });
       },
     ]);

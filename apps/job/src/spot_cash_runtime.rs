@@ -68,7 +68,7 @@ fn scenario(request: &NativeSimulationRequestV1) -> Result<&FrozenSpotFeeScenari
         return Err(anyhow!("SPOT_EXPLICIT_FEE_SCENARIO_ACCEPTANCE_REQUIRED"));
     };
     ensure!(
-        native_version == "0.63.0"
+        native_version == "0.67.0"
             && matches!(
                 parameters.acceptance,
                 SpotCashFeeAcceptanceV1::PublicRateScenarioUnverifiedApplicability

@@ -47,7 +47,7 @@ use tokio::sync::watch;
 
 use crate::{
     native_node_observer::NativeNodeObserver,
-    simulation::{paper_target_strategy, ReplayStatus},
+    simulation::{paper_target_strategy, PaperMakerTakerPolicy, ReplayStatus},
 };
 
 pub const EXECUTION_CLIENT: &str = "QZ-PAPER";
@@ -582,8 +582,7 @@ pub fn preflight_envelope(
         native_version: NATIVE_ACCOUNT_VERSION,
         instrument_ids,
         bar_types,
-        fee_basis:
-            "native public instrument default 0.001; simulated fees, not account commission rates",
+        fee_basis: "explicit simulated venue policy 0.001; not account commission rates",
         latency_basis:
             "native wall clock; Sandbox does not apply the historical StaticLatencyModel",
         connects_market_data: false,
@@ -669,6 +668,11 @@ impl PaperNode {
         let settings = &original.execution_settings;
         let (fill, _) = domain::portfolio::simulation_models(settings)?;
         let currency = Currency::from_str(&settings.base_currency)?;
+        let fee_model = MakerTakerFeeModel::new(
+            rust_decimal::Decimal::new(1, 3),
+            rust_decimal::Decimal::new(1, 3),
+        );
+        let fee_policy = PaperMakerTakerPolicy::from_model(Venue::from("BINANCE"), &fee_model);
         let mut node = LiveNode::builder(
             TraderId::new_checked(&config.trader_id)?,
             Environment::Sandbox,
@@ -697,13 +701,13 @@ impl PaperNode {
                 oms_type: OmsType::Netting,
                 account_type: AccountType::Margin,
                 base_currency: Some(currency),
-                starting_balances: vec![Money::from_str(&format!(
+                starting_balances: vec![Money::from_str_exact(&format!(
                     "{} {}",
                     settings.starting_capital.as_decimal().to_plain_string(),
                     settings.base_currency
                 ))
                 .map_err(anyhow::Error::msg)?],
-                fee_model: Some(FeeModelAny::MakerTaker(MakerTakerFeeModel)),
+                fee_model: Some(FeeModelAny::MakerTaker(fee_model)),
                 fill_model: Some(FillModelAny::Default(DefaultFillModel::new(
                     fill.prob_fill_on_limit
                         .as_decimal()
@@ -750,6 +754,7 @@ impl PaperNode {
             point,
             StrategyId::from("QZ-TARGET-001"),
             ClientId::from(EXECUTION_CLIENT),
+            Some(fee_policy),
         )?;
         if let TargetPackageEnvelopeV2::TargetDecision(p) = &claim.package {
             strategy.require_fresh_paper_account(p.account_start.clone())?;

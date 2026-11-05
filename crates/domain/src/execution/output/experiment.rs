@@ -15,7 +15,7 @@ pub(super) fn shape(value: &NativeExperimentEvaluationResultV1) -> Result<(), Do
     crate::control::text(&value.instrument_id, 1, 200, false)?;
     if value.native_versions
         != BTreeMap::from([
-            ("nautilus-backtest".into(), "0.63.0".into()),
+            ("nautilus-backtest".into(), "0.67.0".into()),
             ("solow-cv".into(), "0.7.3".into()),
             ("wasmi".into(), "2.0.0".into()),
         ])

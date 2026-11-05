@@ -6,6 +6,7 @@ import type { ResearchHost } from '../../research/src/host.ts';
 import { strategyMembers } from '../../research/src/strategy.ts';
 import { metrics } from './projections.ts';
 import { object, Problem } from './facts.ts';
+import { latestTrialReview } from '../../research/src/review-documents.ts';
 import type { ResearchAdmissions } from './facts.ts';
 
 export const factorId = (researchId: number, trialId: number, memberIndex: number) => `r${researchId}.t${trialId}.m${memberIndex}`;
@@ -55,7 +56,10 @@ export async function listFactors(host: ResearchHost, admissions?: ResearchAdmis
     const page = await host.list(cursor);
     for (const row of page.items) {
       const state = await host.state(row.id);
-      if (state.research) factors.push(...factorViews(row.id, state.research, admissions, state.originalSubmission?.requestId));
+      if (state.research) factors.push(...factorViews(row.id, state.research, admissions, state.originalSubmission?.requestId).map(view => {
+        const review = latestTrialReview(state.reviews, view.trialId);
+        return { ...view, review, ...(review && review.decision !== 'PASS' ? { combinable: false, reason: `review_${review.decision.toLowerCase()}` } : {}) };
+      }));
     }
     cursor = page.next;
   } while (cursor);
@@ -66,5 +70,7 @@ export async function readFactor(host: ResearchHost, id: string, admissions?: Re
   const state = await host.state(reference.researchId); const study = state.research;
   const view = study && factorViews(reference.researchId, study, admissions, state.originalSubmission?.requestId).find(item => item.id === id);
   if (!view || !study?.input) throw new Problem('factor_not_found', 404);
+  view.review = latestTrialReview(state.reviews, reference.trialId);
+  if (view.review && view.review.decision !== 'PASS') { view.combinable = false; view.reason = `review_${view.review.decision.toLowerCase()}`; }
   return { view, study, specification: study.input.specification as ResearchSpecification | undefined };
 }

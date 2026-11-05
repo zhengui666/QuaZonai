@@ -1,0 +1,28 @@
+{
+  "source_commit": "d7da6bff197bcbf272ba998ae0a15b2c1b25071c",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "cgroup_cpu_max": "400000 100000",
+  "kernel": "6.18.55",
+  "cases": [
+    [
+      256,
+      16
+    ],
+    [
+      32,
+      4096
+    ]
+  ],
+  "warmup_pairs": 5,
+  "measured_pairs": 30,
+  "profile": "release opt-level=3; production signals.rs included directly; matching Wasmi 2.0.0 features",
+  "source_sha256": "b7cd88d2b7b1da3f27399f4b4aee01c7423e4c2e81706bbe4e63615326e2f334",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "affinity_cpu": 0
+}

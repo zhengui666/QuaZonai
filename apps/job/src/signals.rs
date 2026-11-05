@@ -1,6 +1,7 @@
 //! Pure research computation using the native Wasmi interpreter.
 //! This module has no WASI, host imports, file, network, clock or credential access.
 use anyhow::{ensure, Result};
+use std::rc::Rc;
 use wasmi::{CompilationMode, Config, Engine, Instance, Linker, Module, Store, TypedFunc};
 
 type Arguments = (f64, f64, f64, f64, f64, f64, f64, f64);
@@ -21,6 +22,57 @@ pub struct SignalModule {
     engine: Engine,
     module: Module,
     fuel_metering: bool,
+}
+
+/// Only compiled code is retained, and only for the owning task. Limits bound
+/// entry count and retained source bytes, not the engine's compiled heap size
+/// or accepted model size: large models still run uncached under host resources.
+/// Each entry owns its Engine, released with the task. Once full, retain the
+/// admitted modules: repeated model-order scans must not evict every cache hit.
+pub(crate) struct SignalModuleCache {
+    entries: Vec<(Box<[u8]>, bool, Rc<SignalModule>)>,
+    source_bytes: usize,
+    max_entries: usize,
+    max_source_bytes: usize,
+}
+
+impl Default for SignalModuleCache {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            source_bytes: 0,
+            max_entries: 32,
+            max_source_bytes: 16 * 1024 * 1024,
+        }
+    }
+}
+
+impl SignalModuleCache {
+    /// Compile on the first actual invocation, after its request validation.
+    /// Exact bytes and metering mode identify code; mutable instances never do.
+    pub(crate) fn get_or_compile(
+        &mut self,
+        bytes: &[u8],
+        fuel_metering: bool,
+    ) -> Result<Rc<SignalModule>> {
+        if let Some((_, _, module)) = self
+            .entries
+            .iter()
+            .find(|(source, mode, _)| *mode == fuel_metering && source.as_ref() == bytes)
+        {
+            return Ok(Rc::clone(module));
+        }
+        let module = Rc::new(SignalModule::new(bytes, fuel_metering)?);
+        if self.entries.len() >= self.max_entries
+            || bytes.len() > self.max_source_bytes - self.source_bytes
+        {
+            return Ok(module);
+        }
+        self.source_bytes += bytes.len();
+        self.entries
+            .push((bytes.into(), fuel_metering, Rc::clone(&module)));
+        Ok(module)
+    }
 }
 
 impl SignalModule {
@@ -160,3 +212,7 @@ impl WasmSignal {
         self.remaining_fuel
     }
 }
+
+#[cfg(test)]
+#[path = "signals_cache_tests.rs"]
+mod cache_tests;

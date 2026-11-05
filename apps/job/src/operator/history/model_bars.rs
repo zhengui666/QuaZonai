@@ -8,7 +8,7 @@ use nautilus_model::{
     identifiers::{InstrumentId, TradeId},
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use parquet::{
     file::reader::{FileReader, SerializedFileReader},
     record::{Field, Row},

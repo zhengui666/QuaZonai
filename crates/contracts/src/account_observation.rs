@@ -3,7 +3,7 @@ use crate::{forward::ForwardEnvironmentV1, DbCounter, DecimalValue, Id, SchemaV1
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-pub const NATIVE_ACCOUNT_VERSION: &str = "0.63.0";
+pub const NATIVE_ACCOUNT_VERSION: &str = "0.67.0";
 pub const CONNECTION_STALE_SECONDS: i64 = 120;
 
 /// Exact wire version for observations retained by the opt-in native-client producer.

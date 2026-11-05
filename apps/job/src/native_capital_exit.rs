@@ -13,12 +13,13 @@ use contracts::{
     DecimalValue, Id, Revision, SchemaV1,
 };
 use nautilus_common::{actor::DataActorNative, enums::Environment};
-use nautilus_execution::models::fee::{FeeModel, FeeModelAny, FeeModelHandle, MakerTakerFeeModel};
+use nautilus_execution::models::fee::{FeeModel, FeeModelAny, FeeModelHandle};
 use nautilus_live::node::{LiveNode, NodeState};
 use nautilus_model::{
     data::QuoteTick,
     enums::{AccountType, LiquiditySide, OrderSide, OrderStatus, TimeInForce},
     events::{AccountState, PortfolioSnapshot},
+    fees::MakerTakerFeeRates,
     identifiers::{AccountId, ClientId, ClientOrderId, InstrumentId, StrategyId},
     instruments::{Instrument, InstrumentAny},
     orders::{Order, OrderAny},
@@ -52,10 +53,12 @@ pub struct NativeCapitalExitOwner {
     gate: CapitalExitGate,
     fee_model: FeeModelHandle,
     fee_shape: FeeShape,
+    /// Exact trusted venue configuration used by the native sandbox client.
+    venue_fee_rates: Option<MakerTakerFeeRates>,
     resolved_source: RefCell<Option<Id>>,
     check_runtime: Box<dyn Fn() -> Result<()>>,
     /// The frozen original quote survives later marks; not the cost basis/PnL.
-    reference_quotes: RefCell<Vec<(Id, QuoteTick, Decimal, Decimal)>>,
+    reference_quotes: RefCell<Vec<(Id, QuoteTick, Value)>>,
     /// Backtest clocks follow source time; they cannot prove wall-time freshness
     /// while a live public-data producer is silent.
     streaming_paper: bool,
@@ -73,6 +76,7 @@ struct NativeReport {
     snapshot: PortfolioSnapshot,
     account: AccountState,
     instrument: InstrumentAny,
+    fee_source: Value,
     quote: QuoteTick,
     orders: Vec<OrderAny>,
     positions: Vec<Position>,
@@ -182,7 +186,7 @@ impl NativeCapitalExitOwner {
                 && sandbox.starting_balances.len() == 1
                 && !sandbox.frozen_account
                 && sandbox.use_reduce_only
-                && sandbox.fee_model.as_ref().is_none_or(|m| matches!(
+                && sandbox.fee_model.as_ref().is_some_and(|m| matches!(
                     m,
                     FeeModelAny::MakerTaker(_) | FeeModelAny::ProbabilityPrice(_)
                 )),
@@ -243,6 +247,23 @@ impl NativeCapitalExitOwner {
             Ok(())
         });
         let resolved_source = RefCell::new(binding.account_source_id);
+        // Nautilus 0.67 itself rejects None: an explicit zero policy is distinct
+        // from an absent fee model. Resolve exactly the config installed above.
+        let configured_fee = sandbox
+            .fee_model
+            .clone()
+            .ok_or_else(|| anyhow!("capital_exit_explicit_native_fee_model_required"))?;
+        let venue_fee_rates = match &configured_fee {
+            FeeModelAny::MakerTaker(model) => model.schedule().rates_for(binding.instrument_id),
+            FeeModelAny::ProbabilityPrice(model) => {
+                model.schedule().rates_for(binding.instrument_id)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "capital_exit_sandbox_account_or_fee_model_unsupported"
+                ));
+            }
+        };
         Ok(Self {
             binding,
             resolved_source,
@@ -251,12 +272,8 @@ impl NativeCapitalExitOwner {
             session_id: node.instance_id().to_string(),
             trader_id: node.trader_id().to_string(),
             gate,
-            fee_model: FeeModelHandle::new(
-                sandbox
-                    .fee_model
-                    .clone()
-                    .unwrap_or(FeeModelAny::MakerTaker(MakerTakerFeeModel)),
-            ),
+            fee_model: FeeModelHandle::from(configured_fee),
+            venue_fee_rates: Some(venue_fee_rates),
             fee_shape: if matches!(sandbox.fee_model, Some(FeeModelAny::ProbabilityPrice(_))) {
                 FeeShape::ProbabilityPrice
             } else {
@@ -369,6 +386,7 @@ impl NativeCapitalExitOwner {
             gate,
             fee_model,
             fee_shape: FeeShape::Polymarket,
+            venue_fee_rates: None,
             resolved_source: RefCell::new(None),
             check_runtime,
             reference_quotes: RefCell::new(vec![]),
@@ -467,14 +485,17 @@ impl NativeCapitalExitOwner {
             .instrument(&self.binding.instrument_id)
             .ok_or_else(|| anyhow!("capital_exit_native_instrument_unavailable"))?;
         ensure!(
-            instrument.maker_fee() >= Decimal::ZERO
-                && instrument.taker_fee() >= Decimal::ZERO
+            self.venue_fee_rates
+                .is_none_or(|rates| rates.maker >= Decimal::ZERO && rates.taker >= Decimal::ZERO)
                 && instrument.quote_currency() == self.currency
                 && instrument.multiplier().as_decimal() == Decimal::ONE
                 && !instrument.is_inverse(),
             "capital_exit_fee_or_instrument_model_unsupported"
         );
-        if instrument.maker_fee() != Decimal::ZERO || instrument.taker_fee() != Decimal::ZERO {
+        if self
+            .venue_fee_rates
+            .is_some_and(|rates| rates.maker != Decimal::ZERO || rates.taker != Decimal::ZERO)
+        {
             ensure!(
                 matches!(&instrument, InstrumentAny::BinaryOption(_)),
                 "capital_exit_fee_price_bound_unavailable"
@@ -564,11 +585,20 @@ impl NativeCapitalExitOwner {
             .iter()
             .map(|o| serde_json::to_value(o.events()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let raw = json!({"native_version":nautilus_core::consts::NAUTILUS_VERSION_CORE,"native_fee_model": match self.fee_shape { FeeShape::MakerTaker => "nautilus_execution::models::fee::MakerTakerFeeModel", FeeShape::ProbabilityPrice => "nautilus_execution::models::fee::ProbabilityPriceFeeModel", FeeShape::Polymarket => "nautilus_polymarket::models::PolymarketFeeModel" },"environment":if self.streaming_paper {"PAPER_BACKTEST_ENGINE"} else {"SANDBOX"},"native_session_id":self.session_id,"native_trader_id":self.trader_id,"native_client_id":self.binding.client_id.to_string(),"snapshot":snapshot,"account_event":account,"instrument":instrument,"quote":quote,"order_events":original_orders,"positions":positions});
+        let fee_source = if let Some(rates) = self.venue_fee_rates {
+            json!({"source":"trusted_sandbox_venue_config","rates":rates})
+        } else {
+            let payload = crate::prediction::native_payload(&instrument)?;
+            domain::prediction::planning_fee(&payload)?;
+            json!({"source":"original_polymarket_instrument_info",
+                "fee_schedule":payload["info"]["fee_schedule"]})
+        };
+        let raw = json!({"native_version":nautilus_core::consts::NAUTILUS_VERSION_CORE,"native_fee_source":fee_source,"native_fee_model": match self.fee_shape { FeeShape::MakerTaker => "nautilus_execution::models::fee::MakerTakerFeeModel", FeeShape::ProbabilityPrice => "nautilus_execution::models::fee::ProbabilityPriceFeeModel", FeeShape::Polymarket => "nautilus_polymarket::models::PolymarketFeeModel" },"environment":if self.streaming_paper {"PAPER_BACKTEST_ENGINE"} else {"SANDBOX"},"native_session_id":self.session_id,"native_trader_id":self.trader_id,"native_client_id":self.binding.client_id.to_string(),"snapshot":snapshot,"account_event":account,"instrument":instrument,"quote":quote,"order_events":original_orders,"positions":positions});
         Ok(NativeReport {
             snapshot,
             account,
             instrument,
+            fee_source,
             quote,
             orders,
             positions,
@@ -595,8 +625,8 @@ impl NativeCapitalExitOwner {
             .as_decimal()
                 == &bigdecimal::BigDecimal::from(0)
         } else {
-            report.instrument.maker_fee() == Decimal::ZERO
-                && report.instrument.taker_fee() == Decimal::ZERO
+            self.venue_fee_rates
+                .is_some_and(|rates| rates.maker == Decimal::ZERO && rates.taker == Decimal::ZERO)
         };
         if !zero_rates {
             ensure!(
@@ -792,14 +822,11 @@ impl NativeCapitalExitOwner {
                 // Freeze the actual original quote keyed to the retained assessment
                 // source, without substituting a future quote on start/resume.
                 let mut quotes = self.reference_quotes.borrow_mut();
-                if let Some((_, previous, maker, taker)) = quotes
+                if let Some((_, previous, fee_source)) = quotes
                     .iter()
                     .find(|(id, ..)| *id == max_execution_cost.reference_evidence_id)
                 {
-                    if previous != &report.quote
-                        || *maker != report.instrument.maker_fee()
-                        || *taker != report.instrument.taker_fee()
-                    {
+                    if previous != &report.quote || fee_source != &report.fee_source {
                         reasons.push("capital_exit_reference_evidence_conflict".into());
                     }
                 } else {
@@ -807,8 +834,7 @@ impl NativeCapitalExitOwner {
                     quotes.push((
                         max_execution_cost.reference_evidence_id,
                         report.quote,
-                        report.instrument.maker_fee(),
-                        report.instrument.taker_fee(),
+                        report.fee_source.clone(),
                     ));
                 }
                 let holdings = report
@@ -1158,7 +1184,7 @@ impl NativeCapitalExitOwner {
         } = &view.policy
         {
             let references = self.reference_quotes.borrow();
-            let (_, quote, maker, taker) = references
+            let (_, quote, fee_source) = references
                 .iter()
                 .find(|(id, ..)| *id == max_execution_cost.reference_evidence_id)
                 .ok_or_else(|| anyhow!("capital_exit_original_cost_reference_unavailable"))?;
@@ -1173,8 +1199,7 @@ impl NativeCapitalExitOwner {
                         && quote.ask_price == report.quote.ask_price
                         && quote.bid_size == report.quote.bid_size
                         && quote.ask_size == report.quote.ask_size
-                        && *maker == report.instrument.maker_fee()
-                        && *taker == report.instrument.taker_fee(),
+                        && fee_source == &report.fee_source,
                     "capital_exit_preview_quote_or_fee_changed"
                 );
             }
@@ -1296,16 +1321,15 @@ impl NativeCapitalExitOwner {
                 );
                 let leg = &legs[0];
                 let floor = exact(&leg.minimum_sell_price)?;
-                let (original_quote, original_maker_fee, original_taker_fee) = self
+                let (original_quote, original_fee_source) = self
                     .reference_quotes
                     .borrow()
                     .iter()
                     .find(|(id, ..)| *id == max_execution_cost.reference_evidence_id)
-                    .map(|(_, q, maker, taker)| (*q, *maker, *taker))
+                    .map(|(_, q, fee_source)| (*q, fee_source.clone()))
                     .ok_or_else(|| anyhow!("capital_exit_original_cost_reference_unavailable"))?;
                 ensure!(
-                    report.instrument.maker_fee() == original_maker_fee
-                        && report.instrument.taker_fee() == original_taker_fee,
+                    report.fee_source == original_fee_source,
                     "capital_exit_fee_evidence_changed"
                 );
                 let cumulative = report

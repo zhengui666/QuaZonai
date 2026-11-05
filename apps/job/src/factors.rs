@@ -182,12 +182,22 @@ pub fn evaluate_factor(
             end_ns,
             metric: metric(selected())?,
             assets,
+            diagnostics: if partition == NativeFactorPartitionV1::Train {
+                None
+            } else {
+                Some(crate::review_science::factor_diagnostics(
+                    &points,
+                    partition,
+                    horizon.max(1),
+                    contracts::review_science::NativeReviewFactorScopeV1::PooledTimeSeries,
+                )?)
+            },
         })
     })
     .collect::<Result<Vec<_>>>()?;
     let mut native_versions = forecast.native_versions;
     native_versions.extend(BTreeMap::from([
-        ("nautilus-model".into(), "0.63.0".into()),
+        ("nautilus-model".into(), "0.67.0".into()),
         ("ndarray".into(), "0.17.1".into()),
         ("ndarray-stats".into(), "0.7.0".into()),
     ]));

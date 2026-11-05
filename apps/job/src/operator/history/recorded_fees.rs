@@ -5,7 +5,7 @@ use anyhow::{ensure, Context, Result};
 use bigdecimal::BigDecimal;
 use contracts::{recorded_fees::*, science::NativeBarSelectionV1, DbCounter, SchemaV1};
 use nautilus_model::data::{Bar, TradeTick};
-use nautilus_persistence::backend::catalog::urisafe_instrument_id;
+use nautilus_persistence::backend::parquet::catalog::urisafe_instrument_id;
 use nautilus_serialization::arrow::DecodeFromRecordBatch;
 use parquet::{
     arrow::arrow_reader::ParquetRecordBatchReaderBuilder,

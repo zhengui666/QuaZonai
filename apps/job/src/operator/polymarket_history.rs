@@ -11,7 +11,7 @@ use nautilus_model::{
     instruments::{Instrument, InstrumentAny},
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use nautilus_polymarket::http::{
     data_api::PolymarketDataApiHttpClient,
     gamma::PolymarketGammaRawHttpClient,
@@ -26,7 +26,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const NATIVE_VERSION: &str = "0.63.0";
+const NATIVE_VERSION: &str = "0.67.0";
 
 #[path = "history/archive.rs"]
 mod archive;
@@ -282,8 +282,8 @@ fn validate(archive: &NativeArchive) -> Result<()> {
         if delta.action == BookAction::Clear {
             ensure!(
                 delta.order.side.is_none()
-                    && delta.order.price.raw == 0
-                    && delta.order.size.raw == 0
+                    && delta.order.price.raw() == 0
+                    && delta.order.size.raw() == 0
                     && delta.order.order_id == 0,
                 "INVALID_BOOK_CLEAR"
             );
@@ -671,14 +671,17 @@ mod tests {
         let root = target.join("catalog");
         let mut catalog =
             ParquetDataCatalog::from_uri(root.to_str().unwrap(), None, None, None, None).unwrap();
-        let instruments = catalog.instruments(None, None, None).unwrap();
+        let instruments = catalog
+            .query_instruments_filtered(None, None, None)
+            .unwrap();
         assert_eq!(instruments.len(), 1);
         assert_eq!(instruments[0].id(), expected_id);
         let rows = catalog
             .query::<TradeTick>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(rows.len(), 2);
         assert!(target.join("source-evidence.json").exists());
         assert!(!root.join("source-evidence.json").exists());
@@ -706,8 +709,9 @@ mod tests {
         let rows = catalog
             .query::<InstrumentClose>(None, None, None, None, None, true)
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+            .into_iter()
+            .map(nautilus_model::data::Data::from)
+            .collect::<Vec<_>>();
         assert_eq!(
             rows,
             vec![nautilus_model::data::Data::InstrumentClose(expected)]
@@ -812,8 +816,9 @@ mod tests {
                     catalog
                         .query::<$kind>(Some(vec![$key]), None, None, None, None, true)
                         .unwrap()
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap()
+                        .into_iter()
+                        .map(nautilus_model::data::Data::from)
+                        .collect::<Vec<_>>()
                 };
             }
             assert_eq!(rows!(TradeTick, id.to_string()).len(), 2);
@@ -947,7 +952,7 @@ mod tests {
             .deltas
             .iter()
             .copied()
-            .map(Data::Delta)
+            .map(Data::BookDelta)
             .collect::<Vec<_>>();
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("arrival-order");
@@ -960,8 +965,9 @@ mod tests {
                 catalog
                     .query::<$kind>(Some(vec![id.to_string()]), None, None, None, None, true)
                     .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap()
+                    .into_iter()
+                    .map(nautilus_model::data::Data::from)
+                    .collect::<Vec<_>>()
             };
         }
         assert_eq!(rows!(TradeTick), trades);

@@ -1,0 +1,25 @@
+{
+  "recordedAtUtc": "2026-10-30T04:17:56.529376+00:00",
+  "testNode": "v22.19.0",
+  "tests": {
+    "pass": 38,
+    "fail": 0,
+    "skipped": 0,
+    "command": "node --experimental-strip-types --test apps/research/test/native-json.test.ts apps/research/test/native-evidence.test.ts apps/service/test/pm-evidence.test.ts apps/research/test/remote-native.test.ts apps/nautilus/test/server.test.ts"
+  },
+  "typechecksPassed": [
+    "npm --prefix apps/research run typecheck",
+    "npm --prefix apps/service run typecheck",
+    "npm --prefix apps/nautilus run typecheck"
+  ],
+  "fullNativeHttpAndCi": "Not claimed here; final-head acceptance belongs to the coordinating core/CI run",
+  "sha256": {
+    "apps/research/src/native-json.ts": "20e51bdafa73ceae50d212e9bde8ca5a6d1482d39c7f1544d2aa41215cc26fb5",
+    "apps/service/src/pm-evidence.ts": "b318d7131364440dc43864652611e0ca5111c62d2680f107a7224c63b924c3f6",
+    "apps/research/plugins/native-evidence.ts": "fa7a62d3656f1d9b821b75aba00294ebfff4b36ef7eca23b38392a9b27186bbd",
+    "apps/research/test/native-json.test.ts": "4a5a3facdd24cd4f32b2aa3eec77ff505473d0ad02981d6652cf69828928fa47",
+    "apps/research/test/native-evidence.test.ts": "78a15ac58b78e9a4771bd42814ece873c57f4adef29418a09aa08f8d62d9c045",
+    "apps/service/test/pm-evidence.test.ts": "968a84ed59bab028f630539b28eadac394d252b03e9514d0d7063d6a262b5420"
+  },
+  "reviewCorrection": "Finite dynamic ancestor getters use original recursive token traversal only for ancestor revisits; per-pull bytes and getter counts match the original; ordinary JSON keeps explicit stack."
+}

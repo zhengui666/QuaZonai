@@ -1,3 +1,4 @@
+import { startLegacyResearch } from './legacy-study.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
@@ -42,7 +43,7 @@ for (const spot of [false, true]) test(`native fitted ${spot ? 'spot restart bri
     transcript => tool('strategy_portfolio_finalize', { trialId: last(transcript, 'strategy_ensemble_evaluate').trialId!, reason: 'Protocol-only independent replay with the frozen native fit' }),
   ]);
   try {
-    const receipt = await host.start('fitted-original', input);
+    const receipt = await startLegacyResearch(host, 'fitted-original', input);
     if (spot) {
       const deadline = Date.now() + 10_000;
       while (!(await readFile(log, 'utf8').catch(() => '')).includes('"command":"simulate"')) { assert.ok(Date.now() < deadline, 'original replay reached native boundary'); await delay(15); }
@@ -56,7 +57,7 @@ for (const spot of [false, true]) test(`native fitted ${spot ? 'spot restart bri
     const child = await host.harness.getTask(result.evidenceTaskId as TaskId<JsonObject>, context);
     assert.equal(child!.state.outcome!.status, 'completed');
     const native = await readNativeEvidence(host.harness, receipt.conversationId, child!.id, object(child!.state.outcome!.status === 'completed' ? child!.state.outcome!.result.native : null, 'native'), context);
-    assert.ok(object(native.fitRequest, 'fit-request').members); assert.equal(object(native.catalogPrefix, 'original-prefix').method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V1'); assert.equal(object(native.fit, 'fit').fit_end_ns, '10');
+    assert.ok(object(native.fitRequest, 'fit-request').members); assert.equal(object(native.catalogPrefix, 'original-prefix').method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V2'); assert.equal(object(native.fit, 'fit').fit_end_ns, '10');
     const calls = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { command: string; input: JsonObject; args: string[] });
     assert.equal(calls.filter(call => call.command === 'fit-ensemble').length, 1); assert.equal(calls.filter(call => call.command === 'apply-ensemble').length, spot ? 3 : 2);
     const simulations = calls.filter(call => call.command === 'simulate'); assert.equal(simulations.length, spot ? 3 : 2);
@@ -73,7 +74,7 @@ for (const spot of [false, true]) test(`native fitted ${spot ? 'spot restart bri
     }
     assert.equal(JSON.stringify((await host.view(receipt.conversationId)).entries).includes('RAW_TRAIN_PANEL_NOT_MODEL_VISIBLE'), false);
     const count = calls.length; await host.close(); host = await openResearch(options);
-    assert.deepEqual(await host.start('fitted-original', input), receipt); assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, count);
+    assert.deepEqual(await startLegacyResearch(host, 'fitted-original', input), receipt); assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, count);
   } finally { await host.close(); if (previous === undefined) delete process.env.QZ_JOB_BINARY; else process.env.QZ_JOB_BINARY = previous; await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -94,7 +95,7 @@ test('a changed native prefix cannot produce a fit or replay under the original 
     assert.equal(calls.filter(call => call.command === 'fit-ensemble').length, 0, 'changed panel source must not be fitted');
     await configure(); await writeFile(prefixFile, 'original complete prefix');
     const fit = await fitNativeEnsemble(input, context);
-    assert.equal(object(fit.evidence.catalogPrefix, 'original-prefix').method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V1');
+    assert.equal(object(fit.evidence.catalogPrefix, 'original-prefix').method, 'NAUTILUS_SELECTED_PREFIX_SHA256_V2');
     await writeFile(prefixFile, 'changed historical rows');
     await assert.rejects(replayFittedEnsemble({ ...input, fit: fit.evidence.fit,
       catalogPrefix: fit.evidence.catalogPrefix, partition: 'VALIDATION', policy: { name: 'wire-policy', kind: 'factor-threshold', instrumentId: 'TEST.SIM', threshold: 0,

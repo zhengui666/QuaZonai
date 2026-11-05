@@ -55,6 +55,7 @@ fn export_disjoint_native_pm_revision_when_requested() {
     let bodies = ["local.get 0", "f64.const 1 local.get 0 f64.div"];
     let modules: Vec<_> = bodies.iter().map(|body| market::module(body)).collect();
     let fit_request = NativeEnsembleFitRequestV1 {
+        review_prior: None,
         schema_version: SchemaV1,
         fit_end_ns: factor_request.train_end_ns,
         folds: [(1080, 2160), (2160, 3240), (3240, 4320)]
@@ -98,8 +99,10 @@ fn export_disjoint_native_pm_revision_when_requested() {
         .iter()
         .flat_map(|member| member.calibrations.iter().map(|calibration| serde_json::json!({"intercept":calibration.intercept, "slope":calibration.slope})))
         .collect();
-    assert_ne!(next_calibrations, first_calibrations,
-        "The changed original prices must produce fresh native calibration evidence, independent of member IDs.");
+    assert_ne!(
+        next_calibrations, first_calibrations,
+        "The changed original prices must produce fresh native calibration evidence, independent of member IDs."
+    );
     fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
         std::fs::create_dir_all(destination).unwrap();
         for entry in std::fs::read_dir(source).unwrap() {

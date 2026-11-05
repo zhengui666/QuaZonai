@@ -28,6 +28,7 @@ export const finalizeGroup = defineTool({
         // This legacy grouping protocol has no shared typed comparison basis or
         // downstream consumer binding. Campaigns use their registered finalizer.
         if (study.input.campaign) throw new Error('campaign_group_finalization_unsupported');
+        if (study.input.policy.reviewPolicy !== undefined || study.input.policy.reviewPolicies !== undefined) throw new Error('reviewed_group_finalization_requires_individual_reviews');
         if (study.final && (study.final.taskId !== api.taskId || study.final.trialId !== selection.trialId)) throw new Error('research_already_final');
         const trial = study.trials.find((trial) => trial.taskId === selection.trialId);
         if (trial?.status !== 'COMPUTED') throw new Error('selected_trial_not_computed');

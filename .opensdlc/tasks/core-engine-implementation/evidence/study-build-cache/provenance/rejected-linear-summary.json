@@ -1,0 +1,50 @@
+{
+  "measurement_included": false,
+  "case": {
+    "origin": "FIXTURE",
+    "rows_per_asset": 64,
+    "assets": 2,
+    "models": 16,
+    "cutoffs_ns": [
+      "1020000000001",
+      "1200000000001",
+      "1380000000001",
+      "1560000000001",
+      "1740000000001",
+      "1920000000001",
+      "2100000000001",
+      "2280000000001",
+      "2460000000001",
+      "2640000000001",
+      "2820000000001",
+      "3000000000001",
+      "3180000000001",
+      "3360000000001",
+      "3540000000001",
+      "3720000000001"
+    ],
+    "first_evaluation_bar": 17,
+    "step_seconds": 180,
+    "explicit_fuel_per_model": "100000000",
+    "build_cache_reuse_expected": 0,
+    "study_compilations_baseline_expected": 256,
+    "study_compilations_cached_expected": 16,
+    "count_kind": "structural expectations; no production compilation counter added"
+  },
+  "observed_frames": 11,
+  "observed_consumed_fuel": "38400",
+  "simulation": null,
+  "last_allocation": {
+    "schema_version": 1,
+    "solver_status": "FAILED",
+    "reason_code": "INACCURATE_RESULT_NOT_AUTHORIZED",
+    "targets": null,
+    "cash_weight": null,
+    "cvar_risk_budget_witness": null,
+    "iterations": 10,
+    "objective_value": 1.407093480174835e-10,
+    "primal_residual": 2.8542683652828176e-13,
+    "dual_residual": 1.7136136282343686e-10
+  },
+  "action": "changed only the declared synthetic fixture price path; original solver tolerance and reject-inaccurate policy retained"
+}

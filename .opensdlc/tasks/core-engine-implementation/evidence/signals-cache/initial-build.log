@@ -1,0 +1,29 @@
+   Compiling libm v0.2.16
+   Compiling leb128fmt v0.1.0
+   Compiling wasmi_ir v2.0.0
+   Compiling wasmparser v0.228.0
+   Compiling wasm-encoder v0.258.0
+   Compiling wasmi_core v2.0.0
+   Compiling memchr v2.8.3
+   Compiling unicode-width v0.2.2
+   Compiling anyhow v1.0.104
+   Compiling wasmi v2.0.0
+   Compiling bitflags v2.13.1
+   Compiling bumpalo v3.20.3
+   Compiling wast v258.0.0
+   Compiling wasmi_collections v2.0.0
+   Compiling spin v0.9.9
+   Compiling wat v1.258.0
+   Compiling qz-signals-cache-bench v0.0.0 (/workspace/QuaZonai/.opensdlc/tasks/core-engine-implementation/evidence/signals-cache)
+warning: associated function `new` is never used
+   --> src/../../../../../../apps/job/src/signals.rs:164:12
+    |
+163 | impl WasmSignal {
+    | --------------- associated function in this implementation
+164 |     pub fn new(
+    |            ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `qz-signals-cache-bench` (bin "qz-signals-cache-bench") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 49s

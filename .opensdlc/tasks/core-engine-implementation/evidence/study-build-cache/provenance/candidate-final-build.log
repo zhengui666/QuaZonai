@@ -1,0 +1,58 @@
+warning: associated function `open_fresh_paper` is never used
+  --> apps/job/src/capital_exit_gate.rs:69:19
+   |
+44 | impl CapitalExitGate {
+   | -------------------- associated function in this implementation
+...
+69 |     pub(crate) fn open_fresh_paper(
+   |                   ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `active_opportunities` is never used
+   --> apps/job/src/catalog_ensemble_policy.rs:460:12
+    |
+204 | impl CatalogEnsemblePolicy {
+    | -------------------------- method in this implementation
+...
+460 |     pub fn active_opportunities(&self) -> usize {
+    |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Polymarket` is never constructed
+  --> apps/job/src/native_capital_exit.rs:72:5
+   |
+69 | enum FeeShape {
+   |      -------- variant in this enum
+...
+72 |     Polymarket,
+   |     ^^^^^^^^^^
+   |
+   = note: `FeeShape` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: associated function `attach_streaming_paper` is never used
+   --> apps/job/src/native_capital_exit.rs:305:19
+    |
+168 | impl NativeCapitalExitOwner {
+    | --------------------------- associated function in this implementation
+...
+305 |     pub(crate) fn attach_streaming_paper(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `require_capital_exit_gate`, `await_capital_exit_source`, and `authenticated_capital_exit_source` are never used
+   --> apps/job/src/simulation.rs:432:19
+    |
+349 | impl TargetReplay {
+    | ----------------- methods in this implementation
+...
+432 |     pub(crate) fn require_capital_exit_gate(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+443 |     pub(crate) fn await_capital_exit_source(&mut self) {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+448 |     pub(crate) fn authenticated_capital_exit_source(&mut self) {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `job` (lib) generated 5 warnings
+   Compiling job v3.0.0-dev.1 (/tmp/qz-study-build-cache-20261030/candidate/apps/job)
+    Finished `release` profile [optimized] target(s) in 9.15s

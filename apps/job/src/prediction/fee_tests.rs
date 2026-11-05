@@ -70,49 +70,50 @@ fn buy_and_sell_sub_collateral_fills_preserve_original_official_money() {
 }
 
 #[test]
-fn five_decimal_rounding_is_checked_per_fill_against_exact_frozen_bound() {
+fn native_taker_truncation_and_maker_rounding_match_independent_decimal_boundaries() {
     let instrument = &fixture::instruments("0.05", 18 * fixture::STEP)[0];
-    for (quantity, accepted) in [
-        ("0.000400", true),
-        ("0.000480", false),
-        ("0.000499", false),
-        ("0.000500", true),
+    // Original source info remains rate=0.05, rebateRate=0.2, exponent=1.
+    // At p=0.4 the exact taker amount is quantity * 0.012. Nautilus 0.67
+    // truncates taker commissions to five places; maker rebates use half-even.
+    for (liquidity, quantity, expected) in [
+        (LiquiditySide::Taker, "0.000400", "0"),
+        (LiquiditySide::Taker, "0.000480", "0"),
+        (LiquiditySide::Taker, "0.000833", "0"),
+        (LiquiditySide::Taker, "0.000834", "0.00001"),
+        (LiquiditySide::Taker, "0.001666", "0.00001"),
+        (LiquiditySide::Taker, "0.001667", "0.00002"),
+        (LiquiditySide::Maker, "0.002083", "0"),
+        (LiquiditySide::Maker, "0.002084", "-0.00001"),
+        (LiquiditySide::Maker, "0.006250", "-0.00002"),
     ] {
         let order = order(
             instrument,
             OrderSide::Buy,
-            LiquiditySide::Taker,
+            liquidity,
             false,
             "rounding-fill",
         );
         let qty = Quantity::from(quantity);
         let px = Price::from("0.4000");
-        let oracle = PolymarketFeeModel
+        let official = PolymarketFeeModel
             .get_commission(&order, qty, px, instrument)
             .unwrap();
-        let actual = SettlementAwarePolymarketFee.get_commission(&order, qty, px, instrument);
-        if accepted {
-            assert_eq!(actual.unwrap(), oracle, "quantity={quantity}");
-        } else {
-            assert_eq!(oracle.as_decimal(), Decimal::from_str("0.00001").unwrap());
-            assert!(
-                actual
-                    .unwrap_err()
-                    .to_string()
-                    .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"),
-                "quantity={quantity}"
-            );
-        }
+        let actual = SettlementAwarePolymarketFee
+            .get_commission(&order, qty, px, instrument)
+            .unwrap();
+        assert_eq!(actual, official, "quantity={quantity}");
+        assert_eq!(
+            actual.as_decimal(),
+            Decimal::from_str(expected).unwrap(),
+            "quantity={quantity}"
+        );
+        let bound = BigDecimal::from_str(quantity).unwrap()
+            * BigDecimal::from_str("0.4").unwrap()
+            * domain::prediction::planning_fee(&native_payload(instrument).unwrap())
+                .unwrap()
+                .as_decimal();
+        assert!(BigDecimal::from_str(&actual.as_decimal().to_string()).unwrap() <= bound);
     }
-    let bound = bigdecimal::BigDecimal::from_str("0.000480").unwrap()
-        * bigdecimal::BigDecimal::from_str("0.4").unwrap()
-        * domain::prediction::planning_fee(&native_payload(instrument).unwrap())
-            .unwrap()
-            .as_decimal();
-    assert_eq!(
-        bound,
-        bigdecimal::BigDecimal::from_str("0.00000960096").unwrap()
-    );
 }
 
 #[test]
@@ -128,7 +129,7 @@ fn two_small_native_fills_are_not_combined_before_rounding_or_oracle_comparison(
     let px = Price::from("0.4000");
     let mut total = Decimal::ZERO;
     for _ in 0..2 {
-        let qty = Quantity::from("0.000250");
+        let qty = Quantity::from("0.000500");
         let oracle = PolymarketFeeModel
             .get_commission(&order, qty, px, instrument)
             .unwrap();
@@ -139,12 +140,12 @@ fn two_small_native_fills_are_not_combined_before_rounding_or_oracle_comparison(
         total += actual.as_decimal();
     }
     assert_eq!(total, Decimal::ZERO);
-    assert!(
+    assert_eq!(
         PolymarketFeeModel
-            .get_commission(&order, Quantity::from("0.000500"), px, instrument)
+            .get_commission(&order, Quantity::from("0.001000"), px, instrument)
             .unwrap()
-            .as_decimal()
-            > total
+            .as_decimal(),
+        Decimal::from_str("0.00001").unwrap()
     );
 }
 
@@ -279,16 +280,26 @@ fn only_native_reduce_only_expiration_orders_have_zero_redemption_fee() {
             reduce,
             id,
         );
-        assert!(SettlementAwarePolymarketFee
+        let charged = SettlementAwarePolymarketFee
             .get_commission(
                 &ordinary,
-                Quantity::from("0.000480"),
+                Quantity::from("2.000000"),
                 Price::from("0.4000"),
-                instrument
+                instrument,
             )
-            .unwrap_err()
-            .to_string()
-            .contains("POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"));
+            .unwrap();
+        assert_eq!(charged.as_decimal(), Decimal::from_str("0.024").unwrap());
+        assert_eq!(
+            charged,
+            PolymarketFeeModel
+                .get_commission(
+                    &ordinary,
+                    Quantity::from("2.000000"),
+                    Price::from("0.4000"),
+                    instrument
+                )
+                .unwrap()
+        );
     }
 }
 
@@ -387,10 +398,10 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
     let same_run = observer.clone();
     let observed = observer.wrap(FeeModelHandle::new(SettlementAwarePolymarketFee));
     let handle_clone = observed.clone();
-    let first = order(
+    let mut first = order(
         &instruments[0],
         OrderSide::Buy,
-        LiquiditySide::Taker,
+        LiquiditySide::NoLiquiditySide,
         false,
         "first-fill",
     );
@@ -403,10 +414,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
             None,
         )
         .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
-    );
+    assert_eq!(error.to_string(), "Liquidity side not set");
     let later = order(
         &instruments[1],
         OrderSide::Buy,
@@ -424,6 +432,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
         )
         .unwrap_err();
     assert_eq!(error.to_string(), "POLYMARKET_FILL_QUANTITY_PRICE_RANGE");
+    first.set_liquidity_side(LiquiditySide::Taker);
     let qty = Quantity::from("2.000000");
     let px = Price::from("0.4000");
     assert_eq!(
@@ -435,7 +444,7 @@ fn fill_observer_first_error_is_sticky_across_clones_but_isolated_between_runs()
             .unwrap()
     );
     let failure = same_run.failure().unwrap();
-    assert_eq!(failure.reason, "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND");
+    assert_eq!(failure.reason, "Liquidity side not set");
     assert_eq!(failure.client_order_id, first.client_order_id());
     assert_eq!(failure.instrument_id, instruments[0].id());
     assert_eq!(failure.quantity, Quantity::from("0.000480"));
@@ -474,12 +483,9 @@ fn unobserved_capital_estimates_cannot_pollute_the_venue_fill_observer() {
     let qty = Quantity::from("2.000000");
     let px = Price::from("0.4000");
     let estimate = adapter
-        .get_commission(&order, Quantity::from("0.000480"), px, instrument)
+        .get_commission(&order, Quantity::from("0.000000"), px, instrument)
         .unwrap_err();
-    assert_eq!(
-        estimate.to_string(),
-        "POLYMARKET_FILL_FEE_EXCEEDS_PLANNING_BOUND"
-    );
+    assert_eq!(estimate.to_string(), "POLYMARKET_FILL_QUANTITY_PRICE_RANGE");
     assert!(observer.check().is_ok());
     assert_eq!(
         venue.get_commission(&order, qty, px, instrument).unwrap(),

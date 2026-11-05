@@ -20,6 +20,9 @@ export const wat = '(module (func (export "predict") (param f64 f64 f64 f64 f64 
 export const controlledResearch = defineExtension({ name: 'test.protocol-research', tools: [defineTool({
   name: 'controlled_trial', description: 'Test-only model/science protocol', parameters: Type.Object({}), replay: 'safe',
   async execute(_args, api, ctx) {
+    // This controlled tool reconstructs an already-qualified pre-review study;
+    // it never claims to exercise the new production review/qualification chain.
+    await api.commit(async tx => { const original = await tx.doc(Study, api.conversationId); if (!original.trials.length) delete original.input!.policy.reviewPolicies; }, ctx);
     const study = (await api.snapshot(Study, api.conversationId, ctx))!;
     const result: JsonObject = { request: study.input!.data.request!, partitions: [{ partition: 'HELDOUT', metric: { counts: { included: '2' }, pearson_ic: { value: null, status: 'CONSTANT_SCORE' } } }] };
     await evaluateTrial(api, ctx, { hypothesis: 'Controlled protocol', model: wat }, async () => result);

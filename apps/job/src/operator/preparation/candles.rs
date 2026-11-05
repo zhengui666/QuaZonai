@@ -591,7 +591,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
         decision_cutoff_ns: counter(cutoff.as_u64())?,
         maximum_rows: u32::try_from(bars.len())?,
     };
-    let report = json!({"schema_version":1, "native_version":"0.63.0", "source_provider":PROVIDER,
+    let report = json!({"schema_version":1, "native_version":"0.67.0", "source_provider":PROVIDER,
     "source_record_kind":"OHLCV_CANDLE", "native_selection":native_selection, "instruments":1,
     "instrument_versions":instruments.len(), "bars":bars.len(), "catalog_relative_path":"catalog",
     "source_evidence_relative_path":"source-evidence.json", "native_readback_verified":true,

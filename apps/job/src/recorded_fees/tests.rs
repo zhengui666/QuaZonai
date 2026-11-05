@@ -1,7 +1,7 @@
 use super::*;
 use crate::catalog::NativeBarSeries;
 use contracts::SchemaV1;
-use nautilus_common::clock::TestClock;
+use nautilus_common::clock::VirtualClock;
 use nautilus_model::{
     data::{Bar, BarType},
     enums::{LiquiditySide, OrderSide, OrderType},
@@ -45,6 +45,8 @@ pub(super) fn market() -> NativeMarketData {
         })
         .collect();
     NativeMarketData {
+        execution_fees: None,
+        fee_selection: None,
         series: vec![NativeBarSeries {
             instrument,
             instrument_updates: vec![],
@@ -82,7 +84,7 @@ fn source() -> RecordedTradeFeesV1 {
     }
 }
 pub(super) fn model() -> (RecordedFeeModel, Rc<RefCell<dyn Clock>>) {
-    let clock: Rc<RefCell<dyn Clock>> = Rc::new(RefCell::new(TestClock::new()));
+    let clock: Rc<RefCell<dyn Clock>> = Rc::new(RefCell::new(VirtualClock::new()));
     set_time(&clock, MINUTE_NS);
     (
         RecordedFeeModel::new(source(), &market(), clock.clone()).unwrap(),
@@ -93,7 +95,7 @@ pub(super) fn set_time(clock: &Rc<RefCell<dyn Clock>>, time: u64) {
     clock
         .borrow_mut()
         .as_any_mut()
-        .downcast_mut::<TestClock>()
+        .downcast_mut::<VirtualClock>()
         .unwrap()
         .set_time(time.into());
 }
@@ -251,7 +253,7 @@ pub(super) fn native_scenario() -> (
     contracts::science::NativeSimulationRequestV1,
 ) {
     use contracts::{portfolio::AllocationTargetV1, science::*};
-    use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
     let directory = tempfile::tempdir().unwrap();
     let mut data = market();
     let mut source = source();
@@ -290,9 +292,9 @@ pub(super) fn native_scenario() -> (
     .unwrap();
     let settings: NativeSimulationSettingsV1 = serde_json::from_value(serde_json::json!({
         "schema_version":1,"base_currency":"pUSD","starting_capital":"3000","account_kind":"MARGIN","leverage":"1",
-        "fee_model":{"schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_FEES","native_version":"0.63.0","parameters":{}},
-        "fill_model":{"schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL","upstream_class":"nautilus_execution::models::fill::DefaultFillModel","upstream_version":"0.63.0","parameters":{"prob_fill_on_limit":"1","prob_slippage":"0","random_seed":"1"}},
-        "latency_model":{"schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY","upstream_class":"nautilus_execution::models::latency::StaticLatencyModel","upstream_version":"0.63.0","parameters":{"base_latency_ns":"1","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}},
+        "fee_model":{"schema_version":1,"adapter_kind":"POLYMARKET_V2_RECORDED_FEES","native_version":"0.67.0","parameters":{}},
+        "fill_model":{"schema_version":1,"adapter_kind":"NAUTILUS_DEFAULT_FILL","upstream_class":"nautilus_execution::models::fill::DefaultFillModel","upstream_version":"0.67.0","parameters":{"prob_fill_on_limit":"1","prob_slippage":"0","random_seed":"1"}},
+        "latency_model":{"schema_version":1,"adapter_kind":"NAUTILUS_STATIC_LATENCY","upstream_class":"nautilus_execution::models::latency::StaticLatencyModel","upstream_version":"0.67.0","parameters":{"base_latency_ns":"1","insert_latency_ns":"0","update_latency_ns":"0","cancel_latency_ns":"0"}},
         "snapshot_interval_ms":60000,"exposure_tolerance":"0.00001","fee_rates":[{"instrument_id":ID,"maker":"0","taker":"0"}]
     })).unwrap();
     let end = DbCounter::new(7 * MINUTE_NS).unwrap();
@@ -341,6 +343,7 @@ fn native_shared_account_books_exactly_the_recorded_allocation_once() {
             request.target_points[0].clone(),
             nautilus_model::identifiers::StrategyId::from("RECORDED-001"),
             nautilus_model::identifiers::ClientId::from("RECORDED-TEST"),
+            None,
         )
         .err()
         .expect("recorded cost replay cannot enter Paper without a catalog and replay clock");

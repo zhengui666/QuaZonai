@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { defineExtension, defineTask } from '@earendil-works/pi-durable';
+import { configure, defineExtension, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, TaskQuery } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { awaitWithContext } from '@earendil-works/chord/context';
@@ -116,6 +116,9 @@ test('research detail exposes original catalog final daily returns and assumptio
     assert.equal('executionRequest' in historical.final, false);
     assert.deepEqual(historical.final.registeredRequest, final.summary.request);
     state.service.research.registry.install(research);
+    // The host freezes its ordinary extension allowlist; explicitly enable this
+    // later-installed read tool on the retained fixture conversation.
+    await state.service.research.harness.commit(tx => configure(tx, receipt.conversationId, { extensions: [research] }), context);
     const trialId = response.json().trialRecords[0].id;
     state.faux.setResponses([fauxAssistantMessage(fauxToolCall('research_trial', { trialId }), { stopReason: 'toolUse' })]);
     const conversation = await state.service.research.harness.conversation(receipt.conversationId, context);
@@ -139,7 +142,7 @@ test('list and usage do not load historical task results; list retains its exist
     const { receipt } = await studied(state);
     const get = (path: string) => state.service.app.inject({ url: `/api/v3/${path}`, headers: state.headers });
     const detail = (await get(`research/${receipt.conversationId}`)).json();
-    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, ...expected } = detail;
+    const { input: _input, trialRecords: _trials, final: _final, tasks: _tasks, submission: _submission, previousStops: _stops, reviews: _reviews, ...expected } = detail;
     const scan = storage.scanTasks.bind(storage); const scans: TaskQuery[] = [];
     t.mock.method(storage, 'scanTasks', (...args: Parameters<typeof scan>) => { scans.push(args[0]); return scan(...args); });
     const list = await get('research'); const usage = await get('usage');

@@ -53,6 +53,10 @@ async fn main() -> Result<()> {
                 starting_balances: vec![Money::from("10000 USDT")],
                 base_currency: Some(Currency::USDT()),
                 account_type: AccountType::Margin,
+                // No orders in this fixture; make its zero-fee scenario explicit.
+                fee_model: Some(nautilus_execution::models::fee::FeeModelAny::MakerTaker(
+                    nautilus_execution::models::fee::MakerTakerFeeModel::zero(),
+                )),
                 ..Default::default()
             }),
         )?

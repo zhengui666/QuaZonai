@@ -202,7 +202,7 @@ class UncappedDataTest(unittest.TestCase):
         output = self.root / "native"
         (output / "catalog").mkdir(parents=True)
         (output / "catalog/data.parquet").write_bytes(b"PAR1fixturePAR1")
-        report = {"schema_version": 1, "native_version": "0.63.0", "catalog_relative_path": "catalog",
+        report = {"schema_version": 1, "native_version": "0.67.0", "catalog_relative_path": "catalog",
                   "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
                   "registered_in_quazonai": False, "research_qualified": False,
                   "limitations": ["Fixture envelope only"], "instruments": 1_000_001,

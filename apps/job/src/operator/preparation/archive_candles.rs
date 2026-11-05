@@ -678,7 +678,7 @@ pub fn run(args: &Arguments) -> Result<Value> {
             "SOURCE_INPUT_CHANGED_DURING_IMPORT"
         );
     }
-    let report = json!({"schema_version":1,"native_version":"0.63.0","source_provider":PROVIDER,"source_schema":SCHEMA,"source_record_kind":"OHLCV_CANDLE",
+    let report = json!({"schema_version":1,"native_version":"0.67.0","source_provider":PROVIDER,"source_schema":SCHEMA,"source_record_kind":"OHLCV_CANDLE",
         "native_selection":selection,"acquisition_sha256":digest(&bytes),"instrument_definitions_sha256":digest(&definition_bytes),"instruments":1,"instrument_versions":instruments.len(),"bars":bars.len(),
         "catalog_relative_path":"catalog","source_evidence_relative_path":"source-evidence.json","native_readback_verified":true,
         "source_provenance_kind":declaration["kind"],"receipt_basis":basis,"supported_zip_profile":PROFILE,

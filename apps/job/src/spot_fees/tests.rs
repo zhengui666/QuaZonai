@@ -144,10 +144,10 @@ fn official_handle_uses_all_four_frozen_rules_without_changing_instruments() {
         assert_eq!(result.currency, currency);
     }
     assert_eq!(serde_json::to_value(&native).unwrap(), before);
-    // Defaults remain untouched. They are demonstrably not this adapter's fees.
+    // An explicitly configured zero-fee model differs from the frozen adapter.
     assert_eq!(
         fee(
-            &MakerTakerFeeModel,
+            &MakerTakerFeeModel::zero(),
             OrderSide::Buy,
             LiquiditySide::Taker,
             "10",

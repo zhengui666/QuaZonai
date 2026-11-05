@@ -52,7 +52,7 @@ class ArchivePluginTest(unittest.TestCase):
         receipt = plugins.archive_receipt(self.manifest)
         hashes = {'acquisition_sha256': plugins.sha256(self.args.acquisition),
                   'instrument_definitions_sha256': plugins.sha256(self.instruments)}
-        report = {'schema_version': 1, 'native_version': '0.63.0', 'source_provider': vision.PROVIDER['id'],
+        report = {'schema_version': 1, 'native_version': '0.67.0', 'source_provider': vision.PROVIDER['id'],
                   'source_schema': vision.SCHEMA, 'source_record_kind': 'OHLCV_CANDLE',
                   'instruments': 1, 'instrument_versions': 1, 'bars': 2, 'catalog_relative_path': 'catalog',
                   'source_evidence_relative_path': 'source-evidence.json', 'native_readback_verified': True,

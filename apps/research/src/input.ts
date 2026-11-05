@@ -1,3 +1,4 @@
+import { validateReviewPolicy } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ResearchInput } from './documents.ts';
 import { publicLiteratureQueries, researchSpecification } from '../../../packages/contracts/src/research.ts';
 import { researchCampaignBinding } from './pm-campaign.ts';
@@ -29,6 +30,11 @@ export function researchInput(value: unknown): ResearchInput {
   }
   const data = record(input.data, 'data');
   const policy = record(input.policy, 'policy');
+  if (policy.reviewPolicy !== undefined) validateReviewPolicy(policy.reviewPolicy);
+  if (policy.reviewPolicies !== undefined) {
+    const reviews = record(policy.reviewPolicies, 'review_policies');
+    for (const kind of ['FACTOR', 'PORTFOLIO']) if (validateReviewPolicy(reviews[kind]).targetKind !== kind) throw new Error('review_policy_target_mismatch');
+  }
   const tagged = nativeResearchInput(data);
   const sealed = data.sealed === undefined ? null : nativeResearchInput(record(data.sealed, 'heldout_data'));
   if ((tagged || sealed) && tagged?.modality !== sealed?.modality && data.sealed !== undefined) throw new Error('native_research_modality_mismatch');

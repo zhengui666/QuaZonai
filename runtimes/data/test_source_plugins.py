@@ -137,7 +137,7 @@ class PreparationTest(unittest.TestCase):
             end_seconds=1785357900, bar_seconds=1)
 
     def base_report(self):
-        return {"schema_version": 1, "native_version": "0.63.0", "instruments": 1,
+        return {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "limitations": ["Offline fixture; not qualified"]}
@@ -465,7 +465,7 @@ class CatalogPreparationTest(unittest.TestCase):
         self.selection.write_text('{"selection":{"decision_cutoff_ns":123456789},"settlements":[]}\n')
         self.metadata = self.declared | {"row_count": 2, "quality": {"native_fixture": True}}
         self.body = (json.dumps(self.metadata, indent=4) + "\n").encode()
-        self.report = {"schema_version": 1, "native_version": "0.63.0", "instruments": 1,
+        self.report = {"schema_version": 1, "native_version": "0.67.0", "instruments": 1,
             "instrument_versions": 1, "bars": 2, "catalog_relative_path": "catalog",
             "coverage": "UNPROVEN", "historical_availability": "UNVERIFIED",
             "registered_in_quazonai": False, "research_qualified": False,
@@ -487,15 +487,20 @@ class CatalogPreparationTest(unittest.TestCase):
 
     def runner(self, change=None, returncode=0):
         def run(argv, **kwargs):
-            self.assertEqual(argv, [str(self.binary), "--catalog", str(self.source / "catalog"),
-                                   "--declaration", str(self.declaration), "--selection", str(self.selection),
-                                   "--output", str(self.output)])
+            expected = [str(self.binary), "--catalog", str(self.source / "catalog"),
+                        "--declaration", str(self.declaration), "--selection", str(self.selection)]
+            if getattr(self.args, "fee_source", None) is not None:
+                expected += ["--fee-source", str(self.args.fee_source)]
+            self.assertEqual(argv, expected + ["--output", str(self.output)])
             self.assertIs(kwargs["shell"], False)
             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
             self.assertNotIn("timeout", kwargs)
             (self.output / "catalog").mkdir(parents=True)
             (self.output / "catalog/fixture.parquet").write_bytes(b"PAR1prepared-fixturePAR1")
             (self.output / "catalog-metadata.json").write_bytes(self.body)
+            if self.metadata.get("execution_fees") is not None:
+                (self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE).write_text(
+                    json.dumps(self.metadata["execution_fees"]))
             if change:
                 change()
             return SimpleNamespace(returncode=returncode)
@@ -505,6 +510,78 @@ class CatalogPreparationTest(unittest.TestCase):
         return ["prepare", "coinbase-candles", "--native-output", str(self.source),
                 "--declaration", str(self.declaration), "--selection", str(self.selection),
                 "--output", str(self.output), "--native-bin", str(self.binary)]
+
+    def independent_fee_source(self):
+        value = {"schema_version": 1, "source_reference": "controlled fee-source fixture only",
+                 "source_version": "fixture-v1", "origin": "FIXTURE", "venue": "SIM",
+                 "currency": "USD", "currency_precision": 2, "available_at_ns": "0",
+                 "valid_from_ns": "0", "valid_until_ns": "200000000",
+                 "rates": [{"instrument_id": "EUR/USD.SIM", "maker": "0.0000", "taker": "0.0010"}]}
+        self.args.fee_source = self.root / "independent fee policy; literal.json"
+        self.args.fee_source.write_text(json.dumps(value, indent=4))
+        # The native contract normalizes decimal spellings while retaining values.
+        self.metadata["execution_fees"] = value | {"rates": [value["rates"][0] | {"maker": "0", "taker": "0.001"}]}
+        self.body = json.dumps(self.metadata).encode()
+        return value
+
+    def test_independent_fee_file_is_forwarded_bound_and_never_written_into_original_catalog(self):
+        self.independent_fee_source()
+        original = self.source_bytes()
+        fees = self.args.fee_source.read_bytes()
+        with patch.object(plugins.subprocess, "run", side_effect=self.runner()):
+            result = plugins.prepare_source("coinbase-candles", self.args)
+        self.assertEqual(result["source_artifacts"]["fee_source"], {
+            "path": str(self.args.fee_source), "bytes": len(fees), "sha256": hashlib.sha256(fees).hexdigest()})
+        self.assertEqual(self.source_bytes(), original)
+        self.assertEqual(self.args.fee_source.read_bytes(), fees)
+        self.assertEqual(json.loads((self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE).read_bytes()),
+                         self.metadata["execution_fees"])
+
+    def test_prepare_cli_accepts_literal_independent_fee_path(self):
+        self.independent_fee_source()
+        with patch.object(plugins.subprocess, "run", side_effect=self.runner()), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            self.assertEqual(plugins.main(self.argv() + ["--fee-source", str(self.args.fee_source)]), 0)
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(result["source_artifacts"]["fee_source"]["path"], str(self.args.fee_source))
+
+    def test_existing_native_fee_source_is_bound_without_an_explicit_file_flag(self):
+        self.independent_fee_source()
+        original_fee = self.source / "catalog" / plugins.MAKER_TAKER_FEES_FILE
+        original_fee.write_bytes(self.args.fee_source.read_bytes())
+        del self.args.fee_source
+        original = self.source_bytes()
+        with patch.object(plugins.subprocess, "run", side_effect=self.runner()):
+            result = plugins.prepare_source("coinbase-candles", self.args)
+        self.assertEqual(result["source_artifacts"]["fee_source"]["path"], str(original_fee))
+        self.assertEqual(self.source_bytes(), original)
+
+    def test_native_output_cannot_invent_a_missing_independent_fee_source(self):
+        self.independent_fee_source()
+        del self.args.fee_source
+        with patch.object(plugins.subprocess, "run", side_effect=self.runner()), \
+                self.assertRaisesRegex(ValueError, "no original independent input"):
+            plugins.prepare_source("coinbase-candles", self.args)
+
+    def test_fee_input_mutation_and_published_rate_substitution_are_rejected(self):
+        self.independent_fee_source()
+        for mode in ("input", "metadata", "catalog"):
+            self.output = self.root / ("changed-fee-" + mode)
+            self.args.output = self.output
+            original = self.args.fee_source.read_bytes()
+            def change():
+                path = (self.args.fee_source if mode == "input" else
+                        self.output / "catalog-metadata.json" if mode == "metadata" else
+                        self.output / "catalog" / plugins.MAKER_TAKER_FEES_FILE)
+                value = json.loads(path.read_bytes())
+                fee = value["execution_fees"] if mode == "metadata" else value
+                fee["rates"][0]["taker"] = "0.002"
+                path.write_text(json.dumps(value))
+            with self.subTest(mode=mode), patch.object(plugins.subprocess, "run", side_effect=self.runner(change)), \
+                    self.assertRaisesRegex(ValueError, "changed|differs"):
+                plugins.prepare_source("coinbase-candles", self.args)
+            self.assertTrue((self.output / "catalog-metadata.json").exists())
+            self.args.fee_source.write_bytes(original)
 
     def test_handoff_uses_exact_original_metadata_bytes_and_only_identity_hints(self):
         original = self.source_bytes()

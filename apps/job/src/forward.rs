@@ -90,7 +90,7 @@ pub fn evaluate(
     .collect();
     let result = NativeForwardResultV1 {
         schema_version: SchemaV1,
-        native_version: "0.63.0".into(),
+        native_version: "0.67.0".into(),
         window: selected.view,
         statistics,
     };

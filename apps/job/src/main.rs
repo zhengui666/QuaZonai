@@ -40,6 +40,12 @@ enum Operation {
     },
     /// Solve one frozen allocation request read from stdin.
     Allocate,
+    /// Deterministic evidence diagnostics; no qualification or delivery authority.
+    ReviewScience,
+    /// Validate original source-owner metadata; no inferred permission or PIT status.
+    ReviewSource,
+    /// Quality-adjusted constrained allocation from frozen review evidence.
+    ReviewAllocate,
     /// Fit causal fold-local score calibrations and nonnegative simplex weights.
     FitEnsemble,
     /// Apply an immutable fitted signal ensemble to later original forecasts.
@@ -287,6 +293,9 @@ fn run(operation: Operation) -> Result<()> {
             Ok(())
         }
         Operation::Allocate => output(&job::allocate(&input()?)?),
+        Operation::ReviewScience => output(&job::review_science::analyze(&input()?)?),
+        Operation::ReviewSource => output(&job::review_science::validate_source(&input()?)?),
+        Operation::ReviewAllocate => output(&job::review_allocate::allocate(&input()?)?),
         Operation::FitEnsemble => output(&job::ensemble_fit::fit(&input()?)?),
         Operation::ApplyEnsemble => output(&job::ensemble_fit::apply(&input()?)?),
         Operation::FreezeEnsembleCalibrations => output(&job::ensemble_fit::freeze(&input()?)?),

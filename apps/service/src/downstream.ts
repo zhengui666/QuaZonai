@@ -5,8 +5,10 @@ import { remoteNativeCredential } from '../../research/src/native-execution.ts';
 import { canonical } from '../../research/src/documents.ts';
 import { counter, decimal, nowNs, nsTime, object, Problem, text } from './facts.ts';
 import type { ObservationFact } from './facts.ts';
+import { assertReviewDeliverySources } from './review-delivery.ts';
 
 export interface ObservationTaskInput {
+  reviewSources?: import('./review-delivery.ts').ReviewDeliverySource[];
   id: string; connection: ConnectionConfig; receiptId: string; target: JsonObject; allocation?: JsonObject;
 }
 export function connectionBase(connection: ConnectionConfig): URL {
@@ -31,12 +33,13 @@ export async function downstreamRequest(connection: ConnectionConfig, path: stri
 }
 
 export function isPreTransportRejection(error: unknown): boolean {
-  return error instanceof Problem && ['target_expired', 'downstream_credentials_missing', 'allocation_evidence_unavailable', 'allocation_evidence_expired'].includes(error.message);
+  return error instanceof Problem && (error.message.startsWith('review_source_') || ['target_expired', 'downstream_credentials_missing', 'allocation_evidence_unavailable', 'allocation_evidence_expired'].includes(error.message));
 }
 
 export async function downstream(input: ObservationTaskInput, operation: 'deliver' | 'receipt' | 'account', signal: AbortSignal): Promise<JsonObject> {
   const { connection } = input;
   if (operation === 'deliver') {
+    await assertReviewDeliverySources(input.reviewSources ?? []);
     const now = BigInt(nowNs());
     if (BigInt(counter(input.target.valid_until_ns, 'expiry')) <= now) throw new Problem('target_expired');
     if (input.allocation) {

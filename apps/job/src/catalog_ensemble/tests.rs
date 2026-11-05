@@ -6,7 +6,7 @@ use nautilus_model::{
     data::{Bar, BarType},
     types::{Price, Quantity},
 };
-use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
 use serde_json::json;
 use std::{fs, path::Path, process::Command, str::FromStr};
 
