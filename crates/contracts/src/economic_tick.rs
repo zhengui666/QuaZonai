@@ -69,6 +69,38 @@ pub struct NativeTickEconomicDayV1 {
     pub equity_usdt: Option<DecimalValue>,
     pub net_return: Option<f64>,
     pub unknown_reason: Option<String>,
+    /// Balance FX failures only. Empty or absent does not establish complete NAV,
+    /// available position marks, reporting FX, or funding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_balances: Vec<NativeTickMissingBalanceV1>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTickMissingBalanceV1 {
+    pub ledger: NativeTickBalanceLedgerV1,
+    pub currency: String,
+    /// Exact native balance text, without DecimalValue range conversion.
+    #[serde(deserialize_with = "deserialize_balance_amount")]
+    #[schema(pattern = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?![\s\S])")]
+    pub amount: String,
+}
+
+fn deserialize_balance_amount<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let amount = String::deserialize(deserializer)?;
+    amount
+        .parse::<crate::recorded_fees::RecordedSourceDecimal>()
+        .map_err(serde::de::Error::custom)?;
+    Ok(amount)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NativeTickBalanceLedgerV1 {
+    Cash,
+    Margin,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -146,4 +178,35 @@ pub struct NativeTickEconomicResultV1 {
     pub skipped_minimum: DbCounter,
     pub consumed_fuel: Option<DbCounter>,
     pub limitations: Vec<String>,
+}
+
+#[cfg(test)]
+mod missing_balance_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_plain_unbounded_balance_text_and_rejects_invalid_values() {
+        for amount in [
+            "0",
+            "-12.34",
+            "+1",
+            ".5",
+            "1.",
+            "999999999999999999999999999999999999999999.1",
+        ] {
+            let row = json!({"ledger":"CASH", "currency":"BTC", "amount":amount});
+            assert!(
+                serde_json::from_value::<NativeTickMissingBalanceV1>(row).is_ok(),
+                "{amount}"
+            );
+        }
+        for amount in ["", "unknown", "1e3", "1..2", "1\n"] {
+            let row = json!({"ledger":"CASH", "currency":"BTC", "amount":amount});
+            assert!(
+                serde_json::from_value::<NativeTickMissingBalanceV1>(row).is_err(),
+                "{amount}"
+            );
+        }
+    }
 }
