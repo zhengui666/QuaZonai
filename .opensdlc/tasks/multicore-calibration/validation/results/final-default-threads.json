@@ -1,0 +1,22 @@
+{
+  "exit": 0,
+  "requested_threads": null,
+  "peak_total_threads": 2,
+  "peak_spawned_calibration_threads": 1,
+  "thread_names": [
+    "multicore-final",
+    "qz-calibration"
+  ],
+  "input_sha256": "d5e42857875badc93611ed385d670b4a3d693c834c37a1c3eda30917fd9f38e2",
+  "scope": "Separate thread-observability run, not a timing or memory benchmark",
+  "source_base": "8e4059b07b688ec8c42a6ed490da7b30e4ece5a4",
+  "source_candidate": "2f6fa77a70fb7e3a5258706d4deb83b93ff7eed4",
+  "build": {
+    "toolchain": "1.99.1",
+    "command": "cargo build --locked --release -p job --bin job",
+    "features": "default",
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_INCREMENTAL": "0",
+    "profile_overrides": null
+  }
+}

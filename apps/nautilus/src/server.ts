@@ -32,6 +32,8 @@ export interface WorkerOptions {
   maximumRequestBytes?: number;
   /** Concurrent worker capacity, separate from cumulative research execution. */
   maximumConcurrentTickExecutions?: number;
+  /** Maximum threads per independent ensemble-calibration call; native code also checks cores and scratch size. */
+  calibrationThreads?: number;
   /** Legacy configuration accepted for compatibility; execution quotas are ignored. */
   tickMaximumMemoryBytes?: number;
   tickMaximumOutputBytes?: number;
@@ -97,6 +99,8 @@ function validateRequest(value: unknown, digest: string): Request {
 
 export async function createNautilusWorker(options: WorkerOptions) {
   const tickConcurrency = positiveLimit(options.maximumConcurrentTickExecutions, 1, 'nautilus_tick_concurrency_invalid');
+  const calibrationThreads = options.calibrationThreads === undefined ? undefined
+    : positiveLimit(options.calibrationThreads, 1, 'nautilus_calibration_threads_invalid');
   const binary = await realpath(options.binary);
   const tickBinary = options.tickBinary === undefined ? binary : await realpath(options.tickBinary);
   async function implementationIdentity() {
@@ -215,7 +219,9 @@ export async function createNautilusWorker(options: WorkerOptions) {
           const childArgs = [request.command, ...args];
           if (['simulate', 'replay-catalog-ensemble'].includes(request.command)) execution.progressPath = join(directory, 'progress.ndjson');
           child = spawn(selectedBinary, childArgs, { cwd: directory, detached: true,
-            env: { PATH: '/usr/bin:/bin', TMPDIR: directory, ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
+            env: { PATH: '/usr/bin:/bin', TMPDIR: directory,
+              ...(calibrationThreads === undefined ? {} : { QZ_CALIBRATION_THREADS: String(calibrationThreads) }),
+              ...(execution.progressPath ? { QZ_PROGRESS_PATH: execution.progressPath } : {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
           const parser = new JsonReader(); let parseError: unknown; let stderr = '';
           child.stdout!.setEncoding('utf8'); child.stderr!.setEncoding('utf8');
           child.stdout!.on('data', chunk => {
