@@ -16,8 +16,8 @@ calibration. Base: remote `dev` at `8e4059b07b688ec8c42a6ed490da7b30e4ece5a4`.
   can reuse it without re-ranking or moving missing groups between slices.
 - Reuse one contiguous score/label column cache, the ordering and two rank
   buffers, the sampled group indices and pooled pairs across the 512 replicates.
-  The shared column costs up to one additional f64 per sampled row compared with
-  direct pair indexing, but preserves the baseline's compact sorting access;
+  The shared column adds one f64 buffer sized for the largest sampled column,
+  including Vec capacity overhead, but restores compact sorting access;
   unlike the baseline, two input columns are not retained simultaneously.
   Keep total ordering, tie ranks, random draws and floating-point accumulation
   order unchanged. No sample quota, estimator, confidence method or wire changes.
@@ -43,33 +43,26 @@ the original input, grouped observations or standard stable-sort workspace.
 
 ## Validation
 
-Fixed-affinity, warmed release measurements exposed a pooled CPU regression in
-both direct-pair ranking variants. The three-way diagnostic measured median CPU
-1.10483 s for the baseline, 1.13883 s for unstable sorting (`bb71c1a9`) and
-1.26753 s for stable sorting (`f8603b50`). Neither variant is accepted as a CPU
-improvement. The implementation now restores contiguous values and the original
-stable ordering while reusing one column instead of allocating two. Its exact
-commit, full-output regression and resource measurements remain pending.
-All earlier favorable, unfavorable and nonstationary runs are retained. The
-checks below describe the earlier buffer implementation, not final validation.
+Final production source: `d2a8c6610ac7a216c077d047c06816731533f11d`.
 
-- Pinned Rust 1.99.1, locked dependencies, actual candidate native library and CLI:
-  `cargo test --locked -p job --test review_science`
-  passes 18 tests, with no ignored or skipped tests. The complete frozen-output
-  regression covers 26 baseline cases, including two expected input errors.
-- Independent actual-CLI comparison runs 28 identical requests on each binary
-  (56 processes): all stdout bytes, exit codes and error outputs agree. This
-  includes the 26 edge cases plus both irregular-group benchmark inputs.
-- Baseline unoptimized binary SHA-256:
-  `46c6ebfca23cc28f584580992ca59e7e75dc614b9bf237c2d8e36de10214f141`.
-  Candidate unoptimized binary SHA-256:
-  `e2236a368dca0449e21bcac7cec42d240d259a049ecf4c028dd6a531e2a05418`.
-  These establish behavior only; concurrent compilation and an unoptimized
-  profile exclude these runs from release-performance claims.
+- Pinned Rust 1.99.1 and locked dependencies: `cargo test --locked -p job
+  --test review_science` passes all 18 tests, zero skips/ignored tests. The job
+  package was explicitly rebuilt to exclude stale worktree artifacts. The
+  complete frozen-output regression covers 26 original-dev cases, including
+  two expected missing-input errors and signed-zero/tied rankings.
+- Independent final release CLI comparison: 29 original JSON requests on both
+  binaries, 58 actual processes, with identical full stdout, exit codes and
+  failure stderr. The two expanded inputs also match in every performance run.
+- Final fixed-affinity measurements: five workloads, one warmup and five measured
+  rounds per binary/input. Median peak RSS decreases 1.25–1.54%; CPU changes are
+  workload-dependent and wall-time ranges overlap. No general CPU speedup or
+  extreme memory reduction is claimed. See [all measurements and earlier
+  unfavorable variants](validation/measurements.md).
 - `cargo fmt --all -- --check`, diff whitespace and Python script syntax pass.
-  Independent static inspection found no actionable production defect; review of
-  the final commit remains required. Release resource measurement and applicable
-  exact-Head hosted CI remain pending.
+  The runner rejects zero repetitions and an empty case filter. Independent
+  static review of the final production commit found no actionable defect.
+- Applicable exact-Head hosted CI and GitHub Codex review remain pending. No
+  merge, publication or deployment is claimed.
 
-See [reproduction instructions](validation/README.md) for the benchmark generator
-and complete-result runner. No merge, publication or deployment is claimed.
+See [reproduction instructions](validation/README.md) for source/binary provenance,
+fixed CPU affinity, warmup and the complete-result comparison commands.

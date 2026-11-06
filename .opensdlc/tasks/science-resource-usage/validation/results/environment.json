@@ -1,0 +1,21 @@
+{
+  "architecture": "x86_64",
+  "system": "Linux",
+  "allowed_cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "cgroup_cpu_max": "400000 100000",
+  "cgroup_memory_max": "17179869184",
+  "rust_available_parallelism": 4,
+  "pinned_cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "rust_pinned_available_parallelism": 4
+}

@@ -30,11 +30,20 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--case", action="append", default=[])
     p.add_argument("--repeats", type=int, default=1)
+    p.add_argument("--warmups", type=int, default=0, help="unmeasured runs per case/binary")
+    p.add_argument("--cpus", help="optional fixed Linux CPU affinity, e.g. 0,1,2,3")
     p.add_argument("--timeout", type=float, default=0,
                    help="seconds, 0 uses blocking wait4 for precise benchmark wall time")
     args = p.parse_args()
     if args.repeats < 1:
         p.error("--repeats must be positive")
+    if args.warmups < 0:
+        p.error("--warmups must not be negative")
+    cpus = None
+    if args.cpus:
+        cpus = {int(cpu) for cpu in args.cpus.split(",")}
+        if not cpus or not cpus.issubset(os.sched_getaffinity(0)):
+            p.error("--cpus must be a nonempty subset of the permitted affinity")
     args.out.mkdir(parents=True, exist_ok=True)
     binaries = []
     for spec in args.binary:
@@ -52,7 +61,7 @@ def main():
     records = []
     equivalent = True
     expected = {}
-    for rep in range(args.repeats):
+    for rep in range(-args.warmups, args.repeats):
         for case in manifest:
             path = args.fixtures / case["file"]
             if digest(path) != case["input_sha256"]:
@@ -65,7 +74,8 @@ def main():
                 cmd = [binary["path"], case["operation"]]
                 start = time.perf_counter()
                 with path.open("rb") as inp, stdout.open("wb") as out, stderr.open("wb") as err:
-                    process = subprocess.Popen(cmd, stdin=inp, stdout=out, stderr=err, env=binary["env"])
+                    process = subprocess.Popen(cmd, stdin=inp, stdout=out, stderr=err, env=binary["env"],
+                                               preexec_fn=(lambda: os.sched_setaffinity(0, cpus)) if cpus else None)
                     while args.timeout:
                         pid, status, usage = os.wait4(process.pid, os.WNOHANG)
                         if pid:
@@ -102,7 +112,7 @@ def main():
     summary = []
     for case in manifest:
         for binary in binaries:
-            runs = [r for r in records if r["case"] == case["name"] and r["binary"] == binary["label"]]
+            runs = [r for r in records if r["case"] == case["name"] and r["binary"] == binary["label"] and r["repeat"] >= 0]
             summary.append({"case": case["name"], "binary": binary["label"],
                             "runs": len(runs), "all_success": all(r["exit"] == 0 for r in runs),
                             **{key + "_median": statistics.median(r[key] for r in runs)
@@ -110,6 +120,7 @@ def main():
                             **{key + "_range": [min(r[key] for r in runs), max(r[key] for r in runs)]
                                for key in ["precise_wall_s", "cpu_s", "peak_rss_kib"]}})
     result = {"binaries": binaries, "all_complete_results_equal": equivalent,
+              "fixed_cpu_affinity": sorted(cpus) if cpus else None, "warmups_per_case_binary": args.warmups,
               "summary": summary, "records": records}
     (args.out / "report.json").write_text(json.dumps(result, indent=2) + "\n")
     if not equivalent:

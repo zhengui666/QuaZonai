@@ -26,11 +26,16 @@ python3 .opensdlc/tasks/science-resource-usage/validation/compare-review.py \
   --binary baseline=/absolute/path/to/base/job \
   --binary candidate=/absolute/path/to/candidate/job \
   --fixtures /tmp/qz-review-fixtures --out /tmp/qz-review-measurements \
-  --case bench-review --repeats 5
+  --case bench-review --case scale10-review --repeats 5 --warmups 1 --cpus 0,1,2,3
 ```
 
+Choose a CPU list permitted by your host; `--cpus` rejects an unavailable CPU.
+The recorded final run used 0,1,2,3, one warmup and five measured rounds. See
+[measured source revisions, binary hashes and all results](measurements.md).
+
 Order alternates each repetition. `report.json` records input/output and binary
-checksums, every process measurement, medians and complete-result equality. A
+checksums, every process measurement (including warmups), medians/ranges from
+measured rounds only and complete-result equality. A
 mismatching result fails the run; failed requests are useful failure-regression
 cases and never count as successful performance samples. For meaningful timing,
 run after compilation and other CPU-intensive work have finished. Report actual
