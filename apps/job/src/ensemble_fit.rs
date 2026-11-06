@@ -8,6 +8,9 @@ use contracts::{
 use ndarray::{Array1, Array2};
 use std::collections::BTreeSet;
 
+mod calibration;
+use calibration::calibrations;
+
 const METHOD: &str = "TEMPORAL_OOF_OLS_SIMPLEX_V1";
 const REVIEW_METHOD: &str = "TEMPORAL_OOF_OLS_SIMPLEX_REVIEW_PRIOR_V1";
 const DECIMAL_PLACES: u32 = 12;
@@ -65,39 +68,6 @@ struct Row {
 
 fn complete_before(row: &Row, end: u64) -> bool {
     row.event < end && row.available < end && row.label_event < end && row.label_available < end
-}
-
-fn calibrations(rows: &[&Row], members: usize) -> Result<Vec<Vec<NativeEnsembleCalibrationV1>>> {
-    let instruments: BTreeSet<_> = rows.iter().map(|r| r.instrument.as_str()).collect();
-    ensure!(!instruments.is_empty(), "ENSEMBLE_NO_CALIBRATION_ROWS");
-    (0..members)
-        .map(|m| {
-            instruments
-                .iter()
-                .map(|instrument| {
-                    let selected: Vec<_> = rows
-                        .iter()
-                        .filter(|r| &r.instrument.as_str() == instrument)
-                        .collect();
-                    let model = crate::validation::ScoreCalibration::fit(
-                        &selected.iter().map(|r| r.x[m]).collect::<Vec<_>>(),
-                        &selected.iter().map(|r| r.y).collect::<Vec<_>>(),
-                    )?;
-                    let [intercept, slope] = model.coefficients();
-                    Ok(NativeEnsembleCalibrationV1 {
-                        instrument_id: (*instrument).into(),
-                        intercept,
-                        slope,
-                        training_observations: count(selected.len())?,
-                        last_label_available_ns: DbCounter::new(
-                            selected.iter().map(|r| r.label_available).max().unwrap(),
-                        )
-                        .map_err(anyhow::Error::msg)?,
-                    })
-                })
-                .collect()
-        })
-        .collect()
 }
 
 fn calibrated(models: &[Vec<NativeEnsembleCalibrationV1>], row: &Row) -> Result<Vec<f64>> {

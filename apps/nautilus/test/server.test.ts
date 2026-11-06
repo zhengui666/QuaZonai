@@ -27,7 +27,7 @@ test('request hashing preserves original canonical identities across buffered Un
   assert.equal(executionId({ ...large, files: { ...large.files }, input: [...large.input] }), executionId(large));
 });
 
-async function fixture() {
+async function fixture(calibrationThreads?: number) {
   const directory = await mkdtemp(join(tmpdir(), 'qz-remote-worker-'));
   const catalog = join(directory, 'catalog'); await mkdir(catalog);
   const count = join(directory, 'calls'); const binary = join(directory, 'job');
@@ -42,10 +42,10 @@ else if(input.fail) { console.error('NATIVE_CONTROLLED_FAILURE'); process.exitCo
 else if(input.invalid) { console.log('invalid'); }
 else { const contents={}; for(let i=0;i<args.length;i++) if(['--model','--scope'].includes(args[i])) contents[args[i]]=fs.readFileSync(args[++i],'utf8');
 const objects=args.indexOf('--objects'); if(objects>=0) contents.objects=fs.readdirSync(args[objects+1]).sort();
-console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN})); }
+console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUTILUS_TOKEN,calibrationThreads:process.env.QZ_CALIBRATION_THREADS??null})); }
 `);
   await writeFile(binary, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`, { mode: 0o700 });
-  const options = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token' };
+  const options = { binary, dataDir: join(directory, 'state'), catalogRoots: [catalog], token: 'test-only-worker-token', calibrationThreads };
   let worker = await createNautilusWorker(options);
   async function listen() { worker.server.listen(0, '127.0.0.1'); await once(worker.server, 'listening'); return `http://127.0.0.1:${(worker.server.address() as AddressInfo).port}`; }
   let url = await listen();
@@ -60,6 +60,26 @@ console.log(JSON.stringify({input,args,contents,authLeaked:!!process.env.QZ_NAUT
     async cleanup() { await worker.close(); await rm(directory, { recursive: true, force: true }); },
   };
 }
+
+test('calibration capacity reaches the native process without widening the environment', async () => {
+  for (const threads of [undefined, 1, 4]) {
+    const f = await fixture(threads);
+    try {
+      const request = f.request({});
+      request.command = 'fit-ensemble';
+      const { requestId: _previousId, ...input } = request;
+      request.requestId = executionId(input);
+      const receipt = await (await f.post(request)).json();
+      assert.equal(receipt.status, 'COMPLETED');
+      assert.equal(receipt.result.calibrationThreads, threads === undefined ? null : String(threads));
+      assert.equal(receipt.result.authLeaked, false);
+    } finally { await f.cleanup(); }
+  }
+  for (const calibrationThreads of [0, -1, 1.5, NaN, Infinity]) {
+    await assert.rejects(createNautilusWorker({ binary: '/unused', dataDir: '/unused', catalogRoots: [], calibrationThreads }),
+      /nautilus_calibration_threads_invalid/);
+  }
+});
 
 test('remote worker retains actual execution, attachments and original receipt across retries and restart', async () => {
   const f = await fixture();
