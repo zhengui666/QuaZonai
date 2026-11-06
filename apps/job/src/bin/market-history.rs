@@ -569,13 +569,41 @@ fn selected_missing(manifest: &Manifest, prefixes: &[String]) -> Vec<serde_json:
     manifest
         .missing
         .iter()
-        .filter(|missing| {
-            missing
-                .get("pattern")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(|path| selected_path(path, prefixes))
+        .filter_map(|missing| {
+            let Some(path) = missing.get("pattern").and_then(serde_json::Value::as_str) else {
+                return Some(missing.clone());
+            };
+            if let Some(hours) = missing
+                .get("hours")
+                .and_then(serde_json::Value::as_array)
+                .filter(|_| path.contains("{hour}"))
+            {
+                let hours = hours
+                    .iter()
+                    .filter(|hour| {
+                        hour.as_u64().is_some_and(|hour| {
+                            selected_path(&path.replace("{hour}", &format!("{hour:02}")), prefixes)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if hours.is_empty() {
+                    return None;
+                }
+                let mut selected = missing.clone();
+                if hours.len() == 1 {
+                    let hour = hours[0].as_u64().unwrap();
+                    selected.as_object_mut().unwrap().remove("hours");
+                    selected["hour"] = serde_json::json!(hour);
+                    selected["pattern"] =
+                        serde_json::json!(path.replace("{hour}", &format!("{hour:02}")));
+                } else {
+                    selected["hours"] = serde_json::Value::Array(hours);
+                }
+                return Some(selected);
+            }
+            selected_path(path, prefixes).then(|| missing.clone())
         })
-        .cloned()
         .collect()
 }
 
@@ -1306,6 +1334,39 @@ mod tests {
         assert!(manifest.trade_revision());
         manifest.revision = "published-files-not-a-date".into();
         assert!(!manifest.trade_revision());
+    }
+
+    #[test]
+    fn grouped_missing_hours_follow_selected_hour_prefixes_without_expanding_partitions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (path, _, _) = tick_source(temp.path(), "");
+        let mut manifest: Manifest = json(&path).unwrap();
+        manifest.missing = vec![
+            serde_json::json!({"stream":"trades","date":"2026-01-01","symbol":"ETH",
+                "pattern":"hyperliquid_futures/2026-01-01/{hour}/ETH_trades.parquet[.zst]","hours":[21,22,23]}),
+            serde_json::json!({"stream":"legacy","pattern":"hyperliquid_futures/2026-01-01/23/legacy.parquet"}),
+            serde_json::json!({"stream":"legacy","pattern":"hyperliquid_futures/2026-01-01/22/legacy.parquet"}),
+        ];
+        let selected = selected_missing(&manifest, &["hyperliquid_futures/2026-01-01/23/".into()]);
+        assert_eq!(
+            selected,
+            vec![
+                serde_json::json!({"stream":"trades","date":"2026-01-01","symbol":"ETH","hour":23,
+                "pattern":"hyperliquid_futures/2026-01-01/23/ETH_trades.parquet[.zst]"}),
+                manifest.missing[1].clone(),
+            ]
+        );
+        let selected = selected_missing(
+            &manifest,
+            &[
+                "hyperliquid_futures/2026-01-01/21/".into(),
+                "hyperliquid_futures/2026-01-01/23/".into(),
+            ],
+        );
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0]["hours"], serde_json::json!([21, 23]));
+        assert_eq!(selected[0]["pattern"], manifest.missing[0]["pattern"]);
+        assert_eq!(selected_missing(&manifest, &[]), manifest.missing);
     }
 
     #[test]

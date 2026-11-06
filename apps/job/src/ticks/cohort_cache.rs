@@ -725,9 +725,7 @@ fn compact_published_report(report: &mut Value) -> Result<()> {
             .as_array()
             .context("TICK_CACHE_SOURCE_FIELD: missing_partitions")?;
         fields.insert("missing_partition_count".into(), json!(entries.len()));
-        if !fields.contains_key("missing_hour_count") {
-            fields.insert("missing_hour_count".into(), json!(missing_hours(entries)?));
-        }
+        fields.insert("missing_hour_count".into(), json!(missing_hours(entries)?));
     }
     fields.insert(
         "full_report_reference".into(),
@@ -1661,7 +1659,7 @@ mod resource_tests {
                 "unobserved_symbols":["UNLISTED"]},
             "instrument_source":{"instruments":[{"id":"BTC.SIM"}]},
             "source_coverage":{"trades":{"source_rows":8,"selected_rows":7}},
-            "missing_partitions":[{"hours":[1,2,3]},{"hour":7}],
+            "missing_partitions":[{"hour":7}],"missing_hour_count":4,
             "duplicate_trades":1,"deduplicated_trades":1,"deduplication_policy":"EARLIEST_RECEIPT_IDENTICAL_TRADE",
             "source_rows":8,"selected_rows":7,"readback_records":6,"historical_availability":"UNVERIFIED"
         });
@@ -1685,8 +1683,8 @@ mod resource_tests {
         assert_eq!(source["start_date"], "2026-01-01");
         assert_eq!(source["unobserved_symbols"], json!(["UNLISTED"]));
         assert!(report.get("missing_partitions").is_none());
-        assert_eq!(report["missing_partition_count"], 2);
-        assert_eq!(report["missing_hour_count"], 4);
+        assert_eq!(report["missing_partition_count"], 1);
+        assert_eq!(report["missing_hour_count"], 1);
         assert_eq!(
             report["instrument_source"]["instruments"][0]["id"],
             "BTC.SIM"
@@ -1710,7 +1708,7 @@ mod resource_tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            2
+            1
         );
         assert_eq!(fs::read(temp.path().join(MANIFEST_FILE)).unwrap(), original);
     }

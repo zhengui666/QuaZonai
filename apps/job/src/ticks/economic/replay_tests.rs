@@ -1503,6 +1503,21 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
             books::Snapshot::new(OrderBookDeltas::new(instrument.id(), deltas)).unwrap()
         };
+        // Start the UTC day before entry: the first frame purges closed native history.
+        let ledger = if is_margin { &mut margin } else { &mut cash };
+        ledger
+            .step_books(
+                2 * SECOND,
+                native_books(
+                    Vec::new(),
+                    &BTreeMap::from([(i, snapshot(2 * SECOND, false))]),
+                    &assets,
+                    is_margin,
+                ),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(ledger.summary().submitted, 0);
         let frames = BTreeMap::from([(i, snapshot(3 * SECOND, false))]);
         let mut rows = vec![NativeMark {
             instrument_id: instrument.id(),
@@ -1531,7 +1546,8 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
                 Decimal::new(295, 3)
             } else {
                 target
-            })
+            }),
+            "{id}: direction={direction}, quote_budget={quote_budget}"
         );
         let ledger = if is_margin { &mut margin } else { &mut cash };
         ledger
@@ -1554,7 +1570,8 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
             .sum();
         assert!(
             notional > Decimal::ZERO && notional <= Decimal::from(quote_budget),
-            "actual fills cost {notional}"
+            "{id}: direction={direction}, quote_budget={quote_budget}, actual fills cost {notional}, summary={:?}, retained_orders={}",
+            ledger.summary(), ledger.orders().len()
         );
         let frames = BTreeMap::from([(i, snapshot(4 * SECOND, true))]);
         let mut rows = vec![NativeMark {
@@ -1585,7 +1602,11 @@ fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
                 &[],
             )
             .unwrap();
-        assert_eq!(ledger.current_quantity(instrument.id()), Decimal::ZERO);
+        assert_eq!(
+            ledger.current_quantity(instrument.id()),
+            Decimal::ZERO,
+            "{id}: direction={direction}, quote_budget={quote_budget}, closing inventory"
+        );
         cash.finish().unwrap();
         margin.finish().unwrap();
     }
