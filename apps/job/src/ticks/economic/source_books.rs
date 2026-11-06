@@ -905,16 +905,16 @@ mod tests {
         replace_first_hour(
             root.path(),
             &[
-                (event, START, "bid", "10.12", "1"),
-                (event, START, "ask", "10.13", "2"),
-                (event + 1, START + 1_000_000, "bid", "10.11", "3"),
-                (event + 1, START + 1_000_000, "ask", "10.15", "4"),
+                (event, START - 1, "bid", "10.12", "1"),
+                (event, START - 1, "ask", "10.13", "2"),
+                (event + 1, START, "bid", "10.11", "3"),
+                (event + 1, START, "ask", "10.15", "4"),
             ],
             Some(&[Some(1), Some(1), None, None]),
             true,
         );
-        let mut books = RawBooks::open(root.path(), id, START + 500_000, START + HOUR).unwrap();
-        assert_eq!(books.next().unwrap().unwrap().received(), START + 1_000_000);
+        let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        assert_eq!(books.next().unwrap().unwrap().received(), START);
         assert_eq!(books.checkpoint_counts(), (0, 0));
     }
 
