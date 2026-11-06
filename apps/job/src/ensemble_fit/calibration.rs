@@ -15,6 +15,9 @@ const WORKING_SET_BYTES: usize = 256 * 1024 * 1024;
 const ESTIMATED_BYTES_PER_ROW: usize = 256;
 const THREAD_STACK_BYTES: usize = 2 * 1024 * 1024;
 const MIN_OBSERVATIONS_PER_WORKER: usize = 32 * 1024;
+// Higher caps are opt-in: measurements show additional OLS scratch reliably
+// increases RSS, while four workers do not consistently beat two end to end.
+const DEFAULT_THREADS: usize = 2;
 
 type Fits = Vec<Vec<NativeEnsembleCalibrationV1>>;
 type Group<'a> = (&'a str, Vec<&'a Row>);
@@ -40,7 +43,7 @@ fn configured_threads() -> Result<usize> {
             let count = value.parse::<usize>().ok().filter(|n| *n > 0);
             count.ok_or_else(|| anyhow::anyhow!("ENSEMBLE_CALIBRATION_THREADS_INVALID"))
         }
-        Err(std::env::VarError::NotPresent) => Ok(usize::MAX),
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_THREADS),
         Err(_) => anyhow::bail!("ENSEMBLE_CALIBRATION_THREADS_INVALID"),
     }
 }
