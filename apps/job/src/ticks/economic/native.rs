@@ -65,7 +65,7 @@ fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Re
     let size_precision = instrument.size_precision();
     for delta in &mut snapshot.deltas {
         if delta.order.price.precision != price_precision {
-            check_fixed_raw_i128(i128::from(delta.order.price.raw), price_precision).with_context(
+            check_fixed_raw_i128(i128::from(delta.order.price.raw()), price_precision).with_context(
                 || {
                     format!(
                         "TICK_ECONOMIC_BOOK_PRICE_PRECISION_UNSUPPORTED: instrument_id={} received_ns={} value={} required_precision={price_precision}",
@@ -73,10 +73,10 @@ fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Re
                     )
                 },
             )?;
-            delta.order.price = Price::from_raw_checked(delta.order.price.raw, price_precision)?;
+            delta.order.price = Price::from_raw_checked(delta.order.price.raw(), price_precision)?;
         }
         if delta.order.size.precision != size_precision {
-            check_fixed_raw_u128(u128::from(delta.order.size.raw), size_precision).with_context(
+            check_fixed_raw_u128(u128::from(delta.order.size.raw()), size_precision).with_context(
                 || {
                     format!(
                         "TICK_ECONOMIC_BOOK_SIZE_PRECISION_UNSUPPORTED: instrument_id={} received_ns={} value={} required_precision={size_precision}",
@@ -84,7 +84,7 @@ fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Re
                     )
                 },
             )?;
-            delta.order.size = Quantity::from_raw_checked(delta.order.size.raw, size_precision)?;
+            delta.order.size = Quantity::from_raw_checked(delta.order.size.raw(), size_precision)?;
         }
     }
     Ok(())
@@ -1970,9 +1970,9 @@ mod tests {
                 for delta in &mut snapshot.deltas {
                     let precision = nautilus_model::types::fixed::FIXED_PRECISION;
                     delta.order.price =
-                        Price::from_raw_checked(delta.order.price.raw, precision).unwrap();
+                        Price::from_raw_checked(delta.order.price.raw(), precision).unwrap();
                     delta.order.size =
-                        Quantity::from_raw_checked(delta.order.size.raw, precision).unwrap();
+                        Quantity::from_raw_checked(delta.order.size.raw(), precision).unwrap();
                 }
                 snapshot
             };
@@ -1980,8 +1980,8 @@ mod tests {
             let mut encoded = raw.clone();
             encode_book(&mut encoded, &instrument).unwrap();
             for (before, after) in raw.deltas.iter().zip(&encoded.deltas) {
-                assert_eq!(after.order.price.raw, before.order.price.raw);
-                assert_eq!(after.order.size.raw, before.order.size.raw);
+                assert_eq!(after.order.price.raw(), before.order.price.raw());
+                assert_eq!(after.order.size.raw(), before.order.size.raw());
                 assert_eq!(after.order.price.precision, instrument.price_precision());
                 assert_eq!(after.order.size.precision, instrument.size_precision());
                 assert_eq!(after.action, before.action);
@@ -2028,7 +2028,7 @@ mod tests {
                 let quote = cache.quote(&id).unwrap();
                 assert_eq!(quote.bid_price.precision, instrument.price_precision());
                 assert_eq!(quote.ask_size.precision, 5);
-                assert_eq!(quote.bid_price.raw, raw.deltas[1].order.price.raw);
+                assert_eq!(quote.bid_price.raw(), raw.deltas[1].order.price.raw());
                 assert_eq!(quote.ts_event.as_u64(), 2_000_000_000 - 100);
                 assert_eq!(quote.ts_init.as_u64(), 2_000_000_000);
             }
