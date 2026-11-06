@@ -368,7 +368,9 @@ impl ContextReader {
         let mut reader = BufReader::new(File::open(root.join(&file.path))?);
         let mut header = String::new();
         reader.by_ref().take(4097).read_line(&mut header)?;
-        let header = header.trim_end_matches(['\r', '\n']);
+        ensure!(header.ends_with('\n'), "ECONOMIC_CONTEXT_HEADER_INVALID");
+        let header = header.strip_suffix('\n').unwrap();
+        let header = header.strip_suffix('\r').unwrap_or(header);
         ensure!(
             matches!(
                 header,
@@ -406,7 +408,9 @@ impl ContextReader {
             n <= 4096 && self.line.ends_with('\n'),
             "ECONOMIC_CONTEXT_ROW_INVALID"
         );
-        let mut fields = self.line.trim_end_matches(['\r', '\n']).split(',');
+        let line = self.line.strip_suffix('\n').unwrap_or(&self.line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let mut fields = line.split(',');
         let event = counter(
             fields
                 .next()
