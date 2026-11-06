@@ -162,6 +162,7 @@ fn hour_ns(day: &str, hour: &str) -> Result<u64> {
 struct Layout {
     market: String,
     symbol: String,
+    instrument_id: InstrumentId,
     stream: Stream,
 }
 impl Layout {
@@ -194,6 +195,7 @@ struct IndexedSource {
     end: u64,
     observed: bool,
     instruments: BTreeSet<InstrumentId>,
+    aliases: BTreeMap<String, BTreeMap<String, InstrumentId>>,
     layouts: Vec<Layout>,
     files: BTreeMap<InstrumentId, Arc<Vec<HourFile>>>,
     missing: BTreeMap<InstrumentId, Vec<(u64, String)>>,
@@ -236,6 +238,7 @@ impl IndexBuilder {
             self.layouts.push(Layout {
                 market: market.into(),
                 symbol: symbol.into(),
+                instrument_id: id,
                 stream: stream.clone(),
             });
             self.layout_ids.insert(key, index);
@@ -418,6 +421,7 @@ impl IndexedSource {
             end: date_ns(header.end_date)?,
             observed,
             instruments: markets.into_keys().collect(),
+            aliases: builder.aliases,
             layouts: builder.layouts,
             files,
             missing: builder.missing,
@@ -503,8 +507,14 @@ impl Hour {
         let layout = &source.layouts[self.layout];
         while let Some(row) = self.rows.next() {
             let row = row?;
+            let symbol = scalar(mapped_field(&row, &layout.stream.columns, "symbol")?)?;
             ensure!(
-                scalar(mapped_field(&row, &layout.stream.columns, "symbol")?)? == layout.symbol,
+                symbol == layout.symbol
+                    || source
+                        .aliases
+                        .get(&layout.market)
+                        .and_then(|aliases| aliases.get(&symbol))
+                        == Some(&layout.instrument_id),
                 "ECONOMIC_BOOK_SOURCE_SYMBOL_MISMATCH"
             );
             let event = timestamp(
@@ -694,6 +704,15 @@ mod tests {
         rows: &[(u64, u64, &str, &str, &str)],
         transactions: Option<&[Option<i64>]>,
     ) {
+        write_hour_transactions_with_symbol(path, rows, "BTC_USDT", transactions);
+    }
+
+    fn write_hour_transactions_with_symbol(
+        path: &Path,
+        rows: &[(u64, u64, &str, &str, &str)],
+        symbol: &str,
+        transactions: Option<&[Option<i64>]>,
+    ) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let schema = Arc::new(parse_message_type(&format!("message source {{
             REQUIRED INT64 event_time; REQUIRED INT64 received_time;
@@ -720,7 +739,7 @@ mod tests {
                     .iter()
                     .map(|row| {
                         ByteArray::from(match index {
-                            2 => "BTC_USDT",
+                            2 => symbol,
                             3 => "snapshot",
                             4 => row.2,
                             5 => row.3,
@@ -797,7 +816,7 @@ mod tests {
                     "file_identity":FileIdentity::metadata(&metadata).unwrap().to_string()})
             }),
             "instrument_source":{"currencies":crate::catalog::currencies::definitions(std::slice::from_ref(&instrument)),
-                "instruments":[instrument],"symbol_ids":{"BTC_USDT":id}}
+                "instruments":[instrument],"symbol_ids":{"BTC_USDT":id,"BTC_USDT_ALIAS":id}}
         })).unwrap()).unwrap();
         (temp, id)
     }
@@ -805,11 +824,12 @@ mod tests {
     fn replace_first_hour(
         root: &Path,
         rows: &[(u64, u64, &str, &str, &str)],
+        row_symbol: &str,
         transactions: Option<&[Option<i64>]>,
         observed: bool,
     ) {
         let file = root.join("archive/hyperliquid_spot/2026-01-01/00/BTC_USDT_orderbook.parquet");
-        write_hour_transactions(&file, rows, transactions);
+        write_hour_transactions_with_symbol(&file, rows, row_symbol, transactions);
         let path = root.join("book-snapshots.source.json");
         let mut manifest: serde_json::Value =
             serde_json::from_reader(File::open(&path).unwrap()).unwrap();
@@ -852,7 +872,7 @@ mod tests {
                 ]);
                 transactions.extend([Some(1), Some(1)]);
             }
-            replace_first_hour(root.path(), &rows, Some(&transactions), true);
+            replace_first_hour(root.path(), &rows, "BTC_USDT", Some(&transactions), true);
             let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
             if !valid {
                 assert_eq!(books.next().err().unwrap().to_string(), "BOOK_CROSSED");
@@ -890,6 +910,7 @@ mod tests {
                     (event, START + offset, "bid", "10.12", "1"),
                     (event, START + offset, "ask", "10.13", "2"),
                 ],
+                "BTC_USDT",
                 transactions.as_deref(),
                 observed,
             );
@@ -910,6 +931,7 @@ mod tests {
                 (event + 1, START, "bid", "10.11", "3"),
                 (event + 1, START, "ask", "10.15", "4"),
             ],
+            "BTC_USDT",
             Some(&[Some(1), Some(1), None, None]),
             true,
         );
@@ -939,6 +961,26 @@ mod tests {
             RawBooks::open(root.path(), id, START + 1_000_000, START + 2 * HOUR).unwrap();
         assert!(Arc::ptr_eq(&books.source, &later.source));
         assert_eq!(later.next().unwrap().unwrap().received(), START + 1_000_123);
+    }
+
+    #[test]
+    fn raw_hour_replay_matches_row_alias_to_file_instrument() {
+        let rows = [
+            (START / 1_000_000 - 1, START + 123, "bid", "10.12", "1"),
+            (START / 1_000_000 - 1, START + 123, "ask", "10.13", "2"),
+        ];
+        let (root, id) = source(false);
+        replace_first_hour(root.path(), &rows, "BTC_USDT_ALIAS", None, false);
+        let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        assert_eq!(books.next().unwrap().unwrap().received(), START + 123);
+
+        let (root, id) = source(false);
+        replace_first_hour(root.path(), &rows, "UNKNOWN", None, false);
+        let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        assert_eq!(
+            books.next().err().unwrap().to_string(),
+            "ECONOMIC_BOOK_SOURCE_SYMBOL_MISMATCH"
+        );
     }
 
     #[test]
