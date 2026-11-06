@@ -478,7 +478,7 @@ mod tests {
             true,
         )
         .unwrap();
-        for (maker, side) in [(true, AggressorSide::Seller), (false, AggressorSide::Buyer)] {
+        for (maker, side) in [(true, AggressorSide::Sell), (false, AggressorSide::Buy)] {
             let row = Row::new(vec![
                 ("is_buyer_maker".into(), Field::Bool(maker)),
                 ("trade_id".into(), Field::Long(123)),

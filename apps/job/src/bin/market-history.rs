@@ -1436,7 +1436,7 @@ mod tests {
             "BTCUSDT.BINANCE".parse().unwrap(),
             "10.12".parse().unwrap(),
             "0.1".parse().unwrap(),
-            nautilus_model::enums::AggressorSide::Buyer,
+            nautilus_model::enums::AggressorSide::Buy,
             TradeId::new_checked("T-1").unwrap(),
             1_000_000_000.into(),
             1_001_000_000.into(),
