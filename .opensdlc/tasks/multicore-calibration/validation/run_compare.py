@@ -52,6 +52,8 @@ def main():
     manifest = [case for case in manifest if not args.case or any(s in case["name"] for s in args.case)]
     if not manifest:
         p.error("no fixture matches the requested cases")
+    if len({binary["label"] for binary in binaries}) != len(binaries):
+        p.error("binary labels must be unique")
     records = []
     equivalent = True
     expected = {}
@@ -109,6 +111,8 @@ def main():
             summary.append({"case": case["name"], "binary": binary["label"],
                             "runs": len(runs), "all_success": all(r["exit"] == 0 for r in runs),
                             **{key + "_median": statistics.median(r[key] for r in runs)
+                               for key in ["precise_wall_s", "cpu_s", "peak_rss_kib"]},
+                            **{key + "_range": [min(r[key] for r in runs), max(r[key] for r in runs)]
                                for key in ["precise_wall_s", "cpu_s", "peak_rss_kib"]}})
     result = {"binaries": binaries, "all_complete_results_equal": equivalent,
               "summary": summary, "records": records}
