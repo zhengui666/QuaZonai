@@ -54,14 +54,29 @@ fn correlation(x: &[f64], y: &[f64]) -> Option<f64> {
         .then(|| xy / xx.sqrt() / yy.sqrt())
         .filter(|v| v.is_finite())
 }
-fn ranks(values: &[f64]) -> Vec<f64> {
-    let mut order: Vec<_> = (0..values.len()).collect();
-    order.sort_by(|a, b| values[*a].total_cmp(&values[*b]));
-    let mut ranks = vec![0.0; values.len()];
+/// Reuse ranking storage across synchronized groups and bootstrap replicates.
+/// Read score/label columns directly from pairs instead of copying both columns.
+#[derive(Default)]
+struct RankWorkspace {
+    order: Vec<usize>,
+    x: Vec<f64>,
+    y: Vec<f64>,
+}
+
+fn ranks_by(
+    len: usize,
+    value: impl Fn(usize) -> f64,
+    order: &mut Vec<usize>,
+    ranks: &mut Vec<f64>,
+) {
+    order.clear();
+    order.extend(0..len);
+    order.sort_by(|a, b| value(*a).total_cmp(&value(*b)));
+    ranks.resize(len, 0.0);
     let mut index = 0;
     while index < order.len() {
         let mut end = index + 1;
-        while end < order.len() && values[order[index]] == values[order[end]] {
+        while end < order.len() && value(order[index]) == value(order[end]) {
             end += 1;
         }
         let rank = (index + end - 1) as f64 / 2.0;
@@ -70,36 +85,46 @@ fn ranks(values: &[f64]) -> Vec<f64> {
         }
         index = end;
     }
-    ranks
 }
-fn rank_ic(x: &[f64], y: &[f64]) -> Option<f64> {
-    correlation(&ranks(x), &ranks(y))
+
+impl RankWorkspace {
+    fn statistic(&mut self, pairs: &[(f64, f64)]) -> Option<f64> {
+        if pairs.len() < 3 {
+            return None;
+        }
+        ranks_by(pairs.len(), |i| pairs[i].0, &mut self.order, &mut self.x);
+        ranks_by(pairs.len(), |i| pairs[i].1, &mut self.order, &mut self.y);
+        correlation(&self.x, &self.y)
+    }
+
+    fn quantile_diagnostics(&mut self, pairs: &[(f64, f64)]) -> Option<(f64, f64)> {
+        if pairs.len() < 10 || pairs.iter().all(|pair| pair.0 == pairs[0].0) {
+            return None;
+        }
+        ranks_by(pairs.len(), |i| pairs[i].0, &mut self.order, &mut self.x);
+        let mut bins = [0.0; 5];
+        let mut counts = [0_usize; 5];
+        for (rank, pair) in self.x.iter().zip(pairs) {
+            let index = ((rank * 5.0 / pairs.len() as f64).floor() as usize).min(4);
+            bins[index] += pair.1;
+            counts[index] += 1;
+        }
+        if counts.iter().any(|n| *n < 2) {
+            return None;
+        }
+        for i in 0..5 {
+            bins[i] /= counts[i] as f64;
+        }
+        Some((
+            bins[4] - bins[0],
+            bins.windows(2).filter(|p| p[1] > p[0]).count() as f64 / 4.0,
+        ))
+    }
 }
-fn quantile_diagnostics(pairs: &[(f64, f64)]) -> Option<(f64, f64)> {
-    if pairs.len() < 10 {
-        return None;
-    }
-    let scores: Vec<_> = pairs.iter().map(|p| p.0).collect();
-    if scores.iter().all(|score| *score == scores[0]) {
-        return None;
-    }
-    let mut bins = [0.0; 5];
-    let mut counts = [0_usize; 5];
-    for (rank, pair) in ranks(&scores).into_iter().zip(pairs) {
-        let index = ((rank * 5.0 / pairs.len() as f64).floor() as usize).min(4);
-        bins[index] += pair.1;
-        counts[index] += 1;
-    }
-    if counts.iter().any(|n| *n < 2) {
-        return None;
-    }
-    for i in 0..5 {
-        bins[i] /= counts[i] as f64;
-    }
-    Some((
-        bins[4] - bins[0],
-        bins.windows(2).filter(|p| p[1] > p[0]).count() as f64 / 4.0,
-    ))
+
+fn mean_present(values: &[Option<f64>]) -> Option<f64> {
+    let count = values.iter().flatten().count();
+    (count != 0).then(|| values.iter().flatten().sum::<f64>() / count as f64)
 }
 fn next_random(state: &mut u64) -> usize {
     *state ^= *state << 13;
@@ -122,19 +147,17 @@ pub fn factor_diagnostics(
     requested_block: usize,
     scope: NativeReviewFactorScopeV1,
 ) -> Result<NativeFactorDiagnosticsV1> {
-    let selected: Vec<_> = points.iter().filter(|p| p.partition == partition).collect();
-    let included: Vec<_> = selected
-        .iter()
-        .filter(|p| p.exclusion_reason.is_none())
-        .copied()
-        .collect();
+    let selected = points.iter().filter(|p| p.partition == partition);
+    let selected_count = selected.clone().count();
+    let included = selected.filter(|p| p.exclusion_reason.is_none());
+    let included_count = included.clone().count();
     let mut output = NativeFactorDiagnosticsV1 {
         method_version: METHOD.into(),
         scope,
-        observations: included.len().try_into()?,
+        observations: included_count.try_into()?,
         metrics: vec![metric(
             "coverage",
-            (!selected.is_empty()).then(|| included.len() as f64 / selected.len() as f64),
+            (selected_count != 0).then(|| included_count as f64 / selected_count as f64),
             "EMPTY_PARTITION",
         )],
         limitations: vec![
@@ -143,7 +166,7 @@ pub fn factor_diagnostics(
     };
     let mut groups: BTreeMap<u64, Vec<(f64, f64)>> = BTreeMap::new();
     let mut keys = BTreeSet::new();
-    for point in &included {
+    for point in included.clone() {
         if !keys.insert((&point.observation.instrument_id, point.observation.event_ns)) {
             let mut unavailable = metric("rank_ic", None, "REVIEW_DUPLICATE_FACTOR_POINT");
             unavailable.status = NativeReviewMetricStatusV1::InvalidInput;
@@ -164,10 +187,11 @@ pub fn factor_diagnostics(
             .or_default()
             .push((score, label));
     }
+    // Duplicate detection is complete; the tree is not needed during ranking/bootstrap.
+    drop(keys);
     let times: Vec<_> = groups.keys().copied().collect();
     let groups: Vec<_> = groups.into_values().collect();
     let maximum_overlap = included
-        .iter()
         .filter_map(|p| {
             p.label_event_ns.map(|end| {
                 let left = times.partition_point(|t| *t < p.observation.event_ns.get());
@@ -177,38 +201,46 @@ pub fn factor_diagnostics(
         })
         .max()
         .unwrap_or(1);
+    drop(times);
     let block = requested_block.max(maximum_overlap).max(1);
-    let all_pairs: Vec<_> = groups.iter().flatten().copied().collect();
-    let statistic = |pairs: &[(f64, f64)]| -> Option<f64> {
-        let x: Vec<_> = pairs.iter().map(|p| p.0).collect();
-        let y: Vec<_> = pairs.iter().map(|p| p.1).collect();
-        rank_ic(&x, &y)
+    let mut workspace = RankWorkspace::default();
+    let mut pairs = Vec::new();
+    // Keep one entry per event group so missing cross-sectional statistics retain
+    // their original slice positions. Pooling does not compute these statistics.
+    let cross: Vec<_> = if scope == NativeReviewFactorScopeV1::CrossSectional {
+        groups.iter().map(|g| workspace.statistic(g)).collect()
+    } else {
+        Vec::new()
     };
-    let cross: Vec<_> = groups.iter().filter_map(|g| statistic(g)).collect();
-    let observed = match scope {
-        NativeReviewFactorScopeV1::PooledTimeSeries => statistic(&all_pairs),
-        NativeReviewFactorScopeV1::CrossSectional => (!cross.is_empty()).then(|| mean(&cross)),
+    let (observed, quantiles) = match scope {
+        NativeReviewFactorScopeV1::PooledTimeSeries => {
+            pairs.extend(groups.iter().flatten().copied());
+            (
+                workspace.statistic(&pairs),
+                workspace.quantile_diagnostics(&pairs),
+            )
+        }
+        NativeReviewFactorScopeV1::CrossSectional => {
+            let values: Vec<_> = groups
+                .iter()
+                .filter_map(|g| workspace.quantile_diagnostics(g))
+                .collect();
+            (
+                mean_present(&cross),
+                (!values.is_empty()).then(|| {
+                    (
+                        values.iter().map(|v| v.0).sum::<f64>() / values.len() as f64,
+                        values.iter().map(|v| v.1).sum::<f64>() / values.len() as f64,
+                    )
+                }),
+            )
+        }
     };
     output.metrics.push(metric(
         "rank_ic",
         observed,
         "CONSTANT_OR_INSUFFICIENT_FACTOR_PAIRS",
     ));
-    let quantiles = match scope {
-        NativeReviewFactorScopeV1::PooledTimeSeries => quantile_diagnostics(&all_pairs),
-        NativeReviewFactorScopeV1::CrossSectional => {
-            let values: Vec<_> = groups
-                .iter()
-                .filter_map(|g| quantile_diagnostics(g))
-                .collect();
-            (!values.is_empty()).then(|| {
-                (
-                    values.iter().map(|v| v.0).sum::<f64>() / values.len() as f64,
-                    values.iter().map(|v| v.1).sum::<f64>() / values.len() as f64,
-                )
-            })
-        }
-    };
     output.metrics.push(metric(
         "quantile_spread",
         quantiles.map(|q| q.0),
@@ -225,12 +257,15 @@ pub fn factor_diagnostics(
         "",
     ));
     let can_bootstrap = groups.len() / block >= 30
-        && (scope != NativeReviewFactorScopeV1::CrossSectional || cross.len() == groups.len());
+        && (scope != NativeReviewFactorScopeV1::CrossSectional
+            || cross.iter().all(Option::is_some));
     let mut samples = Vec::new();
     let mut seed = 0x6a09e667f3bcc909_u64;
     if can_bootstrap {
+        samples.reserve(BOOTSTRAPS);
+        let mut indices = Vec::with_capacity(groups.len());
         for _ in 0..BOOTSTRAPS {
-            let mut indices = Vec::with_capacity(groups.len());
+            indices.clear();
             while indices.len() < groups.len() {
                 let start = next_random(&mut seed) % (groups.len() - block + 1);
                 for index in start..start + block {
@@ -241,15 +276,13 @@ pub fn factor_diagnostics(
             }
             let estimate = match scope {
                 NativeReviewFactorScopeV1::PooledTimeSeries => {
-                    let pairs: Vec<_> = indices
-                        .iter()
-                        .flat_map(|i| groups[*i].iter().copied())
-                        .collect();
-                    statistic(&pairs)
+                    pairs.clear();
+                    pairs.extend(indices.iter().flat_map(|i| groups[*i].iter().copied()));
+                    workspace.statistic(&pairs)
                 }
-                NativeReviewFactorScopeV1::CrossSectional => {
-                    Some(indices.iter().map(|i| cross[*i]).sum::<f64>() / indices.len() as f64)
-                }
+                NativeReviewFactorScopeV1::CrossSectional => Some(
+                    indices.iter().map(|i| cross[*i].unwrap()).sum::<f64>() / indices.len() as f64,
+                ),
             };
             if let Some(v) = estimate {
                 samples.push(v);
@@ -269,16 +302,14 @@ pub fn factor_diagnostics(
     ));
     let mut slice_results = Vec::new();
     for slice in 0..4 {
-        let subset = &groups[groups.len() * slice / 4..groups.len() * (slice + 1) / 4];
+        let range = groups.len() * slice / 4..groups.len() * (slice + 1) / 4;
         let value = match scope {
             NativeReviewFactorScopeV1::PooledTimeSeries => {
-                let pairs: Vec<_> = subset.iter().flatten().copied().collect();
-                statistic(&pairs)
+                pairs.clear();
+                pairs.extend(groups[range].iter().flatten().copied());
+                workspace.statistic(&pairs)
             }
-            NativeReviewFactorScopeV1::CrossSectional => {
-                let values: Vec<_> = subset.iter().filter_map(|g| statistic(g)).collect();
-                (!values.is_empty()).then(|| mean(&values))
-            }
+            NativeReviewFactorScopeV1::CrossSectional => mean_present(&cross[range]),
         };
         if let Some(value) = value {
             slice_results.push(value);

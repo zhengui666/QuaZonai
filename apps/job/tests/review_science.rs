@@ -482,3 +482,124 @@ fn long_original_blocks_return_insufficient_evidence_without_a_resource_rejectio
     .unwrap();
     assert!(result.metrics.iter().all(|metric| metric.value.is_none()));
 }
+
+#[test]
+fn cross_sectional_slices_keep_missing_groups_at_original_times() {
+    // Two constant groups have no IC. Removing their positions before slicing
+    // would change which original time quarters have positive IC.
+    let directions = [1.0, 0.0, -1.0, -1.0, 1.0, 0.0, -1.0, 1.0];
+    let mut points = Vec::new();
+    for (event, direction) in directions.into_iter().enumerate() {
+        for asset in 0..3 {
+            let mut point = factor_points(1).pop().unwrap();
+            point.observation.instrument_id = format!("asset-{asset}");
+            point.observation.event_ns = DbCounter::new(event as u64).unwrap();
+            point.observation.available_ns = point.observation.event_ns;
+            point.observation.forecast = Some(asset as f64);
+            point.observation.label_return = Some(direction * asset as f64);
+            point.observation.label_available_ns = Some(DbCounter::new(event as u64 + 1).unwrap());
+            point.label_event_ns = point.observation.label_available_ns;
+            points.push(point);
+        }
+    }
+    let result = job::review_science::factor_diagnostics(
+        &points,
+        contracts::factors::NativeFactorPartitionV1::Validation,
+        1,
+        NativeReviewFactorScopeV1::CrossSectional,
+    )
+    .unwrap();
+    let value = |code: &str| {
+        result
+            .metrics
+            .iter()
+            .find(|m| m.code == code)
+            .unwrap()
+            .value
+    };
+    assert_eq!(value("coverage"), Some(1.0));
+    assert_eq!(value("rank_ic"), Some(0.0));
+    assert_eq!(value("positive_slice_fraction"), Some(0.5));
+    assert_eq!(value("rank_ic_lower"), None);
+}
+
+#[test]
+fn factor_validation_ignores_other_partitions_but_rejects_included_nonfinite() {
+    use contracts::factors::NativeFactorPartitionV1;
+    let mut points = factor_points(8);
+    let baseline = job::review_science::factor_diagnostics(
+        &points,
+        NativeFactorPartitionV1::Validation,
+        1,
+        NativeReviewFactorScopeV1::PooledTimeSeries,
+    )
+    .unwrap();
+    let mut other_partition = points[0].clone();
+    other_partition.partition = NativeFactorPartitionV1::Heldout;
+    other_partition.observation.forecast = Some(f64::NAN);
+    points.push(other_partition);
+    let actual = job::review_science::factor_diagnostics(
+        &points,
+        NativeFactorPartitionV1::Validation,
+        1,
+        NativeReviewFactorScopeV1::PooledTimeSeries,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(baseline).unwrap()
+    );
+    points[0].observation.forecast = Some(f64::INFINITY);
+    assert_eq!(
+        job::review_science::factor_diagnostics(
+            &points,
+            NativeFactorPartitionV1::Validation,
+            1,
+            NativeReviewFactorScopeV1::PooledTimeSeries,
+        )
+        .unwrap_err()
+        .to_string(),
+        "REVIEW_FACTOR_NONFINITE"
+    );
+}
+
+#[path = "support/review_diagnostics_fixture.rs"]
+mod review_diagnostics_fixture;
+
+#[test]
+fn factor_diagnostics_match_complete_frozen_dev_outputs() {
+    // Captured from the unmodified 8e4059b0 job review-science CLI, not from a
+    // second implementation of ranking or resampling. See the task validation.
+    let expected: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/review_diagnostics_baseline.json")).unwrap();
+    let cases = review_diagnostics_fixture::cases();
+    assert_eq!(cases.len(), expected.len());
+    for (case, expected) in cases.into_iter().zip(expected) {
+        assert_eq!(expected["case"].as_str(), Some(case.name.as_str()));
+        let actual = job::review_science::factor_diagnostics(
+            &case.points,
+            contracts::factors::NativeFactorPartitionV1::Validation,
+            1,
+            case.scope,
+        );
+        if let Some(error) = expected.get("error") {
+            assert_eq!(
+                actual.unwrap_err().to_string(),
+                error.as_str().unwrap(),
+                "{}",
+                case.name
+            );
+        } else {
+            // Compare canonical serialized numbers as well as every field, so
+            // signed zeros and a changed floating-point result cannot pass as
+            // an approximate numeric equality.
+            let actual = serde_json::to_value(actual.unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_string(&actual).unwrap(),
+                serde_json::to_string(&expected["result"]).unwrap(),
+                "{}",
+                case.name
+            );
+        }
+    }
+}
