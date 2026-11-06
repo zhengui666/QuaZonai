@@ -11,7 +11,7 @@ import time
 p = argparse.ArgumentParser()
 p.add_argument("--binary", type=Path, required=True)
 p.add_argument("--input", type=Path, required=True)
-p.add_argument("--threads", type=int, required=True)
+p.add_argument("--threads", type=int, help="omit to observe the production default")
 p.add_argument("--out", type=Path, required=True)
 a = p.parse_args()
 a.out.mkdir(parents=True, exist_ok=True)
@@ -19,8 +19,10 @@ observed = set()
 peak = 0
 peak_calibration = 0
 with a.input.open("rb") as inp, (a.out / "stdout.json").open("wb") as out, (a.out / "stderr.txt").open("wb") as err:
-    proc = subprocess.Popen([str(a.binary.resolve()), "fit-ensemble"], stdin=inp, stdout=out, stderr=err,
-                            env={"PATH": os.defpath, "QZ_CALIBRATION_THREADS": str(a.threads)})
+    env = {"PATH": os.defpath}
+    if a.threads is not None:
+        env["QZ_CALIBRATION_THREADS"] = str(a.threads)
+    proc = subprocess.Popen([str(a.binary.resolve()), "fit-ensemble"], stdin=inp, stdout=out, stderr=err, env=env)
     while proc.poll() is None:
         names = []
         for path in Path(f"/proc/{proc.pid}/task").glob("*/comm"):
