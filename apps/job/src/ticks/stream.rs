@@ -466,14 +466,14 @@ fn evaluate_asset(
                 let flow_features = [a, b, c, d, e, f, g, feature_at(signed, &current)?];
                 model.predict(
                     current.event,
-                    current.source_event_end - 1,
+                    current.feature_event(observed),
                     ordinal,
                     &flow_features,
                 )?
             } else {
                 model.predict(
                     current.event,
-                    current.source_event_end - 1,
+                    current.feature_event(observed),
                     ordinal,
                     &features,
                 )?

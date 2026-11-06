@@ -458,9 +458,41 @@ struct Hour {
     path: PathBuf,
     identity: FileIdentity,
     layout: usize,
+    at: u64,
     snapshots: FlatSnapshots,
+    first_row: bool,
+    checkpoint: Option<CarryCheckpoint>,
+    previous: Option<u64>,
+    carry_snapshots: u64,
+    carry_rows: u64,
+}
+struct CarryCheckpoint {
+    event: u64,
+    received: u64,
+    rows: u64,
+    all_transaction_null: bool,
 }
 impl Hour {
+    fn complete(&mut self, snapshot: BookSnapshot) -> Result<Option<BookSnapshot>> {
+        let received = snapshot.deltas.ts_init.as_u64();
+        ensure!(
+            self.previous.is_none_or(|previous| previous < received),
+            "ECONOMIC_BOOK_RECEIPT_ORDER_INVALID"
+        );
+        self.previous = Some(received);
+        if let Some(checkpoint) = self.checkpoint.take() {
+            if checkpoint.all_transaction_null
+                && checkpoint.event == snapshot.deltas.ts_event.as_u64()
+                && checkpoint.received == received
+            {
+                self.carry_snapshots += 1;
+                self.carry_rows += checkpoint.rows;
+                return Ok(None);
+            }
+        }
+        Ok(Some(snapshot))
+    }
+
     fn next(
         &mut self,
         source: &IndexedSource,
@@ -469,7 +501,7 @@ impl Hour {
         end: u64,
     ) -> Result<Option<BookSnapshot>> {
         let layout = &source.layouts[self.layout];
-        for row in self.rows.by_ref() {
+        while let Some(row) = self.rows.next() {
             let row = row?;
             ensure!(
                 scalar(mapped_field(&row, &layout.stream.columns, "symbol")?)? == layout.symbol,
@@ -487,7 +519,28 @@ impl Hour {
                     .as_deref()
                     .unwrap_or(&layout.stream.time_unit),
             )?;
-            ensure!(received >= event, "SOURCE_EVENT_AFTER_AVAILABILITY");
+            let transaction_null = |row: &parquet::record::Row| {
+                row.get_column_iter().any(|(name, value)| {
+                    name == "transaction_time" && matches!(value, parquet::record::Field::Null)
+                })
+            };
+            if self.first_row {
+                self.first_row = false;
+                if source.observed && received == self.at && transaction_null(&row) {
+                    self.checkpoint = Some(CarryCheckpoint {
+                        event,
+                        received,
+                        rows: 0,
+                        all_transaction_null: true,
+                    });
+                }
+            }
+            if let Some(checkpoint) = &mut self.checkpoint {
+                if (checkpoint.event, checkpoint.received) == (event, received) {
+                    checkpoint.rows += 1;
+                    checkpoint.all_transaction_null &= transaction_null(&row);
+                }
+            }
             if received < start || received >= end {
                 continue;
             }
@@ -495,11 +548,18 @@ impl Hour {
                 self.snapshots
                     .push(&layout.stream.columns, row, encoding, event, received)?
             {
-                return Ok(Some(snapshot));
+                // Parse the complete frame first; a carried checkpoint is not new liquidity.
+                if let Some(snapshot) = self.complete(snapshot)? {
+                    return Ok(Some(snapshot));
+                }
             }
         }
         self.identity.check(&self.file, &self.path)?;
-        self.snapshots.finish(&layout.stream.columns)
+        self.snapshots
+            .finish(&layout.stream.columns)?
+            .map(|snapshot| self.complete(snapshot))
+            .transpose()
+            .map(Option::flatten)
     }
 }
 
@@ -512,6 +572,8 @@ pub(super) struct RawBooks {
     start: u64,
     end: u64,
     previous: Option<u64>,
+    carry_snapshots: u64,
+    carry_rows: u64,
 }
 impl RawBooks {
     pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
@@ -551,14 +613,21 @@ impl RawBooks {
             start,
             end,
             previous: None,
+            carry_snapshots: 0,
+            carry_rows: 0,
         })
+    }
+    pub fn checkpoint_counts(&self) -> (u64, u64) {
+        (self.carry_snapshots, self.carry_rows)
     }
     pub fn next(&mut self) -> Result<Option<Snapshot>> {
         loop {
             if let Some(hour) = &mut self.hour {
-                if let Some(snapshot) =
-                    hour.next(&self.source, self.encoding, self.start, self.end)?
-                {
+                let before = (hour.carry_snapshots, hour.carry_rows);
+                let next = hour.next(&self.source, self.encoding, self.start, self.end)?;
+                self.carry_snapshots += hour.carry_snapshots - before.0;
+                self.carry_rows += hour.carry_rows - before.1;
+                if let Some(snapshot) = next {
                     let received = snapshot.deltas.ts_init.as_u64();
                     ensure!(
                         self.previous.is_none_or(|last| last < received),
@@ -591,7 +660,13 @@ impl RawBooks {
                 path,
                 identity: file.identity,
                 layout: file.layout,
+                at: file.at,
                 snapshots: FlatSnapshots::default(),
+                first_row: true,
+                checkpoint: None,
+                previous: None,
+                carry_snapshots: 0,
+                carry_rows: 0,
             });
         }
     }
@@ -611,12 +686,20 @@ mod tests {
     const START: u64 = 1_767_225_600_000_000_000;
 
     fn write_hour(path: &Path, rows: &[(u64, u64, &str, &str, &str)]) {
+        write_hour_transactions(path, rows, None);
+    }
+
+    fn write_hour_transactions(
+        path: &Path,
+        rows: &[(u64, u64, &str, &str, &str)],
+        transactions: Option<&[Option<i64>]>,
+    ) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let schema = Arc::new(parse_message_type("message source {
+        let schema = Arc::new(parse_message_type(&format!("message source {{
             REQUIRED INT64 event_time; REQUIRED INT64 received_time;
             REQUIRED BINARY symbol (UTF8); REQUIRED BINARY event_type (UTF8);
             REQUIRED BINARY side (UTF8); REQUIRED BINARY price (UTF8); REQUIRED BINARY quantity (UTF8);
-        }").unwrap());
+            {} }}", if transactions.is_some() { "OPTIONAL INT64 transaction_time;" } else { "" })).unwrap());
         let mut writer =
             SerializedFileWriter::new(File::create(path).unwrap(), schema, Default::default())
                 .unwrap();
@@ -651,6 +734,20 @@ mod tests {
                     .write_batch(&values, None, None)
                     .unwrap();
             }
+            column.close().unwrap();
+        }
+        if let Some(transactions) = transactions {
+            assert_eq!(rows.len(), transactions.len());
+            let mut column = group.next_column().unwrap().unwrap();
+            let values = transactions.iter().flatten().copied().collect::<Vec<_>>();
+            let levels = transactions
+                .iter()
+                .map(|value| i16::from(value.is_some()))
+                .collect::<Vec<_>>();
+            column
+                .typed::<Int64Type>()
+                .write_batch(&values, Some(&levels), None)
+                .unwrap();
             column.close().unwrap();
         }
         group.close().unwrap();
@@ -703,6 +800,122 @@ mod tests {
                 "instruments":[instrument],"symbol_ids":{"BTC_USDT":id}}
         })).unwrap()).unwrap();
         (temp, id)
+    }
+
+    fn replace_first_hour(
+        root: &Path,
+        rows: &[(u64, u64, &str, &str, &str)],
+        transactions: Option<&[Option<i64>]>,
+        observed: bool,
+    ) {
+        let file = root.join("archive/hyperliquid_spot/2026-01-01/00/BTC_USDT_orderbook.parquet");
+        write_hour_transactions(&file, rows, transactions);
+        let path = root.join("book-snapshots.source.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_reader(File::open(&path).unwrap()).unwrap();
+        manifest["files"].as_array_mut().unwrap().truncate(1);
+        let metadata = file.metadata().unwrap();
+        manifest["files"][0]["size"] = serde_json::json!(metadata.len());
+        manifest["files"][0]["file_identity"] =
+            serde_json::json!(FileIdentity::metadata(&metadata).unwrap().to_string());
+        if observed {
+            manifest["repository"] = serde_json::json!("CryptoHFTData");
+            manifest["source_reference"] = serde_json::json!(
+                "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
+            );
+            manifest["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
+        }
+        std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn published_carry_checkpoint_is_validated_without_refreshing_books_or_clocks() {
+        for (only_checkpoint, valid) in [(false, true), (true, true), (false, false)] {
+            let (root, id) = source(false);
+            // Venue time can be ahead; only the source's exact checkpoint marker decides.
+            let event = START / 1_000_000 + 1;
+            let mut rows = vec![
+                (
+                    event,
+                    START,
+                    "bid",
+                    if valid { "10.12" } else { "10.14" },
+                    "1",
+                ),
+                (event, START, "ask", "10.13", "2"),
+            ];
+            let mut transactions = vec![None, None];
+            if !only_checkpoint {
+                rows.extend([
+                    (event + 2, START + 2_000_000, "bid", "10.11", "3"),
+                    (event + 2, START + 2_000_000, "ask", "10.15", "4"),
+                ]);
+                transactions.extend([Some(1), Some(1)]);
+            }
+            replace_first_hour(root.path(), &rows, Some(&transactions), true);
+            let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+            if !valid {
+                assert_eq!(books.next().err().unwrap().to_string(), "BOOK_CROSSED");
+                assert_eq!(books.checkpoint_counts(), (0, 0));
+                continue;
+            }
+            let next = books.next().unwrap();
+            if only_checkpoint {
+                assert!(next.is_none());
+            } else {
+                let next = next.unwrap();
+                assert_eq!(next.received(), START + 2_000_000);
+                assert_eq!(next.deltas.ts_event.as_u64(), START + 3_000_000);
+                assert_eq!(next.bid_depth, rust_decimal::Decimal::from(3));
+                assert!(books.next().unwrap().is_none());
+            }
+            assert_eq!(books.checkpoint_counts(), (1, 2));
+        }
+    }
+
+    #[test]
+    fn checkpoint_marker_never_discards_missing_nonnull_mixed_or_nonfirst_real_frames() {
+        for (observed, offset, transactions) in [
+            (true, 0, None),
+            (true, 0, Some(vec![Some(1), Some(1)])),
+            (true, 0, Some(vec![None, Some(1)])),
+            (true, 123, Some(vec![None, None])),
+            (false, 0, Some(vec![None, None])),
+        ] {
+            let (root, id) = source(false);
+            let event = START / 1_000_000 + 1;
+            replace_first_hour(
+                root.path(),
+                &[
+                    (event, START + offset, "bid", "10.12", "1"),
+                    (event, START + offset, "ask", "10.13", "2"),
+                ],
+                transactions.as_deref(),
+                observed,
+            );
+            let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+            let first = books.next().unwrap().unwrap();
+            assert_eq!(first.received(), START + offset);
+            assert_eq!(first.deltas.ts_event.as_u64(), START + 1_000_000);
+            assert!(books.next().unwrap().is_none());
+            assert_eq!(books.checkpoint_counts(), (0, 0));
+        }
+        let (root, id) = source(false);
+        let event = START / 1_000_000;
+        replace_first_hour(
+            root.path(),
+            &[
+                (event, START - 1, "bid", "10.12", "1"),
+                (event, START - 1, "ask", "10.13", "2"),
+                (event + 1, START, "bid", "10.11", "3"),
+                (event + 1, START, "ask", "10.15", "4"),
+            ],
+            Some(&[Some(1), Some(1), None, None]),
+            true,
+        );
+        let mut books = RawBooks::open(root.path(), id, START, START + HOUR).unwrap();
+        assert_eq!(books.next().unwrap().unwrap().received(), START);
+        assert_eq!(books.checkpoint_counts(), (0, 0));
     }
 
     #[test]

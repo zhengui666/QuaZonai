@@ -2229,7 +2229,7 @@ pub fn replay_models_with_funding(
                         .map(|total| total.get() - consumed);
                     let (score, used) = model.predict(
                         event,
-                        current.source_event_end - 1,
+                        current.feature_event(received),
                         ordinal,
                         &features,
                         remaining_fuel,
@@ -2818,6 +2818,18 @@ pub fn replay_models_with_funding(
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
     if observed {
+        if funding_root.join("book-snapshots.source.json").is_file() {
+            let (carry_snapshots, carry_rows) =
+                book_readers.iter().fold((0, 0), |totals, reader| {
+                    let counts = reader.checkpoint_counts();
+                    (totals.0 + counts.0, totals.1 + counts.1)
+                });
+            result.coverage.source_evidence.insert("published_books".into(), serde_json::json!({
+                "carry_checkpoint_snapshots": carry_snapshots.to_string(),
+                "carry_checkpoint_rows": carry_rows.to_string(),
+                "policy": "Only the first complete frame of an observed CryptoHFTData file, received at its file hour with transaction_time explicitly null on every row, is a carried checkpoint. It is structurally validated but does not refresh liquidity, marks or receipt age; original files and clocks are retained."
+            }));
+        }
         result.model = "SEGREGATED_OBSERVED_L2_IOC_V1".into();
         result.methods.insert("execution".into(), "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account. Cash buys and capped new exposure use the actual execution-side depth cost, with declared fees and native Money rounding accounted for. A one-sided snapshot may only reduce existing inventory through an IOC limit at the depth actually touched; it does not create a BBO or a NAV mark. Two-sided snapshots retain market IOC orders.".into());
         result.methods.insert("capital".into(), "Initial USDT wealth is explicitly mapped to USDT0 in a native bootstrap cash account. Delayed real-book IOC sales convert that inventory to USDC, including native depth, size limits and fees. Realized net proceeds become one initial cash/margin split; unconverted dust remains in total wealth. No running transfers or reinjection.".into());

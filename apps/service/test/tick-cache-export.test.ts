@@ -45,10 +45,12 @@ async function preparedCache(target: NativeTickFactorRequest['target'] = { kind:
     await mkdir(join(root, 'data/cohorts'), { recursive: true }); await link(source, join(root, path));
     await writeFile(join(root, 'cohort-cache.json'), JSON.stringify({ schema_version: 1, representation,
       source_revision: selection.input.source_revision, availability: selection.input.availability,
-      ...(received ? { maximum_receive_delay_ns: selection.input.maximum_receive_delay_ns } : {}),
+      ...(received ? { maximum_receive_delay_ns: selection.input.maximum_receive_delay_ns,
+        source_event_start_ns: String(BigInt(clock(10)) - 1n), source_event_end_ns: clock(last) } : {}),
       event_start_ns: selection.input.event_start_ns, event_end_ns: selection.input.event_end_ns, trade_count: String(Number(count) * (flow ? 2 : 1)), cohort_count: count,
       source_report: { status: 'IMPORTED', source_revision: selection.input.source_revision },
       files: [{ instrument_id: 'BTCUSDT.SIM', path, bytes: String(bytes.length), byte_start: '0', byte_end: String(Number(count) * frameBytes),
+        ...(received ? { source_event_start_ns: String(BigInt(clock(10)) - 1n), source_event_end_ns: clock(last) } : {}),
         trade_count: String(Number(count) * (flow ? 2 : 1)), cohort_count: count, first_event_ns: clock(10), last_event_ns: clock(last) }] }));
   }
   const metadata = { schema_version: 1, modality: 'TRADE_TICK', representation, request, research_request: research,
@@ -78,6 +80,34 @@ test('receive-time cache export preserves clock, frame layout and bounded source
       await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'wrong-delay.json') }), /tick_cache_manifest_mismatch/);
     } finally { await rm(f.directory, { recursive: true, force: true }); }
   }
+});
+
+test('receive-time export binds each clipped view to its own original venue bounds', async () => {
+  const f = await preparedCache({ kind: 'FIXED_RECEIVED_TIME', horizon_ns: '10' }, true, false, true);
+  try {
+    const bytes = Buffer.from(f.bytes);
+    for (const [index, end] of [[2, 55n], [5, 95n]] as const) {
+      bytes.writeBigUInt64LE(end - 1n, index * 56 + 32); bytes.writeBigUInt64LE(end, index * 56 + 40);
+    }
+    await writeFile(f.source, bytes);
+    for (const [part, end] of [['research', '55'], ['independent', '95']] as const) {
+      const path = join(f.prepared, part, 'catalog/cohort-cache.json');
+      const manifest = JSON.parse(await readFile(path, 'utf8')); manifest.source_event_end_ns = end; manifest.files[0].source_event_end_ns = end;
+      await writeFile(path, JSON.stringify(manifest));
+    }
+    const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8'));
+    metadata.coverage.source_event_start_ns = '9'; metadata.coverage.source_event_end_ns = '95';
+    await writeFile(f.options.prepared, JSON.stringify(metadata));
+    const result = await exportDataset(f.options); const sealed = result.data.sealed as Record<string, unknown>;
+    assert.equal(result.data.source_event_start_ns, '9'); assert.equal(result.data.source_event_end_ns, '55');
+    assert.equal(sealed.source_event_start_ns, '9'); assert.equal(sealed.source_event_end_ns, '95');
+    assert.equal(result.inputCoverage?.source_event_end_ns, '95');
+    assert.deepEqual((await readSourceRevision(result))!.configured.data, result.data);
+    const path = join(f.prepared, 'research/catalog/cohort-cache.json');
+    const manifest = JSON.parse(await readFile(path, 'utf8')); delete manifest.source_event_end_ns;
+    await writeFile(path, JSON.stringify(manifest));
+    await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'missing-bounds.json') }), /tick_received_source_bounds_required/);
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
 test('regime-aware export binds the clipped primary calendar and keeps future BTC marks in the sealed request', async () => {

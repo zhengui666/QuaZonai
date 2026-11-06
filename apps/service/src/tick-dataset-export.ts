@@ -30,6 +30,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
   const received = full.input.availability === 'RECEIVED_TIME_OBSERVED';
   const flow = String(full.input.representation).endsWith('_FLOW_CACHE_V1');
   const cache = full.input.representation !== undefined;
+  if (received && !cache) throw new Error('tick_received_native_source_bounds_unsupported');
   if ((cache ? metadata.catalog_format !== `QZ_${full.input.representation}`
     : !['NAUTILUS_HIGH_PRECISION_16', 'NAUTILUS_STANDARD_9'].includes(String(metadata.catalog_format)))
     || (cache ? metadata.representation !== full.input.representation : metadata.representation !== undefined)) throw new Error('tick_prepared_representation_mismatch');
@@ -77,7 +78,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     return BigInt(value);
   }
   type CacheFile = { inode: string; bytes: bigint; begin: bigint; end: bigint };
-  async function cacheCatalog(directory: string, request: NativeTickFactorRequest): Promise<{ trades: bigint; cohorts: bigint; source: string; assets: Map<string, CacheFile>; contextFiles: Map<string, string> }> {
+  async function cacheCatalog(directory: string, request: NativeTickFactorRequest): Promise<{ trades: bigint; cohorts: bigint; source: string; sourceBounds: JsonObject; assets: Map<string, CacheFile>; contextFiles: Map<string, string> }> {
     const manifestPath = join(directory, 'cohort-cache.json'); await observe(manifestPath);
     const manifest = object(parseOriginalJson(await readFile(manifestPath, 'utf8')), 'tick_cache_manifest'); validateNumbers(manifest);
     if (manifest.schema_version !== 1 || manifest.representation !== request.input.representation
@@ -87,6 +88,13 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       || !Array.isArray(manifest.files)) throw new Error('tick_cache_manifest_mismatch');
     const source = object(manifest.source_report, 'tick_cache_source_report');
     if (source.status !== 'IMPORTED' || (source.source_revision ?? source.revision) !== manifest.source_revision) throw new Error('tick_cache_source_report_mismatch');
+    const sourceBounds: JsonObject = {};
+    if (request.input.availability === 'RECEIVED_TIME_OBSERVED') {
+      if (manifest.source_event_start_ns === undefined || manifest.source_event_end_ns === undefined) throw new Error('tick_received_source_bounds_required');
+      const start = cacheCounter(manifest.source_event_start_ns); const end = cacheCounter(manifest.source_event_end_ns);
+      if (start >= end) throw new Error('tick_cache_source_event_bounds_invalid');
+      sourceBounds.source_event_start_ns = String(start); sourceBounds.source_event_end_ns = String(end);
+    }
     const frameBytes = 32n + (String(request.input.representation).endsWith('_FLOW_CACHE_V1') ? 8n : 0n)
       + (request.input.availability === 'RECEIVED_TIME_OBSERVED' ? 16n : 0n);
     const contextFiles = new Map<string, string>();
@@ -183,7 +191,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
       await observe(path);
     }
     await visit(directory); if (files.size) throw new Error('tick_cache_file_missing');
-    return { trades, cohorts, source: canonical(source), assets, contextFiles };
+    return { trades, cohorts, source: canonical(source), sourceBounds, assets, contextFiles };
   }
   const cacheCoverage = cache ? await cacheCatalog(primary, research) : null;
   const fullCacheCoverage = cache ? await cacheCatalog(independent, full) : null;
@@ -232,8 +240,8 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     end: new Date(Number(BigInt(full.input.event_end_ns) / 1_000_000n)).toISOString(), ready: options.ready === true,
     nativeModality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' },
     inputCoverage: { ...coverage, event_start_ns: full.input.event_start_ns, event_end_ns: full.input.event_end_ns, catalog_format: metadata.catalog_format!, ...(cache ? { representation: full.input.representation! } : {}) },
-    data: { catalog: primary, nativeInput: { modality: 'TRADE_TICK', request: research },
-      sealed: { catalog: independent, nativeInput: { modality: 'TRADE_TICK', request: full } } },
+    data: { catalog: primary, nativeInput: { modality: 'TRADE_TICK', request: research }, ...cacheCoverage?.sourceBounds,
+      sealed: { catalog: independent, nativeInput: { modality: 'TRADE_TICK', request: full }, ...fullCacheCoverage?.sourceBounds } },
   };
   if (options.policy) { result.policy = object(parseOriginalJson(await readFile(options.policy, 'utf8')), 'tick_policy'); validateNumbers(result.policy); }
   result.revisionManifest = datasetRevisionManifest(output, result.id);

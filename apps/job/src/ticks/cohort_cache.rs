@@ -360,11 +360,7 @@ impl Builder {
         ensure!(!self.sealed, "TICK_CACHE_SOURCE_CLOCK_OR_STATE");
         if let Some(maximum) = self.maximum_receive_delay_ns {
             ensure!(
-                trade
-                    .ts_init
-                    .as_u64()
-                    .checked_sub(trade.ts_event.as_u64())
-                    .is_some_and(|delay| delay <= maximum),
+                super::source_age_within(trade.ts_event.as_u64(), trade.ts_init.as_u64(), maximum),
                 "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
             );
         } else {
@@ -575,11 +571,11 @@ impl Iterator for CacheReader {
             if let Some(maximum) = self.maximum_receive_delay_ns {
                 ensure!(
                     cohort.source_event_start < cohort.source_event_end
-                        && cohort.source_event_end - 1 <= cohort.event
-                        && cohort
-                            .event
-                            .checked_sub(cohort.source_event_start)
-                            .is_some_and(|delay| delay <= maximum),
+                        && super::source_age_within(
+                            cohort.source_event_start,
+                            cohort.event,
+                            maximum,
+                        ),
                     "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
                 );
                 self.source_first =
@@ -726,6 +722,12 @@ fn compact_published_report(report: &mut Value) -> Result<()> {
             .context("TICK_CACHE_SOURCE_FIELD: missing_partitions")?;
         fields.insert("missing_partition_count".into(), json!(entries.len()));
         fields.insert("missing_hour_count".into(), json!(missing_hours(entries)?));
+    }
+    if let Some(excluded) = fields.remove("source_age_excluded_files") {
+        let files = excluded
+            .as_object()
+            .context("TICK_CACHE_SOURCE_FIELD: source_age_excluded_files")?;
+        fields.insert("source_age_excluded_file_count".into(), json!(files.len()));
     }
     fields.insert(
         "full_report_reference".into(),
@@ -1661,6 +1663,8 @@ mod resource_tests {
             "source_coverage":{"trades":{"source_rows":8,"selected_rows":7}},
             "missing_partitions":[{"hour":7}],"missing_hour_count":4,
             "duplicate_trades":1,"deduplicated_trades":1,"deduplication_policy":"EARLIEST_RECEIPT_IDENTICAL_TRADE",
+            "source_age_excluded_rows":2,"source_age_population":"earliest eligible delivery",
+            "source_age_excluded_files":{"old.parquet":{"rows":2,"selected_rows":1,"row_ranges_zero_based":[[0,2]]}},
             "source_rows":8,"selected_rows":7,"readback_records":6,"historical_availability":"UNVERIFIED"
         });
         publish(
@@ -1695,6 +1699,13 @@ mod resource_tests {
         assert_eq!(report["readback_records"], 6);
         assert_eq!(report["deduplicated_trades"], 1);
         assert_eq!(report["historical_availability"], "UNVERIFIED");
+        assert_eq!(report["source_age_excluded_rows"], 2);
+        assert_eq!(report["source_age_excluded_file_count"], 1);
+        assert_eq!(
+            report["source_age_population"],
+            "earliest eligible delivery"
+        );
+        assert!(report.get("source_age_excluded_files").is_none());
         let full: Value = serde_json::from_slice(&original).unwrap();
         assert_eq!(
             full["source_report"]["source_manifest"]["files"]

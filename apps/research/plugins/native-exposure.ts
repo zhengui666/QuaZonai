@@ -42,13 +42,22 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
       : catalog ? { barTypesRef: object(data.catalog_scope, 'catalog_scope') } : { barTypes: [...selection.bar_types as string[]].sort() }),
     ...(tick && selection.availability === 'RECEIVED_TIME_OBSERVED' ? { availability: selection.availability,
       receivedStart: request.validation_end_ns!, receivedEnd: selection.event_end_ns! } : {}),
-    start: sourceStart(selection, ensemble ? data.validation_end_ns! : request.validation_end_ns!), end: selection.event_end_ns! };
+    start: sourceStart(selection, ensemble ? data.validation_end_ns! : request.validation_end_ns!), end: sourceEnd(data, selection, selection.event_end_ns!) };
 }
 
 function sourceStart(selection: JsonObject, start: JsonObject[string]): string {
   const delay = selection.availability === 'RECEIVED_TIME_OBSERVED' ? BigInt(selection.maximum_receive_delay_ns as string) : 0n;
   const earliest = BigInt(start as string) - delay;
   return String(earliest < 0n ? 0n : earliest);
+}
+
+function sourceEnd(data: JsonObject, selection: JsonObject, end: JsonObject[string]): string {
+  if (selection.availability !== 'RECEIVED_TIME_OBSERVED') return end as string;
+  const start = data.source_event_start_ns; const rawEnd = data.source_event_end_ns;
+  if (typeof start !== 'string' || typeof rawEnd !== 'string') throw new Error('native_received_source_bounds_required');
+  if (!/^(0|[1-9]\d*)$/.test(start) || !/^(0|[1-9]\d*)$/.test(rawEnd)
+    || BigInt(start) >= BigInt(rawEnd) || BigInt(rawEnd) > 9223372036854775807n) throw new Error('native_received_source_bounds_invalid');
+  return BigInt(rawEnd) > BigInt(end as string) ? rawEnd : end as string;
 }
 
 export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT', record = true): Promise<void> {
@@ -60,10 +69,11 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const selection = ensemble || data.catalog_scan_request !== undefined ? request : isTickResearchInput(data) ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast').selection, 'selection');
   if (!reserve) {
     window.start = sourceStart(selection, selection.event_start_ns!);
-    window.end = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
+    const receivedEnd = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
+    window.end = sourceEnd(data, selection, receivedEnd);
     if (window.availability === 'RECEIVED_TIME_OBSERVED') {
       window.receivedStart = selection.event_start_ns!;
-      window.receivedEnd = window.end;
+      window.receivedEnd = receivedEnd;
     }
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
@@ -76,11 +86,14 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   if (finalRequest) partitionBoundaries(finalData!.catalog_ensemble_request !== undefined
     ? { ...finalRequest, train_end_ns: finalData!.train_end_ns!, validation_end_ns: finalData!.validation_end_ns! }
     : finalRequest, true);
-  const finalEnd = finalRequest ? finalRequest.event_end_ns!
-    : finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
-  const end = BigInt(finalEnd as string) > BigInt(selection.event_end_ns as string) ? finalEnd : selection.event_end_ns!;
+  const finalWindow = finalData && !finalRequest ? await footprint(finalData) : null;
+  const finalEnd = finalRequest ? finalRequest.event_end_ns! : finalWindow?.end ?? sourceEnd(data, selection, selection.event_end_ns!);
+  const currentEnd = sourceEnd(data, selection, selection.event_end_ns!);
+  const end = BigInt(finalEnd as string) > BigInt(currentEnd) ? finalEnd : currentEnd;
+  const receivedEnd = finalWindow?.receivedEnd !== undefined && BigInt(finalWindow.receivedEnd as string) > BigInt(selection.event_end_ns as string)
+    ? finalWindow.receivedEnd : selection.event_end_ns!;
   const checked = reserve ? window : { ...window, end,
-    ...(window.availability === 'RECEIVED_TIME_OBSERVED' ? { receivedEnd: end } : {}) };
+    ...(window.availability === 'RECEIVED_TIME_OBSERVED' ? { receivedEnd } : {}) };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
     const scopes = new Map<string, Set<string>>();
@@ -121,7 +134,7 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
       // The delay envelope remains authoritative outside this admitted prefix/sealed pair.
       return item.catalog === await realpath(original.catalog) && checked.catalog === await realpath(sealed.catalog)
         && item.receivedStart === primary.request.input.event_start_ns && item.receivedEnd === primary.request.validation_end_ns
-        && item.start === sourceStart(primary.request.input, item.receivedStart) && item.end === item.receivedEnd
+        && item.start === sourceStart(primary.request.input, item.receivedStart) && item.end === sourceEnd(original, primary.request.input, item.receivedEnd)
         && canonical(item.instrumentIds!) === canonical([...primary.request.input.instrument_ids].sort());
     }
     function barSourceStarts(item: JsonObject, types: Set<string>): Map<string, bigint> {

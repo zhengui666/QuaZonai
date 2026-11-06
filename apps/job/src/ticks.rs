@@ -59,6 +59,21 @@ struct Cohort {
     signed_quantity: Option<f64>,
 }
 
+impl Cohort {
+    fn feature_event(&self, received: bool) -> u64 {
+        if received {
+            self.event
+        } else {
+            self.source_event_end - 1
+        }
+    }
+}
+
+/// Bound positive source-clock age; unsynchronized venue clocks may be ahead.
+pub fn source_age_within(event: u64, received: u64, maximum: u64) -> bool {
+    received.checked_sub(event).is_none_or(|age| age <= maximum)
+}
+
 fn counter(value: u64) -> Result<DbCounter> {
     DbCounter::new(value).map_err(anyhow::Error::msg)
 }
@@ -268,6 +283,8 @@ fn clocked_feature(
     observed: bool,
 ) -> Result<FeatureValueV1> {
     ensure!(value.is_finite(), "TICK_FEATURE_NONFINITE");
+    // These are derived receipt-clock observations, not relabeled venue records.
+    let event = if observed { available } else { event };
     Ok(FeatureValueV1 {
         value: Some(value),
         missing_reason: None,
@@ -346,7 +363,7 @@ fn evaluate_series(
                 ];
                 let value = model.predict(
                     current.event,
-                    current.source_event_end - 1,
+                    current.feature_event(observed),
                     ordinal,
                     &features,
                 )?;
@@ -381,7 +398,8 @@ fn evaluate_series(
             };
             let label = future.map(|future| future.vwap / current.vwap - 1.0);
             ensure!(label.is_none_or(f64::is_finite), "TICK_LABEL_NONFINITE");
-            let event_ns = counter(current.source_event_end - 1)?;
+            let received = request.input.uses_received_time();
+            let event_ns = counter(current.feature_event(received))?;
             let available_ns = counter(current.event)?;
             let observation = NativeForecastPointV1 {
                 instrument_id: instrument_id.clone(),
@@ -405,7 +423,7 @@ fn evaluate_series(
             let partition = partition_for_event(request, available_ns)
                 .ok_or_else(|| anyhow::anyhow!("TICK_EVENT_OUTSIDE_SELECTION"))?;
             let label_event_ns = future
-                .map(|future| counter(future.source_event_end - 1))
+                .map(|future| counter(future.feature_event(received)))
                 .transpose()?;
             let (_, end) = partition_bounds(request, partition);
             let exclusion_reason = if prediction.is_none() {

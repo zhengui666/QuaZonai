@@ -95,10 +95,11 @@ export function modelBriefInput(input: { data: JsonObject; policy: JsonObject })
     definitions: [`Quantity-weighted price over exactly the current complete instrument/${received ? 'receive' : 'event'}-time cohort; previous complete cohort price.`,
       'Fast/slow native EMA advance once per complete cohort; periods count cohorts.',
       `Sum of original cohort quantities, original trade count and elapsed ${received ? 'receive' : 'event'} nanoseconds since the preceding cohort.`,
+      ...(received ? ['Received-time derived features and the prediction event_ns use the original collector ts_init analysis clock; original exchange ts_event bounds remain separate source provenance and may be ahead of or behind receipt time.'] : []),
       ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : [])],
     missing: 'The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.',
     scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',
-    evidence: `${tagged.request.input.availability}: exploratory computation, not PIT qualification, independent source validation or execution evidence.${received ? ' Collector receipt timestamps are preserved; collector clock accuracy and user network latency are unverified.' : ''}`,
+    evidence: `${tagged.request.input.availability}: exploratory computation, not PIT qualification, independent source validation or execution evidence.${received ? ' Collector receipt timestamps are preserved; collector clock accuracy and user network latency are unverified. For CryptoHFTData, maximum_receive_delay_ns selects the fresh published population; older reconnect deliveries are excluded and counted in source provenance, while negative venue/collector clock skew is retained.' : ''}`,
   } }, policy: input.policy };
   const strategy = record(input.policy.strategy);
   if (strategy?.kind === 'catalog-ensemble') {
