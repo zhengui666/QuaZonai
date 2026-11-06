@@ -406,7 +406,7 @@ impl ContextReader {
             n <= 4096 && self.line.ends_with('\n'),
             "ECONOMIC_CONTEXT_ROW_INVALID"
         );
-        let mut fields = self.line[..self.line.len() - 1].split(',');
+        let mut fields = self.line.trim_end_matches(['\r', '\n']).split(',');
         let event = counter(
             fields
                 .next()
