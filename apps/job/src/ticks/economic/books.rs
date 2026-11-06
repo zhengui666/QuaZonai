@@ -139,6 +139,12 @@ impl Books {
             Source::Published(source) => source.next(),
         }
     }
+    pub fn checkpoint_counts(&self) -> (u64, u64) {
+        match &self.0 {
+            Source::Native(_) => (0, 0),
+            Source::Published(source) => source.checkpoint_counts(),
+        }
+    }
 }
 
 struct NativeBooks {

@@ -175,6 +175,14 @@ struct SourceCoverage {
 }
 
 #[derive(Default, Deserialize, Serialize)]
+struct SourceAgeExclusion {
+    rows: u64,
+    selected_rows: u64,
+    /// Half-open physical row ranges in the original source file.
+    row_ranges_zero_based: Vec<[u64; 2]>,
+}
+
+#[derive(Default, Deserialize, Serialize)]
 struct Report {
     schema_version: u32,
     status: String,
@@ -206,6 +214,12 @@ struct Report {
     filtered_rows: u64,
     selected_rows: u64,
     duplicate_trades: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_age_population: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_age_excluded_rows: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    source_age_excluded_files: BTreeMap<String, SourceAgeExclusion>,
     missing_symbols: BTreeMap<String, u64>,
     missing_definitions: BTreeMap<String, u64>,
     rejected_rows: BTreeMap<String, u64>,
@@ -225,6 +239,32 @@ struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     deduplicated_trades: Option<u64>,
     registered_in_quazonai: bool,
+}
+
+impl Report {
+    fn exclude_source_age(&mut self, path: &str, stream: &str, row: u64, selected: bool) {
+        *self.source_age_excluded_rows.get_or_insert(0) += 1;
+        self.filtered_rows += 1;
+        if selected {
+            self.selected_rows -= 1;
+            self.source_coverage.get_mut(stream).unwrap().selected_rows -= 1;
+        }
+        let excluded = self
+            .source_age_excluded_files
+            .entry(path.into())
+            .or_default();
+        excluded.rows += 1;
+        excluded.selected_rows += u64::from(selected);
+        if let Some(range) = excluded
+            .row_ranges_zero_based
+            .last_mut()
+            .filter(|range| range[1] == row)
+        {
+            range[1] = row + 1;
+        } else {
+            excluded.row_ranges_zero_based.push([row, row + 1]);
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -472,6 +512,13 @@ fn same_execution(a: &TradeTick, b: &TradeTick) -> bool {
     a.price == b.price && a.size == b.size && a.aggressor_side == b.aggressor_side
 }
 
+struct PublishedFileTrade {
+    execution: TradeTick,
+    first_eligible: Option<TradeTick>,
+    selected_deliveries: u64,
+    selected: bool,
+}
+
 #[derive(Default)]
 struct PublishedTrades {
     seen: BTreeMap<InstrumentId, BTreeMap<(UnixNanos, TradeId), TradeTick>>,
@@ -479,6 +526,20 @@ struct PublishedTrades {
 }
 
 impl PublishedTrades {
+    fn check_execution(&self, trade: &TradeTick) -> Result<()> {
+        if let Some(previous) = self
+            .seen
+            .get(&trade.instrument_id)
+            .and_then(|seen| seen.get(&(trade.ts_event, trade.trade_id)))
+        {
+            ensure!(
+                same_execution(previous, trade),
+                "CONFLICTING_SOURCE_TRADE_ID"
+            );
+        }
+        Ok(())
+    }
+
     fn admit(&mut self, trade: TradeTick, maximum_delay: Option<u64>) -> Result<bool> {
         let seen = self.seen.entry(trade.instrument_id).or_default();
         let key = (trade.ts_event, trade.trade_id);
@@ -501,11 +562,11 @@ impl PublishedTrades {
         );
         if let Some(delay) = maximum_delay {
             ensure!(
-                trade
-                    .ts_init
-                    .as_u64()
-                    .checked_sub(trade.ts_event.as_u64())
-                    .is_some_and(|d| d <= delay),
+                job::ticks::source_age_within(
+                    trade.ts_event.as_u64(),
+                    trade.ts_init.as_u64(),
+                    delay
+                ),
                 "SOURCE_RECEIVE_DELAY_EXCEEDED"
             );
             let minimum_event = trade.ts_init.as_u64().saturating_sub(delay);
@@ -618,6 +679,7 @@ fn import(
     let published_source = manifest.cryptohftdata();
     let observed_source =
         published_source && manifest.coverage.as_deref() == Some("OBSERVED_PUBLISHED_FILES");
+    let freshness_source = observed_source && options.received_time;
     ensure!(
         manifest.schema_version == 1 && !manifest.license.is_empty(),
         "SOURCE_MANIFEST_INVALID"
@@ -825,6 +887,8 @@ fn import(
         event_start_ns: start,
         event_end_ns: end,
         maximum_receive_delay_ns: options.maximum_receive_delay_ns,
+        source_age_population: freshness_source.then(|| "Original collector-receipt window with positive receiver-minus-venue source age at most maximum_receive_delay_ns; venue-ahead clock skew is retained. EARLIEST_RECEIPT_IDENTICAL_TRADE applies among eligible deliveries. Every processed payload is validated before selection; identity conflicts are checked within each file and the retained eligible ID window, not across all historical excluded deliveries. Excluded original rows and files remain unchanged; this is a freshness selection, not complete exchange history or synchronized latency evidence.".into()),
+        source_age_excluded_rows: freshness_source.then_some(0),
         record_precision: if options.native_precision {
             format!("NATIVE_ENCODING_{}; not a historical contract tick/lot claim", nautilus_model::types::fixed::FIXED_PRECISION)
         } else {
@@ -838,6 +902,7 @@ fn import(
     };
     // shortcut: deduplication retains IDs for this import; split long histories into dated catalogs when ID memory grows.
     let mut trades = BTreeMap::new();
+    // shortcut: excluded identities use each file and the eligible D-window; all-history identity claims need a separate index.
     let mut published_trades = PublishedTrades::default();
     for file in selected_files {
         let Some(name) = &file.stream else { continue };
@@ -845,9 +910,12 @@ fn import(
         let path = source_file(&root, file)?;
         report.source_coverage.entry(name.clone()).or_default();
         let mut snapshots = records::FlatSnapshots::default();
-        let mut file_trades: BTreeMap<(InstrumentId, UnixNanos, TradeId), (TradeTick, u64)> =
+        let mut file_trades: BTreeMap<(InstrumentId, UnixNanos, TradeId), PublishedFileTrade> =
             BTreeMap::new();
+        let mut file_row = 0;
         records::read_rows(&path, &stream.format, |row| {
+            let ordinal = file_row;
+            file_row += 1;
             report.source_rows += 1;
             let event = records::timestamp(stream.field(&row, "time")?, &stream.time_unit)?;
             let coverage = report.source_coverage.get_mut(name).unwrap();
@@ -930,7 +998,6 @@ fn import(
                     .transpose()?
                     .unwrap_or(event)
             };
-            ensure!(available >= event, "SOURCE_EVENT_AFTER_AVAILABILITY");
             // A late definition can decode raw records, but is never backdated into research evidence.
             let instrument = by_symbol.get(&symbol).map(|versions| {
                 versions
@@ -970,19 +1037,39 @@ fn import(
             for data in converted {
                 if published_source {
                     if let Data::Trade(trade) = data {
+                        // Validate every payload before selecting freshness; old deliveries are not duplicates.
+                        let eligible = !freshness_source
+                            || job::ticks::source_age_within(
+                                trade.ts_event.as_u64(),
+                                trade.ts_init.as_u64(),
+                                options.maximum_receive_delay_ns.unwrap(),
+                            );
+                        if !eligible {
+                            report.exclude_source_age(&file.path, name, ordinal, selected);
+                        }
                         let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
                         match file_trades.entry(key) {
                             Entry::Vacant(entry) => {
-                                entry.insert((trade, u64::from(selected)));
+                                entry.insert(PublishedFileTrade {
+                                    execution: trade,
+                                    first_eligible: eligible.then_some(trade),
+                                    selected_deliveries: u64::from(selected && eligible),
+                                    selected,
+                                });
                             }
                             Entry::Occupied(mut entry) => {
-                                if same_execution(&entry.get().0, &trade) {
+                                if same_execution(&entry.get().execution, &trade) {
                                     let previous = entry.get_mut();
-                                    previous.1 += u64::from(selected);
-                                    if trade.ts_init < previous.0.ts_init {
-                                        previous.0 = trade;
+                                    previous.selected |= selected;
+                                    previous.selected_deliveries += u64::from(selected && eligible);
+                                    if eligible
+                                        && previous
+                                            .first_eligible
+                                            .is_none_or(|first| trade.ts_init < first.ts_init)
+                                    {
+                                        previous.first_eligible = Some(trade);
                                     }
-                                } else if selected || entry.get().1 > 0 {
+                                } else if selected || entry.get().selected {
                                     *report
                                         .rejected_rows
                                         .entry("CONFLICTING_SOURCE_TRADE_ID".into())
@@ -1026,7 +1113,8 @@ fn import(
         .with_context(|| format!("source file {}", file.path))?;
         // Published files are arrival-hour partitions; sort one hour before choosing its earliest deliveries.
         let mut file_trades = file_trades.into_values().collect::<Vec<_>>();
-        file_trades.sort_by_key(|(trade, _)| {
+        file_trades.sort_by_key(|delivery| {
+            let trade = delivery.first_eligible.unwrap_or(delivery.execution);
             (
                 trade.ts_init,
                 trade.instrument_id,
@@ -1034,7 +1122,16 @@ fn import(
                 trade.trade_id,
             )
         });
-        for (trade, selected_deliveries) in file_trades {
+        for delivery in file_trades {
+            let Some(trade) = delivery.first_eligible else {
+                if let Err(error) = published_trades.check_execution(&delivery.execution) {
+                    if delivery.selected {
+                        *report.rejected_rows.entry(error.to_string()).or_default() += 1;
+                    }
+                }
+                continue;
+            };
+            let selected_deliveries = delivery.selected_deliveries;
             match published_trades.admit(trade, options.maximum_receive_delay_ns) {
                 Ok(true) => {}
                 Ok(false) => {
@@ -1426,6 +1523,131 @@ mod tests {
             let cached = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
             assert_eq!(cached.trade_count.get(), count);
             assert_eq!(cached.files[0].first_event_ns.unwrap().get(), first);
+        }
+    }
+
+    fn received_source(root: &Path, rows: &str, observed: bool) -> (PathBuf, PathBuf) {
+        let (path, instruments, csv) = tick_source(root, "");
+        fs::write(
+            &csv,
+            format!("coin,timestamp,price,size,trade_id,side,received\n{rows}"),
+        )
+        .unwrap();
+        let mut metadata: serde_json::Value = json(&path).unwrap();
+        metadata["repository"] = serde_json::json!("CryptoHFTData");
+        metadata["source_reference"] =
+            serde_json::json!("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data");
+        metadata["revision"] = serde_json::json!("published-files-2026-01-01-2026-01-01");
+        if observed {
+            metadata["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
+        }
+        metadata["missing"] = serde_json::json!([]);
+        metadata["profile"]["streams"][0]["available_time_unit"] = serde_json::json!("ns");
+        metadata["profile"]["streams"][0]["columns"]["available_at"] =
+            serde_json::json!("received");
+        metadata["files"][0]["size"] = serde_json::json!(fs::metadata(&csv).unwrap().len());
+        fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        (path, instruments)
+    }
+
+    #[test]
+    fn observed_received_freshness_keeps_venue_ahead_and_earliest_eligible_deliveries() {
+        let temp = tempfile::tempdir().unwrap();
+        let (path, instruments) = received_source(
+            temp.path(),
+            concat!(
+                "BTCUSDT,1767225599998,10.12,0.1,T-1,B,1767225600005000000\n",
+                "BTCUSDT,1767225599998,10.12,0.1,T-1,B,1767225600001000000\n",
+                "BTCUSDT,1767225599990,10.11,0.1,T-old,B,1767225600002000000\n",
+                "BTCUSDT,1767225601000,10.13,0.1,T-ahead,B,1767225600003000000\n",
+                "BTCUSDT,1767225599998,10.12,0.1,T-1,B,1767225600001500000\n",
+                "BTCUSDT,1767225599990,10.11,0.1,T-older,B,1767225600004500000\n",
+            ),
+            true,
+        );
+        let prefixes = ["perps/".into()];
+        let mut options = tick_options(&prefixes, false, 0, 10_000_000);
+        options.trade_ticks = false;
+        options.cohort_cache = true;
+        options.received_time = true;
+        options.maximum_receive_delay_ns = Some(3_000_000);
+        options.end = Some(1767225601);
+        let output = temp.path().join("received");
+        let report = import(&path, &instruments, &output, options).unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(report.source_rows, 6);
+        assert_eq!(report.selected_rows, 2);
+        assert_eq!(report.filtered_rows, 4);
+        assert_eq!(report.duplicate_trades, 0);
+        assert_eq!(report.source_age_excluded_rows, Some(4));
+        let excluded = &report.source_age_excluded_files["perps/fills.csv"];
+        assert_eq!((excluded.rows, excluded.selected_rows), (4, 4));
+        assert_eq!(excluded.row_ranges_zero_based, [[0, 1], [2, 3], [4, 6]]);
+        assert!(report
+            .source_age_population
+            .unwrap()
+            .contains("among eligible deliveries"));
+        assert_eq!(report.source_event_start_ns, Some(1767225599998000000));
+        assert_eq!(report.source_event_end_ns, Some(1767225601000000001));
+        assert!(report.source_event_end_ns.unwrap() > report.event_end_ns);
+        let cached = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
+        assert_eq!(cached.trade_count.get(), 2);
+        assert_eq!(
+            cached.files[0].first_event_ns.unwrap().get(),
+            1767225600001000000
+        );
+        assert_eq!(
+            cached.files[0].last_event_ns.unwrap().get(),
+            1767225600003000000
+        );
+        assert_eq!(
+            cached.source_event_end_ns.unwrap().get(),
+            1767225601000000001
+        );
+    }
+
+    #[test]
+    fn freshness_selection_still_rejects_bad_payload_conflicts_and_other_coverage() {
+        for (row, observed, reason) in [
+            (
+                "BTCUSDT,1767225599990,10.13,0.1,T-1,B,1767225600005000000\n",
+                true,
+                "CONFLICTING_SOURCE_TRADE_ID",
+            ),
+            (
+                "BTCUSDT,1767225599990,invalid,0.1,T-bad,B,1767225600005000000\n",
+                true,
+                "trades:",
+            ),
+            (
+                "BTCUSDT,1767225599990,10.12,0.1,T-old,B,1767225600005000000\n",
+                false,
+                "SOURCE_RECEIVE_DELAY_EXCEEDED",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let rows = format!("BTCUSDT,1767225599990,10.12,0.1,T-1,B,1767225600001000000\n{row}");
+            let (path, instruments) = received_source(temp.path(), &rows, observed);
+            let prefixes = ["perps/".into()];
+            let mut options = tick_options(&prefixes, false, 0, 10_000_000);
+            options.trade_ticks = false;
+            options.cohort_cache = true;
+            options.received_time = true;
+            options.maximum_receive_delay_ns = Some(12_000_000);
+            let output = temp.path().join("received");
+            assert_eq!(
+                import(&path, &instruments, &output, options)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "INCOMPLETE_COHORT_CACHE_IMPORT"
+            );
+            let report: Report = json(&output.join("import-report.json")).unwrap();
+            assert!(report
+                .rejected_rows
+                .keys()
+                .any(|key| key.starts_with(reason)));
+            assert_eq!(report.source_age_excluded_rows.is_some(), observed);
         }
     }
 

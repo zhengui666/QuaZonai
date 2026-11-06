@@ -435,8 +435,10 @@ pub(crate) fn load(
             let available = trade.ts_init.as_u64();
             let clock = if request.input.uses_received_time() {
                 ensure!(
-                    available.checked_sub(event).is_some_and(
-                        |delay| delay <= request.input.maximum_receive_delay_ns.unwrap().get()
+                    super::source_age_within(
+                        event,
+                        available,
+                        request.input.maximum_receive_delay_ns.unwrap().get(),
                     ),
                     "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
                 );
@@ -682,7 +684,7 @@ mod tests {
     fn received_query_uses_receipt_scope_preserves_event_clocks_and_checks_delay() {
         let original = vec![
             tick(1, 20, "first"),
-            tick(3, 20, "same-receipt"),
+            tick(21, 20, "venue-ahead"),
             tick(2, 30, "late"),
             tick(40, 40, "excluded"),
         ];

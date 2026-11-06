@@ -149,6 +149,12 @@ test('received-time contract binds sampling, label clock, cache layout and a con
   assert.deepEqual(validateNativeTickFactorRequest(request), request);
   assert.equal(validateNativeTickFactorRequest({ ...request, input: { ...request.input, maximum_receive_delay_ns: '0' } }).input.maximum_receive_delay_ns, '0');
   assert.equal(iterationRequest(tagged(request)).input && (iterationRequest(tagged(request)).input as JsonObject).maximum_receive_delay_ns, '2000000000');
+  const brief = modelBriefInput({ data: { ...tagged(request), source_event_start_ns: '7', source_event_end_ns: '55' }, policy: {} });
+  const features = brief.data.feature_model as JsonObject;
+  assert.match(JSON.stringify(features.definitions), /original collector ts_init analysis clock/);
+  assert.match(features.evidence as string, /older reconnect deliveries are excluded and counted/);
+  assert.match(features.evidence as string, /negative venue\/collector clock skew is retained/);
+  assert.equal(brief.data.source_event_end_ns, '55');
   for (const invalid of [
     { ...request, input: { ...request.input, maximum_receive_delay_ns: undefined } },
     { ...request, input: { ...request.input, maximum_receive_delay_ns: '-1' } },

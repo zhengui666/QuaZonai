@@ -117,7 +117,7 @@ fn received_cohorts_preserve_late_events_and_use_receipt_clocks_for_features_lab
             .collect::<Vec<_>>(),
         vec![10.0, 20.0, 15.0, 5.0]
     );
-    assert_eq!(points[1].observation.event_ns.get(), 8);
+    assert_eq!(points[1].observation.event_ns.get(), 20);
     assert_eq!(points[1].observation.available_ns.get(), 20);
     assert_eq!(points[1].observation.label_available_ns.unwrap().get(), 40);
     assert_eq!(points[3].observation.label_available_ns.unwrap().get(), 60);
@@ -154,14 +154,81 @@ fn received_cohorts_preserve_late_events_and_use_receipt_clocks_for_features_lab
             .to_string(),
         "TICK_CACHE_VIEW_MISMATCH"
     );
-    let mut negative_skew = rows[0];
-    negative_skew.ts_event = 11_u64.into();
+    let mut venue_ahead = rows[0];
+    venue_ahead.ts_event = 11_u64.into();
+    let mut ahead_builder =
+        cohort_cache::Builder::new_received(&temp.path().join("ahead"), 100, 0, 0, false, 70)
+            .unwrap();
+    ahead_builder.push(venue_ahead).unwrap();
+    let ahead = ahead_builder.seal("fixed-source", 0, 80).unwrap();
+    assert_eq!(ahead.files[0].first_event_ns.unwrap().get(), 10);
+    assert_eq!(ahead.source_event_start_ns.unwrap().get(), 11);
+    assert_eq!(ahead.source_event_end_ns.unwrap().get(), 12);
+    let mut too_old = rows[0];
+    too_old.ts_init = 79_u64.into();
     let mut invalid_builder =
-        cohort_cache::Builder::new_received(&temp.path().join("negative"), 100, 0, 0, false, 70)
+        cohort_cache::Builder::new_received(&temp.path().join("too-old"), 100, 0, 0, false, 70)
             .unwrap();
     assert_eq!(
-        invalid_builder.push(negative_skew).unwrap_err().to_string(),
+        invalid_builder.push(too_old).unwrap_err().to_string(),
         "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+    );
+}
+
+#[test]
+fn received_feature_clock_is_derived_without_changing_raw_venue_bounds() {
+    let mut request = request();
+    request.input.availability = NativeTickAvailabilityV1::ReceivedTimeObserved;
+    request.input.maximum_receive_delay_ns = Some(counter(70).unwrap());
+    request.sampling.kind = NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+    let rows = (1..=7)
+        .map(|i| {
+            let mut row = trade(
+                i * 10 + if i == 7 { 13 } else { 3 },
+                &i.to_string(),
+                &(10 + i).to_string(),
+                "1",
+            );
+            row.ts_init = (i * 10).into();
+            row
+        })
+        .collect::<Vec<_>>();
+    let wasm = wat::parse_str(
+        r#"(module
+        (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 3 local.get 4 i64.ne if unreachable end)
+        (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            local.get 0 local.get 1 i64.ne if unreachable end f64.const 1))"#,
+    )
+    .unwrap();
+    let original = evaluate_series(
+        &request,
+        BTreeMap::from([("AUD/USD.SIM".into(), rows.clone())]),
+        &wasm,
+        false,
+    )
+    .unwrap();
+    assert_eq!(original.coverage.source_event_end_ns.unwrap().get(), 84);
+    assert!(original
+        .points
+        .as_ref()
+        .unwrap()
+        .iter()
+        .all(|point| point.observation.event_ns == point.observation.available_ns));
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("received");
+    let mut builder = cohort_cache::Builder::new_received(&output, 100, 0, 0, false, 70).unwrap();
+    for row in rows {
+        builder.push(row).unwrap();
+    }
+    let manifest = builder.seal("fixed-source", 0, 80).unwrap();
+    builder.publish(manifest, json!({"status":"IMPORTED","availability":"RECEIVED_TIME_OBSERVED","source_revision":"fixed-source","event_start_ns":"0","event_end_ns":"80","missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0})).unwrap();
+    request.input.representation = Some(NativeTickRepresentationV1::ReceivedTimeCohortCacheV1);
+    let cached = evaluate(&output.join("catalog"), &request, &wasm, true).unwrap();
+    assert_eq!(cached.coverage.source_event_end_ns.unwrap().get(), 84);
+    assert_eq!(
+        serde_json::to_value(&cached.partitions).unwrap(),
+        serde_json::to_value(&original.partitions).unwrap()
     );
 }
 

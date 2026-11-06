@@ -9,7 +9,7 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { studyInput } from '../src/trials.ts';
-import { checkExposure, Exposures } from '../plugins/native-exposure.ts';
+import { checkExposure, Exposures, footprint } from '../plugins/native-exposure.ts';
 import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
 import { Study } from '../src/documents.ts';
 import { clipTickRegimeEvaluation, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
@@ -79,6 +79,7 @@ test('later source events bypass an unavailable BAR scope while receive delay pr
     const input = request.input as JsonObject;
     input.availability = 'RECEIVED_TIME_OBSERVED'; input.maximum_receive_delay_ns = ns(1);
     (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+    data.source_event_start_ns = ns(9); data.source_event_end_ns = ns(12);
     await checkExposure(api, context, data, true, undefined, undefined, false);
     assert.equal(scopeReads, 0);
     input.maximum_receive_delay_ns = ns(2);
@@ -94,6 +95,32 @@ test('later source events bypass an unavailable BAR scope while receive delay pr
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('received venue bounds preserve ahead-clock exposure and require an explicit source extent', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-received-source-extent-'));
+  const ledger: { windows: JsonObject[] } = { windows: [] };
+  const api = { taskId: 2, conversationId: 2,
+    async commit(action: (tx: unknown) => Promise<void>) { return action({ async doc() { return ledger; } }); },
+  } as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    const data = tickData(directory, 'CLOCK.SIM', 11, 12);
+    const request = (data.nativeInput as JsonObject).request as JsonObject;
+    const input = request.input as JsonObject;
+    input.availability = 'RECEIVED_TIME_OBSERVED'; input.maximum_receive_delay_ns = ns(1);
+    (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+    await assert.rejects(footprint(data), /native_received_source_bounds_required/);
+    data.source_event_start_ns = ns(9); data.source_event_end_ns = ns(13);
+    const window = await footprint(data);
+    assert.deepEqual([window.start, window.end, window.receivedStart, window.receivedEnd], [ns(10), ns(13), ns(11), ns(12)]);
+    await checkExposure(api, context, data, false);
+    assert.deepEqual([ledger.windows[0]!.end, ledger.windows[0]!.receivedEnd], [ns(13), ns(11)]);
+    ledger.windows.push({ kind: 'FINAL', taskId: 1, conversationId: 1,
+      modality: 'TRADE_TICK', instrumentIds: ['CLOCK.SIM'], start: ns(12), end: ns(13) });
+    const original = structuredClone(ledger);
+    await assert.rejects(checkExposure(api, context, data, true), /heldout_already_exposed/);
+    assert.deepEqual(ledger, original);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('only an admitted received-time study can finalize beside its own iteration delay envelope', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-own-received-final-'));
   const primaryCatalog = join(directory, 'primary'); const sealedCatalog = join(directory, 'sealed'); const changedCatalog = join(directory, 'changed');
@@ -104,7 +131,9 @@ test('only an admitted received-time study can finalize beside its own iteration
     availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2' });
   Object.assign(request, { train_end_ns: '30', validation_end_ns: '50', target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '1' } });
   (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
-  const primary = { catalog: primaryCatalog, nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), '50') } };
+  full.source_event_start_ns = '0'; full.source_event_end_ns = '90';
+  const primary = { catalog: primaryCatalog, source_event_start_ns: '0', source_event_end_ns: '55',
+    nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), '50') } };
   const admitted: JsonObject = { ...primary, sealed: full };
   const study = { input: { data: admitted } }; const ledger: { windows: JsonObject[] } = { windows: [] };
   const api = (taskId: number, conversationId = 7) => ({ taskId, conversationId,
@@ -112,8 +141,12 @@ test('only an admitted received-time study can finalize beside its own iteration
   }) as unknown as Parameters<typeof checkExposure>[0];
   const rejected = (data = full) => assert.rejects(checkExposure(api(2), context, data, true, undefined, undefined, false), /heldout_already_exposed/);
   try {
+    ledger.windows.push({ kind: 'FINAL', taskId: 99, conversationId: 8,
+      modality: 'TRADE_TICK', instrumentIds: ['RECEIVED.SIM'], start: '85', end: '90' });
+    await assert.rejects(checkExposure(api(1), context, admitted, false, full), /heldout_already_exposed/);
+    ledger.windows.pop();
     await checkExposure(api(1), context, admitted, false, full);
-    assert.deepEqual([ledger.windows[0]!.start, ledger.windows[0]!.end, ledger.windows[0]!.receivedStart, ledger.windows[0]!.receivedEnd], ['0', '50', '0', '50']);
+    assert.deepEqual([ledger.windows[0]!.start, ledger.windows[0]!.end, ledger.windows[0]!.receivedStart, ledger.windows[0]!.receivedEnd], ['0', '55', '0', '50']);
     const iteration = structuredClone(ledger.windows[0]!);
     await assert.rejects(checkExposure(api(2, 8), context, full, true, undefined, undefined, false), /heldout_already_exposed/);
     for (const [field, value] of [['source_revision', 'different-source'], ['maximum_receive_delay_ns', '1']] as const) {
@@ -122,17 +155,19 @@ test('only an admitted received-time study can finalize beside its own iteration
       await rejected(changed);
     }
     study.input.data = { ...admitted, catalog: changedCatalog }; await rejected();
+    study.input.data = { ...admitted, source_event_end_ns: '54' }; await rejected();
     study.input.data = structuredClone(admitted);
     (((study.input.data.nativeInput as JsonObject).request as JsonObject).parameters as JsonObject).slow_period_cohorts = 3;
     await rejected();
     study.input.data = { ...admitted }; delete study.input.data.sealed; await rejected();
     study.input.data = admitted;
     delete ledger.windows[0]!.receivedStart; await rejected(); ledger.windows[0] = iteration;
+    ledger.windows[0] = { ...iteration, end: '50' }; await rejected(); ledger.windows[0] = iteration;
     ledger.windows.push({ kind: 'ITERATION', taskId: 99, conversationId: 7, barTypes: ['RECEIVED.SIM-1-SECOND-LAST-EXTERNAL'], start: '49', end: '51' });
     await rejected(); ledger.windows.pop();
     await checkExposure(api(2), context, full, true);
     assert.deepEqual(ledger.windows[0], iteration);
-    assert.deepEqual([ledger.windows[1]!.start, ledger.windows[1]!.end, ledger.windows[1]!.receivedStart, ledger.windows[1]!.receivedEnd], ['48', '80', '50', '80']);
+    assert.deepEqual([ledger.windows[1]!.start, ledger.windows[1]!.end, ledger.windows[1]!.receivedStart, ledger.windows[1]!.receivedEnd], ['48', '90', '50', '80']);
     await assert.rejects(checkExposure(api(3), context, full, true), /heldout_already_exposed/);
     assert.equal(ledger.windows.length, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
