@@ -55,28 +55,25 @@ fn correlation(x: &[f64], y: &[f64]) -> Option<f64> {
         .filter(|v| v.is_finite())
 }
 /// Reuse ranking storage across synchronized groups and bootstrap replicates.
-/// Read score/label columns directly from pairs instead of copying both columns.
+/// Reuse one contiguous column cache for both scores and labels. Sorting reads
+/// the same compact values as the original estimator, without retaining two copies.
 #[derive(Default)]
 struct RankWorkspace {
+    values: Vec<f64>,
     order: Vec<usize>,
     x: Vec<f64>,
     y: Vec<f64>,
 }
 
-fn ranks_by(
-    len: usize,
-    value: impl Fn(usize) -> f64,
-    order: &mut Vec<usize>,
-    ranks: &mut Vec<f64>,
-) {
+fn ranks_into(values: &[f64], order: &mut Vec<usize>, ranks: &mut Vec<f64>) {
     order.clear();
-    order.extend(0..len);
-    order.sort_by(|a, b| value(*a).total_cmp(&value(*b)));
-    ranks.resize(len, 0.0);
+    order.extend(0..values.len());
+    order.sort_by(|a, b| values[*a].total_cmp(&values[*b]));
+    ranks.resize(values.len(), 0.0);
     let mut index = 0;
     while index < order.len() {
         let mut end = index + 1;
-        while end < order.len() && value(order[index]) == value(order[end]) {
+        while end < order.len() && values[order[index]] == values[order[end]] {
             end += 1;
         }
         let rank = (index + end - 1) as f64 / 2.0;
@@ -92,8 +89,12 @@ impl RankWorkspace {
         if pairs.len() < 3 {
             return None;
         }
-        ranks_by(pairs.len(), |i| pairs[i].0, &mut self.order, &mut self.x);
-        ranks_by(pairs.len(), |i| pairs[i].1, &mut self.order, &mut self.y);
+        self.values.clear();
+        self.values.extend(pairs.iter().map(|pair| pair.0));
+        ranks_into(&self.values, &mut self.order, &mut self.x);
+        self.values.clear();
+        self.values.extend(pairs.iter().map(|pair| pair.1));
+        ranks_into(&self.values, &mut self.order, &mut self.y);
         correlation(&self.x, &self.y)
     }
 
@@ -101,7 +102,9 @@ impl RankWorkspace {
         if pairs.len() < 10 || pairs.iter().all(|pair| pair.0 == pairs[0].0) {
             return None;
         }
-        ranks_by(pairs.len(), |i| pairs[i].0, &mut self.order, &mut self.x);
+        self.values.clear();
+        self.values.extend(pairs.iter().map(|pair| pair.0));
+        ranks_into(&self.values, &mut self.order, &mut self.x);
         let mut bins = [0.0; 5];
         let mut counts = [0_usize; 5];
         for (rank, pair) in self.x.iter().zip(pairs) {
