@@ -33,8 +33,6 @@ COPY --chmod=755 apps/research/plugins /opt/quazonai/apps/research/plugins
 COPY --chmod=755 apps/cli/src /opt/quazonai/apps/cli/src
 COPY --chmod=755 packages/contracts /opt/quazonai/packages/contracts
 COPY --chmod=755 contracts/generated /opt/quazonai/contracts/generated
-COPY --chmod=755 runtimes/data/hub.py /opt/quazonai/runtimes/data/hub.py
-COPY --chmod=644 runtimes/data/sources/hyperliquid.json /opt/quazonai/runtimes/data/sources/hyperliquid.json
 COPY --chmod=755 LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/doc/quazonai/
 COPY --chmod=755 licenses/ /usr/share/doc/quazonai/licenses/
 COPY --chmod=755 deploy/docker/entrypoint.sh /opt/quazonai/entrypoint.sh
@@ -44,7 +42,7 @@ FROM application-source AS nautilus-source
 COPY --chmod=755 apps/nautilus/package.json /opt/quazonai/apps/nautilus/package.json
 COPY --chmod=755 apps/nautilus/src /opt/quazonai/apps/nautilus/src
 COPY --chmod=755 deploy/docker/operator/catalog-prepare deploy/docker/operator/polymarket-history /opt/quazonai/operator/bin/
-COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py /opt/quazonai/operator/
+COPY --chmod=755 runtimes/data/source_plugins.py runtimes/data/acquire.py runtimes/data/providers.py runtimes/data/snapshot.py runtimes/data/hf_dataset.py runtimes/data/polymarket_v2.py runtimes/data/binance_vision.py runtimes/data/cryptohftdata.py /opt/quazonai/operator/
 
 FROM node AS execution-base
 RUN apt-get update \

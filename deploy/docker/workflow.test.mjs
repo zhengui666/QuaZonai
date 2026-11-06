@@ -22,14 +22,14 @@ test('native source integration workflows install and cache both exporter depend
 
 const results = ['success', 'failure', 'cancelled', 'skipped'];
 
-test('application carries the historical provider profile and existing downloader', async () => {
+test('CryptoHFTData conversion stays in the remote native image', async () => {
   const docker = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const context = await readFile(new URL('./Dockerfile.dockerignore', import.meta.url), 'utf8');
   const application = docker.split('FROM scratch AS application-source\n')[1].split('\nFROM application-source AS nautilus-source')[0];
-  for (const file of ['hub.py', 'sources/hyperliquid.json']) {
-    assert.ok(application.includes(`runtimes/data/${file} /opt/quazonai/runtimes/data/${file}`));
-  }
-  assert.ok(context.includes('!runtimes/data/sources/\n!runtimes/data/sources/hyperliquid.json'));
+  const native = docker.split('FROM application-source AS nautilus-source\n')[1].split('\nFROM node AS execution-base')[0];
+  assert.doesNotMatch(application, /runtimes\/data\/(?:hub\.py|sources\/hyperliquid\.json)/);
+  assert.ok(native.includes('runtimes/data/cryptohftdata.py'));
+  assert.ok(context.includes('!runtimes/data/*.py'));
 });
 
 test('only the remote native image installs the tick OS limiter and native payload', async () => {

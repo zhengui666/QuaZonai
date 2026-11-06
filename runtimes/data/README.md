@@ -1,6 +1,6 @@
 # Public historical data
 
-For the declaratively mapped Hyperliquid archive, including public acquisition, native trades/books/funding/BAR conversion and actual coverage limits, see the [Hyperliquid guide](hyperliquid.md). Its generic acquisition path does not perform content hashing; original files and terms remain available for inspection.
+For an already downloaded CryptoHFTData Hyperliquid archive, service registration and native book/quote/price conversion, see the [Hyperliquid guide](hyperliquid.md). The plugin reads original files in place and performs no network acquisition or content hashing.
 
 Operator tools acquire immutable source files and bounded API observations, then convert supported records into the existing Nautilus catalog. Acquisition is separate from source-specific interpretation in the native importers; scientific jobs remain offline and existing research-admission checks still apply.
 

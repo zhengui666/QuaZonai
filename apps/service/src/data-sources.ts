@@ -10,7 +10,7 @@ import { bindScienceData, resolveDatasetPaths, scienceDataWithoutBinding, valida
 import type { DatasetConfig, ServiceConfig } from './config.ts';
 import { object, Problem } from './facts.ts';
 import { validateNumbers } from '../../research/src/input.ts';
-import hyperliquid from './providers/hyperliquid.ts';
+import cryptohftdata from './providers/cryptohftdata.ts';
 
 export interface DataSourcePlugin {
   name: string; version?: string; fields: DataSourceField[];
@@ -78,14 +78,14 @@ export async function dataSources(config: ServiceConfig) {
   try { stored = object(JSON.parse(await readFile(file, 'utf8')), 'data_sources') as unknown as typeof stored; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   const sources = new Map<string, Source>();
-  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, hyperliquid].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
+  const configured = [{ name: 'qz.data.config', version: '1', enabled: true, config: {} as JsonObject, module: '', kind: 'data' }, ...[local, cryptohftdata].map(plugin => ({ name: plugin.name, version: plugin.version, enabled: false, config: {} as JsonObject, module: '', kind: 'data' })), ...config.extensions.filter(item => item.kind === 'data')];
   for (const entry of configured) {
     if (sources.has(entry.name)) throw new Problem('extension_name_conflict');
     const saved = stored[entry.name];
     const source: Source = { name: entry.name, version: entry.version ?? null, fields: [], enabled: saved?.enabled ?? entry.enabled,
       config: structuredClone(saved?.config ?? entry.config ?? {}), datasets: entry.name === 'qz.data.config' ? base : saved ? datasets(saved.datasets) : [], retainedDatasets: saved ? datasets(saved.retainedDatasets ?? saved.datasets) : [], lastLoadedAt: saved?.lastLoadedAt ?? null, error: saved?.error ?? null };
     try {
-      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === hyperliquid.name ? hyperliquid : (await import(pathToFileURL(entry.module).href)).default, entry.name);
+      source.plugin = validatePlugin(entry.name === 'qz.data.config' ? { name: entry.name, version: '1', fields: [], async load() { return base; } } : entry.name === local.name ? local : entry.name === cryptohftdata.name ? cryptohftdata : (await import(pathToFileURL(entry.module).href)).default, entry.name);
       source.fields = source.plugin.fields; source.version = source.plugin.version ?? source.version;
     } catch { source.error = 'data_source_plugin_load_failed'; }
     sources.set(entry.name, source);

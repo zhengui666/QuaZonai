@@ -10,12 +10,18 @@ Existing investment decisions retain source lookup when a provider is disabled o
 
 ## External providers
 
-The built-in disabled `qz.data.hyperliquid` provider loads existing public history
-from the fixed Hugging Face archive profile, with optional exact 100ms native
-trade aggregation. It never opens a live market feed. See the
-[history guide](../../runtimes/data/hyperliquid.md) for source coverage, local
-archives, downloads, native conversion and research-admission boundaries.
-Archives appear with `ready: false`; they do not bypass native preparation.
+The built-in disabled `qz.data.cryptohftdata` provider registers an already downloaded
+CryptoHFTData Hyperliquid archive. Set `archiveDirectory` to the directory containing
+`dataset.json`, save, enable and load. It reads the completed manifest and original
+market directories in place, so a 279 GB archive needs no second copy or full file scan.
+The dataset exposes its actual dates, bytes, object count and spot/perpetual book and
+mark-price streams. See the [history guide](../../runtimes/data/hyperliquid.md) for
+bounded native conversion. Raw archives have `ready: false`: books and marks are
+separate from the existing BAR/TradeTick research inputs.
+
+The previous `qz.data.hyperliquid` HF provider is removed from discovery and active
+selection. Its stored historical dataset references remain available to existing
+research; loading the new provider uses a distinct dataset ID.
 
 Register a module in the existing service configuration:
 

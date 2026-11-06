@@ -12,6 +12,24 @@ const local = 'qz.data.local-config';
 const dataset = (id: string): DatasetConfig => ({ id, name: id, assetClass: 'CRYPTO', currency: 'USD', source: 'local', start: null, end: null,
   ready: true, data: { catalog: './catalog', sealed: { catalog: './heldout' }, request: {} } });
 
+test('disabling or closing a source aborts an active cooperative operator', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'qz-source-cancel-'));
+  const module = join(dataDir, 'history.mjs');
+  await writeFile(module, `export default {name:'test.history',fields:[],async load(config,{signal}) {
+    await new Promise((resolve,reject)=> { if(signal.aborted) reject(new Error('aborted')); else signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}); }); return [];
+  }};`);
+  const sources = await dataSources(configDefaults({ dataDir, extensions: [{ name: 'test.history', module, kind: 'data', enabled: true }] }));
+  try {
+    let run = sources.refresh('test.history'); let rejected = assert.rejects(run, /data_source_refresh_cancelled/);
+    await new Promise(resolve => setImmediate(resolve));
+    await sources.save('test.history', { enabled: false, config: {} }); await rejected;
+    assert.equal(sources.view().find(item => item.name === 'test.history')!.enabled, false);
+    await sources.toggle('test.history', true);
+    run = sources.refresh('test.history'); rejected = assert.rejects(run, /data_source_refresh_cancelled/);
+    await new Promise(resolve => setImmediate(resolve)); await sources.close(); await rejected;
+  } finally { await sources.close(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
 test('local source registers catalogs, persists and applies enablement to new admissions only', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'qz-data-source-'));
   const file = join(directory, 'export', 'dataset.json');
