@@ -35,7 +35,10 @@ use nautilus_model::{
     orderbook::OrderBook,
     orders::OrderAny,
     position::Position,
-    types::{Currency, Money, Price, Quantity},
+    types::{
+        fixed::{check_fixed_raw_i128, check_fixed_raw_u128},
+        Currency, Money, Price, Quantity,
+    },
 };
 use nautilus_trading::{
     nautilus_strategy,
@@ -51,6 +54,40 @@ use std::{
 
 fn arithmetic(value: Option<Decimal>) -> Result<Decimal> {
     value.context("TICK_ECONOMIC_NATIVE_DECIMAL_RANGE")
+}
+
+#[allow(
+    clippy::useless_conversion,
+    reason = "Native fixed-point raw widths depend on upstream high-precision feature"
+)]
+fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Result<()> {
+    let price_precision = instrument.price_precision();
+    let size_precision = instrument.size_precision();
+    for delta in &mut snapshot.deltas {
+        if delta.order.price.precision != price_precision {
+            check_fixed_raw_i128(i128::from(delta.order.price.raw), price_precision).with_context(
+                || {
+                    format!(
+                        "TICK_ECONOMIC_BOOK_PRICE_PRECISION_UNSUPPORTED: instrument_id={} received_ns={} value={} required_precision={price_precision}",
+                        delta.instrument_id, delta.ts_init, delta.order.price
+                    )
+                },
+            )?;
+            delta.order.price = Price::from_raw_checked(delta.order.price.raw, price_precision)?;
+        }
+        if delta.order.size.precision != size_precision {
+            check_fixed_raw_u128(u128::from(delta.order.size.raw), size_precision).with_context(
+                || {
+                    format!(
+                        "TICK_ECONOMIC_BOOK_SIZE_PRECISION_UNSUPPORTED: instrument_id={} received_ns={} value={} required_precision={size_precision}",
+                        delta.instrument_id, delta.ts_init, delta.order.size
+                    )
+                },
+            )?;
+            delta.order.size = Quantity::from_raw_checked(delta.order.size.raw, size_precision)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn affordable_depth_quantity(
@@ -1062,7 +1099,7 @@ impl NativeLedger {
                 event.into(),
             )));
         }
-        for row in rows {
+        for mut row in rows {
             let id = row.snapshot.instrument_id;
             ensure!(
                 self.instruments.contains_key(&id)
@@ -1071,13 +1108,20 @@ impl NativeLedger {
                     && row.capacity >= Decimal::ZERO,
                 "TICK_ECONOMIC_BOOK_BATCH_INVALID"
             );
+            // Relabel exact raw values, including Clear zeros, without rounding archive levels.
+            encode_book(&mut row.snapshot, &self.instruments[&id])?;
             if let Some(target) = row.target_quantity {
                 ensure!(
                     self.state.borrow_mut().targets.insert(id, target).is_none(),
                     "TICK_ECONOMIC_DUPLICATE_TARGET"
                 );
             }
-            self.state.borrow_mut().capacities.insert(id, row.capacity);
+            let first_book = self
+                .state
+                .borrow_mut()
+                .capacities
+                .insert(id, row.capacity)
+                .is_none();
             let bid = row
                 .snapshot
                 .deltas
@@ -1100,7 +1144,10 @@ impl NativeLedger {
                     row.snapshot.ts_init,
                 )));
             }
-            events.push(Data::BookDeltas(Box::new(row.snapshot)));
+            // IOC orders finish within a run; refresh depth before every target and preserve resets.
+            if first_book || row.target_quantity.is_some() || bid.is_none() || ask.is_none() {
+                events.push(Data::BookDeltas(Box::new(row.snapshot)));
+            }
         }
         self.run_events(event, events)?;
         ensure!(
@@ -1874,6 +1921,146 @@ mod tests {
     }
 
     #[test]
+    fn observed_raw_precision_preserves_btc_and_ubtc_values_and_rejects_loss() {
+        let InstrumentAny::CryptoPerpetual(mut btc) = perp() else {
+            unreachable!()
+        };
+        // Original published BTC perp and UBTC spot precision and increments.
+        btc.price_precision = 1;
+        btc.size_precision = 5;
+        btc.price_increment = Price::from("0.1");
+        btc.size_increment = Quantity::from("0.00001");
+        btc.min_notional = Some(Money::from("10 USD"));
+        let InstrumentAny::CurrencyPair(mut ubtc) = spot() else {
+            unreachable!()
+        };
+        ubtc.id = InstrumentId::from("UBTC-USDC-SPOT.HYPERLIQUID");
+        ubtc.raw_symbol = Symbol::new("@142");
+        ubtc.base_currency = Currency::new(
+            "UBTC",
+            8,
+            0,
+            "UBTC",
+            nautilus_model::enums::CurrencyType::Crypto,
+        );
+        ubtc.price_precision = 3;
+        ubtc.size_precision = 5;
+        ubtc.price_increment = Price::from("0.001");
+        ubtc.size_increment = Quantity::from("0.00001");
+        ubtc.min_notional = Some(Money::from("10 USDC"));
+        for (instrument, bid, ask, invalid_price) in [
+            (
+                InstrumentAny::CryptoPerpetual(btc),
+                "100000.1",
+                "100000.2",
+                "100000.11",
+            ),
+            (
+                InstrumentAny::CurrencyPair(ubtc),
+                "100000.123",
+                "100000.124",
+                "100000.1234",
+            ),
+        ] {
+            let id = instrument.id();
+            let definition = serde_json::to_value(&instrument).unwrap();
+            let raw_snapshot = |at| {
+                let mut snapshot =
+                    observed_snapshot(&instrument, at, bid, "0.00123", &[(ask, "0.00123")]);
+                for delta in &mut snapshot.deltas {
+                    let precision = nautilus_model::types::fixed::FIXED_PRECISION;
+                    delta.order.price =
+                        Price::from_raw_checked(delta.order.price.raw, precision).unwrap();
+                    delta.order.size =
+                        Quantity::from_raw_checked(delta.order.size.raw, precision).unwrap();
+                }
+                snapshot
+            };
+            let raw = raw_snapshot(1_000_000_000);
+            let mut encoded = raw.clone();
+            encode_book(&mut encoded, &instrument).unwrap();
+            for (before, after) in raw.deltas.iter().zip(&encoded.deltas) {
+                assert_eq!(after.order.price.raw, before.order.price.raw);
+                assert_eq!(after.order.size.raw, before.order.size.raw);
+                assert_eq!(after.order.price.precision, instrument.price_precision());
+                assert_eq!(after.order.size.precision, instrument.size_precision());
+                assert_eq!(after.action, before.action);
+                assert_eq!(after.flags, before.flags);
+                assert_eq!(after.ts_event, before.ts_event);
+                assert_eq!(after.ts_init, before.ts_init);
+            }
+            let mut ledger = NativeLedger::new_observed(
+                vec![instrument.clone()],
+                Decimal::from(3000),
+                matches!(instrument, InstrumentAny::CryptoPerpetual(_)),
+                Decimal::ZERO,
+                Decimal::ZERO,
+                Decimal::new(5, 1),
+                Decimal::new(25, 2),
+            )
+            .unwrap();
+            for (at, target) in [
+                (1_000_000_000, None),
+                (2_000_000_000, Some(Decimal::new(1, 3))),
+            ] {
+                ledger
+                    .step_books(
+                        at,
+                        vec![NativeBook {
+                            snapshot: raw_snapshot(at),
+                            capacity: Decimal::ONE,
+                            target_quantity: target,
+                        }],
+                        &[],
+                    )
+                    .unwrap();
+            }
+            assert_eq!(ledger.current_quantity(id), Decimal::new(1, 3));
+            assert_eq!(ledger.summary().fills, 1);
+            assert_eq!(ledger.summary().rejected, 0);
+            assert_eq!(ledger.pending_order_count(), 0);
+            assert_eq!(
+                serde_json::to_value(&ledger.instruments[&id]).unwrap(),
+                definition
+            );
+            {
+                let cache = ledger.engine.kernel().cache.borrow();
+                let quote = cache.quote(&id).unwrap();
+                assert_eq!(quote.bid_price.precision, instrument.price_precision());
+                assert_eq!(quote.ask_size.precision, 5);
+                assert_eq!(quote.bid_price.raw, raw.deltas[1].order.price.raw);
+                assert_eq!(quote.ts_event.as_u64(), 2_000_000_000 - 100);
+                assert_eq!(quote.ts_init.as_u64(), 2_000_000_000);
+            }
+            for field in ["PRICE", "SIZE"] {
+                let mut invalid = raw_snapshot(3_000_000_000);
+                if field == "PRICE" {
+                    invalid.deltas[1].order.price = Price::from(invalid_price);
+                } else {
+                    invalid.deltas[1].order.size = Quantity::from("0.001231");
+                }
+                let error = ledger
+                    .step_books(
+                        3_000_000_000,
+                        vec![NativeBook {
+                            snapshot: invalid,
+                            capacity: Decimal::ZERO,
+                            target_quantity: None,
+                        }],
+                        &[],
+                    )
+                    .unwrap_err();
+                assert!(error.to_string().contains(&format!(
+                    "TICK_ECONOMIC_BOOK_{field}_PRECISION_UNSUPPORTED: instrument_id={id}"
+                )));
+                assert_eq!(ledger.last_event, Some(2_000_000_000));
+                assert_eq!(ledger.summary().submitted, 1);
+            }
+            ledger.finish().unwrap();
+        }
+    }
+
+    #[test]
     fn observed_l2_ioc_uses_ask_depth_then_retains_partial_exit_inventory() {
         let instrument = spot();
         let mut ledger = NativeLedger::new_observed(
@@ -1940,6 +2127,76 @@ mod tests {
     }
 
     #[test]
+    fn observed_idle_quotes_advance_clock_and_next_ioc_uses_fresh_depth() {
+        let instrument = spot();
+        let id = instrument.id();
+        let mut ledger = NativeLedger::new_observed(
+            vec![instrument.clone()],
+            Decimal::from(1000),
+            false,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+        )
+        .unwrap();
+        let next_day = 86_401_000_000_000;
+        ledger
+            .queue_adjustment(next_day, Money::from("1 USDC"))
+            .unwrap();
+        for (at, bid, asks, target) in [
+            (1_000_000_000, "99.00", &[("101.00", "10.0000")][..], None),
+            (2_000_000_000, "199.00", &[("201.00", "0.5000")][..], None),
+            (
+                3_000_000_000,
+                "299.00",
+                &[("301.00", "0.5000"), ("302.00", "0.2500")][..],
+                Some(Decimal::from(3)),
+            ),
+            (next_day, "399.00", &[("401.00", "10.0000")][..], None),
+        ] {
+            ledger
+                .step_books(
+                    at,
+                    vec![NativeBook {
+                        snapshot: observed_snapshot(&instrument, at, bid, "10.0000", asks),
+                        capacity: Decimal::from(10),
+                        target_quantity: target,
+                    }],
+                    &[],
+                )
+                .unwrap();
+            assert_eq!(ledger.pending_order_count(), 0);
+            let cache = ledger.engine.kernel().cache.borrow();
+            let quote = cache.quote(&id).unwrap();
+            assert_eq!(quote.bid_price, Price::from(bid));
+            assert_eq!(quote.ask_price, Price::from(asks[0].0));
+            assert_eq!(quote.ask_size, Quantity::from(asks[0].1));
+            assert_eq!(quote.ts_event.as_u64(), at - 100);
+            assert_eq!(quote.ts_init.as_u64(), at);
+            if at <= 2_000_000_000 {
+                assert_eq!(
+                    cache.order_book(&id).unwrap().best_ask_price(),
+                    Some(Price::from("101.00"))
+                );
+                assert_eq!(ledger.summary().submitted, 0);
+            }
+        }
+        assert_eq!(ledger.current_quantity(id), Decimal::new(75, 2));
+        assert_eq!(
+            ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(775)
+        );
+        assert_eq!(ledger.summary().submitted, 1);
+        assert_eq!(ledger.summary().fills, 2);
+        assert_eq!(ledger.summary().rejected, 0);
+        assert_eq!(ledger.summary().adjustments_applied, 1);
+        assert_eq!(ledger.last_event, Some(next_day));
+        assert_eq!(ledger.purge_day, Some(1));
+        ledger.finish().unwrap();
+    }
+
+    #[test]
     fn observed_cash_buy_sizes_crossed_levels_and_fees_within_wallet() {
         for (fee, filled, cash) in [("0", "1.9901", "0.0098"), ("100", "1.9705", "0.009090")] {
             let instrument = spot();
@@ -1995,6 +2252,85 @@ mod tests {
             .collect::<Vec<_>>();
         rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
         OrderBookDeltas::new(snapshot.instrument_id, rows)
+    }
+
+    #[test]
+    fn observed_idle_one_sided_and_empty_books_clear_previous_depth() {
+        let instrument = spot();
+        let id = instrument.id();
+        let mut ledger = NativeLedger::new_observed(
+            vec![instrument.clone()],
+            Decimal::from(1000),
+            false,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+        )
+        .unwrap();
+        for at in [1_000_000_000, 2_000_000_000] {
+            ledger
+                .step_books(
+                    at,
+                    vec![NativeBook {
+                        snapshot: observed_snapshot(
+                            &instrument,
+                            at,
+                            "99.00",
+                            "10.0000",
+                            &[("101.00", "10.0000")],
+                        ),
+                        capacity: Decimal::ZERO,
+                        target_quantity: None,
+                    }],
+                    &[],
+                )
+                .unwrap();
+        }
+        for (index, side) in [Some(OrderSide::Buy), Some(OrderSide::Sell), None]
+            .into_iter()
+            .enumerate()
+        {
+            let at = (index as u64 + 3) * 1_000_000_000;
+            let mut snapshot = observed_snapshot(
+                &instrument,
+                at,
+                "199.00",
+                "10.0000",
+                &[("201.00", "10.0000")],
+            );
+            snapshot
+                .deltas
+                .retain(|row| row.action == BookAction::Clear || row.order.side == side);
+            snapshot.deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+            let snapshot = OrderBookDeltas::new(id, snapshot.deltas);
+            ledger
+                .step_books(
+                    at,
+                    vec![NativeBook {
+                        snapshot,
+                        capacity: Decimal::ZERO,
+                        target_quantity: None,
+                    }],
+                    &[],
+                )
+                .unwrap();
+            let cache = ledger.engine.kernel().cache.borrow();
+            let book = cache.order_book(&id).unwrap();
+            assert_eq!(
+                book.best_bid_price(),
+                (side == Some(OrderSide::Buy)).then(|| Price::from("199.00"))
+            );
+            assert_eq!(
+                book.best_ask_price(),
+                (side == Some(OrderSide::Sell)).then(|| Price::from("201.00"))
+            );
+            assert_eq!(book.ts_last.as_u64(), at - 100);
+            assert_eq!(cache.quote(&id).unwrap().ts_init.as_u64(), 2_000_000_000);
+        }
+        assert_eq!(ledger.summary().submitted, 0);
+        assert_eq!(ledger.summary().fills, 0);
+        ledger.finish().unwrap();
     }
 
     #[test]
