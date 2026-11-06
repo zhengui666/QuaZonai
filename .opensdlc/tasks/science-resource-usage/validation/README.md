@@ -17,7 +17,7 @@ Run from the repository root with Python 3 on Linux:
 
 ```sh
 python3 .opensdlc/tasks/science-resource-usage/validation/generate-review-fixtures.py \
-  --out /tmp/qz-review-fixtures --bench
+  --out /tmp/qz-review-fixtures --bench --scale10
 python3 .opensdlc/tasks/science-resource-usage/validation/compare-review.py \
   --binary baseline=/absolute/path/to/base/job \
   --binary candidate=/absolute/path/to/candidate/job \
@@ -37,7 +37,11 @@ run after compilation and other CPU-intensive work have finished. Report actual
 CPU/cgroup limits and RAM along with the results. Inputs with uneven group sizes
 are intentional: they exercise growing reusable sample buffers. The skewed pooled
 case has 96 groups, one with 6,000 assets and the others with three, allowing the
-same large group to occur multiple times in one resampled sequence.
+same large group to occur multiple times in one resampled sequence. The optional
+`--scale10` cases expand the irregular input to 2,400 event groups with at most
+40 assets; select them with `--case scale10-review`. Preserve the original runs
+when using a larger input or CPU affinity to investigate measurement variability;
+those diagnostics do not replace an unfavorable or noisy earlier result.
 
 The Rust fixture helper in `apps/job/tests/support/review_diagnostics_fixture.rs`
 uses the same small-case input formulas. Integer values divided by powers of two

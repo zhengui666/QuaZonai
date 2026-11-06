@@ -71,9 +71,7 @@ fn ranks_by(
 ) {
     order.clear();
     order.extend(0..len);
-    // Every equal-value block receives one rank at the original indices, so
-    // tie order is irrelevant. Unstable sorting avoids a per-call sort buffer.
-    order.sort_unstable_by(|a, b| value(*a).total_cmp(&value(*b)));
+    order.sort_by(|a, b| value(*a).total_cmp(&value(*b)));
     ranks.resize(len, 0.0);
     let mut index = 0;
     while index < order.len() {

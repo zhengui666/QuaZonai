@@ -83,6 +83,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=Path, default=Path(__file__).parent / "fixtures")
     p.add_argument("--bench", action="store_true")
+    p.add_argument("--scale10", action="store_true", help="additional 10x event-group diagnostic workloads")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     cases = []
@@ -100,6 +101,10 @@ def main():
                           review_fixture(240, 40, scope, "irregular")))
         cases.append(("bench-review-skewed-pooled", "review-science",
                       review_fixture(96, 6000, "POOLED_TIME_SERIES", "skewed")))
+    if args.scale10:
+        for scope in ["POOLED_TIME_SERIES", "CROSS_SECTIONAL"]:
+            cases.append((f"scale10-review-{scope.lower()}", "review-science",
+                          review_fixture(2400, 40, scope, "irregular")))
     manifest = []
     for name, operation, value in cases:
         payload = json.dumps(value, separators=(",", ":"), allow_nan=False).encode()

@@ -16,15 +16,13 @@ calibration. Base: remote `dev` at `8e4059b07b688ec8c42a6ed490da7b30e4ece5a4`.
   can reuse it without re-ranking or moving missing groups between slices.
 - Rank score/label columns directly from pairs. Reuse the ordering and two rank
   buffers, the sampled group indices and pooled pairs across the 512 replicates.
-  Use allocation-free unstable ordering: equal-value blocks receive the same
-  rank at their original indices, so internal tie order does not affect results.
   Keep total ordering, tie ranks, random draws and floating-point accumulation
   order unchanged. No sample quota, estimator, confidence method or wire changes.
 
 Buffers retain their high-water capacities for this invocation. Irregular group
 sizes can grow a bootstrap sample beyond the original point count; measurements
 must include that case. This work does not promise constant memory or eliminate
-the original input or grouped observations.
+the original input, grouped observations or standard stable-sort workspace.
 
 ## Acceptance
 
@@ -42,8 +40,14 @@ the original input or grouped observations.
 
 ## Validation
 
-The final allocation-free sorting change is awaiting revalidation. The following
-checks currently describe the preceding reusable-buffer implementation.
+A fixed-affinity, warmed release diagnostic found a workload-specific regression
+in the additional unstable-sort change (`bb71c1a9`): the 2,400-group pooled case
+used 5.50% more CPU and 5.53% more wall time while reducing RSS 2.36%. Stable sorting
+has been restored without changing the other buffer or scope optimizations.
+Baseline/unstable/stable comparison is pending; no CPU improvement is claimed.
+The earlier measurements, including unfavorable and nonstationary runs, are
+retained for the final evidence record. The checks below describe the preceding
+reusable-buffer implementation, not a claim of final-commit validation.
 
 - Pinned Rust 1.99.1, locked dependencies, actual candidate native library and CLI:
   `cargo test --locked -p job --test review_science`
