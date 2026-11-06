@@ -24,7 +24,7 @@ use nautilus_model::{
         margin_model::{MarginModel, MarginModelHandle},
         Account,
     },
-    data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate, QuoteTick},
+    data::{Bar, BarSpecification, BarType, Data, FundingRateUpdate, OrderBookDeltas, QuoteTick},
     enums::{
         AccountType, AggregationSource, BarAggregation, BookType, OmsType, OrderSide, PriceType,
         TimeInForce,
@@ -148,6 +148,7 @@ struct CohortStrategy {
     venue: Venue,
     cash: bool,
     synthetic_quote_ioc: bool,
+    observed_l2: bool,
     cost_fraction: Decimal,
     state: Rc<RefCell<State>>,
 }
@@ -184,13 +185,38 @@ nautilus_strategy!(CohortStrategy, {
 });
 impl DataActor for CohortStrategy {
     fn on_start(&mut self) -> Result<()> {
-        for bar in self.bars.clone() {
-            self.subscribe_bars(bar, None, None);
+        if self.observed_l2 {
+            for id in self.instruments.keys().copied().collect::<Vec<_>>() {
+                self.subscribe_book_deltas(id, BookType::L2_MBP, None, None, true, None);
+            }
+        } else {
+            for bar in self.bars.clone() {
+                self.subscribe_bars(bar, None, None);
+            }
         }
         Ok(())
     }
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
-        let id = bar.instrument_id();
+        self.execute(bar.instrument_id(), bar.close, None)
+    }
+    fn on_book_deltas(&mut self, deltas: &OrderBookDeltas) -> Result<()> {
+        let prices = self
+            .cache()
+            .order_book(&deltas.instrument_id)
+            .and_then(|book| Some((book.best_bid_price()?, book.best_ask_price()?)));
+        if let Some((bid, ask)) = prices {
+            self.execute(deltas.instrument_id, ask, Some((bid, ask)))?;
+        }
+        Ok(())
+    }
+}
+impl CohortStrategy {
+    fn execute(
+        &mut self,
+        id: InstrumentId,
+        reference: Price,
+        quotes: Option<(Price, Price)>,
+    ) -> Result<()> {
         let Some(target) = self.state.borrow_mut().targets.remove(&id) else {
             return Ok(());
         };
@@ -218,6 +244,10 @@ impl DataActor for CohortStrategy {
         } else {
             OrderSide::Sell
         };
+        let price = quotes.map_or(
+            reference,
+            |(bid, ask)| if side == OrderSide::Buy { ask } else { bid },
+        );
         let capacity = self
             .state
             .borrow()
@@ -225,7 +255,7 @@ impl DataActor for CohortStrategy {
             .get(&id)
             .copied()
             .context("TICK_ECONOMIC_CAPACITY_MISSING")?;
-        let mut amount = if self.synthetic_quote_ioc {
+        let mut amount = if self.synthetic_quote_ioc && !self.observed_l2 {
             difference.abs()
         } else {
             difference.abs().min(capacity)
@@ -245,7 +275,7 @@ impl DataActor for CohortStrategy {
             let affordable = if side == OrderSide::Buy {
                 let unit = arithmetic(
                     arithmetic(
-                        bar.close
+                        price
                             .as_decimal()
                             .checked_mul(instrument.multiplier().as_decimal()),
                     )?
@@ -275,7 +305,7 @@ impl DataActor for CohortStrategy {
             return Ok(());
         }
         let notional = arithmetic(
-            arithmetic(quantity.as_decimal().checked_mul(bar.close.as_decimal()))?
+            arithmetic(quantity.as_decimal().checked_mul(price.as_decimal()))?
                 .checked_mul(instrument.multiplier().as_decimal()),
         )?;
         if instrument
@@ -440,6 +470,12 @@ pub(super) struct NativeRate {
     pub rate: Decimal,
 }
 
+pub(super) struct NativeBook {
+    pub snapshot: OrderBookDeltas,
+    pub capacity: Decimal,
+    pub target_quantity: Option<Decimal>,
+}
+
 pub(super) struct NativeLedger {
     engine: BacktestEngine,
     bus: Rc<RefCell<MessageBus>>,
@@ -451,6 +487,7 @@ pub(super) struct NativeLedger {
     last_event: Option<u64>,
     purge_day: Option<u64>,
     synthetic_quote_ioc: bool,
+    observed_l2: bool,
 }
 impl NativeLedger {
     #[allow(clippy::too_many_arguments)]
@@ -464,8 +501,84 @@ impl NativeLedger {
         maintenance_margin_fraction: Decimal,
         synthetic_quote_ioc: bool,
     ) -> Result<Self> {
+        Self::with_execution(
+            instruments,
+            initial_usdc,
+            margin,
+            taker_fee_bps,
+            extra_cost_bps,
+            initial_margin_fraction,
+            maintenance_margin_fraction,
+            synthetic_quote_ioc,
+            false,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_observed(
+        instruments: Vec<InstrumentAny>,
+        initial_usdc: Decimal,
+        margin: bool,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+        initial_margin_fraction: Decimal,
+        maintenance_margin_fraction: Decimal,
+    ) -> Result<Self> {
+        Self::with_execution(
+            instruments,
+            initial_usdc,
+            margin,
+            taker_fee_bps,
+            extra_cost_bps,
+            initial_margin_fraction,
+            maintenance_margin_fraction,
+            false,
+            true,
+            None,
+        )
+    }
+    pub fn new_conversion(
+        instrument: InstrumentAny,
+        initial_base: Money,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+    ) -> Result<Self> {
         ensure!(
-            initial_usdc > Decimal::ZERO && !instruments.is_empty(),
+            instrument.base_currency() == Some(initial_base.currency)
+                && initial_base.as_decimal() > Decimal::ZERO,
+            "TICK_ECONOMIC_CONVERSION_BALANCE_INVALID"
+        );
+        let id = instrument.id();
+        let ledger = Self::with_execution(
+            vec![instrument],
+            Decimal::ZERO,
+            false,
+            taker_fee_bps,
+            extra_cost_bps,
+            Decimal::ONE,
+            Decimal::new(5, 1),
+            false,
+            true,
+            Some(initial_base),
+        )?;
+        ledger.inventory_target_instruments(&[id])?;
+        Ok(ledger)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn with_execution(
+        instruments: Vec<InstrumentAny>,
+        initial_usdc: Decimal,
+        margin: bool,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+        initial_margin_fraction: Decimal,
+        maintenance_margin_fraction: Decimal,
+        synthetic_quote_ioc: bool,
+        observed_l2: bool,
+        initial_base: Option<Money>,
+    ) -> Result<Self> {
+        ensure!(
+            (initial_usdc > Decimal::ZERO || initial_base.is_some()) && !instruments.is_empty(),
             "TICK_ECONOMIC_LEDGER_INPUT"
         );
         ensure!(
@@ -529,6 +642,12 @@ impl NativeLedger {
                     .or_insert((currency, Decimal::ZERO));
             }
         }
+        if let Some(initial) = initial_base {
+            balances.insert(
+                initial.currency.code.to_string(),
+                (initial.currency, initial.as_decimal()),
+            );
+        }
         let initial_balances = balances
             .into_iter()
             .map(|(_, (currency, value))| {
@@ -544,7 +663,11 @@ impl NativeLedger {
                 } else {
                     AccountType::Cash
                 })
-                .book_type(BookType::L1_MBP)
+                .book_type(if observed_l2 {
+                    BookType::L2_MBP
+                } else {
+                    BookType::L1_MBP
+                })
                 .allow_cash_borrowing(false)
                 .starting_balances(initial_balances.clone())
                 .default_leverage(Decimal::ONE)
@@ -559,8 +682,9 @@ impl NativeLedger {
                     0.0,
                     Some(1),
                 )?))
-                .bar_execution(!synthetic_quote_ioc)
-                .liquidity_consumption(!synthetic_quote_ioc)
+                .bar_execution(!synthetic_quote_ioc && !observed_l2)
+                .trade_execution(!observed_l2)
+                .liquidity_consumption(observed_l2 || !synthetic_quote_ioc)
                 .build()?,
         )?;
         let count = instruments.len();
@@ -588,6 +712,7 @@ impl NativeLedger {
             venue,
             cash: !margin,
             synthetic_quote_ioc,
+            observed_l2,
             cost_fraction: fee_fraction,
             state: state.clone(),
         })?;
@@ -602,6 +727,7 @@ impl NativeLedger {
             last_event: None,
             purge_day: None,
             synthetic_quote_ioc,
+            observed_l2,
         })
     }
 
@@ -621,6 +747,25 @@ impl NativeLedger {
         Ok(())
     }
 
+    pub fn current_quantity(&self, id: InstrumentId) -> Decimal {
+        if self.state.borrow().inventory_targets.contains(&id) {
+            self.instruments
+                .get(&id)
+                .and_then(|instrument| instrument.base_currency())
+                .and_then(|currency| self.balance(currency))
+                .map_or(Decimal::ZERO, |balance| balance.as_decimal())
+        } else {
+            self.engine
+                .kernel()
+                .cache
+                .borrow()
+                .positions_open_refs(Some(&self.venue), Some(&id), None, None, None)
+                .into_iter()
+                .map(|position| position.signed_decimal_qty())
+                .sum()
+        }
+    }
+
     /// All marks at a shared event timestamp form one complete streaming batch.
     pub fn step_batch(&mut self, event: u64, rows: &[NativeMark]) -> Result<()> {
         self.step_batch_with_rates(event, rows, &[])
@@ -638,6 +783,10 @@ impl NativeLedger {
         rows: &[NativeMark],
         rates: &[NativeRate],
     ) -> Result<()> {
+        ensure!(
+            !self.observed_l2 || rows.is_empty(),
+            "TICK_ECONOMIC_OBSERVED_REQUIRES_BOOKS"
+        );
         ensure!(
             self.last_event.is_none_or(|last| last < event)
                 && (!rows.is_empty() || !rates.is_empty()),
@@ -729,6 +878,87 @@ impl NativeLedger {
                 event.into(),
             )?));
         }
+        self.run_events(event, events)
+    }
+
+    pub fn step_books(
+        &mut self,
+        event: u64,
+        rows: Vec<NativeBook>,
+        rates: &[NativeRate],
+    ) -> Result<()> {
+        ensure!(
+            self.observed_l2
+                && self.last_event.is_none_or(|last| last < event)
+                && (!rows.is_empty() || !rates.is_empty()),
+            "TICK_ECONOMIC_NATIVE_EVENT_ORDER"
+        );
+        set_message_bus(self.bus.clone());
+        let mut seen = BTreeSet::new();
+        let mut events = Vec::new();
+        for rate in rates {
+            ensure!(
+                self.instruments.contains_key(&rate.instrument_id),
+                "TICK_ECONOMIC_FUNDING_INSTRUMENT_UNKNOWN"
+            );
+            events.push(Data::FundingRate(FundingRateUpdate::new(
+                rate.instrument_id,
+                rate.rate,
+                None,
+                None,
+                event.into(),
+                event.into(),
+            )));
+        }
+        for row in rows {
+            let id = row.snapshot.instrument_id;
+            ensure!(
+                self.instruments.contains_key(&id)
+                    && seen.insert(id)
+                    && row.snapshot.ts_init.as_u64() == event
+                    && row.capacity >= Decimal::ZERO,
+                "TICK_ECONOMIC_BOOK_BATCH_INVALID"
+            );
+            if let Some(target) = row.target_quantity {
+                ensure!(
+                    self.state.borrow_mut().targets.insert(id, target).is_none(),
+                    "TICK_ECONOMIC_DUPLICATE_TARGET"
+                );
+            }
+            self.state.borrow_mut().capacities.insert(id, row.capacity);
+            let bid = row
+                .snapshot
+                .deltas
+                .iter()
+                .find(|delta| delta.order.side == Some(OrderSide::Buy));
+            let ask = row
+                .snapshot
+                .deltas
+                .iter()
+                .find(|delta| delta.order.side == Some(OrderSide::Sell));
+            if let (Some(bid), Some(ask)) = (bid, ask) {
+                // Official market-order risk checks read cached quotes, not the L2 book.
+                events.push(Data::Quote(QuoteTick::new(
+                    id,
+                    bid.order.price,
+                    ask.order.price,
+                    bid.order.size,
+                    ask.order.size,
+                    row.snapshot.ts_event,
+                    row.snapshot.ts_init,
+                )));
+            }
+            events.push(Data::BookDeltas(Box::new(row.snapshot)));
+        }
+        self.run_events(event, events)?;
+        ensure!(
+            self.state.borrow().targets.is_empty(),
+            "TICK_ECONOMIC_BOOK_TARGET_NOT_CONSUMED"
+        );
+        Ok(())
+    }
+
+    fn run_events(&mut self, event: u64, events: Vec<Data>) -> Result<()> {
         self.engine.add_data(events, None, true, true)?;
         self.engine.run(None, None, None, true)?;
         self.engine.clear_data();
@@ -883,7 +1113,8 @@ fn bar_type(id: InstrumentId) -> BarType {
 mod tests {
     use super::*;
     use nautilus_model::{
-        enums::OrderStatus,
+        data::{BookOrder, OrderBookDelta},
+        enums::{BookAction, OrderStatus, RecordFlag},
         events::OrderEventAny,
         identifiers::Symbol,
         instruments::{CryptoPerpetual, CurrencyPair},
@@ -1440,5 +1671,158 @@ mod tests {
             .step(1_000_000_000, &instrument, 100.0, 10.0, None)
             .is_err());
         native.finish().unwrap();
+    }
+
+    fn observed_snapshot(
+        instrument: &InstrumentAny,
+        at: u64,
+        bid: &str,
+        bid_size: &str,
+        asks: &[(&str, &str)],
+    ) -> OrderBookDeltas {
+        let id = instrument.id();
+        let mut clear = OrderBookDelta::clear(id, 0, (at - 100).into(), at.into());
+        clear.order.price = Price::zero(instrument.price_precision());
+        clear.order.size = Quantity::zero(instrument.size_precision());
+        let mut rows = vec![
+            clear,
+            OrderBookDelta::new(
+                id,
+                BookAction::Add,
+                BookOrder::new(
+                    OrderSide::Buy,
+                    Price::from(bid),
+                    Quantity::from(bid_size),
+                    0,
+                ),
+                RecordFlag::F_SNAPSHOT as u8,
+                0,
+                (at - 100).into(),
+                at.into(),
+            ),
+        ];
+        for (price, quantity) in asks {
+            rows.push(OrderBookDelta::new(
+                id,
+                BookAction::Add,
+                BookOrder::new(
+                    OrderSide::Sell,
+                    Price::from(*price),
+                    Quantity::from(*quantity),
+                    0,
+                ),
+                RecordFlag::F_SNAPSHOT as u8,
+                0,
+                (at - 100).into(),
+                at.into(),
+            ));
+        }
+        rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+        OrderBookDeltas::new(id, rows)
+    }
+
+    #[test]
+    fn observed_l2_ioc_uses_ask_depth_then_retains_partial_exit_inventory() {
+        let instrument = spot();
+        let mut ledger = NativeLedger::new_observed(
+            vec![instrument.clone()],
+            Decimal::from(1000),
+            false,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::new(5, 1),
+            Decimal::new(25, 2),
+        )
+        .unwrap();
+        ledger
+            .step_books(
+                1_000_000_000,
+                vec![NativeBook {
+                    snapshot: observed_snapshot(
+                        &instrument,
+                        1_000_000_000,
+                        "99.00",
+                        "10.0000",
+                        &[("101.00", "1.0000"), ("102.00", "1.0000")],
+                    ),
+                    capacity: Decimal::from(10),
+                    target_quantity: Some(Decimal::from(3)),
+                }],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::from(2)
+        );
+        assert_eq!(
+            ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(797)
+        );
+        ledger
+            .step_books(
+                2_000_000_000,
+                vec![NativeBook {
+                    snapshot: observed_snapshot(
+                        &instrument,
+                        2_000_000_000,
+                        "98.00",
+                        "0.5000",
+                        &[("103.00", "1.0000")],
+                    ),
+                    capacity: Decimal::from(10),
+                    target_quantity: Some(Decimal::ZERO),
+                }],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::new(15, 1)
+        );
+        assert_eq!(
+            ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::from(846)
+        );
+        ledger.finish().unwrap();
+    }
+
+    #[test]
+    fn observed_conversion_spends_original_base_and_books_native_fee() {
+        let instrument = spot();
+        let mut ledger = NativeLedger::new_conversion(
+            instrument.clone(),
+            Money::from("2 BTC"),
+            Decimal::from(100),
+            Decimal::ZERO,
+        )
+        .unwrap();
+        ledger
+            .step_books(
+                1_000_000_000,
+                vec![NativeBook {
+                    snapshot: observed_snapshot(
+                        &instrument,
+                        1_000_000_000,
+                        "99.00",
+                        "1.0000",
+                        &[("101.00", "1.0000")],
+                    ),
+                    capacity: Decimal::new(5, 1),
+                    target_quantity: Some(Decimal::ZERO),
+                }],
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.balance(Currency::BTC()).unwrap().as_decimal(),
+            Decimal::new(15, 1)
+        );
+        assert_eq!(
+            ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+            Decimal::new(49005, 3)
+        );
+        assert_eq!(ledger.summary().commissions["USDC"], Decimal::new(495, 3));
+        ledger.finish().unwrap();
     }
 }

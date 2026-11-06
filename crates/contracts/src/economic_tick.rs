@@ -32,6 +32,8 @@ pub struct NativeTickEconomicScenarioV1 {
 pub enum NativeTickEconomicExecutionModelV1 {
     #[serde(rename = "SYNTHETIC_QUOTE_IOC_V1")]
     SyntheticQuoteIocV1,
+    #[serde(rename = "OBSERVED_L2_IOC_V1")]
+    ObservedL2IocV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -47,6 +49,8 @@ pub struct NativeTickEconomicRequestV1 {
     pub schema_version: SchemaV1,
     /// The selected model's original prepared input and feature parameters.
     pub research: NativeTradeTickFactorEvaluationRequestV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_weights: Option<Vec<DecimalValue>>,
     pub scenario: NativeTickEconomicScenarioV1,
     pub fx_instrument_ids: Vec<String>,
     /// Catalog-relative chronological JSONL of actual instrument_id/event_ns/rate.

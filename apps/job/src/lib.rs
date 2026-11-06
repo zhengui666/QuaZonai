@@ -47,6 +47,7 @@ mod report;
 pub use report::write_probe_report;
 pub mod signals;
 pub mod simulation;
+pub mod source_market;
 pub mod spot_cash_capture;
 mod spot_cash_runtime;
 #[cfg(feature = "hyperliquid-offline")]

@@ -5,6 +5,7 @@ import type { Context } from '@earendil-works/chord';
 import { realpath } from 'node:fs/promises';
 import { object } from '../src/trials.ts';
 import { NativeEvidencePart, readNativeEvidenceParts } from './native-evidence.ts';
+import { CatalogScopes } from './native-catalog-scope.ts';
 import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 // Scientific exposure facts use the upstream session transaction, not a new
@@ -38,7 +39,13 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
   return { catalog: await realpath(data.catalog),
     ...(tick ? { modality: 'TRADE_TICK', instrumentIds: [...selection.instrument_ids as string[]].sort() }
       : catalog ? { barTypesRef: object(data.catalog_scope, 'catalog_scope') } : { barTypes: [...selection.bar_types as string[]].sort() }),
-    start: ensemble ? data.validation_end_ns! : request.validation_end_ns!, end: selection.event_end_ns! };
+    start: sourceStart(selection, ensemble ? data.validation_end_ns! : request.validation_end_ns!), end: selection.event_end_ns! };
+}
+
+function sourceStart(selection: JsonObject, start: JsonObject[string]): string {
+  const delay = selection.availability === 'RECEIVED_TIME_OBSERVED' ? BigInt(selection.maximum_receive_delay_ns as string) : 0n;
+  const earliest = BigInt(start as string) - delay;
+  return String(earliest < 0n ? 0n : earliest);
 }
 
 export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT', record = true): Promise<void> {
@@ -49,7 +56,7 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const request = nativeResearchRequest(data);
   const selection = ensemble || data.catalog_scan_request !== undefined ? request : isTickResearchInput(data) ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast').selection, 'selection');
   if (!reserve) {
-    window.start = selection.event_start_ns!;
+    window.start = sourceStart(selection, selection.event_start_ns!);
     window.end = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
@@ -118,9 +125,28 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
       }
       const bars = leftTick ? checked : item;
       const ticks = leftTick ? item : checked;
-      const starts = barSourceStarts(bars, await assets(bars));
       const barEnd = BigInt(bars.end as string);
-      for (const id of await assets(ticks)) {
+      // A completed BAR cannot reveal source events after its own end.
+      if (BigInt(ticks.start as string) >= barEnd) return false;
+      const tickAssets = await assets(ticks);
+      if (bars.barTypesRef !== undefined) {
+        const reference = object(bars.barTypesRef, 'bar_types_reference');
+        const original = (await tx.doc(CatalogScopes)).roots.find(root => {
+          const cached = object(root.reference, 'catalog_scope_reference');
+          return root.catalog === bars.catalog && cached.conversationId === reference.conversationId
+            && cached.taskId === reference.taskId && cached.count === reference.count;
+        });
+        const venues = original?.instrumentVenues;
+        // A recovered conservative namespace can prove disjointness without
+        // replacing the original identity reference or its exposure history.
+        if (Array.isArray(venues) && venues.length > 0 && venues.every(venue => typeof venue === 'string' && /^[A-Z0-9_]+$/.test(venue))
+          && tickAssets.size > 0 && [...tickAssets].every(id => {
+            const venue = id.slice(id.lastIndexOf('.') + 1);
+            return id.includes('.') && /^[A-Z0-9_]+$/.test(venue) && !venues.includes(venue);
+          })) return false;
+      }
+      const starts = barSourceStarts(bars, await assets(bars));
+      for (const id of tickAssets) {
         const barStart = starts.get(id);
         if (barStart !== undefined && overlaps(barStart, barEnd, BigInt(ticks.start as string), BigInt(ticks.end as string))) return true;
       }

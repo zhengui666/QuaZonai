@@ -9,6 +9,8 @@ import re
 PLUGIN = "cryptohftdata-hyperliquid"
 SOURCE = "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
 MARKETS = {"spot": "hyperliquid_spot", "perpetual": "hyperliquid_futures"}
+STREAMS = {"books": "orderbook", "context": "mark_price", "trades": "trades"}
+COVERAGE = "OBSERVED_PUBLISHED_FILES"
 
 
 def date(value):
@@ -56,8 +58,8 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
                           or re.search(r"[/\\\x00-\x1f]", symbol) for symbol in symbols):
         raise ValueError("expected exact source filename symbols")
     streams = sorted(set(streams or (["books", "context"] if market == "perpetual" else ["books"])))
-    if not streams or set(streams) - {"books", "context"} or market == "spot" and "context" in streams:
-        raise ValueError("spot provides books; perpetual provides books and context")
+    if not streams or set(streams) - STREAMS.keys() or market == "spot" and "context" in streams:
+        raise ValueError("spot provides books and trades; perpetual provides books, context and trades")
     hours = sorted(set(range(24) if hours is None else hours))
     if not hours or any(type(hour) is not int or not 0 <= hour < 24 for hour in hours):
         raise ValueError("hours must be integers from 0 through 23")
@@ -67,7 +69,7 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
         for hour in hours:
             for symbol in symbols:
                 for kind in streams:
-                    suffix = "orderbook" if kind == "books" else "mark_price"
+                    suffix = STREAMS[kind]
                     relative = f"{MARKETS[market]}/{day.isoformat()}/{hour:02}/{symbol}_{suffix}.parquet"
                     variants = [root / relative, root / (relative + ".zst")]
                     present = [path for path in variants if path.is_file()]
@@ -88,20 +90,23 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
                         if kind == "books":
                             columns = {"symbol": "symbol", "time": "event_time", "available_at": "received_time",
                                        "side": "side", "price": "price", "size": "quantity", "event_type": "event_type"}
+                        elif kind == "trades":
+                            columns = {"symbol": "symbol", "time": "event_time", "available_at": "received_time",
+                                       "side": "is_buyer_maker", "price": "price", "size": "quantity", "trade_id": "trade_id"}
                         else:
                             # The publisher's old/new mark event_time units differ; received_time is always ns.
                             columns = {"symbol": "symbol", "time": "received_time", "available_at": "received_time",
                                        "mark_price": "mark_price", "index_price": "index_price", "funding_rate": "funding_rate"}
-                        definitions[name] = {"name": name, "kind": "book_snapshots" if kind == "books" else "context",
+                        definitions[name] = {"name": name, "kind": "book_snapshots" if kind == "books" else kind,
                                              "format": "parquet-zstd" if compressed else "parquet",
-                                             "time_unit": "ms" if kind == "books" else "ns",
+                                             "time_unit": "ns" if kind == "context" else "ms",
                                              "available_time_unit": "ns", "columns": columns,
                                              "paths": [f"{MARKETS[market]}/{{date}}/{{hour}}/*_{suffix}.parquet" + (".zst" if compressed else "")]}
+                        if kind == "trades":
+                            definitions[name]["sides"] = {"true": "SELLER", "false": "BUYER"}
         day += datetime.timedelta(days=1)
     if not files:
         raise ValueError("no downloaded source files match the selection")
-    if set(symbols) - found:
-        raise ValueError("selected symbol has no downloaded files: " + ", ".join(sorted(set(symbols) - found)))
     return {"schema_version": 1, "repository": "CryptoHFTData",
             "revision": f"published-files-{manifest['start_date_utc']}-{manifest['end_date_utc']}",
             "source_root": str(root), "source_reference": SOURCE,
@@ -111,7 +116,7 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
             "profile": {"streams": list(definitions.values())}, "files": files, "missing": missing,
             "selected_path_prefixes": [MARKETS[market] + "/"],
             "selection": {"market": market, "symbols": symbols, "hours": hours, "streams": streams},
-            "coverage": "SELECTED_PUBLISHED_FILES; missing hourly paths may include unlisted markets"}
+            "unobserved_symbols": sorted(set(symbols) - found), "coverage": COVERAGE}
 
 
 def publish(path, manifest):

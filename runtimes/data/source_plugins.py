@@ -953,30 +953,68 @@ def polymarket_v2_export(args):
     return providers.read_json(completed.stdout)
 
 
-def cryptohftdata_options(parser, convert=False):
+def cryptohftdata_options(parser, convert=False, plan=False):
     parser.add_argument("--archive", type=Path, required=True, help="existing CryptoHFTData root containing dataset.json")
-    if convert:
-        native_options(parser)
+    if convert or plan:
+        if convert:
+            native_options(parser)
+        else:
+            parser.add_argument("--output", type=Path, required=True, help="new source manifest file")
         parser.add_argument("--market", choices=cryptohftdata.MARKETS, required=True)
         parser.add_argument("--symbol", action="append", required=True, help="exact source filename symbol; repeatable")
         parser.add_argument("--start-date", required=True, help="inclusive UTC YYYY-MM-DD")
         parser.add_argument("--end-date", required=True, help="exclusive UTC YYYY-MM-DD")
         parser.add_argument("--hour", type=int, action="append", help="UTC hour 0-23; omit for every hour")
-        parser.add_argument("--stream", choices=("books", "context"), action="append", help="omit for all market streams")
+        parser.add_argument("--stream", choices=tuple(cryptohftdata.STREAMS), action="append",
+                            help="repeatable; defaults to books and perpetual context")
+        if convert:
+            mode = parser.add_mutually_exclusive_group()
+            mode.add_argument("--trade-ticks", action="store_true", help="native trade-only catalog")
+            mode.add_argument("--cohort-cache", action="store_true", help="derived trade cohort cache")
+            mode.add_argument("--cohort-flow-cache", action="store_true", help="derived trade cohort cache with aggressive flow")
+            parser.add_argument("--received-time", action="store_true", help="select and group original collector receive times")
+            parser.add_argument("--maximum-receive-delay-ns", type=int,
+                                help="explicit maximum receive minus exchange-event time for received-time input")
         parser.add_argument("--instruments", type=Path, required=True, help="original native definitions and explicit symbol aliases")
+
+
+def cryptohftdata_manifest(args):
+    manifest = cryptohftdata.selection(args.archive, args.market, args.symbol, args.start_date,
+                                      args.end_date, args.stream, args.hour)
+    instruments = providers.read_json(acquire.local_bytes(local_path(args.instruments), None))
+    if not isinstance(instruments, (dict, list)):
+        raise ValueError("expected original native instrument definitions")
+    return manifest | {"instrument_source": instruments}
+
+
+def cryptohftdata_plan(args):
+    manifest = cryptohftdata_manifest(args)
+    output = local_path(args.output)
+    cryptohftdata.publish(output, manifest)
+    return {"plugin": cryptohftdata.PLUGIN, "status": "PLANNED", "source_manifest": str(output),
+            "files": len(manifest["files"]), "missing": len(manifest["missing"]), "research_qualified": False}
 
 
 def cryptohftdata_convert(args):
     output = local_path(args.output)
     if output.exists():
         raise ValueError("native output must be a new directory; failed artifacts are never removed")
-    manifest = cryptohftdata.selection(args.archive, args.market, args.symbol, args.start_date,
-                                      args.end_date, args.stream, args.hour)
+    manifest = cryptohftdata_manifest(args)
+    mode = next((name for name in ("trade_ticks", "cohort_cache", "cohort_flow_cache") if getattr(args, name)), None)
+    if mode and manifest["selection"]["streams"] != ["trades"]:
+        raise ValueError("trade/catalog cache mode requires --stream trades only")
+    if (args.received_time and mode is None or args.received_time != (args.maximum_receive_delay_ns is not None)
+            or args.maximum_receive_delay_ns is not None and args.maximum_receive_delay_ns < 0):
+        raise ValueError("received-time mode requires a trade/catalog cache mode and a nonnegative maximum receive delay")
     source_file = output.with_name(output.name + ".source.json")
     source_file.parent.mkdir(parents=True, exist_ok=True)
     cryptohftdata.publish(source_file, manifest)
-    run_native(args, ["import", "--manifest", str(source_file), "--instruments", str(local_path(args.instruments)),
-                      "--native-precision"], "market-history")
+    native = ["import", "--manifest", str(source_file), "--instruments", str(local_path(args.instruments)), "--native-precision"]
+    if mode:
+        native.append("--" + mode.replace("_", "-"))
+    if args.received_time:
+        native += ["--received-time", "--maximum-receive-delay-ns", str(args.maximum_receive_delay_ns)]
+    run_native(args, native, "market-history")
     report = load_json(output / "import-report.json")
     if (report.get("status") != "IMPORTED" or type(report.get("readback_records")) is not int
             or report["readback_records"] <= 0 or report.get("missing_symbols") or report.get("rejected_rows")):
@@ -1026,9 +1064,10 @@ PLUGINS[polymarket_v2.PLUGIN] = source_plugin(polymarket_v2.PLUGIN, polymarket_v
      "Prepared catalogs remain owner-managed immutable inputs; readiness is not scientific qualification"])
 PLUGINS[cryptohftdata.PLUGIN] = source_plugin(cryptohftdata.PLUGIN, "CryptoHFTData Hyperliquid Parquet / Parquet.zst",
     {"inspect": Capability(cryptohftdata_options, lambda args: cryptohftdata.inspect(args.archive)),
+     "plan": Capability(partial(cryptohftdata_options, plan=True), cryptohftdata_plan),
      "convert": Capability(partial(cryptohftdata_options, convert=True), cryptohftdata_convert)},
     ["Reads an existing downloaded archive; no credentials, network access or raw-file copies",
-     "Native conversion preserves book snapshots, collector clocks and perpetual context; it creates no trades or BARs",
+     "Native conversion preserves published trades, book snapshots, collector clocks and perpetual context; it creates no BARs",
      "Explicit market, symbols, UTC dates and optional hours select existing files; missing hourly paths remain reported",
      "Source download completeness does not establish exchange coverage, historical instrument definitions or research qualification"])
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",

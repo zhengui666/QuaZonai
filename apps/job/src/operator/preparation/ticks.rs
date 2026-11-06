@@ -210,6 +210,8 @@ fn copy_selected(
         "instrument_ids": request.input.instrument_ids,
         "event_start_ns": request.input.event_start_ns.get(),
         "event_end_ns": request.input.event_end_ns.get(),
+        "availability": request.input.availability,
+        "maximum_receive_delay_ns": request.input.maximum_receive_delay_ns,
         "trade_counts": trade_counts,
     });
     publish(&root.join("import-provenance.json"), &provenance)?;
@@ -256,9 +258,16 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
         "OUTPUT_MUST_NOT_OVERLAP_SOURCE"
     );
     let series = crate::ticks::catalog::load(&source, &request)?;
+    let clock = |trade: &TradeTick| {
+        if request.input.uses_received_time() {
+            trade.ts_init
+        } else {
+            trade.ts_event
+        }
+    };
     for rows in series.values() {
         ensure!(
-            rows.chunk_by(|left, right| left.ts_event == right.ts_event)
+            rows.chunk_by(|left, right| clock(left) == clock(right))
                 .all(|cohort| cohort.len() <= request.sampling.maximum_cohort_rows as usize),
             "TICK_COHORT_ROW_LIMIT"
         );
@@ -274,7 +283,7 @@ pub(super) fn run(args: &Arguments) -> Result<Value> {
                 id.clone(),
                 rows.iter()
                     .copied()
-                    .filter(|t| t.ts_event.as_u64() < request.validation_end_ns.get())
+                    .filter(|trade| clock(trade).as_u64() < request.validation_end_ns.get())
                     .collect(),
             )
         })
@@ -367,6 +376,73 @@ mod tests {
             "train_end_ns":"30","validation_end_ns":"50"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn received_preparation_groups_and_physically_cuts_by_receipt_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let native = super::super::native(&source).unwrap();
+        let instrument = InstrumentAny::CurrencyPair(audusd_sim());
+        crate::catalog::currencies::write(&source, std::slice::from_ref(&instrument)).unwrap();
+        native.write_instruments(vec![instrument]).unwrap();
+        let trades = [40_u64, 55]
+            .into_iter()
+            .map(|received| {
+                TradeTick::new(
+                    InstrumentId::from("AUD/USD.SIM"),
+                    Price::from("1.20"),
+                    Quantity::from("1"),
+                    AggressorSide::Buy,
+                    TradeId::from(received.to_string().as_str()),
+                    25_u64.into(),
+                    received.into(),
+                )
+            })
+            .collect::<Vec<_>>();
+        native.write_to_parquet(&trades, None, None, None).unwrap();
+        publish(&source.join("import-provenance.json"), &json!({
+            "schema_version":1,"status":"IMPORTED","source_revision":"native-test-source",
+            "availability":"RECEIVED_TIME_OBSERVED","missing_symbols":{},"missing_definitions":{},"rejected_rows":{},
+            "missing_partitions":[],"duplicate_trades":0,"readback_records":2,
+            "event_start_ns":0,"event_end_ns":80,"source_event_start_ns":25,"source_event_end_ns":26,
+            "native_files":crate::ticks::catalog::native_inventory(&source).unwrap(),
+        })).unwrap();
+        let mut request = request();
+        request.input.availability =
+            contracts::ticks::NativeTickAvailabilityV1::ReceivedTimeObserved;
+        request.input.maximum_receive_delay_ns = Some(contracts::DbCounter::new(30).unwrap());
+        request.sampling.kind = contracts::ticks::NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+        request.sampling.maximum_cohort_rows = 1;
+        let request_file = temp.path().join("request.json");
+        publish(&request_file, &request).unwrap();
+        let output = temp.path().join("prepared");
+        let metadata = run(&Arguments {
+            catalog: source,
+            request: request_file,
+            output: output.clone(),
+            maximum_output_bytes: 0,
+        })
+        .unwrap();
+        let primary_request = serde_json::from_value(metadata["research_request"].clone()).unwrap();
+        let primary =
+            crate::ticks::catalog::load(&output.join("research/catalog"), &primary_request)
+                .unwrap();
+        assert_eq!(primary["AUD/USD.SIM"], trades[..1]);
+        assert_eq!(
+            crate::ticks::catalog::load(&output.join("independent/catalog"), &request).unwrap()
+                ["AUD/USD.SIM"],
+            trades
+        );
+        let mut physical = super::super::native(&output.join("research/catalog")).unwrap();
+        assert_eq!(
+            physical
+                .query::<TradeTick>(None, None, None, None, None, false)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

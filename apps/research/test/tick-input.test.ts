@@ -141,6 +141,26 @@ test('fixed event-time labels preserve exact duration through clipping and expos
   assert.equal('horizonNs' in original, false);
 });
 
+test('received-time contract binds sampling, label clock, cache layout and a conservative delay bound', () => {
+  const request: NativeTickFactorRequest = { ...tick(), input: { ...tick().input,
+    availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2000000000', representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1' },
+    sampling: { kind: 'RECEIVED_TIME_COHORT_V1', maximum_cohort_rows: 100_000 },
+    target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '9007199254740993' } };
+  assert.deepEqual(validateNativeTickFactorRequest(request), request);
+  assert.equal(validateNativeTickFactorRequest({ ...request, input: { ...request.input, maximum_receive_delay_ns: '0' } }).input.maximum_receive_delay_ns, '0');
+  assert.equal(iterationRequest(tagged(request)).input && (iterationRequest(tagged(request)).input as JsonObject).maximum_receive_delay_ns, '2000000000');
+  for (const invalid of [
+    { ...request, input: { ...request.input, maximum_receive_delay_ns: undefined } },
+    { ...request, input: { ...request.input, maximum_receive_delay_ns: '-1' } },
+    { ...request, input: { ...request.input, maximum_receive_delay_ns: '9223372036854775808' } },
+    { ...request, input: { ...request.input, representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1' } },
+    { ...request, sampling: { ...request.sampling, kind: 'EVENT_TIME_COHORT_V1' } },
+    { ...request, target: { ...request.target, kind: 'FIXED_EVENT_TIME' } },
+    { ...tick(), target: request.target },
+    { ...tick(), input: { ...tick().input, maximum_receive_delay_ns: '0' } },
+  ]) assert.throws(() => validateNativeTickFactorRequest(invalid));
+});
+
 test('legacy row allowances do not limit admitted tick or full-source cache requests', () => {
   const original = tick(); const { maximum_rows: _rows, ...input } = original.input;
   const cache: NativeTickFactorRequest = { ...original, input: { ...input, representation: 'EVENT_TIME_COHORT_CACHE_V1', maximum_source_rows: '1308222597' } };

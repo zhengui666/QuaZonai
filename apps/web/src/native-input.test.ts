@@ -34,4 +34,16 @@ describe('native input evidence presentation', () => {
     }
   });
 
+  it('labels source receive time and its horizon without calling them event-time proxies', () => {
+    const html = renderToStaticMarkup(createElement(NativeInputFacts, {
+      settings: { modality: 'TRADE_TICK', instruments: ['BTC.SIM'], inputFamily: 'tick-received-cohort-flow-v1', horizon: null,
+        horizonNs: '60000000000', horizonUnit: 'RECEIVED_TIME_NS', sampling: 'RECEIVED_TIME_COHORT_V1',
+        availability: 'RECEIVED_TIME_OBSERVED', partitions: null, strategy: null },
+      coverage: { representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1', event_start_ns: '100', event_end_ns: '200' },
+    }));
+    expect(html).toContain('60 秒（接收时间'); expect(html).toContain('同接收时间戳');
+    expect(html).toContain('源端实际接收时间'); expect(html).toContain('精确接收范围');
+    expect(html).toContain('signed_quantity'); expect(html).not.toContain('事件时间代理');
+  });
+
 });

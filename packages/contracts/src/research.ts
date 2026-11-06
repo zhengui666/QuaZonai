@@ -70,11 +70,13 @@ export function datasetResearchSettings(data: JsonObject, strategy?: JsonObject)
     const request = tagged.request as JsonObject;
     const selection = request.input as JsonObject;
     const target = request.target as JsonObject;
-    const duration = target.kind === 'FIXED_EVENT_TIME';
-    return { instruments: selection.instrument_ids as string[], inputFamily: selection.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1'
-      ? 'tick-cohort-flow-v1: cohort_vwap, previous_cohort_vwap, fast_ema, slow_ema, quantity, trade_count, elapsed_event_ns, signed_quantity'
-      : 'tick-cohort-v1: cohort_vwap, previous_cohort_vwap, fast_ema, slow_ema, quantity, trade_count, elapsed_event_ns',
-      modality: 'TRADE_TICK' as const, sampling: 'EVENT_TIME_COHORT_V1', horizonUnit: duration ? 'EVENT_TIME_NS' as const : 'TRADE_COHORTS' as const,
+    const duration = target.kind === 'FIXED_EVENT_TIME' || target.kind === 'FIXED_RECEIVED_TIME';
+    const received = selection.availability === 'RECEIVED_TIME_OBSERVED';
+    const flow = String(selection.representation).endsWith('_FLOW_CACHE_V1');
+    return { instruments: selection.instrument_ids as string[], inputFamily:
+      `tick-${received ? 'received-' : ''}cohort${flow ? '-flow' : ''}-v1: cohort_vwap, previous_cohort_vwap, fast_ema, slow_ema, quantity, trade_count, elapsed_${received ? 'received' : 'event'}_ns${flow ? ', signed_quantity' : ''}`,
+      modality: 'TRADE_TICK' as const, sampling: (request.sampling as JsonObject).kind as string,
+      horizonUnit: duration ? received ? 'RECEIVED_TIME_NS' as const : 'EVENT_TIME_NS' as const : 'TRADE_COHORTS' as const,
       horizon: duration ? null : target.horizon_cohorts as number, ...(duration ? { horizonNs: target.horizon_ns as string } : {}), sourceRevision: selection.source_revision as string, availability: selection.availability as string,
       partitions: { trainEndNs: request.train_end_ns!, validationEndNs: request.validation_end_ns!, endNs: selection.event_end_ns! }, strategy: null };
   }

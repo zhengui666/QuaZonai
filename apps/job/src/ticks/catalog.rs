@@ -18,7 +18,11 @@ use std::{
 fn unsigned(report: &Value, field: &str) -> Result<u64> {
     report
         .get(field)
-        .and_then(Value::as_u64)
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
         .with_context(|| format!("TICK_PROVENANCE_FIELD_INVALID: {field}"))
 }
 
@@ -28,6 +32,37 @@ fn empty_object(report: &Value, field: &str) -> Result<()> {
         .and_then(Value::as_object)
         .with_context(|| format!("TICK_PROVENANCE_FIELD_INVALID: {field}"))?;
     ensure!(values.is_empty(), "TICK_SOURCE_INCOMPLETE: {field}");
+    Ok(())
+}
+
+pub(crate) fn observed_published_files(report: &Value) -> bool {
+    let source = "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data";
+    let manifest = &report["source_manifest"];
+    manifest["repository"] == "CryptoHFTData"
+        && manifest["source_reference"] == source
+        && report["source_reference"] == source
+        && manifest["coverage"] == "OBSERVED_PUBLISHED_FILES"
+        && report["coverage"] == "OBSERVED_PUBLISHED_FILES"
+}
+
+pub(crate) fn validate_source_observations(report: &Value) -> Result<()> {
+    let observed = observed_published_files(report);
+    let missing = report
+        .get("missing_partitions")
+        .and_then(Value::as_array)
+        .context("TICK_PROVENANCE_FIELD_INVALID: missing_partitions")?;
+    ensure!(
+        observed || missing.is_empty(),
+        "TICK_SOURCE_INCOMPLETE: missing_partitions"
+    );
+    let duplicates = unsigned(report, "duplicate_trades")?;
+    ensure!(
+        duplicates == 0
+            || (observed
+                && report["deduplication_policy"] == "EARLIEST_RECEIPT_IDENTICAL_TRADE"
+                && unsigned(report, "deduplicated_trades")? == duplicates),
+        "TICK_SOURCE_DUPLICATES_REPORTED"
+    );
     Ok(())
 }
 
@@ -147,18 +182,7 @@ fn validate_provenance(
             .is_some(),
         "TICK_PROVENANCE_FIELD_INVALID: missing_definitions"
     );
-    let missing = report
-        .get("missing_partitions")
-        .and_then(Value::as_array)
-        .context("TICK_PROVENANCE_FIELD_INVALID: missing_partitions")?;
-    ensure!(
-        missing.is_empty(),
-        "TICK_SOURCE_INCOMPLETE: missing_partitions"
-    );
-    ensure!(
-        unsigned(report, "duplicate_trades")? == 0,
-        "TICK_SOURCE_DUPLICATES_REPORTED"
-    );
+    validate_source_observations(report)?;
     ensure!(
         unsigned(report, "readback_records")? > 0,
         "TICK_SOURCE_READBACK_MISSING"
@@ -168,16 +192,23 @@ fn validate_provenance(
             && request.input.event_end_ns.get() <= unsigned(report, "event_end_ns")?,
         "TICK_SOURCE_COVERAGE_INCOMPLETE"
     );
-    ensure!(
-        report
-            .get("historical_availability")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.starts_with("UNVERIFIED")),
-        "TICK_AVAILABILITY_POLICY_UNSUPPORTED"
-    );
+    if request.input.uses_received_time() {
+        ensure!(
+            report["availability"] == request.input.availability_name(),
+            "TICK_AVAILABILITY_POLICY_UNSUPPORTED"
+        );
+    } else {
+        ensure!(
+            report
+                .get("historical_availability")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.starts_with("UNVERIFIED")),
+            "TICK_AVAILABILITY_POLICY_UNSUPPORTED"
+        );
+    }
     if let Some(availability) = report.get("availability") {
         ensure!(
-            availability.as_str() == Some("EVENT_TIME_PROXY_UNVERIFIED"),
+            availability.as_str() == Some(request.input.availability_name()),
             "TICK_AVAILABILITY_POLICY_UNSUPPORTED"
         );
     }
@@ -226,12 +257,18 @@ pub(crate) fn source_evidence(
         "selected_streams",
         "selected_path_prefixes",
         "source_coverage",
+        "coverage",
+        "deduplication_policy",
+        "deduplicated_trades",
         "missing_partitions",
         "missing_definitions",
         "definitions_observed_after_event_rows",
         "record_precision",
         "historical_availability",
         "availability",
+        "maximum_receive_delay_ns",
+        "source_event_start_ns",
+        "source_event_end_ns",
         "source_observed_at",
         "license",
         "attribution",
@@ -243,6 +280,14 @@ pub(crate) fn source_evidence(
         "source_native_files",
     ] {
         if let Some(value) = report.get(key) {
+            evidence.insert(key.to_owned(), evidence_value(Some(key), value));
+        }
+    }
+    for key in ["repository", "unobserved_symbols"] {
+        if let Some(value) = report
+            .get("source_manifest")
+            .and_then(|manifest| manifest.get(key))
+        {
             evidence.insert(key.to_owned(), evidence_value(Some(key), value));
         }
     }
@@ -312,6 +357,7 @@ pub(crate) fn load(
     root: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<BTreeMap<String, Vec<TradeTick>>> {
+    domain::ticks::evaluation_request(request)?;
     ensure!(
         !request.input.is_cohort_cache(),
         "TICK_NATIVE_REPRESENTATION_REQUIRED"
@@ -362,18 +408,19 @@ pub(crate) fn load(
             "TICK_INSTRUMENT_DEFINITION_MISSING: {name}"
         );
     }
-    // This initial policy requires exact event-time proxy clocks. Availability
-    // bounds would hide contradictory in-window rows before validation, so use
-    // the explicit event filter and validate every selected row's clocks below.
-    let query = CatalogQuery::new(NautilusDataType::TradeTick)
+    // Proxy mode must inspect contradictory clocks; receipt mode selects arrivals
+    // independently of their original event time, then checks the declared delay.
+    let mut query = CatalogQuery::new(NautilusDataType::TradeTick)
         .with_identifiers(Some(request.input.instrument_ids.clone()));
-    let mut session = crate::catalog::file_batch_session(
-        &catalog,
-        query,
-        Some(request.input.event_start_ns.get()..request.input.event_end_ns.get()),
-        4096,
-    )
-    .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
+    let event_range = if request.input.uses_received_time() {
+        query.start = Some(request.input.event_start_ns.get().into());
+        query.end = Some((request.input.event_end_ns.get() - 1).into());
+        None
+    } else {
+        Some(request.input.event_start_ns.get()..request.input.event_end_ns.get())
+    };
+    let mut session = crate::catalog::file_batch_session(&catalog, query, event_range, 4096)
+        .context("TICK_NATIVE_FORMAT_OR_QUERY_INCOMPATIBLE")?;
     let mut identities = BTreeMap::new();
     let mut rows = 0_usize;
     while let Some(batch) = session
@@ -386,10 +433,21 @@ pub(crate) fn load(
         for &trade in batch.as_ref() {
             let event = trade.ts_event.as_u64();
             let available = trade.ts_init.as_u64();
-            ensure!(event == available, "TICK_AVAILABILITY_POLICY_UNSUPPORTED");
+            let clock = if request.input.uses_received_time() {
+                ensure!(
+                    available.checked_sub(event).is_some_and(
+                        |delay| delay <= request.input.maximum_receive_delay_ns.unwrap().get()
+                    ),
+                    "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+                );
+                available
+            } else {
+                ensure!(event == available, "TICK_AVAILABILITY_POLICY_UNSUPPORTED");
+                event
+            };
             ensure!(
-                event >= request.input.event_start_ns.get()
-                    && event < request.input.event_end_ns.get()
+                clock >= request.input.event_start_ns.get()
+                    && clock < request.input.event_end_ns.get()
                     && available <= request.input.decision_cutoff_ns.get(),
                 "TICK_QUERY_OUTSIDE_SELECTION"
             );
@@ -443,9 +501,19 @@ pub(crate) fn load(
     for trades in selected.values_mut() {
         // A stable tie order is reproducibility only, never availability proof.
         trades.sort_by(|left, right| {
-            left.ts_event
-                .cmp(&right.ts_event)
-                .then_with(|| left.trade_id.as_str().cmp(right.trade_id.as_str()))
+            (if request.input.uses_received_time() {
+                left.ts_init
+            } else {
+                left.ts_event
+            })
+            .cmp(
+                &(if request.input.uses_received_time() {
+                    right.ts_init
+                } else {
+                    right.ts_event
+                }),
+            )
+            .then_with(|| left.trade_id.as_str().cmp(right.trade_id.as_str()))
         });
     }
     Ok(selected)
@@ -523,6 +591,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn observed_cryptohftdata_keeps_gaps_and_only_accepts_accounted_identical_duplicates() {
+        let source = "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data";
+        let mut observed = report();
+        observed["source_revision"] = json!(request().input.source_revision);
+        observed["source_reference"] = json!(source);
+        observed["coverage"] = json!("OBSERVED_PUBLISHED_FILES");
+        observed["source_manifest"] = json!({"repository":"CryptoHFTData", "source_reference":source, "coverage":"OBSERVED_PUBLISHED_FILES"});
+        observed["missing_partitions"] = json!(["unpublished-hour"]);
+        observed["duplicate_trades"] = json!(3);
+        observed["deduplicated_trades"] = json!(3);
+        observed["deduplication_policy"] = json!("EARLIEST_RECEIPT_IDENTICAL_TRADE");
+        assert!(validate_provenance(&observed, &request()).is_ok());
+        assert_eq!(observed["missing_partitions"], json!(["unpublished-hour"]));
+        assert_eq!(observed["duplicate_trades"], 3);
+        for (field, value) in [
+            ("source_reference", json!("https://example.com/archive")),
+            ("coverage", json!("COMPLETE")),
+            ("deduplicated_trades", json!(2)),
+            ("deduplication_policy", json!("UNKNOWN")),
+            (
+                "source_manifest",
+                json!({"repository":"old/hf", "source_reference":source, "coverage":"OBSERVED_PUBLISHED_FILES"}),
+            ),
+            ("rejected_rows", json!({"conflict":1})),
+        ] {
+            let mut invalid = observed.clone();
+            invalid[field] = value;
+            assert!(
+                validate_provenance(&invalid, &request()).is_err(),
+                "{field}"
+            );
+        }
+        assert!(validate_source_observations(&report()).is_ok());
+    }
+
     fn native_fixture(rows: Vec<TradeTick>) -> tempfile::TempDir {
         let temp = tempfile::tempdir().unwrap();
         let catalog = ParquetDataCatalog::from_uri(
@@ -572,6 +676,35 @@ mod tests {
                 original
             );
         }
+    }
+
+    #[test]
+    fn received_query_uses_receipt_scope_preserves_event_clocks_and_checks_delay() {
+        let original = vec![
+            tick(1, 20, "first"),
+            tick(3, 20, "same-receipt"),
+            tick(2, 30, "late"),
+            tick(40, 40, "excluded"),
+        ];
+        let temp = native_fixture(original.clone());
+        let path = temp.path().join("import-provenance.json");
+        let mut provenance: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        provenance["availability"] = json!("RECEIVED_TIME_OBSERVED");
+        fs::write(path, serde_json::to_vec(&provenance).unwrap()).unwrap();
+        let mut request = request();
+        request.input.availability =
+            contracts::ticks::NativeTickAvailabilityV1::ReceivedTimeObserved;
+        request.input.maximum_receive_delay_ns = Some(contracts::DbCounter::new(30).unwrap());
+        request.sampling.kind = contracts::ticks::NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+        assert_eq!(
+            load(temp.path(), &request).unwrap()["AUD/USD.SIM"],
+            original[..3]
+        );
+        request.input.maximum_receive_delay_ns = Some(contracts::DbCounter::new(10).unwrap());
+        assert_eq!(
+            load(temp.path(), &request).unwrap_err().to_string(),
+            "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+        );
     }
 
     #[test]

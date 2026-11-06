@@ -45,12 +45,24 @@ Owner-authenticated `POST /api/v3/tick-economic-replays` accepts
 `GET /api/v3/tick-economic-replays/:id`. `quazonai schema show TickEconomicReplayStart`
 and `NativeTickEconomicRequest` expose the source DTOs. The authenticated CLI callers are
 `quazonai portfolio replay-ticks --file REQUEST.json` and
-`quazonai portfolio tick-replay REPLAY_ID`.
+`quazonai portfolio tick-replay REPLAY_ID`. For one explicit combination, replace
+`factorId` with `members: [{factorId, weight}, ...]`: at least two distinct retained
+factors, with positive decimal-string weights summing exactly to one. The response
+retains the members, weights and original study/trial/source revisions. This is an
+owner-only exploratory replay, not the general portfolio API or a weight-search tool.
+Every combination examined during research counts toward that research's existing
+search budget; replay transport does not create or reset its factor-trial ledger.
 
-The factor must be a retained, computed single-model trial of that admitted
+Each factor must be a retained, computed single-model trial of that admitted
 dataset; final selection is optional. Economic start/end/train/validation boundaries must fall on UTC day boundaries.
 The request must exactly match its original prepared primary or sealed tick input
-and feature parameters, and execution uses that matching view’s catalog. Candidate
+and feature parameters, and execution uses that matching view’s catalog. All members
+must share that original request, catalog and native target. Each member keeps its
+own Wasm state and receives the same causal cohort features; their weighted signals
+feed one shared cash/margin account with one capital allocation and cost/funding
+ledger. Individual capitalized return curves are never added. The native request's
+`signal_weights` records these weights, and repeated `--model` attachments preserve
+member order. Omitting `signal_weights` retains the single-model protocol. Candidate
 comparisons use primary TRAIN/VALIDATION; the operator records the chosen candidate
 before requesting its full sealed replay. All capital, cash/perpetual allocation,
 costs, participation, margin, clock and latency assumptions are explicit exact

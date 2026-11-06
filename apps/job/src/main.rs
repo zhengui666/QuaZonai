@@ -115,8 +115,8 @@ enum Operation {
         catalog: PathBuf,
         #[arg(long)]
         funding_catalog: Option<PathBuf>,
-        #[arg(long)]
-        model: PathBuf,
+        #[arg(long, required = true)]
+        model: Vec<PathBuf>,
     },
     /// Exact native BAR identities for private exposure tracking; no observations.
     CatalogFactorScope {
@@ -347,11 +347,14 @@ fn run(operation: Operation) -> Result<()> {
             catalog,
             funding_catalog,
             model,
-        } => output(&job::ticks::economic::replay_with_funding(
+        } => output(&job::ticks::economic::replay_models_with_funding(
             &catalog,
             funding_catalog.as_deref().unwrap_or(&catalog),
             &input()?,
-            &model_bytes(&model)?,
+            &model
+                .iter()
+                .map(|path| model_bytes(path))
+                .collect::<Result<Vec<_>>>()?,
         )?),
         Operation::CatalogFactorScope { catalog } => {
             output(&job::factors::catalog_factor_scope(&catalog)?)

@@ -1,6 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { clipTickRegimeEvaluation, nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { clipTickRegimeEvaluation, nativeResearchInput, TICK_FEATURE_ABI, TICK_FEATURE_KEYS, TICK_FLOW_FEATURE_KEYS, TICK_RECEIVED_FEATURE_KEYS, TICK_RECEIVED_FLOW_FEATURE_KEYS, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 function record(value: JsonValue | undefined): JsonObject | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
@@ -83,20 +83,22 @@ const featureV2Semantics = {
 export function modelBriefInput(input: { data: JsonObject; policy: JsonObject }): { data: JsonObject; policy: JsonObject } {
   const { sealed: _sealed, ...data } = input.data;
   const tagged = nativeResearchInput(data);
-  const flow = tagged?.modality === 'TRADE_TICK' && tagged.request.input.representation === 'EVENT_TIME_COHORT_FLOW_CACHE_V1';
+  const flow = tagged?.modality === 'TRADE_TICK' && String(tagged.request.input.representation).endsWith('_FLOW_CACHE_V1');
+  const received = tagged?.modality === 'TRADE_TICK' && tagged.request.input.availability === 'RECEIVED_TIME_OBSERVED';
   const { evaluation_regimes: _regimes, ...tickRequest } = tagged?.modality === 'TRADE_TICK' ? tagged.request : {};
   if (tagged?.modality === 'TRADE_TICK') return { data: { ...data,
     ...(tagged.request.evaluation_regimes ? { nativeInput: { modality: 'TRADE_TICK', request: tickRequest } } : {}),
     feature_model: {
-    abi: TICK_FEATURE_ABI, ...featureV2Semantics, features: [...(flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
-    ...(flow ? { schema: 'qz.tick-cohort-flow-features.v1' } : {}),
-    definitions: ['Quantity-weighted price over exactly the current complete instrument/event-time cohort; previous complete cohort price.',
+    abi: TICK_FEATURE_ABI, ...featureV2Semantics,
+    features: [...(received ? flow ? TICK_RECEIVED_FLOW_FEATURE_KEYS : TICK_RECEIVED_FEATURE_KEYS : flow ? TICK_FLOW_FEATURE_KEYS : TICK_FEATURE_KEYS)],
+    ...(received || flow ? { schema: `qz.tick-${received ? 'received-' : ''}cohort${flow ? '-flow' : ''}-features.v1` } : {}),
+    definitions: [`Quantity-weighted price over exactly the current complete instrument/${received ? 'receive' : 'event'}-time cohort; previous complete cohort price.`,
       'Fast/slow native EMA advance once per complete cohort; periods count cohorts.',
-      'Sum of original cohort quantities, original trade count and elapsed event nanoseconds since the preceding cohort.',
+      `Sum of original cohort quantities, original trade count and elapsed ${received ? 'receive' : 'event'} nanoseconds since the preceding cohort.`,
       ...(flow ? ['Signed quantity is the exact current-cohort BUYER quantity minus SELLER quantity before f64 conversion. Balanced zero is observed; unknown aggressors are rejected, never filled with zero.'] : [])],
     missing: 'The native tick evaluator skips prediction until a previous cohort exists and both EMAs are initialized; its eligible cohort features are observed values with mask=0. Missing values are not observed zero.',
     scope: 'One fresh score-model instance per instrument. Current and earlier eligible cohorts only; no future labels enter the model.',
-    evidence: 'EVENT_TIME_PROXY_UNVERIFIED: exploratory computation, not PIT qualification, independent source validation or execution evidence.',
+    evidence: `${tagged.request.input.availability}: exploratory computation, not PIT qualification, independent source validation or execution evidence.${received ? ' Collector receipt timestamps are preserved; collector clock accuracy and user network latency are unverified.' : ''}`,
   } }, policy: input.policy };
   const strategy = record(input.policy.strategy);
   if (strategy?.kind === 'catalog-ensemble') {

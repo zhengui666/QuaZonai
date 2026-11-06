@@ -10,6 +10,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { studyInput } from '../src/trials.ts';
 import { checkExposure, Exposures } from '../plugins/native-exposure.ts';
+import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
 import research from '../plugins/research.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -55,6 +56,39 @@ test('unscoped final catalog boundaries cannot erase an existing final exposure'
       await assert.rejects(checkExposure(api, context, data, false, finalData), /ambiguous_factor_request/);
       assert.deepEqual(ledger, original);
     }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('later source events bypass an unavailable BAR scope while receive delay preserves overlap', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-exposure-received-'));
+  const ledger = { windows: [{ kind: 'ITERATION', taskId: 1, conversationId: 1, catalog: directory,
+    barTypesRef: { conversationId: 1, taskId: 99, count: '1' }, start: ns(1), end: ns(10) }] };
+  const scopes: { roots: JsonObject[] } = { roots: [] };
+  const original = structuredClone(ledger); let scopeReads = 0;
+  const api = { taskId: 2, conversationId: 2,
+    async commit(action: (tx: unknown) => Promise<void>) {
+      return action({ async doc(type: unknown) { return type === CatalogScopes ? scopes : ledger; }, async task() { scopeReads++; return null; } });
+    },
+  } as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    const data = tickData(directory, 'LATER.SIM', 11, 12);
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    const request = (data.nativeInput as JsonObject).request as JsonObject;
+    const input = request.input as JsonObject;
+    input.availability = 'RECEIVED_TIME_OBSERVED'; input.maximum_receive_delay_ns = ns(1);
+    (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    assert.equal(scopeReads, 0);
+    input.maximum_receive_delay_ns = ns(2);
+    await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
+    assert.equal(scopeReads, 1);
+    scopes.roots.push({ catalog: directory, reference: ledger.windows[0]!.barTypesRef, instrumentVenues: ['POLYMARKET'] });
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    assert.equal(scopeReads, 1);
+    input.instrument_ids = ['ORIGINAL.POLYMARKET'];
+    await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
+    assert.equal(scopeReads, 2);
+    assert.deepEqual(ledger, original);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -1,6 +1,6 @@
 //! Explicit derived-cohort execution estimate; no source trades/quotes are invented.
-use super::{cohort_cache, feature, Cohort};
-use crate::{feature_model::FeatureModel, signals::SignalModule};
+use super::{clocked_feature, cohort_cache, Cohort};
+use crate::signals::SignalModule;
 use anyhow::{ensure, Context, Result};
 use contracts::{economic_tick::*, DbCounter, DecimalValue, SchemaV1};
 use nautilus_indicators::{
@@ -25,10 +25,18 @@ use std::{
     str::FromStr,
 };
 
+mod books;
+mod models;
 mod native;
-use native::{NativeLedger, NativeMark, NativeRate};
+mod source_books;
+use models::EconomicModels;
+use native::{NativeBook, NativeLedger, NativeMark, NativeRate};
 const DAY: u64 = 86_400_000_000_000;
 const HOUR: u64 = DAY / 24;
+
+fn observed(scenario: &NativeTickEconomicScenarioV1) -> bool {
+    scenario.execution_model == Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1)
+}
 
 fn counter(v: u64) -> Result<DbCounter> {
     DbCounter::new(v).map_err(anyhow::Error::msg)
@@ -65,6 +73,25 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
         "ECONOMIC_FLOW_CACHE_REQUIRED"
     );
     let s = &request.scenario;
+    if observed(s) {
+        ensure!(
+            request.context_source.is_some(),
+            "ECONOMIC_OBSERVED_ORACLE_CONTEXT_REQUIRED"
+        );
+    }
+    if let Some(weights) = &request.signal_weights {
+        ensure!(!weights.is_empty(), "ECONOMIC_SIGNAL_WEIGHTS_INVALID");
+        let sum = weights.iter().try_fold(Decimal::ZERO, |sum, weight| {
+            let weight = decimal(weight)?;
+            ensure!(
+                weight > Decimal::ZERO && weight <= Decimal::ONE,
+                "ECONOMIC_SIGNAL_WEIGHTS_INVALID"
+            );
+            sum.checked_add(weight)
+                .context("ECONOMIC_SIGNAL_WEIGHTS_INVALID")
+        })?;
+        ensure!(sum == Decimal::ONE, "ECONOMIC_SIGNAL_WEIGHTS_INVALID");
+    }
     for v in [&s.initial_usdt, &s.usdt0_per_usdt] {
         ensure!(
             decimal(v)? > Decimal::ZERO,
@@ -259,8 +286,11 @@ fn context_manifest(
         serde_json::from_reader(BufReader::new(File::open(root.join(CONTEXT_MANIFEST))?))?;
     let _ = m.schema_version;
     ensure!(
-        m.format == "EVENT_TIME_CONTEXT_PRICE_CSV_V1"
-            && m.clock == "EVENT_TIME_PROXY_UNVERIFIED"
+        ((m.format == "EVENT_TIME_CONTEXT_PRICE_CSV_V1"
+            && m.clock == "EVENT_TIME_PROXY_UNVERIFIED")
+            || (m.format == "RECEIVED_TIME_CONTEXT_PRICE_CSV_V1"
+                && m.clock == "RECEIVED_TIME_OBSERVED"))
+            && (!request.input.uses_received_time() || m.clock == "RECEIVED_TIME_OBSERVED")
             && !m.source_revision.trim().is_empty()
             && m.research_source_revision == request.input.source_revision
             && m.start_ns <= request.input.event_start_ns
@@ -606,7 +636,7 @@ struct Asset {
     previous: Option<Cohort>,
     fast: ExponentialMovingAverage,
     slow: ExponentialMovingAverage,
-    model: Option<FeatureModel>,
+    model: Option<EconomicModels>,
     score: Option<f64>,
     mark: Option<(u64, Decimal)>,
     cohorts: u64,
@@ -817,12 +847,7 @@ fn small_quantity(a: &Asset, cash: &NativeLedger, margin: &NativeLedger) -> Deci
             .and_then(|currency| cash.balance(currency))
             .map_or(Decimal::ZERO, |b| b.as_decimal())
     } else {
-        margin
-            .positions()
-            .into_iter()
-            .filter(|p| p.instrument_id == a.instrument.id())
-            .map(|p| p.signed_decimal_qty())
-            .sum()
+        margin.current_quantity(a.instrument.id())
     }
 }
 fn small_legal_quantity(
@@ -1726,16 +1751,27 @@ pub(crate) fn funding_sources(
                 .map(|file| (file.path, file.bytes.get())),
         );
     }
-    match std::fs::symlink_metadata(root.join("spot-valuation.jsonl")) {
-        Ok(state) => {
-            ensure!(
-                state.is_file() && !state.file_type().is_symlink(),
-                "ECONOMIC_SPOT_QUOTE_REGULAR_SOURCE_REQUIRED"
-            );
-            files.push(("spot-valuation.jsonl".into(), state.len()));
+    for (name, issue) in [
+        (
+            "spot-valuation.jsonl",
+            "ECONOMIC_SPOT_QUOTE_REGULAR_SOURCE_REQUIRED",
+        ),
+        (
+            "book-snapshots.source.json",
+            "ECONOMIC_BOOK_SOURCE_REGULAR_FILE_REQUIRED",
+        ),
+    ] {
+        match std::fs::symlink_metadata(root.join(name)) {
+            Ok(state) => {
+                ensure!(
+                    state.is_file() && !state.file_type().is_symlink(),
+                    "{issue}"
+                );
+                files.push((name.into(), state.len()));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
     }
     Ok(files)
 }
@@ -1755,6 +1791,15 @@ pub fn replay_with_funding(
     request: &NativeTickEconomicRequestV1,
     wasm: &[u8],
 ) -> Result<NativeTickEconomicResultV1> {
+    replay_models_with_funding(root, funding_root, request, &[wasm.to_vec()])
+}
+
+pub fn replay_models_with_funding(
+    root: &Path,
+    funding_root: &Path,
+    request: &NativeTickEconomicRequestV1,
+    wasms: &[Vec<u8>],
+) -> Result<NativeTickEconomicResultV1> {
     validate(request)?;
     ensure!(
         !funding_sources(funding_root, &request.research)?.is_empty(),
@@ -1765,7 +1810,26 @@ pub fn replay_with_funding(
         .into_iter()
         .map(|i| (i.id().to_string(), i))
         .collect::<BTreeMap<_, _>>();
-    let module = SignalModule::new(wasm, request.research.parameters.total_fuel.is_some())?;
+    let weights = request
+        .signal_weights
+        .clone()
+        .unwrap_or_else(|| vec!["1".parse().unwrap()]);
+    ensure!(
+        weights.len() == wasms.len(),
+        "ECONOMIC_SIGNAL_MODEL_COUNT_MISMATCH"
+    );
+    let modules = weights
+        .iter()
+        .zip(wasms)
+        .map(|(weight, wasm)| {
+            Ok((
+                decimal(weight)?
+                    .to_f64()
+                    .context("ECONOMIC_SIGNAL_WEIGHT_RANGE")?,
+                SignalModule::new(wasm, request.research.parameters.total_fuel.is_some())?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let mut consumed = 0u64;
     let mut assets = Vec::new();
     let mut heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
@@ -1800,10 +1864,8 @@ pub fn replay_with_funding(
         let model = if a.cohort_count == 0 {
             None
         } else {
-            let model = FeatureModel::new(&module, Some(a.cohort_count), fuel)?;
-            if let (Some(before), Some(after)) = (fuel, model.remaining_fuel()) {
-                consumed += before - after;
-            }
+            let (model, used) = EconomicModels::new(&modules, a.cohort_count, fuel)?;
+            consumed += used;
             Some(model)
         };
         assets.push(Asset {
@@ -1845,6 +1907,26 @@ pub fn replay_with_funding(
                 && a.instrument.quote_currency() == Currency::USDC()
         })
         .context("ECONOMIC_USDT0_USDC_BRIDGE_REQUIRED")?;
+    let observed = observed(s);
+    let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
+    let mut book_readers = Vec::new();
+    let mut book_heads = Vec::new();
+    if observed {
+        for (i, asset) in assets.iter().enumerate() {
+            let mut reader = books::Books::open(
+                funding_root,
+                asset.instrument.id(),
+                request.research.input.event_start_ns.get(),
+                request.research.input.event_end_ns.get(),
+            )?;
+            let head = reader.next()?;
+            if let Some(head) = &head {
+                book_heap.push(Reverse((head.received(), i)));
+            }
+            book_readers.push(reader);
+            book_heads.push(head);
+        }
+    }
     let funding_manifest: FundingManifest = serde_json::from_reader(File::open(
         funding_root.join("funding-rates.manifest.json"),
     )?)?;
@@ -1894,6 +1976,16 @@ pub fn replay_with_funding(
     let mut margin_started = false;
     let mut funding_unknown = None;
     let mut remaining = decimal(&s.initial_usdt)? * decimal(&s.usdt0_per_usdt)?;
+    let mut conversion_ledger = if observed {
+        Some(NativeLedger::new_conversion(
+            assets[bridge].instrument.clone(),
+            Money::from_decimal(remaining, usdt0)?,
+            decimal(&s.spot_taker_fee_bps)?,
+            decimal(&s.extra_cost_bps)?,
+        )?)
+    } else {
+        None
+    };
     let mut converted = Decimal::ZERO;
     let mut reserve_usdc = Decimal::ZERO;
     let mut conversion_due = None;
@@ -1915,11 +2007,31 @@ pub fn replay_with_funding(
         .small_capital_policy
         .as_ref()
         .map(|_| SmallCapital::new(assets.len()));
-    while let Some(Reverse((event, index))) = heap.pop() {
+    let mut latest_source_events = vec![0; assets.len()];
+    while let Some(event) = heap
+        .peek()
+        .map(|Reverse((at, _))| *at)
+        .into_iter()
+        .chain(book_heap.peek().map(|Reverse((at, _))| *at))
+        .min()
+    {
         // Complete each global timestamp before scheduling new decisions.
-        let mut group = vec![index];
+        let mut group = Vec::new();
         while heap.peek().is_some_and(|Reverse((at, _))| *at == event) {
             group.push(heap.pop().unwrap().0 .1);
+        }
+        let mut snapshots = BTreeMap::new();
+        while book_heap
+            .peek()
+            .is_some_and(|Reverse((at, _))| *at == event)
+        {
+            let i = book_heap.pop().unwrap().0 .1;
+            let frame = book_heads[i].take().unwrap();
+            snapshots.insert(i, frame);
+            book_heads[i] = book_readers[i].next()?;
+            if let Some(next) = &book_heads[i] {
+                book_heap.push(Reverse((next.received(), i)));
+            }
         }
         if let Some(small) = &mut small {
             small.expire(event, &mut assets, s, &mut seed)?;
@@ -1991,6 +2103,9 @@ pub fn replay_with_funding(
             &mut seen_rates,
             &mut contexts,
         )?;
+        for (&i, frame) in &snapshots {
+            assets[i].mark = frame.midpoint.map(|price| (event, price));
+        }
         let mut marks_cash = Vec::new();
         let mut marks_margin = Vec::new();
         let mut fresh = Vec::new();
@@ -2002,38 +2117,66 @@ pub fn replay_with_funding(
             }
             let a = &mut assets[i];
             let current = a.head.take().unwrap();
+            latest_source_events[i] = latest_source_events[i].max(current.source_event_end - 1);
             a.fast.update_raw(current.vwap);
             a.slow.update_raw(current.vwap);
             if let Some(previous) = &a.previous {
                 if a.fast.initialized() && a.slow.initialized() {
                     let ordinal = u32::try_from(a.cohorts)?;
-                    let inputs = [
-                        current.vwap,
-                        previous.vwap,
-                        a.fast.value(),
-                        a.slow.value(),
-                        current.quantity,
-                        current.count as f64,
-                        (current.event - previous.event) as f64,
-                        current.signed_quantity.context("ECONOMIC_FLOW_REQUIRED")?,
+                    let received = request.research.input.uses_received_time();
+                    let feature_at = |value, cohort: &Cohort| {
+                        clocked_feature(
+                            value,
+                            cohort.source_event_end - 1,
+                            cohort.event,
+                            ordinal,
+                            received,
+                        )
+                    };
+                    let features = [
+                        feature_at(current.vwap, &current)?,
+                        feature_at(previous.vwap, previous)?,
+                        clocked_feature(
+                            a.fast.value(),
+                            latest_source_events[i],
+                            current.event,
+                            ordinal,
+                            received,
+                        )?,
+                        clocked_feature(
+                            a.slow.value(),
+                            latest_source_events[i],
+                            current.event,
+                            ordinal,
+                            received,
+                        )?,
+                        feature_at(current.quantity, &current)?,
+                        feature_at(current.count as f64, &current)?,
+                        feature_at((current.event - previous.event) as f64, &current)?,
+                        feature_at(
+                            current.signed_quantity.context("ECONOMIC_FLOW_REQUIRED")?,
+                            &current,
+                        )?,
                     ];
-                    let features = inputs
-                        .into_iter()
-                        .map(|v| feature(v, current.event, ordinal))
-                        .collect::<Result<Vec<_>>>()?;
                     let model = a.model.as_mut().context("ECONOMIC_MODEL_MISSING")?;
-                    if let Some(total) = request.research.parameters.total_fuel {
-                        model.cap_remaining_fuel(total.get() - consumed)?;
-                    }
-                    let before = model.remaining_fuel();
-                    a.score = Some(model.predict(event, event, ordinal, &features)?);
+                    let remaining_fuel = request
+                        .research
+                        .parameters
+                        .total_fuel
+                        .map(|total| total.get() - consumed);
+                    let (score, used) = model.predict(
+                        event,
+                        current.source_event_end - 1,
+                        ordinal,
+                        &features,
+                        remaining_fuel,
+                    )?;
+                    a.score = Some(score);
                     if small.is_some() {
                         fresh.push(i);
                     }
-                    if let (Some(before), Some(after)) = (before, model.remaining_fuel()) {
-                        consumed = consumed
-                            .checked_add(before - after)
-                            .context("ECONOMIC_FUEL_RANGE")?;
+                    if request.research.parameters.total_fuel.is_some() {
+                        consumed = consumed.checked_add(used).context("ECONOMIC_FUEL_RANGE")?;
                         ensure!(
                             consumed <= request.research.parameters.total_fuel.unwrap().get(),
                             "FEATURE_MODEL_BUDGET_EXHAUSTED"
@@ -2041,9 +2184,9 @@ pub fn replay_with_funding(
                     }
                 }
             }
-            let target = if a
-                .pending
-                .is_some_and(|(decision, due, _)| decision < event && due <= event)
+            let target = if !observed
+                && a.pending
+                    .is_some_and(|(decision, due, _)| decision < event && due <= event)
             {
                 a.attempts += 1;
                 if small.is_some() {
@@ -2063,15 +2206,17 @@ pub fn replay_with_funding(
                 capacity: finite(current.quantity)? * decimal(&s.participation_fraction)?,
                 target_quantity: target,
             };
-            if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
+            if !observed && matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
                 if native.target_quantity.is_some() || !cash_started {
                     marks_cash.push(native);
                 }
-            } else if native.target_quantity.is_some() || !margin_started {
+            } else if !observed && (native.target_quantity.is_some() || !margin_started) {
                 marks_margin.push(native);
             }
 
-            a.mark = Some((event, finite(current.vwap)?));
+            if !observed {
+                a.mark = Some((event, finite(current.vwap)?));
+            }
             a.cohorts += 1;
             a.previous = Some(current);
             a.head = a.reader.next().transpose()?;
@@ -2079,8 +2224,84 @@ pub fn replay_with_funding(
                 heap.push(Reverse((h.event, i)));
             }
         }
-        if cash.is_none() && group.contains(&bridge) {
-            let price = assets[bridge].mark.unwrap().1;
+        if observed {
+            for (&i, frame) in &snapshots {
+                let Some(price) = frame.midpoint else {
+                    continue;
+                };
+                let a = &mut assets[i];
+                let ledger = if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
+                    &cash
+                } else {
+                    &margin
+                };
+                let due = a
+                    .pending
+                    .filter(|(decision, due, _)| *decision < event && *due <= event);
+                let held = if due.is_some() {
+                    ledger.as_ref().map_or(Decimal::ZERO, |ledger| {
+                        ledger.current_quantity(a.instrument.id())
+                    })
+                } else {
+                    Decimal::ZERO
+                };
+                let buy = due.is_some_and(|(_, _, target)| target > held);
+                let capacity = frame.capacity(buy) * decimal(&s.participation_fraction)?;
+                let target = if let Some((_, _, quantity)) = due {
+                    let executable = frame
+                        .price(buy)
+                        .map(|price| {
+                            small_legal_quantity(
+                                &a.instrument,
+                                (quantity - held).abs().min(capacity),
+                                price,
+                            )
+                        })
+                        .transpose()?
+                        .unwrap_or(Decimal::ZERO);
+                    if quantity == held {
+                        a.pending = None;
+                        None
+                    } else if executable.is_zero() {
+                        None
+                    } else {
+                        a.attempts += 1;
+                        if small.is_some() {
+                            attempted.push(i);
+                        }
+                        if small.is_none() || !fx_ids.contains(&a.instrument.id().to_string()) {
+                            a.pending = None;
+                        }
+                        Some(quantity)
+                    }
+                } else {
+                    None
+                };
+                let row = NativeMark {
+                    instrument_id: a.instrument.id(),
+                    mark: price.to_f64().context("ECONOMIC_BOOK_PRICE_RANGE")?,
+                    capacity,
+                    target_quantity: target,
+                };
+                if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
+                    if row.target_quantity.is_some() || !cash_started {
+                        marks_cash.push(row);
+                    }
+                } else if row.target_quantity.is_some() || !margin_started {
+                    marks_margin.push(row);
+                }
+            }
+        }
+        let converting = cash.is_none();
+        let mut conversion_advanced = false;
+        if converting
+            && ((!observed && group.contains(&bridge)) || snapshots.contains_key(&bridge))
+            && assets[bridge].mark.is_some()
+        {
+            let price = snapshots
+                .get(&bridge)
+                .and_then(|frame| frame.price(false))
+                .unwrap_or(assets[bridge].mark.unwrap().1);
             if conversion_due.is_none() {
                 conversion_due = Some(
                     event
@@ -2089,20 +2310,61 @@ pub fn replay_with_funding(
                         .context("ECONOMIC_CLOCK_OVERFLOW")?,
                 );
             } else if conversion_due.is_some_and(|at| event >= at) {
-                let capacity = finite(assets[bridge].previous.as_ref().unwrap().quantity)?
-                    * decimal(&s.participation_fraction)?;
-                let quantity =
-                    conversion_quantity(remaining, capacity, price, &assets[bridge].instrument)?;
-                converted += quantity
-                    * price
-                    * (Decimal::ONE
-                        - (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                            / Decimal::from(10000));
-                conversion_cost += quantity
-                    * price
-                    * (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
-                    / Decimal::from(10000);
-                remaining -= quantity;
+                if let Some(ledger) = &mut conversion_ledger {
+                    let frame = snapshots.get(&bridge).unwrap();
+                    let capacity = frame.bid_depth * decimal(&s.participation_fraction)?;
+                    let quantity = conversion_quantity(
+                        remaining,
+                        capacity,
+                        price,
+                        &assets[bridge].instrument,
+                    )?;
+                    if quantity > Decimal::ZERO {
+                        ledger.step_books(
+                            event,
+                            vec![NativeBook {
+                                snapshot: frame.deltas.clone(),
+                                capacity,
+                                target_quantity: Some(Decimal::ZERO),
+                            }],
+                            &[],
+                        )?;
+                        conversion_advanced = true;
+                    }
+                    remaining = ledger
+                        .balance(usdt0)
+                        .context("ECONOMIC_CONVERSION_BALANCE_MISSING")?
+                        .as_decimal();
+                    converted = ledger
+                        .balance(Currency::USDC())
+                        .context("ECONOMIC_CONVERSION_BALANCE_MISSING")?
+                        .as_decimal();
+                    conversion_cost = ledger
+                        .summary()
+                        .commissions
+                        .get("USDC")
+                        .copied()
+                        .unwrap_or(Decimal::ZERO);
+                } else {
+                    let capacity = finite(assets[bridge].previous.as_ref().unwrap().quantity)?
+                        * decimal(&s.participation_fraction)?;
+                    let quantity = conversion_quantity(
+                        remaining,
+                        capacity,
+                        price,
+                        &assets[bridge].instrument,
+                    )?;
+                    converted += quantity
+                        * price
+                        * (Decimal::ONE
+                            - (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                                / Decimal::from(10000));
+                    conversion_cost += quantity
+                        * price
+                        * (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
+                        / Decimal::from(10000);
+                    remaining -= quantity;
+                }
                 if converted > Decimal::ZERO
                     && conversion_quantity(remaining, remaining, price, &assets[bridge].instrument)?
                         .is_zero()
@@ -2126,6 +2388,19 @@ pub fn replay_with_funding(
                     conversion_ns = Some(counter(event)?);
                     initial_usdc = Some(exact(converted)?);
                 }
+            }
+        }
+        if converting && !conversion_advanced {
+            if let (Some(ledger), Some(frame)) = (&mut conversion_ledger, snapshots.get(&bridge)) {
+                ledger.step_books(
+                    event,
+                    vec![NativeBook {
+                        snapshot: frame.deltas.clone(),
+                        capacity: Decimal::ZERO,
+                        target_quantity: None,
+                    }],
+                    &[],
+                )?;
             }
         }
         if let (Some(small), Some(c), Some(m)) = (&small, &cash, &margin) {
@@ -2160,14 +2435,41 @@ pub fn replay_with_funding(
             }
         }
         if let Some(ledger) = cash.as_mut() {
-            if !marks_cash.is_empty() {
-                ledger.step_batch(event, &marks_cash)?;
+            if !marks_cash.is_empty()
+                || observed
+                    && snapshots
+                        .keys()
+                        .any(|i| matches!(assets[*i].instrument, InstrumentAny::CurrencyPair(_)))
+            {
+                if observed {
+                    ledger.step_books(
+                        event,
+                        native_books(marks_cash, &snapshots, &assets, false),
+                        &[],
+                    )?;
+                } else {
+                    ledger.step_batch(event, &marks_cash)?;
+                }
                 cash_started = true;
             }
         }
         if let Some(ledger) = margin.as_mut() {
-            if !marks_margin.is_empty() || !rates.is_empty() {
-                ledger.step_batch_with_rates(event, &marks_margin, &rates)?;
+            if !marks_margin.is_empty()
+                || !rates.is_empty()
+                || observed
+                    && snapshots
+                        .keys()
+                        .any(|i| matches!(assets[*i].instrument, InstrumentAny::CryptoPerpetual(_)))
+            {
+                if observed {
+                    ledger.step_books(
+                        event,
+                        native_books(marks_margin, &snapshots, &assets, true),
+                        &rates,
+                    )?;
+                } else {
+                    ledger.step_batch_with_rates(event, &marks_margin, &rates)?;
+                }
                 margin_started = true;
                 for id in ledger.open_instrument_ids() {
                     let id = id.to_string();
@@ -2180,7 +2482,12 @@ pub fn replay_with_funding(
             }
         }
         if let (Some(small), Some(c), Some(m)) = (&mut small, &cash, &margin) {
-            for &i in &group {
+            let reconciled = if observed {
+                snapshots.keys().copied().collect::<Vec<_>>()
+            } else {
+                group.clone()
+            };
+            for i in reconciled {
                 if small.cycles[i].is_some() {
                     let quantity = small_quantity(&assets[i], c, m);
                     small.reconcile(
@@ -2339,13 +2646,20 @@ pub fn replay_with_funding(
     if let Some(c) = cash.as_mut() {
         c.finish()?;
     }
+    if let Some(conversion) = conversion_ledger.as_mut() {
+        conversion.finish()?;
+    }
     if let Some(m) = margin.as_mut() {
         m.finish()?;
     }
-    let (fills, rejections) = cash.iter().chain(margin.iter()).fold((0, 0), |(f, r), l| {
-        let s = l.summary();
-        (f + s.fills, r + s.rejected)
-    });
+    let (fills, rejections) = cash
+        .iter()
+        .chain(margin.iter())
+        .chain(conversion_ledger.iter())
+        .fold((0, 0), |(f, r), l| {
+            let s = l.summary();
+            (f + s.fills, r + s.rejected)
+        });
     let mut fees = BTreeMap::<String, Decimal>::from([("USDC".into(), conversion_cost)]);
     for ledger in cash.iter().chain(margin.iter()) {
         for (currency, amount) in ledger.summary().commissions {
@@ -2426,6 +2740,35 @@ pub fn replay_with_funding(
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if observed {
+        result.model = "SEGREGATED_OBSERVED_L2_IOC_V1".into();
+        result.methods.insert("execution".into(), "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account.".into());
+        result.methods.insert("capital".into(), "Initial USDT wealth is explicitly mapped to USDT0 in a native bootstrap cash account. Delayed real-book IOC sales convert that inventory to USDC, including native depth, size limits and fees. Realized net proceeds become one initial cash/margin split; unconverted dust remains in total wealth. No running transfers or reinjection.".into());
+        result.methods.insert("policy".into(), if small.is_some() { "Capped small-capital entry intent and timeout retain the registered policy. Features advance on observed trade receipt cohorts; execution advances only on complete published book snapshots. Unexecutable size/minimum-notional exits retain their inventory and pending intent without generating native orders. A later legal snapshot may retry; dust is never called closed." } else { "Registered global decision grid and absolute score-proportional capped gross targets. Coalesced delayed targets execute against a later complete published book; spot negatives remain cash, perpetual targets are signed. Multiple model scores share one target calculation, cash balance, margin balance and matching liquidity." }.into());
+        result
+            .limitations
+            .retain(|limit| limit != "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK");
+        result.limitations.extend(
+            [
+                "PUBLISHED_L2_SNAPSHOTS_NOT_CONTINUOUS_EXCHANGE_BOOK",
+                "MILLISECOND_JITTER_IS_A_SCENARIO_NOT_MEASURED_NETWORK_OR_QUEUE_LATENCY",
+                "PUBLISHED_HISTORY_CAN_OMIT_EMPTY_BOOK_RESETS_OR_MARKET_INTERVALS",
+            ]
+            .map(str::to_owned),
+        );
+        if request.research.input.uses_received_time() {
+            result.limitations.retain(|limit| {
+                limit != "CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"
+            });
+            result
+                .limitations
+                .push("PROVIDER_RECEIPT_CLOCK_NOT_LOCAL_NETWORK_OR_EXCHANGE_COMPLETENESS".into());
+            result.methods.insert("funding".into(), "Published settlement rates apply to own signed quantity times the latest nonfuture observed oracle, selected by provider receipt time and the registered age limit. Context observations value perpetual NAV at observed marks; missing settlement rates or oracle coverage make net equity unknown. Context rate samples are never substituted for settlement-rate history. Native funding is disabled; only acknowledged account adjustments enter the funding total.".into());
+        }
+    }
+    if wasms.len() > 1 {
+        result.methods.insert("signals".into(), "Declared positive weights sum to one and combine original model scores at each shared cohort before any target, order or account calculation. Models share the request's measured fuel allowance. This is a fixed signal combination, not a sum of separately backtested NAV curves or a covariance optimizer.".into());
+    }
     if request.spot_valuation_source.is_some() {
         result.methods.insert("spot_valuation".into(), "Daily valuation uses the midpoint of the latest nonfuture provider-received spot quote when present; missing prior quotes use cohort marks, and stale, invalid or ambiguous quotes remain unavailable. Quotes do not change trading, margin or fees, and do not prove executable liquidity. Provider receive time is not local receipt time.".into());
         result
@@ -2441,24 +2784,66 @@ fn build(
     capital: Decimal,
     s: &NativeTickEconomicScenarioV1,
 ) -> Result<NativeLedger> {
+    let instruments = assets
+        .iter()
+        .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)) == margin)
+        .map(|a| a.instrument.clone())
+        .collect();
+    let fee = decimal(if margin {
+        &s.perp_taker_fee_bps
+    } else {
+        &s.spot_taker_fee_bps
+    })?;
+    if observed(s) {
+        return NativeLedger::new_observed(
+            instruments,
+            capital,
+            margin,
+            fee,
+            decimal(&s.extra_cost_bps)?,
+            decimal(&s.initial_margin_fraction)?,
+            decimal(&s.maintenance_margin_fraction)?,
+        );
+    }
     NativeLedger::new(
-        assets
-            .iter()
-            .filter(|a| matches!(a.instrument, InstrumentAny::CryptoPerpetual(_)) == margin)
-            .map(|a| a.instrument.clone())
-            .collect(),
+        instruments,
         capital,
         margin,
-        decimal(if margin {
-            &s.perp_taker_fee_bps
-        } else {
-            &s.spot_taker_fee_bps
-        })?,
+        fee,
         decimal(&s.extra_cost_bps)?,
         decimal(&s.initial_margin_fraction)?,
         decimal(&s.maintenance_margin_fraction)?,
-        s.execution_model.is_some(),
+        s.execution_model == Some(NativeTickEconomicExecutionModelV1::SyntheticQuoteIocV1),
     )
+}
+
+fn native_books(
+    rows: Vec<NativeMark>,
+    snapshots: &BTreeMap<usize, books::Snapshot>,
+    assets: &[Asset],
+    margin: bool,
+) -> Vec<NativeBook> {
+    let mut targets = rows
+        .into_iter()
+        .map(|row| (row.instrument_id, row))
+        .collect::<BTreeMap<_, _>>();
+    snapshots
+        .iter()
+        .filter(|(index, _)| {
+            matches!(
+                assets[**index].instrument,
+                InstrumentAny::CryptoPerpetual(_)
+            ) == margin
+        })
+        .map(|(_, snapshot)| {
+            let target = targets.remove(&snapshot.deltas.instrument_id);
+            NativeBook {
+                snapshot: snapshot.deltas.clone(),
+                capacity: target.as_ref().map_or(Decimal::ZERO, |row| row.capacity),
+                target_quantity: target.and_then(|row| row.target_quantity),
+            }
+        })
+        .collect()
 }
 
 fn append_day(

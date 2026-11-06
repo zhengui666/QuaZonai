@@ -14,7 +14,11 @@ use std::{
 
 pub const REPRESENTATION: &str = "EVENT_TIME_COHORT_CACHE_V1";
 pub const FLOW_REPRESENTATION: &str = "EVENT_TIME_COHORT_FLOW_CACHE_V1";
+pub const RECEIVED_REPRESENTATION: &str = "RECEIVED_TIME_COHORT_CACHE_V1";
+pub const RECEIVED_FLOW_REPRESENTATION: &str = "RECEIVED_TIME_COHORT_FLOW_CACHE_V1";
 pub const FLOW_FRAME_BYTES: u64 = 40;
+pub const RECEIVED_FRAME_BYTES: u64 = 48;
+pub const RECEIVED_FLOW_FRAME_BYTES: u64 = 56;
 pub const MANIFEST_FILE: &str = "cohort-cache.json";
 pub const FRAME_BYTES: u64 = 32;
 const WRITE_BATCH: usize = 4096 * FRAME_BYTES as usize;
@@ -36,6 +40,10 @@ pub struct CacheFile {
     pub cohort_count: DbCounter,
     pub first_event_ns: Option<DbCounter>,
     pub last_event_ns: Option<DbCounter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_start_ns: Option<DbCounter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_end_ns: Option<DbCounter>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -47,6 +55,12 @@ pub struct Manifest {
     pub availability: String,
     pub event_start_ns: DbCounter,
     pub event_end_ns: DbCounter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_receive_delay_ns: Option<DbCounter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_start_ns: Option<DbCounter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_end_ns: Option<DbCounter>,
     pub trade_count: DbCounter,
     pub cohort_count: DbCounter,
     pub files: Vec<CacheFile>,
@@ -96,12 +110,18 @@ fn frame_bytes(representation: &str) -> Result<u64> {
     match representation {
         REPRESENTATION => Ok(FRAME_BYTES),
         FLOW_REPRESENTATION => Ok(FLOW_FRAME_BYTES),
+        RECEIVED_REPRESENTATION => Ok(RECEIVED_FRAME_BYTES),
+        RECEIVED_FLOW_REPRESENTATION => Ok(RECEIVED_FLOW_FRAME_BYTES),
         _ => anyhow::bail!("TICK_CACHE_REPRESENTATION_UNSUPPORTED"),
     }
 }
 
-fn frame(cohort: &Cohort, flow: bool) -> Result<[u8; FLOW_FRAME_BYTES as usize]> {
-    let mut encoded = [0; FLOW_FRAME_BYTES as usize];
+fn frame(
+    cohort: &Cohort,
+    flow: bool,
+    received: bool,
+) -> Result<[u8; RECEIVED_FLOW_FRAME_BYTES as usize]> {
+    let mut encoded = [0; RECEIVED_FLOW_FRAME_BYTES as usize];
     for (slot, value) in [
         cohort.event,
         cohort.vwap.to_bits(),
@@ -113,8 +133,13 @@ fn frame(cohort: &Cohort, flow: bool) -> Result<[u8; FLOW_FRAME_BYTES as usize]>
     {
         encoded[slot * 8..slot * 8 + 8].copy_from_slice(&value.to_le_bytes());
     }
+    if received {
+        encoded[32..40].copy_from_slice(&cohort.source_event_start.to_le_bytes());
+        encoded[40..48].copy_from_slice(&cohort.source_event_end.to_le_bytes());
+    }
     if flow {
-        encoded[32..40].copy_from_slice(
+        let offset = if received { 48 } else { 32 };
+        encoded[offset..offset + 8].copy_from_slice(
             &cohort
                 .signed_quantity
                 .context("TICK_FLOW_REQUIRED")?
@@ -127,24 +152,33 @@ fn frame(cohort: &Cohort, flow: bool) -> Result<[u8; FLOW_FRAME_BYTES as usize]>
 
 fn decode(bytes: &[u8]) -> Result<Cohort> {
     let value = |slot: usize| u64::from_le_bytes(bytes[slot * 8..slot * 8 + 8].try_into().unwrap());
+    let received = bytes.len() >= RECEIVED_FRAME_BYTES as usize;
+    let flow = bytes.len() == FLOW_FRAME_BYTES as usize
+        || bytes.len() == RECEIVED_FLOW_FRAME_BYTES as usize;
     Ok(Cohort {
         event: value(0),
+        source_event_start: if received { value(4) } else { value(0) },
+        source_event_end: if received {
+            value(5)
+        } else {
+            value(0).checked_add(1).context("TICK_EVENT_TIME_RANGE")?
+        },
         vwap: f64::from_bits(value(1)),
         quantity: f64::from_bits(value(2)),
         count: usize::try_from(value(3))?,
-        signed_quantity: (bytes.len() == FLOW_FRAME_BYTES as usize)
-            .then(|| f64::from_bits(value(4))),
+        signed_quantity: flow.then(|| f64::from_bits(value(if received { 6 } else { 4 }))),
     })
 }
 
 struct Output {
     flow: bool,
+    received: bool,
     path: PathBuf,
     expected: Vec<u8>,
     verified: u64,
     record: CacheFile,
     pending: Vec<TradeTick>,
-    identities: BTreeMap<TradeId, TradeTick>,
+    identities: BTreeMap<(u64, TradeId), TradeTick>,
 }
 
 impl Output {
@@ -173,14 +207,15 @@ impl Output {
         if self.pending.is_empty() {
             return Ok(0);
         }
-        let cohort = super::cohorts_with_flow(&self.pending, maximum, self.flow)?
+        let cohort = super::sampled_cohorts(&self.pending, maximum, self.flow, self.received)?
             .pop()
             .context("TICK_CACHE_EMPTY_COHORT")?;
-        let encoded = frame(&cohort, self.flow)?;
-        let width = if self.flow {
-            FLOW_FRAME_BYTES
-        } else {
-            FRAME_BYTES
+        let encoded = frame(&cohort, self.flow, self.received)?;
+        let width = match (self.received, self.flow) {
+            (true, true) => RECEIVED_FLOW_FRAME_BYTES,
+            (true, false) => RECEIVED_FRAME_BYTES,
+            (false, true) => FLOW_FRAME_BYTES,
+            (false, false) => FRAME_BYTES,
         };
         self.expected.extend_from_slice(&encoded[..width as usize]);
         self.record.cohort_count = counter(self.record.cohort_count.get() + 1)?;
@@ -190,6 +225,22 @@ impl Output {
             .first_event_ns
             .get_or_insert(counter(cohort.event)?);
         self.record.last_event_ns = Some(counter(cohort.event)?);
+        if self.received {
+            self.record.source_event_start_ns = Some(counter(
+                self.record
+                    .source_event_start_ns
+                    .map_or(cohort.source_event_start, |old| {
+                        old.get().min(cohort.source_event_start)
+                    }),
+            )?);
+            self.record.source_event_end_ns = Some(counter(
+                self.record
+                    .source_event_end_ns
+                    .map_or(cohort.source_event_end, |old| {
+                        old.get().max(cohort.source_event_end)
+                    }),
+            )?);
+        }
         self.record.bytes = counter(self.record.bytes.get() + width)?;
         self.record.byte_end = self.record.bytes;
         let count = self.pending.len();
@@ -205,6 +256,7 @@ impl Output {
 /// Source conversion retains only unfinished cohorts and bounded buffered readback.
 pub struct Builder {
     flow: bool,
+    maximum_receive_delay_ns: Option<u64>,
     root: PathBuf,
     outputs: BTreeMap<String, Output>,
     pending_rows: usize,
@@ -215,6 +267,15 @@ pub struct Builder {
 }
 
 impl Builder {
+    fn representation(&self) -> &'static str {
+        match (self.maximum_receive_delay_ns.is_some(), self.flow) {
+            (true, true) => RECEIVED_FLOW_REPRESENTATION,
+            (true, false) => RECEIVED_REPRESENTATION,
+            (false, true) => FLOW_REPRESENTATION,
+            (false, false) => REPRESENTATION,
+        }
+    }
+
     pub fn new(
         output: &Path,
         maximum_cohort_rows: u32,
@@ -227,6 +288,7 @@ impl Builder {
             _maximum_working_rows,
             _maximum_output_bytes,
             false,
+            None,
         )
     }
 
@@ -242,6 +304,26 @@ impl Builder {
             _maximum_working_rows,
             _maximum_output_bytes,
             true,
+            None,
+        )
+    }
+
+    pub fn new_received(
+        output: &Path,
+        maximum_cohort_rows: u32,
+        maximum_working_rows: usize,
+        maximum_output_bytes: u64,
+        flow: bool,
+        maximum_receive_delay_ns: u64,
+    ) -> Result<Self> {
+        counter(maximum_receive_delay_ns)?;
+        Self::create(
+            output,
+            maximum_cohort_rows,
+            maximum_working_rows,
+            maximum_output_bytes,
+            flow,
+            Some(maximum_receive_delay_ns),
         )
     }
 
@@ -251,6 +333,7 @@ impl Builder {
         _maximum_working_rows: usize,
         _maximum_output_bytes: u64,
         flow: bool,
+        maximum_receive_delay_ns: Option<u64>,
     ) -> Result<Self> {
         ensure!(
             maximum_cohort_rows > 0 && maximum_cohort_rows <= domain::ticks::MAXIMUM_COHORT_ROWS,
@@ -261,6 +344,7 @@ impl Builder {
         fs::create_dir_all(root.join("data/cohorts"))?;
         Ok(Self {
             flow,
+            maximum_receive_delay_ns,
             root,
             outputs: BTreeMap::new(),
             pending_rows: 0,
@@ -272,10 +356,23 @@ impl Builder {
     }
 
     pub fn push(&mut self, trade: TradeTick) -> Result<()> {
-        ensure!(
-            !self.sealed && trade.ts_event == trade.ts_init,
-            "TICK_CACHE_SOURCE_CLOCK_OR_STATE"
-        );
+        let width = frame_bytes(self.representation())?;
+        ensure!(!self.sealed, "TICK_CACHE_SOURCE_CLOCK_OR_STATE");
+        if let Some(maximum) = self.maximum_receive_delay_ns {
+            ensure!(
+                trade
+                    .ts_init
+                    .as_u64()
+                    .checked_sub(trade.ts_event.as_u64())
+                    .is_some_and(|delay| delay <= maximum),
+                "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+            );
+        } else {
+            ensure!(
+                trade.ts_event == trade.ts_init,
+                "TICK_CACHE_SOURCE_CLOCK_OR_STATE"
+            );
+        }
         let id = trade.instrument_id.to_string();
         if !self.outputs.contains_key(&id) {
             let path = format!(
@@ -291,6 +388,7 @@ impl Builder {
                 id.clone(),
                 Output {
                     flow: self.flow,
+                    received: self.maximum_receive_delay_ns.is_some(),
                     path: file_path,
                     expected: Vec::new(),
                     verified: 0,
@@ -306,6 +404,8 @@ impl Builder {
                         cohort_count: counter(0)?,
                         first_event_ns: None,
                         last_event_ns: None,
+                        source_event_start_ns: None,
+                        source_event_end_ns: None,
                     },
                 },
             );
@@ -313,22 +413,21 @@ impl Builder {
         let output = self.outputs.get_mut(&id).unwrap();
         if let Some(previous) = output.pending.first() {
             ensure!(
-                trade.ts_event >= previous.ts_event,
+                trade.ts_init >= previous.ts_init,
                 "TICK_CACHE_SOURCE_TIME_REVERSAL"
             );
-            if trade.ts_event != previous.ts_event {
+            if trade.ts_init != previous.ts_init {
                 let buffered = output.expected.len();
                 let flushed = output.flush_cohort(self.maximum_cohort_rows)?;
                 self.buffered_bytes = self.buffered_bytes - buffered + output.expected.len();
                 self.pending_rows -= flushed;
-                self.written_bytes += if self.flow {
-                    FLOW_FRAME_BYTES
-                } else {
-                    FRAME_BYTES
-                };
+                self.written_bytes += width;
             }
         }
-        if let Some(previous) = output.identities.insert(trade.trade_id, trade) {
+        if let Some(previous) = output
+            .identities
+            .insert((trade.ts_event.as_u64(), trade.trade_id), trade)
+        {
             ensure!(previous == trade, "TICK_CACHE_SOURCE_ID_CONFLICT");
             anyhow::bail!("TICK_CACHE_SOURCE_ID_DUPLICATE");
         }
@@ -350,13 +449,10 @@ impl Builder {
 
     pub fn seal(&mut self, source_revision: &str, start: u64, end: u64) -> Result<Manifest> {
         ensure!(!self.sealed, "TICK_CACHE_ALREADY_SEALED");
+        let width = frame_bytes(self.representation())?;
         for output in self.outputs.values_mut() {
             if output.flush_cohort(self.maximum_cohort_rows)? > 0 {
-                self.written_bytes += if self.flow {
-                    FLOW_FRAME_BYTES
-                } else {
-                    FRAME_BYTES
-                };
+                self.written_bytes += width;
             }
 
             output.verify()?;
@@ -371,16 +467,25 @@ impl Builder {
         ensure!(!files.is_empty(), "TICK_CACHE_EMPTY_SELECTION");
         Ok(Manifest {
             schema_version: SchemaV1,
-            representation: if self.flow {
-                FLOW_REPRESENTATION
+            representation: self.representation().into(),
+            source_revision: source_revision.into(),
+            availability: if self.maximum_receive_delay_ns.is_some() {
+                "RECEIVED_TIME_OBSERVED"
             } else {
-                REPRESENTATION
+                "EVENT_TIME_PROXY_UNVERIFIED"
             }
             .into(),
-            source_revision: source_revision.into(),
-            availability: "EVENT_TIME_PROXY_UNVERIFIED".into(),
             event_start_ns: counter(start)?,
             event_end_ns: counter(end)?,
+            maximum_receive_delay_ns: self.maximum_receive_delay_ns.map(counter).transpose()?,
+            source_event_start_ns: files
+                .iter()
+                .filter_map(|file| file.source_event_start_ns)
+                .min(),
+            source_event_end_ns: files
+                .iter()
+                .filter_map(|file| file.source_event_end_ns)
+                .max(),
             trade_count: counter(files.iter().map(|file| file.trade_count.get()).sum())?,
             cohort_count: counter(files.iter().map(|file| file.cohort_count.get()).sum())?,
             files,
@@ -416,6 +521,7 @@ pub(super) struct CacheAsset {
 
 pub(super) struct CacheInput {
     frame_bytes: u64,
+    maximum_receive_delay_ns: Option<u64>,
     pub coverage: NativeTradeTickCoverageV1,
     pub assets: Vec<CacheAsset>,
     root: PathBuf,
@@ -426,6 +532,7 @@ pub(super) struct CacheInput {
 
 pub(super) struct CacheReader {
     frame_bytes: u64,
+    maximum_receive_delay_ns: Option<u64>,
     input: BufReader<std::io::Take<File>>,
     file: CacheFile,
     start: u64,
@@ -435,6 +542,8 @@ pub(super) struct CacheReader {
     trades: u64,
     first: Option<u64>,
     last: Option<u64>,
+    source_first: Option<u64>,
+    source_last: Option<u64>,
     finished: bool,
 }
 
@@ -449,16 +558,38 @@ impl Iterator for CacheReader {
                 ensure!(
                     self.trades == self.file.trade_count.get()
                         && self.first == self.file.first_event_ns.map(|value| value.get())
-                        && self.last == self.file.last_event_ns.map(|value| value.get()),
+                        && self.last == self.file.last_event_ns.map(|value| value.get())
+                        && self.source_first
+                            == self.file.source_event_start_ns.map(|value| value.get())
+                        && self.source_last
+                            == self.file.source_event_end_ns.map(|value| value.get()),
                     "TICK_CACHE_COUNTS_MISMATCH"
                 );
                 return Ok(None);
             }
-            let mut encoded = [0; FLOW_FRAME_BYTES as usize];
+            let mut encoded = [0; RECEIVED_FLOW_FRAME_BYTES as usize];
             self.input
                 .read_exact(&mut encoded[..self.frame_bytes as usize])
                 .context("TICK_CACHE_FRAME_TRUNCATED")?;
             let cohort = decode(&encoded[..self.frame_bytes as usize])?;
+            if let Some(maximum) = self.maximum_receive_delay_ns {
+                ensure!(
+                    cohort.source_event_start < cohort.source_event_end
+                        && cohort.source_event_end - 1 <= cohort.event
+                        && cohort
+                            .event
+                            .checked_sub(cohort.source_event_start)
+                            .is_some_and(|delay| delay <= maximum),
+                    "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+                );
+                self.source_first =
+                    Some(self.source_first.map_or(cohort.source_event_start, |old| {
+                        old.min(cohort.source_event_start)
+                    }));
+                self.source_last = Some(self.source_last.map_or(cohort.source_event_end, |old| {
+                    old.max(cohort.source_event_end)
+                }));
+            }
             ensure!(
                 cohort.event >= self.start
                     && cohort.event < self.end
@@ -509,6 +640,7 @@ impl CacheInput {
         file.seek(SeekFrom::Start(asset.file.byte_start.get()))?;
         Ok(CacheReader {
             frame_bytes: self.frame_bytes,
+            maximum_receive_delay_ns: self.maximum_receive_delay_ns,
             input: BufReader::new(
                 file.take(asset.file.byte_end.get() - asset.file.byte_start.get()),
             ),
@@ -520,6 +652,8 @@ impl CacheInput {
             trades: 0,
             first: None,
             last: None,
+            source_first: None,
+            source_last: None,
             finished: false,
         })
     }
@@ -555,7 +689,8 @@ pub(super) fn load(
     ensure!(
         Some(manifest.representation.as_str()) == request.input.cache_representation()
             && manifest.source_revision == request.input.source_revision
-            && manifest.availability == "EVENT_TIME_PROXY_UNVERIFIED"
+            && manifest.availability == request.input.availability_name()
+            && manifest.maximum_receive_delay_ns == request.input.maximum_receive_delay_ns
             && manifest.event_start_ns == request.input.event_start_ns
             && manifest.event_end_ns == request.input.event_end_ns,
         "TICK_CACHE_VIEW_MISMATCH"
@@ -563,7 +698,7 @@ pub(super) fn load(
     let report = &manifest.source_report;
     ensure!(
         report["status"] == "IMPORTED"
-            && report["availability"] == "EVENT_TIME_PROXY_UNVERIFIED"
+            && report["availability"] == request.input.availability_name()
             && report["source_revision"] == manifest.source_revision,
         "TICK_CACHE_SOURCE_INCOMPLETE"
     );
@@ -581,12 +716,9 @@ pub(super) fn load(
             "TICK_CACHE_SOURCE_INCOMPLETE"
         );
     }
+    super::catalog::validate_source_observations(report).context("TICK_CACHE_SOURCE_INCOMPLETE")?;
     ensure!(
-        report["missing_partitions"]
-            .as_array()
-            .is_some_and(|values| values.is_empty())
-            && number(report, "duplicate_trades")? == 0
-            && manifest.event_start_ns.get() >= number(report, "event_start_ns")?
+        manifest.event_start_ns.get() >= number(report, "event_start_ns")?
             && manifest.event_end_ns.get() <= number(report, "event_end_ns")?,
         "TICK_CACHE_SOURCE_INCOMPLETE"
     );
@@ -596,6 +728,21 @@ pub(super) fn load(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    ensure!(
+        manifest.source_event_start_ns
+            == manifest
+                .files
+                .iter()
+                .filter_map(|file| file.source_event_start_ns)
+                .min()
+            && manifest.source_event_end_ns
+                == manifest
+                    .files
+                    .iter()
+                    .filter_map(|file| file.source_event_end_ns)
+                    .max(),
+        "TICK_CACHE_SOURCE_EVENT_COVERAGE_INVALID"
+    );
     let mut ids = BTreeSet::new();
     let mut paths = BTreeSet::new();
     let mut assets = Vec::new();
@@ -662,6 +809,14 @@ pub(super) fn load(
                             && event < manifest.event_end_ns)),
             "TICK_CACHE_COVERAGE_INVALID"
         );
+        ensure!(
+            if request.input.uses_received_time() && file.cohort_count.get() > 0 {
+                matches!((file.source_event_start_ns, file.source_event_end_ns), (Some(start), Some(end)) if start < end)
+            } else {
+                file.source_event_start_ns.is_none() && file.source_event_end_ns.is_none()
+            },
+            "TICK_CACHE_SOURCE_EVENT_COVERAGE_INVALID"
+        );
         total_trades = total_trades
             .checked_add(file.trade_count.get())
             .context("TICK_CACHE_COUNT_RANGE")?;
@@ -727,10 +882,18 @@ pub(super) fn load(
         cohort_count: counter(selected_cohorts)?,
         first_event_ns: first,
         last_event_ns: last,
-        availability: NativeTickAvailabilityV1::EventTimeProxyUnverified,
+        source_event_start_ns: assets
+            .iter()
+            .filter_map(|asset| asset.file.source_event_start_ns)
+            .min(),
+        source_event_end_ns: assets
+            .iter()
+            .filter_map(|asset| asset.file.source_event_end_ns)
+            .max(),
+        availability: request.input.availability,
         limitations: vec![
             "UNQUALIFIED_EXPLORATORY".into(),
-            "EVENT_TIME_PROXY_UNVERIFIED".into(),
+            request.input.availability_name().into(),
             "DERIVED_COHORT_CACHE_NOT_NATIVE_TRADE_TICKS".into(),
             "VWAP_IS_NOT_EXECUTABLE_PRICE".into(),
             "CURRENT_DEFINITIONS_ARE_REPRESENTATION_METADATA_NOT_HISTORICAL_CONTRACT_OR_FEES"
@@ -743,6 +906,10 @@ pub(super) fn load(
     };
     Ok(CacheInput {
         frame_bytes,
+        maximum_receive_delay_ns: request
+            .input
+            .maximum_receive_delay_ns
+            .map(|value| value.get()),
         coverage,
         assets,
         root,
@@ -784,9 +951,16 @@ pub fn concatenate(
         let unit = crate::catalog::catalog_root(unit)?;
         let current = manifest(&unit)?;
         let width = frame_bytes(&current.representation)?;
+        let received = current.maximum_receive_delay_ns.is_some();
         ensure!(
             current.event_start_ns < current.event_end_ns
-                && current.availability == "EVENT_TIME_PROXY_UNVERIFIED",
+                && received == (width >= RECEIVED_FRAME_BYTES)
+                && current.availability
+                    == if received {
+                        "RECEIVED_TIME_OBSERVED"
+                    } else {
+                        "EVENT_TIME_PROXY_UNVERIFIED"
+                    },
             "TICK_CACHE_VIEW_MISMATCH"
         );
         if let Some(previous) = &mut combined {
@@ -794,10 +968,21 @@ pub fn concatenate(
                 previous.representation == current.representation
                     && previous.source_revision == current.source_revision
                     && previous.availability == current.availability
+                    && previous.maximum_receive_delay_ns == current.maximum_receive_delay_ns
                     && previous.event_end_ns == current.event_start_ns,
                 "TICK_CACHE_UNIT_MISMATCH"
             );
             previous.event_end_ns = current.event_end_ns;
+            previous.source_event_start_ns = previous
+                .source_event_start_ns
+                .into_iter()
+                .chain(current.source_event_start_ns)
+                .min();
+            previous.source_event_end_ns = previous
+                .source_event_end_ns
+                .into_iter()
+                .chain(current.source_event_end_ns)
+                .max();
         } else {
             combined = Some(Manifest {
                 schema_version: SchemaV1,
@@ -806,6 +991,9 @@ pub fn concatenate(
                 availability: current.availability.clone(),
                 event_start_ns: current.event_start_ns,
                 event_end_ns: current.event_end_ns,
+                maximum_receive_delay_ns: current.maximum_receive_delay_ns,
+                source_event_start_ns: current.source_event_start_ns,
+                source_event_end_ns: current.source_event_end_ns,
                 trade_count: counter(0)?,
                 cohort_count: counter(0)?,
                 files: Vec::new(),
@@ -857,11 +1045,14 @@ pub fn concatenate(
                         cohort_count: counter(0)?,
                         first_event_ns: None,
                         last_event_ns: None,
+                        source_event_start_ns: None,
+                        source_event_end_ns: None,
                     },
                 );
             }
             let reader = CacheReader {
                 frame_bytes: width,
+                maximum_receive_delay_ns: current.maximum_receive_delay_ns.map(|value| value.get()),
                 input: BufReader::new(source.take(record.bytes.get())),
                 file: record.clone(),
                 start: current.event_start_ns.get(),
@@ -871,6 +1062,8 @@ pub fn concatenate(
                 trades: 0,
                 first: None,
                 last: None,
+                source_first: None,
+                source_last: None,
                 finished: false,
             };
             let target = outputs.get_mut(&record.instrument_id).unwrap();
@@ -892,9 +1085,31 @@ pub fn concatenate(
                     .checked_add(width)
                     .context("TICK_CACHE_OUTPUT_LIMIT")?;
 
-                writer.write_all(&frame(&cohort, width == FLOW_FRAME_BYTES)?[..width as usize])?;
+                writer.write_all(
+                    &frame(
+                        &cohort,
+                        width == FLOW_FRAME_BYTES || width == RECEIVED_FLOW_FRAME_BYTES,
+                        received,
+                    )?[..width as usize],
+                )?;
                 target.first_event_ns.get_or_insert(counter(cohort.event)?);
                 target.last_event_ns = Some(counter(cohort.event)?);
+                if received {
+                    target.source_event_start_ns = Some(counter(
+                        target
+                            .source_event_start_ns
+                            .map_or(cohort.source_event_start, |old| {
+                                old.get().min(cohort.source_event_start)
+                            }),
+                    )?);
+                    target.source_event_end_ns = Some(counter(
+                        target
+                            .source_event_end_ns
+                            .map_or(cohort.source_event_end, |old| {
+                                old.get().max(cohort.source_event_end)
+                            }),
+                    )?);
+                }
             }
             writer.flush()?;
             drop(writer);
@@ -961,6 +1176,12 @@ pub fn concatenate(
         (file.instrument_id.clone(), file.cohort_count.get())).collect::<BTreeMap<_, _>>()});
     source_report["readback_records"] = json!(result.cohort_count.get());
     source_report["representation"] = json!(result.representation);
+    source_report["availability"] = json!(result.availability);
+    if let Some(delay) = result.maximum_receive_delay_ns {
+        source_report["maximum_receive_delay_ns"] = json!(delay);
+        source_report["source_event_start_ns"] = json!(result.source_event_start_ns);
+        source_report["source_event_end_ns"] = json!(result.source_event_end_ns);
+    }
     source_report["event_start_ns"] = json!(result.event_start_ns.get());
     source_report["event_end_ns"] = json!(result.event_end_ns.get());
     result.source_report = source_report.clone();
@@ -1069,6 +1290,8 @@ pub fn prepare_views(
         .collect();
     full.trade_count = input.coverage.trade_count;
     full.cohort_count = input.coverage.cohort_count;
+    full.source_event_start_ns = input.coverage.source_event_start_ns;
+    full.source_event_end_ns = input.coverage.source_event_end_ns;
     let mut primary = full.clone();
     primary.event_end_ns = request.validation_end_ns;
     for (asset, file) in input.assets.iter().zip(&mut primary.files) {
@@ -1076,6 +1299,8 @@ pub fn prepare_views(
         let mut count = 0;
         let mut first = None;
         let mut last = None;
+        let mut source_first: Option<u64> = None;
+        let mut source_last: Option<u64> = None;
         for cohort in input.cohorts(asset)? {
             let cohort = cohort?;
             if cohort.event < request.validation_end_ns.get() {
@@ -1083,6 +1308,14 @@ pub fn prepare_views(
                 count += 1;
                 first.get_or_insert(counter(cohort.event)?);
                 last = Some(counter(cohort.event)?);
+                if request.input.uses_received_time() {
+                    source_first = Some(source_first.map_or(cohort.source_event_start, |old| {
+                        old.min(cohort.source_event_start)
+                    }));
+                    source_last = Some(source_last.map_or(cohort.source_event_end, |old| {
+                        old.max(cohort.source_event_end)
+                    }));
+                }
             }
         }
         file.byte_end = counter(file.byte_start.get() + count * input.frame_bytes)?;
@@ -1090,6 +1323,8 @@ pub fn prepare_views(
         file.cohort_count = counter(count)?;
         file.first_event_ns = first;
         file.last_event_ns = last;
+        file.source_event_start_ns = source_first.map(counter).transpose()?;
+        file.source_event_end_ns = source_last.map(counter).transpose()?;
     }
     primary.trade_count = counter(
         primary
@@ -1105,6 +1340,16 @@ pub fn prepare_views(
             .map(|file| file.cohort_count.get())
             .sum(),
     )?;
+    primary.source_event_start_ns = primary
+        .files
+        .iter()
+        .filter_map(|file| file.source_event_start_ns)
+        .min();
+    primary.source_event_end_ns = primary
+        .files
+        .iter()
+        .filter_map(|file| file.source_event_end_ns)
+        .max();
     let spot_sizes = if economic_sources
         .iter()
         .any(|(name, _)| name == "spot-valuation.jsonl")
@@ -1234,8 +1479,8 @@ mod concatenate_tests {
     }
 
     #[test]
-    fn concatenate_preserves_both_frame_layouts_and_rejects_partial_units() {
-        for flow in [false, true] {
+    fn concatenate_preserves_all_frame_layouts_and_rejects_partial_units() {
+        for (flow, received) in [(false, false), (true, false), (false, true), (true, true)] {
             let temp = tempfile::tempdir().unwrap();
             let mut units = Vec::new();
             let mut expected = Vec::new();
@@ -1244,13 +1489,21 @@ mod concatenate_tests {
                 fs::create_dir_all(root.join("data/cohorts")).unwrap();
                 let cohort = Cohort {
                     event: index * 10 + 1,
+                    source_event_start: index * 10,
+                    source_event_end: index * 10 + 1,
                     vwap: 1.2345678901234567,
                     quantity: 2.0,
                     count: 2,
                     signed_quantity: flow.then_some(-0.0),
                 };
-                let width = if flow { FLOW_FRAME_BYTES } else { FRAME_BYTES };
-                let encoded = frame(&cohort, flow).unwrap();
+                let representation = match (received, flow) {
+                    (true, true) => RECEIVED_FLOW_REPRESENTATION,
+                    (true, false) => RECEIVED_REPRESENTATION,
+                    (false, true) => FLOW_REPRESENTATION,
+                    (false, false) => REPRESENTATION,
+                };
+                let width = frame_bytes(representation).unwrap();
+                let encoded = frame(&cohort, flow, received).unwrap();
                 let bytes = &encoded[..width as usize];
                 expected.extend_from_slice(bytes);
                 fs::write(root.join("data/cohorts/input.bin"), bytes).unwrap();
@@ -1258,16 +1511,21 @@ mod concatenate_tests {
                     &root.join(MANIFEST_FILE),
                     &Manifest {
                         schema_version: SchemaV1,
-                        representation: if flow {
-                            FLOW_REPRESENTATION
+                        representation: representation.into(),
+                        source_revision: "a".repeat(40),
+                        availability: if received {
+                            "RECEIVED_TIME_OBSERVED"
                         } else {
-                            REPRESENTATION
+                            "EVENT_TIME_PROXY_UNVERIFIED"
                         }
                         .into(),
-                        source_revision: "a".repeat(40),
-                        availability: "EVENT_TIME_PROXY_UNVERIFIED".into(),
                         event_start_ns: counter(index * 10).unwrap(),
                         event_end_ns: counter(index * 10 + 10).unwrap(),
+                        maximum_receive_delay_ns: received.then(|| counter(2).unwrap()),
+                        source_event_start_ns: received
+                            .then(|| counter(cohort.source_event_start).unwrap()),
+                        source_event_end_ns: received
+                            .then(|| counter(cohort.source_event_end).unwrap()),
                         trade_count: counter(2).unwrap(),
                         cohort_count: counter(1).unwrap(),
                         files: vec![CacheFile {
@@ -1280,6 +1538,10 @@ mod concatenate_tests {
                             cohort_count: counter(1).unwrap(),
                             first_event_ns: Some(counter(cohort.event).unwrap()),
                             last_event_ns: Some(counter(cohort.event).unwrap()),
+                            source_event_start_ns: received
+                                .then(|| counter(cohort.source_event_start).unwrap()),
+                            source_event_end_ns: received
+                                .then(|| counter(cohort.source_event_end).unwrap()),
                         }],
                         source_report: Value::Null,
                     },

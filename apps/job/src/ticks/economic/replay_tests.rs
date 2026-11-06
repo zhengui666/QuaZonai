@@ -215,6 +215,92 @@ fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fak
 }
 
 #[test]
+fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
+    use nautilus_model::{
+        data::{BookOrder, OrderBookDelta},
+        enums::{BookAction, RecordFlag},
+    };
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request, wasm) = source(directory.path(), 1, None, true);
+    request.research.clip_end(counter(2 * DAY).unwrap());
+    request.scenario.execution_model = Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
+    request.context_source = Some(CONTEXT_MANIFEST.into());
+    let economic = directory.path().join("source/catalog");
+    let csv = "event_ns,oracle_px,mark_px\n";
+    std::fs::write(economic.join("context-prices-000.csv"), csv).unwrap();
+    std::fs::write(economic.join(CONTEXT_MANIFEST), serde_json::to_vec(&json!({
+        "schema_version":1,"format":"EVENT_TIME_CONTEXT_PRICE_CSV_V1","clock":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"controlled-books","research_source_revision":"fixed-source","start_ns":"0","end_ns":(3*DAY).to_string(),
+        "rows":"0","instrument_ids":[LATE],"files":[{"instrument_id":LATE,"path":"context-prices-000.csv", "bytes":csv.len().to_string(),
+            "rows":"0","first_event_ns":null,"last_event_ns":null}]
+    })).unwrap()).unwrap();
+    let catalog = ParquetDataCatalog::new(&economic, None, None, None, None);
+    let mut times = (8..=78)
+        .step_by(10)
+        .map(|second| second * SECOND)
+        .collect::<Vec<_>>();
+    times.extend([DAY + 8 * SECOND, DAY + 18 * SECOND, 2 * DAY - SECOND]);
+    for instrument in definitions() {
+        let mut rows = Vec::new();
+        for &at in &times {
+            let (bid, ask) = if instrument.id().to_string() == BRIDGE {
+                ("1.000", "1.010")
+            } else {
+                ("99.00", "101.00")
+            };
+            let mut clear = OrderBookDelta::clear(instrument.id(), 0, (at - 100).into(), at.into());
+            clear.order.price = Price::zero(instrument.price_precision());
+            clear.order.size = Quantity::zero(instrument.size_precision());
+            rows.push(clear);
+            for (side, price) in [(OrderSide::Buy, bid), (OrderSide::Sell, ask)] {
+                rows.push(OrderBookDelta::new(
+                    instrument.id(),
+                    BookAction::Add,
+                    BookOrder::new(side, Price::from(price), Quantity::from("10000.0000"), 0),
+                    RecordFlag::F_SNAPSHOT as u8,
+                    0,
+                    (at - 100).into(),
+                    at.into(),
+                ));
+            }
+            rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+        }
+        catalog.write_to_parquet(&rows, None, None, None).unwrap();
+    }
+    let result = replay_with_funding(
+        &prepared.join("research/catalog"),
+        &economic,
+        &request,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(result.model, "SEGREGATED_OBSERVED_L2_IOC_V1");
+    assert_eq!(
+        decimal(result.initial_usdc_after_cost.as_ref().unwrap()).unwrap(),
+        Decimal::from(3000)
+    );
+    assert_eq!(result.days.len(), 2);
+    assert!(result.native_fills.get() >= 2);
+    assert!(
+        result
+            .assets
+            .iter()
+            .find(|asset| asset.instrument_id == SPOT)
+            .unwrap()
+            .execution_attempts
+            .get()
+            > 0
+    );
+    assert!(result.methods["execution"].contains("L2_MBP"));
+    assert!(!result
+        .limitations
+        .iter()
+        .any(|limit| limit == "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK"));
+}
+
+#[test]
 fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_price_exposure() {
     for score in [-1, 0] {
         let directory = tempfile::tempdir().unwrap();
