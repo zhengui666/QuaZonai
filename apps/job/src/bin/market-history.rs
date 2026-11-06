@@ -109,6 +109,7 @@ struct Stream {
     kind: String,
     format: String,
     time_unit: String,
+    available_time_unit: Option<String>,
     columns: BTreeMap<String, String>,
     #[serde(default)]
     paths: Vec<String>,
@@ -148,6 +149,8 @@ struct Manifest {
     license: String,
     attribution: String,
     retrieved_at: DateTime<Utc>,
+    source_root: Option<PathBuf>,
+    source_reference: Option<String>,
     start_date: NaiveDate,
     end_date: NaiveDate,
     profile: Profile,
@@ -346,6 +349,14 @@ fn file_symbol(path: &Path) -> Result<String> {
 }
 
 impl Manifest {
+    fn root(&self, manifest_path: &Path) -> Result<PathBuf> {
+        self.source_root
+            .as_deref()
+            .unwrap_or(manifest_path.parent().context("SOURCE_ROOT")?)
+            .canonicalize()
+            .context("SOURCE_ROOT")
+    }
+
     fn stream(&self, name: &str) -> Result<&Stream> {
         self.profile
             .streams
@@ -357,10 +368,7 @@ impl Manifest {
 
 fn source_symbols(manifest_path: &Path) -> Result<BTreeSet<String>> {
     let manifest: Manifest = json(manifest_path)?;
-    let root = manifest_path
-        .parent()
-        .context("SOURCE_ROOT")?
-        .canonicalize()?;
+    let root = manifest.root(manifest_path)?;
     let mut symbols = BTreeSet::new();
     for file in &manifest.files {
         let Some(name) = &file.stream else { continue };
@@ -523,10 +531,7 @@ fn import(
     } else {
         None
     };
-    let root = manifest_path
-        .parent()
-        .context("SOURCE_ROOT")?
-        .canonicalize()?;
+    let root = manifest.root(manifest_path)?;
     let start = options
         .start
         .map(seconds_ns)
@@ -596,6 +601,15 @@ fn import(
     for versions in by_symbol.values_mut() {
         versions.sort_by_key(|v| v.ts_init());
     }
+    // Publisher aliases select original definitions by their resolved native ID.
+    for (symbol, id) in &symbol_ids {
+        if !by_symbol.contains_key(symbol) {
+            if let Some(versions) = by_symbol.values().find(|versions| versions[0].id() == *id) {
+                let versions = versions.clone();
+                by_symbol.insert(symbol.clone(), versions);
+            }
+        }
+    }
     ensure!(
         !options.is_cache()
             || (!options.resume && bar_seconds.is_none() && bar_milliseconds.is_none()),
@@ -630,7 +644,7 @@ fn import(
     let mut aggregation = records::Aggregation::with_milliseconds(bar_seconds, bar_milliseconds)?;
     let mut report = Report {
         schema_version: 1,
-        source_reference: format!("https://huggingface.co/datasets/{}/tree/{}", manifest.repository, manifest.revision),
+        source_reference: manifest.source_reference.clone().unwrap_or_else(|| format!("https://huggingface.co/datasets/{}/tree/{}", manifest.repository, manifest.revision)),
         revision: manifest.revision.clone(), source_revision: manifest.revision.clone(),
         selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
         selected_path_prefixes: prefixes.clone(),
@@ -659,6 +673,7 @@ fn import(
         let stream = manifest.stream(name)?;
         let path = source_file(&root, file)?;
         report.source_coverage.entry(name.clone()).or_default();
+        let mut snapshots = records::FlatSnapshots::default();
         records::read_rows(&path, &stream.format, |row| {
             report.source_rows += 1;
             let event = records::timestamp(stream.field(&row, "time")?, &stream.time_unit)?;
@@ -688,7 +703,15 @@ fn import(
             let available = stream
                 .columns
                 .get("available_at")
-                .map(|_| records::timestamp(stream.field(&row, "available_at")?, &stream.time_unit))
+                .map(|_| {
+                    records::timestamp(
+                        stream.field(&row, "available_at")?,
+                        stream
+                            .available_time_unit
+                            .as_deref()
+                            .unwrap_or(&stream.time_unit),
+                    )
+                })
                 .transpose()?
                 .unwrap_or(event);
             ensure!(available >= event, "SOURCE_EVENT_AFTER_AVAILABILITY");
@@ -710,7 +733,11 @@ fn import(
             }
             let converted = records::Encoding::new(id, instrument, options.native_precision)
                 .and_then(|encoding| {
-                    records::convert(stream, &row, &encoding, event, available, &mut report)
+                    if stream.kind == "book_snapshots" {
+                        snapshots.push(stream, row, encoding, event, available, &mut report)
+                    } else {
+                        records::convert(stream, &row, &encoding, event, available, &mut report)
+                    }
                 });
             let converted = match converted {
                 Ok(data) => data,
@@ -754,6 +781,21 @@ fn import(
             Ok(())
         })
         .with_context(|| format!("source file {}", file.path))?;
+        match snapshots.finish(stream, &mut report) {
+            Ok(data) => {
+                for data in data {
+                    sink.as_mut()
+                        .context("BOOK_SNAPSHOT_SINK_REQUIRED")?
+                        .push(data)?;
+                }
+            }
+            Err(error) => {
+                *report
+                    .rejected_rows
+                    .entry(format!("{}: {error}", stream.name))
+                    .or_default() += 1;
+            }
+        }
         eprintln!("scanned {}", file.path);
     }
     if let Some(mut cache) = cache {
@@ -969,6 +1011,65 @@ mod tests {
         )
         .unwrap();
         (manifest, instruments, csv)
+    }
+
+    #[test]
+    fn flat_book_import_uses_source_root_alias_definitions_and_original_receipt_units() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("archive");
+        let selection = temp.path().join("selection");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&selection).unwrap();
+        let csv = source.join("book.csv");
+        fs::write(&csv, "symbol,time,received,event_type,side,price,quantity\nALIAS,1767225600001,1767225600001000123,snapshot,bid,10.12,2\nALIAS,1767225600001,1767225600001000123,snapshot,ask,10.13,3\nALIAS,1767225600002,1767225600002000456,snapshot,noop,0,0\n").unwrap();
+        let manifest = selection.join("market-data.json");
+        fs::write(&manifest, serde_json::to_vec(&serde_json::json!({
+            "schema_version":1,"repository":"CryptoHFTData","revision":"published selection",
+            "source_root":source,"source_reference":"https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data",
+            "license":"UNSPECIFIED_BY_LOCAL_ARCHIVE","attribution":"CryptoHFTData","retrieved_at":"2026-01-03T00:00:00Z",
+            "start_date":"2026-01-01","end_date":"2026-01-02",
+            "profile":{"streams":[{"name":"books","kind":"book_snapshots","format":"csv","time_unit":"ms","available_time_unit":"ns",
+                "columns":{"symbol":"symbol","time":"time","available_at":"received","event_type":"event_type","side":"side","price":"price","size":"quantity"}}]},
+            "files":[{"path":"book.csv","size":fs::metadata(&csv).unwrap().len(),"stream":"books"}],"missing":[]
+        })).unwrap()).unwrap();
+        let instrument = InstrumentAny::CurrencyPair(
+            nautilus_model::instruments::stubs::currency_pair_btcusdt(),
+        );
+        let instruments = temp.path().join("instruments.json");
+        fs::write(&instruments, serde_json::to_vec(&serde_json::json!({
+            "currencies":job::catalog::currencies::definitions(std::slice::from_ref(&instrument)),
+            "instruments":[instrument],"symbol_ids":{"ALIAS":instrument.id()}
+        })).unwrap()).unwrap();
+        assert_eq!(
+            source_symbols(&manifest).unwrap(),
+            BTreeSet::from(["ALIAS".into()])
+        );
+        let mut options = tick_options(&[], false, 0, 0);
+        options.trade_ticks = false;
+        options.native_precision = false;
+        let report = import(
+            &manifest,
+            &instruments,
+            &temp.path().join("native"),
+            options,
+        )
+        .unwrap();
+        assert_eq!(report.status, "IMPORTED");
+        assert_eq!(
+            report.source_reference,
+            "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
+        );
+        assert_eq!(report.source_rows, 3);
+        assert_eq!(report.readback_records, 5);
+        assert!(report.missing_definitions.is_empty());
+        assert_eq!(
+            report.native_records["book_deltas"][&instrument.id().to_string()],
+            4
+        );
+        assert_eq!(
+            report.native_records["quotes"][&instrument.id().to_string()],
+            1
+        );
     }
 
     #[test]

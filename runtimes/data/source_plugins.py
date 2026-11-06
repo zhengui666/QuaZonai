@@ -20,6 +20,7 @@ import urllib.parse
 
 import acquire
 import binance_vision
+import cryptohftdata
 import hf_dataset
 import polymarket_v2
 import providers
@@ -952,6 +953,39 @@ def polymarket_v2_export(args):
     return providers.read_json(completed.stdout)
 
 
+def cryptohftdata_options(parser, convert=False):
+    parser.add_argument("--archive", type=Path, required=True, help="existing CryptoHFTData root containing dataset.json")
+    if convert:
+        native_options(parser)
+        parser.add_argument("--market", choices=cryptohftdata.MARKETS, required=True)
+        parser.add_argument("--symbol", action="append", required=True, help="exact source filename symbol; repeatable")
+        parser.add_argument("--start-date", required=True, help="inclusive UTC YYYY-MM-DD")
+        parser.add_argument("--end-date", required=True, help="exclusive UTC YYYY-MM-DD")
+        parser.add_argument("--hour", type=int, action="append", help="UTC hour 0-23; omit for every hour")
+        parser.add_argument("--stream", choices=("books", "context"), action="append", help="omit for all market streams")
+        parser.add_argument("--instruments", type=Path, required=True, help="original native definitions and explicit symbol aliases")
+
+
+def cryptohftdata_convert(args):
+    output = local_path(args.output)
+    if output.exists():
+        raise ValueError("native output must be a new directory; failed artifacts are never removed")
+    manifest = cryptohftdata.selection(args.archive, args.market, args.symbol, args.start_date,
+                                      args.end_date, args.stream, args.hour)
+    source_file = output.with_name(output.name + ".source.json")
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    cryptohftdata.publish(source_file, manifest)
+    run_native(args, ["import", "--manifest", str(source_file), "--instruments", str(local_path(args.instruments)),
+                      "--native-precision"], "market-history")
+    report = load_json(output / "import-report.json")
+    if (report.get("status") != "IMPORTED" or type(report.get("readback_records")) is not int
+            or report["readback_records"] <= 0 or report.get("missing_symbols") or report.get("rejected_rows")):
+        raise ValueError("CryptoHFTData native import is incomplete; artifacts retained")
+    return {"plugin": cryptohftdata.PLUGIN, "status": "IMPORTED", "output": str(output),
+            "catalog_root": str(output / "catalog"), "source_manifest": str(source_file),
+            "native_report": report, "research_qualified": False}
+
+
 PLUGINS = {provider_id: http_plugin(provider_id) for provider_id in providers.PROVIDERS}
 PLUGINS["coinbase-candles"].capabilities["convert"] = Capability(candle_options, candle_convert)
 PLUGINS["coinbase-candles"].capabilities["prepare"] = Capability(
@@ -990,6 +1024,13 @@ PLUGINS[polymarket_v2.PLUGIN] = source_plugin(polymarket_v2.PLUGIN, polymarket_v
      "Native conversion retains strict normalized amounts and unverified historical availability",
      "Offline export produces a v3 DatasetConfig fragment, not service registration or research",
      "Prepared catalogs remain owner-managed immutable inputs; readiness is not scientific qualification"])
+PLUGINS[cryptohftdata.PLUGIN] = source_plugin(cryptohftdata.PLUGIN, "CryptoHFTData Hyperliquid Parquet / Parquet.zst",
+    {"inspect": Capability(cryptohftdata_options, lambda args: cryptohftdata.inspect(args.archive)),
+     "convert": Capability(partial(cryptohftdata_options, convert=True), cryptohftdata_convert)},
+    ["Reads an existing downloaded archive; no credentials, network access or raw-file copies",
+     "Native conversion preserves book snapshots, collector clocks and perpetual context; it creates no trades or BARs",
+     "Explicit market, symbols, UTC dates and optional hours select existing files; missing hourly paths remain reported",
+     "Source download completeness does not establish exchange coverage, historical instrument definitions or research qualification"])
 PLUGINS["polymarket-capture"] = source_plugin("polymarket-capture", "lokima-dual-capture",
     snapshot_capabilities() | {"convert": Capability(partial(history_options, capture=True),
                                                        partial(history_convert, capture=True)),

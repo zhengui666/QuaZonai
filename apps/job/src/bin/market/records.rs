@@ -19,6 +19,7 @@ use parquet::{
 use rust_decimal::Decimal;
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path, str::FromStr};
 
+#[derive(Clone, Copy)]
 pub(super) struct Encoding {
     id: InstrumentId,
     price_precision: u8,
@@ -197,8 +198,19 @@ pub(super) fn read_rows(
     mut consume: impl FnMut(Row) -> Result<()>,
 ) -> Result<()> {
     match format {
-        "parquet" => {
-            let reader = SerializedFileReader::new(File::open(path)?)?;
+        "parquet" | "parquet-zstd" => {
+            let mut decoded;
+            let file = if format == "parquet-zstd" {
+                decoded = tempfile::tempfile()?;
+                std::io::copy(
+                    &mut zstd::stream::read::Decoder::new(File::open(path)?)?,
+                    &mut decoded,
+                )?;
+                decoded
+            } else {
+                File::open(path)?
+            };
+            let reader = SerializedFileReader::new(file)?;
             for row in reader.get_row_iter(None)? {
                 consume(row?)?;
             }
@@ -294,6 +306,106 @@ fn snapshot(
         _ => report.one_sided_books += 1,
     }
     Ok(data)
+}
+
+struct FlatSnapshot {
+    encoding: Encoding,
+    event: u64,
+    available: u64,
+    rows: Vec<Row>,
+}
+
+impl FlatSnapshot {
+    fn convert(self, stream: &Stream, report: &mut Report) -> Result<Vec<Data>> {
+        let mut sides = [Vec::new(), Vec::new()];
+        for row in &self.rows {
+            ensure!(
+                scalar(stream.field(row, "event_type")?)? == "snapshot",
+                "BOOK_SNAPSHOT_REQUIRED"
+            );
+            let side = scalar(stream.field(row, "side")?)?;
+            if side == "noop" {
+                ensure!(
+                    self.rows.len() == 1
+                        && decimal(stream.field(row, "price")?)? == Decimal::ZERO
+                        && decimal(stream.field(row, "size")?)? == Decimal::ZERO,
+                    "EMPTY_BOOK_SNAPSHOT_INVALID"
+                );
+                continue;
+            }
+            let index = match side.as_str() {
+                "bid" => 0,
+                "ask" => 1,
+                _ => anyhow::bail!("BOOK_SIDE_UNSUPPORTED"),
+            };
+            let price =
+                price_with_precision(stream.field(row, "price")?, self.encoding.price_precision)?;
+            let size = quantity(stream.field(row, "size")?, self.encoding.size_precision)?;
+            ensure!(size.as_decimal() > Decimal::ZERO, "NONPOSITIVE_BOOK_SIZE");
+            sides[index].push((price, size));
+        }
+        sides[0].sort_by(|a, b| b.0.cmp(&a.0));
+        sides[1].sort_by(|a, b| a.0.cmp(&b.0));
+        ensure!(
+            sides
+                .iter()
+                .all(|levels| levels.windows(2).all(|pair| pair[0].0 != pair[1].0)),
+            "DUPLICATE_BOOK_LEVEL"
+        );
+        snapshot(
+            &self.encoding,
+            sides,
+            self.event.into(),
+            self.available.into(),
+            report,
+        )
+    }
+}
+
+#[derive(Default)]
+pub(super) struct FlatSnapshots {
+    pending: Option<FlatSnapshot>,
+}
+
+impl FlatSnapshots {
+    pub(super) fn push(
+        &mut self,
+        stream: &Stream,
+        row: Row,
+        encoding: Encoding,
+        event: u64,
+        available: u64,
+        report: &mut Report,
+    ) -> Result<Vec<Data>> {
+        let completed = if self.pending.as_ref().is_some_and(|current| {
+            (current.encoding.id, current.event, current.available)
+                != (encoding.id, event, available)
+        }) {
+            self.pending.take()
+        } else {
+            None
+        };
+        self.pending
+            .get_or_insert_with(|| FlatSnapshot {
+                encoding,
+                event,
+                available,
+                rows: Vec::new(),
+            })
+            .rows
+            .push(row);
+        completed.map_or_else(
+            || Ok(Vec::new()),
+            |snapshot| snapshot.convert(stream, report),
+        )
+    }
+
+    pub(super) fn finish(&mut self, stream: &Stream, report: &mut Report) -> Result<Vec<Data>> {
+        self.pending.take().map_or_else(
+            || Ok(Vec::new()),
+            |snapshot| snapshot.convert(stream, report),
+        )
+    }
 }
 
 pub(super) fn convert(
@@ -560,6 +672,166 @@ impl Aggregation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn flat_stream() -> Stream {
+        serde_json::from_value(serde_json::json!({
+            "name":"books", "kind":"book_snapshots", "format":"parquet",
+            "time_unit":"ms", "available_time_unit":"ns",
+            "columns":{"event_type":"event_type", "side":"side", "price":"price", "size":"quantity"}
+        }))
+        .unwrap()
+    }
+
+    fn flat_row(side: &str, price: &str, size: &str) -> Row {
+        Row::new(vec![
+            ("event_type".into(), Field::Str("snapshot".into())),
+            ("side".into(), Field::Str(side.into())),
+            ("price".into(), Field::Str(price.into())),
+            ("quantity".into(), Field::Str(size.into())),
+        ])
+    }
+
+    #[test]
+    fn flat_snapshots_sort_levels_clear_once_and_keep_nanosecond_receipts() {
+        let stream = flat_stream();
+        let encoding =
+            Encoding::new(InstrumentId::from_str("AUD/USD.SIM").unwrap(), None, true).unwrap();
+        let mut snapshots = FlatSnapshots::default();
+        let mut report = Report::default();
+        let event = 1_000_000_000;
+        let receipt = 1_001_000_123;
+        for (side, price, size) in [
+            ("bid", "1.1", "2"),
+            ("bid", "1.2", "3"),
+            ("ask", "1.4", "4"),
+            ("ask", "1.3", "5"),
+        ] {
+            assert!(snapshots
+                .push(
+                    &stream,
+                    flat_row(side, price, size),
+                    encoding,
+                    event,
+                    receipt,
+                    &mut report
+                )
+                .unwrap()
+                .is_empty());
+        }
+        let data = snapshots
+            .push(
+                &stream,
+                flat_row("noop", "0", "0"),
+                encoding,
+                event + 1,
+                receipt + 1,
+                &mut report,
+            )
+            .unwrap();
+        assert_eq!(data.len(), 6);
+        let Data::BookDelta(clear) = &data[0] else {
+            panic!("missing clear")
+        };
+        assert_eq!(clear.action, BookAction::Clear);
+        let Data::Quote(quote) = &data[5] else {
+            panic!("missing quote")
+        };
+        assert_eq!(
+            quote.bid_price.as_decimal(),
+            Decimal::from_str_exact("1.2").unwrap()
+        );
+        assert_eq!(
+            quote.ask_price.as_decimal(),
+            Decimal::from_str_exact("1.3").unwrap()
+        );
+        assert_eq!(quote.ts_event.as_u64(), event);
+        assert_eq!(quote.ts_init.as_u64(), receipt);
+        let Data::BookDelta(last) = &data[4] else {
+            panic!("missing final level")
+        };
+        assert_ne!(last.flags & RecordFlag::F_LAST as u8, 0);
+        let empty = snapshots.finish(&stream, &mut report).unwrap();
+        assert_eq!(empty.len(), 1);
+        assert_eq!(report.empty_books, 1);
+        assert!(snapshots.finish(&stream, &mut report).unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_flat_level_rejects_whole_snapshot_and_preserves_next_group() {
+        let stream = flat_stream();
+        let encoding =
+            Encoding::new(InstrumentId::from_str("AUD/USD.SIM").unwrap(), None, true).unwrap();
+        let mut snapshots = FlatSnapshots::default();
+        let mut report = Report::default();
+        for row in [flat_row("bid", "1.1", "2"), flat_row("ask", "1.2", "-1")] {
+            snapshots
+                .push(&stream, row, encoding, 1, 2, &mut report)
+                .unwrap();
+        }
+        assert!(snapshots
+            .push(
+                &stream,
+                flat_row("noop", "0", "0"),
+                encoding,
+                3,
+                4,
+                &mut report
+            )
+            .is_err());
+        assert_eq!(snapshots.finish(&stream, &mut report).unwrap().len(), 1);
+        let mut snapshots = FlatSnapshots::default();
+        for row in [flat_row("bid", "1.1", "2"), flat_row("bid", "1.1", "3")] {
+            snapshots
+                .push(&stream, row, encoding, 1, 2, &mut report)
+                .unwrap();
+        }
+        assert_eq!(
+            snapshots
+                .finish(&stream, &mut report)
+                .unwrap_err()
+                .to_string(),
+            "DUPLICATE_BOOK_LEVEL"
+        );
+    }
+
+    #[test]
+    fn zstd_wrapped_parquet_keeps_original_integer_values() {
+        use parquet::{
+            data_type::Int64Type, file::writer::SerializedFileWriter,
+            schema::parser::parse_message_type,
+        };
+        use std::sync::Arc;
+        let root = tempfile::tempdir().unwrap();
+        let raw = root.path().join("source.parquet");
+        let schema = Arc::new(
+            parse_message_type("message source { REQUIRED INT64 received_time; }").unwrap(),
+        );
+        let mut writer =
+            SerializedFileWriter::new(File::create(&raw).unwrap(), schema, Default::default())
+                .unwrap();
+        let mut group = writer.next_row_group().unwrap();
+        let mut column = group.next_column().unwrap().unwrap();
+        let values = [1_770_854_400_237_799_618_i64];
+        column
+            .typed::<Int64Type>()
+            .write_batch(&values, None, None)
+            .unwrap();
+        column.close().unwrap();
+        group.close().unwrap();
+        writer.close().unwrap();
+        let wrapped = root.path().join("source.parquet.zst");
+        let mut encoder =
+            zstd::stream::write::Encoder::new(File::create(&wrapped).unwrap(), 1).unwrap();
+        std::io::copy(&mut File::open(&raw).unwrap(), &mut encoder).unwrap();
+        encoder.finish().unwrap();
+        let mut observed = Vec::new();
+        read_rows(&wrapped, "parquet-zstd", |row| {
+            observed.push(timestamp(field(&row, "received_time")?, "ns")?);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(observed, vec![values[0] as u64]);
+    }
 
     #[test]
     fn source_filters_reject_nonscalar_conditions_including_on_null_rows() {

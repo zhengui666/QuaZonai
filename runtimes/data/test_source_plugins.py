@@ -43,7 +43,7 @@ class RegistryTest(unittest.TestCase):
             self.assertIn("convert", result[name]["capabilities"])
             self.assertIn("prepare", result[name]["capabilities"])
         for name, item in result.items():
-            expected = [] if name == "binance-vision-spot-klines" else (
+            expected = [] if name in ("binance-vision-spot-klines", "cryptohftdata-hyperliquid") else (
                 ["download"] if name in providers.PROVIDERS else ["download", "plan"])
             self.assertEqual(item["public_network_operations"], expected)
         for item in result.values():
