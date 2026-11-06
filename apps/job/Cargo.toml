@@ -74,7 +74,7 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"]
 crc32fast = { version = "=1.5.2", optional = true }
 csv = { version = "=1.4.0", optional = true }
 lz4_flex = { version = "=0.14.0", optional = true }
-zstd = { version = "=0.13.3", optional = true }
+zstd = { version = "=0.13.3", default-features = false, optional = true }
 nautilus-data = { version = "=0.67.0", default-features = false, optional = true }
 alloy-core = { version = "=1.7.3", default-features = false, features = ["std", "sol-types", "serde"], optional = true }
 url = { version = "=2.5.8", optional = true }
