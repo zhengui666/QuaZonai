@@ -1083,6 +1083,14 @@ impl NativeLedger {
             "TICK_ECONOMIC_NATIVE_EVENT_ORDER"
         );
         set_message_bus(self.bus.clone());
+        let needs_clock = self.purge_day != Some(event / 86_400_000_000_000)
+            || self
+                .adjustments
+                .state
+                .borrow()
+                .queue
+                .front()
+                .is_some_and(|(at, _)| *at <= event);
         let mut seen = BTreeSet::new();
         let mut events = Vec::new();
         for rate in rates {
@@ -1132,24 +1140,32 @@ impl NativeLedger {
                 .deltas
                 .iter()
                 .find(|delta| delta.order.side == Some(OrderSide::Sell));
-            if let (Some(bid), Some(ask)) = (bid, ask) {
-                // Official market-order risk checks read cached quotes, not the L2 book.
-                events.push(Data::Quote(QuoteTick::new(
-                    id,
-                    bid.order.price,
-                    ask.order.price,
-                    bid.order.size,
-                    ask.order.size,
-                    row.snapshot.ts_event,
-                    row.snapshot.ts_init,
-                )));
+            let update_book =
+                first_book || row.target_quantity.is_some() || bid.is_none() || ask.is_none();
+            match (bid, ask) {
+                (Some(bid), Some(ask)) if update_book || needs_clock && events.is_empty() => {
+                    // Official market-order risk checks read cached quotes, not the L2 book.
+                    events.push(Data::Quote(QuoteTick::new(
+                        id,
+                        bid.order.price,
+                        ask.order.price,
+                        bid.order.size,
+                        ask.order.size,
+                        row.snapshot.ts_event,
+                        row.snapshot.ts_init,
+                    )));
+                }
+                _ => {}
             }
             // IOC orders finish within a run; refresh depth before every target and preserve resets.
-            if first_book || row.target_quantity.is_some() || bid.is_none() || ask.is_none() {
+            if update_book {
                 events.push(Data::BookDeltas(Box::new(row.snapshot)));
             }
         }
-        self.run_events(event, events)?;
+        // shortcut: observed IOC uses outer NAV; revisit for native Portfolio NAV/base currency FX, resting orders or latency.
+        if !events.is_empty() {
+            self.run_events(event, events)?;
+        }
         ensure!(
             self.state.borrow().targets.is_empty(),
             "TICK_ECONOMIC_BOOK_TARGET_NOT_CONSUMED"
@@ -2127,7 +2143,7 @@ mod tests {
     }
 
     #[test]
-    fn observed_idle_quotes_advance_clock_and_next_ioc_uses_fresh_depth() {
+    fn observed_idle_books_skip_native_clock_but_targets_adjustments_and_days_still_run() {
         let instrument = spot();
         let id = instrument.id();
         let mut ledger = NativeLedger::new_observed(
@@ -2142,7 +2158,7 @@ mod tests {
         .unwrap();
         let next_day = 86_401_000_000_000;
         ledger
-            .queue_adjustment(next_day, Money::from("1 USDC"))
+            .queue_adjustment(4_000_000_000, Money::from("1 USDC"))
             .unwrap();
         for (at, bid, asks, target) in [
             (1_000_000_000, "99.00", &[("101.00", "10.0000")][..], None),
@@ -2153,6 +2169,8 @@ mod tests {
                 &[("301.00", "0.5000"), ("302.00", "0.2500")][..],
                 Some(Decimal::from(3)),
             ),
+            (4_000_000_000, "349.00", &[("351.00", "10.0000")][..], None),
+            (5_000_000_000, "369.00", &[("371.00", "10.0000")][..], None),
             (next_day, "399.00", &[("401.00", "10.0000")][..], None),
         ] {
             ledger
@@ -2169,11 +2187,17 @@ mod tests {
             assert_eq!(ledger.pending_order_count(), 0);
             let cache = ledger.engine.kernel().cache.borrow();
             let quote = cache.quote(&id).unwrap();
-            assert_eq!(quote.bid_price, Price::from(bid));
-            assert_eq!(quote.ask_price, Price::from(asks[0].0));
-            assert_eq!(quote.ask_size, Quantity::from(asks[0].1));
-            assert_eq!(quote.ts_event.as_u64(), at - 100);
-            assert_eq!(quote.ts_init.as_u64(), at);
+            let (native_at, native_bid, native_ask) = match at {
+                2_000_000_000 => (1_000_000_000, "99.00", ("101.00", "10.0000")),
+                5_000_000_000 => (4_000_000_000, "349.00", ("351.00", "10.0000")),
+                _ => (at, bid, asks[0]),
+            };
+            assert_eq!(quote.bid_price, Price::from(native_bid));
+            assert_eq!(quote.ask_price, Price::from(native_ask.0));
+            assert_eq!(quote.ask_size, Quantity::from(native_ask.1));
+            assert_eq!(quote.ts_event.as_u64(), native_at - 100);
+            assert_eq!(quote.ts_init.as_u64(), native_at);
+            assert_eq!(ledger.last_event, Some(native_at));
             if at <= 2_000_000_000 {
                 assert_eq!(
                     cache.order_book(&id).unwrap().best_ask_price(),
@@ -2194,6 +2218,139 @@ mod tests {
         assert_eq!(ledger.last_event, Some(next_day));
         assert_eq!(ledger.purge_day, Some(1));
         ledger.finish().unwrap();
+    }
+
+    #[test]
+    fn observed_idle_margin_preserves_funding_and_fresh_partial_exit_accounting() {
+        for funding_with_book in [false, true] {
+            let instrument = perp();
+            let id = instrument.id();
+            let mut ledger = NativeLedger::new_observed(
+                vec![instrument.clone()],
+                Decimal::from(1000),
+                true,
+                Decimal::ZERO,
+                Decimal::ZERO,
+                Decimal::new(5, 1),
+                Decimal::new(25, 2),
+            )
+            .unwrap();
+            for (second, bid, ask, target) in [
+                (1, ("99.00", "10.0000"), ("101.00", "10.0000"), None),
+                (
+                    2,
+                    ("99.00", "10.0000"),
+                    ("101.00", "1.0000"),
+                    Some(Decimal::from(2)),
+                ),
+                (3, ("199.00", "10.0000"), ("201.00", "10.0000"), None),
+                (5, ("249.00", "10.0000"), ("251.00", "10.0000"), None),
+                (
+                    6,
+                    ("103.00", "0.5000"),
+                    ("105.00", "10.0000"),
+                    Some(Decimal::ZERO),
+                ),
+                (7, ("999.00", "10.0000"), ("1001.00", "10.0000"), None),
+                (
+                    8,
+                    ("104.00", "0.5000"),
+                    ("106.00", "10.0000"),
+                    Some(Decimal::ZERO),
+                ),
+            ] {
+                if second == 5 {
+                    ledger
+                        .queue_adjustment(4_000_000_000, Money::from("-5 USDC"))
+                        .unwrap();
+                    let rates = [NativeRate {
+                        instrument_id: id,
+                        rate: Decimal::new(5, 2),
+                    }];
+                    if funding_with_book {
+                        ledger
+                            .step_books(
+                                4_000_000_000,
+                                vec![NativeBook {
+                                    snapshot: observed_snapshot(
+                                        &instrument,
+                                        4_000_000_000,
+                                        "229.00",
+                                        "10.0000",
+                                        &[("231.00", "10.0000")],
+                                    ),
+                                    capacity: Decimal::ZERO,
+                                    target_quantity: None,
+                                }],
+                                &rates,
+                            )
+                            .unwrap();
+                    } else {
+                        ledger.funding_batch(4_000_000_000, &rates).unwrap();
+                    }
+                    assert_eq!(ledger.last_event, Some(4_000_000_000));
+                    assert_eq!(
+                        ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+                        Decimal::from(995)
+                    );
+                }
+                let at = second * 1_000_000_000;
+                ledger
+                    .step_books(
+                        at,
+                        vec![NativeBook {
+                            snapshot: observed_snapshot(&instrument, at, bid.0, bid.1, &[ask]),
+                            capacity: Decimal::from(10),
+                            target_quantity: target,
+                        }],
+                        &[],
+                    )
+                    .unwrap();
+                assert_eq!(ledger.pending_order_count(), 0);
+                let native_quote_second = match second {
+                    3 | 5 => 2,
+                    7 => 6,
+                    _ => second,
+                };
+                let native_second = if second == 5 { 4 } else { native_quote_second };
+                assert_eq!(ledger.last_event, Some(native_second * 1_000_000_000));
+                let cache = ledger.engine.kernel().cache.borrow();
+                assert_eq!(
+                    cache.quote(&id).unwrap().ts_init.as_u64(),
+                    native_quote_second * 1_000_000_000
+                );
+                assert_eq!(
+                    ledger.current_quantity(id),
+                    match second {
+                        1 | 8 => Decimal::ZERO,
+                        6 | 7 => Decimal::new(5, 1),
+                        _ => Decimal::ONE,
+                    }
+                );
+            }
+            assert!(ledger.positions().is_empty());
+            assert_eq!(
+                ledger.balance(Currency::USDC()).unwrap().as_decimal(),
+                Decimal::new(9975, 1)
+            );
+            assert_eq!(
+                ledger.balance(Currency::USD()).unwrap().as_decimal(),
+                Decimal::ZERO
+            );
+            assert_eq!(ledger.summary().submitted, 3);
+            assert_eq!(ledger.summary().fills, 3);
+            assert_eq!(ledger.summary().rejected, 0);
+            assert_eq!(ledger.summary().adjustments_applied, 1);
+            assert_eq!(
+                ledger.summary().adjustment_totals["USDC"],
+                Decimal::from(-5)
+            );
+            assert_eq!(
+                ledger.summary().nominal_settlement_usdc,
+                Decimal::new(25, 1)
+            );
+            ledger.finish().unwrap();
+        }
     }
 
     #[test]
@@ -2287,6 +2444,7 @@ mod tests {
                 )
                 .unwrap();
         }
+        assert_eq!(ledger.last_event, Some(1_000_000_000));
         for (index, side) in [Some(OrderSide::Buy), Some(OrderSide::Sell), None]
             .into_iter()
             .enumerate()
@@ -2315,6 +2473,7 @@ mod tests {
                     &[],
                 )
                 .unwrap();
+            assert_eq!(ledger.last_event, Some(at));
             let cache = ledger.engine.kernel().cache.borrow();
             let book = cache.order_book(&id).unwrap();
             assert_eq!(
@@ -2326,7 +2485,7 @@ mod tests {
                 (side == Some(OrderSide::Sell)).then(|| Price::from("201.00"))
             );
             assert_eq!(book.ts_last.as_u64(), at - 100);
-            assert_eq!(cache.quote(&id).unwrap().ts_init.as_u64(), 2_000_000_000);
+            assert_eq!(cache.quote(&id).unwrap().ts_init.as_u64(), 1_000_000_000);
         }
         assert_eq!(ledger.summary().submitted, 0);
         assert_eq!(ledger.summary().fills, 0);
