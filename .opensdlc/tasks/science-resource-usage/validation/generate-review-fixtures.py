@@ -49,6 +49,8 @@ def review_fixture(groups=96, assets=12, scope="POOLED_TIME_SERIES", mode="regul
     points = []
     for group in range(groups):
         count = assets if mode != "irregular" else 3 + (group * 7) % max(assets - 2, 1)
+        if mode == "skewed":
+            count = assets if group == groups // 2 else 3
         for asset in range(count):
             score = ((group * 7 + asset * 11) % 23 - 11) / 8
             label = ((group * 13 + asset * 5) % 29 - 14) / 1024
@@ -96,6 +98,8 @@ def main():
         for scope in ["POOLED_TIME_SERIES", "CROSS_SECTIONAL"]:
             cases.append((f"bench-review-{scope.lower()}", "review-science",
                           review_fixture(240, 40, scope, "irregular")))
+        cases.append(("bench-review-skewed-pooled", "review-science",
+                      review_fixture(96, 6000, "POOLED_TIME_SERIES", "skewed")))
     manifest = []
     for name, operation, value in cases:
         payload = json.dumps(value, separators=(",", ":"), allow_nan=False).encode()

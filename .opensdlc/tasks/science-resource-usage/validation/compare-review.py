@@ -33,6 +33,8 @@ def main():
     p.add_argument("--timeout", type=float, default=0,
                    help="seconds, 0 uses blocking wait4 for precise benchmark wall time")
     args = p.parse_args()
+    if args.repeats < 1:
+        p.error("--repeats must be positive")
     args.out.mkdir(parents=True, exist_ok=True)
     binaries = []
     for spec in args.binary:
@@ -43,6 +45,10 @@ def main():
         binaries.append({"label": label, "path": str(binary), "sha256": digest(binary), "env": env})
     manifest = json.loads((args.fixtures / "manifest.json").read_text())
     manifest = [case for case in manifest if not args.case or any(s in case["name"] for s in args.case)]
+    if not manifest:
+        p.error("no fixture matches --case")
+    if len({binary["label"] for binary in binaries}) != len(binaries):
+        p.error("binary labels must be unique")
     records = []
     equivalent = True
     expected = {}
@@ -100,6 +106,8 @@ def main():
             summary.append({"case": case["name"], "binary": binary["label"],
                             "runs": len(runs), "all_success": all(r["exit"] == 0 for r in runs),
                             **{key + "_median": statistics.median(r[key] for r in runs)
+                               for key in ["precise_wall_s", "cpu_s", "peak_rss_kib"]},
+                            **{key + "_range": [min(r[key] for r in runs), max(r[key] for r in runs)]
                                for key in ["precise_wall_s", "cpu_s", "peak_rss_kib"]}})
     result = {"binaries": binaries, "all_complete_results_equal": equivalent,
               "summary": summary, "records": records}

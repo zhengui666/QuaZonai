@@ -35,7 +35,9 @@ mismatching result fails the run; failed requests are useful failure-regression
 cases and never count as successful performance samples. For meaningful timing,
 run after compilation and other CPU-intensive work have finished. Report actual
 CPU/cgroup limits and RAM along with the results. Inputs with uneven group sizes
-are intentional: they exercise growing reusable sample buffers.
+are intentional: they exercise growing reusable sample buffers. The skewed pooled
+case has 96 groups, one with 6,000 assets and the others with three, allowing the
+same large group to occur multiple times in one resampled sequence.
 
 The Rust fixture helper in `apps/job/tests/support/review_diagnostics_fixture.rs`
 uses the same small-case input formulas. Integer values divided by powers of two
