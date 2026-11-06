@@ -27,6 +27,19 @@ node --experimental-strip-types --test apps/nautilus/test/*.test.ts
 
 Performance acceptance uses the same serialized `NativeEnsembleFitRequestV1` input on the original binary, candidate with `QZ_CALIBRATION_THREADS=1`, and candidate with multiple workers. Compare the complete output, elapsed time, total process CPU time and peak RSS in separate processes. Measure both multi-asset and large single-asset inputs. Controlled numerical fixtures establish software performance and equality, not real-market profitability.
 
+The [fixture generator](validation/generate_ensemble.py) and [process comparator](validation/run_compare.py) require only Python's standard library on Linux. Build the original and candidate binaries with the same pinned toolchain, lockfile, features and optimized profile, then preserve them under different absolute paths. The comparator records their hashes, input hashes, complete-output equality and `wait4` process measurements; it alternates binary order across repetitions. The constant-predictor case intentionally fails and verifies original error equivalence, so use only `bench-ensemble` for timing claims:
+
+```sh
+python3 .opensdlc/tasks/multicore-calibration/validation/generate_ensemble.py --bench --out /tmp/qz-ensemble-fixtures
+python3 .opensdlc/tasks/multicore-calibration/validation/run_compare.py \
+  --fixtures /tmp/qz-ensemble-fixtures --out /tmp/qz-ensemble-results \
+  --binary baseline=/absolute/baseline/job \
+  --binary serial=/absolute/candidate/job,threads=1 \
+  --binary parallel=/absolute/candidate/job,threads=4 --repeats 5 --case bench-ensemble
+```
+
+Run the same comparator without `--case` to check both successful and intentionally failing inputs. Every benchmark row must have `all_success: true` before interpreting speed. [Thread observation](validation/observe_threads.py) can sample `/proc` in a separate run with `--binary`, `--input`, `--threads` and `--out`; requested threads alone do not prove actual concurrent execution. Do not mix that polling run into timing evidence.
+
 Implementation and benchmark results are recorded below after execution. Hosted final-Head CI and independent review are required before merge; creating the requested PR does not deploy it.
 
 ## Execution evidence
