@@ -368,8 +368,14 @@ impl ContextReader {
         let mut reader = BufReader::new(File::open(root.join(&file.path))?);
         let mut header = String::new();
         reader.by_ref().take(4097).read_line(&mut header)?;
+        ensure!(header.ends_with('\n'), "ECONOMIC_CONTEXT_HEADER_INVALID");
+        let header = header.strip_suffix('\n').unwrap();
+        let header = header.strip_suffix('\r').unwrap_or(header);
         ensure!(
-            header == "event_ns,oracle_px,mark_px\n",
+            matches!(
+                header,
+                "event_ns,oracle_px,mark_px" | "\"event_ns\",\"oracle_px\",\"mark_px\""
+            ),
             "ECONOMIC_CONTEXT_HEADER_INVALID"
         );
         let mut result = Self {
@@ -402,7 +408,9 @@ impl ContextReader {
             n <= 4096 && self.line.ends_with('\n'),
             "ECONOMIC_CONTEXT_ROW_INVALID"
         );
-        let mut fields = self.line[..self.line.len() - 1].split(',');
+        let line = self.line.strip_suffix('\n').unwrap_or(&self.line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let mut fields = line.split(',');
         let event = counter(
             fields
                 .next()

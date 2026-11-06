@@ -274,7 +274,7 @@ fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("context-prices-000.csv");
     let text = format!(
-        "event_ns,oracle_px,mark_px\n0,3.0440,3.042500\n{},,4\n{},5,6\n",
+        "\"event_ns\",\"oracle_px\",\"mark_px\"\r\n0,3.0440,3.042500\r\n{},,4\r\n{},5,6\r\n",
         HOUR,
         2 * HOUR
     );
