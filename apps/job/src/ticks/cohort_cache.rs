@@ -674,6 +674,69 @@ pub fn manifest(root: &Path) -> Result<Manifest> {
     serde_json::from_reader(BufReader::new(file)).context("TICK_CACHE_MANIFEST_INVALID")
 }
 
+fn missing_hours(entries: &[Value]) -> Result<u64> {
+    entries.iter().try_fold(0_u64, |total, entry| {
+        let count = if let Some(hours) = entry.get("hours") {
+            u64::try_from(
+                hours
+                    .as_array()
+                    .context("TICK_CACHE_SOURCE_FIELD: hours")?
+                    .len(),
+            )?
+        } else {
+            1
+        };
+        total.checked_add(count).context("TICK_CACHE_COUNT_RANGE")
+    })
+}
+
+// The catalog keeps the full report; trial evidence carries its facts and reference.
+fn compact_published_report(report: &mut Value) -> Result<()> {
+    if !super::catalog::observed_published_files(report) {
+        return Ok(());
+    }
+    let source = report["source_manifest"]
+        .as_object_mut()
+        .context("TICK_CACHE_SOURCE_FIELD: source_manifest")?;
+    if let Some(files) = source.remove("files") {
+        let entries = files.as_array().context("TICK_CACHE_SOURCE_FIELD: files")?;
+        let bytes = entries.iter().try_fold(0_u64, |total, file| {
+            total
+                .checked_add(number(file, "size")?)
+                .context("TICK_CACHE_COUNT_RANGE")
+        })?;
+        source.insert("file_count".into(), json!(entries.len()));
+        source.insert("total_bytes".into(), json!(bytes));
+    }
+    if let Some(missing) = source.remove("missing") {
+        let entries = missing
+            .as_array()
+            .context("TICK_CACHE_SOURCE_FIELD: missing")?;
+        source.insert("missing_entry_count".into(), json!(entries.len()));
+        if !source.contains_key("missing_hour_count") {
+            source.insert("missing_hour_count".into(), json!(missing_hours(entries)?));
+        }
+    }
+    let fields = report
+        .as_object_mut()
+        .context("TICK_CACHE_SOURCE_FIELD: source_report")?;
+    if let Some(missing) = fields.remove("missing_partitions") {
+        let entries = missing
+            .as_array()
+            .context("TICK_CACHE_SOURCE_FIELD: missing_partitions")?;
+        fields.insert("missing_partition_count".into(), json!(entries.len()));
+        if !fields.contains_key("missing_hour_count") {
+            fields.insert("missing_hour_count".into(), json!(missing_hours(entries)?));
+        }
+    }
+    fields.insert(
+        "full_report_reference".into(),
+        json!(format!("{MANIFEST_FILE}#source_report")),
+    );
+    exact_json(report);
+    Ok(())
+}
+
 pub(super) fn load(
     root: &Path,
     request: &NativeTradeTickFactorEvaluationRequestV1,
@@ -684,7 +747,7 @@ pub(super) fn load(
         "TICK_CACHE_REPRESENTATION_REQUIRED"
     );
     let root = crate::catalog::catalog_root(root)?;
-    let manifest = manifest(&root)?;
+    let mut manifest = manifest(&root)?;
     let frame_bytes = frame_bytes(&manifest.representation)?;
     ensure!(
         Some(manifest.representation.as_str()) == request.input.cache_representation()
@@ -873,6 +936,7 @@ pub(super) fn load(
         .filter_map(|asset| asset.file.last_event_ns)
         .max()
         .context("TICK_CACHE_EMPTY_SELECTION")?;
+    compact_published_report(&mut manifest.source_report)?;
     let coverage = NativeTradeTickCoverageV1 {
         modality: NativeTickModalityV1::TradeTick,
         source_revision: manifest.source_revision,
@@ -1580,6 +1644,86 @@ mod resource_tests {
         identifiers::InstrumentId,
         types::{Price, Quantity},
     };
+
+    #[test]
+    fn published_wire_report_retains_facts_counts_and_reference_without_source_arrays() {
+        let temp = tempfile::tempdir().unwrap();
+        let reference = "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data";
+        let mut report = json!({
+            "source_reference":reference,"coverage":"OBSERVED_PUBLISHED_FILES",
+            "source_revision":"published-files-2026-01-01-2026-01-02",
+            "source_manifest":{"repository":"CryptoHFTData","source_reference":reference,
+                "coverage":"OBSERVED_PUBLISHED_FILES","start_date":"2026-01-01","end_date":"2026-01-03",
+                "profile":{"streams":[{"name":"trades"}]},
+                "files":[{"path":"first.parquet","size":10,"file_identity":"1:2:10:3:4"},
+                    {"path":"second.parquet","size":20,"file_identity":"1:3:20:3:4"}],
+                "missing":[{"hours":[1,2,3]},{"hour":7}],"missing_hour_count":4,
+                "unobserved_symbols":["UNLISTED"]},
+            "instrument_source":{"instruments":[{"id":"BTC.SIM"}]},
+            "source_coverage":{"trades":{"source_rows":8,"selected_rows":7}},
+            "missing_partitions":[{"hours":[1,2,3]},{"hour":7}],
+            "duplicate_trades":1,"deduplicated_trades":1,"deduplication_policy":"EARLIEST_RECEIPT_IDENTICAL_TRADE",
+            "source_rows":8,"selected_rows":7,"readback_records":6,"historical_availability":"UNVERIFIED"
+        });
+        publish(
+            &temp.path().join(MANIFEST_FILE),
+            &json!({"source_report":report}),
+        )
+        .unwrap();
+        let original = fs::read(temp.path().join(MANIFEST_FILE)).unwrap();
+        compact_published_report(&mut report).unwrap();
+        assert_eq!(
+            report["full_report_reference"],
+            "cohort-cache.json#source_report"
+        );
+        let source = &report["source_manifest"];
+        assert!(source.get("files").is_none() && source.get("missing").is_none());
+        assert_eq!(source["file_count"], 2);
+        assert_eq!(source["total_bytes"], 30);
+        assert_eq!(source["missing_entry_count"], 2);
+        assert_eq!(source["missing_hour_count"], 4);
+        assert_eq!(source["start_date"], "2026-01-01");
+        assert_eq!(source["unobserved_symbols"], json!(["UNLISTED"]));
+        assert!(report.get("missing_partitions").is_none());
+        assert_eq!(report["missing_partition_count"], 2);
+        assert_eq!(report["missing_hour_count"], 4);
+        assert_eq!(
+            report["instrument_source"]["instruments"][0]["id"],
+            "BTC.SIM"
+        );
+        assert_eq!(report["source_coverage"]["trades"]["source_rows"], 8);
+        assert_eq!(report["source_rows"], 8);
+        assert_eq!(report["selected_rows"], 7);
+        assert_eq!(report["readback_records"], 6);
+        assert_eq!(report["deduplicated_trades"], 1);
+        assert_eq!(report["historical_availability"], "UNVERIFIED");
+        let full: Value = serde_json::from_slice(&original).unwrap();
+        assert_eq!(
+            full["source_report"]["source_manifest"]["files"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            full["source_report"]["missing_partitions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(fs::read(temp.path().join(MANIFEST_FILE)).unwrap(), original);
+    }
+
+    #[test]
+    fn legacy_wire_report_keeps_original_source_arrays() {
+        let mut report = json!({"source_manifest":{"repository":"legacy/HF",
+            "files":[{"path":"fills.parquet","size":12}],"missing":[]},
+            "missing_partitions":[],"source_coverage":{"fills":{"source_rows":3}}});
+        let original = serde_json::to_vec(&report).unwrap();
+        compact_published_report(&mut report).unwrap();
+        assert_eq!(serde_json::to_vec(&report).unwrap(), original);
+    }
 
     #[test]
     fn cache_releases_flushed_trade_storage_and_idle_descriptors() {

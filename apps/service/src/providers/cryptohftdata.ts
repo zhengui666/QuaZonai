@@ -1,12 +1,15 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { DataSourcePlugin } from '../data-sources.ts';
+import { readDatasetConfig } from '../data-sources.ts';
 
 const dayMilliseconds = 86_400_000;
 const streamDirectories: Record<string, string> = {
   'spot orderbook': 'hyperliquid_spot',
   'perpetual orderbook': 'hyperliquid_futures',
   'perpetual mark_price': 'hyperliquid_futures',
+  'spot trades': 'hyperliquid_spot',
+  'perpetual trades': 'hyperliquid_futures',
 };
 function date(value: unknown): number {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('cryptohftdata_date_invalid');
@@ -19,7 +22,9 @@ function date(value: unknown): number {
 export const cryptohftdataDataPlugin: DataSourcePlugin = {
   name: 'qz.data.cryptohftdata', version: '1',
   fields: [{ key: 'archiveDirectory', label: 'CryptoHFTData 历史档案目录', type: 'text', required: true,
-    description: '包含 dataset.json、hyperliquid_spot 和 hyperliquid_futures 的已下载目录；相对服务数据目录解析。' }],
+    description: '包含 dataset.json、hyperliquid_spot 和 hyperliquid_futures 的已下载目录；相对服务数据目录解析。' },
+  { key: 'preparedConfig', label: '已准备研究数据集配置', type: 'text',
+    description: '该源经原生准备、导出后的 DatasetConfig JSON；相对服务数据目录解析。' }],
   async load(config, { dataDir, signal }) {
     if (typeof config.archiveDirectory !== 'string' || !config.archiveDirectory.trim()) throw new Error('cryptohftdata_config_invalid');
     const root = resolve(dataDir, config.archiveDirectory);
@@ -44,12 +49,14 @@ export const cryptohftdataDataPlugin: DataSourcePlugin = {
     const preparation = { archiveLoaded: true, nativePrepared: false, scientificQualification: 'UNVERIFIED' as const };
     const coverage = { startDateUtc: manifest.start_date_utc as string, endDateUtcInclusive: manifest.end_date_utc as string,
       days: manifest.days as number, objects: manifest.objects as number, bytes: manifest.bytes as number, streams };
+    const prepared = typeof config.preparedConfig === 'string' && config.preparedConfig.trim()
+      ? await readDatasetConfig(resolve(dataDir, config.preparedConfig)) : [];
     return [{ id: `cryptohftdata-hyperliquid-${manifest.start_date_utc}-${manifest.end_date_utc}`,
       name: `CryptoHFTData Hyperliquid · ${streams.join(', ')}`, assetClass: 'CRYPTO', currency: 'MULTI',
       source: 'CryptoHFTData Hyperliquid published historical Parquet files', start: new Date(start).toISOString(),
       end: new Date(end + dayMilliseconds).toISOString(), ready: false, preparation, inputCoverage: coverage,
       data: { archiveDirectory: root, acquisition: manifestFile, preparation, ...coverage,
-        coverage: 'PUBLISHED_ARCHIVE_RECORDS_NOT_EXCHANGE_WIDE_COMPLETENESS' } }];
+        coverage: 'PUBLISHED_ARCHIVE_RECORDS_NOT_EXCHANGE_WIDE_COMPLETENESS' } }, ...prepared];
   },
 };
 export default cryptohftdataDataPlugin;

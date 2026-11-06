@@ -125,14 +125,15 @@ pub fn quantity(value: &Field, precision: u8) -> Result<Quantity> {
 }
 
 pub fn parquet_rows(path: &Path, format: &str) -> Result<RowIter<'static>> {
+    parquet_file_rows(File::open(path)?, format)
+}
+
+pub fn parquet_file_rows(file: File, format: &str) -> Result<RowIter<'static>> {
     let file = match format {
-        "parquet" => File::open(path)?,
+        "parquet" => file,
         "parquet-zstd" => {
             let mut decoded = tempfile::tempfile()?;
-            std::io::copy(
-                &mut zstd::stream::read::Decoder::new(File::open(path)?)?,
-                &mut decoded,
-            )?;
+            std::io::copy(&mut zstd::stream::read::Decoder::new(file)?, &mut decoded)?;
             decoded
         }
         _ => anyhow::bail!("SOURCE_FORMAT_UNSUPPORTED"),

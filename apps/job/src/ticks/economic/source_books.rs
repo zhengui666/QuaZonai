@@ -1,7 +1,7 @@
 //! Read selected published book hours directly, without a second catalog.
 use super::books::Snapshot;
 use crate::source_market::{
-    mapped_field, parquet_rows, scalar, timestamp, BookSnapshot, Encoding, FlatSnapshots,
+    mapped_field, parquet_file_rows, scalar, timestamp, BookSnapshot, Encoding, FlatSnapshots,
 };
 use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, NaiveDate};
@@ -18,11 +18,11 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fmt,
-    fs::File,
+    fs::{File, Metadata},
     io::BufReader,
+    os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     sync::{Arc, Weak},
-    time::SystemTime,
 };
 
 const HOUR: u64 = 3_600_000_000_000;
@@ -41,6 +41,71 @@ struct SourceFile {
     path: String,
     size: u64,
     stream: Option<String>,
+    file_identity: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: i64,
+    changed: i64,
+}
+impl FileIdentity {
+    fn nanoseconds(seconds: i64, nanos: i64) -> Result<i64> {
+        seconds
+            .checked_mul(1_000_000_000)
+            .and_then(|value| value.checked_add(nanos))
+            .context("ECONOMIC_BOOK_SOURCE_FILE_TIME_RANGE")
+    }
+    fn metadata(value: &Metadata) -> Result<Self> {
+        Ok(Self {
+            device: value.dev(),
+            inode: value.ino(),
+            size: value.len(),
+            modified: Self::nanoseconds(value.mtime(), value.mtime_nsec())?,
+            changed: Self::nanoseconds(value.ctime(), value.ctime_nsec())?,
+        })
+    }
+    fn parse(value: &str) -> Result<Self> {
+        let mut parts = value.split(':');
+        let mut next = || {
+            parts
+                .next()
+                .context("ECONOMIC_BOOK_SOURCE_FILE_IDENTITY_INVALID")
+        };
+        let identity = Self {
+            device: next()?.parse()?,
+            inode: next()?.parse()?,
+            size: next()?.parse()?,
+            modified: next()?.parse()?,
+            changed: next()?.parse()?,
+        };
+        ensure!(
+            parts.next().is_none(),
+            "ECONOMIC_BOOK_SOURCE_FILE_IDENTITY_INVALID"
+        );
+        Ok(identity)
+    }
+    fn check(&self, file: &File, path: &Path) -> Result<()> {
+        ensure!(
+            *self == Self::metadata(&file.metadata()?)?
+                && *self == Self::metadata(&path.metadata()?)?,
+            "ECONOMIC_BOOK_SOURCE_FILE_CHANGED: {}",
+            path.display()
+        );
+        Ok(())
+    }
+}
+impl fmt::Display for FileIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}:{}:{}:{}:{}",
+            self.device, self.inode, self.size, self.modified, self.changed
+        )
+    }
 }
 #[derive(Deserialize)]
 struct Profile {
@@ -120,7 +185,7 @@ impl Layout {
 #[derive(Clone, Copy)]
 struct HourFile {
     at: u64,
-    size: u64,
+    identity: FileIdentity,
     layout: usize,
 }
 struct IndexedSource {
@@ -181,9 +246,15 @@ impl IndexBuilder {
             self.layouts[layout].path(at)? == file.path,
             "ECONOMIC_BOOK_SOURCE_PATH_INVALID"
         );
+        let identity = FileIdentity::parse(&file.file_identity)
+            .context("ECONOMIC_BOOK_SOURCE_FILE_IDENTITY_INVALID")?;
+        ensure!(
+            identity.size == file.size,
+            "ECONOMIC_BOOK_SOURCE_FILE_IDENTITY_INVALID"
+        );
         self.files.entry(id).or_default().push(HourFile {
             at,
-            size: file.size,
+            identity,
             layout,
         });
         Ok(())
@@ -355,22 +426,17 @@ impl IndexedSource {
 }
 struct CachedSource {
     path: PathBuf,
-    size: u64,
-    modified: SystemTime,
+    identity: FileIdentity,
     source: Weak<IndexedSource>,
 }
 thread_local! { static SOURCE: RefCell<Option<CachedSource>> = const { RefCell::new(None) }; }
 fn source(root: &Path) -> Result<Arc<IndexedSource>> {
     let path = root.join("book-snapshots.source.json").canonicalize()?;
-    let metadata = path.metadata()?;
-    let modified = metadata.modified()?;
+    let identity = FileIdentity::metadata(&path.metadata()?)?;
     SOURCE.with(|cached| {
         let mut cached = cached.borrow_mut();
         if let Some(previous) = &*cached {
-            if previous.path == path
-                && previous.size == metadata.len()
-                && previous.modified == modified
-            {
+            if previous.path == path && previous.identity == identity {
                 if let Some(source) = previous.source.upgrade() {
                     return Ok(source);
                 }
@@ -379,8 +445,7 @@ fn source(root: &Path) -> Result<Arc<IndexedSource>> {
         let source = Arc::new(IndexedSource::open(&path)?);
         *cached = Some(CachedSource {
             path,
-            size: metadata.len(),
-            modified,
+            identity,
             source: Arc::downgrade(&source),
         });
         Ok(source)
@@ -389,6 +454,9 @@ fn source(root: &Path) -> Result<Arc<IndexedSource>> {
 
 struct Hour {
     rows: RowIter<'static>,
+    file: File,
+    path: PathBuf,
+    identity: FileIdentity,
     layout: usize,
     snapshots: FlatSnapshots,
 }
@@ -430,6 +498,7 @@ impl Hour {
                 return Ok(Some(snapshot));
             }
         }
+        self.identity.check(&self.file, &self.path)?;
         self.snapshots.finish(&layout.stream.columns)
     }
 }
@@ -511,11 +580,16 @@ impl RawBooks {
             let relative = layout.path(file.at)?;
             let path = self.source.root.join(&relative).canonicalize()?;
             ensure!(
-                path.starts_with(&self.source.root) && path.metadata()?.len() == file.size,
+                path.starts_with(&self.source.root),
                 "ECONOMIC_BOOK_SOURCE_FILE_MISMATCH: {relative}"
             );
+            let opened = File::open(&path)?;
+            file.identity.check(&opened, &path)?;
             self.hour = Some(Hour {
-                rows: parquet_rows(&path, &layout.stream.format)?,
+                rows: parquet_file_rows(opened.try_clone()?, &layout.stream.format)?,
+                file: opened,
+                path,
+                identity: file.identity,
                 layout: file.layout,
                 snapshots: FlatSnapshots::default(),
             });
@@ -620,7 +694,11 @@ mod tests {
             "profile":{"streams":[{"name":"books","kind":"book_snapshots","format":"parquet",
                 "time_unit":"ms","available_time_unit":"ns","columns":{"symbol":"symbol","time":"event_time",
                     "available_at":"received_time","event_type":"event_type","side":"side","price":"price","size":"quantity"}}]},
-            "files":paths.map(|path| serde_json::json!({"path":path,"size":archive.join(path).metadata().unwrap().len(),"stream":"books"})),
+            "files":paths.map(|path| {
+                let metadata = archive.join(path).metadata().unwrap();
+                serde_json::json!({"path":path,"size":metadata.len(),"stream":"books",
+                    "file_identity":FileIdentity::metadata(&metadata).unwrap().to_string()})
+            }),
             "instrument_source":{"currencies":crate::catalog::currencies::definitions(std::slice::from_ref(&instrument)),
                 "instruments":[instrument],"symbol_ids":{"BTC_USDT":id}}
         })).unwrap()).unwrap();
@@ -660,6 +738,66 @@ mod tests {
             books.next().err().unwrap().to_string(),
             "ECONOMIC_BOOK_RECEIPT_ORDER_INVALID"
         );
+    }
+
+    fn rewrite_same_size_preserving_mtime(path: &Path) {
+        let before = path.metadata().unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        let price = bytes
+            .windows(5)
+            .position(|value| value == b"10.12")
+            .unwrap();
+        bytes[price + 4] = b'1';
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::fs::write(path, bytes).unwrap();
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(before.modified().unwrap()))
+            .unwrap();
+        let after = path.metadata().unwrap();
+        assert_eq!(
+            (
+                before.dev(),
+                before.ino(),
+                before.len(),
+                before.modified().unwrap()
+            ),
+            (
+                after.dev(),
+                after.ino(),
+                after.len(),
+                after.modified().unwrap()
+            )
+        );
+        assert_ne!(
+            (before.ctime(), before.ctime_nsec()),
+            (after.ctime(), after.ctime_nsec())
+        );
+    }
+
+    #[test]
+    fn raw_hour_identity_rejects_same_size_rewrites_before_open_and_at_read_end() {
+        assert_eq!(FileIdentity::nanoseconds(-1, 999_999_999).unwrap(), -1);
+        for reading in [false, true] {
+            let (root, id) = source(false);
+            let mut books = RawBooks::open(root.path(), id, START, START + 2 * HOUR).unwrap();
+            if reading {
+                assert!(books.next().unwrap().is_some());
+            }
+            rewrite_same_size_preserving_mtime(
+                &root
+                    .path()
+                    .join("archive/hyperliquid_spot/2026-01-01/00/BTC_USDT_orderbook.parquet"),
+            );
+            assert!(books
+                .next()
+                .err()
+                .unwrap()
+                .to_string()
+                .starts_with("ECONOMIC_BOOK_SOURCE_FILE_CHANGED:"));
+        }
     }
 
     #[test]

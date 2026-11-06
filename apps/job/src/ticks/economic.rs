@@ -1258,6 +1258,7 @@ fn small_cap_entries(
     event: u64,
     s: &NativeTickEconomicScenarioV1,
     contexts: &mut Option<ContextPrices>,
+    observed_books: Option<&BTreeMap<usize, books::Snapshot>>,
 ) -> Result<()> {
     let age = s.maximum_mark_age_ns.get();
     for row in rows {
@@ -1270,6 +1271,13 @@ fn small_cap_entries(
             .context("ECONOMIC_NATIVE_DEFINITION_REQUIRED")?;
         let a = &assets[i];
         let is_margin = matches!(a.instrument, InstrumentAny::CryptoPerpetual(_));
+        let current = if is_margin { margin } else { cash }.current_quantity(a.instrument.id());
+        if !current.is_zero()
+            && target.is_sign_negative() == current.is_sign_negative()
+            && target.abs() <= current.abs()
+        {
+            continue;
+        }
         let capital = value(
             if is_margin { margin } else { cash },
             assets,
@@ -1319,6 +1327,7 @@ fn small_cap_entries(
             Decimal::ZERO
         };
         let mut capped = target.abs().min(allowed / unit);
+        let mut quote_budget = None;
         if !is_margin {
             let fee = (decimal(&s.spot_taker_fee_bps)? + decimal(&s.extra_cost_bps)?)
                 / Decimal::from(10000);
@@ -1342,10 +1351,11 @@ fn small_cap_entries(
                 row.target_quantity = None;
                 continue;
             };
-            capped =
-                capped.min(held + (available + owned).min(owned).max(Decimal::ZERO) / quote_unit);
+            let budget = (available + owned).min(owned).max(Decimal::ZERO);
+            capped = capped.min(held + budget / quote_unit);
+            quote_budget = Some((budget, fee));
         }
-        let quantity = small_legal_quantity(
+        let mut quantity = small_legal_quantity(
             &a.instrument,
             capped
                 * if target < Decimal::ZERO {
@@ -1355,6 +1365,59 @@ fn small_cap_entries(
                 },
             native_price,
         )?;
+        if let Some(snapshots) = observed_books {
+            let difference = quantity - current;
+            let closing = if !current.is_zero()
+                && !difference.is_zero()
+                && current.is_sign_negative() != difference.is_sign_negative()
+            {
+                current.abs().min(difference.abs())
+            } else {
+                Decimal::ZERO
+            };
+            if difference.abs() > closing {
+                let snapshot = snapshots
+                    .get(&i)
+                    .context("ECONOMIC_BOOK_SNAPSHOT_REQUIRED")?;
+                let budget = if closing > Decimal::ZERO {
+                    allowed
+                } else {
+                    (allowed - current.abs() * unit).max(Decimal::ZERO)
+                };
+                let quote_fx = unit / (native_price * a.instrument.multiplier().as_decimal());
+                let buy = difference > Decimal::ZERO;
+                let mut bounded = native::affordable_depth_quantity(
+                    &a.instrument,
+                    snapshot.levels(buy),
+                    difference.abs(),
+                    closing,
+                    budget / quote_fx,
+                    Decimal::ZERO,
+                )?;
+                if let Some((budget, fee)) = quote_budget.filter(|_| buy) {
+                    bounded = native::affordable_depth_quantity(
+                        &a.instrument,
+                        snapshot.levels(true),
+                        bounded,
+                        closing,
+                        budget,
+                        fee,
+                    )?;
+                }
+                let change = small_legal_quantity(
+                    &a.instrument,
+                    bounded * if buy { Decimal::ONE } else { -Decimal::ONE },
+                    snapshot
+                        .price(buy)
+                        .context("ECONOMIC_BOOK_EXECUTION_PRICE_REQUIRED")?,
+                )?;
+                if change.is_zero() {
+                    row.target_quantity = None;
+                    continue;
+                }
+                quantity = current + change;
+            }
+        }
         // Funding inventory may only grow here; a tighter cap cannot sell an existing reserve.
         row.target_quantity = if fx_ids.contains(&a.instrument.id().to_string()) && quantity < held
         {
@@ -2226,9 +2289,6 @@ pub fn replay_models_with_funding(
         }
         if observed {
             for (&i, frame) in &snapshots {
-                let Some(price) = frame.midpoint else {
-                    continue;
-                };
                 let a = &mut assets[i];
                 let ledger = if matches!(a.instrument, InstrumentAny::CurrencyPair(_)) {
                     &cash
@@ -2246,6 +2306,19 @@ pub fn replay_models_with_funding(
                     Decimal::ZERO
                 };
                 let buy = due.is_some_and(|(_, _, target)| target > held);
+                let reducing = due.is_some_and(|(_, _, target)| {
+                    !held.is_zero()
+                        && (target.is_zero()
+                            || target.is_sign_negative() == held.is_sign_negative()
+                                && target.abs() < held.abs())
+                });
+                let Some(price) =
+                    frame
+                        .midpoint
+                        .or_else(|| if reducing { frame.price(buy) } else { None })
+                else {
+                    continue;
+                };
                 let capacity = frame.capacity(buy) * decimal(&s.participation_fraction)?;
                 let target = if let Some((_, _, quantity)) = due {
                     let executable = frame
@@ -2294,14 +2367,16 @@ pub fn replay_models_with_funding(
         }
         let converting = cash.is_none();
         let mut conversion_advanced = false;
+        let bridge_price = if observed {
+            snapshots.get(&bridge).and_then(|frame| frame.price(false))
+        } else {
+            assets[bridge].mark.map(|(_, price)| price)
+        };
         if converting
             && ((!observed && group.contains(&bridge)) || snapshots.contains_key(&bridge))
-            && assets[bridge].mark.is_some()
+            && bridge_price.is_some()
         {
-            let price = snapshots
-                .get(&bridge)
-                .and_then(|frame| frame.price(false))
-                .unwrap_or(assets[bridge].mark.unwrap().1);
+            let price = bridge_price.unwrap();
             if conversion_due.is_none() {
                 conversion_due = Some(
                     event
@@ -2414,6 +2489,7 @@ pub fn replay_models_with_funding(
                 event,
                 s,
                 &mut contexts,
+                observed.then_some(&snapshots),
             )?;
             small_cap_entries(
                 small,
@@ -2425,6 +2501,7 @@ pub fn replay_models_with_funding(
                 event,
                 s,
                 &mut contexts,
+                observed.then_some(&snapshots),
             )?;
             if funding_unknown.is_some() {
                 for row in &mut marks_margin {
@@ -2742,7 +2819,7 @@ pub fn replay_models_with_funding(
     };
     if observed {
         result.model = "SEGREGATED_OBSERVED_L2_IOC_V1".into();
-        result.methods.insert("execution".into(), "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account.".into());
+        result.methods.insert("execution".into(), "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account. Cash buys and capped new exposure use the actual execution-side depth cost, with declared fees and native Money rounding accounted for. A one-sided snapshot may only reduce existing inventory through an IOC limit at the depth actually touched; it does not create a BBO or a NAV mark. Two-sided snapshots retain market IOC orders.".into());
         result.methods.insert("capital".into(), "Initial USDT wealth is explicitly mapped to USDT0 in a native bootstrap cash account. Delayed real-book IOC sales convert that inventory to USDC, including native depth, size limits and fees. Realized net proceeds become one initial cash/margin split; unconverted dust remains in total wealth. No running transfers or reinjection.".into());
         result.methods.insert("policy".into(), if small.is_some() { "Capped small-capital entry intent and timeout retain the registered policy. Features advance on observed trade receipt cohorts; execution advances only on complete published book snapshots. Unexecutable size/minimum-notional exits retain their inventory and pending intent without generating native orders. A later legal snapshot may retry; dust is never called closed." } else { "Registered global decision grid and absolute score-proportional capped gross targets. Coalesced delayed targets execute against a later complete published book; spot negatives remain cash, perpetual targets are signed. Multiple model scores share one target calculation, cash balance, margin balance and matching liquidity." }.into());
         result

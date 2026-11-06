@@ -65,6 +65,29 @@ test('archive loading uses manifest dates and counts without claiming BAR or Tra
   } finally { await f.clean(); }
 });
 
+test('the same CryptoHFTData plugin loads published trades and an exported research configuration', async () => {
+  const f = await archive();
+  try {
+    f.manifest.datasets.push('spot trades', 'perpetual trades'); await f.save();
+    const request = { schema_version: 1,
+      input: { modality: 'TRADE_TICK', instrument_ids: ['BTC-USD-PERP.HYPERLIQUID'], event_start_ns: '0', event_end_ns: '100', decision_cutoff_ns: '100',
+        source_revision: 'published-files-2026-02-12-2026-10-13', availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2' },
+      sampling: { kind: 'RECEIVED_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '10' },
+      parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '30', validation_end_ns: '60' };
+    await mkdir(join(f.dataDir, 'prepared'));
+    await writeFile(join(f.dataDir, 'prepared/dataset.json'), JSON.stringify({ id: 'cryptohftdata-research', name: 'Prepared published trades',
+      assetClass: 'CRYPTO', currency: 'MULTI', source: 'CryptoHFTData', start: null, end: null, ready: true,
+      nativeModality: 'TRADE_TICK', preparation: { archiveLoaded: true, nativePrepared: true, scientificQualification: 'UNVERIFIED' },
+      data: { catalog: 'catalog', nativeInput: { modality: 'TRADE_TICK', request } } }));
+    const result = await cryptohftdata.load({ archiveDirectory: 'archive', preparedConfig: 'prepared/dataset.json' }, { dataDir: f.dataDir });
+    assert.equal(result.length, 2); assert.equal(result[0]!.ready, false);
+    assert.deepEqual(result[0]!.inputCoverage!.streams, f.manifest.datasets);
+    assert.equal(result[1]!.id, 'cryptohftdata-research'); assert.equal(result[1]!.ready, true);
+    assert.equal(result[1]!.data.catalog, join(f.dataDir, 'prepared/catalog'));
+    assert.equal(result[1]!.nativeModality, 'TRADE_TICK');
+  } finally { await f.clean(); }
+});
+
 test('incomplete or malformed descriptors and missing archive directories are rejected', async () => {
   const f = await archive();
   const load = () => cryptohftdata.load({ archiveDirectory: 'archive' }, { dataDir: f.dataDir });

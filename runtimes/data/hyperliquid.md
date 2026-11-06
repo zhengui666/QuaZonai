@@ -55,6 +55,10 @@ the listed existing files, not a complete hourly grid or exchange history.
 those with no matching files. The first or last published file is not a listing
 or delisting timestamp. `IMPORTED` means the observed files converted, while
 missing hours and economic valuation gaps remain unknown.
+Missing hours are grouped by stream, UTC date and source symbol. A single-hour
+entry keeps its exact path; a multi-hour entry uses `{hour}` in `pattern` and
+lists the precise missing `hours`. `missing_hour_count` counts missing hourly
+paths, while the length of `missing` counts groups.
 
 For raw book replay, write a source manifest and use its parent directory as the
 book source root. Planning runs offline, references only existing files in the
@@ -71,6 +75,9 @@ python3 -B runtimes/data/source_plugins.py plan cryptohftdata-hyperliquid \
 This creates only the selected file manifest; raw replay reads those Parquet
 files directly without preparing a second full book catalog. `plan` does not
 accept native conversion or trade cache options.
+The selection records each local file's device, inode, size, modification time
+and change time. Replay compares this identity before and after reading an hour;
+corrected, replaced or relocated files require a new source selection.
 
 ```sh
 python3 -B runtimes/data/source_plugins.py convert cryptohftdata-hyperliquid \
@@ -155,6 +162,8 @@ Mark/index prices and hourly fractional funding-rate observations remain their
 own native record types; a funding-rate observation is not a funding payment.
 
 The loaded raw archive remains `ready: false` with `nativePrepared: false`.
+Point the service plugin's optional `preparedConfig` at the exported DatasetConfig
+to register prepared research through `qz.data.cryptohftdata` itself.
 Explicit trade conversion supplies real TRADE_TICK input or a declared received-time
 cohort cache; book/context conversion supplies book/quote/price catalogs.
 No candles or market fills are fabricated from book snapshots. Historical instrument parameters,

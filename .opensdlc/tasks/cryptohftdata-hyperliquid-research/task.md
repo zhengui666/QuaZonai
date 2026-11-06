@@ -56,6 +56,12 @@ Implemented: original receipt-clock grouping and labels; bounded shared raw-book
 
 Focused source Python tests (55), service export/admission/exposure tests (22), model/replay protocol tests (11), and Web clock presentation tests (5) passed. Service/research type checks passed. The native schema was generated from the changed contracts using the repository generator. Independent review found the native preparation clock mismatch; it is corrected with a cross-partition regression. Native compilation/tests and final review are pending CI. No new scientific trials or replays have run.
 
+The first [PR #284 CI](https://github.com/zhengui666/QuaZonai/actions/runs/42218591254) built the native programs and passed TS/source/deployment and Web/e2e. The science suite stopped at a union test missing its new receive-time target sample; the sample is added. Review corrections cover cumulative L2 cash cost, the actual entry-notional cap, one-sided exits and local source-file version changes. File selection records the existing local device/inode/size/mtime/ctime identity and checks it around reading; no new content-hash procedure is introduced.
+
+Receive-time final reservation now distinguishes disjoint causal windows within the same original prepared study, after checking its original primary/sealed binding. Other studies, modalities, old records and existing finals retain the raw-event comparison. Gap metadata groups missing hours without dropping their exact count, and new-source coverage responses reference the full catalog report instead of repeating million-file arrays in every trial.
+
+The same plugin can load the exported research configuration through `preparedConfig`. Public trade inventory is complete: 1,418,278 files, 14,438,943,369 bytes for the original supported universe. Trade and official historical funding downloads are running; source statistics, data preparation, installation of this continuation and financial evaluation remain unfinished.
+
 <a id="delivery"></a>
 ## Delivery
 

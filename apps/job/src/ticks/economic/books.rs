@@ -110,6 +110,14 @@ impl Snapshot {
             .find(|row| row.action == BookAction::Add && row.order.side == Some(side))
             .map(|row| row.order.price.as_decimal())
     }
+    pub fn levels(&self, buy: bool) -> impl Iterator<Item = (Decimal, Decimal)> + '_ {
+        let side = if buy { OrderSide::Sell } else { OrderSide::Buy };
+        self.deltas
+            .deltas
+            .iter()
+            .filter(move |row| row.action == BookAction::Add && row.order.side == Some(side))
+            .map(|row| (row.order.price.as_decimal(), row.order.size.as_decimal()))
+    }
 }
 
 pub(super) struct Books(Source);

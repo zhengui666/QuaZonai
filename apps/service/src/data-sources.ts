@@ -25,10 +25,13 @@ const local: DataSourcePlugin = {
   fields: [{ key: 'path', label: '数据集配置文件', type: 'text', required: true, description: '现有数据工具导出的 DatasetConfig JSON 文件；相对数据目录解析。' }],
   async load(config, context) {
     const file = resolve(context.dataDir, String(config.path));
-    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
-    return datasets(Array.isArray(parsed) ? parsed : [parsed]).map(value => resolveDatasetPaths(value, dirname(file)));
+    return readDatasetConfig(file);
   },
 };
+export async function readDatasetConfig(file: string): Promise<DatasetConfig[]> {
+  const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+  return datasets(Array.isArray(parsed) ? parsed : [parsed]).map(value => resolveDatasetPaths(value, dirname(file)));
+}
 function datasets(value: unknown): DatasetConfig[] {
   validateNumbers(value);
   if (!Array.isArray(value)) throw new Problem('data_source_datasets_invalid');

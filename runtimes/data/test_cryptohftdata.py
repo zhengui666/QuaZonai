@@ -59,6 +59,10 @@ class CryptoHFTDataTests(unittest.TestCase):
         self.assertEqual(definitions["context-zstd"]["columns"]["time"], "received_time")
         self.assertEqual(definitions["context-zstd"]["format"], "parquet-zstd")
         self.assertEqual(selection["missing"], [])
+        for file in selection["files"]:
+            state = (self.archive / file["path"]).stat()
+            self.assertEqual(file["file_identity"], ":".join(str(value) for value in
+                (state.st_dev, state.st_ino, state.st_size, state.st_mtime_ns, state.st_ctime_ns)))
         self.assertNotIn("sha256", json.dumps(selection))
         self.assertNotIn("huggingface", selection["source_reference"])
 
@@ -68,8 +72,27 @@ class CryptoHFTDataTests(unittest.TestCase):
         selection = self.select(streams=["books"], hours=[22, 23])
         self.assertEqual(len(selection["files"]), 1)
         self.assertEqual(len(selection["missing"]), 1)
+        self.assertEqual(selection["missing_hour_count"], 1)
         self.assertIn("/22/BTC_", selection["missing"][0]["pattern"])
+        self.assertNotIn("hours", selection["missing"][0])
         self.assertEqual(selection["selection"]["symbols"], ["BTC"])
+
+    def test_missing_hours_group_by_stream_date_and_symbol_with_exact_count(self):
+        for day in ("2026-10-12", "2026-10-13"):
+            self.file(f"hyperliquid_futures/{day}/23/BTC_trades.parquet")
+        result = cryptohftdata.selection(self.archive, "perpetual", ["BTC", "MISSING"],
+            "2026-10-12", "2026-10-14", streams=["books", "trades"], hours=[21, 22, 23])
+        self.assertEqual(result["missing_hour_count"], 22)
+        self.assertEqual(len(result["missing"]), 8)
+        for item in result["missing"]:
+            self.assertIn(item["stream"], ("books", "trades"))
+            self.assertIn(item["date"], ("2026-10-12", "2026-10-13"))
+            self.assertIn("/{hour}/", item["pattern"])
+            expected = [21, 22] if item["stream"] == "trades" and "/BTC_" in item["pattern"] else [21, 22, 23]
+            self.assertEqual(item["hours"], expected)
+        self.assertEqual(sum(len(item["hours"]) for item in result["missing"]), 22)
+        self.assertEqual(result["selection"]["symbols"], ["BTC", "MISSING"])
+        self.assertEqual(result["unobserved_symbols"], ["MISSING"])
 
     def test_trade_stream_preserves_real_columns_clocks_and_aggressor_direction(self):
         for market, symbol, compressed in (("perpetual", "BTC", False), ("spot", "UBTC_USDC", True)):

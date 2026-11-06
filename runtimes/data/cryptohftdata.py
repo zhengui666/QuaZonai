@@ -42,7 +42,7 @@ def inspect(directory):
             "source_reference": SOURCE, "start_date": start.isoformat(),
             "end_date": (end + datetime.timedelta(days=1)).isoformat(),
             "objects": manifest["objects"], "bytes": manifest["bytes"],
-            "streams": ["spot orderbook", "perpetual orderbook", "perpetual mark_price"],
+            "streams": manifest.get("datasets", ["spot orderbook", "perpetual orderbook", "perpetual mark_price"]),
             "coverage": "PUBLISHED_ARCHIVE_FILES", "research_qualified": False}
 
 
@@ -64,27 +64,33 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
     if not hours or any(type(hour) is not int or not 0 <= hour < 24 for hour in hours):
         raise ValueError("hours must be integers from 0 through 23")
     files, missing, definitions, found = [], [], {}, set()
+    missing_hour_count = 0
     day = start
     while day < end:
+        day_name, missing_hours = day.isoformat(), {}
         for hour in hours:
             for symbol in symbols:
                 for kind in streams:
                     suffix = STREAMS[kind]
-                    relative = f"{MARKETS[market]}/{day.isoformat()}/{hour:02}/{symbol}_{suffix}.parquet"
+                    relative = f"{MARKETS[market]}/{day_name}/{hour:02}/{symbol}_{suffix}.parquet"
                     variants = [root / relative, root / (relative + ".zst")]
                     present = [path for path in variants if path.is_file()]
                     if len(present) > 1:
                         raise ValueError(f"ambiguous plain and compressed source file: {relative}")
                     if not present:
-                        missing.append({"stream": kind, "date": day.isoformat(), "pattern": relative + "[.zst]"})
+                        missing_hours.setdefault((kind, symbol), []).append(hour)
+                        missing_hour_count += 1
                         continue
                     path = present[0]
                     if not path.resolve().is_relative_to(root):
                         raise ValueError("source file resolves outside the archive directory")
                     compressed = path.suffix == ".zst"
                     name = kind + ("-zstd" if compressed else "")
+                    state = path.stat()
                     files.append({"path": path.relative_to(root).as_posix(),
-                                  "size": path.stat().st_size, "stream": name})
+                                  "size": state.st_size, "stream": name,
+                                  "file_identity": ":".join(str(value) for value in (state.st_dev, state.st_ino,
+                                      state.st_size, state.st_mtime_ns, state.st_ctime_ns))})
                     found.add(symbol)
                     if name not in definitions:
                         if kind == "books":
@@ -104,6 +110,13 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
                                              "paths": [f"{MARKETS[market]}/{{date}}/{{hour}}/*_{suffix}.parquet" + (".zst" if compressed else "")]}
                         if kind == "trades":
                             definitions[name]["sides"] = {"true": "SELLER", "false": "BUYER"}
+        for (kind, symbol), absent in missing_hours.items():
+            hour = f"{absent[0]:02}" if len(absent) == 1 else "{hour}"
+            item = {"stream": kind, "date": day_name,
+                    "pattern": f"{MARKETS[market]}/{day_name}/{hour}/{symbol}_{STREAMS[kind]}.parquet[.zst]"}
+            if len(absent) > 1:
+                item["hours"] = absent
+            missing.append(item)
         day += datetime.timedelta(days=1)
     if not files:
         raise ValueError("no downloaded source files match the selection")
@@ -114,6 +127,7 @@ def selection(directory, market, symbols, start_date, end_date, streams=None, ho
             "retrieved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             "profile": {"streams": list(definitions.values())}, "files": files, "missing": missing,
+            "missing_hour_count": missing_hour_count,
             "selected_path_prefixes": [MARKETS[market] + "/"],
             "selection": {"market": market, "symbols": symbols, "hours": hours, "streams": streams},
             "unobserved_symbols": sorted(set(symbols) - found), "coverage": COVERAGE}

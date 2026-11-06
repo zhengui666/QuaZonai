@@ -992,7 +992,8 @@ def cryptohftdata_plan(args):
     output = local_path(args.output)
     cryptohftdata.publish(output, manifest)
     return {"plugin": cryptohftdata.PLUGIN, "status": "PLANNED", "source_manifest": str(output),
-            "files": len(manifest["files"]), "missing": len(manifest["missing"]), "research_qualified": False}
+            "files": len(manifest["files"]), "missing": len(manifest["missing"]),
+            "missing_hours": manifest["missing_hour_count"], "research_qualified": False}
 
 
 def cryptohftdata_convert(args):
