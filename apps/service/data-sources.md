@@ -14,10 +14,12 @@ The built-in disabled `qz.data.cryptohftdata` provider registers an already down
 CryptoHFTData Hyperliquid archive. Set `archiveDirectory` to the directory containing
 `dataset.json`, save, enable and load. It reads the completed manifest and original
 market directories in place, so a 279 GB archive needs no second copy or full file scan.
-The dataset exposes its actual dates, bytes, object count and spot/perpetual book and
-mark-price streams. See the [history guide](../../runtimes/data/hyperliquid.md) for
-bounded native conversion. Raw archives have `ready: false`: books and marks are
-separate from the existing BAR/TradeTick research inputs.
+The dataset exposes its actual dates, bytes, object count and published book,
+mark-price and trade streams. See the [history guide](../../runtimes/data/hyperliquid.md)
+for conversion and raw L2 replay. Raw archives have `ready: false`.
+After native preparation and dataset export, set `preparedConfig` to the exported
+DatasetConfig JSON and load the same plugin. It registers both the raw descriptor
+and the prepared research datasets through the existing configuration parser.
 
 The previous `qz.data.hyperliquid` HF provider is removed from discovery and active
 selection. Its stored historical dataset references remain available to existing

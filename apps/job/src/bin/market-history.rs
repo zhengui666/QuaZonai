@@ -4,8 +4,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use nautilus_core::UnixNanos;
 use nautilus_model::{
-    data::Data,
-    identifiers::{InstrumentId, Symbol},
+    data::{Data, TradeTick},
+    identifiers::{InstrumentId, Symbol, TradeId},
     instruments::{Instrument, InstrumentAny},
 };
 use serde::{Deserialize, Serialize};
@@ -86,6 +86,11 @@ enum Command {
         /// Derived event-time cohorts with explicit signed aggressive quantity.
         #[arg(long, conflicts_with_all = ["trade_ticks", "cohort_cache", "bar_seconds", "bar_milliseconds", "resume"])]
         cohort_flow_cache: bool,
+        /// Select and group original collector receive times instead of exchange event times.
+        #[arg(long, requires = "maximum_receive_delay_ns")]
+        received_time: bool,
+        #[arg(long, requires = "received_time")]
+        maximum_receive_delay_ns: Option<u64>,
         /// Select declared source directories without requiring unrelated streams or paths.
         #[arg(long = "path-prefix")]
         path_prefixes: Vec<String>,
@@ -151,6 +156,7 @@ struct Manifest {
     retrieved_at: DateTime<Utc>,
     source_root: Option<PathBuf>,
     source_reference: Option<String>,
+    coverage: Option<String>,
     start_date: NaiveDate,
     end_date: NaiveDate,
     profile: Profile,
@@ -189,6 +195,12 @@ struct Report {
     attribution: String,
     event_start_ns: u64,
     event_end_ns: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_event_start_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_event_end_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maximum_receive_delay_ns: Option<u64>,
     source_rows: u64,
     outside_window_rows: u64,
     filtered_rows: u64,
@@ -206,6 +218,12 @@ struct Report {
     readback_records: u64,
     missing_partitions: Vec<serde_json::Value>,
     historical_availability: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deduplication_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deduplicated_trades: Option<u64>,
     registered_in_quazonai: bool,
 }
 
@@ -349,6 +367,35 @@ fn file_symbol(path: &Path) -> Result<String> {
 }
 
 impl Manifest {
+    fn cryptohftdata(&self) -> bool {
+        self.repository == "CryptoHFTData"
+            && self.source_reference.as_deref()
+                == Some("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data")
+    }
+
+    fn trade_revision(&self) -> bool {
+        if self.revision.len() == 40 && self.revision.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return true;
+        }
+        self.cryptohftdata()
+            && self
+                .revision
+                .strip_prefix("published-files-")
+                .is_some_and(|dates| {
+                    dates
+                        .get(..10)
+                        .zip(dates.get(11..))
+                        .is_some_and(|(start, end)| {
+                            dates.as_bytes().get(10) == Some(&b'-')
+                                && start
+                                    .parse::<NaiveDate>()
+                                    .ok()
+                                    .zip(end.parse::<NaiveDate>().ok())
+                                    .is_some_and(|(start, end)| start <= end)
+                        })
+                })
+    }
+
     fn root(&self, manifest_path: &Path) -> Result<PathBuf> {
         self.source_root
             .as_deref()
@@ -407,6 +454,8 @@ struct ImportOptions<'a> {
     trade_ticks: bool,
     cohort_cache: bool,
     cohort_flow_cache: bool,
+    received_time: bool,
+    maximum_receive_delay_ns: Option<u64>,
     path_prefixes: &'a [String],
     resume: bool,
     _max_trade_rows: u64,
@@ -416,6 +465,60 @@ struct ImportOptions<'a> {
 impl ImportOptions<'_> {
     fn is_cache(&self) -> bool {
         self.cohort_cache || self.cohort_flow_cache
+    }
+}
+
+fn same_execution(a: &TradeTick, b: &TradeTick) -> bool {
+    a.price == b.price && a.size == b.size && a.aggressor_side == b.aggressor_side
+}
+
+#[derive(Default)]
+struct PublishedTrades {
+    seen: BTreeMap<InstrumentId, BTreeMap<(UnixNanos, TradeId), TradeTick>>,
+    latest: BTreeMap<InstrumentId, UnixNanos>,
+}
+
+impl PublishedTrades {
+    fn admit(&mut self, trade: TradeTick, maximum_delay: Option<u64>) -> Result<bool> {
+        let seen = self.seen.entry(trade.instrument_id).or_default();
+        let key = (trade.ts_event, trade.trade_id);
+        if let Some(previous) = seen.get(&key) {
+            ensure!(
+                same_execution(previous, &trade),
+                "CONFLICTING_SOURCE_TRADE_ID"
+            );
+            ensure!(
+                previous.ts_init <= trade.ts_init,
+                "SOURCE_RECEIVE_ORDER_INVALID"
+            );
+            return Ok(false);
+        }
+        ensure!(
+            self.latest
+                .get(&trade.instrument_id)
+                .is_none_or(|last| *last <= trade.ts_init),
+            "SOURCE_RECEIVE_ORDER_INVALID"
+        );
+        if let Some(delay) = maximum_delay {
+            ensure!(
+                trade
+                    .ts_init
+                    .as_u64()
+                    .checked_sub(trade.ts_event.as_u64())
+                    .is_some_and(|d| d <= delay),
+                "SOURCE_RECEIVE_DELAY_EXCEEDED"
+            );
+            let minimum_event = trade.ts_init.as_u64().saturating_sub(delay);
+            while seen
+                .first_key_value()
+                .is_some_and(|((event, _), _)| event.as_u64() < minimum_event)
+            {
+                seen.pop_first();
+            }
+        }
+        self.latest.insert(trade.instrument_id, trade.ts_init);
+        seen.insert(key, trade);
+        Ok(true)
     }
 }
 
@@ -466,13 +569,41 @@ fn selected_missing(manifest: &Manifest, prefixes: &[String]) -> Vec<serde_json:
     manifest
         .missing
         .iter()
-        .filter(|missing| {
-            missing
-                .get("pattern")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(|path| selected_path(path, prefixes))
+        .filter_map(|missing| {
+            let Some(path) = missing.get("pattern").and_then(serde_json::Value::as_str) else {
+                return Some(missing.clone());
+            };
+            if let Some(hours) = missing
+                .get("hours")
+                .and_then(serde_json::Value::as_array)
+                .filter(|_| path.contains("{hour}"))
+            {
+                let hours = hours
+                    .iter()
+                    .filter(|hour| {
+                        hour.as_u64().is_some_and(|hour| {
+                            selected_path(&path.replace("{hour}", &format!("{hour:02}")), prefixes)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if hours.is_empty() {
+                    return None;
+                }
+                let mut selected = missing.clone();
+                if hours.len() == 1 {
+                    let hour = hours[0].as_u64().unwrap();
+                    selected.as_object_mut().unwrap().remove("hours");
+                    selected["hour"] = serde_json::json!(hour);
+                    selected["pattern"] =
+                        serde_json::json!(path.replace("{hour}", &format!("{hour:02}")));
+                } else {
+                    selected["hours"] = serde_json::Value::Array(hours);
+                }
+                return Some(selected);
+            }
+            selected_path(path, prefixes).then(|| missing.clone())
         })
-        .cloned()
         .collect()
 }
 
@@ -484,16 +615,25 @@ fn import(
 ) -> Result<Report> {
     let (bar_seconds, bar_milliseconds) = options.bar_interval;
     let manifest: Manifest = json(manifest_path)?;
+    let published_source = manifest.cryptohftdata();
+    let observed_source =
+        published_source && manifest.coverage.as_deref() == Some("OBSERVED_PUBLISHED_FILES");
     ensure!(
         manifest.schema_version == 1 && !manifest.license.is_empty(),
         "SOURCE_MANIFEST_INVALID"
     );
     let prefixes = selection_prefixes(&manifest, options.path_prefixes)?;
     ensure!(
-        !(options.trade_ticks || options.is_cache())
-            || (manifest.revision.len() == 40
-                && manifest.revision.bytes().all(|c| c.is_ascii_hexdigit())),
+        !(options.trade_ticks || options.is_cache()) || manifest.trade_revision(),
         "SOURCE_REVISION_REQUIRED"
+    );
+    ensure!(
+        !options.received_time || (options.trade_ticks || options.is_cache()),
+        "RECEIVED_TIME_REQUIRES_TRADE_INPUT"
+    );
+    ensure!(
+        options.received_time == options.maximum_receive_delay_ns.is_some(),
+        "RECEIVED_TIME_REQUIRES_MAXIMUM_DELAY"
     );
     ensure!(
         !options.resume || options.trade_ticks,
@@ -503,12 +643,15 @@ fn import(
         !options.trade_ticks || (bar_seconds.is_none() && bar_milliseconds.is_none()),
         "TRADE_INPUT_RESOURCE_OR_MODALITY_INVALID"
     );
-    let selected_files = manifest
+    let mut selected_files = manifest
         .files
         .iter()
         .filter(|f| f.stream.is_some() && selected_path(&f.path, &prefixes))
         .collect::<Vec<_>>();
     ensure!(!selected_files.is_empty(), "SOURCE_SELECTION_EMPTY");
+    if published_source {
+        selected_files.sort_by(|a, b| a.path.cmp(&b.path));
+    }
     if options.trade_ticks || options.is_cache() {
         for file in &selected_files {
             ensure!(
@@ -517,6 +660,14 @@ fn import(
                     .kind
                     == "trades",
                 "TRADE_TICKS_REQUIRE_TRADE_ONLY_SELECTION"
+            );
+            ensure!(
+                !options.received_time
+                    || manifest
+                        .stream(file.stream.as_deref().unwrap())?
+                        .columns
+                        .contains_key("available_at"),
+                "RECEIVED_TIME_REQUIRES_SOURCE_AVAILABILITY"
             );
         }
     }
@@ -618,17 +769,28 @@ fn import(
     let mut cache = options
         .is_cache()
         .then(|| {
-            let builder = if options.cohort_flow_cache {
-                job::ticks::cohort_cache::Builder::new_flow
+            if options.received_time {
+                job::ticks::cohort_cache::Builder::new_received(
+                    output,
+                    domain::ticks::MAXIMUM_COHORT_ROWS,
+                    domain::ticks::MAXIMUM_TICK_ROWS as usize,
+                    options.max_output_bytes,
+                    options.cohort_flow_cache,
+                    options.maximum_receive_delay_ns.unwrap(),
+                )
             } else {
-                job::ticks::cohort_cache::Builder::new
-            };
-            builder(
-                output,
-                domain::ticks::MAXIMUM_COHORT_ROWS,
-                domain::ticks::MAXIMUM_TICK_ROWS as usize,
-                options.max_output_bytes,
-            )
+                let builder = if options.cohort_flow_cache {
+                    job::ticks::cohort_cache::Builder::new_flow
+                } else {
+                    job::ticks::cohort_cache::Builder::new
+                };
+                builder(
+                    output,
+                    domain::ticks::MAXIMUM_COHORT_ROWS,
+                    domain::ticks::MAXIMUM_TICK_ROWS as usize,
+                    options.max_output_bytes,
+                )
+            }
         })
         .transpose()?;
     let mut sink = if options.is_cache() {
@@ -649,14 +811,20 @@ fn import(
         selected_streams: selected_files.iter().filter_map(|f| f.stream.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
         selected_path_prefixes: prefixes.clone(),
         modality: if options.trade_ticks || options.is_cache() { "TRADE_TICK" } else { "NATIVE_SOURCE" }.into(),
-        representation: options.is_cache().then(|| if options.cohort_flow_cache { job::ticks::cohort_cache::FLOW_REPRESENTATION } else { job::ticks::cohort_cache::REPRESENTATION }.into()),
-        availability: if selected_files.iter().all(|f| manifest.stream(f.stream.as_deref().unwrap()).is_ok_and(|s| !s.columns.contains_key("available_at"))) { "EVENT_TIME_PROXY_UNVERIFIED" } else { "SOURCE_AVAILABILITY_UNVERIFIED" }.into(),
+        representation: options.is_cache().then(|| match (options.received_time, options.cohort_flow_cache) {
+            (true, true) => "RECEIVED_TIME_COHORT_FLOW_CACHE_V1",
+            (true, false) => "RECEIVED_TIME_COHORT_CACHE_V1",
+            (false, true) => job::ticks::cohort_cache::FLOW_REPRESENTATION,
+            (false, false) => job::ticks::cohort_cache::REPRESENTATION,
+        }.into()),
+        availability: if options.received_time { "RECEIVED_TIME_OBSERVED" } else if selected_files.iter().all(|f| manifest.stream(f.stream.as_deref().unwrap()).is_ok_and(|s| !s.columns.contains_key("available_at"))) { "EVENT_TIME_PROXY_UNVERIFIED" } else { "SOURCE_AVAILABILITY_UNVERIFIED" }.into(),
         source_manifest: json(manifest_path)?, instrument_source: json(instruments_path)?,
         source_observed_at: Some(manifest.retrieved_at),
         license: manifest.license.clone(),
         attribution: manifest.attribution.clone(),
         event_start_ns: start,
         event_end_ns: end,
+        maximum_receive_delay_ns: options.maximum_receive_delay_ns,
         record_precision: if options.native_precision {
             format!("NATIVE_ENCODING_{}; not a historical contract tick/lot claim", nautilus_model::types::fixed::FIXED_PRECISION)
         } else {
@@ -664,16 +832,21 @@ fn import(
         },
         missing_partitions: selected_missing(&manifest, &prefixes),
         historical_availability: "UNVERIFIED; event-time proxy unless an original availability column is mapped; native definition times unchanged".into(),
+        coverage: observed_source.then(|| "OBSERVED_PUBLISHED_FILES".into()),
+        deduplication_policy: published_source.then(|| "EARLIEST_RECEIPT_IDENTICAL_TRADE".into()),
         ..Report::default()
     };
     // shortcut: deduplication retains IDs for this import; split long histories into dated catalogs when ID memory grows.
     let mut trades = BTreeMap::new();
+    let mut published_trades = PublishedTrades::default();
     for file in selected_files {
         let Some(name) = &file.stream else { continue };
         let stream = manifest.stream(name)?;
         let path = source_file(&root, file)?;
         report.source_coverage.entry(name.clone()).or_default();
         let mut snapshots = records::FlatSnapshots::default();
+        let mut file_trades: BTreeMap<(InstrumentId, UnixNanos, TradeId), (TradeTick, u64)> =
+            BTreeMap::new();
         records::read_rows(&path, &stream.format, |row| {
             report.source_rows += 1;
             let event = records::timestamp(stream.field(&row, "time")?, &stream.time_unit)?;
@@ -681,29 +854,9 @@ fn import(
             coverage.source_rows += 1;
             coverage.first_event_ns = Some(coverage.first_event_ns.map_or(event, |v| v.min(event)));
             coverage.last_event_ns = Some(coverage.last_event_ns.map_or(event, |v| v.max(event)));
-            if event < start || event >= end {
-                report.outside_window_rows += 1;
-                return Ok(());
-            }
-            if !stream.matches(&row)? {
-                report.filtered_rows += 1;
-                return Ok(());
-            }
-            report.selected_rows += 1;
-            coverage.selected_rows += 1;
-            let symbol = if stream.symbol_from_file_stem {
-                file_symbol(&path)?
-            } else {
-                records::scalar(stream.field(&row, "symbol")?)?
-            };
-            let Some(id) = symbol_ids.get(&symbol).copied() else {
-                *report.missing_symbols.entry(symbol).or_default() += 1;
-                return Ok(());
-            };
-            let available = stream
-                .columns
-                .get("available_at")
-                .map(|_| {
+            let received = options
+                .received_time
+                .then(|| {
                     records::timestamp(
                         stream.field(&row, "available_at")?,
                         stream
@@ -712,8 +865,71 @@ fn import(
                             .unwrap_or(&stream.time_unit),
                     )
                 })
-                .transpose()?
-                .unwrap_or(event);
+                .transpose()?;
+            let selected_at = received.unwrap_or(event);
+            let selected = start <= selected_at && selected_at < end;
+            if !selected {
+                report.outside_window_rows += 1;
+                let lookbehind = published_source
+                    && stream.kind == "trades"
+                    && options.received_time
+                    && selected_at < start
+                    && selected_at
+                        >= start.saturating_sub(options.maximum_receive_delay_ns.unwrap());
+                if !lookbehind {
+                    return Ok(());
+                }
+            }
+            if !stream.matches(&row)? {
+                report.filtered_rows += 1;
+                return Ok(());
+            }
+            if selected {
+                report.selected_rows += 1;
+                coverage.selected_rows += 1;
+            }
+            if options.received_time && selected && !published_source {
+                report.source_event_start_ns = Some(
+                    report
+                        .source_event_start_ns
+                        .map_or(event, |first| first.min(event)),
+                );
+                let event_end = event.checked_add(1).context("TIMESTAMP_RANGE")?;
+                report.source_event_end_ns = Some(
+                    report
+                        .source_event_end_ns
+                        .map_or(event_end, |last| last.max(event_end)),
+                );
+            }
+            let symbol = if stream.symbol_from_file_stem {
+                file_symbol(&path)?
+            } else {
+                records::scalar(stream.field(&row, "symbol")?)?
+            };
+            let Some(id) = symbol_ids.get(&symbol).copied() else {
+                if selected {
+                    *report.missing_symbols.entry(symbol).or_default() += 1;
+                }
+                return Ok(());
+            };
+            let available = if let Some(received) = received {
+                received
+            } else {
+                stream
+                    .columns
+                    .get("available_at")
+                    .map(|_| {
+                        records::timestamp(
+                            stream.field(&row, "available_at")?,
+                            stream
+                                .available_time_unit
+                                .as_deref()
+                                .unwrap_or(&stream.time_unit),
+                        )
+                    })
+                    .transpose()?
+                    .unwrap_or(event)
+            };
             ensure!(available >= event, "SOURCE_EVENT_AFTER_AVAILABILITY");
             // A late definition can decode raw records, but is never backdated into research evidence.
             let instrument = by_symbol.get(&symbol).map(|versions| {
@@ -725,10 +941,10 @@ fn import(
                     .unwrap_or(versions[0])
             });
             if let Some(instrument) = instrument {
-                if instrument.ts_init().as_u64() > available {
+                if selected && instrument.ts_init().as_u64() > available {
                     report.definitions_observed_after_event_rows += 1;
                 }
-            } else {
+            } else if selected {
                 *report.missing_definitions.entry(symbol).or_default() += 1;
             }
             let converted = records::Encoding::new(id, instrument, options.native_precision)
@@ -742,14 +958,41 @@ fn import(
             let converted = match converted {
                 Ok(data) => data,
                 Err(error) => {
-                    *report
-                        .rejected_rows
-                        .entry(format!("{}: {error}", stream.name))
-                        .or_default() += 1;
+                    if selected {
+                        *report
+                            .rejected_rows
+                            .entry(format!("{}: {error}", stream.name))
+                            .or_default() += 1;
+                    }
                     return Ok(());
                 }
             };
             for data in converted {
+                if published_source {
+                    if let Data::Trade(trade) = data {
+                        let key = (trade.instrument_id, trade.ts_event, trade.trade_id);
+                        match file_trades.entry(key) {
+                            Entry::Vacant(entry) => {
+                                entry.insert((trade, u64::from(selected)));
+                            }
+                            Entry::Occupied(mut entry) => {
+                                if same_execution(&entry.get().0, &trade) {
+                                    let previous = entry.get_mut();
+                                    previous.1 += u64::from(selected);
+                                    if trade.ts_init < previous.0.ts_init {
+                                        previous.0 = trade;
+                                    }
+                                } else if selected || entry.get().1 > 0 {
+                                    *report
+                                        .rejected_rows
+                                        .entry("CONFLICTING_SOURCE_TRADE_ID".into())
+                                        .or_default() += 1;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
                 if let Some(cache) = &mut cache {
                     let Data::Trade(trade) = data else {
                         anyhow::bail!("COHORT_CACHE_REQUIRES_TRADE_SOURCE");
@@ -781,6 +1024,61 @@ fn import(
             Ok(())
         })
         .with_context(|| format!("source file {}", file.path))?;
+        // Published files are arrival-hour partitions; sort one hour before choosing its earliest deliveries.
+        let mut file_trades = file_trades.into_values().collect::<Vec<_>>();
+        file_trades.sort_by_key(|(trade, _)| {
+            (
+                trade.ts_init,
+                trade.instrument_id,
+                trade.ts_event,
+                trade.trade_id,
+            )
+        });
+        for (trade, selected_deliveries) in file_trades {
+            match published_trades.admit(trade, options.maximum_receive_delay_ns) {
+                Ok(true) => {}
+                Ok(false) => {
+                    report.duplicate_trades += selected_deliveries;
+                    continue;
+                }
+                Err(error) => {
+                    if selected_deliveries > 0 {
+                        *report.rejected_rows.entry(error.to_string()).or_default() += 1;
+                    }
+                    continue;
+                }
+            }
+            let at = if options.received_time {
+                trade.ts_init
+            } else {
+                trade.ts_event
+            }
+            .as_u64();
+            if at < start || at >= end {
+                report.duplicate_trades += selected_deliveries;
+                continue;
+            }
+            report.duplicate_trades += selected_deliveries.saturating_sub(1);
+            if options.received_time {
+                let event = trade.ts_event.as_u64();
+                report.source_event_start_ns = Some(
+                    report
+                        .source_event_start_ns
+                        .map_or(event, |first| first.min(event)),
+                );
+                let end = event.checked_add(1).context("TIMESTAMP_RANGE")?;
+                report.source_event_end_ns =
+                    Some(report.source_event_end_ns.map_or(end, |last| last.max(end)));
+            }
+            if let Some(cache) = &mut cache {
+                cache.push(trade)?;
+            } else {
+                if let Some(bar) = aggregation.update(&trade)? {
+                    sink.as_mut().unwrap().push(Data::Bar(bar))?;
+                }
+                sink.as_mut().unwrap().push(Data::Trade(trade))?;
+            }
+        }
         match snapshots.finish(stream, &mut report) {
             Ok(data) => {
                 for data in data {
@@ -799,6 +1097,7 @@ fn import(
         eprintln!("scanned {}", file.path);
     }
     if let Some(mut cache) = cache {
+        report.deduplicated_trades = published_source.then_some(report.duplicate_trades);
         let manifest = cache.seal(&manifest.revision, start, end)?;
         report.native_files = manifest
             .files
@@ -819,10 +1118,10 @@ fn import(
         report.readback_records = manifest.cohort_count.get();
         report.status = if report.missing_symbols.is_empty()
             && report.rejected_rows.is_empty()
-            && report.missing_partitions.is_empty()
-            && report.duplicate_trades == 0
+            && (observed_source || report.missing_partitions.is_empty())
+            && (published_source || report.duplicate_trades == 0)
             && report.readback_records > 0
-            && manifest.trade_count.get() == report.selected_rows
+            && manifest.trade_count.get() + report.duplicate_trades == report.selected_rows
         {
             "IMPORTED"
         } else {
@@ -849,11 +1148,13 @@ fn import(
         .values()
         .flat_map(|v| v.values())
         .sum();
+    report.deduplicated_trades = published_source.then_some(report.duplicate_trades);
     report.status = if report.missing_symbols.is_empty()
         && report.rejected_rows.is_empty()
-        && report.missing_partitions.is_empty()
+        && (observed_source || report.missing_partitions.is_empty())
         && (!options.trade_ticks
-            || (report.duplicate_trades == 0 && report.missing_definitions.is_empty()))
+            || ((published_source || report.duplicate_trades == 0)
+                && report.missing_definitions.is_empty()))
         && report.readback_records > 0
     {
         "IMPORTED"
@@ -914,6 +1215,8 @@ fn main() {
             trade_ticks,
             cohort_cache,
             cohort_flow_cache,
+            received_time,
+            maximum_receive_delay_ns,
             path_prefixes,
             resume,
             max_trade_rows,
@@ -937,6 +1240,8 @@ fn main() {
                     trade_ticks,
                     cohort_cache,
                     cohort_flow_cache,
+                    received_time,
+                    maximum_receive_delay_ns,
                     path_prefixes: &path_prefixes,
                     resume,
                     _max_trade_rows: max_trade_rows,
@@ -972,6 +1277,8 @@ mod tests {
             trade_ticks: true,
             cohort_cache: false,
             cohort_flow_cache: false,
+            received_time: false,
+            maximum_receive_delay_ns: None,
             path_prefixes: prefixes,
             resume,
             _max_trade_rows: rows,
@@ -1011,6 +1318,144 @@ mod tests {
         )
         .unwrap();
         (manifest, instruments, csv)
+    }
+
+    #[test]
+    fn published_revision_does_not_relax_hub_revision_rules() {
+        let temp = tempfile::tempdir().unwrap();
+        let (path, _, _) = tick_source(temp.path(), "");
+        let mut manifest: Manifest = json(&path).unwrap();
+        assert!(manifest.trade_revision());
+        manifest.revision = "published-files-2026-01-01-2026-01-02".into();
+        assert!(!manifest.trade_revision());
+        manifest.repository = "CryptoHFTData".into();
+        manifest.source_reference =
+            Some("https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data".into());
+        assert!(manifest.trade_revision());
+        manifest.revision = "published-files-not-a-date".into();
+        assert!(!manifest.trade_revision());
+    }
+
+    #[test]
+    fn grouped_missing_hours_follow_selected_hour_prefixes_without_expanding_partitions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (path, _, _) = tick_source(temp.path(), "");
+        let mut manifest: Manifest = json(&path).unwrap();
+        manifest.missing = vec![
+            serde_json::json!({"stream":"trades","date":"2026-01-01","symbol":"ETH",
+                "pattern":"hyperliquid_futures/2026-01-01/{hour}/ETH_trades.parquet[.zst]","hours":[21,22,23]}),
+            serde_json::json!({"stream":"legacy","pattern":"hyperliquid_futures/2026-01-01/23/legacy.parquet"}),
+            serde_json::json!({"stream":"legacy","pattern":"hyperliquid_futures/2026-01-01/22/legacy.parquet"}),
+        ];
+        let selected = selected_missing(&manifest, &["hyperliquid_futures/2026-01-01/23/".into()]);
+        assert_eq!(
+            selected,
+            vec![
+                serde_json::json!({"stream":"trades","date":"2026-01-01","symbol":"ETH","hour":23,
+                "pattern":"hyperliquid_futures/2026-01-01/23/ETH_trades.parquet[.zst]"}),
+                manifest.missing[1].clone(),
+            ]
+        );
+        let selected = selected_missing(
+            &manifest,
+            &[
+                "hyperliquid_futures/2026-01-01/21/".into(),
+                "hyperliquid_futures/2026-01-01/23/".into(),
+            ],
+        );
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0]["hours"], serde_json::json!([21, 23]));
+        assert_eq!(selected[0]["pattern"], manifest.missing[0]["pattern"]);
+        assert_eq!(selected_missing(&manifest, &[]), manifest.missing);
+    }
+
+    #[test]
+    fn published_receiver_cache_selects_receive_time_and_keeps_earliest_duplicate() {
+        for (earliest, selected, count, first) in [
+            (1767225600001000000_u64, 3, 2, 1767225600001000000_u64),
+            (1767225599999500000_u64, 2, 1, 1767225600003000000_u64),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let (path, instruments, csv) = tick_source(temp.path(), "");
+            fs::write(
+                &csv,
+                format!(
+                    concat!(
+                        "coin,timestamp,price,size,trade_id,side,received\n",
+                        "BTCUSDT,1767225599999,10.12,0.1,T-1,B,1767225600002000000\n",
+                        "BTCUSDT,1767225599999,10.12,0.1,T-1,B,{}\n",
+                        "BTCUSDT,1767225600002,10.13,0.1,T-2,B,1767225600003000000\n"
+                    ),
+                    earliest
+                ),
+            )
+            .unwrap();
+            let mut metadata: serde_json::Value = json(&path).unwrap();
+            metadata["repository"] = serde_json::json!("CryptoHFTData");
+            metadata["source_reference"] = serde_json::json!(
+                "https://www.cryptohftdata.com/datasets/hyperliquid-orderbook-data"
+            );
+            metadata["revision"] = serde_json::json!("published-files-2026-01-01-2026-01-01");
+            metadata["coverage"] = serde_json::json!("OBSERVED_PUBLISHED_FILES");
+            metadata["missing"] =
+                serde_json::json!([{"stream":"trades", "pattern":"perps/unprovided.csv"}]);
+            metadata["profile"]["streams"][0]["available_time_unit"] = serde_json::json!("ns");
+            metadata["profile"]["streams"][0]["columns"]["available_at"] =
+                serde_json::json!("received");
+            metadata["files"][0]["size"] = serde_json::json!(fs::metadata(&csv).unwrap().len());
+            fs::write(&path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            let prefixes = ["perps/".into()];
+            let mut options = tick_options(&prefixes, false, 10, 10_000_000);
+            options.trade_ticks = false;
+            options.cohort_cache = true;
+            options.received_time = true;
+            options.maximum_receive_delay_ns = Some(3_000_000);
+            let output = temp.path().join("received");
+            let report = import(&path, &instruments, &output, options).unwrap();
+            assert_eq!(report.status, "IMPORTED");
+            assert_eq!(report.availability, "RECEIVED_TIME_OBSERVED");
+            assert_eq!(report.selected_rows, selected);
+            assert_eq!(report.duplicate_trades, 1);
+            assert_eq!(report.deduplicated_trades, Some(1));
+            assert_eq!(
+                report.deduplication_policy.as_deref(),
+                Some("EARLIEST_RECEIPT_IDENTICAL_TRADE")
+            );
+            assert_eq!(report.coverage.as_deref(), Some("OBSERVED_PUBLISHED_FILES"));
+            assert_eq!(report.missing_partitions.len(), 1);
+            let cached = job::ticks::cohort_cache::manifest(&output.join("catalog")).unwrap();
+            assert_eq!(cached.trade_count.get(), count);
+            assert_eq!(cached.files[0].first_event_ns.unwrap().get(), first);
+        }
+    }
+
+    #[test]
+    fn published_trade_identity_rejects_different_execution_and_bounds_seen_rows() {
+        let mut seen = PublishedTrades::default();
+        let trade = TradeTick::new_checked(
+            "BTCUSDT.BINANCE".parse().unwrap(),
+            "10.12".parse().unwrap(),
+            "0.1".parse().unwrap(),
+            nautilus_model::enums::AggressorSide::Buy,
+            TradeId::new_checked("T-1").unwrap(),
+            1_000_000_000.into(),
+            1_001_000_000.into(),
+        )
+        .unwrap();
+        assert!(seen.admit(trade, Some(2_000_000)).unwrap());
+        let mut replay = trade;
+        replay.ts_init = 1_002_000_000.into();
+        assert!(!seen.admit(replay, Some(2_000_000)).unwrap());
+        replay.price = "10.13".parse().unwrap();
+        assert_eq!(
+            seen.admit(replay, Some(2_000_000)).unwrap_err().to_string(),
+            "CONFLICTING_SOURCE_TRADE_ID"
+        );
+        let mut later = trade;
+        later.ts_event = 2_000_000_000.into();
+        later.ts_init = 2_001_000_000.into();
+        assert!(seen.admit(later, Some(2_000_000)).unwrap());
+        assert_eq!(seen.seen[&trade.instrument_id].len(), 1);
     }
 
     #[test]

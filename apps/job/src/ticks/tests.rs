@@ -47,6 +47,125 @@ pub(super) fn model(slot: i32) -> Vec<u8> {
 }
 
 #[test]
+fn received_cohorts_preserve_late_events_and_use_receipt_clocks_for_features_labels_and_views() {
+    let mut request = request();
+    request.input.availability = NativeTickAvailabilityV1::ReceivedTimeObserved;
+    request.input.maximum_receive_delay_ns = Some(counter(70).unwrap());
+    request.sampling.kind = NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+    request.target = NativeTickTargetV1::FixedReceivedTime {
+        horizon_ns: counter(5).unwrap(),
+    };
+    let rows = [
+        (8, 10, "10"),
+        (1, 20, "20"),
+        (8, 20, "30"),
+        (2, 40, "40"),
+        (25, 55, "50"),
+        (3, 60, "60"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (event, received, price))| {
+        let mut row = trade(event, &index.to_string(), price, "1");
+        row.ts_init = received.into();
+        row
+    })
+    .collect::<Vec<_>>();
+    let reduced = sampled_cohorts(&rows, 100, false, true).unwrap();
+    assert_eq!(
+        reduced
+            .iter()
+            .map(|row| (
+                row.event,
+                row.source_event_start,
+                row.source_event_end,
+                row.count
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (10, 8, 9, 1),
+            (20, 1, 9, 2),
+            (40, 2, 3, 1),
+            (55, 25, 26, 1),
+            (60, 3, 4, 1)
+        ]
+    );
+    let wasm = wat::parse_str(r#"(module
+        (global $event (mut i64) (i64.const 0))
+        (global $available (mut i64) (i64.const 0))
+        (global $elapsed (mut f64) (f64.const 0))
+        (func (export "qz_set_feature_v2") (param i32 f64 i32 i64 i64)
+            local.get 0 i32.eqz if local.get 3 global.set $event local.get 4 global.set $available end
+            local.get 0 i32.const 6 i32.eq if local.get 1 global.set $elapsed end)
+        (func (export "qz_predict_v2") (param i64 i64 i32 i32 i32) (result f64)
+            local.get 0 global.get $available i64.ne if unreachable end
+            local.get 1 global.get $event i64.ne if unreachable end
+            global.get $elapsed))"#).unwrap();
+    let original = evaluate_series(
+        &request,
+        BTreeMap::from([("AUD/USD.SIM".into(), rows.clone())]),
+        &wasm,
+        false,
+    )
+    .unwrap();
+    let points = original.points.as_ref().unwrap();
+    assert_eq!(
+        points
+            .iter()
+            .skip(1)
+            .map(|point| point.observation.forecast.unwrap())
+            .collect::<Vec<_>>(),
+        vec![10.0, 20.0, 15.0, 5.0]
+    );
+    assert_eq!(points[1].observation.event_ns.get(), 8);
+    assert_eq!(points[1].observation.available_ns.get(), 20);
+    assert_eq!(points[1].observation.label_available_ns.unwrap().get(), 40);
+    assert_eq!(points[3].observation.label_available_ns.unwrap().get(), 60);
+    assert!((points[3].observation.label_return.unwrap() - 0.2).abs() < 1e-12);
+    assert_eq!(points[3].partition, NativeFactorPartitionV1::Heldout);
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("received");
+    let mut builder = cohort_cache::Builder::new_received(&output, 100, 0, 0, false, 70).unwrap();
+    for row in &rows {
+        builder.push(*row).unwrap();
+    }
+    let manifest = builder.seal("fixed-source", 0, 80).unwrap();
+    assert_eq!(manifest.files[0].bytes.get(), 5 * 48);
+    assert_eq!(manifest.source_event_start_ns.unwrap().get(), 1);
+    assert_eq!(manifest.source_event_end_ns.unwrap().get(), 26);
+    builder.publish(manifest, json!({"status":"IMPORTED","availability":"RECEIVED_TIME_OBSERVED", "source_revision":"fixed-source", "event_start_ns":"0","event_end_ns":"80","missing_symbols":{},"rejected_rows":{},"missing_partitions":[],"duplicate_trades":0})).unwrap();
+    request.input.representation = Some(NativeTickRepresentationV1::ReceivedTimeCohortCacheV1);
+    let result = evaluate(&output.join("catalog"), &request, &wasm, true).unwrap();
+    assert_eq!(
+        serde_json::to_value(&result.partitions).unwrap(),
+        serde_json::to_value(&original.partitions).unwrap()
+    );
+    assert_eq!(result.methods["features"], RECEIVED_FEATURE_SCHEMA);
+    let prepared = temp.path().join("prepared");
+    cohort_cache::prepare_views(&output.join("catalog"), &request, &prepared, 0).unwrap();
+    let primary = cohort_cache::manifest(&prepared.join("research/catalog")).unwrap();
+    assert_eq!(primary.source_event_start_ns.unwrap().get(), 1);
+    assert_eq!(primary.source_event_end_ns.unwrap().get(), 9);
+    let mut invalid = request.clone();
+    invalid.input.maximum_receive_delay_ns = Some(counter(69).unwrap());
+    assert_eq!(
+        evaluate(&output.join("catalog"), &invalid, &wasm, true)
+            .unwrap_err()
+            .to_string(),
+        "TICK_CACHE_VIEW_MISMATCH"
+    );
+    let mut negative_skew = rows[0];
+    negative_skew.ts_event = 11_u64.into();
+    let mut invalid_builder =
+        cohort_cache::Builder::new_received(&temp.path().join("negative"), 100, 0, 0, false, 70)
+            .unwrap();
+    assert_eq!(
+        invalid_builder.push(negative_skew).unwrap_err().to_string(),
+        "TICK_RECEIVE_DELAY_OUTSIDE_BOUND"
+    );
+}
+
+#[test]
 fn flow_reduction_preserves_marks_and_distinguishes_balanced_zero_from_unknown_side() {
     let mut rows = vec![
         trade(10, "a", "10", "0.1"),

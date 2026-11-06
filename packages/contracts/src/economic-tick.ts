@@ -3,7 +3,7 @@ import { addDecimal, compareDecimal } from './pm-validation.ts';
 import { validateNativeTickFactorRequest, type NativeTickFactorRequest } from './tick-input.ts';
 
 export type NativeTickEconomicScenario = {
-  execution_model?: 'SYNTHETIC_QUOTE_IOC_V1';
+  execution_model?: 'SYNTHETIC_QUOTE_IOC_V1' | 'OBSERVED_L2_IOC_V1';
   initial_usdt: string; usdt0_per_usdt: string; spot_fraction: string;
   gross_fraction: string; maximum_asset_weight: string; participation_fraction: string;
   perp_taker_fee_bps: string; spot_taker_fee_bps: string; extra_cost_bps: string;
@@ -14,6 +14,7 @@ export type NativeTickEconomicScenario = {
 export type NativeTickEconomicRequest = {
   schema_version: 1; research: NativeTickFactorRequest; scenario: NativeTickEconomicScenario;
   fx_instrument_ids: string[]; funding_source: string; context_source?: string; spot_valuation_source?: string;
+  signal_weights?: string[];
   small_capital_policy?: { maximum_entry_notional_usdc: string; maximum_holding_ns: string };
 };
 
@@ -31,13 +32,13 @@ function fields(value: Record<string, unknown>, names: readonly string[]) {
 /** Exact native wire values; no floating-point conversion or inferred costs/capital. */
 export function validateNativeTickEconomicRequest(value: unknown): NativeTickEconomicRequest {
   const request = object(value);
-  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source', 'context_source', 'spot_valuation_source', 'small_capital_policy']);
+  fields(request, ['schema_version', 'research', 'scenario', 'fx_instrument_ids', 'funding_source', 'context_source', 'spot_valuation_source', 'signal_weights', 'small_capital_policy']);
   if (request.schema_version !== 1) throw new Error('tick_economic_schema_version_unsupported');
   const research = validateNativeTickFactorRequest(request.research);
   if ([research.input.event_start_ns, research.input.event_end_ns, research.train_end_ns, research.validation_end_ns]
     .some(value => BigInt(value) % 86_400_000_000_000n !== 0n)) throw new Error('tick_economic_utc_daily_boundaries_required');
   const scenario = object(request.scenario); fields(scenario, [...decimalFields, ...counterFields, 'execution_model']);
-  if (scenario.execution_model !== undefined && scenario.execution_model !== 'SYNTHETIC_QUOTE_IOC_V1') throw new Error('tick_economic_execution_model_invalid');
+  if (scenario.execution_model !== undefined && scenario.execution_model !== 'SYNTHETIC_QUOTE_IOC_V1' && scenario.execution_model !== 'OBSERVED_L2_IOC_V1') throw new Error('tick_economic_execution_model_invalid');
   for (const key of decimalFields) {
     const value = scenario[key];
     if (typeof value !== 'string' || value.length > 64 || !/^[+-]?(?:0*\d{1,20}(?:\.\d{0,18}0*)?|\.\d{1,18}0*)(?![\s\S])/.test(value)) throw new Error(`tick_economic_${key}_invalid`);
@@ -61,6 +62,13 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
   if (typeof request.funding_source !== 'string' || !request.funding_source.endsWith('.jsonl') || /[/\\\u0000-\u001f\u007f]/.test(request.funding_source)) throw new Error('tick_economic_funding_source_invalid');
   if (request.context_source !== undefined && request.context_source !== 'context-prices.manifest.json') throw new Error('tick_economic_context_source_invalid');
   if (request.spot_valuation_source !== undefined && request.spot_valuation_source !== 'spot-valuation.jsonl') throw new Error('tick_economic_spot_valuation_source_invalid');
+  let weights: string[] | undefined;
+  if (request.signal_weights !== undefined) {
+    if (!Array.isArray(request.signal_weights) || !request.signal_weights.length || request.signal_weights.some(weight => typeof weight !== 'string' || weight.length > 64
+      || !/^\d+(?:\.\d{1,18})?$/.test(weight) || compareDecimal(weight, '0') <= 0 || compareDecimal(weight, '1') > 0)) throw new Error('tick_economic_signal_weights_invalid');
+    weights = request.signal_weights.map(weight => addDecimal(weight, '0'));
+    if (compareDecimal(weights.reduce((sum, weight) => addDecimal(sum, weight), '0'), '1') !== 0) throw new Error('tick_economic_signal_weights_invalid');
+  }
   let policy: NativeTickEconomicRequest['small_capital_policy'];
   if (request.small_capital_policy !== undefined) {
     const value = object(request.small_capital_policy);
@@ -75,6 +83,7 @@ export function validateNativeTickEconomicRequest(value: unknown): NativeTickEco
     fx_instrument_ids: [...request.fx_instrument_ids] as string[], funding_source: request.funding_source,
     ...(request.context_source === undefined ? {} : { context_source: request.context_source }),
     ...(request.spot_valuation_source === undefined ? {} : { spot_valuation_source: request.spot_valuation_source }),
+    ...(weights === undefined ? {} : { signal_weights: weights }),
     ...(policy === undefined ? {} : { small_capital_policy: policy }) };
 }
 
@@ -98,9 +107,12 @@ export type NativeTickEconomicResult = {
   targets: { instrument_id: string; currency: string; weight: string }[]; target_asof_ns: string | null; target_cash_weight: string | null;
   skipped_cash: string; skipped_minimum: string; consumed_fuel: string | null; limitations: string[];
 };
-export type TickEconomicReplayStart = { requestId: string; datasetId: string; factorId: string; fundingCatalog?: string; request: NativeTickEconomicRequest };
+export type TickEconomicReplayMember = { factorId: string; weight: string };
+export type TickEconomicReplaySelection = { factorId: string; members?: never } | { factorId?: never; members: TickEconomicReplayMember[] };
+export type TickEconomicReplayStart = { requestId: string; datasetId: string; fundingCatalog?: string; request: NativeTickEconomicRequest } & TickEconomicReplaySelection;
 export type TickEconomicReplayView = {
-  id: string; requestId: string; datasetId: string; factorId: string; taskId: number; fundingCatalog?: string;
+  id: string; requestId: string; datasetId: string; factorId?: string; members?: TickEconomicReplayMember[]; taskId: number; fundingCatalog?: string;
+  sources?: { factorId: string; researchId: number; trialId: number; memberIndex: number; sourceRevision: string }[];
   status: 'QUEUED' | 'RUNNING' | 'COMPUTED' | 'FAILED' | 'STOPPED';
   scientificQualification: 'UNQUALIFIED_EXPLORATORY'; result: NativeTickEconomicResult | null; error: string | null;
 };

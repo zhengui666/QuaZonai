@@ -18,7 +18,7 @@ native-paper-test = ["native-paper"]
 polymarket-history = ["dep:tokio", "dep:sha2", "dep:nautilus-data", "dep:alloy-core", "dep:url"]
 catalog-prepare = ["dep:sha2", "dep:rc-zip", "dep:winnow", "dep:flate2", "dep:crc32fast", "dep:csv"]
 high-precision = ["nautilus-persistence/high-precision", "nautilus-data?/high-precision"]
-market-history = ["dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:zstd", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
+market-history = ["dep:tokio", "parquet/snap", "dep:csv", "dep:lz4_flex", "dep:nautilus-hyperliquid", "dep:nautilus-data", "high-precision"]
 # Offline parsing of already supplied source files, separate from public history acquisition.
 hyperliquid-offline = ["dep:nautilus-hyperliquid"]
 
@@ -74,7 +74,7 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"]
 crc32fast = { version = "=1.5.2", optional = true }
 csv = { version = "=1.4.0", optional = true }
 lz4_flex = { version = "=0.14.0", optional = true }
-zstd = { version = "=0.13.3", default-features = false, optional = true }
+zstd = { version = "=0.13.3", default-features = false }
 nautilus-data = { version = "=0.67.0", default-features = false, optional = true }
 alloy-core = { version = "=1.7.3", default-features = false, features = ["std", "sol-types", "serde"], optional = true }
 url = { version = "=2.5.8", optional = true }

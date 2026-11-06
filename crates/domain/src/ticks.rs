@@ -2,7 +2,10 @@
 use crate::DomainError;
 use contracts::{
     factors::NativeFactorPartitionV1,
-    ticks::{NativeTickRegimeV1, NativeTickTargetV1, NativeTradeTickFactorEvaluationRequestV1},
+    ticks::{
+        NativeTickRegimeV1, NativeTickRepresentationV1, NativeTickSamplingKindV1,
+        NativeTickTargetV1, NativeTradeTickFactorEvaluationRequestV1,
+    },
     DbCounter,
 };
 use std::collections::BTreeSet;
@@ -36,6 +39,30 @@ pub fn evaluation_request(
     {
         return fail("TICK_PARTITION_BOUNDARIES");
     }
+    let received = input.uses_received_time();
+    if request.sampling.kind
+        != if received {
+            NativeTickSamplingKindV1::ReceivedTimeCohortV1
+        } else {
+            NativeTickSamplingKindV1::EventTimeCohortV1
+        }
+        || input.representation.is_some_and(|representation| {
+            matches!(
+                representation,
+                NativeTickRepresentationV1::ReceivedTimeCohortCacheV1
+                    | NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1
+            ) != received
+        })
+    {
+        return fail("TICK_CLOCK_POLICY_MISMATCH");
+    }
+    if received {
+        if input.maximum_receive_delay_ns.is_none() {
+            return fail("TICK_RECEIVE_DELAY_REQUIRED");
+        }
+    } else if input.maximum_receive_delay_ns.is_some() {
+        return fail("TICK_RECEIVE_DELAY_UNSUPPORTED");
+    }
     if request.sampling.maximum_cohort_rows == 0
         || request.sampling.maximum_cohort_rows > MAXIMUM_COHORT_ROWS
     {
@@ -59,8 +86,10 @@ pub fn evaluation_request(
         NativeTickTargetV1::FixedTradeCohorts { horizon_cohorts } => {
             horizon_cohorts > 0 && horizon_cohorts <= MAXIMUM_TICK_ROWS
         }
-        NativeTickTargetV1::FixedEventTime { horizon_ns } => {
-            horizon_ns.get() > 0
+        NativeTickTargetV1::FixedEventTime { horizon_ns }
+        | NativeTickTargetV1::FixedReceivedTime { horizon_ns } => {
+            matches!(request.target, NativeTickTargetV1::FixedReceivedTime { .. }) == received
+                && horizon_ns.get() > 0
                 && input
                     .event_end_ns
                     .get()

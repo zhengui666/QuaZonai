@@ -5,7 +5,9 @@ import type { Context } from '@earendil-works/chord';
 import { realpath } from 'node:fs/promises';
 import { object } from '../src/trials.ts';
 import { NativeEvidencePart, readNativeEvidenceParts } from './native-evidence.ts';
-import { isTickResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
+import { CatalogScopes } from './native-catalog-scope.ts';
+import { canonical, Study } from '../src/documents.ts';
+import { clipTickRegimeEvaluation, isTickResearchInput, nativeResearchInput, nativeResearchRequest } from '../../../packages/contracts/src/tick-input.ts';
 
 // Scientific exposure facts use the upstream session transaction, not a new
 // task/session database. A fork or a new conversation cannot rewind this doc.
@@ -38,7 +40,15 @@ export async function footprint(data: JsonObject): Promise<JsonObject> {
   return { catalog: await realpath(data.catalog),
     ...(tick ? { modality: 'TRADE_TICK', instrumentIds: [...selection.instrument_ids as string[]].sort() }
       : catalog ? { barTypesRef: object(data.catalog_scope, 'catalog_scope') } : { barTypes: [...selection.bar_types as string[]].sort() }),
-    start: ensemble ? data.validation_end_ns! : request.validation_end_ns!, end: selection.event_end_ns! };
+    ...(tick && selection.availability === 'RECEIVED_TIME_OBSERVED' ? { availability: selection.availability,
+      receivedStart: request.validation_end_ns!, receivedEnd: selection.event_end_ns! } : {}),
+    start: sourceStart(selection, ensemble ? data.validation_end_ns! : request.validation_end_ns!), end: selection.event_end_ns! };
+}
+
+function sourceStart(selection: JsonObject, start: JsonObject[string]): string {
+  const delay = selection.availability === 'RECEIVED_TIME_OBSERVED' ? BigInt(selection.maximum_receive_delay_ns as string) : 0n;
+  const earliest = BigInt(start as string) - delay;
+  return String(earliest < 0n ? 0n : earliest);
 }
 
 export async function checkExposure(api: ResearchRuntime, context: Context, data: JsonObject, reserve: boolean, finalData?: JsonObject, evidenceMode?: 'HISTORICAL_REASSESSMENT', record = true): Promise<void> {
@@ -49,8 +59,12 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const request = nativeResearchRequest(data);
   const selection = ensemble || data.catalog_scan_request !== undefined ? request : isTickResearchInput(data) ? object(request.input, 'native_tick_input') : object(object(request.forecast, 'forecast').selection, 'selection');
   if (!reserve) {
-    window.start = selection.event_start_ns!;
+    window.start = sourceStart(selection, selection.event_start_ns!);
     window.end = ensemble ? data.validation_end_ns! : request.validation_end_ns!;
+    if (window.availability === 'RECEIVED_TIME_OBSERVED') {
+      window.receivedStart = selection.event_start_ns!;
+      window.receivedEnd = window.end;
+    }
   }
   // Iteration reads only the clipped prefix. Keep the original-range check
   // against final exposures so a new root cannot reset an exposed study.
@@ -65,7 +79,8 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
   const finalEnd = finalRequest ? finalRequest.event_end_ns!
     : finalData ? (await footprint(finalData)).end! : selection.event_end_ns!;
   const end = BigInt(finalEnd as string) > BigInt(selection.event_end_ns as string) ? finalEnd : selection.event_end_ns!;
-  const checked = reserve ? window : { ...window, end };
+  const checked = reserve ? window : { ...window, end,
+    ...(window.availability === 'RECEIVED_TIME_OBSERVED' ? { receivedEnd: end } : {}) };
   await api.commit(async (tx) => {
     const ledger = await tx.doc(Exposures);
     const scopes = new Map<string, Set<string>>();
@@ -87,6 +102,28 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
     }
     const overlaps = (start: bigint, end: bigint, otherStart: bigint, otherEnd: bigint) => start < otherEnd && otherStart < end;
     const tickWindow = (item: JsonObject) => item.modality === 'TRADE_TICK' || Array.isArray(item.instrumentIds);
+    async function ownReceivedIterationDisjoint(item: JsonObject): Promise<boolean> {
+      if (!reserve || historical || item.kind !== 'ITERATION' || item.conversationId !== api.conversationId
+        || item.availability !== 'RECEIVED_TIME_OBSERVED' || checked.availability !== 'RECEIVED_TIME_OBSERVED'
+        || typeof item.receivedStart !== 'string' || typeof item.receivedEnd !== 'string'
+        || typeof checked.receivedStart !== 'string' || typeof checked.receivedEnd !== 'string'
+        || overlaps(BigInt(item.receivedStart), BigInt(item.receivedEnd), BigInt(checked.receivedStart), BigInt(checked.receivedEnd))) return false;
+      const original = (await tx.doc(Study, api.conversationId)).input?.data;
+      const sealed = original?.sealed;
+      if (!original || !sealed || typeof sealed !== 'object' || Array.isArray(sealed)
+        || typeof original.catalog !== 'string' || typeof sealed.catalog !== 'string'
+        || canonical(data) !== canonical(sealed)) return false;
+      const primary = nativeResearchInput(original); const independent = nativeResearchInput(sealed);
+      if (primary?.modality !== 'TRADE_TICK' || independent?.modality !== 'TRADE_TICK'
+        || primary.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
+        || independent.request.input.availability !== 'RECEIVED_TIME_OBSERVED'
+        || canonical(primary.request) !== canonical(clipTickRegimeEvaluation(independent.request, independent.request.validation_end_ns))) return false;
+      // The delay envelope remains authoritative outside this admitted prefix/sealed pair.
+      return item.catalog === await realpath(original.catalog) && checked.catalog === await realpath(sealed.catalog)
+        && item.receivedStart === primary.request.input.event_start_ns && item.receivedEnd === primary.request.validation_end_ns
+        && item.start === sourceStart(primary.request.input, item.receivedStart) && item.end === item.receivedEnd
+        && canonical(item.instrumentIds!) === canonical([...primary.request.input.instrument_ids].sort());
+    }
     function barSourceStarts(item: JsonObject, types: Set<string>): Map<string, bigint> {
       // Completed BAR labels can reveal earlier underlying trades. These bounds
       // are conservative cross-modality comparisons, never rewritten ledger facts.
@@ -112,15 +149,35 @@ export async function checkExposure(api: ResearchRuntime, context: Context, data
       if (leftTick === rightTick) {
         // Preserve exact BAR identities and their original label-time admission.
         if (!overlaps(start, end, otherStart, otherEnd)) return false;
+        if (leftTick && await ownReceivedIterationDisjoint(item)) return false;
         const left = await assets(item); const right = await assets(checked);
         for (const asset of right) if (left.has(asset)) return true;
         return false;
       }
       const bars = leftTick ? checked : item;
       const ticks = leftTick ? item : checked;
-      const starts = barSourceStarts(bars, await assets(bars));
       const barEnd = BigInt(bars.end as string);
-      for (const id of await assets(ticks)) {
+      // A completed BAR cannot reveal source events after its own end.
+      if (BigInt(ticks.start as string) >= barEnd) return false;
+      const tickAssets = await assets(ticks);
+      if (bars.barTypesRef !== undefined) {
+        const reference = object(bars.barTypesRef, 'bar_types_reference');
+        const original = (await tx.doc(CatalogScopes)).roots.find(root => {
+          const cached = object(root.reference, 'catalog_scope_reference');
+          return root.catalog === bars.catalog && cached.conversationId === reference.conversationId
+            && cached.taskId === reference.taskId && cached.count === reference.count;
+        });
+        const venues = original?.instrumentVenues;
+        // A recovered conservative namespace can prove disjointness without
+        // replacing the original identity reference or its exposure history.
+        if (Array.isArray(venues) && venues.length > 0 && venues.every(venue => typeof venue === 'string' && /^[A-Z0-9_]+$/.test(venue))
+          && tickAssets.size > 0 && [...tickAssets].every(id => {
+            const venue = id.slice(id.lastIndexOf('.') + 1);
+            return id.includes('.') && /^[A-Z0-9_]+$/.test(venue) && !venues.includes(venue);
+          })) return false;
+      }
+      const starts = barSourceStarts(bars, await assets(bars));
+      for (const id of tickAssets) {
         const barStart = starts.get(id);
         if (barStart !== undefined && overlaps(barStart, barEnd, BigInt(ticks.start as string), BigInt(ticks.end as string))) return true;
       }

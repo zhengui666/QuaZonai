@@ -12,15 +12,18 @@ import factorWasm from '../../research/plugins/factor-wasm.ts';
 import heldoutWasm from '../../research/plugins/heldout-wasm.ts';
 
 // Controlled framing/publication only; native numerical cache checks belong to Rust.
-async function preparedCache(target: NativeTickFactorRequest['target'] = { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 }, flow = false, regimes = false) {
-  const representation = flow ? 'EVENT_TIME_COHORT_FLOW_CACHE_V1' : 'EVENT_TIME_COHORT_CACHE_V1'; const frameBytes = flow ? 40 : 32;
+async function preparedCache(target: NativeTickFactorRequest['target'] = { kind: 'FIXED_TRADE_COHORTS', horizon_cohorts: 1 }, flow = false, regimes = false, received = false) {
+  const representation = received ? flow ? 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1' : 'RECEIVED_TIME_COHORT_CACHE_V1'
+    : flow ? 'EVENT_TIME_COHORT_FLOW_CACHE_V1' : 'EVENT_TIME_COHORT_CACHE_V1';
+  const frameBytes = 32 + (flow ? 8 : 0) + (received ? 16 : 0);
   const dayNs = 86_400_000_000_000n; const clock = (value: string | number) => String(BigInt(value) * (regimes ? dayNs : 1n));
   const directory = await mkdtemp(join(tmpdir(), 'qz-cohort-export-')); const prepared = join(directory, 'prepared');
   const request: NativeTickFactorRequest = { schema_version: 1,
     input: { modality: 'TRADE_TICK', representation, maximum_source_rows: '1308222597',
       instrument_ids: ['BTCUSDT.SIM'], event_start_ns: '0', event_end_ns: clock(80), decision_cutoff_ns: clock(80),
-      source_revision: 'controlled-source-not-market-evidence', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
-    sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target,
+      source_revision: 'controlled-source-not-market-evidence', availability: received ? 'RECEIVED_TIME_OBSERVED' : 'EVENT_TIME_PROXY_UNVERIFIED',
+      ...(received ? { maximum_receive_delay_ns: '1' } : {}) },
+    sampling: { kind: received ? 'RECEIVED_TIME_COHORT_V1' : 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target,
     parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: clock(30), validation_end_ns: clock(50) };
   if (regimes) request.evaluation_regimes = { kind: 'BTC_COMPLETED_30_DAY_RETURN_V1', days: Array.from({ length: 80 }, (_, index) => ({
     day_start_ns: clock(index), previous: index === 79 ? { event_ns: String(BigInt(clock(index)) - 1n), price: '91314159.987654321' } : null, lookback: null })) };
@@ -29,7 +32,12 @@ async function preparedCache(target: NativeTickFactorRequest['target'] = { kind:
   for (const [index, event] of [10, 20, 40, 50, 60, 70].entries()) {
     bytes.writeBigUInt64LE(BigInt(clock(event)), index * frameBytes); bytes.writeDoubleLE(index + 1, index * frameBytes + 8);
     bytes.writeDoubleLE(flow ? 2 : 1, index * frameBytes + 16); bytes.writeBigUInt64LE(flow ? 2n : 1n, index * frameBytes + 24);
-    if (flow) bytes.writeDoubleLE([2, -2, 0][index % 3]!, index * frameBytes + 32);
+    if (flow) bytes.writeDoubleLE([2, -2, 0][index % 3]!, index * frameBytes + (received ? 48 : 32));
+    if (received) {
+      const offset = index * frameBytes + 32;
+      bytes.writeBigUInt64LE(BigInt(clock(event)) - 1n, offset);
+      bytes.writeBigUInt64LE(BigInt(clock(event)), offset + 8);
+    }
   }
   await writeFile(source, bytes);
   for (const [part, selection, count, last] of [['research', research, '3', '40'], ['independent', request, '6', '70']] as const) {
@@ -37,13 +45,14 @@ async function preparedCache(target: NativeTickFactorRequest['target'] = { kind:
     await mkdir(join(root, 'data/cohorts'), { recursive: true }); await link(source, join(root, path));
     await writeFile(join(root, 'cohort-cache.json'), JSON.stringify({ schema_version: 1, representation,
       source_revision: selection.input.source_revision, availability: selection.input.availability,
+      ...(received ? { maximum_receive_delay_ns: selection.input.maximum_receive_delay_ns } : {}),
       event_start_ns: selection.input.event_start_ns, event_end_ns: selection.input.event_end_ns, trade_count: String(Number(count) * (flow ? 2 : 1)), cohort_count: count,
       source_report: { status: 'IMPORTED', source_revision: selection.input.source_revision },
       files: [{ instrument_id: 'BTCUSDT.SIM', path, bytes: String(bytes.length), byte_start: '0', byte_end: String(Number(count) * frameBytes),
         trade_count: String(Number(count) * (flow ? 2 : 1)), cohort_count: count, first_event_ns: clock(10), last_event_ns: clock(last) }] }));
   }
   const metadata = { schema_version: 1, modality: 'TRADE_TICK', representation, request, research_request: research,
-    research_catalog: 'research/catalog', independent_catalog: 'independent/catalog', catalog_format: flow ? 'QZ_EVENT_TIME_COHORT_FLOW_CACHE_V1' : 'QZ_EVENT_TIME_COHORT_CACHE_V1',
+    research_catalog: 'research/catalog', independent_catalog: 'independent/catalog', catalog_format: `QZ_${representation}`,
     operational_state: 'NATIVE_PREPARED', scientific_qualification: 'UNQUALIFIED_EXPLORATORY',
     coverage: { source_revision: request.input.source_revision, availability: request.input.availability, instrument_ids: request.input.instrument_ids,
       trade_count: flow ? '12' : '6', cohort_count: '6' } };
@@ -52,6 +61,24 @@ async function preparedCache(target: NativeTickFactorRequest['target'] = { kind:
   return { directory, prepared, source, bytes, request, research, options: { prepared: metadataFile, request: requestFile,
     output: join(directory, 'dataset.json'), id: 'cohort-cache', name: 'Controlled cohort publication', ready: true } };
 }
+
+test('receive-time cache export preserves clock, frame layout and bounded source delay', async () => {
+  for (const flow of [false, true]) {
+    const f = await preparedCache({ kind: 'FIXED_RECEIVED_TIME', horizon_ns: '10' }, flow, false, true);
+    try {
+      const exported = await exportDataset(f.options);
+      const request = (exported.data.nativeInput as { request: NativeTickFactorRequest }).request;
+      assert.equal(request.input.availability, 'RECEIVED_TIME_OBSERVED');
+      assert.equal(request.input.maximum_receive_delay_ns, '1');
+      assert.equal(request.target.kind, 'FIXED_RECEIVED_TIME');
+      assert.match(exported.source, /receive-time/);
+      const path = join(f.prepared, 'research/catalog/cohort-cache.json');
+      const manifest = JSON.parse(await readFile(path, 'utf8')); manifest.maximum_receive_delay_ns = '2';
+      await writeFile(path, JSON.stringify(manifest));
+      await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'wrong-delay.json') }), /tick_cache_manifest_mismatch/);
+    } finally { await rm(f.directory, { recursive: true, force: true }); }
+  }
+});
 
 test('regime-aware export binds the clipped primary calendar and keeps future BTC marks in the sealed request', async () => {
   const f = await preparedCache(undefined, true, true);
@@ -96,16 +123,20 @@ test('explicit funding sidecars survive owned publication while unrelated files 
     const rates = '{"instrument_id":"BTCUSDT.SIM","event_ns":"10","rate":"0.00001"}\n';
     const funding = JSON.stringify({ source_revision: f.request.input.source_revision, start_ns: '0', end_ns: '80',
       instruments: ['BTCUSDT.SIM'], rows: 1, missing_instruments: [] });
+    const books = JSON.stringify({ source_root: join(f.directory, 'original-published-files'), files: [] });
     const extras = [{ path: 'funding-rates.jsonl', bytes: String(Buffer.byteLength(rates)) },
-      { path: 'funding-rates.manifest.json', bytes: String(Buffer.byteLength(funding)) }];
+      { path: 'funding-rates.manifest.json', bytes: String(Buffer.byteLength(funding)) },
+      { path: 'book-snapshots.source.json', bytes: String(Buffer.byteLength(books)) }];
     for (const part of ['research', 'independent']) {
       const root = join(f.prepared, part, 'catalog');
       await writeFile(join(root, extras[0]!.path), rates); await writeFile(join(root, extras[1]!.path), funding);
+      await writeFile(join(root, extras[2]!.path), books);
     }
     const metadata = JSON.parse(await readFile(f.options.prepared, 'utf8')); metadata.economic_sources = extras;
     await writeFile(f.options.prepared, JSON.stringify(metadata));
     const result = await exportDataset(f.options);
     assert.equal(await readFile(join(String(result.data.catalog), extras[0]!.path), 'utf8'), rates);
+    assert.equal(await readFile(join(String(result.data.catalog), extras[2]!.path), 'utf8'), books);
     await writeFile(join(f.prepared, 'research/catalog/unrelated.json'), '{}');
     await assert.rejects(exportDataset({ ...f.options, output: join(f.directory, 'extra.json') }), /unmanifested/);
   } finally { await rm(f.directory, { recursive: true, force: true }); }

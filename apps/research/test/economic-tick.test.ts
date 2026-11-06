@@ -101,5 +101,16 @@ test('synthetic quote IOC is explicitly selected and unknown execution models ar
   assert.equal(Object.hasOwn(validateNativeTickEconomicRequest(legacy).scenario, 'execution_model'), false);
   const scenario = { ...legacy.scenario, execution_model: 'SYNTHETIC_QUOTE_IOC_V1' };
   assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario }).scenario.execution_model, 'SYNTHETIC_QUOTE_IOC_V1');
+  assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'OBSERVED_L2_IOC_V1' } }).scenario.execution_model, 'OBSERVED_L2_IOC_V1');
   assert.throws(() => validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'UNKNOWN' } }), /tick_economic_execution_model_invalid/);
+  assert.throws(() => validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: ['OBSERVED_L2_IOC_V1'] } }), /tick_economic_execution_model_invalid/);
+});
+
+test('economic signal weights remain explicit exact positive weights without normalization', () => {
+  const request = economicRequest();
+  assert.equal(validateNativeTickEconomicRequest(request).signal_weights, undefined);
+  assert.deepEqual(validateNativeTickEconomicRequest({ ...request, signal_weights: ['0.250', '0.75'] }).signal_weights, ['0.25', '0.75']);
+  for (const signal_weights of [[], ['0', '1'], ['-1', '2'], ['0.4', '0.4'], ['1e0'], ['1\n'], ['0.0000000000000000001', '0.9999999999999999999'], [1]]) {
+    assert.throws(() => validateNativeTickEconomicRequest({ ...request, signal_weights }), /tick_economic_signal_weights_invalid/);
+  }
 });

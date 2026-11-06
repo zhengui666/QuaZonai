@@ -7,11 +7,11 @@ import { defineDoc, defineExtension, defineTask } from '@earendil-works/pi-durab
 import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult, type TickEconomicReplayStart, type TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
+import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult, type TickEconomicReplayMember, type TickEconomicReplayStart, type TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
 import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
-import { strategyMembers } from '../../research/src/strategy.ts';
+import { exactWeights, strategyMembers } from '../../research/src/strategy.ts';
 import { compileWasm, iterationRequest } from '../../research/plugins/native-wasm.ts';
 import { replayTickEconomic } from '../../research/plugins/tick-economic.ts';
 import { NativeRemoteUncertainty, waitForRemoteNativeExecutionReceipt, retainNativeRemoteUncertainty, validateRemoteTarget, withNativeRemoteTracking } from '../../research/src/native-execution.ts';
@@ -29,7 +29,7 @@ export const TickEconomicReplays = defineDoc<{ runs: Record<string, JsonObject> 
   kind: 'qz.tick-economic-replays', version: 1, scope: 'session', initial: () => ({ runs: {} }),
 });
 type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayView };
-type ReplayInput = { id: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string; request: NativeTickEconomicRequest };
+type ReplayInput = { id: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
 function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
@@ -68,8 +68,12 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
         if (canonical(withoutExecutionQuotas(result.request)) !== canonical(withoutExecutionQuotas(task.input.request))) throw new Error('tick_economic_result_request_mismatch');
       } else {
         directory = await mkdtemp(join(task.input.dataDir, 'tick-economic-'));
-        const model = join(directory, 'model.wasm');
-        await writeFile(model, compileWasm(task.input.model, 'retained-factor.wat', 'replay-tick-economic'));
+        const models = Array.isArray(task.input.model) ? task.input.model : [task.input.model];
+        const model = await Promise.all(models.map(async (source, index) => {
+          const path = join(directory!, `model-${index}.wasm`);
+          await writeFile(path, compileWasm(source, 'retained-factor.wat', 'replay-tick-economic'));
+          return path;
+        }));
         result = await withNativeRemoteTracking(task.id, runtime, ctx, () => replayTickEconomic(task.input.target,
           task.input.request, { catalog: task.input.catalog, fundingCatalog: task.input.fundingCatalog, model }, directory!, ctx));
       }
@@ -113,47 +117,74 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
   }
   async function start(value: unknown) {
     const body = object(value);
-    if (Object.keys(body).some(key => !['requestId', 'datasetId', 'factorId', 'fundingCatalog', 'request'].includes(key))) throw new Problem('tick_economic_unknown_field');
+    if (Object.keys(body).some(key => !['requestId', 'datasetId', 'factorId', 'members', 'fundingCatalog', 'request'].includes(key))) throw new Problem('tick_economic_unknown_field');
+    let members: TickEconomicReplayMember[];
+    if (body.members === undefined) members = [{ factorId: text(body.factorId, 'factor_id'), weight: '1' }];
+    else {
+      if (body.factorId !== undefined || !Array.isArray(body.members) || body.members.length < 2) throw new Problem('tick_economic_members_invalid');
+      members = body.members.map(value => {
+        const member = object(value);
+        if (Object.keys(member).some(key => !['factorId', 'weight'].includes(key))) throw new Problem('tick_economic_members_invalid');
+        return { factorId: text(member.factorId, 'factor_id'), weight: text(member.weight, 'member_weight') };
+      });
+      if (new Set(members.map(member => member.factorId)).size !== members.length) throw new Problem('tick_economic_duplicate_factor');
+      exactWeights(members.map(member => member.weight));
+    }
+    const request = validateNativeTickEconomicRequest(body.request);
+    const weighted = validateNativeTickEconomicRequest({ ...request, signal_weights: members.map(member => member.weight) });
+    if (request.signal_weights && canonical(request.signal_weights) !== canonical(weighted.signal_weights!)) throw new Problem('tick_economic_signal_weights_mismatch');
+    members = members.map((member, index) => ({ ...member, weight: weighted.signal_weights![index]! }));
     const input: TickEconomicReplayStart = { requestId: text(body.requestId, 'request_id'), datasetId: text(body.datasetId, 'dataset_id'),
-      factorId: text(body.factorId, 'factor_id'), request: validateNativeTickEconomicRequest(body.request),
+      ...(body.members === undefined ? { factorId: members[0]!.factorId, request } : { members, request: weighted }),
       ...(body.fundingCatalog === undefined ? {} : { fundingCatalog: text(body.fundingCatalog, 'funding_catalog') }) };
-    const reference = factorReference(input.factorId);
     return host.harness.commit(async tx => {
       const replays = await tx.doc(TickEconomicReplays);
       const existing = Object.values(replays.runs).map(fact).find(row => row.original.requestId === input.requestId);
       if (existing) {
-        if (canonical(existing.original) !== canonical(input)) throw new Problem('request_id_conflict', 409);
+        if (canonical(json(existing.original)) !== canonical(json(input))) throw new Problem('request_id_conflict', 409);
         return json(existing.view) as unknown as TickEconomicReplayView;
       }
       const dataset = config.datasets.find(row => row.id === input.datasetId);
       if (!dataset) throw new Problem('dataset_not_found', 404);
       if (!dataset.ready || !dataset.preparation?.nativePrepared) throw new Problem('dataset_not_ready', 409);
       const application = await tx.doc(Application); assertBusinessAdmission(application);
-      const study = await tx.doc(Study, reference.researchId as ConversationId);
-      if (!study.input || study.deletedAt || study.deletedFactors?.[input.factorId]) throw new Problem('factor_not_found', 404);
       const requests = await tx.doc(Requests);
-      const admitted = Object.entries(requests.requests).some(([key, row]) => row.conversationId === reference.researchId
-        && object(application.researchRequests[key]?.dataset ?? {}).id === input.datasetId);
-      if (!admitted) throw new Problem('tick_economic_factor_dataset_mismatch', 409);
-      const trial = study.trials.find(row => row.taskId === reference.trialId);
-      if (!trial || trial.status !== 'COMPUTED' || !trial.result) throw new Problem('tick_economic_computed_factor_required', 422);
-      const members = strategyMembers(object(trial.proposal));
-      if (members.length !== 1 || reference.memberIndex !== 0) throw new Problem('tick_economic_single_factor_required', 422);
-      const source = matchingBinding(study.input.data, dataset.data, input.request.research)
-        ?? (study.input.data.sealed && dataset.data.sealed
-          ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research) : null);
-      if (!source) throw new Problem('tick_economic_original_request_mismatch', 409);
-      if (input.fundingCatalog !== undefined && input.fundingCatalog !== source.fundingCatalog) throw new Problem('tick_economic_funding_catalog_mismatch', 409);
-      const native = object(trial.result);
-      const coverage = object(native.coverage, 'native_coverage');
-      if (canonical(withoutExecutionQuotas(native.request!)) !== canonical(withoutExecutionQuotas(iterationRequest(study.input.data))) || coverage.modality !== 'TRADE_TICK'
-        || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
-        || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
+      const retained = [];
+      for (const member of members) {
+        const reference = factorReference(member.factorId);
+        const study = await tx.doc(Study, reference.researchId as ConversationId);
+        if (!study.input || study.deletedAt || study.deletedFactors?.[member.factorId]) throw new Problem('factor_not_found', 404);
+        const admitted = Object.entries(requests.requests).some(([key, row]) => row.conversationId === reference.researchId
+          && object(application.researchRequests[key]?.dataset ?? {}).id === input.datasetId);
+        if (!admitted) throw new Problem('tick_economic_factor_dataset_mismatch', 409);
+        const trial = study.trials.find(row => row.taskId === reference.trialId);
+        if (!trial || trial.status !== 'COMPUTED' || !trial.result) throw new Problem('tick_economic_computed_factor_required', 422);
+        const models = strategyMembers(object(trial.proposal));
+        if (models.length !== 1 || reference.memberIndex !== 0) throw new Problem('tick_economic_single_factor_required', 422);
+        const source = matchingBinding(study.input.data, dataset.data, input.request.research)
+          ?? (study.input.data.sealed && dataset.data.sealed
+            ? matchingBinding(object(study.input.data.sealed), object(dataset.data.sealed), input.request.research) : null);
+        if (!source) throw new Problem('tick_economic_original_request_mismatch', 409);
+        if (input.fundingCatalog !== undefined && input.fundingCatalog !== source.fundingCatalog) throw new Problem('tick_economic_funding_catalog_mismatch', 409);
+        const native = object(trial.result);
+        const coverage = object(native.coverage, 'native_coverage');
+        if (canonical(withoutExecutionQuotas(native.request!)) !== canonical(withoutExecutionQuotas(iterationRequest(study.input.data))) || coverage.modality !== 'TRADE_TICK'
+          || coverage.source_revision !== source.request.input.source_revision || typeof coverage.trade_count !== 'string' || !/^[1-9]\d*$/.test(coverage.trade_count)
+          || typeof object(native.native_versions, 'native_versions')['nautilus-model'] !== 'string') throw new Problem('tick_economic_native_evidence_mismatch', 409);
+        const target = boundScienceTarget(config, study.input.data);
+        if (retained.length && (source.catalog !== retained[0]!.source.catalog || source.fundingCatalog !== retained[0]!.source.fundingCatalog
+          || canonical(target) !== canonical(retained[0]!.target))) throw new Problem('tick_economic_member_binding_mismatch', 409);
+        retained.push({ reference, source, target, model: models[0]!.model, factorId: member.factorId });
+      }
+      const { reference, source, target } = retained[0]!;
       const id = randomUUID();
       const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: source.catalog, fundingCatalog: source.fundingCatalog,
-        model: members[0]!.model, request: input.request, target: boundScienceTarget(config, study.input.data) },
+        model: retained.length === 1 ? retained[0]!.model : retained.map(member => member.model), request: input.request, target },
       { conversationId: reference.researchId as ConversationId, ownership: { kind: 'conversation' } });
-      const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId, factorId: input.factorId, taskId, fundingCatalog: source.fundingCatalog,
+      const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId,
+        ...(input.members ? { members: input.members } : { factorId: input.factorId }), taskId, fundingCatalog: source.fundingCatalog,
+        sources: retained.map(member => ({ factorId: member.factorId, researchId: member.reference.researchId, trialId: member.reference.trialId,
+          memberIndex: member.reference.memberIndex, sourceRevision: member.source.request.input.source_revision })),
         status: 'QUEUED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null };
       replays.runs[id] = json({ original: input, view });
       return view;

@@ -32,9 +32,11 @@ test('owner API binds a retained unselected computed factor through the actual r
 import json, os, sys
 request=json.load(sys.stdin)
 assert sys.argv[1]=='replay-tick-economic'
-assert os.path.isfile(sys.argv[sys.argv.index('--model')+1])
+models=[sys.argv[i+1] for i,arg in enumerate(sys.argv) if arg=='--model']
+assert all(os.path.isfile(model) for model in models)
+assert len(models)==len(request.get('signal_weights',['1']))
 with open(${JSON.stringify(calls)},'a') as log: log.write('run\\n')
-print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','catalog':sys.argv[sys.argv.index('--catalog')+1],'funding_catalog':sys.argv[sys.argv.index('--funding-catalog')+1]},
+print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTOCOL_ONLY','methods':{'scope':'test protocol only','models':str(len(models)),'catalog':sys.argv[sys.argv.index('--catalog')+1],'funding_catalog':sys.argv[sys.argv.index('--funding-catalog')+1]},
 'coverage':{'modality':'TRADE_TICK','source_revision':request['research']['input']['source_revision']},
 'assets':[{'instrument_id':'BTC.SIM','native_kind':'CryptoPerpetual','cohorts':'2','decisions':'1','execution_attempts':'0'}],
 'days':[{'day_start_ns':'0','equity_usdt':None,'net_return':None,'unknown_reason':'controlled_missing_mark','missing_balances':[{'ledger':'CASH','currency':'BTC','amount':'0.2'},{'ledger':'MARGIN','currency':'ETH','amount':'1'}]}],
@@ -202,5 +204,48 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     await service.close(); service = await createService(options);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json(), result);
     assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun');
+    const addMember = (differentTarget = false) => service.research.harness.commit(async tx => {
+      const original = (await tx.doc(Study, researchId)).input!;
+      const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
+      const input = { ...original, data: { ...original.data, ...(differentTarget ? { nautilusTarget: { ...target, id: 'another-worker' } } : {}) } };
+      const study = await tx.doc(Study, conversation.id); study.input = input;
+      const trial = json((await tx.doc(Study, researchId)).trials[0]!);
+      study.trials.push({ ...trial, taskId: 78 });
+      const key = `request:member-${conversation.id}`;
+      (await tx.doc(Requests)).requests[key] = { input, conversationId: conversation.id };
+      (await tx.doc(Application)).researchRequests[key] = { original: { datasetId: 'ticks' }, input, dataset: json(dataset) };
+      return conversation.id;
+    }, context);
+    const secondResearchId = await addMember();
+    const members = [{ factorId: payload.factorId, weight: '0.25' }, { factorId: `r${secondResearchId}.t78.m0`, weight: '0.75' }];
+    const combination = { requestId: 'economic-combination', datasetId: 'ticks', members, request };
+    const combined = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: combination });
+    assert.equal(combined.statusCode, 202, combined.body);
+    await service.research.harness.waitForTask(combined.json().taskId as TaskId, context);
+    const combinedView = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${combined.json().id}`, headers })).json();
+    assert.equal(combinedView.status, 'COMPUTED', JSON.stringify(combinedView));
+    assert.deepEqual(combinedView.members, members); assert.equal(combinedView.factorId, undefined);
+    assert.equal(combinedView.result.methods.models, '2'); assert.deepEqual(combinedView.result.request.signal_weights, ['0.25', '0.75']);
+    assert.deepEqual(combinedView.sources, [researchId, secondResearchId].map((id, index) => ({ factorId: members[index]!.factorId, researchId: id, trialId: index ? 78 : 77, memberIndex: 0, sourceRevision: full.input.source_revision })));
+    assert.equal((await service.research.harness.snapshot(Study, researchId, context))!.trials.length, 1);
+    assert.equal((await service.research.harness.snapshot(Study, secondResearchId, context))!.trials.length, 1);
+    assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: combination })).json().id, combinedView.id);
+    for (const invalid of [
+      { ...combination, factorId: payload.factorId },
+      { ...combination, members: [members[0]] },
+      { ...combination, members: [members[0], members[0]] },
+      { ...combination, members: members.map(member => ({ ...member, weight: '0.25' })) },
+      { ...combination, request: { ...request, signal_weights: ['0.5', '0.5'] } },
+    ]) assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: invalid })).statusCode, 400);
+    assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
+      payload: { ...combination, members: members.map(member => ({ ...member, weight: '0.5' })) } })).statusCode, 409);
+    const otherTargetId = await addMember(true);
+    const differentTarget = await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers,
+      payload: { ...combination, requestId: 'member-other-target', members: [members[0], { factorId: `r${otherTargetId}.t78.m0`, weight: '0.75' }] } });
+    assert.equal(differentTarget.statusCode, 409, differentTarget.body);
+    assert.equal(differentTarget.json().error, 'tick_economic_member_binding_mismatch');
+    await service.close(); service = await createService(options);
+    assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${combinedView.id}`, headers })).json(), combinedView);
+    assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun\nrun', 'fixed combinations retain one original invocation');
   } finally { await service.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -226,6 +226,11 @@ fn optional_funding_pair_is_bound_to_source_window_before_preparation() {
     assert!(funding_sources(dir.path(), &request.research)
         .unwrap()
         .contains(&("spot-valuation.jsonl".into(), 3)));
+    let books = dir.path().join("book-snapshots.source.json");
+    std::fs::write(&books, "{}\n").unwrap();
+    assert!(funding_sources(dir.path(), &request.research)
+        .unwrap()
+        .contains(&("book-snapshots.source.json".into(), 3)));
     #[cfg(unix)]
     {
         std::fs::remove_file(&quotes).unwrap();

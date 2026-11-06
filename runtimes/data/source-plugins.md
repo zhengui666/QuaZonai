@@ -66,11 +66,16 @@ python3 -B runtimes/data/source_plugins.py prepare --help
   prepare for an already supplied single-symbol/day spot archive. No download or
   terms-acceptance capability; native conversion uses the restricted ordinary ZIP
   profile and original definitions described in the [archive guide](binance-vision.md)
-- `cryptohftdata-hyperliquid`: offline inspect and convert for an existing
+- `cryptohftdata-hyperliquid`: offline inspect, plan and convert for an existing
   [CryptoHFTData Hyperliquid archive](hyperliquid.md). Select explicit market,
   symbols, UTC dates and optional hours; original hourly Parquet/Zstandard files
   are read in place by the existing native importer. Full book snapshots produce
   book deltas and quotes; perpetual context produces original price/funding observations.
+  Explicit `--stream trades` preserves published fills and separate exchange/receive
+  clocks. `--trade-ticks`, `--cohort-cache` and `--cohort-flow-cache` select trade-only
+  output; `--received-time --maximum-receive-delay-ns N` selects the receive-clock path.
+  `plan` writes the selected source manifest with original instrument definitions
+  for direct raw book replay, without native conversion or raw-file copies.
 
 CLI commands and source-specific options come from the registry's capabilities.
 An unsupported operation is absent from the CLI, rather than a false ready state.

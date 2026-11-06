@@ -22,6 +22,8 @@ class CryptoHFTDataTests(unittest.TestCase):
         self.manifest = {"status": "COMPLETE", "bytes": 123, "objects": 3,
                          "start_date_utc": "2026-02-12", "end_date_utc": "2026-10-13"}
         (self.archive / "dataset.json").write_text(json.dumps(self.manifest))
+        self.instruments = {"currencies": [], "instruments": [], "symbol_ids": {"BTC": "BTC-USD-PERP.HYPERLIQUID"}}
+        (self.root / "instruments.json").write_text(json.dumps(self.instruments))
 
     def file(self, relative, data=b"original downloaded file"):
         path = self.archive / relative
@@ -44,6 +46,7 @@ class CryptoHFTDataTests(unittest.TestCase):
     def test_selected_files_keep_original_plain_and_compressed_formats_and_clocks(self):
         plain = self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
         compressed = self.file("hyperliquid_futures/2026-10-13/23/BTC_mark_price.parquet.zst")
+        self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
         selection = self.select(hours=[23])
         self.assertEqual(selection["source_root"], str(self.archive))
         self.assertEqual({f["path"] for f in selection["files"]},
@@ -56,6 +59,10 @@ class CryptoHFTDataTests(unittest.TestCase):
         self.assertEqual(definitions["context-zstd"]["columns"]["time"], "received_time")
         self.assertEqual(definitions["context-zstd"]["format"], "parquet-zstd")
         self.assertEqual(selection["missing"], [])
+        for file in selection["files"]:
+            state = (self.archive / file["path"]).stat()
+            self.assertEqual(file["file_identity"], ":".join(str(value) for value in
+                (state.st_dev, state.st_ino, state.st_size, state.st_mtime_ns, state.st_ctime_ns)))
         self.assertNotIn("sha256", json.dumps(selection))
         self.assertNotIn("huggingface", selection["source_reference"])
 
@@ -65,11 +72,51 @@ class CryptoHFTDataTests(unittest.TestCase):
         selection = self.select(streams=["books"], hours=[22, 23])
         self.assertEqual(len(selection["files"]), 1)
         self.assertEqual(len(selection["missing"]), 1)
+        self.assertEqual(selection["missing_hour_count"], 1)
         self.assertIn("/22/BTC_", selection["missing"][0]["pattern"])
+        self.assertNotIn("hours", selection["missing"][0])
         self.assertEqual(selection["selection"]["symbols"], ["BTC"])
 
+    def test_missing_hours_group_by_stream_date_and_symbol_with_exact_count(self):
+        for day in ("2026-10-12", "2026-10-13"):
+            self.file(f"hyperliquid_futures/{day}/23/BTC_trades.parquet")
+        result = cryptohftdata.selection(self.archive, "perpetual", ["BTC", "MISSING"],
+            "2026-10-12", "2026-10-14", streams=["books", "trades"], hours=[21, 22, 23])
+        self.assertEqual(result["missing_hour_count"], 22)
+        self.assertEqual(len(result["missing"]), 8)
+        for item in result["missing"]:
+            self.assertIn(item["stream"], ("books", "trades"))
+            self.assertIn(item["date"], ("2026-10-12", "2026-10-13"))
+            self.assertIn("/{hour}/", item["pattern"])
+            expected = [21, 22] if item["stream"] == "trades" and "/BTC_" in item["pattern"] else [21, 22, 23]
+            self.assertEqual(item["hours"], expected)
+        self.assertEqual(sum(len(item["hours"]) for item in result["missing"]), 22)
+        self.assertEqual(result["selection"]["symbols"], ["BTC", "MISSING"])
+        self.assertEqual(result["unobserved_symbols"], ["MISSING"])
+
+    def test_trade_stream_preserves_real_columns_clocks_and_aggressor_direction(self):
+        for market, symbol, compressed in (("perpetual", "BTC", False), ("spot", "UBTC_USDC", True)):
+            with self.subTest(market=market):
+                relative = f"{cryptohftdata.MARKETS[market]}/2026-10-13/23/{symbol}_trades.parquet"
+                if compressed:
+                    relative += ".zst"
+                self.file(relative)
+                selection = cryptohftdata.selection(self.archive, market, [symbol], "2026-10-13",
+                                                    "2026-10-14", streams=["trades"], hours=[23])
+                stream, = selection["profile"]["streams"]
+                self.assertEqual(stream["kind"], "trades")
+                self.assertEqual(stream["time_unit"], "ms")
+                self.assertEqual(stream["available_time_unit"], "ns")
+                self.assertEqual(stream["columns"], {"symbol": "symbol", "time": "event_time",
+                    "available_at": "received_time", "side": "is_buyer_maker", "price": "price",
+                    "size": "quantity", "trade_id": "trade_id"})
+                self.assertEqual(stream["sides"], {"true": "SELLER", "false": "BUYER"})
+                self.assertEqual(stream["format"], "parquet-zstd" if compressed else "parquet")
+                self.assertEqual(selection["files"][0]["path"], relative)
+                self.assertEqual(selection["missing"], [])
+
     def test_invalid_selection_and_ambiguous_source_do_not_publish(self):
-        for options in ({"hours": [-1]}, {"hours": [24]}, {"streams": ["trades"]}):
+        for options in ({"hours": [-1]}, {"hours": [24]}, {"streams": ["candles"]}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 self.select(**options)
         for symbol in ("../BTC", "BTC/USDC", "", ".."):
@@ -84,7 +131,7 @@ class CryptoHFTDataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             self.select()
 
-    def test_source_symlink_cannot_escape_archive_and_missing_symbol_fails(self):
+    def test_source_symlink_cannot_escape_and_unobserved_requested_symbols_stay_reported(self):
         original = self.root / "outside.parquet"
         original.write_bytes(b"outside")
         path = self.archive / "hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet"
@@ -94,8 +141,13 @@ class CryptoHFTDataTests(unittest.TestCase):
             self.select()
         path.unlink()
         self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
-        with self.assertRaisesRegex(ValueError, "selected symbol"):
-            cryptohftdata.selection(self.archive, "perpetual", ["BTC", "MISSING"], "2026-10-13", "2026-10-14")
+        result = cryptohftdata.selection(self.archive, "perpetual", ["BTC", "MISSING"], "2026-10-13",
+                                         "2026-10-14", streams=["books"], hours=[23])
+        self.assertEqual(result["coverage"], "OBSERVED_PUBLISHED_FILES")
+        self.assertEqual(result["selection"]["symbols"], ["BTC", "MISSING"])
+        self.assertEqual(result["unobserved_symbols"], ["MISSING"])
+        self.assertEqual(len(result["files"]), 1)
+        self.assertEqual(len(result["missing"]), 1)
 
     def test_convert_dispatch_keeps_raw_files_and_passes_existing_native_interface(self):
         raw = self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
@@ -122,7 +174,70 @@ class CryptoHFTDataTests(unittest.TestCase):
         self.assertFalse(result["research_qualified"])
         self.assertEqual(raw.read_bytes(), b"original downloaded file")
         self.assertEqual(json.loads(Path(result["source_manifest"]).read_text())["source_root"], str(self.archive))
-        self.assertEqual(source_plugins.PLUGINS[cryptohftdata.PLUGIN].capabilities.keys(), {"inspect", "convert"})
+        self.assertEqual(source_plugins.PLUGINS[cryptohftdata.PLUGIN].capabilities.keys(), {"inspect", "plan", "convert"})
+
+    def test_offline_plan_keeps_original_files_and_embeds_original_definitions(self):
+        raw = self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
+        output = self.root / "book-snapshots.source.json"
+        argv = ["plan", cryptohftdata.PLUGIN, "--archive", str(self.archive),
+            "--market", "perpetual", "--symbol", "BTC", "--start-date", "2026-10-13",
+            "--end-date", "2026-10-14", "--hour", "23", "--stream", "books",
+            "--instruments", str(self.root / "instruments.json"), "--output", str(output)]
+        with patch.object(source_plugins, "run_native") as native, \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            code = source_plugins.main(argv)
+        self.assertEqual(code, 0)
+        native.assert_not_called()
+        summary = json.loads(stdout.getvalue())
+        self.assertEqual(summary["files"], 1)
+        manifest = json.loads(output.read_text())
+        self.assertEqual(manifest["source_root"], str(self.archive))
+        self.assertEqual(manifest["instrument_source"], self.instruments)
+        self.assertEqual(manifest["files"][0]["path"], raw.relative_to(self.archive).as_posix())
+        self.assertEqual(raw.read_bytes(), b"original downloaded file")
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            source_plugins.parser().parse_args(argv + ["--trade-ticks"])
+
+    def test_received_trade_modes_use_existing_native_flags(self):
+        self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
+        for mode in ("--trade-ticks", "--cohort-cache", "--cohort-flow-cache"):
+            with self.subTest(mode=mode):
+                output = self.root / mode[2:]
+                def run(args, argv, binary):
+                    self.assertEqual(binary, "market-history")
+                    self.assertIn(mode, argv)
+                    self.assertIn("--received-time", argv)
+                    self.assertEqual(argv[-2:], ["--maximum-receive-delay-ns", "2000000000"])
+                    output.mkdir()
+                    (output / "import-report.json").write_text(json.dumps({"status": "IMPORTED",
+                        "readback_records": 1, "missing_symbols": {}, "rejected_rows": {}}))
+                    return output
+                with patch.object(source_plugins, "run_native", side_effect=run), \
+                        contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    code = source_plugins.main(["convert", cryptohftdata.PLUGIN, "--archive", str(self.archive),
+                        "--market", "perpetual", "--symbol", "BTC", "--start-date", "2026-10-13",
+                        "--end-date", "2026-10-14", "--hour", "23", "--stream", "trades", mode,
+                        "--received-time", "--maximum-receive-delay-ns", "2000000000",
+                        "--instruments", str(self.root / "instruments.json"), "--output", str(output)])
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(stdout.getvalue())["catalog_root"], str(output / "catalog"))
+
+    def test_trade_mode_rejects_mixed_streams_and_incomplete_receive_clock_options(self):
+        self.file("hyperliquid_futures/2026-10-13/23/BTC_orderbook.parquet")
+        self.file("hyperliquid_futures/2026-10-13/23/BTC_trades.parquet")
+        output = self.root / "invalid"
+        base = ["convert", cryptohftdata.PLUGIN, "--archive", str(self.archive), "--market", "perpetual",
+            "--symbol", "BTC", "--start-date", "2026-10-13", "--end-date", "2026-10-14", "--hour", "23",
+            "--instruments", str(self.root / "instruments.json"), "--output", str(output)]
+        for options in (("--stream", "books", "--trade-ticks"),
+                        ("--stream", "trades", "--received-time", "--maximum-receive-delay-ns", "1"),
+                        ("--stream", "trades", "--trade-ticks", "--received-time"),
+                        ("--stream", "trades", "--trade-ticks", "--maximum-receive-delay-ns", "1")):
+            with self.subTest(options=options), contextlib.redirect_stderr(io.StringIO()), \
+                    patch.object(source_plugins, "run_native") as native:
+                self.assertEqual(source_plugins.main(base + list(options)), 1)
+                native.assert_not_called()
+                self.assertFalse(output.with_name(output.name + ".source.json").exists())
 
 
 if __name__ == "__main__":

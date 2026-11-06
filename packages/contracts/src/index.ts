@@ -93,7 +93,7 @@ export interface DatasetView {
   nativeModality?: 'BAR' | 'TRADE_TICK';
   preparation?: DatasetPreparation;
   inputCoverage?: JsonObject;
-  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonNs?: string; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS' | 'EVENT_TIME_NS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };
+  researchSettings?: { instruments: string[]; inputFamily: string; horizon: number | null; horizonNs?: string; horizonUnit?: 'BAR_OBSERVATIONS' | 'TRADE_COHORTS' | 'EVENT_TIME_NS' | 'RECEIVED_TIME_NS'; modality?: 'BAR' | 'TRADE_TICK'; sampling?: string; sourceRevision?: string; availability?: string; partitions: JsonObject | null; strategy: JsonObject | null };
 }
 export interface EquityPoint { at: string; value: string | null }
 export interface TargetWeight { instrumentId: string; weight: string }
@@ -103,7 +103,7 @@ export interface FactorView extends FactorReference {
   id: string; name: string; hypothesis: string; modelSource: string; datasetId: string | null; currency: string | null; market: string[];
   status: string; evidence: 'independent' | 'historical' | 'component_only' | 'validation_only' | 'unavailable';
   metrics: Metric[]; criterion: CriterionView | null; combinable: boolean; reason: string | null; capacity?: CapacityReport; capacityAssumptions?: CapitalAssumptions;
-  nativeModality?: 'BAR' | 'TRADE_TICK'; availability?: 'EVENT_TIME_PROXY_UNVERIFIED'; scientificQualification?: 'UNQUALIFIED_EXPLORATORY';
+  nativeModality?: 'BAR' | 'TRADE_TICK'; availability?: 'EVENT_TIME_PROXY_UNVERIFIED' | 'RECEIVED_TIME_OBSERVED'; scientificQualification?: 'UNQUALIFIED_EXPLORATORY';
 }
 export interface FactorAllocation { factorId: string; weight: string }
 export interface PortfolioStart {

@@ -385,8 +385,10 @@ fn evaluate_asset(
     let mut pending = VecDeque::<Pending>::new();
     let mut previous: Option<Cohort> = None;
     let mut seen = 0_u64;
+    let mut latest_source_event = 0;
     for current in rows {
         let current = current?;
+        latest_source_event = latest_source_event.max(current.source_event_end - 1);
         ensure!(seen < cohort_count, "TICK_CACHE_COHORT_COUNT_MISMATCH");
         ensure!(
             current.count > 0 && current.count <= request.sampling.maximum_cohort_rows as usize,
@@ -427,35 +429,54 @@ fn evaluate_asset(
             .as_ref()
             .filter(|_| fast.initialized() && slow.initialized())
         {
+            let observed = request.input.uses_received_time();
+            let feature_at = |value, cohort: &Cohort| {
+                clocked_feature(
+                    value,
+                    cohort.source_event_end - 1,
+                    cohort.event,
+                    ordinal,
+                    observed,
+                )
+            };
             let features = [
-                feature(current.vwap, current.event, ordinal)?,
-                feature(previous.vwap, previous.event, ordinal)?,
-                feature(fast.value(), current.event, ordinal)?,
-                feature(slow.value(), current.event, ordinal)?,
-                feature(current.quantity, current.event, ordinal)?,
-                feature(current.count as f64, current.event, ordinal)?,
-                feature(
-                    (current.event - previous.event) as f64,
+                feature_at(current.vwap, &current)?,
+                feature_at(previous.vwap, previous)?,
+                clocked_feature(
+                    fast.value(),
+                    latest_source_event,
                     current.event,
                     ordinal,
+                    observed,
                 )?,
+                clocked_feature(
+                    slow.value(),
+                    latest_source_event,
+                    current.event,
+                    ordinal,
+                    observed,
+                )?,
+                feature_at(current.quantity, &current)?,
+                feature_at(current.count as f64, &current)?,
+                feature_at((current.event - previous.event) as f64, &current)?,
             ];
             summary.predictions += 1;
             Some(if let Some(signed) = signed_quantity {
                 let [a, b, c, d, e, f, g] = features;
-                let flow_features = [
-                    a,
-                    b,
-                    c,
-                    d,
-                    e,
-                    f,
-                    g,
-                    feature(signed, current.event, ordinal)?,
-                ];
-                model.predict(current.event, current.event, ordinal, &flow_features)?
+                let flow_features = [a, b, c, d, e, f, g, feature_at(signed, &current)?];
+                model.predict(
+                    current.event,
+                    current.source_event_end - 1,
+                    ordinal,
+                    &flow_features,
+                )?
             } else {
-                model.predict(current.event, current.event, ordinal, &features)?
+                model.predict(
+                    current.event,
+                    current.source_event_end - 1,
+                    ordinal,
+                    &features,
+                )?
             })
         } else {
             record(
@@ -505,7 +526,8 @@ fn evaluate_asset(
                     });
                 }
             }
-            NativeTickTargetV1::FixedEventTime { horizon_ns } => {
+            NativeTickTargetV1::FixedEventTime { horizon_ns }
+            | NativeTickTargetV1::FixedReceivedTime { horizon_ns } => {
                 if let Some(prediction) = prediction {
                     let threshold = current
                         .event
@@ -590,7 +612,8 @@ pub(super) fn evaluate(
         .transpose()?;
     for asset in &cache.assets {
         let mut label_rows = match request.target {
-            NativeTickTargetV1::FixedEventTime { .. } => Some(cache.cohorts(asset)?),
+            NativeTickTargetV1::FixedEventTime { .. }
+            | NativeTickTargetV1::FixedReceivedTime { .. } => Some(cache.cohorts(asset)?),
             NativeTickTargetV1::FixedTradeCohorts { .. } => None,
         };
         let summary = evaluate_asset(
@@ -665,12 +688,12 @@ pub(super) fn evaluate(
         schema_version: SchemaV1, request: request.clone(),
         native_versions: BTreeMap::from([("nautilus-model".into(), "0.67.0".into()), ("nautilus-persistence".into(), "0.67.0".into()), ("nautilus-indicators".into(), "0.67.0".into()), ("wasmi".into(), "2.0.0".into())]),
         methods: BTreeMap::from([
-            ("input".into(), format!("{}: derived complete-event cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
-            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), if request.input.is_flow_cache() { FLOW_FEATURE_SCHEMA } else { FEATURE_SCHEMA }.into()),
-            ("sampling".into(), "EVENT_TIME_COHORT_V1: complete current cohort visible; earlier selected cohorts only; unknown source sequence".into()),
+            ("input".into(), format!("{}: derived complete sampling-clock cohorts; no BAR catalog or simulation", request.input.cache_representation().unwrap())),
+            ("prediction".into(), crate::feature_model::ABI.into()), ("features".into(), feature_schema(&request.input).into()),
+            ("sampling".into(), sampling_method(&request.input).into()),
             ("label".into(), request.target.label_method().into()),
-            ("partitioning".into(), "shared half-open event cuts; cross-boundary labels excluded; warmup and state continue across source units".into()),
-            ("qualification".into(), "UNQUALIFIED_EXPLORATORY; event time proxy is not original availability evidence".into()),
+            ("partitioning".into(), "shared half-open sampling-clock cuts; cross-boundary labels excluded; warmup and state continue across source units".into()),
+            ("qualification".into(), qualification_method(&request.input).into()),
             ("ic".into(), "stable online covariance raw pooled Pearson correlation; not averaged asset/unit IC".into()),
         ]),
         consumed_fuel: request.parameters.total_fuel.zip(budget.fuel).map(|(total, left)| counter(total.get() - left)).transpose()?,

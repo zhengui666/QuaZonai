@@ -215,6 +215,92 @@ fn clipped_zero_cohort_asset_keeps_identity_and_unstarted_collateral_without_fak
 }
 
 #[test]
+fn observed_replay_converts_at_book_bid_and_keeps_one_account_across_days() {
+    use nautilus_model::{
+        data::{BookOrder, OrderBookDelta},
+        enums::{BookAction, RecordFlag},
+    };
+    use nautilus_persistence::backend::parquet::catalog::ParquetDataCatalog;
+
+    let directory = tempfile::tempdir().unwrap();
+    let (prepared, mut request, wasm) = source(directory.path(), 1, None, true);
+    request.research.clip_end(counter(2 * DAY).unwrap());
+    request.scenario.execution_model = Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
+    request.context_source = Some(CONTEXT_MANIFEST.into());
+    let economic = directory.path().join("source/catalog");
+    let csv = "event_ns,oracle_px,mark_px\n";
+    std::fs::write(economic.join("context-prices-000.csv"), csv).unwrap();
+    std::fs::write(economic.join(CONTEXT_MANIFEST), serde_json::to_vec(&json!({
+        "schema_version":1,"format":"EVENT_TIME_CONTEXT_PRICE_CSV_V1","clock":"EVENT_TIME_PROXY_UNVERIFIED",
+        "source_revision":"controlled-books","research_source_revision":"fixed-source","start_ns":"0","end_ns":(3*DAY).to_string(),
+        "rows":"0","instrument_ids":[LATE],"files":[{"instrument_id":LATE,"path":"context-prices-000.csv", "bytes":csv.len().to_string(),
+            "rows":"0","first_event_ns":null,"last_event_ns":null}]
+    })).unwrap()).unwrap();
+    let catalog = ParquetDataCatalog::new(&economic, None, None, None, None);
+    let mut times = (8..=78)
+        .step_by(10)
+        .map(|second| second * SECOND)
+        .collect::<Vec<_>>();
+    times.extend([DAY + 8 * SECOND, DAY + 18 * SECOND, 2 * DAY - SECOND]);
+    for instrument in definitions() {
+        let mut rows = Vec::new();
+        for &at in &times {
+            let (bid, ask) = if instrument.id().to_string() == BRIDGE {
+                ("1.000", "1.010")
+            } else {
+                ("99.00", "101.00")
+            };
+            let mut clear = OrderBookDelta::clear(instrument.id(), 0, (at - 100).into(), at.into());
+            clear.order.price = Price::zero(instrument.price_precision());
+            clear.order.size = Quantity::zero(instrument.size_precision());
+            rows.push(clear);
+            for (side, price) in [(OrderSide::Buy, bid), (OrderSide::Sell, ask)] {
+                rows.push(OrderBookDelta::new(
+                    instrument.id(),
+                    BookAction::Add,
+                    BookOrder::new(side, Price::from(price), Quantity::from("10000.0000"), 0),
+                    RecordFlag::F_SNAPSHOT as u8,
+                    0,
+                    (at - 100).into(),
+                    at.into(),
+                ));
+            }
+            rows.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+        }
+        catalog.write_to_parquet(&rows, None, None, None).unwrap();
+    }
+    let result = replay_with_funding(
+        &prepared.join("research/catalog"),
+        &economic,
+        &request,
+        &wasm,
+    )
+    .unwrap();
+    assert_eq!(result.model, "SEGREGATED_OBSERVED_L2_IOC_V1");
+    assert_eq!(
+        decimal(result.initial_usdc_after_cost.as_ref().unwrap()).unwrap(),
+        Decimal::from(3000)
+    );
+    assert_eq!(result.days.len(), 2);
+    assert!(result.native_fills.get() >= 2);
+    assert!(
+        result
+            .assets
+            .iter()
+            .find(|asset| asset.instrument_id == SPOT)
+            .unwrap()
+            .execution_attempts
+            .get()
+            > 0
+    );
+    assert!(result.methods["execution"].contains("L2_MBP"));
+    assert!(!result
+        .limitations
+        .iter()
+        .any(|limit| limit == "COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK"));
+}
+
+#[test]
 fn negative_or_zero_score_schedules_flat_then_native_future_fill_removes_later_price_exposure() {
     for score in [-1, 0] {
         let directory = tempfile::tempdir().unwrap();
@@ -1255,6 +1341,7 @@ fn small_pending_entry_counts_toward_gross_and_cash_and_bridge_is_not_alpha() {
         3 * SECOND,
         &request.scenario,
         &mut contexts,
+        None,
     )
     .unwrap();
     assert_eq!(rows[0].target_quantity, Some(Decimal::new(15, 2)));
@@ -1302,6 +1389,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         2 * SECOND,
         &request.scenario,
         &mut contexts,
+        None,
     )
     .unwrap();
     assert_eq!(rows[0].target_quantity, Some(Decimal::new(-3, 1)));
@@ -1331,6 +1419,7 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
         2 * SECOND,
         &request.scenario,
         &mut contexts,
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -1340,6 +1429,187 @@ fn small_execution_cap_keeps_perp_short_and_respects_entry_quote_reservation() {
     );
     cash.finish().unwrap();
     margin.finish().unwrap();
+}
+
+#[test]
+fn observed_entry_cap_uses_actual_side_depth_and_never_caps_closing_notional() {
+    use nautilus_model::{
+        data::{BookOrder, OrderBookDelta, OrderBookDeltas},
+        enums::{BookAction, RecordFlag},
+        events::OrderEventAny,
+    };
+    for (id, direction, quote_budget) in [
+        (SPOT, Decimal::ONE, 30),
+        (LATE, Decimal::ONE, 30),
+        (LATE, -Decimal::ONE, 30),
+        (SPOT, Decimal::ONE, 20),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut assets, mut request) = small_assets(directory.path());
+        request.scenario.execution_model =
+            Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1);
+        let mut cash = build(&assets, false, Decimal::from(100), &request.scenario).unwrap();
+        let mut margin = build(&assets, true, Decimal::from(100), &request.scenario).unwrap();
+        let i = assets
+            .iter()
+            .position(|asset| asset.instrument.id().to_string() == id)
+            .unwrap();
+        let instrument = assets[i].instrument.clone();
+        let is_margin = matches!(instrument, InstrumentAny::CryptoPerpetual(_));
+        let target = Decimal::new(3, 1) * direction;
+        assets[i].pending = Some((SECOND, 2 * SECOND, target));
+        assets[i].mark = Some((3 * SECOND, Decimal::from(100)));
+        let mut small = SmallCapital::new(assets.len());
+        small.cycles[i] = Some(SmallCycle {
+            decision: SECOND,
+            deadline: 61 * SECOND,
+            reference: Decimal::from(90),
+            direction,
+            reservation_usdc: Decimal::from(30),
+            reservation_quote: Decimal::from(quote_budget),
+            first_fill: None,
+            exit_decision: None,
+            quantity: Decimal::ZERO,
+        });
+        let snapshot = |at: u64, closing: bool| {
+            let mut clear = OrderBookDelta::clear(instrument.id(), 0, (at - 100).into(), at.into());
+            clear.order.price = Price::zero(instrument.price_precision());
+            clear.order.size = Quantity::zero(instrument.size_precision());
+            let mut deltas = vec![clear];
+            let levels = if closing {
+                vec![
+                    (OrderSide::Buy, "200.00", "1.0000"),
+                    (OrderSide::Sell, "201.00", "1.0000"),
+                ]
+            } else {
+                vec![
+                    (OrderSide::Buy, "99.00", "0.1000"),
+                    (OrderSide::Buy, "98.00", "1.0000"),
+                    (OrderSide::Sell, "101.00", "0.1000"),
+                    (OrderSide::Sell, "102.00", "1.0000"),
+                ]
+            };
+            for (side, price, size) in levels {
+                deltas.push(OrderBookDelta::new(
+                    instrument.id(),
+                    BookAction::Add,
+                    BookOrder::new(side, Price::from(price), Quantity::from(size), 0),
+                    RecordFlag::F_SNAPSHOT as u8,
+                    0,
+                    (at - 100).into(),
+                    at.into(),
+                ));
+            }
+            deltas.last_mut().unwrap().flags |= RecordFlag::F_LAST as u8;
+            books::Snapshot::new(OrderBookDeltas::new(instrument.id(), deltas)).unwrap()
+        };
+        // Start the UTC day before entry: the first frame purges closed native history.
+        let ledger = if is_margin { &mut margin } else { &mut cash };
+        ledger
+            .step_books(
+                2 * SECOND,
+                native_books(
+                    Vec::new(),
+                    &BTreeMap::from([(i, snapshot(2 * SECOND, false))]),
+                    &assets,
+                    is_margin,
+                ),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(ledger.summary().submitted, 0);
+        let frames = BTreeMap::from([(i, snapshot(3 * SECOND, false))]);
+        let mut rows = vec![NativeMark {
+            instrument_id: instrument.id(),
+            mark: 100.0,
+            capacity: Decimal::ONE,
+            target_quantity: Some(target),
+        }];
+        small_cap_entries(
+            &small,
+            &mut rows,
+            &assets,
+            &cash,
+            &margin,
+            &BTreeSet::from([BRIDGE.into()]),
+            3 * SECOND,
+            &request.scenario,
+            &mut None,
+            Some(&frames),
+        )
+        .unwrap();
+        assert_eq!(
+            rows[0].target_quantity,
+            Some(if quote_budget == 20 {
+                Decimal::new(197, 3)
+            } else if direction > Decimal::ZERO {
+                Decimal::new(295, 3)
+            } else {
+                target
+            }),
+            "{id}: direction={direction}, quote_budget={quote_budget}"
+        );
+        let ledger = if is_margin { &mut margin } else { &mut cash };
+        ledger
+            .step_books(
+                3 * SECOND,
+                native_books(rows, &frames, &assets, is_margin),
+                &[],
+            )
+            .unwrap();
+        let notional: Decimal = ledger
+            .orders()
+            .iter()
+            .flat_map(|order| order.events())
+            .filter_map(|event| match event {
+                OrderEventAny::Filled(fill) => {
+                    Some(fill.last_qty.as_decimal() * fill.last_px.as_decimal())
+                }
+                _ => None,
+            })
+            .sum();
+        assert!(
+            notional > Decimal::ZERO && notional <= Decimal::from(quote_budget),
+            "{id}: direction={direction}, quote_budget={quote_budget}, actual fills cost {notional}, summary={:?}, retained_orders={}",
+            ledger.summary(), ledger.orders().len()
+        );
+        let frames = BTreeMap::from([(i, snapshot(4 * SECOND, true))]);
+        let mut rows = vec![NativeMark {
+            instrument_id: instrument.id(),
+            mark: 200.5,
+            capacity: Decimal::ONE,
+            target_quantity: Some(Decimal::ZERO),
+        }];
+        small_cap_entries(
+            &small,
+            &mut rows,
+            &assets,
+            &cash,
+            &margin,
+            &BTreeSet::from([BRIDGE.into()]),
+            4 * SECOND,
+            &request.scenario,
+            &mut None,
+            Some(&frames),
+        )
+        .unwrap();
+        assert_eq!(rows[0].target_quantity, Some(Decimal::ZERO));
+        let ledger = if is_margin { &mut margin } else { &mut cash };
+        ledger
+            .step_books(
+                4 * SECOND,
+                native_books(rows, &frames, &assets, is_margin),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.current_quantity(instrument.id()),
+            Decimal::ZERO,
+            "{id}: direction={direction}, quote_budget={quote_budget}, closing inventory"
+        );
+        cash.finish().unwrap();
+        margin.finish().unwrap();
+    }
 }
 
 #[test]
@@ -1771,6 +2041,7 @@ fn small_quote_shrink_keeps_signed_deficit_and_protects_other_pending_reservatio
         3 * SECOND,
         &request.scenario,
         &mut contexts,
+        None,
     )
     .unwrap();
     assert_eq!(rows[0].target_quantity, Some(Decimal::new(1,1)), "only10 quote is unreserved after protecting the other30; old clamped deficit incorrectly allowed30");

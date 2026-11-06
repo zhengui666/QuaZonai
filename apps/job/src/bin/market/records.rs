@@ -1,59 +1,20 @@
 use super::{Report, Stream};
 use anyhow::{ensure, Context, Result};
+use job::source_market::{decimal, field, price_with_precision, quantity};
+pub(super) use job::source_market::{scalar, timestamp, Encoding};
 use nautilus_core::UnixNanos;
 use nautilus_data::aggregation::BarBuilder;
+#[cfg(test)]
+use nautilus_model::enums::{BookAction, OrderSide, RecordFlag};
 use nautilus_model::{
-    data::{
-        Bar, BarType, BookOrder, Data, FundingRateUpdate, IndexPriceUpdate, MarkPriceUpdate,
-        OrderBookDelta, QuoteTick, TradeTick,
-    },
-    enums::{AggregationSource, AggressorSide, BookAction, OrderSide, RecordFlag},
+    data::{Bar, BarType, Data, FundingRateUpdate, IndexPriceUpdate, MarkPriceUpdate, TradeTick},
+    enums::{AggregationSource, AggressorSide},
     identifiers::{InstrumentId, TradeId},
-    instruments::{Instrument, InstrumentAny},
     types::{fixed::FIXED_PRECISION, Price, Quantity},
 };
-use parquet::{
-    file::reader::{FileReader, SerializedFileReader},
-    record::{Field, Row},
-};
+use parquet::record::{Field, Row};
 use rust_decimal::Decimal;
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path, str::FromStr};
-
-#[derive(Clone, Copy)]
-pub(super) struct Encoding {
-    id: InstrumentId,
-    price_precision: u8,
-    size_precision: u8,
-}
-
-impl Encoding {
-    pub(super) fn new(
-        id: InstrumentId,
-        instrument: Option<&InstrumentAny>,
-        native: bool,
-    ) -> Result<Self> {
-        let (price_precision, size_precision) = if native {
-            let precision = nautilus_model::types::fixed::FIXED_PRECISION;
-            (precision, precision)
-        } else {
-            let instrument = instrument
-                .context("INSTRUMENT_PARAMETERS_MISSING; use --native-precision for raw records")?;
-            (instrument.price_precision(), instrument.size_precision())
-        };
-        Ok(Self {
-            id,
-            price_precision,
-            size_precision,
-        })
-    }
-}
-
-fn field<'a>(row: &'a Row, name: &str) -> Result<&'a Field> {
-    row.get_column_iter()
-        .find(|(key, _)| key.as_str() == name)
-        .map(|(_, value)| value)
-        .with_context(|| format!("SOURCE_COLUMN_MISSING: {name}"))
-}
 
 impl Stream {
     fn bar_interval(&self, id: InstrumentId) -> Result<(BarType, u64)> {
@@ -129,69 +90,6 @@ fn scalar_matches(actual: &Field, expected: &serde_json::Value) -> Result<bool> 
     })
 }
 
-pub(super) fn scalar(value: &Field) -> Result<String> {
-    Ok(match value {
-        Field::Str(v) => v.clone(),
-        Field::Decimal(_) => value.to_string(),
-        Field::Byte(v) => v.to_string(),
-        Field::Short(v) => v.to_string(),
-        Field::Int(v) => v.to_string(),
-        Field::Long(v) | Field::TimestampMillis(v) | Field::TimestampMicros(v) => v.to_string(),
-        Field::UByte(v) => v.to_string(),
-        Field::UShort(v) => v.to_string(),
-        Field::UInt(v) => v.to_string(),
-        Field::ULong(v) => v.to_string(),
-        _ => anyhow::bail!("EXACT_SCALAR_REQUIRED"),
-    })
-}
-
-pub(super) fn timestamp(value: &Field, unit: &str) -> Result<u64> {
-    if unit == "rfc3339" {
-        let at = chrono::DateTime::parse_from_rfc3339(&scalar(value)?)?;
-        return Ok(u64::try_from(
-            at.timestamp_nanos_opt().context("TIMESTAMP_RANGE")?,
-        )?);
-    }
-    ensure!(
-        !matches!(value, Field::TimestampMillis(_)) || unit == "ms",
-        "TIMESTAMP_UNIT_MISMATCH"
-    );
-    ensure!(
-        !matches!(value, Field::TimestampMicros(_)) || unit == "us",
-        "TIMESTAMP_UNIT_MISMATCH"
-    );
-    let multiplier = match unit {
-        "s" => 1_000_000_000,
-        "ms" => 1_000_000,
-        "us" => 1_000,
-        "ns" => 1,
-        _ => anyhow::bail!("TIMESTAMP_UNIT_UNSUPPORTED"),
-    };
-    scalar(value)?
-        .parse::<u64>()?
-        .checked_mul(multiplier)
-        .context("TIMESTAMP_RANGE")
-}
-
-fn decimal(value: &Field) -> Result<Decimal> {
-    Ok(Decimal::from_str_exact(&scalar(value)?)?)
-}
-
-fn price_with_precision(value: &Field, precision: u8) -> Result<Price> {
-    let original = decimal(value)?;
-    let native = Price::from_decimal_dp(original, precision)?;
-    ensure!(native.as_decimal() == original, "PRICE_PRECISION_LOSS");
-    ensure!(original > Decimal::ZERO, "NONPOSITIVE_MARKET_PRICE");
-    Ok(native)
-}
-
-fn quantity(value: &Field, precision: u8) -> Result<Quantity> {
-    let original = decimal(value)?;
-    let native = Quantity::from_decimal_dp(original, precision)?;
-    ensure!(native.as_decimal() == original, "SIZE_PRECISION_LOSS");
-    Ok(native)
-}
-
 pub(super) fn read_rows(
     path: &Path,
     format: &str,
@@ -199,19 +97,7 @@ pub(super) fn read_rows(
 ) -> Result<()> {
     match format {
         "parquet" | "parquet-zstd" => {
-            let mut decoded;
-            let file = if format == "parquet-zstd" {
-                decoded = tempfile::tempfile()?;
-                std::io::copy(
-                    &mut zstd::stream::read::Decoder::new(File::open(path)?)?,
-                    &mut decoded,
-                )?;
-                decoded
-            } else {
-                File::open(path)?
-            };
-            let reader = SerializedFileReader::new(file)?;
-            for row in reader.get_row_iter(None)? {
+            for row in job::source_market::parquet_rows(path, format)? {
                 consume(row?)?;
             }
         }
@@ -265,6 +151,12 @@ fn bar_type(id: InstrumentId, seconds: u32) -> Result<BarType> {
     ))?)
 }
 
+fn recorded_snapshot(snapshot: job::source_market::BookSnapshot, report: &mut Report) -> Vec<Data> {
+    report.empty_books += u64::from(snapshot.empty);
+    report.one_sided_books += u64::from(snapshot.one_sided);
+    snapshot.into_data()
+}
+
 fn snapshot(
     encoding: &Encoding,
     sides: [Vec<(Price, Quantity)>; 2],
@@ -272,100 +164,14 @@ fn snapshot(
     init: UnixNanos,
     report: &mut Report,
 ) -> Result<Vec<Data>> {
-    let id = encoding.id;
-    let mut clear = OrderBookDelta::clear(id, 0, at, init);
-    // Clear has no price or size; its metadata must match the snapshot encoding.
-    clear.order.price = Price::zero(encoding.price_precision);
-    clear.order.size = Quantity::zero(encoding.size_precision);
-    let mut data = vec![Data::BookDelta(clear)];
-    for (levels, side) in sides.iter().zip([OrderSide::Buy, OrderSide::Sell]) {
-        for (p, q) in levels {
-            data.push(Data::BookDelta(OrderBookDelta::new(
-                id,
-                BookAction::Add,
-                BookOrder::new(side, *p, *q, 0),
-                RecordFlag::F_SNAPSHOT as u8,
-                0,
-                at,
-                init,
-            )));
-        }
-    }
-    let Some(Data::BookDelta(last)) = data.last_mut() else {
-        unreachable!()
-    };
-    last.flags |= RecordFlag::F_LAST as u8;
-    match (sides[0].first(), sides[1].first()) {
-        (Some((bid, bid_size)), Some((ask, ask_size))) => {
-            ensure!(bid <= ask, "BOOK_CROSSED");
-            data.push(Data::Quote(QuoteTick::new_checked(
-                id, *bid, *ask, *bid_size, *ask_size, at, init,
-            )?));
-        }
-        (None, None) => report.empty_books += 1,
-        _ => report.one_sided_books += 1,
-    }
-    Ok(data)
-}
-
-struct FlatSnapshot {
-    encoding: Encoding,
-    event: u64,
-    available: u64,
-    rows: Vec<Row>,
-}
-
-impl FlatSnapshot {
-    fn convert(self, stream: &Stream, report: &mut Report) -> Result<Vec<Data>> {
-        let mut sides = [Vec::new(), Vec::new()];
-        for row in &self.rows {
-            ensure!(
-                scalar(stream.field(row, "event_type")?)? == "snapshot",
-                "BOOK_SNAPSHOT_REQUIRED"
-            );
-            let side = scalar(stream.field(row, "side")?)?;
-            if side == "noop" {
-                ensure!(
-                    self.rows.len() == 1
-                        && decimal(stream.field(row, "price")?)? == Decimal::ZERO
-                        && decimal(stream.field(row, "size")?)? == Decimal::ZERO,
-                    "EMPTY_BOOK_SNAPSHOT_INVALID"
-                );
-                continue;
-            }
-            let index = match side.as_str() {
-                "bid" => 0,
-                "ask" => 1,
-                _ => anyhow::bail!("BOOK_SIDE_UNSUPPORTED"),
-            };
-            let price =
-                price_with_precision(stream.field(row, "price")?, self.encoding.price_precision)?;
-            let size = quantity(stream.field(row, "size")?, self.encoding.size_precision)?;
-            ensure!(size.as_decimal() > Decimal::ZERO, "NONPOSITIVE_BOOK_SIZE");
-            sides[index].push((price, size));
-        }
-        sides[0].sort_by(|a, b| b.0.cmp(&a.0));
-        sides[1].sort_by(|a, b| a.0.cmp(&b.0));
-        ensure!(
-            sides
-                .iter()
-                .all(|levels| levels.windows(2).all(|pair| pair[0].0 != pair[1].0)),
-            "DUPLICATE_BOOK_LEVEL"
-        );
-        snapshot(
-            &self.encoding,
-            sides,
-            self.event.into(),
-            self.available.into(),
-            report,
-        )
-    }
+    Ok(recorded_snapshot(
+        job::source_market::snapshot(encoding, sides, at, init)?,
+        report,
+    ))
 }
 
 #[derive(Default)]
-pub(super) struct FlatSnapshots {
-    pending: Option<FlatSnapshot>,
-}
+pub(super) struct FlatSnapshots(job::source_market::FlatSnapshots);
 
 impl FlatSnapshots {
     pub(super) fn push(
@@ -377,34 +183,19 @@ impl FlatSnapshots {
         available: u64,
         report: &mut Report,
     ) -> Result<Vec<Data>> {
-        let completed = if self.pending.as_ref().is_some_and(|current| {
-            (current.encoding.id, current.event, current.available)
-                != (encoding.id, event, available)
-        }) {
-            self.pending.take()
-        } else {
-            None
-        };
-        self.pending
-            .get_or_insert_with(|| FlatSnapshot {
-                encoding,
-                event,
-                available,
-                rows: Vec::new(),
-            })
-            .rows
-            .push(row);
-        completed.map_or_else(
-            || Ok(Vec::new()),
-            |snapshot| snapshot.convert(stream, report),
-        )
+        Ok(self
+            .0
+            .push(&stream.columns, row, encoding, event, available)?
+            .map(|snapshot| recorded_snapshot(snapshot, report))
+            .unwrap_or_default())
     }
 
     pub(super) fn finish(&mut self, stream: &Stream, report: &mut Report) -> Result<Vec<Data>> {
-        self.pending.take().map_or_else(
-            || Ok(Vec::new()),
-            |snapshot| snapshot.convert(stream, report),
-        )
+        Ok(self
+            .0
+            .finish(&stream.columns)?
+            .map(|snapshot| recorded_snapshot(snapshot, report))
+            .unwrap_or_default())
     }
 }
 
@@ -672,6 +463,45 @@ impl Aggregation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boolean_maker_flag_maps_to_aggressor_without_changing_clocks() {
+        let stream: Stream = serde_json::from_value(serde_json::json!({
+            "name":"trades", "kind":"trades", "format":"parquet", "time_unit":"ms",
+            "available_time_unit":"ns",
+            "columns":{"side":"is_buyer_maker", "trade_id":"trade_id", "price":"price", "size":"quantity"},
+            "sides":{"true":"SELLER", "false":"BUYER"}
+        })).unwrap();
+        let encoding = Encoding::new(
+            InstrumentId::from_str("BTC-USD-PERP.HYPERLIQUID").unwrap(),
+            None,
+            true,
+        )
+        .unwrap();
+        for (maker, side) in [(true, AggressorSide::Sell), (false, AggressorSide::Buy)] {
+            let row = Row::new(vec![
+                ("is_buyer_maker".into(), Field::Bool(maker)),
+                ("trade_id".into(), Field::Long(123)),
+                ("price".into(), Field::Str("10.12".into())),
+                ("quantity".into(), Field::Str("0.001".into())),
+            ]);
+            let data = convert(
+                &stream,
+                &row,
+                &encoding,
+                1_000_000_000,
+                1_430_404_104,
+                &mut Report::default(),
+            )
+            .unwrap();
+            let Data::Trade(trade) = data[0] else {
+                panic!("expected native trade")
+            };
+            assert_eq!(trade.aggressor_side, side);
+            assert_eq!(trade.ts_event.as_u64(), 1_000_000_000);
+            assert_eq!(trade.ts_init.as_u64(), 1_430_404_104);
+        }
+    }
 
     fn flat_stream() -> Stream {
         serde_json::from_value(serde_json::json!({

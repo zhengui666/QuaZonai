@@ -20,6 +20,7 @@ pub enum NativeTickModalityV1 {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NativeTickAvailabilityV1 {
     EventTimeProxyUnverified,
+    ReceivedTimeObserved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -27,6 +28,8 @@ pub enum NativeTickAvailabilityV1 {
 pub enum NativeTickRepresentationV1 {
     EventTimeCohortCacheV1,
     EventTimeCohortFlowCacheV1,
+    ReceivedTimeCohortCacheV1,
+    ReceivedTimeCohortFlowCacheV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -34,9 +37,13 @@ pub enum NativeTickRepresentationV1 {
 pub struct NativeTradeTickInputV1 {
     pub modality: NativeTickModalityV1,
     pub instrument_ids: Vec<String>,
+    /// Analysis clock: ts_event for the proxy mode, ts_init for received-time mode.
     pub event_start_ns: DbCounter,
-    /// Exclusive event boundary, independently rechecked after native queries.
+    /// Exclusive analysis boundary, independently rechecked after native queries.
     pub event_end_ns: DbCounter,
+    /// Conservative collector delay bound, checked against every original event clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_receive_delay_ns: Option<DbCounter>,
     pub decision_cutoff_ns: DbCounter,
     /// Absence retains the original native TradeTick representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,12 +59,30 @@ pub struct NativeTradeTickInputV1 {
 }
 
 impl NativeTradeTickInputV1 {
+    pub fn uses_received_time(&self) -> bool {
+        self.availability == NativeTickAvailabilityV1::ReceivedTimeObserved
+    }
+
+    pub fn availability_name(&self) -> &'static str {
+        if self.uses_received_time() {
+            "RECEIVED_TIME_OBSERVED"
+        } else {
+            "EVENT_TIME_PROXY_UNVERIFIED"
+        }
+    }
+
     pub fn is_cohort_cache(&self) -> bool {
         self.representation.is_some()
     }
 
     pub fn is_flow_cache(&self) -> bool {
-        self.representation == Some(NativeTickRepresentationV1::EventTimeCohortFlowCacheV1)
+        matches!(
+            self.representation,
+            Some(
+                NativeTickRepresentationV1::EventTimeCohortFlowCacheV1
+                    | NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1
+            )
+        )
     }
 
     pub fn cache_representation(&self) -> Option<&'static str> {
@@ -66,6 +91,12 @@ impl NativeTradeTickInputV1 {
                 NativeTickRepresentationV1::EventTimeCohortCacheV1 => "EVENT_TIME_COHORT_CACHE_V1",
                 NativeTickRepresentationV1::EventTimeCohortFlowCacheV1 => {
                     "EVENT_TIME_COHORT_FLOW_CACHE_V1"
+                }
+                NativeTickRepresentationV1::ReceivedTimeCohortCacheV1 => {
+                    "RECEIVED_TIME_COHORT_CACHE_V1"
+                }
+                NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1 => {
+                    "RECEIVED_TIME_COHORT_FLOW_CACHE_V1"
                 }
             })
     }
@@ -83,6 +114,7 @@ impl NativeTradeTickInputV1 {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NativeTickSamplingKindV1 {
     EventTimeCohortV1,
+    ReceivedTimeCohortV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -100,6 +132,10 @@ pub enum NativeTickTargetV1 {
     },
     /// First complete same-instrument cohort at or after t + horizon_ns.
     FixedEventTime {
+        horizon_ns: DbCounter,
+    },
+    /// First same-instrument receive cohort at or after received t + horizon_ns.
+    FixedReceivedTime {
         horizon_ns: DbCounter,
     },
 }
@@ -131,6 +167,11 @@ impl PartialSchema for NativeTickTargetV1 {
                     .property("horizon_ns", DbCounter::schema())
                     .required("horizon_ns"),
             )
+            .item(
+                variant("FIXED_RECEIVED_TIME")
+                    .property("horizon_ns", DbCounter::schema())
+                    .required("horizon_ns"),
+            )
             .into()
     }
 }
@@ -141,6 +182,7 @@ impl NativeTickTargetV1 {
         match self {
             Self::FixedTradeCohorts { .. } => "FIXED_TRADE_COHORTS: VWAP(j+H)/VWAP(j)-1; same instrument; no labels supplied to model",
             Self::FixedEventTime { .. } => "FIXED_EVENT_TIME: VWAP(first complete same-instrument cohort with event >= t+horizon_ns)/VWAP(t)-1; actual span may exceed horizon; no labels supplied to model; not executable price",
+            Self::FixedReceivedTime { .. } => "FIXED_RECEIVED_TIME: VWAP(first same-instrument receive cohort with received >= t+horizon_ns)/VWAP(t)-1; actual span may exceed horizon; no labels supplied to model; not executable price",
         }
     }
 }
@@ -261,7 +303,7 @@ pub struct NativeTradeTickInstrumentCoverageV1 {
     pub instrument_id: String,
     pub trade_count: DbCounter,
     pub cohort_count: DbCounter,
-    /// None explicitly represents no observed trades in the requested interval.
+    /// Sampling-clock extent; None represents no trades in the requested interval.
     pub first_event_ns: Option<DbCounter>,
     pub last_event_ns: Option<DbCounter>,
 }
@@ -275,8 +317,14 @@ pub struct NativeTradeTickCoverageV1 {
     pub instrument_coverage: Vec<NativeTradeTickInstrumentCoverageV1>,
     pub trade_count: DbCounter,
     pub cohort_count: DbCounter,
+    /// Sampling-clock extent; exchange-event extent is reported separately below.
     pub first_event_ns: DbCounter,
     pub last_event_ns: DbCounter,
+    /// Actual original exchange-event extent; end is exclusive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_start_ns: Option<DbCounter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_end_ns: Option<DbCounter>,
     pub availability: NativeTickAvailabilityV1,
     pub limitations: Vec<String>,
     /// Selected streams, source paths and definition/availability limitations.

@@ -10,6 +10,9 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import { openResearch } from '../src/host.ts';
 import { studyInput } from '../src/trials.ts';
 import { checkExposure, Exposures } from '../plugins/native-exposure.ts';
+import { CatalogScopes } from '../plugins/native-catalog-scope.ts';
+import { Study } from '../src/documents.ts';
+import { clipTickRegimeEvaluation, validateNativeTickFactorRequest } from '../../../packages/contracts/src/tick-input.ts';
 import research from '../plugins/research.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -55,6 +58,83 @@ test('unscoped final catalog boundaries cannot erase an existing final exposure'
       await assert.rejects(checkExposure(api, context, data, false, finalData), /ambiguous_factor_request/);
       assert.deepEqual(ledger, original);
     }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('later source events bypass an unavailable BAR scope while receive delay preserves overlap', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-exposure-received-'));
+  const ledger = { windows: [{ kind: 'ITERATION', taskId: 1, conversationId: 1, catalog: directory,
+    barTypesRef: { conversationId: 1, taskId: 99, count: '1' }, start: ns(1), end: ns(10) }] };
+  const scopes: { roots: JsonObject[] } = { roots: [] };
+  const original = structuredClone(ledger); let scopeReads = 0;
+  const api = { taskId: 2, conversationId: 2,
+    async commit(action: (tx: unknown) => Promise<void>) {
+      return action({ async doc(type: unknown) { return type === CatalogScopes ? scopes : ledger; }, async task() { scopeReads++; return null; } });
+    },
+  } as unknown as Parameters<typeof checkExposure>[0];
+  try {
+    const data = tickData(directory, 'LATER.SIM', 11, 12);
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    const request = (data.nativeInput as JsonObject).request as JsonObject;
+    const input = request.input as JsonObject;
+    input.availability = 'RECEIVED_TIME_OBSERVED'; input.maximum_receive_delay_ns = ns(1);
+    (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    assert.equal(scopeReads, 0);
+    input.maximum_receive_delay_ns = ns(2);
+    await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
+    assert.equal(scopeReads, 1);
+    scopes.roots.push({ catalog: directory, reference: ledger.windows[0]!.barTypesRef, instrumentVenues: ['POLYMARKET'] });
+    await checkExposure(api, context, data, true, undefined, undefined, false);
+    assert.equal(scopeReads, 1);
+    input.instrument_ids = ['ORIGINAL.POLYMARKET'];
+    await assert.rejects(checkExposure(api, context, data, true, undefined, undefined, false), /native_catalog_scope_missing/);
+    assert.equal(scopeReads, 2);
+    assert.deepEqual(ledger, original);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('only an admitted received-time study can finalize beside its own iteration delay envelope', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'qz-own-received-final-'));
+  const primaryCatalog = join(directory, 'primary'); const sealedCatalog = join(directory, 'sealed'); const changedCatalog = join(directory, 'changed');
+  await Promise.all([primaryCatalog, sealedCatalog, changedCatalog].map(path => mkdir(path)));
+  const full = tickData(sealedCatalog, 'RECEIVED.SIM');
+  const request = (full.nativeInput as JsonObject).request as JsonObject;
+  Object.assign(request.input as JsonObject, { event_start_ns: '0', event_end_ns: '80', decision_cutoff_ns: '80',
+    availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2' });
+  Object.assign(request, { train_end_ns: '30', validation_end_ns: '50', target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '1' } });
+  (request.sampling as JsonObject).kind = 'RECEIVED_TIME_COHORT_V1';
+  const primary = { catalog: primaryCatalog, nativeInput: { modality: 'TRADE_TICK', request: clipTickRegimeEvaluation(validateNativeTickFactorRequest(request), '50') } };
+  const admitted: JsonObject = { ...primary, sealed: full };
+  const study = { input: { data: admitted } }; const ledger: { windows: JsonObject[] } = { windows: [] };
+  const api = (taskId: number, conversationId = 7) => ({ taskId, conversationId,
+    async commit(action: (tx: unknown) => Promise<void>) { return action({ async doc(type: unknown) { return type === Study ? study : ledger; } }); },
+  }) as unknown as Parameters<typeof checkExposure>[0];
+  const rejected = (data = full) => assert.rejects(checkExposure(api(2), context, data, true, undefined, undefined, false), /heldout_already_exposed/);
+  try {
+    await checkExposure(api(1), context, admitted, false, full);
+    assert.deepEqual([ledger.windows[0]!.start, ledger.windows[0]!.end, ledger.windows[0]!.receivedStart, ledger.windows[0]!.receivedEnd], ['0', '50', '0', '50']);
+    const iteration = structuredClone(ledger.windows[0]!);
+    await assert.rejects(checkExposure(api(2, 8), context, full, true, undefined, undefined, false), /heldout_already_exposed/);
+    for (const [field, value] of [['source_revision', 'different-source'], ['maximum_receive_delay_ns', '1']] as const) {
+      const changed = structuredClone(full);
+      (((changed.nativeInput as JsonObject).request as JsonObject).input as JsonObject)[field] = value;
+      await rejected(changed);
+    }
+    study.input.data = { ...admitted, catalog: changedCatalog }; await rejected();
+    study.input.data = structuredClone(admitted);
+    (((study.input.data.nativeInput as JsonObject).request as JsonObject).parameters as JsonObject).slow_period_cohorts = 3;
+    await rejected();
+    study.input.data = { ...admitted }; delete study.input.data.sealed; await rejected();
+    study.input.data = admitted;
+    delete ledger.windows[0]!.receivedStart; await rejected(); ledger.windows[0] = iteration;
+    ledger.windows.push({ kind: 'ITERATION', taskId: 99, conversationId: 7, barTypes: ['RECEIVED.SIM-1-SECOND-LAST-EXTERNAL'], start: '49', end: '51' });
+    await rejected(); ledger.windows.pop();
+    await checkExposure(api(2), context, full, true);
+    assert.deepEqual(ledger.windows[0], iteration);
+    assert.deepEqual([ledger.windows[1]!.start, ledger.windows[1]!.end, ledger.windows[1]!.receivedStart, ledger.windows[1]!.receivedEnd], ['48', '80', '50', '80']);
+    await assert.rejects(checkExposure(api(3), context, full, true), /heldout_already_exposed/);
+    assert.equal(ledger.windows.length, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -113,3 +113,17 @@ test('factor library keeps process-independent tick metrics visibly exploratory 
   assert.equal(factor.availability, 'EVENT_TIME_PROXY_UNVERIFIED'); assert.equal(factor.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
   assert.equal(factor.combinable, false); assert.equal(factor.reason, 'tick_portfolio_unsupported');
 });
+
+test('receive-time settings and factor metadata retain the admitted clock and horizon', () => {
+  const received: NativeTickFactorRequest = { ...research,
+    input: { ...research.input, availability: 'RECEIVED_TIME_OBSERVED', maximum_receive_delay_ns: '2000000000', representation: 'RECEIVED_TIME_COHORT_FLOW_CACHE_V1' },
+    sampling: { ...research.sampling, kind: 'RECEIVED_TIME_COHORT_V1' }, target: { kind: 'FIXED_RECEIVED_TIME', horizon_ns: '60' } };
+  const data = { nativeInput: { modality: 'TRADE_TICK', request: received } };
+  const settings = datasetResearchSettings(data);
+  assert.equal(settings.horizonUnit, 'RECEIVED_TIME_NS'); assert.equal(settings.horizonNs, '60');
+  assert.equal(settings.sampling, 'RECEIVED_TIME_COHORT_V1'); assert.match(settings.inputFamily, /elapsed_received_ns, signed_quantity/);
+  const factor = factorViews(1, { input: { goal: 'Received ticks', model: { provider: 'test', modelId: 'test' }, data, policy: {} },
+    trials: [{ taskId: 2, status: 'COMPUTED', proposal: { model: wat }, result: {} }], final: null })[0]!;
+  assert.equal(factor.availability, 'RECEIVED_TIME_OBSERVED');
+  assert.equal(factor.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
+});
