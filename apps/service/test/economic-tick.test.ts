@@ -64,6 +64,19 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     const session = await service.app.inject({ method: 'POST', url: '/api/v3/session/setup', payload: { password: 'local-test-owner' } });
     assert.equal(session.statusCode, 200, session.body);
     const headers = { cookie: session.cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ') };
+    assert.equal((await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays' })).statusCode, 401);
+    assert.deepEqual((await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json(), []);
+    for (const id of ['missing', '__proto__']) assert.equal((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${id}`, headers })).statusCode, 404);
+    const observedPhases: string[] = [];
+    const unsubscribe = service.research.harness.subscribeCommits(({ changes }) => {
+      for (const change of changes) if (change.type === 'task' && change.value.kind === TickEconomicReplay.definition.name) {
+        const checkpoint = change.value.state.checkpoint;
+        if (checkpoint && typeof checkpoint === 'object' && !Array.isArray(checkpoint)) {
+          const progress = checkpoint.progress;
+          if (progress && typeof progress === 'object' && !Array.isArray(progress) && typeof progress.phase === 'string') observedPhases.push(progress.phase);
+        }
+      }
+    });
     const researchId = await service.research.harness.commit(async tx => {
       const conversation = await tx.createConversation({ ownership: { kind: 'ownerless' } });
       const input = { goal: 'Controlled retained factor protocol', model: { provider: faux.provider.id, modelId: faux.getModel().id }, data: json(data), policy: { maxTrials: 100 } };
@@ -90,6 +103,19 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     await service.research.harness.waitForTask(view.taskId as TaskId, context);
     const result = (await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json();
     assert.equal(result.status, 'COMPUTED', JSON.stringify(result)); assert.equal(result.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
+    assert.deepEqual([...new Set(observedPhases)], ['QUEUED', 'PREPARING_MODELS', 'REPLAYING']); unsubscribe();
+    const taskBeforeReads = await service.research.harness.getTask(view.taskId as TaskId, context);
+    const recordBeforeReads = await service.research.harness.snapshot(TickEconomicReplays, context);
+    assert.equal(result.createdAt, (taskBeforeReads!.input as { createdAt: string }).createdAt);
+    assert.ok(Number.isFinite(Date.parse(result.createdAt))); assert.equal(result.progress, null);
+    assert.equal(result.executionModel, 'CONTROLLED_PROTOCOL_ONLY'); assert.equal(Object.hasOwn(result, 'portfolioId'), false);
+    const summaries = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json();
+    assert.deepEqual(summaries, [Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'result'))]);
+    assert.equal(Object.hasOwn(summaries[0], 'result'), false);
+    assert.deepEqual((await service.app.inject({ method: 'GET', url: '/api/v3/portfolios', headers })).json(), []);
+    await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers });
+    assert.deepEqual(await service.research.harness.getTask(view.taskId as TaskId, context), taskBeforeReads);
+    assert.deepEqual(await service.research.harness.snapshot(TickEconomicReplays, context), recordBeforeReads);
     assert.deepEqual(result.result.days[0].missing_balances, [{ ledger: 'CASH', currency: 'BTC', amount: '0.2' }, { ledger: 'MARGIN', currency: 'ETH', amount: '1' }]);
     const invalid = structuredClone(result.result); invalid.days[0].missing_balances[0].amount = 'unknown';
     assert.throws(() => validateNativeTickEconomicResult(invalid), /tick_economic_result_days_invalid/);
@@ -193,6 +219,15 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
         return taskId;
       }, context);
       await firstRead;
+      const active = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/locally-stopped-original', headers })).json();
+      const activeTask = await service.research.harness.getTask(stoppedTaskId, context);
+      assert.equal(active.status, 'RUNNING'); assert.equal(active.createdAt, null);
+      assert.equal(active.executionModel, 'SEGREGATED_COHORT_MARK_ESTIMATE_V1');
+      assert.deepEqual(active.progress, (activeTask!.state.checkpoint as { progress: unknown }).progress);
+      assert.equal(active.progress.phase, 'RECONCILING'); assert.ok(Number.isFinite(Date.parse(active.progress.updatedAt)));
+      assert.equal(active.progress.completed, undefined); assert.equal(active.progress.total, undefined);
+      const activeRows = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json();
+      assert.deepEqual(activeRows.find((row: { id: string }) => row.id === active.id).progress, active.progress);
       await service.research.harness.abortTask(stoppedTaskId, context);
       await service.research.harness.waitForTask(stoppedTaskId, context);
       const stopped = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/locally-stopped-original', headers })).json();
@@ -203,6 +238,7 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun', 'recovery only reads the retained original receipt; it never POSTs another native run');
     await service.close(); service = await createService(options);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: `/api/v3/tick-economic-replays/${view.id}`, headers })).json(), result);
+    assert.deepEqual((await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json().find((row: { id: string }) => row.id === view.id), summaries[0]);
     assert.equal((await readFile(calls, 'utf8')).trim(), 'run\nrun');
     const addMember = (differentTarget = false) => service.research.harness.commit(async tx => {
       const original = (await tx.doc(Study, researchId)).input!;
@@ -227,6 +263,15 @@ print(json.dumps({'schema_version':1,'request':request,'model':'CONTROLLED_PROTO
     assert.deepEqual(combinedView.members, members); assert.equal(combinedView.factorId, undefined);
     assert.equal(combinedView.result.methods.models, '2'); assert.deepEqual(combinedView.result.request.signal_weights, ['0.25', '0.75']);
     assert.deepEqual(combinedView.sources, [researchId, secondResearchId].map((id, index) => ({ factorId: members[index]!.factorId, researchId: id, trialId: index ? 78 : 77, memberIndex: 0, sourceRevision: full.input.source_revision })));
+    const combinedSummary = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays', headers })).json().find((row: { id: string }) => row.id === combinedView.id);
+    assert.deepEqual(combinedSummary.members, members); assert.equal(Object.hasOwn(combinedSummary, 'result'), false);
+    await service.research.harness.commit(async tx => {
+      (await tx.doc(TickEconomicReplays)).runs['legacy-missing-task'] = json({ original: payload,
+        view: { ...view, id: 'legacy-missing-task', taskId: 99999999, status: 'QUEUED' } });
+    }, context);
+    const unavailable = (await service.app.inject({ method: 'GET', url: '/api/v3/tick-economic-replays/legacy-missing-task', headers })).json();
+    assert.equal(unavailable.createdAt, null); assert.equal(unavailable.progress, null); assert.equal(unavailable.status, 'QUEUED');
+    assert.equal(unavailable.scientificQualification, 'UNQUALIFIED_EXPLORATORY');
     assert.equal((await service.research.harness.snapshot(Study, researchId, context))!.trials.length, 1);
     assert.equal((await service.research.harness.snapshot(Study, secondResearchId, context))!.trials.length, 1);
     assert.equal((await service.app.inject({ method: 'POST', url: '/api/v3/tick-economic-replays', headers, payload: combination })).json().id, combinedView.id);

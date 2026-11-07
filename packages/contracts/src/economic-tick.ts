@@ -116,6 +116,15 @@ export type TickEconomicReplayView = {
   status: 'QUEUED' | 'RUNNING' | 'COMPUTED' | 'FAILED' | 'STOPPED';
   scientificQualification: 'UNQUALIFIED_EXPLORATORY'; result: NativeTickEconomicResult | null; error: string | null;
 };
+/** Progress of the named phase, read from the replay's existing Durable Task. */
+export type TickEconomicReplayProgress = { phase: string; updatedAt: string; completed?: number; total?: number };
+export type TickEconomicReplayMetadata = {
+  /** Older Tasks did not retain admission time. A missing value is never the read time. */
+  createdAt: string | null; executionModel: string | null; progress: TickEconomicReplayProgress | null;
+};
+/** Collection reads deliberately exclude the potentially large native result. */
+export type TickEconomicReplaySummary = Omit<TickEconomicReplayView, 'result'> & TickEconomicReplayMetadata;
+export type TickEconomicReplayDetail = TickEconomicReplayView & TickEconomicReplayMetadata;
 
 export function validateNativeTickEconomicResult(value: unknown): NativeTickEconomicResult {
   const result = object(value);

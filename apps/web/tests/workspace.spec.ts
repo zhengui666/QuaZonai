@@ -5,6 +5,7 @@ import { shortTitle } from '../src/titles';
 import type { CapacityReport, ExecutionErrorDetail, FactorView, DatasetView, ExtensionView, ModelLoginView, ModelView, ObservationView, PortfolioView, ProviderView, ResearchDetail, ResearchSummary, SessionView, SettingsView, UsageView, WorkspaceView } from '../../../packages/contracts/src/index.ts';
 import { createReviewPolicy, scoreReview } from '../../../packages/contracts/src/review-scoring.ts';
 import type { ReviewAllocationView } from '../../../packages/contracts/src/review.ts';
+import type { NativeTickEconomicResult, TickEconomicReplayDetail, TickEconomicReplaySummary } from '../../../packages/contracts/src/economic-tick.ts';
 
 // Controlled transport only. Real HTTP/durable integration is in real-service.spec.ts.
 async function contract(page: BrowserPage, setup = false, fast = false) {
@@ -64,6 +65,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     if (path === '/mandates') return reply([]);
     if (path === '/factors') return reply([]);
     if (path === '/review-allocations') return reply([]);
+    if (path === '/tick-economic-replays') return reply([]);
     if (path === '/usage') return reply(usage);
     if (path === '/research') {
       if (method === 'POST') {
@@ -907,4 +909,73 @@ test('instance tokens stay masked and out of browser storage while an uncertain 
   await expect(backtest.getByLabel('服务地址', { exact: true })).toHaveValue('https://changed.example/worker');
   await expect(backtest.getByLabel('访问令牌', { exact: true })).toHaveValue('');
   expect(await browserStorage()).not.toContain('unsaved-token');
+});
+
+// Controlled display and polling evidence only; real replay admission/recovery lives in Service tests.
+function tickReplay(id: string, status: TickEconomicReplayDetail['status'] = 'COMPUTED'): TickEconomicReplayDetail {
+  const result: NativeTickEconomicResult = {
+    schema_version: 1,
+    request: { schema_version: 1, research: { schema_version: 1,
+      input: { modality: 'TRADE_TICK', instrument_ids: ['BTC.SIM'], event_start_ns: '0', event_end_ns: '691200000000000', decision_cutoff_ns: '691200000000000', representation: 'EVENT_TIME_COHORT_FLOW_CACHE_V1', maximum_source_rows: '2', source_revision: 'CONTROLLED_UI_ONLY', availability: 'EVENT_TIME_PROXY_UNVERIFIED' },
+      sampling: { kind: 'EVENT_TIME_COHORT_V1', maximum_cohort_rows: 100 }, target: { kind: 'FIXED_EVENT_TIME', horizon_ns: '10000000000' }, parameters: { fast_period_cohorts: 1, slow_period_cohorts: 2 }, train_end_ns: '259200000000000', validation_end_ns: '432000000000000' },
+      scenario: { execution_model: 'SYNTHETIC_QUOTE_IOC_V1', initial_usdt: '1000', usdt0_per_usdt: '1', spot_fraction: '0.5', gross_fraction: '1', maximum_asset_weight: '1', participation_fraction: '0.01', perp_taker_fee_bps: '5', spot_taker_fee_bps: '5', extra_cost_bps: '0', initial_margin_fraction: '0.1', maintenance_margin_fraction: '0.05', decision_interval_ns: '1', base_latency_ns: '0', jitter_min_ns: '0', jitter_max_ns: '0', random_seed: '0', maximum_mark_age_ns: '1' },
+      fx_instrument_ids: [], funding_source: 'CONTROLLED_UI_ONLY' },
+    model: 'SYNTHETIC_QUOTE_IOC_V1', methods: {}, coverage: { scope: 'CONTROLLED_UI_ONLY' }, assets: [],
+    days: [{ day_start_ns: '1767225600000000000', equity_usdt: '1000', net_return: null, unknown_reason: null }, { day_start_ns: '1767312000000000000', equity_usdt: null, net_return: null, unknown_reason: 'controlled_missing_mark' }, { day_start_ns: '1767398400000000000', equity_usdt: '1100.000000000000000001', net_return: 0.1, unknown_reason: null }],
+    metrics: [{ partition: 'HELDOUT', regime: 'BULL', days: '3', valid_return_days: '1', sharpe_365: 1.25, conditional_annualized_return_365: 0.123 }, { partition: 'HELDOUT', regime: 'BEAR', days: '2', valid_return_days: '0', sharpe_365: null, conditional_annualized_return_365: null }],
+    conversion_ns: null, initial_usdc_after_cost: '777', funding_usdc: '999', fees_usdc_equivalent: null, fees_by_currency: {}, initial_conversion_cost_usdc: '0', nominal_usd_settled_usdc: '0', native_fills: '0', native_rejections: '0', native_perp_pnl_rounding_events: '0', perp_pnl_rounding_bound_usdc: '0', funding_missing_instruments: [], targets: [], target_asof_ns: null, target_cash_weight: null, skipped_cash: '0', skipped_minimum: '0', consumed_fuel: null, limitations: ['CONTROLLED_UI_ONLY_NOT_SCIENTIFIC_QUALIFICATION'],
+  };
+  return { id, requestId: `request-${id}`, datasetId: 'tick-dataset', members: [{ factorId: 'r8.t11.m0', weight: '0.250000000000000001' }, { factorId: 'r8.t12.m0', weight: '0.749999999999999999' }], taskId: 23, status, scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: status === 'COMPUTED' ? result : null, error: null, createdAt: '2026-11-07T00:00:00Z', executionModel: 'SYNTHETIC_QUOTE_IOC_V1', progress: null };
+}
+function replaySummary({ result: _result, ...summary }: TickEconomicReplayDetail): TickEconomicReplaySummary { return summary; }
+
+test('tick economic replays remain discoverable without portfolios and preserve original results and exploratory qualification', async ({ page }, info) => {
+  const state = await contract(page); state.empty(); const replay = tickReplay('tick-one');
+  await page.route('**/api/v3/tick-economic-replays', route => route.fulfill({ json: [replaySummary(replay)] }));
+  await page.route('**/api/v3/tick-economic-replays/tick-one', route => route.fulfill({ json: replay }));
+  await page.goto('/#/portfolios'); await expect(page.getByRole('heading', { name: '尚无策略组合', exact: true })).toBeVisible();
+  const section = page.getByRole('region', { name: 'Tick 经济回放', exact: true });
+  await section.getByRole('button', { name: replay.id, exact: true }).click(); const detail = section.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
+  await expect(detail).toContainText('0.250000000000000001'); await expect(detail).toContainText('UNQUALIFIED_EXPLORATORY');
+  await expect(detail.getByRole('region', { name: 'HELDOUT / BULL', exact: true })).toContainText('0.123');
+  await expect(detail.getByRole('region', { name: 'HELDOUT / BEAR', exact: true })).toContainText('不可用');
+  await expect(detail.getByTestId('equity-chart').locator('svg')).toBeVisible(); await expect(detail.locator('.equity-summary')).toContainText('+10.00%');
+  await expect(detail.locator('.equity-section')).toContainText('USDT'); await expect(detail).not.toContainText('USDC');
+  await detail.locator('.tick-replay-gaps > summary').click(); await expect(detail.locator('.tick-replay-gaps')).toContainText('controlled_missing_mark');
+  await detail.locator('.curve-details > summary').click(); await expect(detail.locator('.curve-details')).toContainText('1100.000000000000000001'); await expect(detail.locator('.curve-details')).toContainText('未提供');
+  for (const width of [1440, 390]) { await page.setViewportSize({ width, height: 1000 }); await fits(page, width); await audit(page); await page.screenshot({ path: info.outputPath(`tick-replay-${width}.png`), fullPage: true }); }
+  await page.reload(); await expect(section.getByRole('button', { name: replay.id, exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '创建组合', exact: true })).toBeVisible(); expect(state.writes).toEqual([]);
+});
+
+test('tick replay refresh uses actual phase counters, stops at terminal state and keeps stale reads recoverable', async ({ page }) => {
+  const state = await contract(page); await page.clock.install(); const replay = tickReplay('tick-active', 'QUEUED');
+  replay.progress = { phase: 'QUEUED', updatedAt: '2026-11-07T00:00:00Z' }; let detailReads = 0; let unavailable = false;
+  await page.route('**/api/v3/tick-economic-replays', route => route.fulfill({ json: [replaySummary(replay)] }));
+  await page.route('**/api/v3/tick-economic-replays/tick-active', route => { detailReads++; return unavailable ? route.fulfill({ status: 503, json: { error: 'unavailable' } }) : route.fulfill({ json: replay }); });
+  await page.goto('/#/portfolios'); await page.getByRole('button', { name: replay.id, exact: true }).click(); const detail = page.getByRole('article', { name: `经济回放 ${replay.id}`, exact: true });
+  await expect(detail).toContainText('等待执行'); await expect(detail.locator('.ant-spin')).toBeVisible(); await expect(detail).not.toContainText('%');
+  replay.status = 'RUNNING'; replay.progress = { phase: 'REPLAYING', updatedAt: '2026-11-07T00:01:00Z', completed: 1, total: 4 };
+  const refreshed = page.waitForResponse('**/api/v3/tick-economic-replays/tick-active'); await page.clock.runFor(5000); await refreshed;
+  await expect(detail).toContainText('当前阶段 25%（1 / 4）'); await expect(detail).toContainText('2026-11-07 00:01:00');
+  unavailable = true; await detail.getByRole('button', { name: '刷新所选回放', exact: true }).click(); await expect(detail).toContainText('数据未更新'); await expect(detail).toContainText('当前阶段 25%');
+  unavailable = false; replay.status = 'STOPPED'; replay.progress = null; replay.error = 'tick_economic_local_stop_remote_receipt_unsettled';
+  await detail.getByRole('button', { name: '重试', exact: true }).click(); await expect(detail).toContainText('远端执行回执尚未确认终态'); await expect(detail.locator('.ant-spin')).toHaveCount(0);
+  const terminalReads = detailReads; await page.clock.runFor(15000); expect(detailReads).toBe(terminalReads);
+  await detail.getByRole('button', { name: '刷新所选回放', exact: true }).click(); await expect.poll(() => detailReads).toBe(terminalReads + 1); expect(state.writes).toEqual([]);
+});
+
+test('tick collection errors are isolated, manual refresh discovers later admissions and late details cannot replace selection', async ({ page }) => {
+  const state = await contract(page); state.empty(); let listUnavailable = true; let records: TickEconomicReplayDetail[] = []; let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/v3/tick-economic-replays', route => listUnavailable ? route.fulfill({ status: 503, json: { error: 'unavailable' } }) : route.fulfill({ json: records.map(replaySummary) }));
+  const old = tickReplay('tick-old'); const current = tickReplay('tick-current', 'FAILED'); current.createdAt = null; current.executionModel = null; current.factorId = 'r8.t12.m0'; delete current.members; current.error = 'controlled_original_failure';
+  await page.route('**/api/v3/tick-economic-replays/tick-old', async route => { await held; return route.fulfill({ json: old }).catch(() => {}); });
+  await page.route('**/api/v3/tick-economic-replays/tick-current', route => route.fulfill({ json: current }));
+  await page.goto('/#/portfolios'); const section = page.getByRole('region', { name: 'Tick 经济回放', exact: true });
+  await expect(section.getByRole('alert')).toBeVisible(); await expect(page.getByRole('button', { name: '创建组合', exact: true })).toBeVisible();
+  listUnavailable = false; await section.getByRole('button', { name: '重试', exact: true }).click(); await expect(section.getByRole('heading', { name: '尚无 Tick 经济回放', exact: true })).toBeVisible();
+  records = [old, current]; await section.getByRole('button', { name: '刷新回放列表', exact: true }).click();
+  await section.getByRole('button', { name: old.id, exact: true }).click(); await section.getByRole('button', { name: current.id, exact: true }).click();
+  const detail = section.getByRole('article', { name: `经济回放 ${current.id}`, exact: true }); await expect(detail).toContainText('controlled_original_failure'); release();
+  await expect(detail).toContainText('未记录'); await expect(detail).not.toContainText(old.id); await expect(detail.getByTestId('equity-chart')).toHaveCount(0); expect(state.writes).toEqual([]);
 });
