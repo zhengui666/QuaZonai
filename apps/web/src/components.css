@@ -210,6 +210,21 @@ details[open] > summary { margin-bottom: 14px; }
 .equity-summary dt > .explained-metric { margin-left: 0; }
 .equity-legend { flex-wrap: wrap; }
 .record-link { max-width: 38ch; overflow-wrap: anywhere; }
+.tick-economic-replays { min-width: 0; border-top: 1px solid var(--line); margin-top: 32px; padding-top: 26px; }
+.tick-economic-replays > .quiet { margin-bottom: 20px; }
+.tick-economic-replays code, .tick-replay-error, .tick-replay-detail li { overflow-wrap: anywhere; }
+.tick-replay-select { height: auto; padding-inline: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.tick-replay-members { margin: 0; padding-left: 16px; }
+.tick-replay-qualification { display: grid; gap: 5px; }
+.tick-replay-qualification code { font-size: 11px; }
+.tick-replay-progress { margin-top: 10px; }
+.tick-replay-progress p { margin-block: 7px; }
+.tick-replay-progress .ant-progress { max-width: 240px; }
+.tick-replay-detail { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 26px; }
+.tick-replay-metric-group { margin-block: 24px; }
+.tick-replay-metric-group h4 { margin-bottom: 8px; }
+.tick-replay-gaps { margin-top: 16px; }
+.tick-replay-gaps > summary { cursor: pointer; margin-bottom: 12px; }
 @media (prefers-reduced-motion: no-preference) {
   .metric-info { transition: background-color 160ms ease, color 160ms ease; }
 }

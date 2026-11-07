@@ -4,6 +4,7 @@ const definition = (label: string, explanation: string): MetricDefinition => ({ 
 const nativeMoney = '单位为原生报告币种；接口未提供币种时不推断。历史结果不代表未来收益。';
 const fraction = '按原生小数比例显示，0.01 表示 1%；不在浏览器重新年化。';
 const glossary: Record<string, MetricDefinition> = {
+  'tick.conditional_annualized_return_365': definition('条件年化收益（365 天）', '原生 Tick 经济回放在对应分区和市场状态中报告的条件年化收益，保留原小数比例；不在浏览器重算，不表示未来盈利或科学资格。'),
   pearson_ic: definition('皮尔逊信息系数（IC）', '因子分数与对应未来标签的皮尔逊相关系数，无量纲，范围为 −1 至 1。不是收益率；恒定分数、恒定标签或样本不足时不可用。'),
   rank_ic: definition('有方向秩信息系数（RankIC）', '因子分数与未来标签的秩相关系数，范围为 −1 至 1；保留方向，不取绝对值。横截面与合并时间序列的范围见原分析方法，二者不能互换。'),
   rank_ic_lower: definition('秩信息系数区间下界', '按原分析方法计算的 RankIC 置信区间下界。区块重采样保留同步事件组及标签重叠；样本不足时不可用，不是未来盈利概率。'),

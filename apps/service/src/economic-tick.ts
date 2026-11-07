@@ -4,10 +4,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { defineDoc, defineExtension, defineTask } from '@earendil-works/pi-durable';
-import type { ConversationId, JsonObject, TaskId } from '@earendil-works/pi-durable';
+import type { ConversationId, JsonObject, TaskId, TaskRecord } from '@earendil-works/pi-durable';
 import { API } from '../../../packages/contracts/src/index.ts';
 import type { NativeTarget } from '../../../packages/contracts/src/nautilus.ts';
-import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult, type TickEconomicReplayMember, type TickEconomicReplayStart, type TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
+import { validateNativeTickEconomicRequest, validateNativeTickEconomicResult, type NativeTickEconomicRequest, type NativeTickEconomicResult, type TickEconomicReplayDetail, type TickEconomicReplayMember, type TickEconomicReplayMetadata, type TickEconomicReplayProgress, type TickEconomicReplayStart, type TickEconomicReplaySummary, type TickEconomicReplayView } from '../../../packages/contracts/src/economic-tick.ts';
 import { nativeResearchInput } from '../../../packages/contracts/src/tick-input.ts';
 import type { ResearchHost } from '../../research/src/host.ts';
 import { canonical, Requests, Study } from '../../research/src/documents.ts';
@@ -29,7 +29,8 @@ export const TickEconomicReplays = defineDoc<{ runs: Record<string, JsonObject> 
   kind: 'qz.tick-economic-replays', version: 1, scope: 'session', initial: () => ({ runs: {} }),
 });
 type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayView };
-type ReplayInput = { id: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest };
+type ReplayInput = { id: string; createdAt?: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest };
+type ReplayCheckpoint = { phase: 'compute'; progress?: TickEconomicReplayProgress };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
 function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
   const source = nativeResearchInput(sourceData); const configured = nativeResearchInput(configuredData);
@@ -38,18 +39,20 @@ function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, req
   return { request: source.request, catalog: text(sourceData.catalog, 'catalog'), fundingCatalog: text(configuredData.catalog, 'catalog') };
 }
 
-export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, null>({
-  name: 'qz.tick-economic-replay', version: 1, initial: () => ({ phase: 'compute' }),
+export const TickEconomicReplay = defineTask<ReplayInput, ReplayCheckpoint, null>({
+  name: 'qz.tick-economic-replay', version: 1, initial: input => ({ phase: 'compute',
+    ...(input.createdAt ? { progress: { phase: 'QUEUED', updatedAt: input.createdAt } } : {}) }),
   phases: { async compute(task, runtime, ctx) {
     let directory: string | undefined;
     try {
-      await runtime.commit(async tx => {
+      const report = async (phase: string) => runtime.commit(async tx => {
         fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!).view.status = 'RUNNING';
-        return undefined;
+        return { status: 'running', checkpoint: { phase: 'compute', progress: { phase, updatedAt: new Date(runtime.now()).toISOString() } } };
       }, ctx);
       const references = (await runtime.snapshot(NativeRemoteUncertainty, task.conversationId, String(task.id), ctx))?.requests ?? [];
       let result: NativeTickEconomicResult;
       if (references.length) {
+        await report('RECONCILING');
         // A restart may recover an original receipt, never POST a replacement run.
         if (references.length !== 1 || references[0]!.taskId !== task.id || canonical(references[0]!.target!) !== canonical(task.input.target)) throw new Error('tick_economic_remote_reference_invalid');
         const original = references[0]!;
@@ -67,6 +70,7 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
         result = validateNativeTickEconomicResult(receipt.result);
         if (canonical(withoutExecutionQuotas(result.request)) !== canonical(withoutExecutionQuotas(task.input.request))) throw new Error('tick_economic_result_request_mismatch');
       } else {
+        await report('PREPARING_MODELS');
         directory = await mkdtemp(join(task.input.dataDir, 'tick-economic-'));
         const models = Array.isArray(task.input.model) ? task.input.model : [task.input.model];
         const model = await Promise.all(models.map(async (source, index) => {
@@ -74,6 +78,7 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
           await writeFile(path, compileWasm(source, 'retained-factor.wat', 'replay-tick-economic'));
           return path;
         }));
+        await report('REPLAYING');
         result = await withNativeRemoteTracking(task.id, runtime, ctx, () => replayTickEconomic(task.input.target,
           task.input.request, { catalog: task.input.catalog, fundingCatalog: task.input.fundingCatalog, model }, directory!, ctx));
       }
@@ -109,11 +114,45 @@ export const TickEconomicReplay = defineTask<ReplayInput, { phase: 'compute' }, 
 });
 export const tickEconomicExtension = defineExtension({ name: 'qz.tick-economic-replay', tasks: [TickEconomicReplay] });
 
+function timestamp(value: unknown): string | null {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
+}
+function replayMetadata(stored: ReplayFact, task: TaskRecord<unknown, unknown, unknown> | undefined): TickEconomicReplayMetadata {
+  const input = task?.input && typeof task.input === 'object' && !Array.isArray(task.input) ? task.input as Record<string, unknown> : null;
+  const linked = task?.kind === TickEconomicReplay.definition.name && input?.id === stored.view.id;
+  const state = linked ? task.state : null;
+  const checkpoint = state && 'checkpoint' in state && state.checkpoint && typeof state.checkpoint === 'object' ? state.checkpoint as Record<string, unknown> : null;
+  const candidate = checkpoint?.progress && typeof checkpoint.progress === 'object' && !Array.isArray(checkpoint.progress) ? checkpoint.progress as Record<string, unknown> : null;
+  let progress: TickEconomicReplayProgress | null = null;
+  if (candidate && typeof candidate.phase === 'string' && candidate.phase && timestamp(candidate.updatedAt)) {
+    progress = { phase: candidate.phase, updatedAt: candidate.updatedAt as string };
+    if (Number.isSafeInteger(candidate.completed) && Number.isSafeInteger(candidate.total)
+      && (candidate.total as number) > 0 && (candidate.completed as number) >= 0 && (candidate.completed as number) <= (candidate.total as number)) {
+      progress.completed = candidate.completed as number; progress.total = candidate.total as number;
+    }
+  }
+  const scenario = stored.original?.request?.scenario;
+  const executionModel = stored.view.result?.model ?? (!scenario ? null : scenario.execution_model === undefined ? 'SEGREGATED_COHORT_MARK_ESTIMATE_V1'
+    : scenario.execution_model === 'SYNTHETIC_QUOTE_IOC_V1' ? 'SEGREGATED_SYNTHETIC_QUOTE_IOC_V1'
+      : scenario.execution_model === 'OBSERVED_L2_IOC_V1' ? 'SEGREGATED_OBSERVED_L2_IOC_V1' : null);
+  return { createdAt: linked ? timestamp(input?.createdAt) : null, executionModel, progress };
+}
+
 export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig) {
-  async function get(id: string) {
-    const stored = (await host.harness.snapshot(TickEconomicReplays, context))?.runs[id];
-    if (!stored) throw new Problem('tick_economic_replay_not_found', 404);
-    return fact(stored).view;
+  async function get(id: string): Promise<TickEconomicReplayDetail> {
+    const runs = (await host.harness.snapshot(TickEconomicReplays, context))?.runs;
+    if (!runs || !Object.hasOwn(runs, id)) throw new Problem('tick_economic_replay_not_found', 404);
+    const stored = runs[id]!;
+    const replay = fact(stored); const task = await host.harness.getTask(replay.view.taskId as TaskId, context);
+    return { ...replay.view, ...replayMetadata(replay, task) };
+  }
+  async function list(): Promise<TickEconomicReplaySummary[]> {
+    const stored = (await host.harness.snapshot(TickEconomicReplays, context))?.runs ?? {};
+    return Promise.all(Object.values(stored).map(async value => {
+      const replay = fact(value); const { result: _result, ...summary } = replay.view;
+      const task = await host.harness.getTask(replay.view.taskId as TaskId, context);
+      return { ...summary, ...replayMetadata(replay, task) };
+    }));
   }
   async function start(value: unknown) {
     const body = object(value);
@@ -178,7 +217,7 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       }
       const { reference, source, target } = retained[0]!;
       const id = randomUUID();
-      const taskId = await tx.createTask(TickEconomicReplay, { id, dataDir: config.dataDir, catalog: source.catalog, fundingCatalog: source.fundingCatalog,
+      const taskId = await tx.createTask(TickEconomicReplay, { id, createdAt: new Date().toISOString(), dataDir: config.dataDir, catalog: source.catalog, fundingCatalog: source.fundingCatalog,
         model: retained.length === 1 ? retained[0]!.model : retained.map(member => member.model), request: input.request, target },
       { conversationId: reference.researchId as ConversationId, ownership: { kind: 'conversation' } });
       const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId,
@@ -190,11 +229,12 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       return view;
     }, context);
   }
-  return { start, get };
+  return { start, get, list };
 }
 
 /** Register after the existing owner authentication and maintenance hooks. */
 export function registerTickEconomicRoutes(app: FastifyInstance, work: ReturnType<typeof tickEconomicWorkbench>) {
+  app.get(`${API}/tick-economic-replays`, () => work.list());
   app.post(`${API}/tick-economic-replays`, async (request, reply) => reply.code(202).send(await work.start(request.body)));
   app.get<{ Params: { id: string } }>(`${API}/tick-economic-replays/:id`, request => work.get(request.params.id));
 }
