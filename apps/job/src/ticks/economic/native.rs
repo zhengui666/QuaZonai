@@ -60,9 +60,17 @@ fn arithmetic(value: Option<Decimal>) -> Result<Decimal> {
     clippy::useless_conversion,
     reason = "Native fixed-point raw widths depend on upstream high-precision feature"
 )]
-fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Result<()> {
+fn encode_book(
+    snapshot: &mut OrderBookDeltas,
+    instrument: &InstrumentAny,
+    normalize_book_sizes: bool,
+) -> Result<()> {
     let price_precision = instrument.price_precision();
     let size_precision = instrument.size_precision();
+    if normalize_book_sizes {
+        // shortcut: floor to current lot increments until point-in-time instrument rules exist.
+        super::books::floor_book_sizes(snapshot, instrument.size_increment())?;
+    }
     for delta in &mut snapshot.deltas {
         if delta.order.price.precision != price_precision {
             check_fixed_raw_i128(i128::from(delta.order.price.raw()), price_precision).with_context(
@@ -75,7 +83,7 @@ fn encode_book(snapshot: &mut OrderBookDeltas, instrument: &InstrumentAny) -> Re
             )?;
             delta.order.price = Price::from_raw_checked(delta.order.price.raw(), price_precision)?;
         }
-        if delta.order.size.precision != size_precision {
+        if !normalize_book_sizes && delta.order.size.precision != size_precision {
             check_fixed_raw_u128(u128::from(delta.order.size.raw()), size_precision).with_context(
                 || {
                     format!(
@@ -677,6 +685,7 @@ pub(super) struct NativeLedger {
     purge_day: Option<u64>,
     synthetic_quote_ioc: bool,
     observed_l2: bool,
+    normalize_book_sizes: bool,
 }
 impl NativeLedger {
     #[allow(clippy::too_many_arguments)]
@@ -700,6 +709,7 @@ impl NativeLedger {
             maintenance_margin_fraction,
             synthetic_quote_ioc,
             false,
+            false,
             None,
         )
     }
@@ -722,6 +732,31 @@ impl NativeLedger {
             initial_margin_fraction,
             maintenance_margin_fraction,
             false,
+            true,
+            false,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_observed_v2(
+        instruments: Vec<InstrumentAny>,
+        initial_usdc: Decimal,
+        margin: bool,
+        taker_fee_bps: Decimal,
+        extra_cost_bps: Decimal,
+        initial_margin_fraction: Decimal,
+        maintenance_margin_fraction: Decimal,
+    ) -> Result<Self> {
+        Self::with_execution(
+            instruments,
+            initial_usdc,
+            margin,
+            taker_fee_bps,
+            extra_cost_bps,
+            initial_margin_fraction,
+            maintenance_margin_fraction,
+            false,
+            true,
             true,
             None,
         )
@@ -748,6 +783,7 @@ impl NativeLedger {
             Decimal::new(5, 1),
             false,
             true,
+            false,
             Some(initial_base),
         )?;
         ledger.inventory_target_instruments(&[id])?;
@@ -764,6 +800,7 @@ impl NativeLedger {
         maintenance_margin_fraction: Decimal,
         synthetic_quote_ioc: bool,
         observed_l2: bool,
+        normalize_book_sizes: bool,
         initial_base: Option<Money>,
     ) -> Result<Self> {
         ensure!(
@@ -917,6 +954,7 @@ impl NativeLedger {
             purge_day: None,
             synthetic_quote_ioc,
             observed_l2,
+            normalize_book_sizes,
         })
     }
 
@@ -1116,8 +1154,11 @@ impl NativeLedger {
                     && row.capacity >= Decimal::ZERO,
                 "TICK_ECONOMIC_BOOK_BATCH_INVALID"
             );
-            // Relabel exact raw values, including Clear zeros, without rounding archive levels.
-            encode_book(&mut row.snapshot, &self.instruments[&id])?;
+            encode_book(
+                &mut row.snapshot,
+                &self.instruments[&id],
+                self.normalize_book_sizes,
+            )?;
             if let Some(target) = row.target_quantity {
                 ensure!(
                     self.state.borrow_mut().targets.insert(id, target).is_none(),
@@ -1937,7 +1978,7 @@ mod tests {
     }
 
     #[test]
-    fn observed_raw_precision_preserves_btc_and_ubtc_values_and_rejects_loss() {
+    fn observed_raw_precision_preserves_lots_and_floors_off_lot_depth() {
         let InstrumentAny::CryptoPerpetual(mut btc) = perp() else {
             unreachable!()
         };
@@ -1994,7 +2035,7 @@ mod tests {
             };
             let raw = raw_snapshot(1_000_000_000);
             let mut encoded = raw.clone();
-            encode_book(&mut encoded, &instrument).unwrap();
+            encode_book(&mut encoded, &instrument, true).unwrap();
             for (before, after) in raw.deltas.iter().zip(&encoded.deltas) {
                 assert_eq!(after.order.price.raw(), before.order.price.raw());
                 assert_eq!(after.order.size.raw(), before.order.size.raw());
@@ -2005,7 +2046,7 @@ mod tests {
                 assert_eq!(after.ts_event, before.ts_event);
                 assert_eq!(after.ts_init, before.ts_init);
             }
-            let mut ledger = NativeLedger::new_observed(
+            let mut ledger = NativeLedger::new_observed_v2(
                 vec![instrument.clone()],
                 Decimal::from(3000),
                 matches!(instrument, InstrumentAny::CryptoPerpetual(_)),
@@ -2048,30 +2089,50 @@ mod tests {
                 assert_eq!(quote.ts_event.as_u64(), 2_000_000_000 - 100);
                 assert_eq!(quote.ts_init.as_u64(), 2_000_000_000);
             }
-            for field in ["PRICE", "SIZE"] {
-                let mut invalid = raw_snapshot(3_000_000_000);
-                if field == "PRICE" {
-                    invalid.deltas[1].order.price = Price::from(invalid_price);
-                } else {
-                    invalid.deltas[1].order.size = Quantity::from("0.001231");
-                }
-                let error = ledger
-                    .step_books(
-                        3_000_000_000,
-                        vec![NativeBook {
-                            snapshot: invalid,
-                            capacity: Decimal::ZERO,
-                            target_quantity: None,
-                        }],
-                        &[],
-                    )
-                    .unwrap_err();
-                assert!(error.to_string().contains(&format!(
-                    "TICK_ECONOMIC_BOOK_{field}_PRECISION_UNSUPPORTED: instrument_id={id}"
-                )));
-                assert_eq!(ledger.last_event, Some(2_000_000_000));
-                assert_eq!(ledger.summary().submitted, 1);
-            }
+            let mut off_lot = raw_snapshot(3_000_000_000);
+            off_lot.deltas[1].order.size = Quantity::from("0.001231");
+            encode_book(&mut off_lot, &instrument, true).unwrap();
+            assert_eq!(
+                off_lot.deltas[1].order.size.precision,
+                instrument.size_precision()
+            );
+            assert_eq!(
+                off_lot.deltas[1].order.size.as_decimal(),
+                Decimal::new(123, 5)
+            );
+
+            let mut below_lot = raw_snapshot(3_000_000_000);
+            below_lot.deltas[2].order.size = Quantity::from("0.000001");
+            let frame = books::Snapshot::new(below_lot.clone())
+                .unwrap()
+                .floor_sizes(instrument.size_increment())
+                .unwrap();
+            assert!(frame.midpoint.is_none());
+            assert_eq!(frame.capacity(true), Decimal::ZERO);
+            assert_eq!(frame.capacity(false), Decimal::new(123, 5));
+            encode_book(&mut below_lot, &instrument, true).unwrap();
+            assert_eq!(below_lot.deltas.len(), 2);
+            assert!(below_lot.deltas.last().unwrap().flags & RecordFlag::F_LAST as u8 != 0);
+            books::Snapshot::new(below_lot).unwrap();
+
+            let mut invalid = raw_snapshot(3_000_000_000);
+            invalid.deltas[1].order.price = Price::from(invalid_price);
+            let error = ledger
+                .step_books(
+                    3_000_000_000,
+                    vec![NativeBook {
+                        snapshot: invalid,
+                        capacity: Decimal::ZERO,
+                        target_quantity: None,
+                    }],
+                    &[],
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains(&format!(
+                "TICK_ECONOMIC_BOOK_PRICE_PRECISION_UNSUPPORTED: instrument_id={id}"
+            )));
+            assert_eq!(ledger.last_event, Some(2_000_000_000));
+            assert_eq!(ledger.summary().submitted, 1);
             ledger.finish().unwrap();
         }
     }

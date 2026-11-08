@@ -34,6 +34,8 @@ pub enum NativeTickEconomicExecutionModelV1 {
     SyntheticQuoteIocV1,
     #[serde(rename = "OBSERVED_L2_IOC_V1")]
     ObservedL2IocV1,
+    #[serde(rename = "OBSERVED_L2_IOC_V2")]
+    ObservedL2IocV2,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]

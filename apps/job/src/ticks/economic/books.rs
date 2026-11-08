@@ -4,6 +4,7 @@ use nautilus_model::{
     data::{DataBatch, NautilusDataType, OrderBookDelta, OrderBookDeltas},
     enums::{BookAction, OrderSide, RecordFlag},
     identifiers::InstrumentId,
+    types::Quantity,
 };
 use nautilus_persistence::{
     backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
@@ -118,6 +119,31 @@ impl Snapshot {
             .filter(move |row| row.action == BookAction::Add && row.order.side == Some(side))
             .map(|row| (row.order.price.as_decimal(), row.order.size.as_decimal()))
     }
+    pub fn floor_sizes(self, increment: Quantity) -> Result<Self> {
+        let mut deltas = self.deltas;
+        floor_book_sizes(&mut deltas, increment)?;
+        Self::new(deltas)
+    }
+}
+
+pub(super) fn floor_book_sizes(
+    snapshot: &mut OrderBookDeltas,
+    increment: Quantity,
+) -> Result<()> {
+    for delta in &mut snapshot.deltas {
+        delta.order.size = delta
+            .order
+            .size
+            .checked_floor_to_increment(increment)
+            .context("TICK_ECONOMIC_BOOK_SIZE_INCREMENT_UNSUPPORTED")?;
+    }
+    snapshot
+        .deltas
+        .retain(|delta| delta.action != BookAction::Add || delta.order.size.raw() > 0);
+    if let Some(last) = snapshot.deltas.last_mut() {
+        last.flags |= RecordFlag::F_LAST as u8;
+    }
+    Ok(())
 }
 
 pub(super) struct Books(Source);

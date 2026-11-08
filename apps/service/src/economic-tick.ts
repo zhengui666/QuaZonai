@@ -134,7 +134,8 @@ function replayMetadata(stored: ReplayFact, task: TaskRecord<unknown, unknown, u
   const scenario = stored.original?.request?.scenario;
   const executionModel = stored.view.result?.model ?? (!scenario ? null : scenario.execution_model === undefined ? 'SEGREGATED_COHORT_MARK_ESTIMATE_V1'
     : scenario.execution_model === 'SYNTHETIC_QUOTE_IOC_V1' ? 'SEGREGATED_SYNTHETIC_QUOTE_IOC_V1'
-      : scenario.execution_model === 'OBSERVED_L2_IOC_V1' ? 'SEGREGATED_OBSERVED_L2_IOC_V1' : null);
+      : scenario.execution_model === 'OBSERVED_L2_IOC_V1' ? 'SEGREGATED_OBSERVED_L2_IOC_V1'
+        : scenario.execution_model === 'OBSERVED_L2_IOC_V2' ? 'SEGREGATED_OBSERVED_L2_IOC_V2' : null);
   return { createdAt: linked ? timestamp(input?.createdAt) : null, executionModel, progress };
 }
 

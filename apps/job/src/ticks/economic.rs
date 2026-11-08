@@ -35,7 +35,15 @@ const DAY: u64 = 86_400_000_000_000;
 const HOUR: u64 = DAY / 24;
 
 fn observed(scenario: &NativeTickEconomicScenarioV1) -> bool {
-    scenario.execution_model == Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1)
+    matches!(
+        scenario.execution_model,
+        Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV1)
+            | Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV2)
+    )
+}
+
+fn normalize_observed_book_sizes(scenario: &NativeTickEconomicScenarioV1) -> bool {
+    scenario.execution_model == Some(NativeTickEconomicExecutionModelV1::ObservedL2IocV2)
 }
 
 fn counter(v: u64) -> Result<DbCounter> {
@@ -1979,6 +1987,7 @@ pub fn replay_models_with_funding(
         })
         .context("ECONOMIC_USDT0_USDC_BRIDGE_REQUIRED")?;
     let observed = observed(s);
+    let normalize_sizes = normalize_observed_book_sizes(s);
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
     let mut book_readers = Vec::new();
     let mut book_heads = Vec::new();
@@ -1991,6 +2000,12 @@ pub fn replay_models_with_funding(
                 request.research.input.event_end_ns.get(),
             )?;
             let head = reader.next()?;
+            let head = if normalize_sizes {
+                head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
+                    .transpose()?
+            } else {
+                head
+            };
             if let Some(head) = &head {
                 book_heap.push(Reverse((head.received(), i)));
             }
@@ -2099,7 +2114,13 @@ pub fn replay_models_with_funding(
             let i = book_heap.pop().unwrap().0 .1;
             let frame = book_heads[i].take().unwrap();
             snapshots.insert(i, frame);
-            book_heads[i] = book_readers[i].next()?;
+            let next = book_readers[i].next()?;
+            book_heads[i] = if normalize_sizes {
+                next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
+                    .transpose()?
+            } else {
+                next
+            };
             if let Some(next) = &book_heads[i] {
                 book_heap.push(Reverse((next.received(), i)));
             }
@@ -2838,8 +2859,18 @@ pub fn replay_models_with_funding(
                 "policy": "Only the first complete frame of an observed CryptoHFTData file, received at its file hour with transaction_time explicitly null on every row, is a carried checkpoint. It is structurally validated but does not refresh liquidity, marks or receipt age; original files and clocks are retained."
             }));
         }
-        result.model = "SEGREGATED_OBSERVED_L2_IOC_V1".into();
-        result.methods.insert("execution".into(), "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account. Cash buys and capped new exposure use the actual execution-side depth cost, with declared fees and native Money rounding accounted for. A one-sided snapshot may only reduce existing inventory through an IOC limit at the depth actually touched; it does not create a BBO or a NAV mark. Two-sided snapshots retain market IOC orders.".into());
+        let v2 = normalize_observed_book_sizes(&request.scenario);
+        result.model = if v2 {
+            "SEGREGATED_OBSERVED_L2_IOC_V2"
+        } else {
+            "SEGREGATED_OBSERVED_L2_IOC_V1"
+        }
+        .into();
+        result.methods.insert("execution".into(), if v2 {
+            "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their first-level bid/ask price and lot-normalized size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. Level sizes are rounded down to the currently declared lot increment before matching; source rows remain unchanged. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies lot-normalized bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; native partial fills, commissions and residual positions remain in its shared sleeve account. Cash buys and capped new exposure use the lot-normalized execution-side depth cost, with declared fees and native Money rounding accounted for. A one-sided snapshot may only reduce existing inventory through an IOC limit at the depth actually touched; it does not create a BBO or a NAV mark. Two-sided snapshots retain market IOC orders."
+        } else {
+            "Published complete L2 snapshots retain exchange ts_event and provider ts_init. Their actual first-level bid/ask price and size also feed the official market-order risk cache as a same-clock QuoteTick; quotes do not update the L2 matching book. The next complete snapshot after a signal's absolute latency plus seeded jitter supplies actual bid/ask levels to official Nautilus L2_MBP matching, with BAR and trade execution disabled and native liquidity consumption enabled. Participation is a cap on the visible side's total depth, not a measured fraction of traded volume. Each asset submits at most one delayed aggregate IOC at a snapshot; actual native partial fills, commissions and residual positions remain in its shared sleeve account. Cash buys and capped new exposure use the actual execution-side depth cost, with declared fees and native Money rounding accounted for. A one-sided snapshot may only reduce existing inventory through an IOC limit at the depth actually touched; it does not create a BBO or a NAV mark. Two-sided snapshots retain market IOC orders."
+        }.into());
         result.methods.insert("capital".into(), "Initial USDT wealth is explicitly mapped to USDT0 in a native bootstrap cash account. Delayed real-book IOC sales convert that inventory to USDC, including native depth, size limits and fees. Realized net proceeds become one initial cash/margin split; unconverted dust remains in total wealth. No running transfers or reinjection.".into());
         result.methods.insert("policy".into(), if small.is_some() { "Capped small-capital entry intent and timeout retain the registered policy. Features advance on observed trade receipt cohorts; execution advances only on complete published book snapshots. Unexecutable size/minimum-notional exits retain their inventory and pending intent without generating native orders. A later legal snapshot may retry; dust is never called closed." } else { "Registered global decision grid and absolute score-proportional capped gross targets. Coalesced delayed targets execute against a later complete published book; spot negatives remain cash, perpetual targets are signed. Multiple model scores share one target calculation, cash balance, margin balance and matching liquidity." }.into());
         result
@@ -2892,15 +2923,20 @@ fn build(
         &s.spot_taker_fee_bps
     })?;
     if observed(s) {
-        return NativeLedger::new_observed(
-            instruments,
-            capital,
-            margin,
-            fee,
-            decimal(&s.extra_cost_bps)?,
+        let (initial_margin, maintenance_margin, extra_cost) = (
             decimal(&s.initial_margin_fraction)?,
             decimal(&s.maintenance_margin_fraction)?,
+            decimal(&s.extra_cost_bps)?,
         );
+        return if normalize_observed_book_sizes(s) {
+            NativeLedger::new_observed_v2(
+                instruments, capital, margin, fee, extra_cost, initial_margin, maintenance_margin,
+            )
+        } else {
+            NativeLedger::new_observed(
+                instruments, capital, margin, fee, extra_cost, initial_margin, maintenance_margin,
+            )
+        };
     }
     NativeLedger::new(
         instruments,

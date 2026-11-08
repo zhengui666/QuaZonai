@@ -102,6 +102,7 @@ test('synthetic quote IOC is explicitly selected and unknown execution models ar
   const scenario = { ...legacy.scenario, execution_model: 'SYNTHETIC_QUOTE_IOC_V1' };
   assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario }).scenario.execution_model, 'SYNTHETIC_QUOTE_IOC_V1');
   assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'OBSERVED_L2_IOC_V1' } }).scenario.execution_model, 'OBSERVED_L2_IOC_V1');
+  assert.equal(validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'OBSERVED_L2_IOC_V2' } }).scenario.execution_model, 'OBSERVED_L2_IOC_V2');
   assert.throws(() => validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: 'UNKNOWN' } }), /tick_economic_execution_model_invalid/);
   assert.throws(() => validateNativeTickEconomicRequest({ ...legacy, scenario: { ...scenario, execution_model: ['OBSERVED_L2_IOC_V1'] } }), /tick_economic_execution_model_invalid/);
 });
