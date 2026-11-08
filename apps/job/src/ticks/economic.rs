@@ -2930,11 +2930,23 @@ fn build(
         );
         return if normalize_observed_book_sizes(s) {
             NativeLedger::new_observed_v2(
-                instruments, capital, margin, fee, extra_cost, initial_margin, maintenance_margin,
+                instruments,
+                capital,
+                margin,
+                fee,
+                extra_cost,
+                initial_margin,
+                maintenance_margin,
             )
         } else {
             NativeLedger::new_observed(
-                instruments, capital, margin, fee, extra_cost, initial_margin, maintenance_margin,
+                instruments,
+                capital,
+                margin,
+                fee,
+                extra_cost,
+                initial_margin,
+                maintenance_margin,
             )
         };
     }

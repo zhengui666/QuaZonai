@@ -126,10 +126,7 @@ impl Snapshot {
     }
 }
 
-pub(super) fn floor_book_sizes(
-    snapshot: &mut OrderBookDeltas,
-    increment: Quantity,
-) -> Result<()> {
+pub(super) fn floor_book_sizes(snapshot: &mut OrderBookDeltas, increment: Quantity) -> Result<()> {
     for delta in &mut snapshot.deltas {
         delta.order.size = delta
             .order
