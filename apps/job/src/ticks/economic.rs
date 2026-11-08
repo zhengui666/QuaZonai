@@ -308,7 +308,7 @@ fn context_manifest(
             && m.instrument_ids.windows(2).all(|p| p[0] < p[1])
             && m.instrument_ids
                 .iter()
-                .all(|id| request.input.instrument_ids.contains(id))
+                .any(|id| request.input.instrument_ids.contains(id))
             && m.files.len() == m.instrument_ids.len(),
         "ECONOMIC_CONTEXT_MANIFEST_INVALID"
     );
@@ -476,6 +476,7 @@ impl ContextPrices {
         let readers = manifest
             .files
             .into_iter()
+            .filter(|file| request.input.instrument_ids.contains(&file.instrument_id))
             .map(|file| Ok((file.instrument_id.clone(), ContextReader::open(root, file)?)))
             .collect::<Result<_>>()?;
         Ok(Self {
