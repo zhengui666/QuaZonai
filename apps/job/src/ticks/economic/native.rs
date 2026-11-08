@@ -2103,7 +2103,7 @@ mod tests {
 
             let mut below_lot = raw_snapshot(3_000_000_000);
             below_lot.deltas[2].order.size = Quantity::from("0.000001");
-            let frame = books::Snapshot::new(below_lot.clone())
+            let frame = super::super::books::Snapshot::new(below_lot.clone())
                 .unwrap()
                 .floor_sizes(instrument.size_increment())
                 .unwrap();
@@ -2113,7 +2113,7 @@ mod tests {
             encode_book(&mut below_lot, &instrument, true).unwrap();
             assert_eq!(below_lot.deltas.len(), 2);
             assert!(below_lot.deltas.last().unwrap().flags & RecordFlag::F_LAST as u8 != 0);
-            books::Snapshot::new(below_lot).unwrap();
+            super::super::books::Snapshot::new(below_lot).unwrap();
 
             let mut invalid = raw_snapshot(3_000_000_000);
             invalid.deltas[1].order.price = Price::from(invalid_price);
