@@ -76,7 +76,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the same installation-tested images
+      - name: Publish the built images
         env:
           RUNTIME_IMAGE: ${{ steps.images.outputs.runtime-image }}
         run: |
