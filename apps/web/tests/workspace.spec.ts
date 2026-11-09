@@ -54,10 +54,12 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
   ];
   const stopped = new Set<number>(); const inactive = new Set<number>(); const admitted = new Map<string, { id: number; raw: string; input: Record<string, any> }>();
   const finalMetrics = [{ key: 'HELDOUT.pearson_ic', label: 'Pearson IC', value: null, status: 'CONSTANT_SCORE', partition: 'HELDOUT', component: 0 }, { key: 'HELDOUT.counts.included', label: 'Included', value: '9007199254740995', partition: 'HELDOUT', component: 0 }, { key: 'HELDOUT.counts.excluded', label: 'Excluded', value: '0', partition: 'HELDOUT', component: 0 }];
+  const researchDetails = new Map<number, ResearchDetail>();
   const detail = (id: number): ResearchDetail | undefined => {
+    const replacement = researchDetails.get(id); if (replacement) return replacement;
     const summary = studies.find(item => item.id === id); if (!summary) return;
     const original = [...admitted.values()].find(item => item.id === id)?.input; const active = !stopped.has(id) && !inactive.has(id) && (id === 7 || !!original); const unanswered = id === 9 || inactive.has(id);
-    return { ...summary, status: stopped.has(id) ? 'STOPPED' : summary.status, input: { goal: summary.title, ...(original?.thinkingLevel ? { thinkingLevel: original.thinkingLevel } : {}), ...(original?.serviceTier ? { serviceTier: original.serviceTier } : {}), ...(original?.specification ? { specification: original.specification } : {}), model, data: { hidden: 'SHOULD_NOT_RENDER' }, policy: { max_trials: original?.maxTrials ?? 3, hidden: 'PRIVATE_POLICY_SHOULD_NOT_RENDER' } }, datasetId: dataset.id, dataset: { id: dataset.id, name: dataset.name, source: dataset.source, currency: dataset.currency, assetClass: dataset.assetClass, start: null, end: null }, submission: { id: id + 10, status: active ? 'placed' : unanswered ? 'unanswered' : 'done', ...(unanswered ? { reason: 'budget_exhausted' } : {}) },
+    return { ...summary, status: stopped.has(id) ? 'STOPPED' : summary.status, input: { goal: summary.title, ...(original?.thinkingLevel ? { thinkingLevel: original.thinkingLevel } : {}), ...(original?.serviceTier ? { serviceTier: original.serviceTier } : {}), ...(original?.specification ? { specification: original.specification } : {}), model, data: { hidden: 'SHOULD_NOT_RENDER' }, policy: { hidden: 'PRIVATE_POLICY_SHOULD_NOT_RENDER' } }, datasetId: dataset.id, dataset: { id: dataset.id, name: dataset.name, source: dataset.source, currency: dataset.currency, assetClass: dataset.assetClass, start: null, end: null }, submission: { id: id + 10, status: active ? 'placed' : unanswered ? 'unanswered' : 'done', ...(unanswered ? { reason: 'budget_exhausted' } : {}) },
       final: stopped.has(id) ? { status: 'STOPPED', trialId: null, reason: 'Owner requested stop', metrics: [] } : id === 8 ? { status: 'COMPUTED', trialId: 11, reason: 'Original selection rationale', metrics: finalMetrics } : id === 9 ? { status: 'FAILED', trialId: 11, reason: 'Original failed selection rationale', error: 'independent_test_failure', metrics: [] } : null,
       trialRecords: original ? [] : [{ id: 11, hypothesis: '测试 · 流动性假设', status: 'COMPUTED', metrics: [{ key: 'VALIDATION.pearson_ic', label: 'IC', partition: 'VALIDATION', value: 0.04 }], error: null }, { id: 12, hypothesis: '测试 · 失败的假设', status: 'FAILED', metrics: [], error: 'original_trial_failure' }, { id: 13, hypothesis: '测试 · 被拒绝的假设', status: 'REJECTED', metrics: [], error: 'original_trial_rejection' }],
       tasks: [{ id: 21, name: '测试计算', status: active ? 'running' : 'terminal', ...(!active ? { outcome: stopped.has(id) ? 'aborted' : unanswered ? 'failed' : 'completed' } : {}), error: unanswered ? 'task_failed' : null }],
@@ -130,7 +132,7 @@ async function contract(page: BrowserPage, setup = false, fast = false) {
     if (path.startsWith('/extensions/')) { const item = extensions.find(item => item.name === decodeURIComponent(path.split('/')[2]!))!; Object.assign(item, { enabled: request.postDataJSON().enabled, state: 'pending_restart' }); return reply(item); }
     return reply({ error: 'not_found' }, 404);
   });
-  return { writes, observation, portfolio, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { defaultModel: null, thinkingLevel: null, serviceTier: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
+  return { writes, observation, portfolio, researchDetails, idle: () => { inactive.add(7); studies.find(item => item.id === 7)!.status = 'IDLE'; }, hideModels: () => { availableModels = []; settings = { defaultModel: null, thinkingLevel: null, serviceTier: null }; }, paginate: () => { pagination = true; }, loseLogin: () => { missingLogin = true; }, holdAuth: () => { let release!: () => void; heldAuth = new Promise<void>(resolve => { release = resolve; }); return () => { heldAuth = undefined; release(); }; }, empty: () => { studies = []; portfolios = []; observations = []; extensions = []; }, missing: () => { missingExtensions = true; }, hold: () => { let release!: () => void; heldResearch = new Promise<void>(resolve => { release = resolve; }); return () => { heldResearch = undefined; release(); }; } };
 }
 async function mandate(page: BrowserPage, question: string) { await page.getByRole('textbox', { name: /研究名称$/ }).fill(question); await page.getByLabel('研究问题', { exact: true }).fill(question); await page.getByLabel('经济假设与依据', { exact: true }).fill('Controlled hypothesis, protocol coverage only.'); }
 async function choose(page: BrowserPage, label: string, option: string) { await page.getByLabel(label, { exact: true }).click(); await page.getByRole('option', { name: option, exact: true }).click(); }
@@ -532,9 +534,8 @@ test('late settings response cannot overwrite a newer save or discard a later dr
   } finally { release(); }
 });
 
-test('research starts without a trial quota and ignores a saved legacy quota', async ({ page }) => {
+test('research starts without a trial quota', async ({ page }) => {
   const state = await contract(page);
-  await page.addInitScript(() => sessionStorage.setItem('quazonai.draft.research', JSON.stringify({ maxTrials: '0' })));
   await page.goto('/#/research/new');
   await mandate(page, 'Research without a quota'); await choose(page, '数据集', '测试数据 / CNY');
   await expect(page.getByLabel('试验预算', { exact: true })).toHaveCount(0);
@@ -560,14 +561,14 @@ test('light/dark and 320–1024 layouts retain exact long facts without page ove
 });
 
 test('recovered research keeps original identity separate from current execution', async ({ page }) => {
-  await contract(page);
-  await page.route('**/api/v3/research/7', route => route.fulfill({ json: {
+  const state = await contract(page);
+  state.researchDetails.set(7, {
     id: 7, title: '原研究恢复身份', status: 'RUNNING', trials: 18, model: 'test/test-model', createdAt: null, updatedAt: null,
-    input: { goal: '原研究恢复身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 100 } },
+    input: { goal: '原研究恢复身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: {} },
     originalSubmission: { id: 17, requestId: 'owner-original-request', status: 'unanswered', reason: 'model_error' },
     submission: { id: 80, requestId: 'qz.research.resume:7:17', status: 'placed' },
     trialRecords: [], tasks: [{ id: 81, name: 'pi.generation', status: 'running', error: null }], final: null,
-  } }));
+  });
   await page.goto('/#/research/7'); await page.getByRole('tab', { name: '输入与执行', exact: true }).click();
   const original = page.locator('section').filter({ has: page.getByRole('heading', { name: '原始身份', exact: true }) });
   await expect(original).toContainText('owner-original-request'); await expect(original).not.toContainText('qz.research.resume');
@@ -576,15 +577,15 @@ test('recovered research keeps original identity separate from current execution
 });
 
 test('continued research displays the prior unselected stop without replacing original identity', async ({ page }) => {
-  await contract(page);
-  await page.route('**/api/v3/research/7', route => route.fulfill({ json: {
+  const state = await contract(page);
+  state.researchDetails.set(7, {
     id: 7, title: '原研究停止后续作', status: 'RUNNING', trials: 123, model: 'test/test-model', createdAt: null, updatedAt: null,
-    input: { goal: '原研究停止后续作', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 299941 } },
+    input: { goal: '原研究停止后续作', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: {} },
     originalSubmission: { id: 17, requestId: 'owner-original-request', status: 'unanswered', reason: 'model_error' },
     submission: { id: 90, requestId: 'qz.research.resume:7:80', status: 'placed' },
     previousStops: [{ previousSubmissionId: 80, final: { taskId: 89, status: 'STOPPED', trialId: null, result: null, comparedTrials: [82], reason: 'INCOMPLETE_EXECUTION: response boundary is not a scientific stop' } }],
     trialRecords: [], tasks: [{ id: 91, name: 'pi.generation', status: 'running', error: null }], final: null,
-  } }));
+  });
   await page.goto('/#/research/7'); await page.getByRole('tab', { name: '输入与执行', exact: true }).click();
   const history = page.locator('section').filter({ has: page.getByRole('heading', { name: '历史停止记录', exact: true }) });
   await expect(history).toContainText('80'); await expect(history).toContainText('89'); await expect(history).toContainText('INCOMPLETE_EXECUTION: response boundary is not a scientific stop');
@@ -689,13 +690,13 @@ test('touch opens and dismisses a metric explanation without changing the accoun
 });
 
 test('public execution causes and remedies stay visible with original trial and portfolio task identities', async ({ page }, info) => {
-  const state = await contract(page); const errorDetail = { code: 'WASM_MEMORY_LIMIT', category: 'resource', message: '科学模型超过明确的内存预算。', action: '检查原模型与原预算，修正后再明确发起研究；不自动重试原试验。', operation: 'evaluate-factor', stage: 'execute' };
+  const state = await contract(page); const errorDetail = { code: 'WASM_MEMORY_LIMIT', category: 'resource', message: '科学模型超过明确的内存预算。', action: '检查原模型与原预算，修正后再明确发起研究；不自动重试原试验。', operation: 'evaluate-factor', stage: 'execute' } as const;
   Object.assign(state.portfolio, { status: 'FAILED', error: errorDetail.code, errorDetail: { ...errorDetail, operation: 'portfolio-backtest' }, curve: [], metrics: [], targets: [] });
-  await page.route('**/api/v3/research/8', route => route.fulfill({ json: {
+  state.researchDetails.set(8, {
     id: 8, title: '保留原研究身份', status: 'FAILED', trials: 1, model: 'test/test-model', createdAt: null, updatedAt: null,
-    input: { goal: '保留原研究身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: { max_trials: 1 } },
+    input: { goal: '保留原研究身份', model: { provider: 'test', modelId: 'test-model' }, data: {}, policy: {} },
     trialRecords: [{ id: 12, hypothesis: '原试验', status: 'FAILED', metrics: [], error: errorDetail.code, errorDetail }], tasks: [], final: { status: 'FAILED', trialId: 12, reason: null, metrics: [], error: errorDetail.code, errorDetail },
-  } }));
+  });
   await page.goto('/#/research/8'); const failure = page.locator('.recorded-error');
   await expect(failure).toContainText(errorDetail.message); await expect(failure).toContainText(errorDetail.action); await expect(failure.locator('.failure-identity')).toHaveText('研究 #8 / 试验 #12'); await expect(failure.getByText(errorDetail.code, { exact: true })).toBeHidden();
   await page.getByRole('button', { name: '所选试验 #12', exact: true }).click(); await expect(page.locator('.trial-detail .recorded-error')).toContainText(errorDetail.action); await expect(page.locator('.trial-detail .failure-identity')).toHaveText('试验 #12');
@@ -756,7 +757,7 @@ test('original portfolio capacity reassessment sends only explicit assumptions a
   response = { ...stored, requestedAssumptions: assumptions, maximumCapital: '5000.000000000000000001', assumptions: { ...stored.assumptions, participation: assumptions.participation, maximumAgeSeconds: assumptions.maximumAgeSeconds }, scenarios: [{ ...stored.scenarios[0]!, capital: assumptions.scenarios[0]! }] };
   await form.getByLabel('资本情景', { exact: true }).fill(assumptions.scenarios.join(', ')); await form.getByLabel('成交量参与率', { exact: true }).fill(assumptions.participation); await form.getByLabel('流动性数据最大时差（秒）', { exact: true }).fill(String(assumptions.maximumAgeSeconds)); await form.getByRole('button', { name: '重评原组合容量', exact: true }).click();
   await expect(current.locator('.capacity-headline')).toContainText('5000.000000000000000001'); await expect(page.locator('.capacity-assessment-source')).toContainText('本次重评结果'); await expect(page.locator('.capacity-assessment-source')).toContainText('p1'); await expect(current).toContainText(assumptions.participation);
-  const polled = page.waitForResponse('**/api/v3/portfolios/p1'); await page.clock.runFor(3000); await polled; await expect(current.locator('.capacity-headline')).toContainText('5000.000000000000000001'); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(assumptions.scenarios.join(', '));
+  const incoming = page.waitForResponse('**/api/v3/portfolios/p1/events'); await page.clock.runFor(3000); await (await incoming).finished(); await expect(current.locator('.capacity-headline')).toContainText('5000.000000000000000001'); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(assumptions.scenarios.join(', '));
   expect(requests).toEqual([{ path: '/api/v3/portfolios/p1/capacity', method: 'POST', body: requested }, { path: '/api/v3/portfolios/p1/capacity', method: 'POST', body: assumptions }]); expect(state.writes).toEqual([]); expect(state.portfolio).toEqual(original);
   await expect(page.getByRole('heading', { name: original.name, level: 1, exact: true })).toBeVisible(); await expect(page.locator('.result-section').filter({ has: page.getByRole('heading', { name: '目标权重', exact: true }) })).toContainText(original.targets[0]!.weight);
   const saved = page.locator('.capacity-original'); await expect(saved.locator('.capacity-headline')).toBeHidden(); await saved.locator('summary').first().click(); await expect(saved.locator('.capacity-headline')).toContainText('2000');
@@ -775,7 +776,7 @@ test('queued portfolio initializes pristine capacity inputs when the saved compu
   state.portfolio.capacity = { ...stored, coverage: { decisionCount: 1, assessedDecisionCount: 1, requiredObservations: 1, coveredObservations: 1, uniqueBars: 1, reusedBarObservations: 0 } }; await page.clock.runFor(3000); await expect(page.locator('.capacity-coverage')).toBeVisible(); await expect(form.getByLabel('资本情景', { exact: true })).toHaveValue(requested.scenarios.join(', ')); expect(state.writes).toEqual([]);
 });
 
-for (const source of ['saved draft', 'owner edits'] as const) test(`late capacity report and subsequent polls preserve ${source}`, async ({ page }) => {
+for (const source of ['saved draft', 'owner edits'] as const) test(`late capacity report and subsequent source events preserve ${source}`, async ({ page }) => {
   const state = await contract(page); await page.clock.install(); const draft = { scenarios: '900.000000000000000001', participation: '0.02', maximumAgeSeconds: '45' }; const stored = savedPortfolioCapacity(state.portfolio.id);
   if (source === 'saved draft') { state.portfolio.status = 'QUEUED'; await page.addInitScript(value => sessionStorage.setItem('quazonai.draft.portfolio-capacity:p1', JSON.stringify(value)), draft); }
   await page.goto('/#/portfolios/p1'); await expect(page.locator('.portfolio-capacity .capacity-unavailable')).toBeVisible(); const settings = page.locator('.portfolio-capacity > .capacity-settings'); const form = page.locator('.portfolio-capacity-form');
@@ -1085,15 +1086,6 @@ test('research search waits for IME completion before publishing the query', asy
   await search.dispatchEvent('compositionend'); await page.clock.runFor(350);
   await expect(page.getByRole('link', { name: '后页研究', exact: true })).toBeVisible();
   await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1); expect(queries).toEqual(['后页']);
-});
-
-test('legacy research status links normalize to visible canonical filters', async ({ page }) => {
-  await contract(page); await page.goto('/#/research?state=失败');
-  await expect(page).toHaveURL(/status=FAILED/); expect(new URL(page.url().split('#')[1]!, 'http://test').searchParams.has('state')).toBe(false);
-  await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(1);
-  await expect(page.getByLabel('当前筛选')).toContainText('失败');
-  await expect(page.getByRole('alert')).toHaveCount(0);
-  await page.getByRole('button', { name: '清除全部', exact: true }).click(); await expect(page.locator('.workspace-table .ant-table-row')).toHaveCount(3);
 });
 
 test('opening a research detail in another tab does not let polling steal the search focus', async ({ page }) => {

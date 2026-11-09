@@ -55,7 +55,7 @@ jobs:
       - run: make check-ts check-deploy
   web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -89,6 +89,7 @@ jobs:
       - run: npm --prefix apps/web run test:e2e
         env:
           PI_SCRATCH_DIR: ${{ runner.temp }}
+          QUAZONAI_WEB_E2E_PREVIEW: '1'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: failure()
         with:

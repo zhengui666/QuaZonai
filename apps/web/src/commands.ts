@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api } from './api';
-import { clearResearchIntent, readResearchIntent } from './request-intent';
 
 type Kind = 'research' | 'portfolios' | 'review-allocations' | 'observations' | 'mandates' | `pm:${string}` | `capital:${string}` | `capital-preview:${string}`;
 interface Envelope { raw: string; persisted: boolean }
@@ -20,16 +19,13 @@ function read(kind: Kind): CommandState {
   const cached = memory.get(kind); if (cached) return cached;
   let pending: Envelope | undefined;
   try { const raw = sessionStorage.getItem(key(kind)); if (raw && typeof JSON.parse(raw).requestId === 'string') pending = { raw, persisted: true }; }
-  catch { /* Session storage and the legacy store can fail independently. */ }
-  try { if (!pending && kind === 'research') { const legacy = readResearchIntent(); if (legacy) pending = { raw: legacy.raw, persisted: true }; } }
-  catch { /* The original in-memory command is still preferred. */ }
+  catch { /* The current in-memory command remains available when storage fails. */ }
   const state = { pending }; memory.set(kind, state); return state;
 }
 function publish(kind: Kind, state: CommandState) { memory.set(kind, state); updateExitNotice(); for (const listener of listeners) listener(); }
 function clear(kind: Kind, command: Envelope, error?: unknown) {
   if (read(kind).pending !== command) return false;
   try { sessionStorage.removeItem(key(kind)); } catch { /* The service retains the acknowledged identity. */ }
-  try { if (kind === 'research') clearResearchIntent(); } catch { /* One failed store must not prevent clearing the other. */ }
   publish(kind, { error }); return true;
 }
 export function useCommand<T>(kind: Kind, accepted: (result: T) => void, path = `/${kind}`) {

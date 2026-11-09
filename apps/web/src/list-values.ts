@@ -2,17 +2,6 @@ const detailKeys = ['tab', 'trial'];
 const navigationKeys = new Set(['view', 'section', ...detailKeys]);
 const controlKeys = new Set(['q', 'page', 'pageSize', 'sort', 'order']);
 
-/** Old bookmarks used translated state labels; the API now uses canonical status values. */
-export function normalizeResearchState(params: URLSearchParams) {
-  const result = new URLSearchParams(params);
-  const legacy = result.get('state');
-  if (!result.has('status') && legacy) {
-    const statuses: Record<string, string> = { '进行中': 'RUNNING,STARTED,QUEUED', '已计算': 'COMPUTED', '失败': 'FAILED', '已停止': 'STOPPED', '待处理': 'IDLE' };
-    if (statuses[legacy]) result.set('status', statuses[legacy]);
-  }
-  result.delete('state');
-  return result;
-}
 export function isPlainNavigationClick(event: Pick<MouseEvent, 'button' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>) {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
