@@ -20,7 +20,7 @@ import { assertNativeRemoteTaskSettled } from '../../research/src/native-remote-
 import type { ServiceConfig } from './config.ts';
 import { boundScienceTarget, withoutExecutionQuotas } from './science-binding.ts';
 import { factorReference } from './factors.ts';
-import { Application, json, object, Problem, text } from './facts.ts';
+import { Application, json, object, Problem, settings, text } from './facts.ts';
 import { assertBusinessAdmission } from './pm-maintenance.ts';
 
 const context = BACKGROUND_CONTEXT;
@@ -29,7 +29,7 @@ export const TickEconomicReplays = defineDoc<{ runs: Record<string, JsonObject> 
   kind: 'qz.tick-economic-replays', version: 1, scope: 'session', initial: () => ({ runs: {} }),
 });
 type ReplayFact = { original: TickEconomicReplayStart; view: TickEconomicReplayView };
-type ReplayInput = { id: string; createdAt?: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest };
+type ReplayInput = { id: string; createdAt?: string; dataDir: string; catalog: string; fundingCatalog?: string; target: NativeTarget; model: string | string[]; request: NativeTickEconomicRequest; bookCores?: number };
 type ReplayCheckpoint = { phase: 'compute'; progress?: TickEconomicReplayProgress };
 function fact(value: JsonObject): ReplayFact { return value as unknown as ReplayFact; }
 function matchingBinding(sourceData: JsonObject, configuredData: JsonObject, request: NativeTickEconomicRequest['research']) {
@@ -80,7 +80,7 @@ export const TickEconomicReplay = defineTask<ReplayInput, ReplayCheckpoint, null
         }));
         await report('REPLAYING');
         result = await withNativeRemoteTracking(task.id, runtime, ctx, () => replayTickEconomic(task.input.target,
-          task.input.request, { catalog: task.input.catalog, fundingCatalog: task.input.fundingCatalog, model }, directory!, ctx));
+          task.input.request, { catalog: task.input.catalog, fundingCatalog: task.input.fundingCatalog, model, bookCores: task.input.bookCores ?? 1 }, directory!, ctx));
       }
       await runtime.commit(async tx => {
         const stored = fact((await tx.doc(TickEconomicReplays)).runs[task.input.id]!);
@@ -218,14 +218,15 @@ export function tickEconomicWorkbench(host: ResearchHost, config: ServiceConfig)
       }
       const { reference, source, target } = retained[0]!;
       const id = randomUUID();
+      const bookCores = settings(application.settings).tickBookCores ?? 1;
       const taskId = await tx.createTask(TickEconomicReplay, { id, createdAt: new Date().toISOString(), dataDir: config.dataDir, catalog: source.catalog, fundingCatalog: source.fundingCatalog,
-        model: retained.length === 1 ? retained[0]!.model : retained.map(member => member.model), request: input.request, target },
+        model: retained.length === 1 ? retained[0]!.model : retained.map(member => member.model), request: input.request, target, bookCores },
       { conversationId: reference.researchId as ConversationId, ownership: { kind: 'conversation' } });
       const view: TickEconomicReplayView = { id, requestId: input.requestId, datasetId: input.datasetId,
         ...(input.members ? { members: input.members } : { factorId: input.factorId }), taskId, fundingCatalog: source.fundingCatalog,
         sources: retained.map(member => ({ factorId: member.factorId, researchId: member.reference.researchId, trialId: member.reference.trialId,
           memberIndex: member.reference.memberIndex, sourceRevision: member.source.request.input.source_revision })),
-        status: 'QUEUED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null };
+        status: 'QUEUED', scientificQualification: 'UNQUALIFIED_EXPLORATORY', result: null, error: null, bookCores };
       replays.runs[id] = json({ original: input, view });
       return view;
     }, context);

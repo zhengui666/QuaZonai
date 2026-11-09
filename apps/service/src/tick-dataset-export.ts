@@ -135,27 +135,27 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
     if (metadata.economic_sources !== undefined) {
       const extras = metadata.economic_sources;
       if (!Array.isArray(extras)) throw new Error('tick_economic_source_manifest_invalid');
+      const sources = extras;
       const names = new Set(['funding-rates.jsonl', 'funding-rates.manifest.json']);
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'book-snapshots.source.json')) names.add('book-snapshots.source.json');
       if (extras.some(extra => object(extra, 'tick_economic_source').path === 'spot-valuation.jsonl')) names.add('spot-valuation.jsonl');
       const contextSizes = new Map<string, bigint>();
-      if (extras.some(extra => object(extra, 'tick_economic_source').path === 'context-prices.manifest.json')) {
-        const path = join(directory, 'context-prices.manifest.json'); await observe(path);
+      async function addContextSource(manifestName: string, filePrefix: string, format: string, clock: string) {
+        if (!sources.some(extra => object(extra, 'tick_economic_source').path === manifestName)) return;
+        const path = join(directory, manifestName); await observe(path);
         const context = object(parseOriginalJson(await readFile(path, 'utf8')), 'tick_context_manifest'); validateNumbers(context);
         const ids = context.instrument_ids;
-        const contextReceived = request.input.availability === 'RECEIVED_TIME_OBSERVED';
-        if (context.schema_version !== 1 || context.format !== (contextReceived ? 'RECEIVED_TIME_CONTEXT_PRICE_CSV_V1' : 'EVENT_TIME_CONTEXT_PRICE_CSV_V1')
-          || context.clock !== request.input.availability
+        if (context.schema_version !== 1 || context.format !== format || context.clock !== clock
           || typeof context.source_revision !== 'string' || !context.source_revision.trim()
           || context.research_source_revision !== request.input.source_revision
           || cacheCounter(context.start_ns) > BigInt(request.input.event_start_ns) || cacheCounter(context.end_ns) < BigInt(request.input.event_end_ns)
           || !Array.isArray(ids) || ids.length === 0 || ids.some((id, index) => typeof id !== 'string' || !id || !request.input.instrument_ids.includes(id) || index > 0 && String(ids[index - 1]) >= id)
           || !Array.isArray(context.files) || context.files.length !== ids.length) throw new Error('tick_context_source_coverage_mismatch');
-        names.add('context-prices.manifest.json');
+        names.add(manifestName);
         const seenIds = new Set<string>(); let rows = 0n;
         for (const [index, raw] of context.files.entries()) {
           const file = object(raw, 'tick_context_file'); const id = text(file.instrument_id, 'tick_context_instrument'); const name = text(file.path, 'tick_context_path');
-          if (id !== ids[index] || seenIds.has(id) || name !== `context-prices-${String(index).padStart(3, '0')}.csv` || names.has(name)) throw new Error('tick_context_file_invalid');
+          if (id !== ids[index] || seenIds.has(id) || name !== `${filePrefix}${String(index).padStart(3, '0')}.csv` || names.has(name)) throw new Error('tick_context_file_invalid');
           const count = cacheCounter(file.rows); const bytes = cacheCounter(file.bytes);
           if (bytes === 0n || (count === 0n ? file.first_event_ns !== null || file.last_event_ns !== null
             : cacheCounter(file.first_event_ns) > cacheCounter(file.last_event_ns) || cacheCounter(file.first_event_ns) < cacheCounter(context.start_ns)
@@ -164,6 +164,11 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         }
         if (rows !== cacheCounter(context.rows)) throw new Error('tick_context_row_count_mismatch');
       }
+      const contextReceived = request.input.availability === 'RECEIVED_TIME_OBSERVED';
+      await addContextSource('context-prices.manifest.json', 'context-prices-',
+        contextReceived ? 'RECEIVED_TIME_CONTEXT_PRICE_CSV_V1' : 'EVENT_TIME_CONTEXT_PRICE_CSV_V1', request.input.availability);
+      await addContextSource('event-time-context-prices.manifest.json', 'event-time-context-prices-',
+        'EVENT_TIME_CONTEXT_PRICE_CSV_V1', 'EVENT_TIME_PROXY_UNVERIFIED');
       for (const extra of extras) {
         const row = object(extra, 'tick_economic_source');
         if (typeof row.path !== 'string' || !names.delete(row.path)) throw new Error('tick_economic_source_manifest_invalid');
@@ -171,7 +176,7 @@ export async function exportTickDataset(options: DatasetExportOptions): Promise<
         const state = await lstat(path, { bigint: true });
         if (!state.isFile() || state.isSymbolicLink() || state.size !== cacheCounter(row.path === 'spot-valuation.jsonl' && directory === primary ? row.research_bytes ?? row.bytes : row.bytes)
           || contextSizes.has(row.path) && state.size !== contextSizes.get(row.path)) throw new Error('tick_economic_source_size_mismatch');
-        if (row.path === 'context-prices.manifest.json' || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
+        if (row.path.endsWith('context-prices.manifest.json') || contextSizes.has(row.path)) contextFiles.set(row.path, `${state.dev}:${state.ino}:${state.size}`);
         files.add(path);
       }
       if (names.size) throw new Error('tick_economic_source_manifest_invalid');

@@ -1,4 +1,4 @@
-import { Button, Form, Input, Segmented, Select } from 'antd';
+import { Button, Form, Input, InputNumber, Segmented, Select } from 'antd';
 import { ArrowClockwiseIcon, CaretDownIcon, CircleHalfIcon, MagnifyingGlassIcon, MoonIcon, PlugsIcon, SunIcon } from '@phosphor-icons/react';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
@@ -9,10 +9,10 @@ import { draftIsPersisted, readDraft, removeDraft, saveDraft } from './commands'
 import { useResource } from './data-hooks';
 import type { ModelLoginRequest } from './model-login';
 import { DraftNotice, Empty, ErrorNotice, Exact, Facts, Loading, Status, useConfirm } from './ui';
-type Fields = { model?: string; thinking: ThinkingLevel | 'default'; serviceTier?: ServiceTier };
+type Fields = { model?: string; thinking: ThinkingLevel | 'default'; serviceTier?: ServiceTier; tickBookCores: number };
 const modelKey = (model: ModelRef) => JSON.stringify({ provider: model.provider, modelId: model.modelId });
-function fields(value: SettingsView): Fields { return { model: value.defaultModel ? modelKey(value.defaultModel) : undefined, thinking: value.thinkingLevel ?? 'default', serviceTier: value.serviceTier ?? undefined }; }
-function payload(value: Fields): SettingsView { return { defaultModel: value.model ? JSON.parse(value.model) as ModelRef : null, thinkingLevel: value.model && value.thinking !== 'default' ? value.thinking : null, serviceTier: value.model ? value.serviceTier ?? null : null }; }
+function fields(value: SettingsView): Fields { return { model: value.defaultModel ? modelKey(value.defaultModel) : undefined, thinking: value.thinkingLevel ?? 'default', serviceTier: value.serviceTier ?? undefined, tickBookCores: value.tickBookCores ?? 1 }; }
+function payload(value: Fields): SettingsView { return { defaultModel: value.model ? JSON.parse(value.model) as ModelRef : null, thinkingLevel: value.model && value.thinking !== 'default' ? value.thinking : null, serviceTier: value.model ? value.serviceTier ?? null : null, tickBookCores: value.tickBookCores ?? 1 }; }
 export default function ModelSettings({ connect }: { connect: (value: ModelLoginRequest) => void }) {
   const cache = useQueryClient(); const catalog = useResource<ModelCatalog>('/models'); const preferences = useResource<SettingsView>('/settings'); const usage = useResource<UsageView>('/usage', { poll: 10000 });
   const [form] = Form.useForm<Fields>(); const [search, setSearch] = useState(''); const [error, setError] = useState<unknown>(); const [providerError, setProviderError] = useState<unknown>(); const [providerNotice, setProviderNotice] = useState<Record<string, string>>({});
@@ -21,11 +21,11 @@ export default function ModelSettings({ connect }: { connect: (value: ModelLogin
   const [draftSaved, setDraftSaved] = useState(() => draftIsPersisted('settings')); const initialized = useRef(false); const baseline = useRef<SettingsView | undefined>(undefined); const confirm = useConfirm(); const appearance = useAppearance();
   const current = Form.useWatch([], form) as Fields | undefined;
   const selected = catalog.data?.models.find(model => modelKey(model) === current?.model);
-  const dirty = !!saved && !!current && JSON.stringify(payload(current)) !== JSON.stringify(saved);
+  const dirty = !!saved && !!current && JSON.stringify(payload(current)) !== JSON.stringify(payload(fields(saved)));
   useEffect(() => {
     const next = preferences.data; if (!next) return;
-    if (!initialized.current) { initialized.current = true; form.setFieldsValue(readDraft<Fields>('settings') ?? fields(next)); }
-    else if (baseline.current && JSON.stringify(payload(form.getFieldsValue())) === JSON.stringify(baseline.current)) { form.setFieldsValue(fields(next)); removeDraft('settings'); setDraftSaved(true); }
+    if (!initialized.current) { initialized.current = true; form.setFieldsValue({ ...fields(next), ...readDraft<Fields>('settings') }); }
+    else if (baseline.current && JSON.stringify(payload(form.getFieldsValue())) === JSON.stringify(payload(fields(baseline.current)))) { form.setFieldsValue(fields(next)); removeDraft('settings'); setDraftSaved(true); }
     baseline.current = next; setSaved(next);
   }, [preferences.data]);
   useEffect(() => {
@@ -50,6 +50,7 @@ export default function ModelSettings({ connect }: { connect: (value: ModelLogin
       <Form.Item label="默认模型" name="model"><Select showSearch allowClear optionFilterProp="label" options={options} suffixIcon={<CaretDownIcon size={14} />} onChange={value => { const model = catalog.data?.models.find(item => modelKey(item) === value); form.setFieldValue('thinking', 'default'); if (!current?.serviceTier || !model?.serviceTiers.includes(current.serviceTier)) form.setFieldValue('serviceTier', undefined); setDraftSaved(saveDraft('settings', form.getFieldsValue())); }} /></Form.Item>
       <Form.Item label="推理强度" name="thinking"><Select disabled={!current?.model || saving || !!pendingSave} suffixIcon={<CaretDownIcon size={14} />} options={[{ value: 'default', label: '使用默认强度' }, ...(selected?.thinkingLevels.map(value => ({ value, label: ({ off: '关闭', minimal: '最低', low: '低', medium: '中', high: '高', xhigh: '更高', max: '最高' } as Record<string, string>)[value]! })) ?? [])]} /></Form.Item>
       <Form.Item label="推理速度" name="serviceTier" extra={selected && !selected.serviceTiers.length ? '当前模型服务不支持速度配置' : undefined}><Select allowClear disabled={!selected?.serviceTiers.length || saving || !!pendingSave} placeholder={!selected ? '先选择模型' : selected.serviceTiers.length ? '使用默认速度' : '由模型服务决定'} suffixIcon={<CaretDownIcon size={14} />} options={selected?.serviceTiers.map(value => ({ value, label: value === 'priority' ? 'Fast' : '标准' }))} /></Form.Item>
+      <Form.Item label="Tick 回放 CPU 核数" name="tickBookCores" extra="用于新建回放的盘口读取；实际核数不超过运行机器可用 CPU。" rules={[{ required: true, type: 'integer', min: 1 }]}><InputNumber min={1} precision={0} /></Form.Item>
       <ErrorNotice error={error} /><DraftNotice saved={draftSaved} /><div className="settings-save"><Button type="primary" loading={saving} disabled={!dirty && !pendingSave} onClick={() => { void save(); }}>{saving ? '保存中' : pendingSave ? '重试保存' : '保存设置'}</Button><span role="status" className="quiet">{notice || (pendingSave && !saving ? '保存结果待核对' : dirty ? '未保存' : '')}</span></div>
     </Form>}</div></section>
     <section className="settings-group"><header><h2>外观</h2></header><div className="settings-group-body"><Segmented aria-label="外观" className="appearance-options" value={appearance.mode} onChange={value => appearance.setMode(value as 'system' | 'light' | 'dark')} options={[{ value: 'system', label: <span><CircleHalfIcon size={16} />跟随系统</span> }, { value: 'light', label: <span><SunIcon size={16} />浅色</span> }, { value: 'dark', label: <span><MoonIcon size={16} />深色</span> }]} /></div></section>

@@ -100,6 +100,11 @@ test('HTTP sends exact original bodies once, replays only explicit original keys
     ]);
     assert.equal(sent[6]!.bytes.includes('100.123456789123456789'), true);
     assert.deepEqual(output.at(-3), { id: 'o-1', cash: null });
+    for (const cores of ['4', '12']) {
+      await run(['settings', 'set', '--tick-book-cores', cores], () => {});
+      assert.deepEqual(JSON.parse(sent.at(-1)!.bytes), { tickBookCores: Number(cores) });
+    }
+    for (const cores of ['0', '1.2', '-1']) await assert.rejects(run(['settings', 'set', `--tick-book-cores=${cores}`]), /tick_book_cores_invalid/);
     assert.ok((await schemas() as { names: string[] }).names.includes('ResearchStart'));
     assert.ok((await schemas('NativeFactorEvaluationRequestV1', true) as { schema: unknown }).schema);
   } finally { await config.close(); await api.close(); }

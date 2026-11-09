@@ -15,14 +15,13 @@ use serde::{
     Deserialize, Deserializer,
 };
 use std::{
-    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fmt,
     fs::{File, Metadata},
     io::BufReader,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 const HOUR: u64 = 3_600_000_000_000;
@@ -189,7 +188,7 @@ struct HourFile {
     identity: FileIdentity,
     layout: usize,
 }
-struct IndexedSource {
+pub(super) struct IndexedSource {
     root: PathBuf,
     start: u64,
     end: u64,
@@ -433,12 +432,15 @@ struct CachedSource {
     identity: FileIdentity,
     source: Weak<IndexedSource>,
 }
-thread_local! { static SOURCE: RefCell<Option<CachedSource>> = const { RefCell::new(None) }; }
-fn source(root: &Path) -> Result<Arc<IndexedSource>> {
+static SOURCE: OnceLock<Mutex<Option<CachedSource>>> = OnceLock::new();
+pub(super) fn source(root: &Path) -> Result<Arc<IndexedSource>> {
     let path = root.join("book-snapshots.source.json").canonicalize()?;
     let identity = FileIdentity::metadata(&path.metadata()?)?;
-    SOURCE.with(|cached| {
-        let mut cached = cached.borrow_mut();
+    {
+        let mut cached = SOURCE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_SOURCE_CACHE_POISONED"))?;
         if let Some(previous) = &*cached {
             if previous.path == path && previous.identity == identity {
                 if let Some(source) = previous.source.upgrade() {
@@ -453,7 +455,7 @@ fn source(root: &Path) -> Result<Arc<IndexedSource>> {
             source: Arc::downgrade(&source),
         });
         Ok(source)
-    })
+    }
 }
 
 struct Hour {
@@ -587,7 +589,14 @@ pub(super) struct RawBooks {
 }
 impl RawBooks {
     pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
-        let source = source(root)?;
+        Self::open_indexed(source(root)?, id, start, end)
+    }
+    pub(super) fn open_indexed(
+        source: Arc<IndexedSource>,
+        id: InstrumentId,
+        start: u64,
+        end: u64,
+    ) -> Result<Self> {
         ensure!(
             start < end && start >= source.start && end <= source.end,
             "ECONOMIC_BOOK_SOURCE_WINDOW_INVALID"

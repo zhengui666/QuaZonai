@@ -60,6 +60,9 @@ pub struct NativeTickEconomicRequestV1 {
     /// Explicit optional oracle/mark observations in the independent economic catalog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_source: Option<String>,
+    /// Event-time prices used only when the received-time context is missing or stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_time_context_source: Option<String>,
     /// Optional catalog-relative spot-valuation.jsonl for daily valuation only.
     /// Each row: instrument_id, received_ns, bid and ask; rows are ordered per instrument.
     #[serde(default, skip_serializing_if = "Option::is_none")]

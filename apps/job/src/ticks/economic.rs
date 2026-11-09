@@ -160,6 +160,17 @@ pub fn validate(request: &NativeTickEconomicRequestV1) -> Result<()> {
     );
     ensure!(
         request
+            .event_time_context_source
+            .as_deref()
+            .is_none_or(|name| name == EVENT_TIME_CONTEXT_MANIFEST),
+        "ECONOMIC_CONTEXT_PATH_INVALID"
+    );
+    ensure!(
+        request.event_time_context_source.is_none() || !request.research.input.uses_received_time(),
+        "ECONOMIC_EVENT_TIME_CONTEXT_CLOCK_INVALID"
+    );
+    ensure!(
+        request
             .spot_valuation_source
             .as_deref()
             .is_none_or(|name| name == "spot-valuation.jsonl"),
@@ -259,6 +270,7 @@ impl Funding {
 }
 
 const CONTEXT_MANIFEST: &str = "context-prices.manifest.json";
+const EVENT_TIME_CONTEXT_MANIFEST: &str = "event-time-context-prices.manifest.json";
 #[derive(Deserialize)]
 struct ContextFile {
     instrument_id: String,
@@ -285,20 +297,46 @@ fn context_manifest(
     root: &Path,
     request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
 ) -> Result<ContextManifest> {
-    let state = std::fs::symlink_metadata(root.join(CONTEXT_MANIFEST))?;
+    context_manifest_at(root, request, CONTEXT_MANIFEST, "context-prices-", false)
+}
+fn event_time_context_manifest(
+    root: &Path,
+    request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+) -> Result<ContextManifest> {
+    context_manifest_at(
+        root,
+        request,
+        EVENT_TIME_CONTEXT_MANIFEST,
+        "event-time-context-prices-",
+        true,
+    )
+}
+fn context_manifest_at(
+    root: &Path,
+    request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+    manifest_name: &str,
+    file_prefix: &str,
+    event_time_only: bool,
+) -> Result<ContextManifest> {
+    let state = std::fs::symlink_metadata(root.join(manifest_name))?;
     ensure!(
         state.is_file() && !state.file_type().is_symlink(),
         "ECONOMIC_CONTEXT_MANIFEST_INVALID"
     );
     let m: ContextManifest =
-        serde_json::from_reader(BufReader::new(File::open(root.join(CONTEXT_MANIFEST))?))?;
+        serde_json::from_reader(BufReader::new(File::open(root.join(manifest_name))?))?;
     let _ = m.schema_version;
-    ensure!(
+    let clock_matches = if event_time_only {
+        m.format == "EVENT_TIME_CONTEXT_PRICE_CSV_V1" && m.clock == "EVENT_TIME_PROXY_UNVERIFIED"
+    } else {
         ((m.format == "EVENT_TIME_CONTEXT_PRICE_CSV_V1"
             && m.clock == "EVENT_TIME_PROXY_UNVERIFIED")
             || (m.format == "RECEIVED_TIME_CONTEXT_PRICE_CSV_V1"
                 && m.clock == "RECEIVED_TIME_OBSERVED"))
             && (!request.input.uses_received_time() || m.clock == "RECEIVED_TIME_OBSERVED")
+    };
+    ensure!(
+        clock_matches
             && !m.source_revision.trim().is_empty()
             && m.research_source_revision == request.input.source_revision
             && m.start_ns <= request.input.event_start_ns
@@ -317,7 +355,7 @@ fn context_manifest(
         ensure!(
             f.instrument_id == m.instrument_ids[index]
                 && !f.instrument_id.is_empty()
-                && f.path == format!("context-prices-{index:03}.csv"),
+                && f.path == format!("{file_prefix}{index:03}.csv"),
             "ECONOMIC_CONTEXT_FILE_INVALID"
         );
         let state = std::fs::symlink_metadata(root.join(&f.path))?;
@@ -463,16 +501,21 @@ impl ContextReader {
             .and_then(|row| if oracle { row.oracle } else { row.mark }))
     }
 }
-struct ContextPrices {
+struct ContextPriceSource {
     source_revision: String,
+    clock: String,
     readers: BTreeMap<String, ContextReader>,
 }
-impl ContextPrices {
+impl ContextPriceSource {
     fn open(
         root: &Path,
         request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+        manifest_name: &str,
+        file_prefix: &str,
+        event_time_only: bool,
     ) -> Result<Self> {
-        let manifest = context_manifest(root, request)?;
+        let manifest =
+            context_manifest_at(root, request, manifest_name, file_prefix, event_time_only)?;
         let readers = manifest
             .files
             .into_iter()
@@ -481,6 +524,7 @@ impl ContextPrices {
             .collect::<Result<_>>()?;
         Ok(Self {
             source_revision: manifest.source_revision,
+            clock: manifest.clock,
             readers,
         })
     }
@@ -496,6 +540,106 @@ impl ContextPrices {
             }
         }
         Ok(())
+    }
+}
+struct ContextPrices {
+    primary: Option<ContextPriceSource>,
+    event_time_fallback: Option<ContextPriceSource>,
+    fallback_lookups: u64,
+}
+impl ContextPrices {
+    fn latest(&self, id: &str) -> Option<&ContextRow> {
+        [self.primary.as_ref(), self.event_time_fallback.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|source| {
+                source
+                    .readers
+                    .get(id)
+                    .and_then(|reader| reader.current.as_ref())
+            })
+            .max_by_key(|row| row.event)
+    }
+    fn open(
+        root: &Path,
+        request: &contracts::ticks::NativeTradeTickFactorEvaluationRequestV1,
+        primary_enabled: bool,
+        event_time_fallback_enabled: bool,
+    ) -> Result<Self> {
+        Ok(Self {
+            primary: primary_enabled
+                .then(|| {
+                    ContextPriceSource::open(
+                        root,
+                        request,
+                        CONTEXT_MANIFEST,
+                        "context-prices-",
+                        false,
+                    )
+                })
+                .transpose()?,
+            event_time_fallback: event_time_fallback_enabled
+                .then(|| {
+                    ContextPriceSource::open(
+                        root,
+                        request,
+                        EVENT_TIME_CONTEXT_MANIFEST,
+                        "event-time-context-prices-",
+                        true,
+                    )
+                })
+                .transpose()?,
+            fallback_lookups: 0,
+        })
+    }
+    fn price(&mut self, id: &str, at: u64, age: u64, oracle: bool) -> Result<Option<Decimal>> {
+        if let Some(value) = self
+            .primary
+            .as_mut()
+            .map(|source| source.price(id, at, age, oracle))
+            .transpose()?
+            .flatten()
+        {
+            return Ok(Some(value));
+        }
+        let value = self
+            .event_time_fallback
+            .as_mut()
+            .map(|source| source.price(id, at, age, oracle))
+            .transpose()?
+            .flatten();
+        if value.is_some() {
+            self.fallback_lookups += 1;
+        }
+        Ok(value)
+    }
+    fn finish(&mut self) -> Result<()> {
+        if let Some(source) = &mut self.primary {
+            source.finish()?;
+        }
+        if let Some(source) = &mut self.event_time_fallback {
+            source.finish()?;
+        }
+        Ok(())
+    }
+    fn description(&self) -> String {
+        match (&self.primary, &self.event_time_fallback) {
+            (Some(primary), Some(fallback)) => format!(
+                "primary source {} ({}) with event-time proxy fallback {} ({} successful lookups)",
+                primary.source_revision,
+                primary.clock,
+                fallback.source_revision,
+                self.fallback_lookups
+            ),
+            (Some(primary), None) => {
+                format!("source {} ({})", primary.source_revision, primary.clock)
+            }
+            (None, Some(fallback)) => format!(
+                "event-time proxy source {} ({}, {} successful lookups)",
+                fallback.source_revision, fallback.clock, self.fallback_lookups
+            ),
+            (None, None) => "no context source".into(),
+        }
     }
 }
 
@@ -572,9 +716,7 @@ fn rates_at(
                         } else {
                             let cause = if let Some(context) = contexts.as_ref() {
                                 let last = context
-                                    .readers
-                                    .get(&r.instrument_id)
-                                    .and_then(|reader| reader.current.as_ref())
+                                    .latest(&r.instrument_id)
                                     .map(|row| row.event.to_string())
                                     .unwrap_or_else(|| "NONE".into());
                                 format!("FUNDING_FIRST_CAUSE:STALE_OR_MISSING_ORACLE:event_ns={at}:instrument_id={}:last_context_ns={last}", r.instrument_id)
@@ -1745,9 +1887,7 @@ fn valuation_value(
                             "CONTEXT_MARK",
                             &id,
                             context
-                                .readers
-                                .get(&id)
-                                .and_then(|reader| reader.current.as_ref())
+                                .latest(&id)
                                 .map(|row| (row.event, row.mark.is_some())),
                             now,
                             age,
@@ -1831,6 +1971,19 @@ pub(crate) fn funding_sources(
                 .map(|file| (file.path, file.bytes.get())),
         );
     }
+    if root.join(EVENT_TIME_CONTEXT_MANIFEST).exists() {
+        let context = event_time_context_manifest(root, request)?;
+        files.push((
+            EVENT_TIME_CONTEXT_MANIFEST.into(),
+            std::fs::metadata(root.join(EVENT_TIME_CONTEXT_MANIFEST))?.len(),
+        ));
+        files.extend(
+            context
+                .files
+                .into_iter()
+                .map(|file| (file.path, file.bytes.get())),
+        );
+    }
     for (name, issue) in [
         (
             "spot-valuation.jsonl",
@@ -1880,6 +2033,17 @@ pub fn replay_models_with_funding(
     request: &NativeTickEconomicRequestV1,
     wasms: &[Vec<u8>],
 ) -> Result<NativeTickEconomicResultV1> {
+    replay_models_with_funding_and_cores(root, funding_root, request, wasms, 1)
+}
+
+pub fn replay_models_with_funding_and_cores(
+    root: &Path,
+    funding_root: &Path,
+    request: &NativeTickEconomicRequestV1,
+    wasms: &[Vec<u8>],
+    cores: usize,
+) -> Result<NativeTickEconomicResultV1> {
+    ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
     validate(request)?;
     ensure!(
         !funding_sources(funding_root, &request.research)?.is_empty(),
@@ -1990,17 +2154,24 @@ pub fn replay_models_with_funding(
     let observed = observed(s);
     let normalize_sizes = normalize_observed_book_sizes(s);
     let mut book_heap = BinaryHeap::<Reverse<(u64, usize)>>::new();
-    let mut book_readers = Vec::new();
+    let mut book_readers = if observed {
+        Some(books::BookReaders::open(
+            funding_root,
+            &assets
+                .iter()
+                .map(|asset| asset.instrument.id())
+                .collect::<Vec<_>>(),
+            request.research.input.event_start_ns.get(),
+            request.research.input.event_end_ns.get(),
+            cores,
+        )?)
+    } else {
+        None
+    };
     let mut book_heads = Vec::new();
     if observed {
         for (i, asset) in assets.iter().enumerate() {
-            let mut reader = books::Books::open(
-                funding_root,
-                asset.instrument.id(),
-                request.research.input.event_start_ns.get(),
-                request.research.input.event_end_ns.get(),
-            )?;
-            let head = reader.next()?;
+            let head = book_readers.as_mut().unwrap().next(i)?;
             let head = if normalize_sizes {
                 head.map(|frame| frame.floor_sizes(asset.instrument.size_increment()))
                     .transpose()?
@@ -2010,7 +2181,6 @@ pub fn replay_models_with_funding(
             if let Some(head) = &head {
                 book_heap.push(Reverse((head.received(), i)));
             }
-            book_readers.push(reader);
             book_heads.push(head);
         }
     }
@@ -2039,11 +2209,17 @@ pub fn replay_models_with_funding(
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut funding = Funding::open(&funding_root.join(&request.funding_source), funding_ids)?;
-    let mut contexts = request
-        .context_source
-        .as_ref()
-        .map(|_| ContextPrices::open(funding_root, &request.research))
-        .transpose()?;
+    let mut contexts = (request.context_source.is_some()
+        || request.event_time_context_source.is_some())
+    .then(|| {
+        ContextPrices::open(
+            funding_root,
+            &request.research,
+            request.context_source.is_some(),
+            request.event_time_context_source.is_some(),
+        )
+    })
+    .transpose()?;
     let spot_quotes = request
         .spot_valuation_source
         .as_ref()
@@ -2115,7 +2291,7 @@ pub fn replay_models_with_funding(
             let i = book_heap.pop().unwrap().0 .1;
             let frame = book_heads[i].take().unwrap();
             snapshots.insert(i, frame);
-            let next = book_readers[i].next()?;
+            let next = book_readers.as_mut().unwrap().next(i)?;
             book_heads[i] = if normalize_sizes {
                 next.map(|frame| frame.floor_sizes(assets[i].instrument.size_increment()))
                     .transpose()?
@@ -2823,7 +2999,7 @@ pub fn replay_models_with_funding(
             ("execution".into(),if request.scenario.execution_model.is_some() { "Synthetic equal bid/ask quotes at derived cohort VWAP, with each side sized to participation times cohort quantity, are execution proxies and not observed quotes or book depth. One target IOC per instrument and batch; native liquidity consumption is disabled, so no shared liquidity is modeled. Legal order size is checked before native IOC partial fills, with residual positions retained. Earlier decisions execute only at a later cohort after modeled latency and jitter; ties do not establish real queue order." } else { "Derived cohort simulation bars use an engine-required nominal 1ms label at actual irregular cohort timestamps (no resampling); OHLC=VWAP quantized to native price precision; not source BAR/TradeTick/QuoteTick. Earlier-cohort target is submitted only at a later observed cohort after modeled absolute latency and seeded bounded-uniform integer-nanosecond jitter. Quantity capped by participation. Nautilus 0.67 divides BAR volume across OHLC legs in native size increments; on_bar IOC orders match liquidity remaining after that sequence and can fill less than that cap. Nonzero legs refresh the synthetic book even at unchanged prices; this is not observed market depth. Ties use deterministic native ordering, not original queue evidence." }.into()),
             ("policy".into(),if small.is_some() {"Fixed capped USDC alpha entries only on each asset first fresh signal in each global decision bucket; declared roundtrip-cost hurdle; frozen entry fastEMA; timeout measured from decision, precise deadline exit intent, real later-cohort execution and retries. One entry attempt; partial fill is held without top-up. Exits require no NAV and retain nonzero dust. FX bridge instruments and their base currencies serve wallet quote inventory only, never alpha. Real holdings, quote inventory and unfilled reservations consume gross/per-asset budgets; missing NAV blocks new risk. No dynamic sleeve transfers.".into()} else {"Fixed global rebalance grid; one outstanding delayed decision per asset, intermediate grid decisions coalesced until its next eligible observed execution attempt. Absolute score-proportional capped gross targets. Spot negatives to cash, perp signed. No covariance fabrication, optimization or dynamic transfers. Native minimum order and cash affordability apply.".into()}),
             ("capital".into(),"One initial USDT wealth explicitly mapped to USDT0. Observed delayed participation-limited bridge conversion, one split into native Cash/Margin, no running transfers or reinjection.".into()),
-            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture observed oracle; context source {}, maximum age {}ns, EVENT_TIME_PROXY_UNVERIFIED; perpetual NAV/capital PnL uses context mark under the same clock/age, without changing trade execution or feature prices; native funding disabled. Only acknowledged adjustments enter reported funding total.", context.source_revision, age) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
+            ("funding".into(), if let Some(context) = &contexts { format!("Actual rate/time times own signed position times latest nonfuture oracle context; maximum age {}ns; perp NAV/capital PnL uses the same mark context. Context: {}; event-time context is an explicitly unverified fallback only when primary data is missing or stale. Trade execution and feature prices are unchanged; native funding is disabled. Only acknowledged adjustments enter reported funding total.", age, context.description()) } else { "Actual rate/time times own signed position times preceding observed cohort mark. Estimated mark funding, not HL oracle settlement; native funding disabled. Only acknowledged adjustments enter reported funding total.".into() }),
             ("cost".into(),"Native commission combines declared taker and extra spread/impact bps once. fees_by_currency retains native amounts; fees_usdc_equivalent is explicitly valued at final available FX, not historical per-fill FX.".into()),
             ("statistics".into(),"UTC daily total-wealth net returns; risk-free zero, sample-standard-deviation Sharpe times sqrt(365). Regime conditional annualization exp(365*mean(log(1+r)))-1, not concatenated-calendar CAGR; missing returns excluded and counted.".into()),
             ("wire_precision".into(),"Derived decimal outputs round once to 18 fractional places, midpoint nearest even, absolute per-value error at most 0.0000000000000000005; internal native balances and Decimal arithmetic remain unchanged.".into()),
@@ -2847,13 +3023,19 @@ pub fn replay_models_with_funding(
         consumed_fuel:request.research.parameters.total_fuel.map(|_|counter(consumed)).transpose()?,
         limitations:vec![if target_asof.is_none(){"TARGET_SNAPSHOT_UNAVAILABLE_NO_COMPLETE_COMMON_DECISION_CLOCK"}else{"TARGET_SNAPSHOT_IS_DECISION_INTENT_NOT_FILLED_INVENTORY"}.into(),"EXPLORATORY_COST_CAPITAL_SCENARIO_NOT_GOAL_QUALIFICATION".into(),"CURRENT_DEFINITIONS_NOT_HISTORICAL_CONTRACT_RULES".into(),"COHORT_VWAP_NOT_EXECUTABLE_QUOTE_OR_CONTINUOUS_BOOK".into(),"OPEN_END_POSITIONS_VALUED_NOT_RETROSPECTIVELY_LIQUIDATED".into(),"HISTORICAL_ADL_DELISTING_BORROWING_NOT_REPLICATED".into(),"STABLE_PAIR_ALIGNED_STAKING_REFERRAL_AND_HISTORICAL_FEE_DISCOUNTS_NOT_RECONSTRUCTED".into(),"SOURCE_STREAM_BOUNDED_NATIVE_OPEN_POSITION_AUDIT_HISTORY_CAN_GROW".into(),if funding_unknown.is_some(){"FUNDING_UNAVAILABLE_NET_EQUITY_UNKNOWN"}else if contexts.is_some(){"CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY"}else{"FUNDING_USES_PAST_COHORT_MARK_NOT_ORACLE"}.into()].into_iter().chain(funding_unknown.map(|(_, cause)| cause)).collect(),
     };
+    if request.event_time_context_source.is_some()
+        && !result
+            .limitations
+            .iter()
+            .any(|limit| limit == "CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY")
+    {
+        result
+            .limitations
+            .push("CONTEXT_EVENT_TIME_PROXY_NOT_VALIDATED_HISTORICAL_AVAILABILITY".into());
+    }
     if observed {
         if funding_root.join("book-snapshots.source.json").is_file() {
-            let (carry_snapshots, carry_rows) =
-                book_readers.iter().fold((0, 0), |totals, reader| {
-                    let counts = reader.checkpoint_counts();
-                    (totals.0 + counts.0, totals.1 + counts.1)
-                });
+            let (carry_snapshots, carry_rows) = book_readers.as_ref().unwrap().checkpoint_counts();
             result.coverage.source_evidence.insert("published_books".into(), serde_json::json!({
                 "carry_checkpoint_snapshots": carry_snapshots.to_string(),
                 "carry_checkpoint_rows": carry_rows.to_string(),

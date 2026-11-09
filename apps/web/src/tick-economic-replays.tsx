@@ -74,7 +74,7 @@ export function TickReplayDetail({ id, route }: { id: string; route: Route }) {
     <div className="section-heading"><h3>回放详情</h3><Button loading={query.isFetching} onClick={() => { void query.refetch(); }}>刷新所选回放</Button></div>
     <ErrorNotice error={query.error} retry={() => { void query.refetch(); }} /><LastRead stale={query.isError} at={query.dataUpdatedAt} />
     {query.isPending ? <Loading /> : value && <>
-      <Facts items={[["回放编号", value.id], ["数据集", value.datasetId], ["执行状态", <Status value={value.status} label={value.status === 'RUNNING' ? '运行中' : undefined} />], ["科学资格", <Qualification value={value.scientificQualification} />], ["创建时间", <Timestamp value={value.createdAt} />], ["执行模型", value.executionModel ?? '未记录'], ["因子与权重", <Members replay={value} />], ["计算任务", value.taskId]]} />
+      <Facts items={[["回放编号", value.id], ["数据集", value.datasetId], ["执行状态", <Status value={value.status} label={value.status === 'RUNNING' ? '运行中' : undefined} />], ["科学资格", <Qualification value={value.scientificQualification} />], ["创建时间", <Timestamp value={value.createdAt} />], ["执行模型", value.executionModel ?? '未记录'], ["因子与权重", <Members replay={value} />], ["计算任务", value.taskId], ["配置 CPU 核数", value.bookCores ?? 1]]} />
       <TickReplayProgress replay={value} />
       {(value.status === 'FAILED' || value.status === 'STOPPED') && <div className="recorded-error" role="status"><strong>{value.status === 'FAILED' ? '回放失败' : '回放已停止'}</strong>{value.error && <p className="tick-replay-error">{value.error}</p>}{value.error === 'tick_economic_local_stop_remote_receipt_unsettled' && <p>本地任务已停止，远端执行回执尚未确认终态。</p>}</div>}
       {value.status === 'COMPUTED' && (result ? <>

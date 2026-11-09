@@ -333,4 +333,18 @@ fn context_prices_keep_exact_decimals_causal_age_and_observed_empty_fields() {
     validate(&enabled).unwrap();
     enabled.context_source = Some("other.json".into());
     assert!(validate(&enabled).is_err());
+    enabled.context_source = None;
+    enabled.event_time_context_source = Some(EVENT_TIME_CONTEXT_MANIFEST.into());
+    validate(&enabled).unwrap();
+    enabled.research.input.availability =
+        contracts::ticks::NativeTickAvailabilityV1::ReceivedTimeObserved;
+    enabled.research.input.representation =
+        Some(contracts::ticks::NativeTickRepresentationV1::ReceivedTimeCohortFlowCacheV1);
+    enabled.research.input.maximum_receive_delay_ns = Some(counter(1).unwrap());
+    enabled.research.sampling.kind =
+        contracts::ticks::NativeTickSamplingKindV1::ReceivedTimeCohortV1;
+    assert_eq!(
+        validate(&enabled).unwrap_err().to_string(),
+        "ECONOMIC_EVENT_TIME_CONTEXT_CLOCK_INVALID"
+    );
 }

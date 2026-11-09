@@ -10,7 +10,15 @@ use nautilus_persistence::{
     backend::parquet::catalog::ParquetDataCatalog, catalog::types::CatalogQuery,
 };
 use rust_decimal::Decimal;
-use std::{collections::VecDeque, path::Path};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread::{self, JoinHandle},
+};
 
 pub(super) struct Snapshot {
     pub deltas: OrderBookDeltas,
@@ -148,6 +156,47 @@ enum Source {
     Native(NativeBooks),
     Published(super::source_books::RawBooks),
 }
+
+pub(super) enum BookReaders {
+    Serial(Vec<Books>),
+    Parallel(ParallelBooks),
+}
+impl BookReaders {
+    pub fn open(
+        root: &Path,
+        ids: &[InstrumentId],
+        start: u64,
+        end: u64,
+        cores: usize,
+    ) -> Result<Self> {
+        ensure!(cores > 0, "ECONOMIC_BOOK_CORES_INVALID");
+        if cores == 1 || thread::available_parallelism().map_or(1, usize::from) == 1 {
+            return ids
+                .iter()
+                .map(|&id| Books::open(root, id, start, end))
+                .collect::<Result<Vec<_>>>()
+                .map(Self::Serial);
+        }
+        Ok(Self::Parallel(ParallelBooks::open(
+            root, ids, start, end, cores,
+        )?))
+    }
+    pub fn next(&mut self, index: usize) -> Result<Option<Snapshot>> {
+        match self {
+            Self::Serial(readers) => readers[index].next(),
+            Self::Parallel(readers) => readers.next(index),
+        }
+    }
+    pub fn checkpoint_counts(&self) -> (u64, u64) {
+        match self {
+            Self::Serial(readers) => readers.iter().fold((0, 0), |total, reader| {
+                let item = reader.checkpoint_counts();
+                (total.0 + item.0, total.1 + item.1)
+            }),
+            Self::Parallel(readers) => readers.checkpoint_counts(),
+        }
+    }
+}
 impl Books {
     pub fn open(root: &Path, id: InstrumentId, start: u64, end: u64) -> Result<Self> {
         Ok(Self(if root.join("book-snapshots.source.json").is_file() {
@@ -166,6 +215,155 @@ impl Books {
         match &self.0 {
             Source::Native(_) => (0, 0),
             Source::Published(source) => source.checkpoint_counts(),
+        }
+    }
+}
+
+type ReadResult = (Result<Option<Snapshot>>, (u64, u64));
+enum ReadBook {
+    Open {
+        index: usize,
+        id: InstrumentId,
+        reply: mpsc::Sender<ReadResult>,
+    },
+    Next {
+        index: usize,
+        reply: mpsc::Sender<ReadResult>,
+    },
+}
+
+/// Prefetch one frame per instrument; the caller retains the global event order.
+pub(super) struct ParallelBooks {
+    workers: Vec<mpsc::Sender<ReadBook>>,
+    pending: Vec<Option<mpsc::Receiver<ReadResult>>>,
+    counts: Vec<(u64, u64)>,
+    cancelled: Arc<AtomicBool>,
+    threads: Vec<JoinHandle<()>>,
+}
+impl ParallelBooks {
+    pub fn open(
+        root: &Path,
+        ids: &[InstrumentId],
+        start: u64,
+        end: u64,
+        cores: usize,
+    ) -> Result<Self> {
+        let source = root
+            .join("book-snapshots.source.json")
+            .is_file()
+            .then(|| super::source_books::source(root))
+            .transpose()?;
+        let count = thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(cores)
+            .saturating_sub(1)
+            .min(ids.len())
+            .max(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut workers = Vec::with_capacity(count);
+        let mut threads = Vec::with_capacity(count);
+        for _ in 0..count {
+            let (sender, receiver) = mpsc::channel();
+            let root = root.to_path_buf();
+            let cancelled = Arc::clone(&cancelled);
+            let source = source.clone();
+            threads.push(thread::Builder::new().spawn(move || {
+                let mut readers = BTreeMap::<usize, Books>::new();
+                while let Ok(job) = receiver.recv() {
+                    if cancelled.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match job {
+                        ReadBook::Open { index, id, reply } => {
+                            let result = source
+                                .as_ref()
+                                .map_or_else(
+                                    || Books::open(&root, id, start, end),
+                                    |source| {
+                                        super::source_books::RawBooks::open_indexed(
+                                            Arc::clone(source),
+                                            id,
+                                            start,
+                                            end,
+                                        )
+                                        .map(|reader| Books(Source::Published(reader)))
+                                    },
+                                )
+                                .and_then(|mut reader| {
+                                    let next = reader.next();
+                                    let counts = reader.checkpoint_counts();
+                                    readers.insert(index, reader);
+                                    next.map(|frame| (frame, counts))
+                                });
+                            let _ = reply.send(match result {
+                                Ok((frame, counts)) => (Ok(frame), counts),
+                                Err(error) => (Err(error), (0, 0)),
+                            });
+                        }
+                        ReadBook::Next { index, reply } => {
+                            let result = match readers.get_mut(&index) {
+                                Some(reader) => {
+                                    let next = reader.next();
+                                    (next, reader.checkpoint_counts())
+                                }
+                                None => (
+                                    Err(anyhow::anyhow!("ECONOMIC_BOOK_WORKER_READER_MISSING")),
+                                    (0, 0),
+                                ),
+                            };
+                            let _ = reply.send(result);
+                        }
+                    }
+                }
+            })?);
+            workers.push(sender);
+        }
+        let mut result = Self {
+            workers,
+            pending: Vec::with_capacity(ids.len()),
+            counts: vec![(0, 0); ids.len()],
+            cancelled,
+            threads,
+        };
+        for (index, &id) in ids.iter().enumerate() {
+            let (reply, receiver) = mpsc::channel();
+            result.workers[index % count]
+                .send(ReadBook::Open { index, id, reply })
+                .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_WORKER_STOPPED"))?;
+            result.pending.push(Some(receiver));
+        }
+        Ok(result)
+    }
+    pub fn next(&mut self, index: usize) -> Result<Option<Snapshot>> {
+        let receiver = self.pending[index]
+            .take()
+            .context("ECONOMIC_BOOK_WORKER_READER_FINISHED")?;
+        let (result, counts) = receiver
+            .recv()
+            .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_WORKER_STOPPED"))?;
+        self.counts[index] = counts;
+        let frame = result?;
+        if frame.is_some() {
+            let (reply, receiver) = mpsc::channel();
+            self.workers[index % self.workers.len()]
+                .send(ReadBook::Next { index, reply })
+                .map_err(|_| anyhow::anyhow!("ECONOMIC_BOOK_WORKER_STOPPED"))?;
+            self.pending[index] = Some(receiver);
+        }
+        Ok(frame)
+    }
+    pub fn checkpoint_counts(&self) -> (u64, u64) {
+        self.counts
+            .iter()
+            .fold((0, 0), |total, item| (total.0 + item.0, total.1 + item.1))
+    }
+}
+impl Drop for ParallelBooks {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        self.workers.clear();
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
         }
     }
 }

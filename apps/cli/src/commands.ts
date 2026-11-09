@@ -35,7 +35,7 @@ const help = `quazonai — HTTP client (Node 22.19+), JSON receipts
   observation start --file REQUEST.json | list | get ID | refresh ID | stop ID
   observation automatic ID --file POLICY.json
   capital status OBSERVATION_ID | preview OBSERVATION_ID --file REQUEST.json | command OBSERVATION_ID --file REQUEST.json
-  settings get | set --file SETTINGS.json
+  settings get | set --file SETTINGS.json | set --tick-book-cores COUNT
   extensions list | enable NAME | disable NAME
 Retain the original request and ID after uncertainty. No automatic write retries.
 Watch/wait have no default deadline; detaching does not stop admitted work.
@@ -51,6 +51,7 @@ const options = {
   model: { type: 'string' as const }, 'max-trials': { type: 'string' as const }, 'request-id': { type: 'string' as const },
   cursor: { type: 'string' as const }, timeout: { type: 'string' as const }, domain: { type: 'boolean' as const },
   'submission-id': { type: 'string' as const },
+  'tick-book-cores': { type: 'string' as const },
 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CliError('json_object_required');
@@ -226,7 +227,13 @@ export async function run(args: string[], emit: (value: unknown) => void = (valu
     } else if (action !== 'status') throw new CliError('unknown_capital_command');
   } else if (group === 'settings') {
     path = '/settings';
-    if (action === 'set') { body = (await fileBody(values.file)).bytes; method = 'PATCH'; }
+    if (action === 'set') {
+      if (values['tick-book-cores'] !== undefined) {
+        if (values.file || !/^[1-9]\d*$/.test(values['tick-book-cores']) || !Number.isSafeInteger(Number(values['tick-book-cores']))) throw new CliError('tick_book_cores_invalid');
+        body = JSON.stringify({ tickBookCores: Number(values['tick-book-cores']) });
+      } else body = (await fileBody(values.file)).bytes;
+      method = 'PATCH';
+    }
     else if (action !== 'get') throw new CliError('unknown_settings_command');
   } else if (group === 'extensions') {
     path = '/extensions';
